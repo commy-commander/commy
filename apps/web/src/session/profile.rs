@@ -5,6 +5,7 @@ use commy_core::{Avatar, UserProfile};
 use commy_view::pictures::MAX_PROFILE_IMAGE_BYTES;
 use commy_view::profile::{self, ProfileEdit};
 use commy_view::safety::ProfilePolicy;
+use commy_view::server_tags;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -40,6 +41,10 @@ impl Session {
                 let about = profile::about(args.about.as_deref().unwrap_or_default())?;
                 self.edit_profile(false, |p| p.about = (!about.is_empty()).then_some(about))?
             }
+            "set_profile_look" => {
+                let look = profile::look(args.avatar_border.as_deref(), args.card_effect.as_deref())?;
+                self.edit_profile(false, |p| profile::apply_look(p, look))?
+            }
             "set_avatar" => {
                 let avatar = match args.kind.as_deref() {
                     Some("none") => None,
@@ -72,6 +77,18 @@ impl Session {
                 }
                 return Ok(self.voice_settings());
             }
+            "wear_server_tag" => {
+                let worn = match args.server_id.as_deref() {
+                    None => None,
+                    Some(id) => {
+                        let server: commy_core::ServerId = id.parse().map_err(|_| "unknown server")?;
+                        let me = self.client.borrow().profile().ok_or("set a username first")?.id;
+                        let worn = self.with_servers(|servers| servers.get(&server).map(|state| server_tags::wear(state, me)));
+                        Some(worn.ok_or("unknown server")??)
+                    }
+                };
+                self.edit_profile(false, |p| p.server_tag = worn)?
+            }
             "set_status_expiry" => {
                 let now = Utc::now().timestamp();
                 let mut personal = self.personal();
@@ -102,6 +119,16 @@ impl Session {
             _ => return Err(format!("{cmd} is not available in the web app yet")),
         };
         to_json(&edited)
+    }
+
+    pub(super) fn refresh_worn_tag(&self) {
+        let Some((me, worn)) = self.client.borrow().profile().and_then(|p| p.server_tag.clone().map(|w| (p.id, w))) else {
+            return;
+        };
+        let fresh = self.with_servers(|servers| worn.refreshed(servers.get(&worn.server).map(|s| &s.server), me));
+        if fresh.as_ref() != Some(&worn) {
+            let _ = self.edit_profile(false, |p| p.server_tag = fresh);
+        }
     }
 
     pub(super) fn personal(&self) -> Personal {

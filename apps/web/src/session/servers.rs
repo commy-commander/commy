@@ -256,6 +256,15 @@ impl Session {
                 let rules = serde_json::from_value(args.rules.clone().unwrap_or_default()).map_err(|_| "invalid auto moderation rules".to_string())?;
                 vec![client().act(server, |state, me, _, _| moderate::automod(state, me.perms, rules))?]
             }
+            "set_join_approval" => {
+                let (on, at) = (args.enabled.unwrap_or(false), Utc::now().timestamp_millis());
+                vec![client().act(server, |state, me, _, _| commy_view::join_requests::set_approval(state, me.perms, on, at))?]
+            }
+            "set_tip_jar" => vec![client().act(server, |state, me, _, _| commy_view::tip_jar::set_tip_jar(state, me.perms, args.url.as_deref()))?],
+            "answer_join_request" => {
+                let (user, admit) = (user()?, args.admit.unwrap_or(false));
+                vec![client().act(server, |state, me, _, _| commy_view::join_requests::answer(state, me.perms, user, admit))?]
+            }
             "set_activities_enabled" => {
                 let enabled = args.enabled.unwrap_or(false);
                 vec![client().act(server, |state, me, _, _| moderate::activities(state, me.perms, enabled))?]
@@ -297,7 +306,7 @@ impl Session {
         }
         self.refresh_gates();
         match cmd {
-            "ban_member" | "set_member_role" => self.tend_keys(server, None),
+            "ban_member" | "set_member_role" | "set_join_approval" | "answer_join_request" => self.tend_keys(server, None),
             "set_channel_access" => {
                 self.leave_unseen_voice(server).await;
                 self.tend_keys(server, Some(KeyScope::Channel(channel()?)));
@@ -350,6 +359,7 @@ impl Session {
         self.drop_from_list(server);
         let group = self.client.borrow().is_group(server);
         self.forget_left(server, group).await;
+        self.refresh_worn_tag();
         Ok(Value::Null)
     }
 

@@ -4,7 +4,7 @@ use std::time::Duration;
 use chrono::Utc;
 use commy_core::{Permissions, ServerId};
 use commy_net::invite::{self, BackgroundResponse, CreateRequest, CreateResponse, InviteLink, ResolveResponse};
-use commy_net::ServerTicket;
+use commy_net::{KnockReply, ServerTicket};
 use commy_view::ServerSummary;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -17,6 +17,7 @@ use crate::files;
 const JOIN_WAIT: Duration = Duration::from_secs(20);
 const JOIN_POLL: Duration = Duration::from_millis(250);
 const DEFAULT_ACCOUNT_SERVER: &str = "https://commy.chat";
+const ASKS_TO_JOIN: &str = "This server lets people in once a moderator says yes. Ask to join from the Commy app on your computer or phone.";
 
 #[derive(Deserialize)]
 struct ErrorReply {
@@ -162,6 +163,11 @@ impl Session {
         if let Some(summary) = self.client.borrow().summary(server) {
             return Ok(summary);
         }
+        match self.knock(&ticket).await {
+            Some(KnockReply::Waiting(_)) => return Err(ASKS_TO_JOIN.into()),
+            Some(KnockReply::TurnedAway) => return Err("This server did not let you in".into()),
+            _ => {}
+        }
         let key = self.invited.borrow_mut().remove(&server).ok_or("Open an invite link to join a server from the browser")?;
         if ticket.owner.is_none() {
             return Err("That invite is damaged".into());
@@ -175,7 +181,13 @@ impl Session {
             n0_future::time::sleep(JOIN_POLL).await;
         }
         self.emit("servers-changed", Value::Null);
-        Ok(ServerSummary { id: server.to_string(), name: ticket.server_name, member_count: 0, icon: None, can_invite: false, group: false })
+        Ok(ServerSummary { id: server.to_string(), name: ticket.server_name, member_count: 0, icon: None, can_invite: false, group: false, tag: None })
+    }
+
+    async fn knock(&self, ticket: &ServerTicket) -> Option<KnockReply> {
+        let request = self.client.borrow().join_ask(ticket.server_id, "")?;
+        let knocking = self.node.lock().await.as_ref()?.knock(ticket, request);
+        knocking.await
     }
 
     async fn revoke(&self, server: ServerId, origin: &str, code: &str) -> Result<(), String> {

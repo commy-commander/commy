@@ -52,6 +52,8 @@ const LOCALE_EN = {
   "appearance.chatSize": "Chat Font Size",
   "appearance.compact": "Compact Mode",
   "appearance.compact.sub": "Tighter spacing between messages.",
+  "appearance.textStyles": "Text Colours and Effects",
+  "appearance.textStyles.sub": "Show the colours, fonts and moving effects people add to their messages.",
   "appearance.shortcuts": "Keyboard Shortcuts",
   "appearance.switcher": "Quick Switcher",
   "appearance.switcher.sub": "Jump to any channel, conversation or server.",

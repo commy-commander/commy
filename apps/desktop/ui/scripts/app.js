@@ -328,6 +328,21 @@ function mockSeed() {
   server.members[0].tag = "RAID";
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
+  server.members[0].server_tag = { letters: "RUST", emoji: "\u{1f980}", color: "orange", effect: "shine", server: "Rust Hangout" };
+  server.server_tag = { letters: "RUST", emoji: "\u{1f980}", color: "orange", effect: "shine" };
+  server.members[0].avatar_border = "stars";
+  server.members[0].card_effect = "sparkles";
+  server.members[1].avatar_border = "sunset";
+  server.members[1].card_effect = "aurora";
+  server.join_approval = true;
+  server.tip_jar = "https://ko-fi.com/rusthangout";
+  server.join_requests = [
+    { id: "j1", name: "Marlow", username: "marlow", avatar: null, avatar_provider: null, note: "ash invited me after the Tuesday raid. I mostly write Rust for embedded boards.", at: Date.now() - 42 * 60 * 1000 },
+    { id: "j2", name: "kit", username: "kitcat", avatar: null, avatar_provider: null, note: "", at: Date.now() - 6 * 60 * 1000 },
+  ];
+  mock.joinWaits = [
+    { id: crypto.randomUUID(), name: "Night Owls Book Club", rules: "1. Be kind.\n2. No spoilers outside the spoiler channels.\n3. Keep it cozy.", members: 38, note: "", asked_at: Date.now() - 20 * 60 * 1000, turned_away: false, waiting: true },
+  ];
   mock.servers[server.id] = server;
   mock.directory = [
     { code: "KQ7M3N4P", key: "q".repeat(43), name: "Rust Hangout", category: "tech", members: 250, description: "Borrow checker support group, weekly code reviews and a friendly place to ask the questions you were afraid to ask. Beginners welcome, lifetimes optional." },
@@ -384,7 +399,7 @@ function mockSeed() {
     { id: "x2", channel: c0, author_id: "m2", author_name: "nova",
       content: "No central servers, no paywall. Everything peer to peer.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
     { id: "x2b", channel: c0, author_id: "m1", author_name: "ferris",
-      content: "## Patch notes\n**Bold**, *italic*, __underline__, ~~struck~~, `inline code`, ||a spoiler|| and a [masked link](https://commy.chat).\n> Quoted from the changelog\n- noise gate tuned\n- overlay fixed\n```rust\nfn main() {\n    println!(\"hello\"); // 42\n}\n```\nShipped <t:1760900000:R>.",
+      content: "## Patch notes\n**Bold**, *italic*, __underline__, ~~struck~~, `inline code`, ||a spoiler|| and a [masked link](https://commy.chat).\n> Quoted from the changelog\n- noise gate tuned\n- overlay fixed\n```rust\nfn main() {\n    println!(\"hello\"); // 42\n}\n```\nShipped <t:1760900000:R>.\nNow with {red:colour}, {blue+wave:waves}, {rainbow:rainbows}, {serif:serif}, {pink+hand:handwriting}, {display+glow:glow} and {shake:shaky} text.",
       created_at: new Date(Date.now() - 1500e3).toISOString(), edited: true, attachments: [] },
     { id: "x3", channel: c0, author_id: "me", author_name: mock.user ? mock.user.username : "you",
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
@@ -512,6 +527,15 @@ function mockSeed() {
     { message: "f4", title: "Noise cancellation clips the first word", tags: ["ft2", "ft4"], author: "me" },
     { message: "f5", title: "Polls for raid nights", tags: ["ft1"], author: "m2" },
   ] };
+}
+
+function mockServerTagView(server) {
+  return server.server_tag ? { ...server.server_tag, server: server.name } : null;
+}
+
+function mockWornTagView() {
+  const worn = mock.user && mock.user.server_tag;
+  return worn ? { ...worn.tag, server: worn.name } : null;
 }
 
 function mockJoinSoundClips(server) {
@@ -677,7 +701,7 @@ async function mockInvoke(cmd, args = {}) {
       if (Object.keys(mock.servers).length === 0) mockSeed();
       return mock.user;
     case "list_servers":
-      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember, group: Boolean(s.group) }));
+      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember, group: Boolean(s.group), tag: mockServerTagView(s) }));
     case "create_group_dm": {
       const members = Object.values(mock.servers).flatMap(s => s.members).filter(m => args.userIds.includes(m.id));
       const seen = new Set();
@@ -705,7 +729,7 @@ async function mockInvoke(cmd, args = {}) {
       const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, priority_speaker: false, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: mock.user.custom_status || null, status_emoji: mock.user.status_emoji || null, about: mock.user.about || null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
+        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: mock.user.custom_status || null, status_emoji: mock.user.status_emoji || null, about: mock.user.about || null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember, server_tag: mockWornTagView(), avatar_border: mock.user.avatar_border || null, card_effect: mock.user.card_effect || null };
         const vc = s.channels.find(c => isVoiceKind(c.kind) && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -733,6 +757,8 @@ async function mockInvoke(cmd, args = {}) {
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
+        server_tag: mockServerTagView(s),
+        tip_jar: s.tip_jar || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
@@ -1393,6 +1419,47 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
     case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "set_tip_jar": {
+      const url = args.url ? cleanTipJar(args.url) : null;
+      if (args.url && !url) throw "Use your Ko-fi page, like ko-fi.com/yourname";
+      mock.servers[args.serverId].tip_jar = url;
+      return null;
+    }
+    case "set_join_approval": {
+      const srv = mock.servers[args.serverId];
+      srv.join_approval = args.enabled;
+      if (!args.enabled) srv.join_requests = [];
+      return null;
+    }
+    case "answer_join_request": {
+      const srv = mock.servers[args.serverId];
+      const asked = (srv.join_requests || []).find(r => r.id === args.userId);
+      if (!asked) throw "That person is no longer waiting to join";
+      srv.join_requests = srv.join_requests.filter(r => r.id !== args.userId);
+      if (args.admit) srv.members.push({ id: asked.id, name: asked.name, presence: "online", custom_status: null });
+      return null;
+    }
+    case "list_join_waits": return mock.joinWaits || [];
+    case "cancel_join_request": mock.joinWaits = (mock.joinWaits || []).filter(w => w.id !== args.serverId); return null;
+    case "send_join_note": {
+      const wait = (mock.joinWaits || []).find(w => w.id === args.serverId);
+      if (wait) wait.note = String(args.note || "").trim();
+      return null;
+    }
+    case "set_server_tag": {
+      const srv = mock.servers[args.serverId];
+      const letters = cleanTagLetters(args.letters);
+      srv.server_tag = letters ? { letters, emoji: args.emoji || null, color: args.color, effect: args.effect } : null;
+      const worn = mock.user && mock.user.server_tag;
+      if (worn && worn.server === srv.id) mock.user.server_tag = srv.server_tag ? { server: srv.id, name: srv.name, tag: srv.server_tag } : null;
+      return null;
+    }
+    case "wear_server_tag": {
+      const srv = args.serverId && mock.servers[args.serverId];
+      if (args.serverId && !(srv && srv.server_tag)) throw "This server has no tag yet";
+      mock.user.server_tag = srv ? { server: srv.id, name: srv.name, tag: srv.server_tag } : null;
+      return mock.user;
+    }
     case "set_join_sound": {
       const srv = mock.servers[args.serverId];
       srv.join_sounds = { ...(srv.join_sounds || {}) };
@@ -1411,7 +1478,7 @@ async function mockInvoke(cmd, args = {}) {
       return { emojis: from("emojis_shareable", "emojis"), stickers: from("stickers_shareable", "stickers"), emoticons: from("emoticons_shareable", "emoticons") };
     }
     case "fetch_server_image": return (mock.serverImages || {})[args.image] || null;
-    case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, pictures_only: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11" });
+    case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, pictures_only: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11", layout: null, layouts: [] });
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
     case "overlay_hotkey_problems": return [];
     case "preview_overlay": return null;
@@ -1530,6 +1597,10 @@ async function mockInvoke(cmd, args = {}) {
       return touched;
     }
     case "set_about": mock.user.about = args.about; return mock.user;
+    case "set_profile_look":
+      mock.user.avatar_border = args.avatarBorder || null;
+      mock.user.card_effect = args.cardEffect || null;
+      return mock.user;
     case "set_window_title": return null;
     case "set_icons": mock.voice.app_icon = args.appIcon; mock.voice.tray_icon = args.trayIcon; return mock.voice;
     case "get_custom_icon": return null;
@@ -1731,6 +1802,7 @@ async function mockInvoke(cmd, args = {}) {
         { kind: "window", id: 12, name: "Spotify", is_primary: false },
       ];
     case "share_source_preview": return mockFrame(`Source ${args.sourceId}`, 360, 203, args.sourceId * 47);
+    case "can_share_screen": return true;
     case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47, audio: args.audio }; return null;
     case "share_audio_supported": return true;
     case "set_stream_volume": mock.voice.stream_volume = args.volume; return mock.voice;
@@ -1829,6 +1901,7 @@ const ICONS = {
   expand: "M4 4h7v2H6v5H4zm16 16h-7v-2h5v-5h2z",
   collapse: "M11 11H4V9h5V4h2zm2 2h7v2h-5v5h-2z",
   calendar: "M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V10h14zm0-12H5V6h14z",
+  coffee: "M18.5 3H6c-1.1 0-2 .9-2 2v5.71c0 3.83 2.95 7.18 6.78 7.29 3.96.12 7.22-3.06 7.22-7v-1h.5c1.93 0 3.5-1.57 3.5-3.5S20.43 3 18.5 3zM16 5v3H6V5h10zm2.5 3H18V5h.5c.83 0 1.5.67 1.5 1.5S19.33 8 18.5 8zM4 19h16v2H4v-2z",
   book: "M18 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zM9 4h2v5l-1-.75L9 9zm9 16H6V4h1v9l3-2.25L13 13V4h5z",
   chevronLeft: "M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z",
   chevronRight: "M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z",
@@ -2108,7 +2181,7 @@ async function closeSettingsLayers() {
 }
 
 const APPEARANCE_KEY = "commy.appearance";
-const APPEARANCE_DEFAULTS = { chatSize: 16, compact: false };
+const APPEARANCE_DEFAULTS = { chatSize: 16, compact: false, textStyles: true };
 
 function loadAppearance() {
   try {
@@ -2121,6 +2194,7 @@ function loadAppearance() {
 function applyAppearance(prefs) {
   document.documentElement.style.setProperty("--chat-font-size", `${prefs.chatSize}px`);
   document.body.classList.toggle("compact", Boolean(prefs.compact));
+  document.body.classList.toggle("plain-text-styles", prefs.textStyles === false);
 }
 
 function saveAppearance(prefs) {
@@ -2245,13 +2319,13 @@ const OWN_AVATAR_RETRY_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
 function rememberAvatars(members) {
   for (const m of members || []) {
-    avatarDirectory.set(m.id, { avatar: m.avatar || null, provider: m.avatar_provider || null });
+    avatarDirectory.set(m.id, { avatar: m.avatar || null, provider: m.avatar_provider || null, border: m.avatar_border || null });
   }
 }
 
 function avatarFor(userId) {
   if (state.user && userId === state.user.id) {
-    return { avatar: state.user.avatar || null, provider: state.user.node || null };
+    return { avatar: state.user.avatar || null, provider: state.user.node || null, border: state.user.avatar_border || null };
   }
   return avatarDirectory.get(userId) || null;
 }
@@ -2322,7 +2396,107 @@ function paintAvatar(node, userId, name) {
     face = el("span", "avatar-face", initials(name || "?"));
   }
   node.prepend(face);
+  setAvatarBorder(node, avatarFor(userId)?.border);
   return node;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ORNAMENT_PATHS = {
+  stars: "M0,-1 L0.29,-0.4 0.95,-0.31 0.48,0.15 0.59,0.81 0,0.5 -0.59,0.81 -0.48,0.15 -0.95,-0.31 -0.29,-0.4Z",
+  leaves: "M0,-1 C0.62,-0.5 0.62,0.5 0,1 C-0.62,0.5 -0.62,-0.5 0,-1Z",
+};
+
+function setAvatarBorder(node, border) {
+  node.querySelector(":scope > .avatar-border")?.remove();
+  const shown = isAvatarBorder(border);
+  node.classList.toggle("has-border", shown);
+  if (shown) node.appendChild(avatarBorderNode(border));
+}
+
+function avatarBorderNode(id) {
+  const ring = el("span", `avatar-border ab-${id}`);
+  ring.setAttribute("aria-hidden", "true");
+  const ornament = BORDER_ORNAMENTS[id];
+  if (ornament) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "ab-ornaments");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    for (const point of ornamentPoints(ornament.count, ornament.from, ornament.to)) {
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", ORNAMENT_PATHS[id]);
+      path.setAttribute("transform", `translate(${point.x} ${point.y}) rotate(${point.angle}) scale(${ornament.size})`);
+      svg.appendChild(path);
+    }
+    ring.appendChild(svg);
+  }
+  if (id === "orbit") ring.appendChild(el("span", "ab-orbit-dot"));
+  return ring;
+}
+
+function paintCardEffect(banner, effect, seed) {
+  banner.querySelector(":scope > .card-effect")?.remove();
+  const kind = CARD_EFFECTS.find(e => e.id === effect);
+  if (!kind) return;
+  const layer = el("div", `card-effect ce-${kind.id}`);
+  layer.setAttribute("aria-hidden", "true");
+  for (const p of particleSeeds(kind.particles, seed)) {
+    const dot = el("span", "ce-p");
+    dot.style.setProperty("--x", `${p.x}%`);
+    dot.style.setProperty("--y", `${p.y}%`);
+    dot.style.setProperty("--d", p.delay);
+    dot.style.setProperty("--s", p.size);
+    dot.style.setProperty("--t", `${p.duration}s`);
+    layer.appendChild(dot);
+  }
+  banner.appendChild(layer);
+}
+
+function lookOption(label, preview, checked, onPick) {
+  const btn = el("button", "look-option");
+  btn.type = "button";
+  btn.setAttribute("role", "radio");
+  btn.setAttribute("aria-checked", String(checked));
+  btn.append(preview, el("span", null, label));
+  btn.onclick = onPick;
+  return btn;
+}
+
+function renderLookPickers() {
+  const me = state.user;
+  if (!me) return;
+  const name = me.display_name || me.username;
+  const borderPreview = border => {
+    const avatar = makeAvatar(me.id, name, "avatar av-live");
+    setAvatarBorder(avatar, border);
+    return avatar;
+  };
+  $("account-border-grid").replaceChildren(
+    lookOption("None", borderPreview(null), !me.avatar_border, () => saveProfileLook(null, me.card_effect || null)),
+    ...AVATAR_BORDERS.map(b => lookOption(b.label, borderPreview(b.id), me.avatar_border === b.id, () => saveProfileLook(b.id, me.card_effect || null))),
+  );
+  const effectPreview = effect => {
+    const swatch = el("span", "look-swatch");
+    paintCardEffect(swatch, effect, me.id);
+    return swatch;
+  };
+  $("account-effect-grid").replaceChildren(
+    lookOption("None", effectPreview(null), !me.card_effect, () => saveProfileLook(me.avatar_border || null, null)),
+    ...CARD_EFFECTS.map(e => lookOption(e.label, effectPreview(e.id), me.card_effect === e.id, () => saveProfileLook(me.avatar_border || null, e.id))),
+  );
+}
+
+async function saveProfileLook(avatarBorder, cardEffect) {
+  try {
+    state.user = await invoke("set_profile_look", { avatarBorder, cardEffect });
+    renderLookPickers();
+    $("account-avatar").replaceChildren();
+    paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
+    paintAccountBanner();
+    renderProfilePopover();
+    if (state.currentServer) refreshCurrentServer();
+  } catch (err) {
+    toast(String(err));
+  }
 }
 
 function liveElapsed(sinceSecs, fmt = "clock", cls = "") {
@@ -2655,7 +2829,165 @@ function renderServerRail() {
     if (item.open) for (const s of servers) folder.appendChild(railServerButton(s, item.id));
     list.appendChild(folder);
   }
+  for (const wait of joinWaits) list.appendChild(railWaitButton(wait));
   paintNarrowRail();
+}
+
+let joinWaits = [];
+let joinWaitShown = null;
+const seenJoinRequests = new Map();
+
+async function loadJoinWaits() {
+  try {
+    joinWaits = await invoke("list_join_waits");
+  } catch {
+    joinWaits = [];
+  }
+  if (joinWaitShown && !$("modal-join-wait").classList.contains("hidden")) {
+    if (joinWaits.some(w => w.id === joinWaitShown)) paintJoinWait(joinWaitShown);
+    else hideModals();
+  }
+}
+
+function railWaitButton(wait) {
+  const btn = el("button", "server-icon waiting");
+  paintServerIcon(btn, { id: wait.id, name: wait.name, icon: null });
+  btn.title = joinWaitStatus(wait).title;
+  btn.setAttribute("aria-label", btn.title);
+  const wrap = el("div", "rail-item");
+  wrap.appendChild(btn);
+  const mark = el("span", "rail-wait-mark" + (wait.turned_away ? " away" : ""));
+  mark.appendChild(svgIcon(wait.turned_away ? "close" : "clock", 11));
+  wrap.appendChild(mark);
+  btn.onclick = () => openJoinWait(wait.id);
+  return wrap;
+}
+
+function paintJoinWait(id) {
+  const wait = joinWaits.find(w => w.id === id);
+  if (!wait) return false;
+  const icon = $("join-wait-icon");
+  paintServerIcon(icon, { id: wait.id, name: wait.name, icon: null });
+  icon.style.background = serverTint(wait.id);
+  const status = joinWaitStatus(wait);
+  $("join-wait-title").textContent = status.title;
+  $("join-wait-members").textContent = joinWaitMembers(wait.members);
+  $("join-wait-status").textContent = status.text;
+  $("join-wait-rules-wrap").classList.toggle("hidden", !wait.rules);
+  $("join-wait-rules").textContent = wait.rules || "";
+  $("join-wait-note-wrap").classList.toggle("hidden", wait.turned_away);
+  $("join-wait-send").classList.toggle("hidden", wait.turned_away);
+  $("join-wait-cancel").textContent = wait.turned_away ? "Remove" : "Withdraw Request";
+  return true;
+}
+
+function openJoinWait(id) {
+  if (!paintJoinWait(id)) return;
+  joinWaitShown = id;
+  const wait = joinWaits.find(w => w.id === id);
+  $("join-wait-note").value = wait.note || "";
+  showModal("modal-join-wait");
+}
+
+function setupJoinWait() {
+  $("join-wait-close").onclick = hideModals;
+  $("join-wait-cancel").onclick = async () => {
+    const id = joinWaitShown;
+    if (!id) return;
+    try {
+      await invoke("cancel_join_request", { serverId: id });
+      hideModals();
+      await refreshServers();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  $("join-wait-send").onclick = async () => {
+    const id = joinWaitShown;
+    const note = $("join-wait-note").value;
+    if (!id) return;
+    if (joinNoteLeft(note) < 0) return toast(`Keep your note to ${JOIN_NOTE_MAX} characters`);
+    const button = $("join-wait-send");
+    button.disabled = true;
+    try {
+      await invoke("send_join_note", { serverId: id, note });
+      toast("Your note is with the moderators");
+      await refreshServers();
+    } catch (e) {
+      toast(String(e));
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+function paintJoinBadge() {
+  const server = plainServer();
+  const count = server && server.can_answer_joins ? (server.join_requests || []).length : 0;
+  $("join-request-badge").classList.toggle("hidden", !count);
+  if (server && count) $("server-settings-btn").title = `Server Settings, ${count} waiting to join`;
+}
+
+function noteJoinRequests(server) {
+  if (server && server.can_answer_joins) {
+    const now = server.join_requests || [];
+    const before = seenJoinRequests.get(server.id);
+    seenJoinRequests.set(server.id, now);
+    const message = before ? joinRequestToast(server.name, newJoinRequests(before, now)) : "";
+    if (message) toast(message);
+    const layer = $("server-settings");
+    if (!layer.classList.contains("hidden") && layer.dataset.tab === "joins") renderJoinRequestSettings(server);
+  }
+  paintJoinBadge();
+}
+
+function renderJoinRequestSettings(server) {
+  const toggle = $("join-approval-toggle");
+  toggle.checked = Boolean(server.join_approval);
+  toggle.disabled = !server.can_manage_server;
+  $("join-approval-row").classList.toggle("readonly", !server.can_manage_server);
+  const requests = server.can_answer_joins ? server.join_requests || [] : [];
+  $("tab-joins").textContent = joinRequestsLabel(requests.length);
+  $("join-requests-count").textContent = requests.length ? `Waiting - ${requests.length}` : "Waiting";
+  const list = $("join-request-list");
+  list.replaceChildren();
+  if (!requests.length) {
+    const empty = server.join_approval ? "Nobody is waiting right now." : "Turn on Ask to join to meet new people before they come in.";
+    list.appendChild(el("div", "manage-empty", empty));
+    return;
+  }
+  for (const request of requests) {
+    const card = el("div", "report-card");
+    const head = el("div", "report-head");
+    head.appendChild(makeAvatar(request.id, request.name, "avatar avatar-sm"));
+    const who = el("div", "report-who");
+    who.appendChild(el("div", "report-name", request.name));
+    who.appendChild(el("div", "report-meta", `@${request.username} - asked ${formatShortTime(request.at)}`));
+    head.appendChild(who);
+    card.appendChild(head);
+    if (request.note) card.appendChild(el("div", "report-note", request.note));
+    const actions = el("div", "report-actions");
+    const admit = el("button", "btn-primary btn-small", "Let In");
+    const away = el("button", "btn-secondary btn-small", "Turn Away");
+    admit.onclick = () => answerJoinRequest(server, request, true, [admit, away]);
+    away.onclick = () => answerJoinRequest(server, request, false, [admit, away]);
+    actions.append(admit, away);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+}
+
+async function answerJoinRequest(server, request, admit, buttons) {
+  for (const button of buttons) button.disabled = true;
+  try {
+    await invoke("answer_join_request", { serverId: server.id, userId: request.id, admit });
+    toast(admit ? `${request.name} can come in now` : `${request.name} was turned away`);
+    await refreshCurrentServer();
+    if (state.currentServer && state.currentServer.id === server.id) renderJoinRequestSettings(state.currentServer);
+  } catch (e) {
+    for (const button of buttons) button.disabled = false;
+    toast(String(e));
+  }
 }
 
 let menuServer = null;
@@ -3608,6 +3940,7 @@ function paintSidebarBanner() {
     $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? "Server Settings" : "Server Info";
     $("invite-btn").classList.toggle("hidden", !state.currentServer.can_invite);
   }
+  paintJoinBadge();
   const banner = $("sidebar-banner");
   const server = plainServer();
   const ref = server ? server.banner : null;
@@ -4783,7 +5116,7 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -5798,6 +6131,7 @@ function renderMembers() {
       paintRole(nameRow, member.color);
       if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
+      if (member.server_tag) nameRow.appendChild(serverTagChip(member.server_tag));
       if (timeoutActive(member.timeout_until)) nameRow.appendChild(timeoutBadge(member.timeout_until));
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
@@ -8055,13 +8389,23 @@ function renderAttachment(att) {
   const btn = el("button", "btn-secondary btn-small", "Download");
   btn.onclick = async () => {
     btn.disabled = true;
-    btn.textContent = "Fetching";
+    btn.textContent = isBigFile(att.size_bytes) ? "Choose where" : "Fetching";
+    const watching = (downloadButtons.get(att.blob) || new Set()).add(btn);
+    downloadButtons.set(att.blob, watching);
     await saveAttachment(att);
+    watching.delete(btn);
+    if (!watching.size) downloadButtons.delete(att.blob);
     btn.disabled = false;
     btn.textContent = "Download";
   };
   box.appendChild(btn);
   return box;
+}
+
+const downloadButtons = new Map();
+
+function onFileProgress({ blob, done, total }) {
+  for (const btn of downloadButtons.get(blob) || []) btn.textContent = downloadProgressText(done, total);
 }
 
 async function saveAttachment(att) {
@@ -8216,7 +8560,7 @@ async function loadOverlaySettings() {
 
 function emitToOverlay(event, payload) {
   if (!IS_TAURI || !overlaySettings || !overlaySettings.enabled) return;
-  window.__TAURI__.event.emitTo("overlay", event, payload).catch(() => {});
+  for (const label of ["overlay", OVERLAY_CHAT_LABEL]) window.__TAURI__.event.emitTo(label, event, payload).catch(() => {});
 }
 
 function overlayRoster() {
@@ -8266,7 +8610,7 @@ function renderOverlaySettings() {
   $("overlay-enabled").checked = s.enabled;
   $("overlay-options").classList.toggle("disabled", !s.enabled);
   for (const opt of document.querySelectorAll("#overlay-corner .corner-opt")) {
-    const on = opt.dataset.corner === s.corner;
+    const on = !s.layout && opt.dataset.corner === s.corner;
     opt.classList.toggle("selected", on);
     opt.setAttribute("aria-checked", String(on));
   }
@@ -8277,6 +8621,7 @@ function renderOverlaySettings() {
   $("overlay-opacity-label").textContent = `${$("overlay-opacity").value}%`;
   syncRangeFill($("overlay-opacity"));
   $("overlay-chat").checked = s.show_chat;
+  renderOverlayLayout();
   $("overlay-toggle-key").value = s.toggle_hotkey;
   $("overlay-chat-key").value = s.chat_hotkey;
   invoke("overlay_hotkey_problems").then(taken => {
@@ -8284,6 +8629,119 @@ function renderOverlaySettings() {
     warn.textContent = taken.length ? `${taken.join(" and ")} ${taken.length === 1 ? "is" : "are"} already used by another app. Pick a different combination.` : "";
     warn.classList.toggle("hidden", !taken.length);
   }).catch(() => {});
+}
+
+const OVERLAY_WINDOW = { width: 280, height: 420 };
+const OVERLAY_NUDGE = 0.05;
+
+function overlayScreen() {
+  const width = (typeof screen !== "undefined" && screen.availWidth) || 1920;
+  const height = (typeof screen !== "undefined" && screen.availHeight) || 1040;
+  return { width, height, w: Math.min(1, OVERLAY_WINDOW.width / width), h: Math.min(1, OVERLAY_WINDOW.height / height) };
+}
+
+function overlayShownLayout() {
+  const s = overlaySettings;
+  return (s && s.layout) || overlayStartLayout(s && s.corner);
+}
+
+function renderOverlayLayout() {
+  const s = overlaySettings;
+  const map = $("overlay-map");
+  const area = overlayScreen();
+  map.style.setProperty("--screen-ratio", `${area.width} / ${area.height}`);
+  map.classList.toggle("together", !s.layout);
+  const layout = overlayShownLayout();
+  for (const box of map.querySelectorAll(".overlay-map-box")) {
+    const spot = layout[box.dataset.part];
+    box.style.setProperty("--x", String(spot.x));
+    box.style.setProperty("--y", String(spot.y));
+    box.style.setProperty("--w", `${area.w * 100}%`);
+    box.style.setProperty("--h", `${area.h * 100}%`);
+    box.setAttribute("aria-valuetext", `${Math.round(spot.x * 100)}% across, ${Math.round(spot.y * 100)}% down`);
+  }
+  map.querySelector('[data-part="voice"] span').textContent = s.layout ? "Voice" : (s.show_chat ? "Voice + chat" : "Voice");
+  const list = $("overlay-layout-list");
+  list.replaceChildren();
+  for (const saved of s.layouts || []) {
+    const chip = el("span", "overlay-layout-chip" + (overlaySameLayout(saved, s.layout) ? " selected" : ""));
+    const use = el("button", null, saved.name);
+    use.type = "button";
+    use.title = `Use ${saved.name}`;
+    use.onclick = () => moveOverlayTo({ voice: saved.voice, chat: saved.chat });
+    const remove = el("button", "remove", "\u00d7");
+    remove.type = "button";
+    remove.title = `Forget ${saved.name}`;
+    remove.setAttribute("aria-label", `Forget ${saved.name}`);
+    remove.onclick = () => saveOverlaySettings({ layouts: s.layouts.filter(l => l !== saved) });
+    chip.append(use, remove);
+    list.appendChild(chip);
+  }
+}
+
+async function moveOverlayTo(layout) {
+  await saveOverlaySettings({ layout });
+  if (overlaySettings && overlaySettings.enabled) invoke("preview_overlay").catch(() => {});
+}
+
+function wireOverlayLayout() {
+  const map = $("overlay-map");
+  let drag = null;
+  const spotAt = e => {
+    const rect = map.getBoundingClientRect();
+    const area = overlayScreen();
+    const roomX = rect.width * (1 - area.w);
+    const roomY = rect.height * (1 - area.h);
+    return {
+      x: roomX > 0 ? (e.clientX - drag.dx - rect.left) / roomX : 0,
+      y: roomY > 0 ? (e.clientY - drag.dy - rect.top) / roomY : 0,
+    };
+  };
+  for (const box of map.querySelectorAll(".overlay-map-box")) {
+    box.addEventListener("pointerdown", e => {
+      if (!overlaySettings || !overlaySettings.enabled) return;
+      const at = box.getBoundingClientRect();
+      drag = { box, part: box.dataset.part, layout: structuredClone(overlayShownLayout()), dx: e.clientX - at.left, dy: e.clientY - at.top };
+      box.setPointerCapture(e.pointerId);
+      box.classList.add("dragging");
+    });
+    box.addEventListener("pointermove", e => {
+      if (!drag || drag.box !== box) return;
+      const spot = spotAt(e);
+      drag.layout[drag.part] = { x: overlaySnap(spot.x), y: overlaySnap(spot.y) };
+      box.style.setProperty("--x", String(drag.layout[drag.part].x));
+      box.style.setProperty("--y", String(drag.layout[drag.part].y));
+    });
+    const finish = () => {
+      if (!drag || drag.box !== box) return;
+      const layout = drag.layout;
+      drag = null;
+      box.classList.remove("dragging");
+      if (!overlaySameLayout(layout, overlaySettings.layout)) moveOverlayTo(layout);
+    };
+    box.addEventListener("pointerup", finish);
+    box.addEventListener("pointercancel", finish);
+    box.addEventListener("keydown", e => {
+      const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+      if (!step || !overlaySettings || !overlaySettings.enabled) return;
+      e.preventDefault();
+      const layout = structuredClone(overlayShownLayout());
+      const spot = layout[box.dataset.part];
+      layout[box.dataset.part] = { x: overlaySnap(spot.x + step[0] * OVERLAY_NUDGE), y: overlaySnap(spot.y + step[1] * OVERLAY_NUDGE) };
+      moveOverlayTo(layout);
+    });
+  }
+  const save = () => {
+    const name = overlayLayoutName($("overlay-layout-name").value);
+    if (!overlaySettings.layout) return toast("Drag the voice list or chat first");
+    if (!name) return toast("Give the layout a name");
+    $("overlay-layout-name").value = "";
+    saveOverlaySettings({ layouts: overlaySaveLayout(overlaySettings.layouts, name, overlaySettings.layout) }).then(() => toast(`Saved ${name}`));
+  };
+  $("overlay-layout-save").addEventListener("click", save);
+  $("overlay-layout-name").addEventListener("keydown", e => {
+    if (e.key === "Enter") save();
+  });
 }
 
 async function saveOverlaySettings(changes) {
@@ -8436,29 +8894,62 @@ function stopMicMeter() {
 function setTalking(talking) {
   state.talking = talking;
   $("mute-btn").classList.toggle("talking", talking && !state.voice.muted);
-  $("vp-talk").classList.toggle("on", talking);
-  $("vp-talk").textContent = talking ? "Talking" : "Hold to talk";
+  for (const btn of talkButtons()) {
+    btn.classList.toggle("on", talking);
+    btn.textContent = talking ? "Talking" : "Hold to talk";
+  }
   renderUserPanel();
+}
+
+function talkButtons() {
+  return [$("vp-talk"), $("phone-voice-talk")];
 }
 
 function renderTalkButton() {
   const shown = document.body.classList.contains("mobile-app") && Boolean(state.voiceChannelId) && voiceInputState(state.voice).mode === "push_to_talk";
-  $("vp-talk").classList.toggle("hidden", !shown);
+  for (const btn of talkButtons()) btn.classList.toggle("hidden", !shown);
 }
 
 function wireTalkButton() {
-  const btn = $("vp-talk");
   let held = false;
   const press = down => {
     if (held === down) return;
     held = down;
     invoke("press_talk", { pressed: down }).catch(e => toast(String(e)));
   };
-  btn.addEventListener("pointerdown", e => {
-    btn.setPointerCapture(e.pointerId);
-    press(true);
-  });
-  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(type, () => press(false));
+  for (const btn of talkButtons()) {
+    btn.addEventListener("pointerdown", e => {
+      btn.setPointerCapture(e.pointerId);
+      press(true);
+    });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(type, () => press(false));
+  }
+}
+
+function renderPhoneVoice() {
+  const vs = state.voiceServer;
+  const live = Boolean(state.voiceChannelId && vs);
+  $("phone-voice").classList.toggle("hidden", !live);
+  if (!live) return;
+  $("phone-voice-name").textContent = vs.call ? `Call with ${vs.name}` : vs.channelName;
+  $("phone-voice-signal").replaceChildren(svgIcon("signal", 14));
+  setIcon($("phone-voice-mute"), state.voice.muted ? "micOff" : "mic");
+  setIcon($("phone-voice-deafen"), state.voice.deafened ? "headsetOff" : "headset");
+  setIcon($("phone-voice-hangup"), "hangup", 20);
+  $("phone-voice-mute").classList.toggle("danger", state.voice.muted);
+  $("phone-voice-deafen").classList.toggle("danger", state.voice.deafened);
+  $("phone-voice-mute").title = state.voice.muted ? "Unmute" : "Mute";
+  $("phone-voice-deafen").title = state.voice.deafened ? "Undeafen" : "Deafen";
+}
+
+function wirePhoneVoice() {
+  $("phone-voice-mute").onclick = () => $("mute-btn").click();
+  $("phone-voice-deafen").onclick = () => $("deafen-btn").click();
+  $("phone-voice-hangup").onclick = disconnectVoice;
+  $("phone-voice-where").onclick = () => {
+    $("vp-conn-meta").click();
+    phoneStep("back");
+  };
 }
 
 function hotkeyFromEvent(e) {
@@ -8585,7 +9076,9 @@ async function refreshConnPop() {
 }
 
 function paintSignal(links) {
-  $("vp-signal").dataset.quality = links ? worstLinkQuality(links) : "good";
+  const quality = links ? worstLinkQuality(links) : "good";
+  $("vp-signal").dataset.quality = quality;
+  $("phone-voice-signal").dataset.quality = quality;
 }
 
 let signalTimer = null;
@@ -8733,7 +9226,53 @@ function renderInlineNode(node) {
     return renderInlineInto(a, node.children);
   }
   if (node.type === "time") return renderTimestamp(node);
+  if (node.type === "style") return renderStyledText(node);
   return renderInlineInto(el(INLINE_TAGS[node.type] || "span"), node.children);
+}
+
+const MAX_EFFECT_LETTERS = 240;
+
+function renderStyledText(node) {
+  const span = renderInlineInto(el("span", textStyleClasses(node).join(" ")), node.children);
+  if (splitsLetters(node)) splitEffectLetters(span);
+  return span;
+}
+
+function graphemes(text) {
+  if (typeof Intl !== "undefined" && Intl.Segmenter) return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), s => s.segment);
+  return Array.from(text);
+}
+
+function splitEffectLetters(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: node => (node.parentElement && node.parentElement.closest("code, .tx-letter") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const texts = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node);
+  let index = 0;
+  for (const node of texts) {
+    if (index >= MAX_EFFECT_LETTERS) break;
+    const parts = document.createDocumentFragment();
+    for (const part of node.textContent.split(/(\s+)/)) {
+      if (!part) continue;
+      if (/^\s+$/.test(part)) {
+        parts.appendChild(document.createTextNode(part));
+        continue;
+      }
+      const word = el("span", "tx-word");
+      for (const letter of graphemes(part)) {
+        if (index >= MAX_EFFECT_LETTERS) {
+          word.appendChild(document.createTextNode(letter));
+          continue;
+        }
+        const span = el("span", "tx-letter", letter);
+        span.style.setProperty("--i", index++);
+        word.appendChild(span);
+      }
+      parts.appendChild(word);
+    }
+    node.replaceWith(parts);
+  }
 }
 
 function renderSpoiler(node) {
@@ -9229,6 +9768,14 @@ function renderServerExtras(list, server) {
     roles.onclick = () => openChooseRoles();
     list.appendChild(roles);
   }
+  if (server.tip_jar) {
+    const tip = el("div", "channel sidebar-link");
+    tip.appendChild(el("span", "channel-icon")).appendChild(svgIcon("coffee", 18));
+    tip.appendChild(el("span", "channel-label", "Support this server"));
+    tip.title = `Opens ${tipJarLabel(server.tip_jar)} in your browser`;
+    tip.onclick = () => openOutsideLink(server.tip_jar);
+    list.appendChild(tip);
+  }
   list.appendChild(el("div", "sidebar-sep"));
 }
 
@@ -9292,6 +9839,10 @@ function openServerWelcome(step) {
 const rolePromptPending = new Set();
 
 async function enterJoinedServer(summary) {
+  if (summary.waiting) {
+    await refreshServers();
+    return openJoinWait(summary.id);
+  }
   rolePromptPending.add(summary.id);
   await refreshServers();
   await selectServer(summary.id);
@@ -10147,6 +10698,136 @@ function botTag() {
   return chip;
 }
 
+function serverTagChip(tag) {
+  const chip = el("span", `server-tag st-${tag.color} st-fx-${tag.effect}`);
+  if (tag.emoji) chip.appendChild(el("span", "server-tag-emoji", tag.emoji));
+  chip.appendChild(document.createTextNode(tag.letters));
+  chip.title = serverTagTitle(tag);
+  return chip;
+}
+
+let serverTagEdit = serverTagDraft(null);
+
+function renderServerTagEditor(server) {
+  serverTagEdit = serverTagDraft(server.server_tag);
+  const editable = Boolean(server.can_manage_server);
+  for (const id of ["server-tag-letters", "server-tag-effect", "server-tag-emoji", "server-tag-save"]) $(id).disabled = !editable;
+  for (const swatch of $("server-tag-colors").children) swatch.disabled = !editable;
+  $("server-tag-save").classList.toggle("hidden", !editable);
+  $("server-tag-remove").classList.toggle("hidden", !editable || !server.server_tag);
+  $("server-tag-letters").value = serverTagEdit.letters;
+  $("server-tag-effect").value = serverTagEdit.effect;
+  paintServerTagEditor();
+}
+
+function paintServerTagEditor() {
+  paintEmojiSlot($("server-tag-emoji"), serverTagEdit.emoji);
+  for (const swatch of $("server-tag-colors").children) swatch.setAttribute("aria-checked", String(swatch.dataset.color === serverTagEdit.color));
+  const preview = $("server-tag-preview");
+  const me = state.user ? state.user.display_name || state.user.username : "You";
+  preview.replaceChildren(el("span", null, me));
+  if (serverTagEdit.letters) preview.appendChild(serverTagChip({ ...serverTagEdit, server: state.currentServer && state.currentServer.name }));
+  else preview.appendChild(el("span", "setting-sub", "Type some letters to see the tag"));
+}
+
+function renderTipJarEditor(server) {
+  const editable = Boolean(server.can_manage_server);
+  $("tip-jar-input").value = tipJarLabel(server.tip_jar);
+  $("tip-jar-input").disabled = !editable;
+  $("tip-jar-save").classList.toggle("hidden", !editable);
+  $("tip-jar-remove").classList.toggle("hidden", !editable || !server.tip_jar);
+}
+
+async function saveTipJar(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const typed = $("tip-jar-input").value.trim();
+  const url = remove || !typed ? null : cleanTipJar(typed);
+  if (!remove && typed && !url) return toast("Use your Ko-fi page, like ko-fi.com/yourname");
+  try {
+    await invoke("set_tip_jar", { serverId: server.id, url });
+    toast(url ? "Tip jar saved" : "Tip jar removed");
+    await refreshCurrentServer();
+    renderTipJarEditor(state.currentServer);
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+async function saveServerTag(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const letters = remove ? null : serverTagEdit.letters || null;
+  try {
+    await invoke("set_server_tag", { serverId: server.id, letters, emoji: serverTagEdit.emoji || null, color: serverTagEdit.color, effect: serverTagEdit.effect });
+    toast(letters ? "Server tag saved" : "Server tag removed");
+    await refreshServers();
+    await refreshCurrentServer();
+    renderServerTagEditor(state.currentServer);
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+function wireServerTagEditor() {
+  $("server-tag-effect").replaceChildren(...SERVER_TAG_EFFECTS.map(e => new Option(e.label, e.value)));
+  $("server-tag-colors").replaceChildren(...SERVER_TAG_COLORS.map(color => {
+    const swatch = el("button", `server-tag-swatch st-${color}`);
+    swatch.type = "button";
+    swatch.dataset.color = color;
+    swatch.setAttribute("role", "radio");
+    swatch.setAttribute("aria-label", color[0].toUpperCase() + color.slice(1));
+    swatch.onclick = () => {
+      serverTagEdit.color = color;
+      paintServerTagEditor();
+    };
+    return swatch;
+  }));
+  $("server-tag-letters").addEventListener("input", e => {
+    const cleaned = cleanTagLetters(e.target.value);
+    if (e.target.value !== cleaned) e.target.value = cleaned;
+    serverTagEdit.letters = cleaned;
+    paintServerTagEditor();
+  });
+  $("server-tag-effect").addEventListener("change", e => {
+    serverTagEdit.effect = e.target.value;
+    paintServerTagEditor();
+  });
+  $("server-tag-emoji").onclick = e => {
+    const set = emoji => {
+      serverTagEdit.emoji = emoji;
+      paintServerTagEditor();
+    };
+    openEmojiPop(e.currentTarget, set, { onClear: serverTagEdit.emoji ? () => set("") : null });
+  };
+  $("server-tag-save").onclick = () => saveServerTag(false);
+  $("server-tag-remove").onclick = () => saveServerTag(true);
+  $("tip-jar-save").onclick = () => saveTipJar(false);
+  $("tip-jar-remove").onclick = () => saveTipJar(true);
+  $("tip-jar-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveTipJar(false);
+  });
+  $("account-server-tag").addEventListener("change", async e => {
+    try {
+      state.user = await invoke("wear_server_tag", { serverId: e.target.value || null });
+      toast(e.target.value ? "You are wearing that tag" : "Server tag hidden");
+      if (state.currentServer) await refreshCurrentServer();
+    } catch (err) {
+      toast(String(err));
+    }
+    renderAccountServerTag();
+  });
+}
+
+function renderAccountServerTag() {
+  const select = $("account-server-tag");
+  const worn = wornServerId(state.user);
+  const options = wearableTags(state.servers);
+  select.replaceChildren(new Option("None", NO_SERVER_TAG), ...options.map(o => new Option(o.label, o.value)));
+  select.value = options.some(o => o.value === worn) ? worn : NO_SERVER_TAG;
+  select.disabled = !options.length && !worn;
+}
+
 function roleTagChip(tag, color) {
   const custom = parseEmojiToken(tag);
   if (custom) {
@@ -10345,13 +11026,15 @@ async function openFullProfile(member) {
   const person = { ...(state.people.get(member.id) || {}), ...member };
   $("fp-banner").dataset.banner = "";
   paintProfileBanner($("fp-banner"), person.banner, person.avatar_provider, person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
+  paintCardEffect($("fp-banner"), person.card_effect, person.id);
   const av = $("fp-avatar");
   av.replaceChildren();
   paintAvatar(av, person.id, person.name);
   av.appendChild(el("span", "presence-dot " + (person.presence || "offline")));
   $("fp-name").textContent = person.name;
   paintRole($("fp-name"), person.color);
-  $("fp-name").parentElement.querySelector(".role-tag")?.remove();
+  $("fp-name").parentElement.querySelectorAll(".role-tag, .server-tag").forEach(n => n.remove());
+  if (person.server_tag) $("fp-name").after(serverTagChip(person.server_tag));
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
   setEmojiText($("fp-status"), (isShowingActivity(person) ? statusBesideGame(person) : subLine(person)) || presenceLabel(person));
@@ -10450,6 +11133,7 @@ function openMemberCard(member, anchor) {
   const card = $("member-card");
   $("mc-banner").dataset.banner = "";
   paintProfileBanner($("mc-banner"), member.banner, member.avatar_provider, member.role_banner, member.color ? roleGradient(member.color) : bannerColor(member.id));
+  paintCardEffect($("mc-banner"), member.card_effect, member.id);
   const av = $("mc-avatar");
   av.replaceChildren();
   paintAvatar(av, member.id, member.name);
@@ -10457,8 +11141,9 @@ function openMemberCard(member, anchor) {
   const name = $("mc-name");
   name.textContent = member.name;
   paintRole(name, member.color);
-  name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
+  name.parentElement.querySelectorAll(".role-tag, .server-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
   if (timeoutActive(member.timeout_until)) name.after(timeoutBadge(member.timeout_until));
+  if (member.server_tag) name.after(serverTagChip(member.server_tag));
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) name.after(botTag());
   if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
@@ -10544,6 +11229,7 @@ function decorateAuthor(node, authorId) {
   const member = state.view === "server" && currentServerMember(authorId);
   if (!member) return;
   paintRole(node, member.color);
+  if (member.server_tag) node.after(serverTagChip(member.server_tag));
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) node.after(botTag());
 }
@@ -14035,6 +14721,7 @@ function renderVoicePanel() {
   const vs = state.voiceServer;
   panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
   syncSignalPolling(Boolean(state.voiceChannelId && vs));
+  renderPhoneVoice();
   if (!state.voiceChannelId || !vs) return;
 
   const call = vs.call ? state.call : null;
@@ -14111,6 +14798,7 @@ const ACTIVITY_DRIFT_CHECK_MS = 2000;
 const YOUTUBE_SETTLE_MS = 1500;
 const YOUTUBE_GREET_MS = 250;
 const YOUTUBE_GREET_TRIES = 40;
+const YOUTUBE_NOTICE = "This video plays from YouTube. Loading it connects you to YouTube, which can see your IP address and may store data under Google's privacy policy.";
 const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
 
 const activityUi = {
@@ -14122,6 +14810,7 @@ const activityUi = {
   videoBlob: null,
   settling: 0,
   yt: freshYouTubeView(),
+  youtubeAllowedRun: null,
 };
 
 function inBrowserApp() {
@@ -14370,23 +15059,33 @@ function renderActivityWatch(run, me) {
     const blocked = kind === "link" && inBrowserApp();
     $("activity-video").controls = isParticipant(run, me);
     if (!blocked) loadActivityVideo(run);
-    const note = $("activity-screen-note");
-    note.textContent = blocked ? WEB_DIRECT_LINK_NOTE : "";
-    note.classList.toggle("hidden", !blocked);
+    showActivityScreenNote(blocked ? WEB_DIRECT_LINK_NOTE : "", false);
   }
   renderActivitySyncLabel(run);
 }
 
 function renderActivityYouTube(run, me) {
   const joined = isParticipant(run, me);
+  const allowed = activityUi.youtubeAllowedRun === run.id;
   const video = watchYouTubeId(run.activity);
   const yt = activityUi.yt;
-  if (joined && video && yt.video !== video) mountYouTube(video);
-  else if (!joined && yt.frame) releaseYouTube();
-  const note = joined ? activityUi.yt.error || "" : "Join to watch. The video plays from YouTube once you join.";
-  const box = $("activity-screen-note");
-  box.textContent = note;
-  box.classList.toggle("hidden", !note);
+  if (joined && allowed && video && yt.video !== video) mountYouTube(video);
+  else if ((!joined || !allowed) && yt.frame) releaseYouTube();
+  if (!joined) showActivityScreenNote("Join to watch. This video plays from YouTube.", false);
+  else if (!allowed) showActivityScreenNote(YOUTUBE_NOTICE, true);
+  else showActivityScreenNote(yt.error || "", false);
+}
+
+function showActivityScreenNote(text, asking) {
+  $("activity-screen-note-text").textContent = text;
+  $("activity-youtube-allow").classList.toggle("hidden", !asking);
+  $("activity-screen-note").classList.toggle("hidden", !text);
+}
+
+function allowYouTubeForRun() {
+  if (!activityUi.run) return;
+  activityUi.youtubeAllowedRun = activityUi.run.id;
+  renderActivityUi();
 }
 
 function mountYouTube(video) {
@@ -14669,6 +15368,7 @@ function initActivityUi() {
     if (video) invoke("open_url", { url: youtubeWatchUrl(video) }).catch(err => toast(String(err)));
   };
   window.addEventListener("message", onYouTubeMessage);
+  $("activity-youtube-allow").onclick = allowYouTubeForRun;
   $("activity-link-input").addEventListener("input", () => {
     if ($("activity-link-input").value.trim()) {
       activityUi.chip = null;
@@ -14737,11 +15437,13 @@ function renderUserPanel() {
   $("mute-btn").title = state.voice.muted ? "Unmute" : talkTitle || "Mute";
   $("mute-btn").classList.toggle("talking", Boolean(state.talking) && !state.voice.muted);
   $("deafen-btn").title = state.voice.deafened ? "Undeafen" : "Deafen";
+  renderPhoneVoice();
   if (state.currentServer && state.voiceChannelId && state.view === "server") renderChannels();
 }
 
 async function refreshServers() {
   state.servers = await invoke("list_servers");
+  await loadJoinWaits();
   for (const id of [...friendPresenceViews.keys()]) {
     if (!state.servers.some(s => s.id === id)) friendPresenceViews.delete(id);
   }
@@ -14949,6 +15651,7 @@ function serverControlRows(server) {
   ];
   if (server.rules) rows.push(narrowMenuRow("Server Rules", narrowGlyph("book"), () => openRules()));
   if (selfAssignableRoles(server).length) rows.push(narrowMenuRow("Roles", narrowGlyph("roles"), () => openChooseRoles()));
+  if (server.tip_jar) rows.push(narrowMenuRow("Support this server", narrowGlyph("coffee"), () => openOutsideLink(server.tip_jar)));
   rows.push(el("div", "narrow-menu-sep"));
   if (server.can_invite) rows.push(narrowMenuRow("Invite People", narrowGlyph("friendAdd"), () => $("invite-btn").click()));
   rows.push(narrowMenuRow("Server Settings", narrowGlyph("gear"), () => $("server-settings-btn").click()));
@@ -15122,6 +15825,8 @@ function wireTouchMessages() {
 async function markMobileApp() {
   const mobile = await invoke("is_mobile_app").catch(() => false);
   document.body.classList.toggle("mobile-app", Boolean(mobile));
+  const share = mobile ? await invoke("can_share_screen").catch(() => false) : true;
+  document.body.classList.toggle("can-share-screen", Boolean(share));
 }
 
 function setViewMode(mode) {
@@ -16646,21 +17351,23 @@ async function toggleVoice(channel) {
   }
 }
 
+async function stopSharing() {
+  try {
+    await invoke("stop_screen_share", { serverId: state.voiceServer.id });
+    state.sharing = false;
+    state.shareSource = null;
+    if (state.stageMode === "self") closeStage();
+    toast("Stopped sharing");
+    renderShareButton();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 async function toggleShare() {
   if (!state.voiceServer || !state.voiceChannelId) return;
-  if (state.sharing) {
-    try {
-      await invoke("stop_screen_share", { serverId: state.voiceServer.id });
-      state.sharing = false;
-      state.shareSource = null;
-      if (state.stageMode === "self") closeStage();
-      toast("Stopped sharing");
-      renderShareButton();
-    } catch (e) {
-      toast(String(e));
-    }
-    return;
-  }
+  if (state.sharing) return stopSharing();
+  if (document.body.classList.contains("mobile-app")) return startShareWith({ kind: "monitor", id: 0, name: "your screen" }, "balanced", false);
   await openSharePicker();
 }
 
@@ -17229,6 +17936,11 @@ function wireEvents() {
     appearance.compact = e.target.checked;
     saveAppearance(appearance);
   });
+  $("text-styles-toggle").checked = appearance.textStyles !== false;
+  $("text-styles-toggle").addEventListener("change", e => {
+    appearance.textStyles = e.target.checked;
+    saveAppearance(appearance);
+  });
 
   $("mic-test-btn").onclick = async () => {
     try {
@@ -17350,6 +18062,19 @@ function wireEvents() {
     } catch (err) {
       toast(String(err));
       openServerSettings();
+    }
+  });
+  setupJoinWait();
+  $("join-approval-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_join_approval", { serverId: server.id, enabled: e.target.checked });
+      await refreshCurrentServer();
+      renderJoinRequestSettings(state.currentServer);
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
     }
   });
   $("server-activities-toggle").addEventListener("change", async e => {
@@ -17744,7 +18469,7 @@ function wireEvents() {
   $("overlay-enabled").addEventListener("change", e => saveOverlaySettings({ enabled: e.target.checked }));
   $("overlay-corner").addEventListener("click", e => {
     const opt = e.target.closest(".corner-opt");
-    if (opt) saveOverlaySettings({ corner: opt.dataset.corner });
+    if (opt) saveOverlaySettings({ corner: opt.dataset.corner, layout: null });
   });
   $("overlay-test").addEventListener("click", async () => {
     await saveOverlaySettings({});
@@ -17758,6 +18483,7 @@ function wireEvents() {
   });
   $("overlay-opacity").addEventListener("change", e => saveOverlaySettings({ opacity: Number(e.target.value) / 100 }));
   $("overlay-chat").addEventListener("change", e => saveOverlaySettings({ show_chat: e.target.checked }));
+  wireOverlayLayout();
   wireHotkeyInput($("overlay-toggle-key"), combo => saveOverlaySettings({ toggle_hotkey: combo }));
   wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
   wireVoiceInputSettings();
@@ -17878,6 +18604,7 @@ function wireEvents() {
   });
   wireComposerFormatting($("message-input"));
   wireComposerFormatting($("thread-input"));
+  wireTextStylePop();
   $("message-input").addEventListener("keydown", e => {
     if (e.key === "Escape" && state.replyingTo) cancelReply();
   });
@@ -18033,6 +18760,7 @@ function wireEvents() {
   $("sm-rules").onclick = fromMenu(openRules);
   $("sm-roles").onclick = fromMenu(openChooseRoles);
   $("sm-onboarding").onclick = fromMenu(() => openOnboarding("change"));
+  wireServerTagEditor();
   $("game-tag-input").addEventListener("keydown", e => {
     if (e.key === "Escape") closeGameSearch();
     if (e.key !== "Enter") return;
@@ -18586,6 +19314,9 @@ function wireEvents() {
       await trackFriendPresence(serverId);
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
+    window.__TAURI__.event.listen("screen-share-ended", () => {
+      if (state.sharing && state.voiceServer) stopSharing();
+    });
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
     window.__TAURI__.event.listen("activity-set", event => onActivitySet(event.payload));
     window.__TAURI__.event.listen("activity-input", event => onActivityInput(event.payload));
@@ -18656,6 +19387,17 @@ function wireEvents() {
     };
     window.__TAURI__.event.listen("banned", removedFrom("banned from"));
     window.__TAURI__.event.listen("kicked", removedFrom("removed from"));
+    window.__TAURI__.event.listen("join-waits-changed", refreshServers);
+    window.__TAURI__.event.listen("join-request-accepted", async event => {
+      const { server, name } = event.payload || {};
+      toast(`${name || "The server"} let you in`);
+      const waiting = joinWaitShown === server && !$("modal-join-wait").classList.contains("hidden");
+      await refreshServers();
+      if (waiting) {
+        hideModals();
+        await selectServer(server);
+      }
+    });
     window.__TAURI__.event.listen("voice-left", async event => {
       if (state.voiceServer && state.voiceServer.id === event.payload) {
         state.voiceChannelId = null;
@@ -18681,6 +19423,7 @@ function wireEvents() {
       }
     });
     window.__TAURI__.event.listen("event-reminder", () => playSound("message"));
+    window.__TAURI__.event.listen("file-progress", event => onFileProgress(event.payload));
     window.__TAURI__.event.listen("safety-changed", async () => {
       await loadSafety();
       afterSafetyChange();
@@ -19183,6 +19926,100 @@ function wireComposerFormatting(input) {
   });
 }
 
+const TEXT_STYLE_LABELS = {
+  red: "Red", orange: "Orange", yellow: "Yellow", green: "Green", teal: "Teal", blue: "Blue", purple: "Purple", pink: "Pink", gray: "Gray",
+  serif: "Serif", mono: "Mono", hand: "Handwriting", display: "Headline",
+  rainbow: "Rainbow", shimmer: "Shimmer", wave: "Wave", glow: "Glow", shake: "Shake",
+};
+const TEXT_FORMATS = [
+  { marker: "**", label: "Bold", text: "B", keys: "Ctrl+B" },
+  { marker: "*", label: "Italic", text: "I", keys: "Ctrl+I" },
+  { marker: "__", label: "Underline", text: "U", keys: "Ctrl+U" },
+  { marker: "~~", label: "Strikethrough", text: "S", keys: "Ctrl+Shift+S" },
+  { marker: "||", label: "Spoiler", text: "||" },
+  { marker: "`", label: "Code", text: "</>", keys: "Ctrl+E" },
+];
+
+function editComposer(input, change) {
+  const next = change(input.value, input.selectionStart, input.selectionEnd);
+  input.value = next.value;
+  input.focus();
+  input.setSelectionRange(next.start, next.end);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  renderTextStylePop();
+}
+
+function textStyleButton(name, className, label) {
+  const btn = el("button", `ts-btn ${className}`);
+  btn.type = "button";
+  btn.dataset.style = name;
+  btn.title = `${TEXT_STYLE_LABELS[name]}  {${name}:text}`;
+  btn.setAttribute("aria-label", TEXT_STYLE_LABELS[name]);
+  if (label !== undefined) btn.appendChild(label);
+  return btn;
+}
+
+function buildTextStylePop() {
+  const pop = $("text-style-pop");
+  const formats = el("div", "ts-row ts-formats");
+  for (const format of TEXT_FORMATS) {
+    const btn = el("button", "ts-btn ts-format", format.text);
+    btn.type = "button";
+    btn.dataset.marker = format.marker;
+    btn.title = format.keys ? `${format.label} (${format.keys})` : format.label;
+    btn.setAttribute("aria-label", format.label);
+    formats.appendChild(btn);
+  }
+  const colors = el("div", "ts-row ts-colors");
+  for (const name of TEXT_COLORS) colors.appendChild(textStyleButton(name, `ts-swatch tx-swatch-${name}`));
+  const fonts = el("div", "ts-row ts-fonts");
+  for (const name of TEXT_FONTS) fonts.appendChild(textStyleButton(name, "ts-font", renderStyledText({ type: "style", font: name, effects: [], children: [{ type: "text", text: TEXT_STYLE_LABELS[name] }] })));
+  const effects = el("div", "ts-row ts-effects");
+  for (const name of TEXT_EFFECTS) effects.appendChild(textStyleButton(name, "ts-effect", renderStyledText({ type: "style", effects: [name], children: [{ type: "text", text: TEXT_STYLE_LABELS[name] }] })));
+  pop.replaceChildren(
+    formats,
+    el("div", "ts-label", "Colour"), colors,
+    el("div", "ts-label", "Font"), fonts,
+    el("div", "ts-label", "Effect"), effects,
+    el("div", "ts-hint", "Or type {red:text}. Mix up to three, like {blue+wave:text}."),
+  );
+}
+
+function renderTextStylePop() {
+  const pop = $("text-style-pop");
+  if (pop.classList.contains("hidden")) return;
+  const input = $("message-input");
+  const active = activeTextStyles(input.value, input.selectionStart, input.selectionEnd);
+  for (const btn of pop.querySelectorAll("[data-style]")) btn.setAttribute("aria-pressed", String(active.includes(btn.dataset.style)));
+}
+
+function wireTextStylePop() {
+  const pop = $("text-style-pop");
+  const button = $("text-style-btn");
+  const input = $("message-input");
+  buildTextStylePop();
+  button.addEventListener("click", () => {
+    if (!pop.classList.contains("hidden")) {
+      pop.classList.add("hidden");
+      return;
+    }
+    closeFloating("text-style-pop");
+    placePopup(pop, button, "above");
+    renderTextStylePop();
+  });
+  pop.addEventListener("mousedown", e => e.preventDefault());
+  pop.addEventListener("click", e => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    if (btn.dataset.marker) editComposer(input, (value, start, end) => toggleWrap(value, start, end, btn.dataset.marker));
+    else if (btn.dataset.style) editComposer(input, (value, start, end) => applyTextStyle(value, start, end, btn.dataset.style));
+  });
+  for (const type of ["keyup", "mouseup", "select"]) input.addEventListener(type, renderTextStylePop);
+  document.addEventListener("mousedown", e => {
+    if (!pop.classList.contains("hidden") && !pop.contains(e.target) && !button.contains(e.target)) pop.classList.add("hidden");
+  });
+}
+
 const PERMISSION_LABELS = [
   ["manage_server", "Manage Server"],
   ["manage_channels", "Manage Channels"],
@@ -19300,6 +20137,7 @@ function openUserSettings(tab) {
   loadStorageSettings().then(renderStorageSettings);
   $("account-about").value = decodeCustomEmojis(state.user.about);
   $("account-pronouns").value = state.voice.pronouns || "";
+  renderAccountServerTag();
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
   if (!document.documentElement.classList.contains("web-app")) loadDebugLogStatus();
@@ -19330,6 +20168,7 @@ function openUserSettings(tab) {
   $("account-avatar").replaceChildren();
   paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
   paintAccountBanner();
+  renderLookPickers();
   $("account-preview-name").textContent = state.user.display_name || state.user.username;
   $("account-username").textContent = state.user.username;
   openSettingsLayer("user-settings", tab);
@@ -19550,6 +20389,9 @@ function openServerSettings(tab) {
   $("tab-channels").classList.toggle("hidden", !server.can_manage_channels);
   $("tab-roles").classList.toggle("hidden", !server.can_manage_roles);
   $("tab-members").classList.toggle("hidden", !canMembers);
+  const canJoins = Boolean(server.can_answer_joins || server.can_manage_server);
+  $("tab-joins").classList.toggle("hidden", !canJoins);
+  if (canJoins) renderJoinRequestSettings(server);
   const manages = server.can_manage_expressions || server.can_manage_server;
   const canEmoji = manages || server.can_add_emojis;
   const canStickers = manages || server.can_add_stickers;
@@ -19562,6 +20404,8 @@ function openServerSettings(tab) {
   $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
   if (server.can_manage_server) renderAutomodSettings(server);
   renderGameTagEditor(server);
+  renderServerTagEditor(server);
+  renderTipJarEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
   if (isOwner) renderReportSettings(server);
@@ -19594,6 +20438,7 @@ function openServerSettings(tab) {
     onboarding: server.can_manage_server,
     automod: server.can_manage_server,
     members: canMembers,
+    joins: canJoins,
     audit: server.can_view_audit_log,
   };
   renderEmojiSettings(server);
@@ -20356,6 +21201,7 @@ async function refreshCurrentServer() {
   renderServerRail();
   renderMembers();
   renderChannels();
+  noteJoinRequests(state.currentServer);
   refreshVoiceInviteCards();
   renderVoicePanelActivity();
   syncRulesGate();
@@ -20414,6 +21260,7 @@ async function boot() {
   wireNarrowLayout();
   wireTouchMessages();
   wireTalkButton();
+  wirePhoneVoice();
   wireTimeoutModal();
   wireModerationModal();
   wireActivityPing();
@@ -20680,6 +21527,7 @@ function paintAccountBanner() {
   const strip = $("account-banner");
   strip.dataset.banner = "";
   paintProfileBanner(strip, state.user.banner, state.user.node, null, bannerColor(state.user.id));
+  paintCardEffect(strip, state.user.card_effect, state.user.id);
   $("account-banner-upload").lastElementChild.textContent = state.user.banner ? "Change banner" : "Add banner";
   $("account-banner-remove").classList.toggle("hidden", !state.user.banner);
 }

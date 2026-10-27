@@ -24,6 +24,7 @@ mod igdb;
 mod instance;
 mod invite_link;
 mod key_handoff;
+mod knock;
 mod link_preview;
 mod link_safety;
 mod local_key;
@@ -40,6 +41,8 @@ mod read_state;
 mod relaunch;
 mod safety;
 mod saved;
+#[cfg(any(target_os = "android", test))]
+mod screen_service;
 use commy_view::catalog;
 use commy_view::search;
 mod server_wake;
@@ -95,6 +98,11 @@ fn err_to_string(e: impl std::fmt::Display) -> String {
 #[tauri::command]
 fn is_mobile_app() -> bool {
     cfg!(mobile)
+}
+
+#[tauri::command]
+fn can_share_screen() -> bool {
+    !cfg!(target_os = "ios")
 }
 
 #[tauri::command]
@@ -222,15 +230,73 @@ async fn join_server(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
     ticket: String,
-) -> CmdResult<ServerSummary> {
+    note: Option<String>,
+) -> CmdResult<knock::Joined> {
     account::require_account(&app)?;
     let ticket = ServerTicket::decode(&ticket).map_err(err_to_string)?;
     let id = ticket.server_id;
-    let summary = join_ticket(&app, &handle, ticket).await?;
-    entry_list::record_join(&app, id);
-    entry_list::schedule(&handle);
-    community_sync::refresh_soon(&handle);
-    Ok(summary)
+    let joined = knock::knock_then_join(&app, &handle, ticket, note.as_deref().unwrap_or("")).await?;
+    if matches!(joined, knock::Joined::Server(_)) {
+        entry_list::record_join(&app, id);
+        entry_list::schedule(&handle);
+        community_sync::refresh_soon(&handle);
+    }
+    Ok(joined)
+}
+
+#[tauri::command]
+fn list_join_waits(app: tauri::State<App>) -> Vec<knock::WaitingView> {
+    knock::list(&app)
+}
+
+#[tauri::command]
+fn cancel_join_request(app: tauri::State<App>, handle: tauri::AppHandle, server_id: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    knock::cancel(&app, &handle, sid);
+    Ok(())
+}
+
+#[tauri::command]
+async fn send_join_note(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, note: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    knock::send_note(&app, &handle, sid, &note).await
+}
+
+#[tauri::command]
+async fn set_join_approval(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, enabled: bool) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let at = chrono::Utc::now().timestamp_millis();
+    let event = managed(&app, sid, me.id, |state, perms| view::join_requests::set_approval(state, perms, enabled, at))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    if enabled {
+        channel_lock::tend_scope(&app, &handle, sid, commy_core::channel_key::KeyScope::Community).await;
+    }
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_tip_jar(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, url: Option<String>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::tip_jar::set_tip_jar(state, perms, url.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn answer_join_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String, admit: bool) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::join_requests::answer(state, perms, user, admit))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    if admit {
+        channel_lock::tend_scope(&app, &handle, sid, commy_core::channel_key::KeyScope::Community).await;
+    }
+    Ok(())
 }
 
 pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
@@ -796,8 +862,53 @@ async fn delete_message(
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
-const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES: u64 = commy_net::node::MAX_IN_MEMORY_FILE_BYTES;
 const ATTACHMENT_TOO_LARGE: &str = "files larger than 512 MB are not supported yet";
+#[cfg(desktop)]
+const MAX_PICKED_ATTACHMENT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+#[cfg(desktop)]
+const PICKED_ATTACHMENT_TOO_LARGE: &str = "files larger than 4 GB are not supported yet";
+#[cfg(mobile)]
+const MAX_PICKED_ATTACHMENT_BYTES: u64 = MAX_ATTACHMENT_BYTES;
+#[cfg(mobile)]
+const PICKED_ATTACHMENT_TOO_LARGE: &str = ATTACHMENT_TOO_LARGE;
+
+async fn pick_attachment(handle: &tauri::AppHandle, title: &str, filter: Option<picker::Filter<'_>>) -> CmdResult<Option<picker::PickedFile>> {
+    let keep_on_disk_over = commy_net::node::BIG_FILE_BYTES;
+    picker::pick_attachment(handle, title, filter, keep_on_disk_over, MAX_PICKED_ATTACHMENT_BYTES, PICKED_ATTACHMENT_TOO_LARGE).await
+}
+
+async fn store_file(app: &App, contents: picker::Contents) -> CmdResult<(String, Option<String>, u64)> {
+    match contents {
+        picker::Contents::Bytes(bytes) => {
+            if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+                return Err(ATTACHMENT_TOO_LARGE.into());
+            }
+            let size = bytes.len() as u64;
+            let (blob, provider) = store_blob(app, bytes).await?;
+            Ok((blob, provider, size))
+        }
+        picker::Contents::OnDisk { path, size } => {
+            if size > MAX_PICKED_ATTACHMENT_BYTES {
+                return Err(PICKED_ATTACHMENT_TOO_LARGE.into());
+            }
+            share_from_disk(app, &path).await
+        }
+    }
+}
+
+#[cfg(desktop)]
+async fn share_from_disk(app: &App, path: &std::path::Path) -> CmdResult<(String, Option<String>, u64)> {
+    let net = app.net.lock().await;
+    let node = net.as_ref().ok_or("network is not ready yet")?;
+    let (blob, size) = node.share_file(path).await.map_err(err_to_string)?;
+    Ok((blob, Some(node.node_id_hex()), size))
+}
+
+#[cfg(mobile)]
+async fn share_from_disk(_app: &App, _path: &std::path::Path) -> CmdResult<(String, Option<String>, u64)> {
+    Err(ATTACHMENT_TOO_LARGE.into())
+}
 
 async fn send_attachment(
     app: &tauri::State<'_, App>,
@@ -805,19 +916,15 @@ async fn send_attachment(
     sid: ServerId,
     cid: ChannelId,
     filename: String,
-    bytes: Vec<u8>,
+    contents: picker::Contents,
 ) -> CmdResult<MessageView> {
-    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err(ATTACHMENT_TOO_LARGE.into());
-    }
     let profile = current_profile(app)?;
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(app, state, profile.id, Permissions::ATTACH_FILES, "send files or images here")?;
     }
-    let size_bytes = bytes.len() as u64;
-    let (blob, provider) = store_blob(app, bytes).await?;
+    let (blob, provider, size_bytes) = store_file(app, contents).await?;
 
     let mime_type = mime_guess::from_path(&filename)
         .first_raw()
@@ -949,10 +1056,10 @@ async fn attach_file(
         Some("video") => ("Post a video", Some(picker::Filter { label: "Videos", extensions: INLINE_VIDEO_EXTENSIONS })),
         _ => ("Share a file", None),
     };
-    let Some(picked) = picker::pick_file(&handle, title, filter, MAX_ATTACHMENT_BYTES, ATTACHMENT_TOO_LARGE).await? else {
+    let Some(picked) = pick_attachment(&handle, title, filter).await? else {
         return Ok(None);
     };
-    send_attachment(&app, &handle, sid, cid, picked.name, picked.bytes)
+    send_attachment(&app, &handle, sid, cid, picked.name, picked.contents)
         .await
         .map(Some)
 }
@@ -1033,7 +1140,7 @@ async fn attach_bytes(
     if bytes.is_empty() {
         return Err("empty file".into());
     }
-    send_attachment(&app, &handle, sid, cid, filename, bytes).await
+    send_attachment(&app, &handle, sid, cid, filename, picker::Contents::Bytes(bytes)).await
 }
 
 #[tauri::command]
@@ -1103,11 +1210,51 @@ async fn download_attachment(
     size_bytes: Option<u64>,
     server_id: Option<String>,
 ) -> CmdResult<Option<String>> {
+    #[cfg(desktop)]
+    if size_bytes.is_some_and(commy_net::node::is_big_file) {
+        return download_to_disk(&app, &handle, &blob, &filename, provider.as_deref(), server_id.as_deref()).await;
+    }
     if let Some(size) = size_bytes {
         commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
     }
     let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), MAX_ATTACHMENT_BYTES).await?;
     picker::save_file(&handle, &safe_file_name(&filename), bytes).await
+}
+
+#[derive(Clone, serde::Serialize)]
+struct FileProgress<'a> {
+    blob: &'a str,
+    done: u64,
+    total: u64,
+}
+
+#[cfg(desktop)]
+async fn download_to_disk(
+    app: &App,
+    handle: &tauri::AppHandle,
+    blob: &str,
+    filename: &str,
+    provider: Option<&str>,
+    server: Option<&str>,
+) -> CmdResult<Option<String>> {
+    let Some(target) = picker::save_path(handle, &safe_file_name(filename)).await else {
+        return Ok(None);
+    };
+    let server = server.and_then(|s| s.parse::<ServerId>().ok());
+    let (fetcher, sources) = {
+        let net = app.net.lock().await;
+        let node = net.as_ref().ok_or("network is not ready yet")?;
+        let neighbors = server.map(|s| node.neighbors(s)).unwrap_or_default();
+        (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors))
+    };
+    let report = |done, total| {
+        let _ = handle.emit("file-progress", FileProgress { blob, done, total });
+    };
+    fetcher
+        .download_to(blob, sources.iter().map(String::as_str), MAX_PICKED_ATTACHMENT_BYTES, &target, report)
+        .await
+        .map_err(err_to_string)?;
+    Ok(Some(target.display().to_string()))
 }
 
 #[tauri::command]
@@ -1561,6 +1708,18 @@ async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Optio
     fetcher.fetch_from(blob, sources.iter().map(String::as_str), max).await.map_err(err_to_string)
 }
 
+#[cfg(desktop)]
+const SHARED_FILES_DIR: &str = "shared-files";
+
+#[cfg(desktop)]
+async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
+    let Some(dir) = app.data_dir().map(|d| d.join(SHARED_FILES_DIR)) else { return };
+    match commy_net::shelf::Shelf::open(&dir).await {
+        Ok(shelf) => node.set_shelf(shelf),
+        Err(e) => tracing::warn!("big files cannot be shared from this device: {e:#}"),
+    }
+}
+
 fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
     let handle = handle.clone();
     std::sync::Arc::new(move |peer, hello| {
@@ -1697,6 +1856,15 @@ async fn start_screen_share(
     let source = parse_source(source_kind.as_deref(), source_id);
     let quality = StreamQuality::from_name(quality.as_deref().unwrap_or(""));
     let share_audio = audio.unwrap_or(true) && commy_media::system_audio_supported();
+    #[cfg(target_os = "android")]
+    let session = {
+        let _ = (source, share_audio);
+        let fps = quality.fps().min(screen_service::MAX_FPS);
+        let width = quality.max_width().min(screen_service::MAX_WIDTH);
+        tokio::task::spawn_blocking(move || screen_service::ask(width, fps)).await.map_err(err_to_string)??;
+        ScreenShareSession::start_with(sid, channel, fps, width, screen_service::opener(), None)
+    };
+    #[cfg(not(target_os = "android"))]
     let session = ScreenShareSession::start(sid, channel, quality.fps(), quality.max_width(), source, share_audio);
     let (preview_tx, preview_rx) = tokio::sync::mpsc::unbounded_channel();
     session.add_subscriber(preview_tx);
@@ -2602,14 +2770,10 @@ async fn send_dm_attachment(
     handle: &tauri::AppHandle,
     user_id: &str,
     filename: String,
-    bytes: Vec<u8>,
+    contents: picker::Contents,
 ) -> CmdResult<DmMessageView> {
-    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err(ATTACHMENT_TOO_LARGE.into());
-    }
     let (me, partner) = dm_partner(app, user_id)?;
-    let size_bytes = bytes.len() as u64;
-    let (blob, provider) = store_blob(app, bytes).await?;
+    let (blob, provider, size_bytes) = store_file(app, contents).await?;
     let mime_type = mime_guess::from_path(&filename)
         .first_raw()
         .unwrap_or("application/octet-stream")
@@ -2632,10 +2796,10 @@ async fn attach_dm_file(
         Some("video") => ("Send a video", Some(picker::Filter { label: "Videos", extensions: INLINE_VIDEO_EXTENSIONS })),
         _ => ("Send a file", None),
     };
-    let Some(picked) = picker::pick_file(&handle, title, filter, MAX_ATTACHMENT_BYTES, ATTACHMENT_TOO_LARGE).await? else {
+    let Some(picked) = pick_attachment(&handle, title, filter).await? else {
         return Ok(None);
     };
-    send_dm_attachment(&app, &handle, &user_id, picked.name, picked.bytes).await.map(Some)
+    send_dm_attachment(&app, &handle, &user_id, picked.name, picked.contents).await.map(Some)
 }
 
 #[tauri::command]
@@ -2656,7 +2820,7 @@ async fn attach_dm_bytes(
     if bytes.is_empty() {
         return Err("empty file".into());
     }
-    send_dm_attachment(&app, &handle, &user_id, filename, bytes).await
+    send_dm_attachment(&app, &handle, &user_id, filename, picker::Contents::Bytes(bytes)).await
 }
 
 fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
@@ -2800,6 +2964,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
         if state.server.afk_timeout_minutes.is_some() {
             events.push(ServerEvent::AfkTimeoutSet { server: sid, minutes: state.server.afk_timeout_minutes });
         }
+        if state.server.tip_jar.is_some() {
+            events.push(ServerEvent::TipJarSet { server: sid, url: state.server.tip_jar.clone() });
+        }
     }
     if state.server.rules_accepted.contains(&me) {
         events.push(ServerEvent::RulesAccept { server: sid, user: me });
@@ -2905,6 +3072,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if state.server.join_sounds_off && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::JoinSoundsAllowed { server: sid, allowed: false });
+    }
+    if state.server.tag.is_some() && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::ServerTagSet { server: sid, tag: state.server.tag.clone() });
     }
     let sharing = state.server.stickers_shareable || state.server.emoticons_shareable;
     if sharing && perms.allows(Permissions::MANAGE_SERVER) {
@@ -3127,10 +3297,20 @@ async fn leave_server(
     .await;
     leave_server_topic(&app, sid).await;
     forget_server_locally(&app, sid);
+    refresh_worn_tag(&app, &handle).await;
     entry_list::record_leave(&app, sid);
     entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(())
+}
+
+pub(crate) async fn leave_without_trace(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
+    end_voice_in(app, sid);
+    leave_server_topic(app, sid).await;
+    forget_server_locally(app, sid);
+    entry_list::record_leave(app, sid);
+    entry_list::schedule(handle);
+    let _ = handle.emit("servers-changed", ());
 }
 
 pub(crate) async fn leave_from_another_device(app: &App, sid: ServerId) {
@@ -4002,7 +4182,7 @@ fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
         overlay::refresh(handle);
     } else if hotkey_id(&settings.chat_hotkey) == Some(id) {
         let settings = app.update_voice(|voice| voice.overlay.show_chat = !voice.overlay.show_chat).overlay;
-        let _ = handle.emit_to(overlay::LABEL, "overlay-config", &settings);
+        overlay::refresh(handle);
         let _ = handle.emit("overlay-settings-changed", &settings);
     }
 }
@@ -4052,6 +4232,19 @@ fn preview_overlay(app: tauri::State<'_, App>, handle: tauri::AppHandle) {
         handle.state::<App>().overlay_preview.store(false, Relaxed);
         overlay::refresh(&handle);
     });
+}
+
+#[tauri::command]
+async fn set_profile_look(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    avatar_border: Option<String>,
+    card_effect: Option<String>,
+) -> CmdResult<UserProfile> {
+    let look = view::profile::look(avatar_border.as_deref(), card_effect.as_deref())?;
+    let profile = edit_profile(&app, |profile| view::profile::apply_look(profile, look))?;
+    publish_profile(&app, &handle, &profile).await;
+    Ok(profile)
 }
 
 #[tauri::command]
@@ -4875,6 +5068,7 @@ fn removal_of_me(event: &ServerEvent, action: Option<&commy_core::Action>, me: O
 async fn on_removed(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: &str) {
     let name = forget_server_locally(app, sid).map(|s| s.server.name);
     end_voice_in(app, sid);
+    refresh_worn_tag(app, handle).await;
     leave_server_topic(app, sid).await;
     entry_list::record_leave(app, sid);
     entry_list::schedule(handle);
@@ -4887,6 +5081,8 @@ fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, no
     let ticket = (!owned).then(|| app.invites.lock().unwrap().get(&sid).cloned()).flatten();
     let name = forget_server_locally(app, sid).map(|s| s.server.name).unwrap_or_default();
     end_voice_in(app, sid);
+    let later = handle.clone();
+    tauri::async_runtime::spawn(async move { refresh_worn_tag(&later.state::<App>(), &later).await });
     let kept = deleted::DeletedServer { name: name.clone(), notice, ticket };
     app.deleted.lock().unwrap().insert(sid, kept);
     app.persist_deleted();
@@ -5397,6 +5593,60 @@ async fn set_join_sound(
     let me = current_profile(&app)?;
     let event = managed(&app, sid, me.id, |state, perms| view::expressions::join_sound(state, perms, me.id, name.as_deref()))?;
     apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
+async fn set_server_tag(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    letters: Option<String>,
+    emoji: Option<String>,
+    color: String,
+    effect: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| {
+        view::server_tags::set_tag(state, perms, letters.as_deref(), emoji.as_deref(), &color, &effect)
+    })?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    refresh_worn_tag(&app, &handle).await;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn wear_server_tag(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: Option<String>) -> CmdResult<UserProfile> {
+    let me = current_profile(&app)?;
+    let worn = match server_id {
+        None => None,
+        Some(id) => {
+            let sid: ServerId = id.parse().map_err(err_to_string)?;
+            let servers = app.servers.lock().unwrap();
+            let state = servers.get(&sid).ok_or("unknown server")?;
+            Some(view::server_tags::wear(state, me.id)?)
+        }
+    };
+    let profile = edit_profile(&app, |profile| profile.server_tag = worn)?;
+    publish_profile(&app, &handle, &profile).await;
+    Ok(profile)
+}
+
+async fn refresh_worn_tag(app: &App, handle: &tauri::AppHandle) {
+    let Some((me, worn)) = app.profile.lock().unwrap().as_ref().and_then(|p| p.server_tag.clone().map(|w| (p.id, w))) else {
+        return;
+    };
+    let fresh = {
+        let servers = app.servers.lock().unwrap();
+        worn.refreshed(servers.get(&worn.server).map(|s| &s.server), me)
+    };
+    if fresh.as_ref() == Some(&worn) {
+        return;
+    }
+    if let Ok(profile) = edit_profile(app, |profile| profile.server_tag = fresh) {
+        publish_profile(app, handle, &profile).await;
+    }
 }
 
 #[tauri::command]
@@ -6428,7 +6678,7 @@ fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Op
     }
 }
 
-async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
+pub(crate) async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     let net = app.net.lock().await;
     if let Some(node) = net.as_ref() {
         if let Err(e) = node.broadcast(server, payload).await {
@@ -6531,6 +6781,7 @@ async fn run_net_loop(
                 let early = app.awaits_snapshot(server);
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
+                let tag_news = matches!(event, ServerEvent::ServerTagSet { .. } | ServerEvent::ServerRename { .. });
                 let profile_changed = match &event {
                     ServerEvent::ProfileUpdate { profile } | ServerEvent::MemberJoin { profile, .. } => Some(profile.id),
                     _ => None,
@@ -6601,6 +6852,9 @@ async fn run_net_loop(
                         }
                         app.persist_server(server);
                         directory::server_changed(&app, server);
+                        if tag_news {
+                            refresh_worn_tag(&app, &handle).await;
+                        }
                         if let Some(user) = new_owner {
                             app.follow_owner(server);
                             announce_new_owner(&app, &handle, server, user);
@@ -6668,6 +6922,7 @@ async fn run_net_loop(
             NetEvent::SyncReceived { server, payload } => {
                 if catchup::apply_snapshot(&handle, server, payload) {
                     community_sync::refresh_soon(&handle);
+                    knock::wait_outside(&app, &handle, server).await;
                 }
             }
             NetEvent::VoiceDial { .. } => {}
@@ -7091,6 +7346,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
         bell.retain_servers(|id| servers.contains_key(id));
     }
     *app.doorbell.lock().unwrap() = bell;
+    *app.knocks.lock().unwrap() = knock::Knocks::load(&dir);
     {
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
@@ -7138,6 +7394,10 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 if let Some(asks) = node.take_mirror_requests() {
                     tauri::async_runtime::spawn(mirror::run_mirror_requests(handle.clone(), asks));
                 }
+                if let Some(asks) = node.take_knock_requests() {
+                    tauri::async_runtime::spawn(knock::run_requests(handle.clone(), asks));
+                }
+                tauri::async_runtime::spawn(knock::run(handle.clone()));
 
                 let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
                 let stored_invites = app
@@ -7236,6 +7496,8 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 }
                 node.set_catchup_store(catchup::store(&handle));
                 node.set_media_gate(media_gate(&handle));
+                #[cfg(desktop)]
+                open_shelf(&app, &node).await;
                 *app.net.lock().await = Some(node);
                 tracing::info!("iroh node online");
 
@@ -7315,7 +7577,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init());
+    let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init());
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -7449,6 +7711,7 @@ pub fn run() {
             list_friends,
             friend_action,
             set_about,
+            set_profile_look,
             set_window_title,
             has_custom_titlebar,
             window_action,
@@ -7521,7 +7784,15 @@ pub fn run() {
             set_expression_settings,
             set_sound_sharing,
             set_join_sounds_allowed,
+            list_join_waits,
+            cancel_join_request,
+            send_join_note,
+            set_join_approval,
+            answer_join_request,
             set_join_sound,
+            set_server_tag,
+            set_tip_jar,
+            wear_server_tag,
             set_activities_enabled,
             set_role_access,
             add_sticker,
@@ -7548,6 +7819,7 @@ pub fn run() {
             list_shareable_expressions,
             ui_ready,
             is_mobile_app,
+            can_share_screen,
             init_user,
             get_user,
             create_server,

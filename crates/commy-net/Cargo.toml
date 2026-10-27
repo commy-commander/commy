@@ -36,6 +36,7 @@ url = "2"
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 tokio = { workspace = true }
 iroh-blobs = { workspace = true }
+bao-tree = { version = "0.16", default-features = false }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 iroh-blobs = { version = "0.103", default-features = false }

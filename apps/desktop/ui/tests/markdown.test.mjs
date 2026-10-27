@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { parseMessage, parseInline, stripMarkdown, hasFormatting, highlightCode, normalizeLang, toggleWrap, formatShortcut, composerRows } = require("../scripts/markdown.js");
+const { parseMessage, parseInline, stripMarkdown, hasFormatting, highlightCode, normalizeLang, toggleWrap, formatShortcut, composerRows,
+  TEXT_COLORS, TEXT_FONTS, TEXT_EFFECTS, readStyleNames, textStyleClasses, splitsLetters, applyTextStyle, activeTextStyles } = require("../scripts/markdown.js");
 
 const types = nodes => nodes.map(n => n.type);
 const text = nodes => nodes.map(n => (n.type === "text" ? n.text : `<${n.type}>`)).join("");
@@ -115,4 +116,52 @@ test("the composer grows with its lines up to a cap", () => {
   assert.equal(composerRows(""), 1);
   assert.equal(composerRows("a\nb\nc"), 3);
   assert.equal(composerRows("x\n".repeat(20)), 8);
+});
+
+test("style tags colour, change the font of, or add an effect to text, nesting other formatting", () => {
+  const nodes = parseInline("hi {red+wave:big **news**} and {serif:old} {pink+mono+glow:x}");
+  const styled = nodes.filter(n => n.type === "style");
+  assert.deepEqual(styled.map(n => [n.color, n.font, n.effects]), [["red", null, ["wave"]], [null, "serif", []], ["pink", "mono", ["glow"]]]);
+  assert.deepEqual(types(styled[0].children), ["text", "strong"]);
+  assert.equal(stripMarkdown("hi {red+wave:big **news**}!"), "hi big news!");
+  assert.ok(hasFormatting("{teal:hey}"));
+  assert.deepEqual(textStyleClasses(styled[0]), ["tx", "tx-red", "tx-wave"]);
+  assert.deepEqual(textStyleClasses(styled[2]), ["tx", "tx-pink", "tx-font-mono", "tx-glow"]);
+  assert.ok(splitsLetters(styled[0]));
+  assert.ok(!splitsLetters(styled[2]));
+  assert.equal(TEXT_COLORS.length + TEXT_FONTS.length + TEXT_EFFECTS.length, 18);
+});
+
+test("only known style names make a style tag, everything else stays literal", () => {
+  for (const raw of ["{nope:x}", "{red:}", "{red: }", "{red+red:x}", "{red+blue:x}", "{serif+mono:x}", "{red+wave+glow+shake:x}", "{Red:x}", "{red:open", "{red:a\nb}", "a {b} c", "{\"red\": 1}"]) {
+    assert.equal(parseInline(raw).some(n => n.type === "style"), false, raw);
+  }
+  assert.equal(text(parseInline("\\{red:y}")), "{red:y}");
+  assert.equal(text(parseInline("`{red:x}`")), "<code>");
+  assert.equal(text(parseInline("{red:a {b} c}")), "<style>");
+  assert.equal(parseInline("{red:a {b} c}")[0].children[0].text, "a {b} c");
+  assert.equal(text(parseInline("{red:`}` here}")), "<style>");
+  assert.equal(readStyleNames("blue+serif+rainbow").effects[0], "rainbow");
+  assert.equal(readStyleNames("blue+serif+rainbow+glow"), null);
+});
+
+test("the style picker wraps the selection and toggles names on a tag it already made", () => {
+  const wrapped = applyTextStyle("say hello now", 4, 9, "red");
+  assert.deepEqual(wrapped, { value: "say {red:hello} now", start: 9, end: 14 });
+  const wave = applyTextStyle(wrapped.value, wrapped.start, wrapped.end, "wave");
+  assert.deepEqual(wave, { value: "say {red+wave:hello} now", start: 14, end: 19 });
+  const blue = applyTextStyle(wave.value, wave.start, wave.end, "blue");
+  assert.equal(blue.value, "say {wave+blue:hello} now");
+  const font = applyTextStyle(blue.value, blue.start, blue.end, "mono");
+  const swapped = applyTextStyle(font.value, font.start, font.end, "hand");
+  assert.equal(swapped.value, "say {wave+blue+hand:hello} now");
+  const capped = applyTextStyle(swapped.value, swapped.start, swapped.end, "glow");
+  assert.equal(capped.value, "say {blue+hand+glow:hello} now");
+  let off = capped;
+  for (const name of ["blue", "hand", "glow"]) off = applyTextStyle(off.value, off.start, off.end, name);
+  assert.deepEqual(off, { value: "say hello now", start: 4, end: 9 });
+  assert.deepEqual(applyTextStyle("", 0, 0, "teal"), { value: "{teal:}", start: 6, end: 6 });
+  assert.deepEqual(applyTextStyle("abc", 0, 3, "bogus"), { value: "abc", start: 0, end: 3 });
+  assert.deepEqual(activeTextStyles(wave.value, wave.start, wave.end), ["red", "wave"]);
+  assert.deepEqual(activeTextStyles("say hello", 4, 9), []);
 });

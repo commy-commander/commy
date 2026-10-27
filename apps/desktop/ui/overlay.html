@@ -28,6 +28,7 @@
     body.bottom { justify-content: flex-end; }
     body.right { align-items: flex-end; }
     .hidden { display: none !important; }
+    body[data-part="voice"] #chat, body[data-part="chat"] #members, body[data-part="chat"] #notice-stack { display: none; }
     .stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
     body.right .stack { align-items: flex-end; }
     .member {
@@ -108,7 +109,7 @@
   </style>
 </head>
 <body>
-  <div class="stack"><div class="notice hidden" id="notice"></div></div>
+  <div class="stack" id="notice-stack"><div class="notice hidden" id="notice"></div></div>
   <div class="stack" id="members"></div>
   <div class="stack" id="chat"></div>
   <script src="scripts/tint.js"></script>

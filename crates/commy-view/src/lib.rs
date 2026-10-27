@@ -20,7 +20,10 @@ pub mod roles;
 pub mod safety;
 pub mod saved;
 pub mod search;
+pub mod join_requests;
+pub mod server_tags;
 pub mod templates;
+pub mod tip_jar;
 pub mod voice_invite;
 
 use crate::keys::KeyHolder;
@@ -50,6 +53,7 @@ pub struct ServerSummary {
     pub icon: Option<String>,
     pub can_invite: bool,
     pub group: bool,
+    pub tag: Option<server_tags::ServerTagView>,
 }
 
 pub fn server_name(state: &ServerState, viewer: Option<UserId>) -> String {
@@ -80,6 +84,7 @@ impl ServerSummary {
             icon: state.server.icon.clone(),
             can_invite: viewer.is_some_and(|me| state.server.permissions_for(me).allows(Permissions::CREATE_INVITES)),
             group: state.server.group,
+            tag: state.server.tag.as_ref().map(|t| server_tags::tag_view(t, &state.server.name)),
         }
     }
 }
@@ -242,6 +247,9 @@ pub struct MemberView {
     pub priority_speaker: bool,
     pub timeout_until: Option<i64>,
     pub timeout_by: Option<String>,
+    pub server_tag: Option<server_tags::ServerTagView>,
+    pub avatar_border: Option<String>,
+    pub card_effect: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -358,6 +366,11 @@ pub struct ServerView {
     pub join_sounds_allowed: bool,
     pub join_sounds: std::collections::BTreeMap<String, String>,
     pub my_join_sound: Option<String>,
+    pub server_tag: Option<server_tags::ServerTagView>,
+    pub join_approval: bool,
+    pub join_requests: Vec<join_requests::JoinRequestView>,
+    pub can_answer_joins: bool,
+    pub tip_jar: Option<String>,
     pub automod: Option<AutoMod>,
     pub onboarding: Option<commy_core::Onboarding>,
     pub commands: Vec<BotCommandsView>,
@@ -551,6 +564,9 @@ impl ServerView {
                     priority_speaker: state.server.permissions_for(p.id).is_priority_speaker(),
                     timeout_until: state.server.timeout_of(p.id, now).map(|t| t.until.timestamp_millis()),
                     timeout_by: state.server.timeout_of(p.id, now).map(|t| t.by.to_string()),
+                    server_tag: server_tags::shown(p.server_tag.as_ref(), state, p.id),
+                    avatar_border: p.avatar_border.clone().filter(|b| commy_core::user::valid_avatar_border(b)),
+                    card_effect: p.card_effect.clone().filter(|e| commy_core::user::valid_card_effect(e)),
                 }
             })
             .collect();
@@ -730,6 +746,11 @@ impl ServerView {
             join_sounds_allowed: !state.server.join_sounds_off,
             join_sounds: join_sound_clips(state),
             my_join_sound: viewer.and_then(|v| state.server.join_sounds.get(&v).cloned()),
+            server_tag: state.server.tag.as_ref().map(|t| server_tags::tag_view(t, &state.server.name)),
+            join_approval: state.server.join_approval,
+            join_requests: join_requests::queue(state, viewer),
+            can_answer_joins: viewer.is_some_and(|v| join_requests::may_answer(state, v)),
+            tip_jar: state.server.tip_jar.clone(),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
             onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
                 o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))

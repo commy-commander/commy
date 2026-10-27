@@ -206,6 +206,26 @@ pub type MediaGate = Arc<dyn Fn([u8; 32], &MediaHello) -> bool + Send + Sync>;
 
 type GateSlot = Arc<RwLock<Option<MediaGate>>>;
 
+#[cfg(not(wasm_browser))]
+type ShelfSlot = Arc<RwLock<Option<crate::shelf::Shelf>>>;
+
+#[cfg(not(wasm_browser))]
+#[derive(Debug, Clone)]
+struct FilesAcceptor {
+    shelf: ShelfSlot,
+}
+
+#[cfg(not(wasm_browser))]
+impl ProtocolHandler for FilesAcceptor {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        let protocol = self.shelf.read().unwrap_or_else(|e| e.into_inner()).as_ref().map(crate::shelf::Shelf::protocol);
+        match protocol {
+            Some(protocol) => protocol.accept(connection).await,
+            None => Ok(()),
+        }
+    }
+}
+
 const MEDIA_GATE_WAIT: Duration = Duration::from_secs(5);
 
 const MEDIA_GATE_POLL: Duration = Duration::from_millis(250);
@@ -622,6 +642,165 @@ pub struct BlobFetcher {
     endpoint: Endpoint,
     lookup: MemoryLookup,
     relays: Vec<RelayUrl>,
+    #[cfg(not(wasm_browser))]
+    shelf: ShelfSlot,
+}
+
+pub const BIG_FILE_BYTES: u64 = 100 * 1024 * 1024;
+
+pub const MAX_IN_MEMORY_FILE_BYTES: u64 = 512 * 1024 * 1024;
+
+pub fn is_big_file(size: u64) -> bool {
+    size > BIG_FILE_BYTES
+}
+
+#[cfg(not(wasm_browser))]
+impl BlobFetcher {
+    pub async fn download_to<'a>(
+        &self,
+        hash: &str,
+        sources: impl IntoIterator<Item = &'a str>,
+        max: u64,
+        target: &std::path::Path,
+        mut progress: impl FnMut(u64, u64),
+    ) -> Result<u64> {
+        let shelf = self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(shelf) = &shelf {
+            if let Some(shared) = shelf.shared(hash).await {
+                check_blob_size(shared.size, max)?;
+                return shelf.copy_out(hash, target).await;
+            }
+        }
+        let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
+        if let Ok(iroh_blobs::api::blobs::BlobStatus::Complete { size }) = self.blobs.status(hash).await {
+            check_blob_size(size, max)?;
+            if let Ok(bytes) = self.blobs.get_bytes(hash).await {
+                tokio::fs::write(target, &bytes).await.context("could not save the file")?;
+                return Ok(size);
+            }
+        }
+        for source in sources {
+            let Ok(node_id) = parse_node_hex(source) else { continue };
+            if node_id == self.endpoint.id() {
+                continue;
+            }
+            hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
+            for alpn in [crate::shelf::FILES_ALPN, iroh_blobs::ALPN] {
+                match stream_to_file(&self.endpoint, node_id, alpn, hash, max, target, &mut progress).await {
+                    Ok(size) => {
+                        if let Some(shelf) = &shelf {
+                            if let Err(e) = shelf.share(target).await {
+                                tracing::info!("downloaded file is not shared on: {e:#}");
+                            }
+                        }
+                        return Ok(size);
+                    }
+                    Err(e) if e.is::<BlobTooLarge>() => return Err(e),
+                    Err(e) => {
+                        tracing::info!("file {} not streamed from {}: {e:#}", hash.fmt_short(), &source[..source.len().min(10)]);
+                        if e.is::<Unreachable>() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        anyhow::bail!(BLOB_UNAVAILABLE)
+    }
+}
+
+#[cfg(not(wasm_browser))]
+const PROGRESS_STEPS: u64 = 200;
+
+#[cfg(not(wasm_browser))]
+#[derive(Debug, thiserror::Error)]
+#[error("that member could not be reached")]
+struct Unreachable;
+
+#[cfg(not(wasm_browser))]
+async fn stream_to_file(
+    endpoint: &Endpoint,
+    node_id: EndpointId,
+    alpn: &[u8],
+    hash: iroh_blobs::Hash,
+    max: u64,
+    target: &std::path::Path,
+    progress: &mut impl FnMut(u64, u64),
+) -> Result<u64> {
+    let part = crate::shelf::part_path(target);
+    let streamed = stream_into(endpoint, node_id, alpn, hash, max, &part, progress).await;
+    let finished = match streamed {
+        Ok(size) => replace_file(&part, target).await.map(|_| size),
+        Err(e) => Err(e),
+    };
+    if finished.is_err() {
+        let _ = tokio::fs::remove_file(&part).await;
+    }
+    finished
+}
+
+#[cfg(not(wasm_browser))]
+async fn replace_file(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
+    if tokio::fs::metadata(to).await.is_ok() {
+        tokio::fs::remove_file(to).await.context("could not replace the existing file")?;
+    }
+    tokio::fs::rename(from, to).await.context("could not save the file")
+}
+
+#[cfg(not(wasm_browser))]
+async fn stream_into(
+    endpoint: &Endpoint,
+    node_id: EndpointId,
+    alpn: &[u8],
+    hash: iroh_blobs::Hash,
+    max: u64,
+    part: &std::path::Path,
+    progress: &mut impl FnMut(u64, u64),
+) -> Result<u64> {
+    use bao_tree::io::fsm::BaoContentItem;
+    use iroh_blobs::get::fsm::{self, BlobContentNext, ConnectedNext, EndBlobNext};
+    use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+    let connection = n0_future::time::timeout(BLOB_DIAL_TIMEOUT, endpoint.connect(node_id, alpn))
+        .await
+        .map_err(|_| Unreachable)?
+        .context("file download failed")?;
+    let request = iroh_blobs::protocol::GetRequest::blob(hash);
+    let connected = fsm::start(connection, request, Default::default()).next().await?;
+    let ConnectedNext::StartRoot(start) = connected.next().await? else {
+        anyhow::bail!("file download failed: unexpected response");
+    };
+    let (mut content, size) = start.next().next().await?;
+    check_blob_size(size, max)?;
+    let mut file = tokio::fs::File::create(part).await.context("could not create the file")?;
+    let step = (size / PROGRESS_STEPS).max(1);
+    let (mut written, mut reported) = (0u64, 0u64);
+    progress(0, size);
+    let end = loop {
+        match content.next().await {
+            BlobContentNext::More((next, item)) => {
+                content = next;
+                if let BaoContentItem::Leaf(leaf) = item? {
+                    file.seek(std::io::SeekFrom::Start(leaf.offset)).await?;
+                    file.write_all(&leaf.data).await?;
+                    written += leaf.data.len() as u64;
+                    if written - reported >= step {
+                        reported = written;
+                        progress(written.min(size), size);
+                    }
+                }
+            }
+            BlobContentNext::Done(end) => break end,
+        }
+    };
+    file.flush().await?;
+    file.sync_all().await?;
+    drop(file);
+    let EndBlobNext::Closing(closing) = end.next() else {
+        anyhow::bail!("file download failed: unexpected response");
+    };
+    closing.next().await?;
+    progress(size, size);
+    Ok(size)
 }
 
 impl BlobFetcher {
@@ -683,6 +862,8 @@ pub struct CommyNode {
     router: Router,
     gossip: Gossip,
     blobs: MemStore,
+    #[cfg(not(wasm_browser))]
+    shelf: ShelfSlot,
     lookup: MemoryLookup,
     relays: Vec<RelayUrl>,
     can_discover_address: bool,
@@ -690,6 +871,7 @@ pub struct CommyNode {
     events_tx: mpsc::UnboundedSender<NetEvent>,
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
     mirror_requests: Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>>,
+    knock_requests: Option<mpsc::UnboundedReceiver<crate::knock::KnockAsk>>,
     catchup_store: StoreSlot,
     media_gate: GateSlot,
 }
@@ -766,6 +948,7 @@ impl CommyNode {
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
         let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
         let (mirror_tx, mirror_rx) = mpsc::unbounded_channel();
+        let (knock_tx, knock_rx) = mpsc::unbounded_channel();
         let lookup = MemoryLookup::new();
         let relay_mode = relays.map_or_else(iroh::endpoint::default_relay_mode, iroh::RelayMode::Custom);
         let can_discover_address = relay_mode.relay_map().relays::<Vec<Arc<iroh::RelayConfig>>>().iter().any(|relay| relay.quic.is_some());
@@ -816,6 +999,10 @@ impl CommyNode {
         let router = Router::builder(endpoint).accept(iroh_gossip::ALPN, gossip.clone());
         let blobs = MemStore::new();
         let router = router.accept(iroh_blobs::ALPN, iroh_blobs::BlobsProtocol::new(&blobs, None));
+        #[cfg(not(wasm_browser))]
+        let shelf = ShelfSlot::default();
+        #[cfg(not(wasm_browser))]
+        let router = router.accept(crate::shelf::FILES_ALPN, FilesAcceptor { shelf: shelf.clone() });
         let router = router
             .accept(MEDIA_ALPN, MediaAcceptor { tx: media_tx, gate: media_gate.clone() })
             .accept(DM_ALPN, DmAcceptor { tx: dm_tx.clone(), legacy: false })
@@ -824,6 +1011,7 @@ impl CommyNode {
             .accept(CATCHUP_ALPN, catchup)
             .accept(crate::mirror::MIRROR_ALPN, crate::mirror::MirrorAcceptor { tx: mirror_tx, local })
             .accept(crate::wake::WAKE_ALPN, crate::wake::WakeAcceptor::new(events_tx.clone()))
+            .accept(crate::knock::KNOCK_ALPN, crate::knock::KnockAcceptor { tx: knock_tx })
             .spawn();
         let _ = n0_future::time::timeout(ADDRESS_WAIT, router.endpoint().online()).await;
         Ok((
@@ -831,6 +1019,8 @@ impl CommyNode {
                 router,
                 gossip,
                 blobs,
+                #[cfg(not(wasm_browser))]
+                shelf,
                 lookup,
                 relays,
                 can_discover_address,
@@ -838,6 +1028,7 @@ impl CommyNode {
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
                 mirror_requests: Some(mirror_rx),
+                knock_requests: Some(knock_rx),
                 catchup_store,
                 media_gate,
             },
@@ -853,6 +1044,31 @@ impl CommyNode {
 
     pub fn take_mirror_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>> {
         self.mirror_requests.take()
+    }
+
+    pub fn take_knock_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::knock::KnockAsk>> {
+        self.knock_requests.take()
+    }
+
+    pub fn knock(&self, ticket: &ServerTicket, request: crate::knock::KnockRequest) -> impl Future<Output = Option<crate::knock::KnockReply>> + Send + 'static {
+        let addrs: Vec<EndpointAddr> = ticket.bootstrap.iter().filter_map(|a| a.endpoint_addr()).collect();
+        let nodes: Vec<EndpointId> = addrs.iter().map(|a| a.id).filter(|id| *id != self.router.endpoint().id()).collect();
+        for addr in addrs {
+            self.learn(addr);
+        }
+        let endpoint = self.endpoint();
+        async move {
+            let mut pending: futures_util::stream::FuturesUnordered<_> =
+                nodes.into_iter().map(|node| crate::knock::knock_one(endpoint.clone(), node, request.clone())).collect();
+            while let Some(reply) = futures_util::StreamExt::next(&mut pending).await {
+                match reply {
+                    Ok(reply) if reply.decisive() => return Some(reply),
+                    Ok(_) => {}
+                    Err(e) => tracing::debug!("knock went unanswered: {e:#}"),
+                }
+            }
+            None
+        }
     }
 
     pub fn endpoint(&self) -> Endpoint {
@@ -1228,7 +1444,25 @@ impl CommyNode {
     }
 
     pub fn blob_fetcher(&self) -> BlobFetcher {
-        BlobFetcher { blobs: self.blobs.clone(), endpoint: self.endpoint(), lookup: self.lookup.clone(), relays: self.relays.clone() }
+        BlobFetcher {
+            blobs: self.blobs.clone(),
+            endpoint: self.endpoint(),
+            lookup: self.lookup.clone(),
+            relays: self.relays.clone(),
+            #[cfg(not(wasm_browser))]
+            shelf: self.shelf.clone(),
+        }
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub fn set_shelf(&self, shelf: crate::shelf::Shelf) {
+        *self.shelf.write().unwrap_or_else(|e| e.into_inner()) = Some(shelf);
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub async fn share_file(&self, path: &std::path::Path) -> Result<(String, u64)> {
+        let shelf = self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone();
+        shelf.context("big files are not ready yet")?.share(path).await
     }
 
     pub fn set_media_gate(&self, gate: MediaGate) {
@@ -1634,6 +1868,47 @@ mod tests {
             CatchupError::Rejected(Refusal::Busy)
         ));
         assert!(matches!(held.unwrap_err(), CatchupError::Closed));
+    }
+
+    #[tokio::test]
+    async fn a_big_file_streams_from_where_it_sits_to_a_file_and_is_shared_on() {
+        let within = Duration::from_secs;
+        let dir = std::env::temp_dir().join(format!("commy-big-file-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("video.bin");
+        let bytes: Vec<u8> = (0..3_000_000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+        std::fs::write(&original, &bytes).unwrap();
+        let (a, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        let (b, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        a.set_shelf(crate::shelf::Shelf::open(&dir.join("a")).await.unwrap());
+        b.set_shelf(crate::shelf::Shelf::open(&dir.join("b")).await.unwrap());
+        let (hash, size) = a.share_file(&original).await.unwrap();
+        assert_eq!(size, bytes.len() as u64);
+        let addr = tokio::time::timeout(within(30), a.node_addr()).await.unwrap().unwrap();
+        b.learn(addr.endpoint_addr().unwrap());
+        let target = dir.join("saved.bin");
+        let mut seen = Vec::new();
+        let source = a.node_id_hex();
+        let fetcher = b.blob_fetcher();
+        let too_small = fetcher.download_to(&hash, [source.as_str()], 1024, &target, |_, _| {}).await;
+        assert!(too_small.unwrap_err().is::<BlobTooLarge>());
+        let got = tokio::time::timeout(within(60), fetcher.download_to(&hash, [source.as_str()], u64::MAX, &target, |done, total| seen.push((done, total))))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(got, bytes.len() as u64);
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        assert!(!crate::shelf::part_path(&target).exists());
+        assert_eq!(seen.first(), Some(&(0, got)));
+        assert_eq!(seen.last(), Some(&(got, got)));
+        assert!(seen.windows(2).all(|w| w[0].0 <= w[1].0));
+        assert!(b.blob_fetcher().shelf.read().unwrap().as_ref().unwrap().shared(&hash).await.is_some(), "the downloader shares it on");
+        let again = dir.join("again.bin");
+        assert_eq!(b.blob_fetcher().download_to(&hash, std::iter::empty(), u64::MAX, &again, |_, _| {}).await.unwrap(), got);
+        assert_eq!(std::fs::read(&again).unwrap(), bytes);
+        a.shutdown().await.ok();
+        b.shutdown().await.ok();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

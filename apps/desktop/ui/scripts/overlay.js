@@ -2,6 +2,7 @@
 
 const tauri = window.__TAURI__;
 const $ = id => document.getElementById(id);
+const OVERLAY_LABEL = windowLabel();
 
 const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, picturesOnly: false, lines: [], testing: false };
 const TEST_MEMBERS = [{ id: "overlay-test", name: "You, talking" }];
@@ -14,20 +15,29 @@ function el(tag, className, text) {
   return node;
 }
 
+function windowLabel() {
+  try {
+    return tauri.window.getCurrentWindow().label;
+  } catch {
+    return "overlay";
+  }
+}
+
 function initials(name) {
   return String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("") || "?";
 }
 
 function applyConfig(config) {
   document.documentElement.style.setProperty("--opacity", String(config.opacity ?? 0.92));
-  const corner = overlayCorner(config.corner);
-  document.body.classList.toggle("bottom", corner.bottom);
-  document.body.classList.toggle("right", corner.right);
+  const place = overlayPart(config, OVERLAY_LABEL);
+  document.body.classList.toggle("bottom", place.bottom);
+  document.body.classList.toggle("right", place.right);
+  document.body.dataset.part = place.part;
   overlay.showChat = config.show_chat !== false;
   overlay.showEveryone = Boolean(config.show_everyone);
   overlay.picturesOnly = Boolean(config.pictures_only);
   document.body.classList.toggle("pictures", overlay.picturesOnly);
-  showNotice(`Overlay on · ${overlayCornerLabel(config.corner)}`);
+  if (place.part !== "chat") showNotice(config.layout ? "Overlay on · Your layout" : `Overlay on · ${overlayCornerLabel(config.corner)}`);
   if (!overlay.showChat) {
     overlay.lines = [];
     $("chat").replaceChildren();

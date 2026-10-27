@@ -511,6 +511,13 @@ impl Client {
         Some(WirePayload::Signed(SignedEvent::sign(server, profile.id, Utc::now().timestamp_millis(), event, &identity)))
     }
 
+    pub fn join_ask(&self, server: ServerId, note: &str) -> Option<commy_net::KnockRequest> {
+        let (profile, identity) = self.me.lock().unwrap().clone()?;
+        let now = Utc::now().timestamp_millis();
+        let event = commy_view::join_requests::ask(server, &profile, note, now).ok()?;
+        Some(commy_net::KnockRequest { server, ask: SignedEvent::sign(server, profile.id, now, event, &identity) })
+    }
+
     pub fn edit_me(&self, edit: impl FnOnce(&mut UserProfile)) -> Result<UserProfile, String> {
         let mut me = self.me.lock().unwrap();
         let (profile, _) = me.as_mut().ok_or("Your servers are not unlocked yet")?;

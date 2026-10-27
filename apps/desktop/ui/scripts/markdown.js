@@ -7,6 +7,12 @@ const URL_RE = /^https?:\/\/[^\s<>"']+/i;
 const TIME_RE = /^<t:(\d{1,13})(?::([a-zA-Z]))?>/;
 const CUSTOM_EMOJI_RE = /^<:[a-z0-9_]{2,32}:[A-Za-z0-9]{1,128}@[A-Za-z0-9]{1,128}>/;
 const FENCE = "```";
+const TEXT_COLORS = ["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "gray"];
+const TEXT_FONTS = ["serif", "mono", "hand", "display"];
+const TEXT_EFFECTS = ["rainbow", "shimmer", "wave", "glow", "shake"];
+const LETTER_EFFECTS = ["rainbow", "shimmer", "wave"];
+const MAX_TEXT_STYLES = 3;
+const STYLE_HEAD_RE = /^\{([a-z]+(?:\+[a-z]+){0,2}):/;
 
 function isWordChar(ch) {
   return Boolean(ch) && /[\p{L}\p{N}_]/u.test(ch);
@@ -74,6 +80,75 @@ function tryMarker(text, i, nodes) {
   return -1;
 }
 
+function styleCategory(name) {
+  if (TEXT_COLORS.includes(name)) return "color";
+  if (TEXT_FONTS.includes(name)) return "font";
+  if (TEXT_EFFECTS.includes(name)) return "effect";
+  return null;
+}
+
+function readStyleNames(spec) {
+  const names = String(spec || "").split("+");
+  if (!names.length || names.length > MAX_TEXT_STYLES || new Set(names).size !== names.length) return null;
+  const style = { color: null, font: null, effects: [] };
+  for (const name of names) {
+    const kind = styleCategory(name);
+    if (!kind) return null;
+    if (kind === "effect") style.effects.push(name);
+    else if (style[kind]) return null;
+    else style[kind] = name;
+  }
+  return style;
+}
+
+function findStyleClose(text, from) {
+  let depth = 0;
+  for (let i = from; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+    if (ch === "\n") return -1;
+    if (ch === "`") {
+      const end = text.indexOf("`", i + 1);
+      if (end === -1) continue;
+      i = end;
+      continue;
+    }
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      if (depth === 0) return i;
+      depth--;
+    }
+  }
+  return -1;
+}
+
+function tryStyle(text, i, nodes) {
+  const head = STYLE_HEAD_RE.exec(text.slice(i, i + 40));
+  if (!head) return -1;
+  const style = readStyleNames(head[1]);
+  if (!style) return -1;
+  const from = i + head[0].length;
+  const close = findStyleClose(text, from);
+  if (close === -1 || !text.slice(from, close).trim()) return -1;
+  nodes.push({ type: "style", ...style, children: parseInline(text.slice(from, close)) });
+  return close + 1;
+}
+
+function textStyleClasses(node) {
+  const classes = ["tx"];
+  if (node.color) classes.push(`tx-${node.color}`);
+  if (node.font) classes.push(`tx-font-${node.font}`);
+  for (const effect of node.effects || []) classes.push(`tx-${effect}`);
+  return classes;
+}
+
+function splitsLetters(node) {
+  return (node.effects || []).some(effect => LETTER_EFFECTS.includes(effect));
+}
+
 function tryMaskedLink(text, i, nodes) {
   if (text[i] !== "[") return -1;
   const close = text.indexOf("](", i + 1);
@@ -118,7 +193,7 @@ function parseInline(text) {
   };
   while (i < text.length) {
     const ch = text[i];
-    if (ch === "\\" && /[\\*_~|`[\]()<>#>-]/.test(text[i + 1] || "")) {
+    if (ch === "\\" && /[\\*_~|`[\]()<>#>{}-]/.test(text[i + 1] || "")) {
       plain += text[i + 1];
       i += 2;
       continue;
@@ -138,9 +213,12 @@ function parseInline(text) {
       i += verbatim.length;
       continue;
     }
-    if (ch === "<" || ch === "[" || INLINE_MARKERS.some(m => m[0] === ch)) {
+    if (ch === "<" || ch === "[" || ch === "{" || INLINE_MARKERS.some(m => m[0] === ch)) {
       const scratch = [];
-      const next = ch === "<" ? tryTimestamp(text, i, scratch) : ch === "[" ? tryMaskedLink(text, i, scratch) : tryMarker(text, i, scratch);
+      const next = ch === "<" ? tryTimestamp(text, i, scratch)
+        : ch === "[" ? tryMaskedLink(text, i, scratch)
+        : ch === "{" ? tryStyle(text, i, scratch)
+        : tryMarker(text, i, scratch);
       if (next >= 0) {
         flush();
         nodes.push(...scratch);
@@ -437,6 +515,41 @@ function toggleWrap(value, start, end, marker) {
   return { value: before + marker + selected + marker + after, start: start + n, end: end + n };
 }
 
+function enclosingStyleTag(value, start, end) {
+  const open = /\{([a-z]+(?:\+[a-z]+){0,2}):$/.exec(value.slice(0, start));
+  if (!open || !value.slice(end).startsWith("}") || !readStyleNames(open[1])) return null;
+  return { index: open.index, names: open[1].split("+") };
+}
+
+function activeTextStyles(value, start, end) {
+  const tag = enclosingStyleTag(value, start, end);
+  return tag ? tag.names : [];
+}
+
+function applyTextStyle(value, start, end, name) {
+  const kind = styleCategory(name);
+  if (!kind) return { value, start, end };
+  const before = value.slice(0, start);
+  const selected = value.slice(start, end);
+  const after = value.slice(end);
+  const open = enclosingStyleTag(value, start, end);
+  if (open) {
+    let names = open.names;
+    if (names.includes(name)) names = names.filter(n => n !== name);
+    else {
+      if (kind !== "effect") names = names.filter(n => styleCategory(n) !== kind);
+      names.push(name);
+      if (names.length > MAX_TEXT_STYLES) names = names.slice(-MAX_TEXT_STYLES);
+    }
+    const outer = before.slice(0, open.index);
+    if (!names.length) return { value: outer + selected + after.slice(1), start: outer.length, end: outer.length + selected.length };
+    const tag = `{${names.join("+")}:`;
+    return { value: outer + tag + selected + after, start: outer.length + tag.length, end: outer.length + tag.length + selected.length };
+  }
+  const tag = `{${name}:`;
+  return { value: before + tag + selected + "}" + after, start: start + tag.length, end: end + tag.length };
+}
+
 const FORMAT_SHORTCUTS = { b: "**", i: "*", u: "__", s: "~~", e: "`" };
 
 function formatShortcut(event) {
@@ -453,5 +566,8 @@ function composerRows(value, max = 8) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { parseMessage, parseInline, stripMarkdown, hasFormatting, highlightCode, normalizeLang, toggleWrap, formatShortcut, composerRows, inlineToText, TIMESTAMP_STYLES };
+  module.exports = {
+    parseMessage, parseInline, stripMarkdown, hasFormatting, highlightCode, normalizeLang, toggleWrap, formatShortcut, composerRows, inlineToText, TIMESTAMP_STYLES,
+    TEXT_COLORS, TEXT_FONTS, TEXT_EFFECTS, LETTER_EFFECTS, MAX_TEXT_STYLES, readStyleNames, textStyleClasses, splitsLetters, applyTextStyle, activeTextStyles,
+  };
 }
