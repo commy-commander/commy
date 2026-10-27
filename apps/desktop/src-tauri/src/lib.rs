@@ -40,6 +40,8 @@ mod read_state;
 mod relaunch;
 mod safety;
 mod saved;
+#[cfg(any(target_os = "android", test))]
+mod screen_service;
 use commy_view::catalog;
 use commy_view::search;
 mod server_wake;
@@ -95,6 +97,11 @@ fn err_to_string(e: impl std::fmt::Display) -> String {
 #[tauri::command]
 fn is_mobile_app() -> bool {
     cfg!(mobile)
+}
+
+#[tauri::command]
+fn can_share_screen() -> bool {
+    !cfg!(target_os = "ios")
 }
 
 #[tauri::command]
@@ -1790,6 +1797,15 @@ async fn start_screen_share(
     let source = parse_source(source_kind.as_deref(), source_id);
     let quality = StreamQuality::from_name(quality.as_deref().unwrap_or(""));
     let share_audio = audio.unwrap_or(true) && commy_media::system_audio_supported();
+    #[cfg(target_os = "android")]
+    let session = {
+        let _ = (source, share_audio);
+        let fps = quality.fps().min(screen_service::MAX_FPS);
+        let width = quality.max_width().min(screen_service::MAX_WIDTH);
+        tokio::task::spawn_blocking(move || screen_service::ask(width, fps)).await.map_err(err_to_string)??;
+        ScreenShareSession::start_with(sid, channel, fps, width, screen_service::opener(), None)
+    };
+    #[cfg(not(target_os = "android"))]
     let session = ScreenShareSession::start(sid, channel, quality.fps(), quality.max_width(), source, share_audio);
     let (preview_tx, preview_rx) = tokio::sync::mpsc::unbounded_channel();
     session.add_subscriber(preview_tx);
@@ -7406,7 +7422,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init());
+    let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init());
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -7639,6 +7655,7 @@ pub fn run() {
             list_shareable_expressions,
             ui_ready,
             is_mobile_app,
+            can_share_screen,
             init_user,
             get_user,
             create_server,

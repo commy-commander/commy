@@ -1731,6 +1731,7 @@ async function mockInvoke(cmd, args = {}) {
         { kind: "window", id: 12, name: "Spotify", is_primary: false },
       ];
     case "share_source_preview": return mockFrame(`Source ${args.sourceId}`, 360, 203, args.sourceId * 47);
+    case "can_share_screen": return true;
     case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47, audio: args.audio }; return null;
     case "share_audio_supported": return true;
     case "set_stream_volume": mock.voice.stream_volume = args.volume; return mock.voice;
@@ -15084,6 +15085,8 @@ function wireTouchMessages() {
 async function markMobileApp() {
   const mobile = await invoke("is_mobile_app").catch(() => false);
   document.body.classList.toggle("mobile-app", Boolean(mobile));
+  const share = mobile ? await invoke("can_share_screen").catch(() => false) : true;
+  document.body.classList.toggle("can-share-screen", Boolean(share));
 }
 
 function setViewMode(mode) {
@@ -16608,21 +16611,23 @@ async function toggleVoice(channel) {
   }
 }
 
+async function stopSharing() {
+  try {
+    await invoke("stop_screen_share", { serverId: state.voiceServer.id });
+    state.sharing = false;
+    state.shareSource = null;
+    if (state.stageMode === "self") closeStage();
+    toast("Stopped sharing");
+    renderShareButton();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 async function toggleShare() {
   if (!state.voiceServer || !state.voiceChannelId) return;
-  if (state.sharing) {
-    try {
-      await invoke("stop_screen_share", { serverId: state.voiceServer.id });
-      state.sharing = false;
-      state.shareSource = null;
-      if (state.stageMode === "self") closeStage();
-      toast("Stopped sharing");
-      renderShareButton();
-    } catch (e) {
-      toast(String(e));
-    }
-    return;
-  }
+  if (state.sharing) return stopSharing();
+  if (document.body.classList.contains("mobile-app")) return startShareWith({ kind: "monitor", id: 0, name: "your screen" }, "balanced", false);
   await openSharePicker();
 }
 
@@ -18553,6 +18558,9 @@ function wireEvents() {
       await trackFriendPresence(serverId);
     });
     window.__TAURI__.event.listen("servers-changed", refreshServers);
+    window.__TAURI__.event.listen("screen-share-ended", () => {
+      if (state.sharing && state.voiceServer) stopSharing();
+    });
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
     window.__TAURI__.event.listen("activity-set", event => onActivitySet(event.payload));
     window.__TAURI__.event.listen("activity-input", event => onActivityInput(event.payload));
