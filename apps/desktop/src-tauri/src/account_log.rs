@@ -9,7 +9,7 @@ use commy_core::{IdentityKey, ServerId, UserId, UserProfile};
 use commy_net::entry_list::EntryList;
 use commy_net::sync_streams;
 use commy_sync::{AppendError, StreamId, SyncEvent};
-use commy_view::safety::Relation;
+use commy_view::safety::RelationPiece;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -54,15 +54,7 @@ pub enum Record {
         #[serde(default)]
         owner: Option<(UserId, IdentityKey)>,
     },
-    Relation {
-        user: UserId,
-        relation: Relation,
-        at: i64,
-        #[serde(default)]
-        note: Option<String>,
-        #[serde(default)]
-        profile: Option<UserProfile>,
-    },
+    Relations { set: BTreeMap<UserId, RelationPiece> },
     #[serde(other)]
     Unknown,
 }
@@ -116,7 +108,7 @@ pub enum Change {
     Prefs(BTreeMap<String, PrefPiece>),
     Partner(Box<UserProfile>, bool),
     CommunityKey(ServerId),
-    Relation { user: UserId, relation: Relation, note: Option<String>, profile: Option<Box<UserProfile>> },
+    Relations(BTreeMap<UserId, RelationPiece>),
 }
 
 impl SyncState {
@@ -220,13 +212,17 @@ impl SyncState {
                 }
                 if changed { Change::CommunityKey(server) } else { Change::Nothing }
             }
-            Record::Relation { user, relation, at, note, profile } => {
-                if self.relations.get(&user).is_some_and(|seen| at <= *seen) {
-                    return Change::Nothing;
+            Record::Relations { set } => {
+                let mut taken = BTreeMap::new();
+                for (user, mut piece) in set {
+                    if self.relations.get(&user).is_some_and(|seen| piece.at <= *seen) {
+                        continue;
+                    }
+                    self.relations.insert(user, piece.at);
+                    piece.profile = piece.profile.filter(|p| p.id == user);
+                    taken.insert(user, piece);
                 }
-                self.relations.insert(user, at);
-                let profile = profile.filter(|p| p.id == user).map(Box::new);
-                Change::Relation { user, relation, note, profile }
+                if taken.is_empty() { Change::Nothing } else { Change::Relations(taken) }
             }
             _ => Change::Nothing,
         }
@@ -496,41 +492,48 @@ fn apply(handle: &AppHandle, change: Change) {
             crate::community_sync::adopt_owner(handle, server);
             crate::community_sync::refresh_soon(handle);
         }
-        Change::Relation { user, relation, note, profile } => adopt_relation(handle, user, relation, note, profile.map(|p| *p)),
+        Change::Relations(set) => adopt_relations(handle, set),
     }
 }
 
-fn adopt_relation(handle: &AppHandle, user: UserId, relation: Relation, note: Option<String>, profile: Option<UserProfile>) {
+fn adopt_relations(handle: &AppHandle, set: BTreeMap<UserId, RelationPiece>) {
     let app = handle.state::<App>();
-    if app.profile.lock().unwrap().as_ref().map(|p| p.id) == Some(user) {
-        return;
-    }
-    if let Some(profile) = profile {
-        let remembered = {
-            let mut dms = app.dms.lock().unwrap();
-            !dms.contacts.contains_key(&user) && dms.remember_contact(profile)
-        };
-        if remembered {
-            app.persist_dms();
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let set: Vec<(UserId, RelationPiece)> = set.into_iter().filter(|(user, _)| Some(*user) != me).collect();
+    let remembered = {
+        let mut dms = app.dms.lock().unwrap();
+        let mut remembered = false;
+        for (user, piece) in &set {
+            if let Some(profile) = piece.profile.clone().filter(|_| !dms.contacts.contains_key(user)) {
+                remembered |= dms.remember_contact(profile);
+            }
         }
+        remembered
+    };
+    if remembered {
+        app.persist_dms();
     }
     let (changed, block_changed) = {
         let mut safety = app.safety.lock().unwrap();
-        let was_blocked = safety.is_blocked(user);
-        let changed = safety.set_relation(user, relation, note);
-        (changed, was_blocked != safety.is_blocked(user))
+        let (mut changed, mut block_changed) = (false, false);
+        for (user, piece) in set {
+            let was_blocked = safety.is_blocked(user);
+            changed |= safety.set_relation(user, piece.relation, piece.note);
+            block_changed |= was_blocked != safety.is_blocked(user);
+        }
+        (changed, block_changed)
     };
     if !changed {
         return;
     }
     app.persist_safety();
-    let _ = handle.emit("friends-changed", serde_json::json!({ "user": user.to_string() }));
+    let _ = handle.emit("friends-changed", serde_json::json!({}));
     if block_changed {
         let _ = handle.emit("safety-changed", ());
     }
 }
 
-fn relation_record(app: &App, user: UserId, at: i64) -> Record {
+fn relation_piece(app: &App, user: UserId, at: i64) -> RelationPiece {
     let (relation, note) = {
         let safety = app.safety.lock().unwrap();
         (safety.relation(user), safety.friend_notes.get(&user).cloned())
@@ -541,7 +544,24 @@ fn relation_record(app: &App, user: UserId, at: i64) -> Record {
         p.activity_since = None;
         p
     });
-    Record::Relation { user, relation, at, note, profile }
+    RelationPiece { relation, at, note, profile }
+}
+
+pub fn relation_records(pieces: BTreeMap<UserId, RelationPiece>) -> Vec<Record> {
+    let mut out = Vec::new();
+    let mut current = BTreeMap::new();
+    for (user, piece) in pieces {
+        current.insert(user, piece);
+        if current.len() > 1 && record_bytes(&Record::Relations { set: current.clone() }) > MAX_RECORD_BYTES {
+            let last = current.pop_last().expect("just inserted");
+            out.push(Record::Relations { set: std::mem::take(&mut current) });
+            current.insert(last.0, last.1);
+        }
+    }
+    if !current.is_empty() {
+        out.push(Record::Relations { set: current });
+    }
+    out
 }
 
 fn seed_relations(app: &App) {
@@ -555,7 +575,7 @@ fn seed_relations(app: &App) {
     let unsynced: Vec<UserId> =
         with_state(app, |state| mine.into_iter().filter(|user| !state.relations.contains_key(user)).collect()).unwrap_or_default();
     let now = now_ms();
-    let records: Vec<Record> = unsynced.into_iter().map(|user| relation_record(app, user, now)).collect();
+    let records = relation_records(unsynced.into_iter().map(|user| (user, relation_piece(app, user, now))).collect());
     with_state(app, |state| {
         for record in records {
             state.fold(record.clone());
@@ -568,7 +588,7 @@ fn seed_relations(app: &App) {
 }
 
 pub fn note_relation(app: &App, user: UserId) {
-    queue(app, relation_record(app, user, now_ms()));
+    queue(app, Record::Relations { set: BTreeMap::from([(user, relation_piece(app, user, now_ms()))]) });
 }
 
 fn seed(handle: &AppHandle) {
@@ -938,19 +958,45 @@ mod tests {
 
     #[test]
     fn friends_and_blocks_follow_the_latest_change_on_any_device() {
+        use commy_view::safety::Relation;
         let mut state = SyncState::default();
         let user = UserId::new();
-        let set = |relation, at| Record::Relation { user, relation, at, note: None, profile: None };
-        assert!(matches!(state.fold(set(Relation::Outgoing, 5)), Change::Relation { relation: Relation::Outgoing, .. }));
+        let piece = |relation, at| RelationPiece { relation, at, note: None, profile: None };
+        let set = |relation, at| Record::Relations { set: BTreeMap::from([(user, piece(relation, at))]) };
+        let Change::Relations(taken) = state.fold(set(Relation::Outgoing, 5)) else { panic!("a new relation lands") };
+        assert_eq!(taken[&user].relation, Relation::Outgoing);
         assert_eq!(state.fold(set(Relation::None, 4)), Change::Nothing);
-        assert!(matches!(state.fold(set(Relation::Friend, 9)), Change::Relation { relation: Relation::Friend, .. }));
+        assert!(matches!(state.fold(set(Relation::Friend, 9)), Change::Relations(_)));
         assert_eq!(state.fold(set(Relation::Friend, 9)), Change::Nothing);
         let stranger = UserProfile::new("someone else");
-        let mismatched = Record::Relation { user, relation: Relation::Blocked, at: 10, note: None, profile: Some(stranger) };
-        let Change::Relation { profile, .. } = state.fold(mismatched) else { panic!("newer wins") };
-        assert!(profile.is_none());
+        let mismatched = Record::Relations { set: BTreeMap::from([(user, RelationPiece { profile: Some(stranger), ..piece(Relation::Blocked, 10) })]) };
+        let Change::Relations(taken) = state.fold(mismatched) else { panic!("newer wins") };
+        assert!(taken[&user].profile.is_none());
         let json = serde_json::to_string(&set(Relation::Incoming, 11)).unwrap();
-        assert!(json.contains(r#""k":"relation""#) && json.contains(r#""relation":"incoming""#));
+        assert!(json.contains(r#""k":"relations""#) && json.contains(r#""relation":"incoming""#));
+    }
+
+    #[test]
+    fn a_long_friends_list_is_shared_in_few_records_under_the_entry_size() {
+        use commy_view::safety::Relation;
+        let pieces: BTreeMap<UserId, RelationPiece> = (0..300)
+            .map(|n| {
+                let mut profile = UserProfile::new(format!("friend {n}"));
+                profile.custom_status = Some("s".repeat(200));
+                (profile.id, RelationPiece { relation: Relation::Friend, at: 1, note: None, profile: Some(profile) })
+            })
+            .collect();
+        let records = relation_records(pieces);
+        assert!(records.len() > 1 && records.len() < 10);
+        let mut state = SyncState::default();
+        let mut seen = 0;
+        for record in records {
+            assert!(record_bytes(&record) <= MAX_RECORD_BYTES);
+            if let Change::Relations(taken) = state.fold(record) {
+                seen += taken.len();
+            }
+        }
+        assert_eq!(seen, 300);
     }
 
     #[test]

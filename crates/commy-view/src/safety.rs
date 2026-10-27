@@ -282,6 +282,16 @@ pub enum Relation {
     Blocked,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationPiece {
+    pub relation: Relation,
+    pub at: i64,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub profile: Option<UserProfile>,
+}
+
 impl Default for SafetySettings {
     fn default() -> Self {
         Self {
