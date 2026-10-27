@@ -20,6 +20,13 @@ function membersCollapsed(pref, width) {
   return width < NARROW_WINDOW_PX;
 }
 
+const VOICE_RING_LIMIT = 4;
+
+function voiceRingSplit(count, limit = VOICE_RING_LIMIT) {
+  if (count <= limit) return { shown: count, more: 0 };
+  return { shown: limit - 1, more: count - limit + 1 };
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { NARROW_WINDOW_PX, CHAT_FIRST_PX, SIDEBAR_MIN_PX, SIDEBAR_MAX_PX, clampSidebarWidth, pickConnLink, membersCollapsed };
+  module.exports = { NARROW_WINDOW_PX, CHAT_FIRST_PX, SIDEBAR_MIN_PX, SIDEBAR_MAX_PX, clampSidebarWidth, pickConnLink, membersCollapsed, VOICE_RING_LIMIT, voiceRingSplit };
 }
