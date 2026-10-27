@@ -79,8 +79,8 @@ function chosenTtsVoice(voices, id) {
   return (id && voices.find(v => v.id === id)) || null;
 }
 
-function shouldSpeakIncoming({ mode, tts, ownMessage, deafened, viewing, blocked, presence }) {
-  if (!tts || ownMessage || deafened || blocked) return false;
+function shouldSpeakIncoming({ mode, tts, ownMessage, deafened, viewing, blocked, presence, inVoice }) {
+  if (!tts || ownMessage || deafened || blocked || !inVoice) return false;
   if (presence === "do_not_disturb") return false;
   if (mode === "all") return true;
   return mode === "open" && Boolean(viewing);
