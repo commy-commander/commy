@@ -2085,6 +2085,7 @@ function hideModals() {
 
 const avatarDirectory = new Map();
 const avatarImages = new Map();
+const OWN_AVATAR_RETRY_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
 function rememberAvatars(members) {
   for (const m of members || []) {
@@ -2119,6 +2120,14 @@ function loadAvatarImage(blob, provider) {
   return cachedLoad(avatarImages, blob, () => invoke("get_profile_image", { blob, provider }));
 }
 
+function loadAvatarImageUntil(blob, provider, waits, wanted) {
+  return loadAvatarImage(blob, provider).then(url => {
+    if (url || !waits.length || !wanted()) return url;
+    return new Promise(resolve => setTimeout(resolve, waits[0]))
+      .then(() => wanted() ? loadAvatarImageUntil(blob, provider, waits.slice(1), wanted) : null);
+  });
+}
+
 function paintAvatar(node, userId, name) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE || child.classList?.contains("avatar-face")) child.remove();
@@ -2150,7 +2159,8 @@ function paintAvatar(node, userId, name) {
       face.draggable = false;
       node.classList.add("image-avatar");
     } else {
-      loadAvatarImage(blob, avatarFor(userId)?.provider).then(show);
+      const waits = state.user && userId === state.user.id ? OWN_AVATAR_RETRY_MS : [];
+      loadAvatarImageUntil(blob, avatarFor(userId)?.provider, waits, () => node.isConnected && node.contains(face)).then(show);
     }
   } else {
     face = el("span", "avatar-face", initials(name || "?"));
