@@ -248,6 +248,8 @@ pub struct MemberView {
     pub timeout_until: Option<i64>,
     pub timeout_by: Option<String>,
     pub server_tag: Option<server_tags::ServerTagView>,
+    pub avatar_border: Option<String>,
+    pub card_effect: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -563,6 +565,8 @@ impl ServerView {
                     timeout_until: state.server.timeout_of(p.id, now).map(|t| t.until.timestamp_millis()),
                     timeout_by: state.server.timeout_of(p.id, now).map(|t| t.by.to_string()),
                     server_tag: server_tags::shown(p.server_tag.as_ref(), state, p.id),
+                    avatar_border: p.avatar_border.clone().filter(|b| commy_core::user::valid_avatar_border(b)),
+                    card_effect: p.card_effect.clone().filter(|e| commy_core::user::valid_card_effect(e)),
                 }
             })
             .collect();

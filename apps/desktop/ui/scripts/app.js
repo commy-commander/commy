@@ -330,6 +330,10 @@ function mockSeed() {
   server.members[0].color = "9b7bff";
   server.members[0].server_tag = { letters: "RUST", emoji: "\u{1f980}", color: "orange", effect: "shine", server: "Rust Hangout" };
   server.server_tag = { letters: "RUST", emoji: "\u{1f980}", color: "orange", effect: "shine" };
+  server.members[0].avatar_border = "stars";
+  server.members[0].card_effect = "sparkles";
+  server.members[1].avatar_border = "sunset";
+  server.members[1].card_effect = "aurora";
   server.join_approval = true;
   server.tip_jar = "https://ko-fi.com/rusthangout";
   server.join_requests = [
@@ -725,7 +729,7 @@ async function mockInvoke(cmd, args = {}) {
       const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, priority_speaker: false, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: mock.user.custom_status || null, status_emoji: mock.user.status_emoji || null, about: mock.user.about || null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember, server_tag: mockWornTagView() };
+        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: mock.user.custom_status || null, status_emoji: mock.user.status_emoji || null, about: mock.user.about || null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember, server_tag: mockWornTagView(), avatar_border: mock.user.avatar_border || null, card_effect: mock.user.card_effect || null };
         const vc = s.channels.find(c => isVoiceKind(c.kind) && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -1593,6 +1597,10 @@ async function mockInvoke(cmd, args = {}) {
       return touched;
     }
     case "set_about": mock.user.about = args.about; return mock.user;
+    case "set_profile_look":
+      mock.user.avatar_border = args.avatarBorder || null;
+      mock.user.card_effect = args.cardEffect || null;
+      return mock.user;
     case "set_window_title": return null;
     case "set_icons": mock.voice.app_icon = args.appIcon; mock.voice.tray_icon = args.trayIcon; return mock.voice;
     case "get_custom_icon": return null;
@@ -2179,13 +2187,13 @@ const OWN_AVATAR_RETRY_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
 function rememberAvatars(members) {
   for (const m of members || []) {
-    avatarDirectory.set(m.id, { avatar: m.avatar || null, provider: m.avatar_provider || null });
+    avatarDirectory.set(m.id, { avatar: m.avatar || null, provider: m.avatar_provider || null, border: m.avatar_border || null });
   }
 }
 
 function avatarFor(userId) {
   if (state.user && userId === state.user.id) {
-    return { avatar: state.user.avatar || null, provider: state.user.node || null };
+    return { avatar: state.user.avatar || null, provider: state.user.node || null, border: state.user.avatar_border || null };
   }
   return avatarDirectory.get(userId) || null;
 }
@@ -2256,7 +2264,107 @@ function paintAvatar(node, userId, name) {
     face = el("span", "avatar-face", initials(name || "?"));
   }
   node.prepend(face);
+  setAvatarBorder(node, avatarFor(userId)?.border);
   return node;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ORNAMENT_PATHS = {
+  stars: "M0,-1 L0.29,-0.4 0.95,-0.31 0.48,0.15 0.59,0.81 0,0.5 -0.59,0.81 -0.48,0.15 -0.95,-0.31 -0.29,-0.4Z",
+  leaves: "M0,-1 C0.62,-0.5 0.62,0.5 0,1 C-0.62,0.5 -0.62,-0.5 0,-1Z",
+};
+
+function setAvatarBorder(node, border) {
+  node.querySelector(":scope > .avatar-border")?.remove();
+  const shown = isAvatarBorder(border);
+  node.classList.toggle("has-border", shown);
+  if (shown) node.appendChild(avatarBorderNode(border));
+}
+
+function avatarBorderNode(id) {
+  const ring = el("span", `avatar-border ab-${id}`);
+  ring.setAttribute("aria-hidden", "true");
+  const ornament = BORDER_ORNAMENTS[id];
+  if (ornament) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "ab-ornaments");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    for (const point of ornamentPoints(ornament.count, ornament.from, ornament.to)) {
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", ORNAMENT_PATHS[id]);
+      path.setAttribute("transform", `translate(${point.x} ${point.y}) rotate(${point.angle}) scale(${ornament.size})`);
+      svg.appendChild(path);
+    }
+    ring.appendChild(svg);
+  }
+  if (id === "orbit") ring.appendChild(el("span", "ab-orbit-dot"));
+  return ring;
+}
+
+function paintCardEffect(banner, effect, seed) {
+  banner.querySelector(":scope > .card-effect")?.remove();
+  const kind = CARD_EFFECTS.find(e => e.id === effect);
+  if (!kind) return;
+  const layer = el("div", `card-effect ce-${kind.id}`);
+  layer.setAttribute("aria-hidden", "true");
+  for (const p of particleSeeds(kind.particles, seed)) {
+    const dot = el("span", "ce-p");
+    dot.style.setProperty("--x", `${p.x}%`);
+    dot.style.setProperty("--y", `${p.y}%`);
+    dot.style.setProperty("--d", p.delay);
+    dot.style.setProperty("--s", p.size);
+    dot.style.setProperty("--t", `${p.duration}s`);
+    layer.appendChild(dot);
+  }
+  banner.appendChild(layer);
+}
+
+function lookOption(label, preview, checked, onPick) {
+  const btn = el("button", "look-option");
+  btn.type = "button";
+  btn.setAttribute("role", "radio");
+  btn.setAttribute("aria-checked", String(checked));
+  btn.append(preview, el("span", null, label));
+  btn.onclick = onPick;
+  return btn;
+}
+
+function renderLookPickers() {
+  const me = state.user;
+  if (!me) return;
+  const name = me.display_name || me.username;
+  const borderPreview = border => {
+    const avatar = makeAvatar(me.id, name, "avatar av-live");
+    setAvatarBorder(avatar, border);
+    return avatar;
+  };
+  $("account-border-grid").replaceChildren(
+    lookOption("None", borderPreview(null), !me.avatar_border, () => saveProfileLook(null, me.card_effect || null)),
+    ...AVATAR_BORDERS.map(b => lookOption(b.label, borderPreview(b.id), me.avatar_border === b.id, () => saveProfileLook(b.id, me.card_effect || null))),
+  );
+  const effectPreview = effect => {
+    const swatch = el("span", "look-swatch");
+    paintCardEffect(swatch, effect, me.id);
+    return swatch;
+  };
+  $("account-effect-grid").replaceChildren(
+    lookOption("None", effectPreview(null), !me.card_effect, () => saveProfileLook(me.avatar_border || null, null)),
+    ...CARD_EFFECTS.map(e => lookOption(e.label, effectPreview(e.id), me.card_effect === e.id, () => saveProfileLook(me.avatar_border || null, e.id))),
+  );
+}
+
+async function saveProfileLook(avatarBorder, cardEffect) {
+  try {
+    state.user = await invoke("set_profile_look", { avatarBorder, cardEffect });
+    renderLookPickers();
+    $("account-avatar").replaceChildren();
+    paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
+    paintAccountBanner();
+    renderProfilePopover();
+    if (state.currentServer) refreshCurrentServer();
+  } catch (err) {
+    toast(String(err));
+  }
 }
 
 function liveElapsed(sinceSecs, fmt = "clock", cls = "") {
@@ -10672,6 +10780,7 @@ async function openFullProfile(member) {
   const person = { ...(state.people.get(member.id) || {}), ...member };
   $("fp-banner").dataset.banner = "";
   paintProfileBanner($("fp-banner"), person.banner, person.avatar_provider, person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
+  paintCardEffect($("fp-banner"), person.card_effect, person.id);
   const av = $("fp-avatar");
   av.replaceChildren();
   paintAvatar(av, person.id, person.name);
@@ -10778,6 +10887,7 @@ function openMemberCard(member, anchor) {
   const card = $("member-card");
   $("mc-banner").dataset.banner = "";
   paintProfileBanner($("mc-banner"), member.banner, member.avatar_provider, member.role_banner, member.color ? roleGradient(member.color) : bannerColor(member.id));
+  paintCardEffect($("mc-banner"), member.card_effect, member.id);
   const av = $("mc-avatar");
   av.replaceChildren();
   paintAvatar(av, member.id, member.name);
@@ -19809,6 +19919,7 @@ function openUserSettings(tab) {
   $("account-avatar").replaceChildren();
   paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
   paintAccountBanner();
+  renderLookPickers();
   $("account-preview-name").textContent = state.user.display_name || state.user.username;
   $("account-username").textContent = state.user.username;
   openSettingsLayer("user-settings", tab);
@@ -21167,6 +21278,7 @@ function paintAccountBanner() {
   const strip = $("account-banner");
   strip.dataset.banner = "";
   paintProfileBanner(strip, state.user.banner, state.user.node, null, bannerColor(state.user.id));
+  paintCardEffect(strip, state.user.card_effect, state.user.id);
   $("account-banner-upload").lastElementChild.textContent = state.user.banner ? "Change banner" : "Add banner";
   $("account-banner-remove").classList.toggle("hidden", !state.user.banner);
 }
