@@ -3267,6 +3267,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .header-actions .icon-btn { width: 32px; height: 32px; }
 .header-actions .icon-btn > svg { width: 22px; height: 22px; }
 .composer .icon-btn > svg { width: 22px; height: 22px; }
+.composer .text-style-btn > svg { width: 24px; height: 24px; }
 .user-panel { gap: 6px; }
 .user-actions { display: flex; align-items: center; gap: 0; }
 .user-actions .icon-btn { width: 32px; height: 32px; }
@@ -3791,7 +3792,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .ts-swatch:hover { filter: brightness(1.1); }
 .ts-hint { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
 
-.gif-btn { width: auto; padding: 0 6px; font-size: 12px; font-weight: 800; line-height: 1; }
+.gif-btn { width: auto; min-width: 32px; padding: 0 0 1px; font-size: 13px; font-weight: 800; line-height: 1; letter-spacing: -.01em; }
 .composer-slow { display: inline-flex; align-items: center; gap: 4px; min-width: 52px; justify-content: center; padding: 0 6px; font-size: 12px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .composer-slow svg { width: 16px; height: 16px; }
 .composer-slow.waiting { color: var(--accent); }
