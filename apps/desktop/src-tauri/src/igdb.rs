@@ -27,16 +27,6 @@ impl IgdbCredentials {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GameHit {
-    pub id: u64,
-    pub name: String,
-    pub cover: Option<String>,
-    pub year: Option<i32>,
-    #[serde(default)]
-    pub steam: Option<u32>,
-}
-
 #[derive(Deserialize)]
 struct ApiCover {
     image_id: Option<String>,
@@ -88,6 +78,7 @@ struct TokenResponse {
     expires_in: u64,
 }
 
+pub use commy_view::catalog::{safe_games, GameHit};
 pub use commy_view::valid_image_id;
 
 pub fn normalize(name: &str) -> String {
@@ -96,13 +87,6 @@ pub fn normalize(name: &str) -> String {
 
 pub fn apicalypse_string(query: &str) -> String {
     query.chars().filter(|c| !c.is_control()).collect::<String>().replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-pub fn safe_hits(hits: Vec<GameHit>) -> Vec<GameHit> {
-    hits.into_iter()
-        .filter(|h| !h.name.trim().is_empty())
-        .map(|h| GameHit { cover: h.cover.filter(|id| valid_image_id(id)), steam: h.steam.filter(|id| *id > 0), ..h })
-        .collect()
 }
 
 pub fn best_match<'a>(name: &str, hits: &'a [GameHit]) -> Option<&'a GameHit> {
@@ -284,7 +268,7 @@ mod tests {
             GameHit { id: 2, name: "Bad cover".into(), cover: Some("https://evil".into()), year: None, steam: Some(0) },
             GameHit { id: 3, name: " ".into(), cover: None, year: None, steam: None },
         ];
-        let safe = safe_hits(hits);
+        let safe = safe_games(hits);
         assert_eq!(safe.len(), 2);
         assert_eq!(safe[0].cover.as_deref(), Some("co1"));
         assert_eq!(safe[1].cover, None);

@@ -1171,7 +1171,8 @@ async function mockInvoke(cmd, args = {}) {
     case "set_avatar":
       if (args.kind === "image") {
         const blob = "mock" + Date.now();
-        mock.avatars = { ...(mock.avatars || {}), [blob]: `data:image/jpeg;base64,${args.data}` };
+        const mime = args.data.startsWith("R0lGOD") ? "image/gif" : args.data.startsWith("iVBOR") ? "image/png" : "image/jpeg";
+        mock.avatars = { ...(mock.avatars || {}), [blob]: `data:${mime};base64,${args.data}` };
         mock.user.avatar = `blob:${blob}`;
       } else {
         mock.user.avatar = args.kind === "emoji" ? `emoji:${args.data}` : null;
@@ -2085,6 +2086,7 @@ function hideModals() {
 
 const avatarDirectory = new Map();
 const avatarImages = new Map();
+const OWN_AVATAR_RETRY_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
 function rememberAvatars(members) {
   for (const m of members || []) {
@@ -2119,6 +2121,14 @@ function loadAvatarImage(blob, provider) {
   return cachedLoad(avatarImages, blob, () => invoke("get_profile_image", { blob, provider }));
 }
 
+function loadAvatarImageUntil(blob, provider, waits, wanted) {
+  return loadAvatarImage(blob, provider).then(url => {
+    if (url || !waits.length || !wanted()) return url;
+    return new Promise(resolve => setTimeout(resolve, waits[0]))
+      .then(() => wanted() ? loadAvatarImageUntil(blob, provider, waits.slice(1), wanted) : null);
+  });
+}
+
 function paintAvatar(node, userId, name) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE || child.classList?.contains("avatar-face")) child.remove();
@@ -2150,7 +2160,8 @@ function paintAvatar(node, userId, name) {
       face.draggable = false;
       node.classList.add("image-avatar");
     } else {
-      loadAvatarImage(blob, avatarFor(userId)?.provider).then(show);
+      const waits = state.user && userId === state.user.id ? OWN_AVATAR_RETRY_MS : [];
+      loadAvatarImageUntil(blob, avatarFor(userId)?.provider, waits, () => node.isConnected && node.contains(face)).then(show);
     }
   } else {
     face = el("span", "avatar-face", initials(name || "?"));
@@ -3990,20 +4001,85 @@ function saveTtsPrefs(prefs) {
   try { localStorage.setItem(TTS_KEY, JSON.stringify(prefs)); } catch {}
 }
 
-function speechAvailable() {
+const speech = { native: false, ready: false, voices: [], loading: null, utterance: null };
+
+function windowSpeech() {
   return typeof window !== "undefined" && Boolean(window.speechSynthesis) && typeof SpeechSynthesisUtterance === "function";
 }
 
+function speechAvailable() {
+  return speech.native || windowSpeech();
+}
+
+function windowVoices() {
+  if (!windowSpeech()) return [];
+  return window.speechSynthesis.getVoices().map(v => ({ id: v.voiceURI || v.name, name: v.name, lang: v.lang, default: v.default }));
+}
+
+function loadSpeechVoices() {
+  if (speech.loading) return speech.loading;
+  speech.loading = invoke("speech_voices")
+    .catch(() => null)
+    .then(found => {
+      speech.native = Boolean(found && found.native && Array.isArray(found.voices) && found.voices.length);
+      if (!speech.native && windowSpeech()) {
+        window.speechSynthesis.addEventListener("voiceschanged", () => {
+          speech.voices = ttsVoices(windowVoices(), navigator.language);
+          renderTtsSettings();
+        });
+      }
+      speech.voices = ttsVoices(speech.native ? found.voices : windowVoices(), navigator.language);
+      speech.ready = true;
+      renderTtsSettings();
+    });
+  return speech.loading;
+}
+
 function stopSpeaking() {
-  if (speechAvailable()) window.speechSynthesis.cancel();
+  speech.utterance = null;
+  if (speech.native) invoke("speech_stop").catch(() => {});
+  if (windowSpeech()) window.speechSynthesis.cancel();
+}
+
+function speakInWindow(text, prefs) {
+  const synth = window.speechSynthesis;
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = chosenTtsVoice(speech.voices, prefs.voice);
+  const match = voice && synth.getVoices().find(v => (v.voiceURI || v.name) === voice.id);
+  if (match) {
+    utterance.voice = match;
+    utterance.lang = match.lang;
+  }
+  utterance.rate = prefs.rate;
+  utterance.pitch = prefs.pitch;
+  utterance.onend = utterance.onerror = () => { if (speech.utterance === utterance) speech.utterance = null; };
+  speech.utterance = utterance;
+  synth.cancel();
+  setTimeout(() => {
+    if (speech.utterance !== utterance) return;
+    synth.resume();
+    synth.speak(utterance);
+  }, 60);
+}
+
+function speakNow(text) {
+  const prefs = ttsPrefs();
+  if (speech.native) {
+    const voice = chosenTtsVoice(speech.voices, prefs.voice);
+    invoke("speech_speak", { text, voice: voice ? voice.id : null, rate: prefs.rate, pitch: prefs.pitch }).catch(e => toast(`Could not read it aloud: ${e}`));
+  } else if (windowSpeech()) {
+    speakInWindow(text, prefs);
+  }
 }
 
 function speakText(text) {
-  if (!text || !speechAvailable()) return false;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = ttsPrefs().rate;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
+  if (!text) return false;
+  if (!speech.ready) {
+    loadSpeechVoices().then(() => (speechAvailable() ? speakNow(text) : toast("Text-to-speech is not available here")));
+    return true;
+  }
+  if (!speechAvailable()) return false;
+  speakNow(text);
   return true;
 }
 
@@ -4030,12 +4106,24 @@ function canSendTtsHere() {
 
 function renderTtsSettings() {
   const prefs = ttsPrefs();
+  const usable = speechAvailable();
   $("tts-mode").value = prefs.mode;
   $("tts-rate").value = String(Math.round(prefs.rate * 10));
   $("tts-rate-label").textContent = `${prefs.rate.toFixed(1)}x`;
-  $("tts-mode").disabled = !speechAvailable();
-  $("tts-preview").disabled = !speechAvailable();
-  $("tts-preview").title = speechAvailable() ? "" : "Text-to-speech is not available here";
+  $("tts-pitch").value = String(Math.round(prefs.pitch * 10));
+  $("tts-pitch-label").textContent = `${prefs.pitch.toFixed(1)}`;
+  const select = $("tts-voice");
+  const options = [el("option", null, "Computer default")];
+  options[0].value = "";
+  for (const voice of speech.voices) {
+    const option = el("option", null, ttsVoiceLabel(voice));
+    option.value = voice.id;
+    options.push(option);
+  }
+  select.replaceChildren(...options);
+  select.value = chosenTtsVoice(speech.voices, prefs.voice) ? prefs.voice : "";
+  for (const id of ["tts-mode", "tts-voice", "tts-rate", "tts-pitch", "tts-preview"]) $(id).disabled = !usable;
+  $("tts-preview").title = usable ? "" : "Text-to-speech is not available here";
 }
 
 function onMessagesCaughtUp(payload) {
@@ -4822,18 +4910,50 @@ function showEmojiFoot(b, btn) {
 }
 
 function emojiPopBrowser() {
-  if (!emojiBrowsers.pop) emojiBrowsers.pop = buildEmojiBrowser($("emoji-pop"));
+  if (!emojiBrowsers.pop) emojiBrowsers.pop = buildEmojiBrowser($("emoji-pop-browser"));
   return emojiBrowsers.pop;
 }
 
-function openEmojiPop(anchor, onPick, { custom = false, onClear = null } = {}) {
+function openEmojiPop(anchor, onPick, { custom = false, onClear = null, onGif = null } = {}) {
   const pop = $("emoji-pop");
   const b = emojiPopBrowser();
   const done = () => pop.classList.add("hidden");
   pop.classList.remove("hidden");
+  popGifs.pick = onGif && ((gif, btn) => pickPopGif(gif, btn, onGif, done));
+  popGifs.shown = false;
+  $("emoji-pop-gif-search").value = "";
+  $("emoji-pop-tabs").classList.toggle("hidden", !onGif);
   openEmojiBrowser(b, { custom, onPick, onClear, onDone: done });
+  showEmojiPopTab("emoji");
   placePopup(pop, anchor, "above");
-  if (!isPhoneWidth(window.innerWidth)) b.search.focus();
+}
+
+function showEmojiPopTab(tab) {
+  const gifs = tab === "gifs";
+  for (const btn of $("emoji-pop-tabs").querySelectorAll("button")) {
+    btn.classList.toggle("active", btn.dataset.tab === tab);
+    btn.setAttribute("aria-selected", String(btn.dataset.tab === tab));
+  }
+  $("emoji-pop-browser").classList.toggle("hidden", gifs);
+  $("emoji-pop-gifs").classList.toggle("hidden", !gifs);
+  const search = gifs ? $("emoji-pop-gif-search") : emojiPopBrowser().search;
+  if (gifs && !popGifs.shown) {
+    popGifs.shown = true;
+    renderGifResults(search.value, popGifs);
+  }
+  if (!isPhoneWidth(window.innerWidth)) search.focus();
+}
+
+async function pickPopGif(gif, btn, onGif, done) {
+  btn.classList.add("busy");
+  try {
+    await onGif(gif);
+    done();
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    btn.classList.remove("busy");
+  }
 }
 
 function toggleProfilePopover() {
@@ -4920,6 +5040,36 @@ function imageFileToAvatar(file) {
     };
     img.src = url;
   });
+}
+
+async function pictureToAvatar(src, { keepStill = false } = {}) {
+  const blob = await (await fetch(src)).blob();
+  const plan = avatarPicturePlan(new Uint8Array(await blob.arrayBuffer()), { keepStill });
+  if (plan === "keep") return blobToBase64(blob);
+  if (plan === "too-large") throw new Error(`GIF avatars can be up to ${AVATAR_MAX_BYTES / 1024} KB. Try a smaller GIF.`);
+  if (keepStill) return (await prepareEmojiImage(src, { size: 256, maxGif: 0 })).data;
+  return imageFileToAvatar(src);
+}
+
+async function pickEmojiAvatar(picked) {
+  const custom = parseEmojiToken(picked);
+  if (!custom) return applyAvatar("emoji", picked);
+  try {
+    const src = await expressionUrl(custom.image);
+    if (!src) throw new Error("That emoji could not be loaded right now. Try again in a moment.");
+    await applyAvatar("image", await pictureToAvatar(src, { keepStill: true }));
+  } catch (e) {
+    toast(String(e.message || e));
+  }
+}
+
+async function pickGifAvatar(gif) {
+  const src = await invoke("fetch_catalog_image", { url: gif.preview || gif.url });
+  await applyAvatar("image", await pictureToAvatar(src));
+}
+
+function avatarGifs() {
+  return avatarGifsOffered(gifSettings(), serverHasGifs()) ? pickGifAvatar : null;
 }
 
 async function applyAvatar(kind, data) {
@@ -15460,17 +15610,18 @@ async function searchGifs(query, settings = gifSettings()) {
   })).filter(g => g.preview && g.url);
 }
 
-let gifSearchToken = 0;
+const composerGifs = { grid: "gif-grid", attrib: "gif-attrib", search: "gif-search", token: 0, pick: gif => sendGif(gif.url), close: () => closeGifPicker() };
+const popGifs = { grid: "emoji-pop-gif-grid", attrib: "emoji-pop-gif-attrib", search: "emoji-pop-gif-search", token: 0, timer: null, pick: null, shown: false, close: () => $("emoji-pop").classList.add("hidden") };
 
-async function renderGifResults(query) {
-  const grid = $("gif-grid");
-  const token = ++gifSearchToken;
+async function renderGifResults(query, view = composerGifs) {
+  const grid = $(view.grid);
+  const token = ++view.token;
   grid.replaceChildren(el("div", "gif-note", "Searching..."));
   const settings = gifSettings();
-  $("gif-attrib").textContent = settings.key && settings.provider === "giphy" ? "Powered by GIPHY" : "Powered by KLIPY";
+  $(view.attrib).textContent = settings.key && settings.provider === "giphy" ? "Powered by GIPHY" : "Powered by KLIPY";
   try {
     const gifs = await searchGifs(query, settings);
-    if (token !== gifSearchToken) return;
+    if (token !== view.token) return;
     grid.replaceChildren();
     const cols = [el("div", "gif-col"), el("div", "gif-col")];
     const heights = [0, 0];
@@ -15485,7 +15636,7 @@ async function renderGifResults(query) {
       img.loading = "lazy";
       img.decoding = "async";
       btn.appendChild(img);
-      btn.onclick = () => sendGif(gif.url);
+      btn.onclick = () => view.pick && view.pick(gif, btn);
       const target = heights[0] <= heights[1] ? 0 : 1;
       cols[target].appendChild(btn);
       heights[target] += ratio;
@@ -15493,13 +15644,13 @@ async function renderGifResults(query) {
     if (gifs.length) grid.append(...cols);
     if (!gifs.length) grid.appendChild(el("div", "gif-note", "No GIFs found."));
   } catch (e) {
-    if (token !== gifSearchToken) return;
+    if (token !== view.token) return;
     const note = el("div", "gif-note");
     if (e.message === "no-key") {
       note.textContent = "Your account server does not offer GIF search. Add your own GIF API key to search. ";
       const link = el("button", "btn-link", "Open GIF settings");
       link.onclick = () => {
-        closeGifPicker();
+        view.close();
         openUserSettings("integrations");
       };
       note.appendChild(link);
@@ -15508,7 +15659,7 @@ async function renderGifResults(query) {
         ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then Integrations. `
         : `Could not load GIFs: ${e.message}. `;
       const retry = el("button", "btn-link", "Try again");
-      retry.onclick = () => renderGifResults($("gif-search").value);
+      retry.onclick = () => renderGifResults($(view.search).value, view);
       note.appendChild(retry);
     }
     grid.replaceChildren(note);
@@ -17044,15 +17195,15 @@ function wireEvents() {
     $("avatar-menu").classList.add("hidden");
     try {
       const src = await chooseImage("Choose your avatar", $("avatar-file"));
-      if (src) await applyAvatar("image", await imageFileToAvatar(src));
+      if (src) await applyAvatar("image", await pictureToAvatar(src));
     } catch (err) {
-      toast(String(err));
+      toast(String(err.message || err));
     }
   };
   $("avatar-emoji").onclick = e => {
     e.stopPropagation();
     $("avatar-menu").classList.add("hidden");
-    openEmojiPop(avatarMenuAnchor || e.currentTarget, emoji => applyAvatar("emoji", emoji));
+    openEmojiPop(avatarMenuAnchor || e.currentTarget, pickEmojiAvatar, { custom: true, onGif: avatarGifs() });
   };
   $("avatar-remove").onclick = () => {
     $("avatar-menu").classList.add("hidden");
@@ -17123,6 +17274,11 @@ function wireEvents() {
   });
   $("gif-search").addEventListener("keydown", e => {
     if (e.key === "Escape") closeGifPicker();
+  });
+  for (const tab of $("emoji-pop-tabs").querySelectorAll("button")) tab.onclick = () => showEmojiPopTab(tab.dataset.tab);
+  $("emoji-pop-gif-search").addEventListener("input", e => {
+    clearTimeout(popGifs.timer);
+    popGifs.timer = setTimeout(() => renderGifResults(e.target.value, popGifs), 300);
   });
   document.addEventListener("mousedown", e => {
     if (!$("gif-picker").classList.contains("hidden") && !$("gif-picker").contains(e.target) && !$("gif-btn").contains(e.target)) {
@@ -17409,6 +17565,14 @@ function wireEvents() {
   });
   $("tts-rate").addEventListener("input", e => {
     saveTtsPrefs({ ...ttsPrefs(), rate: clampRate(Number(e.target.value) / 10) });
+    renderTtsSettings();
+  });
+  $("tts-pitch").addEventListener("input", e => {
+    saveTtsPrefs({ ...ttsPrefs(), pitch: clampPitch(Number(e.target.value) / 10) });
+    renderTtsSettings();
+  });
+  $("tts-voice").addEventListener("change", e => {
+    saveTtsPrefs({ ...ttsPrefs(), voice: e.target.value || null });
     renderTtsSettings();
   });
   $("tts-preview").onclick = () => {
@@ -19635,6 +19799,7 @@ async function boot() {
   await loadFriends();
   await loadOverlaySettings();
   loadUpdateStatus();
+  loadSpeechVoices();
   await loadIntegrations();
   await loadAccount();
   if (!account.signed_in) {

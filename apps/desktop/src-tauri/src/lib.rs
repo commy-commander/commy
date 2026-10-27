@@ -44,6 +44,7 @@ use commy_view::catalog;
 use commy_view::search;
 mod server_wake;
 mod settle;
+mod speech;
 #[cfg(desktop)]
 mod single_instance;
 mod state;
@@ -4125,14 +4126,9 @@ async fn set_game_tags(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change game tags")?;
-    let tags = commy_core::server::clean_game_tags(&tags).ok_or(format!(
-        "up to {} games, each at most {} characters",
-        commy_core::server::MAX_GAME_TAGS,
-        commy_core::server::MAX_GAME_TAG_CHARS
-    ))?;
-    let meta = commy_core::server::clean_game_tag_meta(&tags, &meta.unwrap_or_default());
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::GameTagsSet { server: sid, tags, meta }).await
+    let meta = meta.unwrap_or_default();
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::game_tags(state, perms, &tags, &meta))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5624,9 +5620,8 @@ async fn set_avatar(
         "none" => None,
         "emoji" => Some(view::profile::emoji_avatar(data)?),
         "image" => {
-            let data = data.unwrap_or_default();
-            let (too_large, not_image) = ("avatar image is too large", "avatar must be a JPEG or PNG image");
-            let blob = store_profile_image(&app, &data, MAX_AVATAR_BYTES, too_large, not_image, AVATAR_FILE).await?;
+            let bytes = view::profile::avatar_bytes(&data.unwrap_or_default(), MAX_AVATAR_BYTES)?;
+            let blob = store_profile_image(&app, bytes, AVATAR_FILE).await?;
             Some(commy_core::Avatar::Image { blob })
         }
         _ => return Err("unknown avatar kind".into()),
@@ -5651,8 +5646,8 @@ async fn set_profile_banner(
     let banner = match data {
         None => None,
         Some(data) => {
-            let (too_large, not_image) = ("banner image is too large", "banner must be a JPEG or PNG image");
-            let blob = store_profile_image(&app, &data, MAX_BANNER_BYTES, too_large, not_image, BANNER_FILE).await?;
+            let bytes = view::profile::image_bytes(&data, MAX_BANNER_BYTES, "banner image is too large", "banner must be a JPEG or PNG image")?;
+            let blob = store_profile_image(&app, bytes, BANNER_FILE).await?;
             Some(commy_core::Avatar::Image { blob }.encode())
         }
     };
@@ -5670,15 +5665,7 @@ pub(crate) fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     view::pictures::is_jpeg_or_png(bytes)
 }
 
-async fn store_profile_image(
-    app: &App,
-    data: &str,
-    max: usize,
-    too_large: &str,
-    not_image: &str,
-    file: &str,
-) -> CmdResult<String> {
-    let bytes = view::profile::image_bytes(data, max, too_large, not_image)?;
+async fn store_profile_image(app: &App, bytes: Vec<u8>, file: &str) -> CmdResult<String> {
     if let Some(dir) = app.data_dir() {
         commy_core::at_rest::write(&dir.join(file), &bytes).map_err(err_to_string)?;
     }
@@ -5854,7 +5841,7 @@ async fn resolve_game_via_account(app: &tauri::State<'_, App>, name: &str) -> Op
         return hit.clone();
     }
     let hit = match account::server_search::<igdb::GameHit>(app, "games", name).await {
-        Ok(Some(hits)) => igdb::best_match(name, &igdb::safe_hits(hits)).cloned(),
+        Ok(Some(hits)) => igdb::best_match(name, &igdb::safe_games(hits)).cloned(),
         Ok(None) => None,
         Err(_) => return None,
     };
@@ -5916,7 +5903,7 @@ async fn search_games(app: tauri::State<'_, App>, query: String) -> CmdResult<Ve
             return Ok(Vec::new());
         }
         let hits = account::server_search::<igdb::GameHit>(&app, "games", query.trim()).await?;
-        return Ok(igdb::safe_hits(hits.unwrap_or_default()));
+        return Ok(igdb::safe_games(hits.unwrap_or_default()));
     }
     app.igdb.lock().await.search(&app.http, &creds, &query).await
 }
@@ -6159,7 +6146,7 @@ pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<
         return Ok(bytes);
     }
     let max = profile_images::MAX_PROFILE_IMAGE_BYTES as u64;
-    if let Some(bytes) = pictures::fetch(&app.http, blob, max).await.filter(|bytes| is_jpeg_or_png(bytes)) {
+    if let Some(bytes) = pictures::fetch(&app.http, blob, max).await.filter(|bytes| view::pictures::is_profile_picture(bytes)) {
         profile_images::keep_if_wanted(app, blob, &bytes);
         return Ok(bytes);
     }
@@ -6176,7 +6163,7 @@ pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<
     let mut failure = String::from("nobody who has it is online");
     for source in attempts {
         match fetcher.fetch(blob, source, max).await {
-            Ok(bytes) if is_jpeg_or_png(&bytes) => {
+            Ok(bytes) if view::pictures::is_profile_picture(&bytes) => {
                 profile_images::keep_if_wanted(app, blob, &bytes);
                 pictures::offer(&app.http, blob, &bytes);
                 return Ok(bytes);
@@ -7580,6 +7567,9 @@ pub fn run() {
             watch_camera,
             stop_watching_camera,
             notify,
+            speech::speech_voices,
+            speech::speech_speak,
+            speech::speech_stop,
             set_unread,
             set_close_to_tray,
             debug_log_status,

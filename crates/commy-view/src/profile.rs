@@ -2,7 +2,7 @@ use commy_core::user::{clean_pronouns, is_emoji_like, rich_text_fits, valid_stat
 use commy_core::{Avatar, Presence, UserProfile};
 
 use crate::act::Act;
-use crate::pictures::is_jpeg_or_png;
+use crate::pictures::{is_jpeg_or_png, is_profile_picture};
 
 const MAX_DISPLAY_NAME_BYTES: usize = 64;
 
@@ -88,12 +88,23 @@ pub fn emoji_avatar(raw: Option<String>) -> Act<Avatar> {
     Ok(Avatar::Emoji(emoji))
 }
 
+pub const AVATAR_TOO_LARGE: &str = "avatar image is too large";
+pub const AVATAR_NOT_IMAGE: &str = "avatar must be a JPEG, PNG or GIF image";
+
 pub fn image_bytes(data: &str, max: usize, too_large: &str, not_image: &str) -> Act<Vec<u8>> {
+    checked_bytes(data, max, too_large, not_image, is_jpeg_or_png)
+}
+
+pub fn avatar_bytes(data: &str, max: usize) -> Act<Vec<u8>> {
+    checked_bytes(data, max, AVATAR_TOO_LARGE, AVATAR_NOT_IMAGE, is_profile_picture)
+}
+
+fn checked_bytes(data: &str, max: usize, too_large: &str, not_image: &str, valid: fn(&[u8]) -> bool) -> Act<Vec<u8>> {
     let bytes = data_encoding::BASE64.decode(data.as_bytes()).map_err(|_| "image data is not valid base64".to_string())?;
     if bytes.len() > max {
         return Err(too_large.into());
     }
-    if !is_jpeg_or_png(&bytes) {
+    if !valid(&bytes) {
         return Err(not_image.into());
     }
     Ok(bytes)
@@ -208,6 +219,16 @@ mod tests {
         assert_eq!(image_bytes(&data, 4, "big", "bad"), Err("big".into()));
         assert_eq!(image_bytes(&data_encoding::BASE64.encode(b"GIF89a"), 100, "big", "bad"), Err("bad".into()));
         assert_eq!(image_bytes("not base64!", 100, "big", "bad"), Err("image data is not valid base64".into()));
+    }
+
+    #[test]
+    fn avatars_may_be_animated_gifs_but_banners_may_not() {
+        let gif = data_encoding::BASE64.encode(b"GIF89a....");
+        assert_eq!(avatar_bytes(&gif, 100), Ok(b"GIF89a....".to_vec()));
+        assert_eq!(avatar_bytes(&gif, 4), Err(AVATAR_TOO_LARGE.into()));
+        assert_eq!(avatar_bytes(&data_encoding::BASE64.encode(PNG), 100), Ok(PNG.to_vec()));
+        assert_eq!(avatar_bytes(&data_encoding::BASE64.encode(b"RIFF\0\0\0\0WEBPVP8 "), 100), Err(AVATAR_NOT_IMAGE.into()));
+        assert_eq!(image_bytes(&gif, 100, "big", "bad"), Err("bad".into()));
     }
 
     #[test]

@@ -2723,8 +2723,26 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .emoji-browser { display: flex; flex-direction: column; min-height: 0; }
+.emoji-pop > .emoji-browser { flex: 1; }
+.picker-tabs.pop-tabs { grid-template-columns: repeat(2, 1fr); margin: 10px 10px 0; }
+.pop-gifs { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 10px 8px; }
+.pop-gifs input {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--bg-darkest);
+  border: none;
+  border-radius: 6px;
+  outline: none;
+  color: var(--text-normal);
+  font: 14px var(--font);
+}
+.pop-gifs input:focus { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.pop-gifs .gif-item.busy { opacity: .5; pointer-events: none; }
 .eb-head { position: relative; display: flex; align-items: center; gap: 8px; padding: 10px 10px 8px; flex-shrink: 0; }
 .eb-search {
   flex: 1;
@@ -5207,6 +5225,8 @@ h3.md-heading { font-size: 1.1em; }
 }
 .msg-tts svg { color: var(--accent); flex-shrink: 0; }
 .tts-preview-row { padding-top: 10px; margin-top: 8px; border-top: 1px solid var(--line); }
+.tts-voice-row { padding-bottom: 10px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.settings-page select.tts-voice-select { width: 240px; min-width: 0; flex: none; text-overflow: ellipsis; }
 .msg.held { box-shadow: inset 3px 0 0 var(--text-faint); }
 .msg.held .msg-body > :not(.msg-head) { opacity: .55; }
 
@@ -7453,7 +7473,7 @@ button.role-chip { background: none; font-family: inherit; line-height: inherit;
   }
   .emoji-picker { padding-top: 14px; }
   .eb-foot { height: calc(44px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); }
-  .emoji-browser .eb-search input { font-size: 16px; }
+  .emoji-browser .eb-search input, .pop-gifs input { font-size: 16px; }
 
   .settings-layer { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); gap: 0; }
   .settings-layer .settings-close-wrap { display: none; }

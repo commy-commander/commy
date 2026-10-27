@@ -12,9 +12,19 @@ pub fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8, 0xff]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])
 }
 
+pub fn is_gif(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
+}
+
+pub fn is_profile_picture(bytes: &[u8]) -> bool {
+    is_jpeg_or_png(bytes) || is_gif(bytes)
+}
+
 pub fn picture_mime(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(&[0x89, b'P']) {
         "image/png"
+    } else if is_gif(bytes) {
+        "image/gif"
     } else {
         "image/jpeg"
     }
@@ -105,6 +115,17 @@ mod tests {
         assert!(!is_jpeg_or_png(b"GIF89a"));
         assert_eq!(picture_mime(b"\x89PNG"), "image/png");
         assert_eq!(picture_mime(&[0xff, 0xd8, 0xff]), "image/jpeg");
+        assert_eq!(picture_mime(b"GIF89a"), "image/gif");
+    }
+
+    #[test]
+    fn profile_pictures_may_also_be_animated_gifs() {
+        assert!(is_profile_picture(b"GIF89a..."));
+        assert!(is_profile_picture(b"GIF87a..."));
+        assert!(is_profile_picture(b"\x89PNG\r\n"));
+        assert!(is_profile_picture(&[0xff, 0xd8, 0xff, 0xe0]));
+        assert!(!is_profile_picture(b"RIFF\0\0\0\0WEBPVP8 "));
+        assert!(!is_profile_picture(b"<svg>"));
     }
 
     #[test]

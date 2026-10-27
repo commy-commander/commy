@@ -15,6 +15,7 @@ const WEB_DEFAULTS = {
   get_storage_settings: { keep: "90", servers: {} },
   get_autostart: false,
   get_stream_deck: { enabled: false, status: "off", decks: [] },
+  speech_voices: { native: false, voices: [] },
   get_awaited: 0,
   set_window_title: null,
   set_unread: null,

@@ -42,12 +42,12 @@ pub fn people_to_keep<'a>(
 pub fn kept_blobs(app: &App) -> HashSet<String> {
     let friends = app.safety.lock().unwrap().friends.clone();
     let contacts = app.dms.lock().unwrap().contacts.clone();
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let own = app.profile.lock().unwrap().as_ref().map(image_blobs).unwrap_or_default();
     let servers = app.servers.lock().unwrap();
     people_to_keep(servers.values(), &friends, &contacts)
         .into_values()
-        .filter(|profile| Some(profile.id) != me)
         .flat_map(image_blobs)
+        .chain(own)
         .collect()
 }
 
@@ -67,7 +67,7 @@ pub fn cached(app: &App, blob: &str) -> Option<Vec<u8>> {
 }
 
 pub fn keep_if_wanted(app: &App, blob: &str, bytes: &[u8]) {
-    if bytes.len() > MAX_PROFILE_IMAGE_BYTES || !crate::is_jpeg_or_png(bytes) || !kept_blobs(app).contains(blob) {
+    if bytes.len() > MAX_PROFILE_IMAGE_BYTES || !commy_view::pictures::is_profile_picture(bytes) || !kept_blobs(app).contains(blob) {
         return;
     }
     let Some(path) = cache_path(app, blob) else { return };
@@ -203,6 +203,26 @@ mod tests {
         app.dms.lock().unwrap().contacts.insert(friend.id, stranger);
         prune(&app);
         assert_eq!(cached(&app, "friendface"), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn our_own_picture_is_kept_so_it_shows_before_the_network_is_up() {
+        let nanos = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+        let dir = std::env::temp_dir().join("commy-profile-images-tests").join(format!("own-{nanos:x}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let app = App::default();
+        app.data_dir.set(dir.clone()).unwrap();
+        let png = [&[0x89, b'P', b'N', b'G'][..], &[0; 16]].concat();
+        *app.profile.lock().unwrap() = Some(with_image("me", "myface"));
+
+        keep_if_wanted(&app, "myface", &png);
+        prune(&app);
+        assert_eq!(cached(&app, "myface"), Some(png));
+
+        *app.profile.lock().unwrap() = Some(with_image("me", "newface"));
+        prune(&app);
+        assert_eq!(cached(&app, "myface"), None);
         let _ = std::fs::remove_dir_all(dir);
     }
 
