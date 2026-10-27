@@ -1063,6 +1063,54 @@ mod tests {
         assert_eq!(restored.action_floor(), now);
     }
 
+    #[test]
+    fn drive_items_travel_as_signed_actions_and_folders_take_their_contents() {
+        use crate::drive::{DriveFile, DriveItem};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let drive = Channel::new("files", ChannelKind::Drive, 5);
+        let cid = drive.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: drive.clone() }).unwrap();
+        let friend = join(&mut state, "friend");
+        let other = join(&mut state, "other");
+        let sign = |by, at, event| SignedEvent::sign(sid, by, at, event, &identity_for(by));
+        let folder = DriveItem::folder(cid, None, "Maps", friend, 1).unwrap();
+        let file = DriveFile { blob: "ab".repeat(32), size: 12, mime: "text/plain".into() };
+        let inside = DriveItem::file(cid, Some(folder.id), "map.txt", file, friend, &"cd".repeat(32), 2).unwrap();
+        let add_folder = sign(friend, 1_000, ServerEvent::DriveAdd { server: sid, item: folder.clone() });
+        let add_inside = sign(friend, 2_000, ServerEvent::DriveAdd { server: sid, item: inside.clone() });
+        assert_eq!(state.apply_signed(&add_folder), Ok(true));
+        assert_eq!(state.apply_signed(&add_inside), Ok(true));
+        let forged = sign(other, 2_500, ServerEvent::DriveAdd { server: sid, item: DriveItem::folder(cid, None, "x", friend, 3).unwrap() });
+        assert_eq!(state.apply_signed(&forged), Err(StoreError::NotAllowed), "nobody adds in someone else's name");
+        let rename = sign(other, 2_600, ServerEvent::DriveEdit { server: sid, item: folder.id, name: "Mine".into(), parent: None });
+        assert_eq!(state.apply_signed(&rename), Err(StoreError::NotAllowed));
+        let keep = sign(other, 2_700, ServerEvent::DriveHold { server: sid, item: inside.id, user: other, node: Some("ef".repeat(32)) });
+        assert_eq!(state.apply_signed(&keep), Ok(true));
+        assert!(snapshot_omits("drive:x") && snapshot_omits("drive.hold:x:y"));
+        assert_eq!(state.signed_actions().len(), 3);
+
+        let mut joiner = crate::store::ServerState::new(state.server.clone());
+        joiner.server.drive.clear();
+        joiner.profiles = state.profiles.clone();
+        for signed in state.signed_actions() {
+            joiner.apply_signed(signed).unwrap();
+        }
+        assert_eq!(joiner.server.drive, state.server.drive, "a newcomer rebuilds the drive from relayed actions");
+
+        let remove = sign(owner, 3_000, ServerEvent::DriveRemove { server: sid, item: folder.id });
+        assert_eq!(state.apply_signed(&remove), Ok(true));
+        assert!(state.server.drive.is_empty());
+        assert_eq!(state.signed_actions(), vec![&remove], "what was inside is no longer relayed");
+        assert_eq!(state.apply_signed(&add_inside), Ok(false));
+        assert_eq!(state.apply_signed(&add_folder), Ok(false), "the removal wins over the old add");
+
+        let again = DriveItem::folder(cid, None, "New", friend, 4).unwrap();
+        state.apply_signed(&sign(friend, 4_000, ServerEvent::DriveAdd { server: sid, item: again })).unwrap();
+        state.apply(ServerEvent::ChannelDelete { server: sid, channel: cid }).unwrap();
+        assert!(state.server.drive.is_empty() && state.signed_actions().iter().all(|s| !matches!(s.event, ServerEvent::DriveAdd { .. })));
+    }
+
     fn emoji(sid: ServerId, name: &str) -> ServerEvent {
         ServerEvent::EmojiAdd { server: sid, emoji: crate::server::CustomEmoji { name: name.into(), blob: format!("{}@{}", "b".repeat(52), "0".repeat(64)) } }
     }

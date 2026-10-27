@@ -1,5 +1,5 @@
 const SWITCHER_RECENT_CAP = 20;
-const SWITCHER_CHANNEL_KINDS = new Set(["text", "voice", "announcement", "forum", "stage"]);
+const SWITCHER_CHANNEL_KINDS = new Set(["text", "voice", "announcement", "forum", "stage", "drive"]);
 const SWITCHER_PREFIXES = { "#": "channel", "@": "person", "*": "server" };
 
 function parseSwitcherQuery(raw) {
