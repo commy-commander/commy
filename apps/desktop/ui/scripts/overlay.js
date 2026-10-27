@@ -4,7 +4,7 @@ const tauri = window.__TAURI__;
 const $ = id => document.getElementById(id);
 const OVERLAY_LABEL = windowLabel();
 
-const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, picturesOnly: false, lines: [], testing: false };
+const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, picturesOnly: false, config: null, lines: [], testing: false };
 const TEST_MEMBERS = [{ id: "overlay-test", name: "You, talking" }];
 let noticeTimer = null;
 
@@ -37,7 +37,9 @@ function applyConfig(config) {
   overlay.showEveryone = Boolean(config.show_everyone);
   overlay.picturesOnly = Boolean(config.pictures_only);
   document.body.classList.toggle("pictures", overlay.picturesOnly);
-  if (place.part !== "chat") showNotice(config.layout ? "Overlay on · Your layout" : `Overlay on · ${overlayCornerLabel(config.corner)}`);
+  const notice = overlayMovedNotice(overlay.config, config);
+  overlay.config = config;
+  if (notice && place.part !== "chat") showNotice(notice);
   if (!overlay.showChat) {
     overlay.lines = [];
     $("chat").replaceChildren();
