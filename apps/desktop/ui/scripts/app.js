@@ -8706,6 +8706,11 @@ async function saveGameTags(tags, meta = gameTagMetaDraft) {
   }
 }
 
+function upcomingEventCount(server) {
+  const now = Date.now();
+  return (server.events || []).filter(e => new Date(e.end || e.start).getTime() >= now).length;
+}
+
 function renderServerExtras(list, server) {
   if (server.game_tags && server.game_tags.length) {
     const row = el("div", "sidebar-game-tags");
@@ -8714,11 +8719,10 @@ function renderServerExtras(list, server) {
     }
     list.appendChild(row);
   }
-  const now = Date.now();
-  const upcoming = (server.events || []).filter(e => new Date(e.end || e.start).getTime() >= now);
+  const upcoming = upcomingEventCount(server);
   const events = el("div", "channel sidebar-link");
   events.appendChild(el("span", "channel-icon")).appendChild(svgIcon("calendar", 18));
-  events.appendChild(el("span", "channel-label", upcoming.length ? `${upcoming.length} Event${upcoming.length === 1 ? "" : "s"}` : "Events"));
+  events.appendChild(el("span", "channel-label", upcoming ? `${upcoming} Event${upcoming === 1 ? "" : "s"}` : "Events"));
   events.onclick = () => openEvents();
   list.appendChild(events);
   if (server.rules) {
@@ -14082,20 +14086,46 @@ function narrowSplit() {
   return Boolean(document.body.dataset.narrow) && isPhoneWidth(window.innerWidth) && !document.body.classList.contains("mobile-app");
 }
 
+function narrowViewServer() {
+  return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
+}
+
+function paintNarrowServerIcon(icon, server) {
+  icon.replaceChildren();
+  icon.style.background = "";
+  if (!server) {
+    icon.appendChild(el("img")).src = "images/commy_v3_noback.png";
+    return;
+  }
+  paintServerIcon(icon, server);
+  icon.style.background = serverTint(server.id);
+}
+
 function paintNarrowSwitch() {
   const button = $("narrow-switch");
   if (!button) return;
-  const server = state.view === "server" ? state.currentServer : null;
-  const icon = button.querySelector(".narrow-switch-icon");
-  icon.innerHTML = "";
-  icon.style.background = "";
-  if (server) {
-    paintServerIcon(icon, server);
-    icon.style.background = serverTint(server.id);
-  } else {
-    icon.appendChild(el("img")).src = "images/commy_v3_noback.png";
-  }
+  const server = narrowViewServer();
+  paintNarrowServerIcon(button.querySelector(".narrow-switch-icon"), server);
   button.querySelector(".narrow-switch-name").textContent = server ? server.name : "Direct Messages";
+  paintNarrowServers(server);
+}
+
+function paintNarrowServers(server) {
+  const active = $("narrow-active");
+  paintNarrowServerIcon(active.querySelector(".narrow-active-icon"), server);
+  active.title = server ? `${server.name}: server controls` : "Direct Messages";
+  const others = railServers().filter(s => !server || s.id !== server.id);
+  const shown = others.length > 4 ? others.slice(0, 3) : others;
+  const grid = $("narrow-grid");
+  const cells = shown.map(other => {
+    const cell = el("span", "narrow-grid-cell");
+    paintNarrowServerIcon(cell, other);
+    return cell;
+  });
+  if (others.length > shown.length) cells.push(el("span", "narrow-grid-cell narrow-grid-more", `+${others.length - shown.length}`));
+  grid.replaceChildren(...cells);
+  grid.title = others.length ? `Switch server: ${others.map(s => s.name).join(", ")}` : "Switch server";
+  grid.classList.toggle("unread", others.some(s => serverUnreadCount(s.id) > 0));
 }
 
 function narrowFlyoutRow(label, paintIcon, onPick, active = false) {
@@ -14110,22 +14140,49 @@ function narrowFlyoutRow(label, paintIcon, onPick, active = false) {
   return row;
 }
 
-function renderNarrowFlyout() {
+function narrowGlyph(name) {
+  return icon => icon.appendChild(svgIcon(name, 18));
+}
+
+function serverSwitchRows() {
+  const current = narrowViewServer();
+  return [
+    narrowFlyoutRow("Direct Messages", icon => paintNarrowServerIcon(icon, null), () => $("home-btn").click(), !current),
+    ...railServers().map(server => narrowFlyoutRow(server.name, icon => paintNarrowServerIcon(icon, server), () => selectServer(server.id), Boolean(current) && server.id === current.id)),
+    narrowFlyoutRow("Add a Server", narrowGlyph("plus"), () => $("add-server-btn").click()),
+    narrowFlyoutRow("Discover Servers", narrowGlyph("globe"), () => $("discover-btn").click()),
+  ];
+}
+
+function serverControlRows(server) {
+  const events = upcomingEventCount(server);
+  const rows = [narrowFlyoutRow(events ? `${events} Event${events === 1 ? "" : "s"}` : "Events", narrowGlyph("calendar"), () => openEvents())];
+  if (server.rules) rows.push(narrowFlyoutRow("Server Rules", narrowGlyph("book"), () => openRules()));
+  if (selfAssignableRoles(server).length) rows.push(narrowFlyoutRow("Roles", narrowGlyph("roles"), () => openChooseRoles()));
+  rows.push(el("div", "narrow-flyout-sep"));
+  if (server.can_invite) rows.push(narrowFlyoutRow("Invite People", narrowGlyph("friendAdd"), () => $("invite-btn").click()));
+  rows.push(narrowFlyoutRow("Server Settings", narrowGlyph("gear"), () => $("server-settings-btn").click()));
+  return rows;
+}
+
+function narrowFlyoutRows(kind) {
+  const server = narrowViewServer();
+  if (kind === "controls" && server) return [el("div", "narrow-flyout-title", server.name), ...serverControlRows(server)];
+  if (kind === "servers") return serverSwitchRows();
+  return [...serverSwitchRows(), el("div", "narrow-flyout-sep"), ...(server ? serverControlRows(server).slice(-2) : [])];
+}
+
+function toggleNarrowFlyout(kind, anchor) {
+  const app = $("app");
   const flyout = $("narrow-flyout");
-  const current = state.view === "server" && state.currentServer ? state.currentServer.id : null;
-  const glyph = name => icon => icon.appendChild(svgIcon(name, 18));
-  flyout.replaceChildren(
-    narrowFlyoutRow("Direct Messages", icon => (icon.appendChild(el("img")).src = "images/commy_v3_noback.png"), () => $("home-btn").click(), !current),
-    ...railServers().map(server => narrowFlyoutRow(server.name, icon => {
-      paintServerIcon(icon, server);
-      icon.style.background = serverTint(server.id);
-    }, () => selectServer(server.id), server.id === current)),
-    narrowFlyoutRow("Add a Server", glyph("plus"), () => $("add-server-btn").click()),
-    narrowFlyoutRow("Discover Servers", glyph("globe"), () => $("discover-btn").click()),
-    el("div", "narrow-flyout-sep"),
-    narrowFlyoutRow("Invite People", glyph("friendAdd"), () => $("invite-btn").click()),
-    narrowFlyoutRow("Server Settings", glyph("gear"), () => $("server-settings-btn").click()),
-  );
+  if (app.classList.contains("servers-open") && flyout.dataset.kind === kind) {
+    app.classList.remove("servers-open");
+    return;
+  }
+  flyout.dataset.kind = kind;
+  flyout.replaceChildren(...narrowFlyoutRows(kind));
+  flyout.style.top = document.body.dataset.narrow === "mix" ? `${Math.round(anchor.getBoundingClientRect().top)}px` : "";
+  app.classList.add("servers-open");
 }
 
 function applyNarrowLayout() {
@@ -14161,11 +14218,20 @@ function wireNarrowLayout() {
   const flyout = el("div", "narrow-flyout");
   flyout.id = "narrow-flyout";
   document.querySelector(".sidebar").appendChild(flyout);
-  button.onclick = () => {
-    const open = !$("app").classList.contains("servers-open");
-    if (open) renderNarrowFlyout();
-    $("app").classList.toggle("servers-open", open);
-  };
+  button.onclick = () => toggleNarrowFlyout("switcher", button);
+  const active = el("button", "narrow-active");
+  active.id = "narrow-active";
+  active.appendChild(el("span", "narrow-active-icon"));
+  active.onclick = () => toggleNarrowFlyout(narrowViewServer() ? "controls" : "servers", active);
+  const grid = el("button", "narrow-grid");
+  grid.id = "narrow-grid";
+  grid.onclick = () => toggleNarrowFlyout("servers", grid);
+  const servers = el("div", "narrow-servers");
+  servers.append(active, grid);
+  document.querySelector(".sidebar").prepend(servers);
+  document.addEventListener("pointerdown", e => {
+    if (!e.target.closest(".narrow-flyout, .narrow-switch, .narrow-active, .narrow-grid")) $("app").classList.remove("servers-open");
+  });
   $("rail").addEventListener("click", e => {
     if (e.target.closest(".server-icon, #home-btn")) $("app").classList.remove("servers-open");
   });

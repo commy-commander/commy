@@ -20,8 +20,8 @@ function membersCollapsed(pref, width) {
   return width < NARROW_WINDOW_PX;
 }
 
-const NARROW_LAYOUTS = ["stack", "slim", "switcher"];
-const VOICE_RING_LIMITS = { stack: 6, slim: 4, switcher: 4 };
+const NARROW_LAYOUTS = ["stack", "slim", "switcher", "mix"];
+const VOICE_RING_LIMITS = { stack: 6, slim: 4, switcher: 4, mix: 4 };
 
 function narrowLayoutFromQuery(search) {
   const asked = new URLSearchParams(search).get("narrow");
