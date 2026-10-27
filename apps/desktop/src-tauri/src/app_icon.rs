@@ -9,7 +9,7 @@ pub const CUSTOM: &str = "custom";
 pub const FOLLOW_APP: &str = "app";
 pub const PRESETS: &[&str] = &[CLASSIC, "amber", "mint", "ocean", "violet", "mono"];
 pub const TARGETS: &[&str] = &["app", "tray"];
-pub const TASKBAR_ICON_FILE: &str = "taskbar-icon.ico";
+const TASKBAR_ICON_PREFIX: &str = "taskbar-icon";
 const TASKBAR_ICON_SIZES: &[u32] = &[256, 64, 48, 32, 24, 16];
 pub const TILE_COLOURS: &[(&str, &str)] = &[
     ("amber", "#e08a1e"),
@@ -113,8 +113,23 @@ pub fn save_custom(dir: &Path, target: &str, bytes: &[u8]) -> Result<(), String>
     icon.save(custom_path(dir, target)).map_err(|e| e.to_string())
 }
 
-pub fn taskbar_icon_path(base: &Path) -> PathBuf {
-    base.join(TASKBAR_ICON_FILE)
+fn taskbar_icons(base: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(base) else { return Vec::new() };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(TASKBAR_ICON_PREFIX) && name.ends_with(".ico"))
+        })
+        .collect()
+}
+
+fn taskbar_icon_name(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(bytes);
+    format!("{TASKBAR_ICON_PREFIX}-{}.ico", data_encoding::HEXLOWER.encode(&digest[..6]))
 }
 
 pub fn ico_bytes(icon: &RgbaImage) -> Result<Vec<u8>, String> {
@@ -132,23 +147,30 @@ pub fn ico_bytes(icon: &RgbaImage) -> Result<Vec<u8>, String> {
 
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn save_taskbar_icon(base: &Path, icon: Option<&RgbaImage>) -> Option<PathBuf> {
-    let path = taskbar_icon_path(base);
-    let Some(icon) = icon else {
-        let _ = std::fs::remove_file(&path);
-        return None;
-    };
-    match ico_bytes(icon).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
-        Ok(()) => Some(path),
+    let saved = icon.and_then(|icon| match write_taskbar_icon(base, icon) {
+        Ok(path) => Some(path),
         Err(e) => {
             tracing::warn!("could not save the taskbar icon: {e}");
-            let _ = std::fs::remove_file(&path);
             None
         }
+    });
+    for old in taskbar_icons(base).into_iter().filter(|path| Some(path) != saved.as_ref()) {
+        let _ = std::fs::remove_file(old);
     }
+    saved
+}
+
+fn write_taskbar_icon(base: &Path, icon: &RgbaImage) -> Result<PathBuf, String> {
+    let bytes = ico_bytes(icon)?;
+    let path = base.join(taskbar_icon_name(&bytes));
+    if !path.is_file() {
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(path)
 }
 
 pub fn saved_taskbar_icon(base: &Path) -> Option<PathBuf> {
-    Some(taskbar_icon_path(base)).filter(|path| path.is_file())
+    taskbar_icons(base).into_iter().next()
 }
 
 fn load(dir: Option<&Path>, target: &str, choice: &str) -> Option<RgbaImage> {
@@ -276,8 +298,12 @@ mod tests {
     fn the_classic_choice_clears_the_saved_taskbar_icon() {
         let dir = temp_dir("taskbar");
         std::fs::create_dir_all(&dir).unwrap();
-        let saved = save_taskbar_icon(&dir, Some(&preset("ocean").unwrap())).unwrap();
-        assert_eq!(saved_taskbar_icon(&dir), Some(saved));
+        let ocean = save_taskbar_icon(&dir, Some(&preset("ocean").unwrap())).unwrap();
+        assert_eq!(saved_taskbar_icon(&dir), Some(ocean.clone()));
+        let mint = save_taskbar_icon(&dir, Some(&preset("mint").unwrap())).unwrap();
+        assert_ne!(mint, ocean, "a new choice gets a new file name so Windows does not show its cached icon");
+        assert!(!ocean.exists());
+        assert_eq!(saved_taskbar_icon(&dir), Some(mint));
         assert_eq!(save_taskbar_icon(&dir, None), None);
         assert_eq!(saved_taskbar_icon(&dir), None);
         let _ = std::fs::remove_dir_all(&dir);
