@@ -79,6 +79,7 @@ pub enum AuditKind {
     JoinSounds,
     ServerTag,
     JoinApproval,
+    TipJar,
     JoinAdmit,
     JoinTurnAway,
 }
@@ -194,6 +195,7 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::JoinSoundsAllowed { allowed, .. } => (K::JoinSounds, None, None, on_off(*allowed)),
         E::ServerTagSet { tag, .. } => (K::ServerTag, None, None, tag.as_ref().map(|t| t.letters.clone())),
         E::JoinApprovalSet { on, .. } => (K::JoinApproval, None, None, on_off(*on)),
+        E::TipJarSet { url, .. } => (K::TipJar, None, None, url.clone()),
         E::JoinAnswer { user, admit, .. } => {
             let asked = crate::join_request::request_of(server, *user).map(|r| &r.profile);
             let name = asked.map(|p| clip(p.display_name.as_deref().unwrap_or(&p.username))).or_else(|| member_name(state, *user));

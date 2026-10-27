@@ -260,6 +260,7 @@ impl Session {
                 let (on, at) = (args.enabled.unwrap_or(false), Utc::now().timestamp_millis());
                 vec![client().act(server, |state, me, _, _| commy_view::join_requests::set_approval(state, me.perms, on, at))?]
             }
+            "set_tip_jar" => vec![client().act(server, |state, me, _, _| commy_view::tip_jar::set_tip_jar(state, me.perms, args.url.as_deref()))?],
             "answer_join_request" => {
                 let (user, admit) = (user()?, args.admit.unwrap_or(false));
                 vec![client().act(server, |state, me, _, _| commy_view::join_requests::answer(state, me.perms, user, admit))?]

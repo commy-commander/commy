@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for the main window",
-  "windows": ["main", "overlay", "stream-ink"],
+  "windows": ["main", "overlay", "overlay-chat", "stream-ink"],
   "permissions": ["core:default", "core:event:default", "notification:default"]
 }

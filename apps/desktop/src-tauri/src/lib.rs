@@ -279,6 +279,16 @@ async fn set_join_approval(app: tauri::State<'_, App>, handle: tauri::AppHandle,
 }
 
 #[tauri::command]
+async fn set_tip_jar(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, url: Option<String>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::tip_jar::set_tip_jar(state, perms, url.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 async fn answer_join_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String, admit: bool) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
@@ -3062,6 +3072,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
         if state.server.afk_timeout_minutes.is_some() {
             events.push(ServerEvent::AfkTimeoutSet { server: sid, minutes: state.server.afk_timeout_minutes });
         }
+        if state.server.tip_jar.is_some() {
+            events.push(ServerEvent::TipJarSet { server: sid, url: state.server.tip_jar.clone() });
+        }
     }
     if state.server.rules_accepted.contains(&me) {
         events.push(ServerEvent::RulesAccept { server: sid, user: me });
@@ -4277,7 +4290,7 @@ fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
         overlay::refresh(handle);
     } else if hotkey_id(&settings.chat_hotkey) == Some(id) {
         let settings = app.update_voice(|voice| voice.overlay.show_chat = !voice.overlay.show_chat).overlay;
-        let _ = handle.emit_to(overlay::LABEL, "overlay-config", &settings);
+        overlay::refresh(handle);
         let _ = handle.emit("overlay-settings-changed", &settings);
     }
 }
@@ -7886,6 +7899,7 @@ pub fn run() {
             answer_join_request,
             set_join_sound,
             set_server_tag,
+            set_tip_jar,
             wear_server_tag,
             set_activities_enabled,
             set_role_access,

@@ -149,6 +149,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::JoinSoundsAllowed { .. } => "join_sounds".into(),
         E::ServerTagSet { .. } => "server_tag".into(),
         E::JoinApprovalSet { .. } => "join_approval".into(),
+        E::TipJarSet { .. } => "tip_jar".into(),
         E::JoinAsk { profile, .. } => format!("join_ask:{}", profile.id),
         E::JoinAnswer { user, .. } => format!("join_ask:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
@@ -343,7 +344,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ExpressionSharingSet { .. }
         | E::JoinSoundsAllowed { .. }
         | E::ServerTagSet { .. }
-        | E::JoinApprovalSet { .. } => allows(Permissions::MANAGE_SERVER),
+        | E::JoinApprovalSet { .. }
+        | E::TipJarSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::JoinAsk { .. } => actor(event) == Some(by) && crate::join_request::may_ask(server, by),
         E::JoinAnswer { user, .. } => member && *user != by && allows(Permissions::KICK_MEMBERS),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
