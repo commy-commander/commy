@@ -21,6 +21,10 @@ fn default_tray_icon() -> String {
     crate::app_icon::FOLLOW_APP.to_string()
 }
 
+fn default_voice_filter() -> String {
+    commy_audio::filters::VoiceFilter::Off.name().to_string()
+}
+
 fn default_afk_minutes() -> u32 {
     crate::afk::DEFAULT_TIMEOUT_MINUTES
 }
@@ -86,11 +90,17 @@ pub struct VoiceSettings {
     pub auto_sensitivity: bool,
     #[serde(default = "crate::voice_keys::default_sensitivity_db")]
     pub sensitivity_db: f32,
+    #[serde(default = "default_voice_filter")]
+    pub voice_filter: String,
 }
 
 impl VoiceSettings {
     pub fn voice_keys(&self) -> crate::voice_keys::VoiceKeys {
         crate::voice_keys::VoiceKeys::from_settings(self.input_mode, &self.talk_key, &self.mute_hotkey, &self.deafen_hotkey)
+    }
+
+    pub fn voice_filter(&self) -> commy_audio::filters::VoiceFilter {
+        commy_audio::filters::VoiceFilter::from_name(&self.voice_filter).unwrap_or_default()
     }
 
     pub fn sensitivity(&self) -> commy_audio::Sensitivity {
@@ -113,6 +123,7 @@ impl VoiceSettings {
         processor.set_input_gain(self.input_gain);
         processor.set_push_to_talk(self.input_mode == crate::voice_keys::InputMode::PushToTalk);
         processor.set_sensitivity(self.sensitivity());
+        processor.set_voice_filter(self.voice_filter());
     }
 }
 
@@ -167,6 +178,7 @@ impl Default for VoiceSettings {
             deafen_hotkey: String::new(),
             auto_sensitivity: true,
             sensitivity_db: crate::voice_keys::default_sensitivity_db(),
+            voice_filter: default_voice_filter(),
         }
     }
 }
@@ -205,6 +217,7 @@ pub struct App {
     pub forced_mute: std::sync::atomic::AtomicBool,
     pub forced_deaf: std::sync::atomic::AtomicBool,
     pub audience: std::sync::atomic::AtomicBool,
+    pub voice_filter_held_back: std::sync::atomic::AtomicBool,
     pub share_seen: Mutex<HashMap<(ServerId, UserId), std::time::Instant>>,
     pub last_game: Mutex<Option<(u32, String)>>,
     pub account: Mutex<crate::account::AccountState>,
@@ -267,6 +280,7 @@ impl Default for App {
             forced_mute: std::sync::atomic::AtomicBool::new(false),
             forced_deaf: std::sync::atomic::AtomicBool::new(false),
             audience: std::sync::atomic::AtomicBool::new(false),
+            voice_filter_held_back: std::sync::atomic::AtomicBool::new(false),
             share_seen: Mutex::new(HashMap::new()),
             last_game: Mutex::new(None),
             account: Mutex::new(crate::account::AccountState::default()),

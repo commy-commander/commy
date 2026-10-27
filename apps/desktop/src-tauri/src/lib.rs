@@ -57,6 +57,7 @@ mod toast;
 mod tray;
 mod updater;
 use commy_view as view;
+mod voice_filter;
 mod voice_keys;
 mod voice_message;
 mod voice_invite;
@@ -1168,6 +1169,7 @@ async fn leave_voice(
 async fn stop_voice_here(app: &App, sid: ServerId, profile: &UserProfile) {
     let testing = pause_mic_test(app);
     *app.voice_session.lock().unwrap() = None;
+    voice_filter::apply(app);
     resume_mic_test(app, testing);
     *app.camera.lock().unwrap() = None;
     app.camera_watches.lock().unwrap().clear();
@@ -1225,6 +1227,7 @@ fn start_voice_session(
     me: UserId,
 ) {
     let testing = pause_mic_test(app);
+    announce_voice_filter(app, handle, Some(sid), true);
     let emitter = handle.clone();
     let on_speaking: media_engine::SpeakingSink = std::sync::Arc::new(move |user: UserId, speaking: bool| {
         let _ = emitter.emit(
@@ -2700,11 +2703,26 @@ async fn apply_and_broadcast(
             None => state.apply(event.clone()).map_err(err_to_string)?,
         };
     }
+    let changes_roles = changes_who_may_do_what(&event);
     outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
     directory::server_changed(app, sid);
+    if changes_roles {
+        refresh_forced_voice(app, handle);
+    }
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
+}
+
+fn changes_who_may_do_what(event: &ServerEvent) -> bool {
+    matches!(
+        event,
+        ServerEvent::RoleAssign { .. }
+            | ServerEvent::RoleUnassign { .. }
+            | ServerEvent::RoleUpdate { .. }
+            | ServerEvent::RoleDelete { .. }
+            | ServerEvent::OwnerTransfer { .. }
+    )
 }
 
 #[tauri::command]
@@ -4818,6 +4836,7 @@ fn end_voice_in(app: &App, sid: ServerId) {
     if in_voice_there {
         let testing = pause_mic_test(app);
         *app.voice_session.lock().unwrap() = None;
+        voice_filter::apply(app);
         resume_mic_test(app, testing);
         app.own_preview.lock().unwrap().take();
         *app.screen_share.lock().unwrap() = None;
@@ -6205,6 +6224,23 @@ fn set_echo_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSettings
 }
 
 #[tauri::command]
+fn set_voice_filter(app: tauri::State<App>, handle: tauri::AppHandle, filter: String) -> CmdResult<VoiceSettings> {
+    let chosen = commy_audio::filters::VoiceFilter::from_name(&filter).ok_or("unknown voice filter")?;
+    let snapshot = app.update_voice(|voice| voice.voice_filter = chosen.name().to_string());
+    let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+    announce_voice_filter(&app, &handle, server, false);
+    Ok(snapshot)
+}
+
+fn announce_voice_filter(app: &App, handle: &tauri::AppHandle, server: Option<ServerId>, joining: bool) {
+    let changed = voice_filter::apply_for(app, server).is_some();
+    if changed || joining {
+        let held = app.voice_filter_held_back.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = handle.emit("voice-filter-held", serde_json::json!({ "held": held, "server": server.map(|s| s.to_string()), "news": changed }));
+    }
+}
+
+#[tauri::command]
 fn set_auto_level(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| {
         voice.auto_level = enabled;
@@ -6319,6 +6355,7 @@ fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
     );
     let was_audience = app.audience.swap(audience, std::sync::atomic::Ordering::Relaxed);
     apply_voice_gates(app);
+    announce_voice_filter(app, handle, session.map(|(sid, _)| sid), false);
     if was != (muted, deafened) {
         let _ = handle.emit("voice-moderated", serde_json::json!({ "muted": muted, "deafened": deafened }));
     }
@@ -6412,16 +6449,8 @@ async fn run_net_loop(
                 if let ServerEvent::ScreenShare { user, active: true, .. } = &event {
                     app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
                 }
-                let moderation = matches!(
-                    event,
-                    ServerEvent::VoiceModerate { .. }
-                        | ServerEvent::MemberTimeout { .. }
-                        | ServerEvent::StageSet { .. }
-                        | ServerEvent::RoleAssign { .. }
-                        | ServerEvent::RoleUnassign { .. }
-                        | ServerEvent::RoleUpdate { .. }
-                        | ServerEvent::RoleDelete { .. }
-                );
+                let moderation = changes_who_may_do_what(&event)
+                    || matches!(event, ServerEvent::VoiceModerate { .. } | ServerEvent::MemberTimeout { .. } | ServerEvent::StageSet { .. });
                 let priority = matches!(
                     event,
                     ServerEvent::VoiceState { .. }
@@ -7639,6 +7668,7 @@ pub fn run() {
             set_noise_cancellation,
             set_echo_cancellation,
             set_auto_level,
+            set_voice_filter,
             set_muted,
             set_deafened,
         ])

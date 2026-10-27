@@ -27,6 +27,7 @@ const state = {
   view: "server",
   currentDm: null,
   micTesting: false,
+  voiceFilterHeld: null,
   people: new Map(),
   speaking: new Set(),
   dmThreads: [],
@@ -705,9 +706,10 @@ async function mockInvoke(cmd, args = {}) {
       return {
         ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: !mock.plainMember, onboarding: s.onboarding || null,
-        chat_restricted: { embed_links: false, read_history: false, create_threads: false, send_polls: false, create_events: false, ...(s.chat_restricted || {}) },
+        chat_restricted: { embed_links: false, read_history: false, create_threads: false, send_polls: false, create_events: false, voice_filters: false, ...(s.chat_restricted || {}) },
         can_embed_links: !mockChatRestricted(s, "embed_links"), can_read_history: !mockChatRestricted(s, "read_history"), can_create_threads: !mockChatRestricted(s, "create_threads"),
         can_send_polls: !mockChatRestricted(s, "send_polls"), can_create_events: !mockChatRestricted(s, "create_events"),
+        can_use_voice_filters: !mockChatRestricted(s, "voice_filters"),
         channels: s.channels
           .map((c, i) => {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
@@ -960,6 +962,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
     case "set_echo_cancellation": mock.voice.echo_cancellation = args.enabled; return mock.voice;
     case "set_auto_level": mock.voice.auto_level = args.enabled; return mock.voice;
+    case "set_voice_filter": mock.voice.voice_filter = args.filter; return mock.voice;
     case "set_input_mode": Object.assign(mock.voice, { input_mode: args.mode, talk_key: args.talkKey, talk_release_ms: args.releaseMs }); return mock.voice;
     case "set_voice_hotkeys": Object.assign(mock.voice, { mute_hotkey: args.mute, deafen_hotkey: args.deafen }); return mock.voice;
     case "set_sensitivity": Object.assign(mock.voice, { auto_sensitivity: args.auto, sensitivity_db: args.thresholdDb }); return mock.voice;
@@ -7922,6 +7925,46 @@ function renderVoiceInputSettings() {
   }).catch(() => {});
 }
 
+function renderVoiceFilter() {
+  const key = voiceFilterKey(state.voice);
+  for (const button of $("voice-filter").querySelectorAll("button")) {
+    const on = button.dataset.filter === key;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+  }
+  const server = state.voiceServer;
+  $("voice-filter-note").textContent = voiceFilterNote(key, voiceFilterHeldHere(state.voiceFilterHeld, server), server && server.name);
+}
+
+function wireVoiceFilter() {
+  const group = $("voice-filter");
+  for (const filter of VOICE_FILTERS) {
+    const button = el("button");
+    button.type = "button";
+    button.dataset.filter = filter.key;
+    button.setAttribute("role", "radio");
+    button.title = filter.sub;
+    button.appendChild(el("strong", null, filter.label));
+    button.onclick = async () => {
+      try {
+        state.voice = await invoke("set_voice_filter", { filter: filter.key });
+      } catch (e) {
+        toast(String(e));
+      }
+      renderVoiceFilter();
+    };
+    group.appendChild(button);
+  }
+}
+
+function onVoiceFilterHeld(payload) {
+  const { held, server, news } = payload || {};
+  state.voiceFilterHeld = { held: Boolean(held), server: server || null };
+  const name = state.voiceServer && state.voiceServer.id === server ? state.voiceServer.name : null;
+  if (news) toast(voiceFilterNews(Boolean(held), name));
+  renderVoiceFilter();
+}
+
 async function saveVoiceInput(command, args) {
   try {
     state.voice = await invoke(command, args);
@@ -10152,7 +10195,7 @@ const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "create_events", "manage_events", "view_audit_log"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "embed_links", "read_message_history", "create_threads", "send_polls", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
-  ["Voice", ["priority_speaker"]],
+  ["Voice", ["priority_speaker", "use_voice_filters"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -16798,6 +16841,7 @@ function wireEvents() {
   wireHotkeyInput($("overlay-toggle-key"), combo => saveOverlaySettings({ toggle_hotkey: combo }));
   wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
   wireVoiceInputSettings();
+  wireVoiceFilter();
   $("dm-policy").addEventListener("change", saveDmSettings);
   wireProfilePrivacy();
   $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
@@ -17644,6 +17688,7 @@ function wireEvents() {
       document.body.classList.toggle("server-muted", muted || deafened);
       renderChannels();
     });
+    window.__TAURI__.event.listen("voice-filter-held", event => onVoiceFilterHeld(event.payload));
     window.__TAURI__.event.listen("stage-role", event => {
       const { audience } = event.payload || {};
       toast(audience ? "You are in the audience now" : "You can speak now");
@@ -18234,6 +18279,7 @@ const PERMISSION_LABELS = [
   ["mute_members", "Mute Members"],
   ["time_out_members", "Time Out Members"],
   ["priority_speaker", "Priority Speaker"],
+  ["use_voice_filters", "Use Voice Filters"],
   ["manage_nicknames", "Manage Nicknames"],
   ["change_nickname", "Change Nickname"],
   ["move_members", "Move Members"],
@@ -18339,6 +18385,7 @@ function openUserSettings(tab) {
   $("output-vol-label").textContent = `${$("output-vol").value}%`;
   $("input-gain-label").textContent = `${$("input-gain").value}%`;
   renderVoiceInputSettings();
+  renderVoiceFilter();
   startMicMeter();
   $("account-display-name").value = state.user.display_name || "";
   $("account-status").value = decodeCustomEmojis(state.user.custom_status);

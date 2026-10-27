@@ -348,6 +348,7 @@ pub struct ServerView {
     pub can_create_threads: bool,
     pub can_send_polls: bool,
     pub can_create_events: bool,
+    pub can_use_voice_filters: bool,
     pub chat_restricted: ChatRestrictions,
     pub public: bool,
     pub can_manage_expressions: bool,
@@ -411,6 +412,7 @@ pub struct ChatRestrictions {
     pub create_threads: bool,
     pub send_polls: bool,
     pub create_events: bool,
+    pub voice_filters: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -708,12 +710,14 @@ impl ServerView {
             can_create_threads: is_member && perms.can_create_threads(),
             can_send_polls: is_member && perms.can_send_polls(),
             can_create_events: is_member && perms.can_create_events(),
+            can_use_voice_filters: perms.can_use_voice_filters(),
             chat_restricted: ChatRestrictions {
                 embed_links: everyone_holds(state, Permissions::NO_EMBED_LINKS),
                 read_history: everyone_holds(state, Permissions::NO_READ_MESSAGE_HISTORY),
                 create_threads: everyone_holds(state, Permissions::NO_CREATE_THREADS),
                 send_polls: everyone_holds(state, Permissions::NO_SEND_POLLS),
                 create_events: everyone_holds(state, Permissions::NO_CREATE_EVENTS),
+                voice_filters: everyone_holds(state, Permissions::NO_VOICE_FILTERS),
             },
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
@@ -763,6 +767,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("change_nickname", Permissions::CHANGE_NICKNAME),
     ("move_members", Permissions::MOVE_MEMBERS),
     ("priority_speaker", Permissions::PRIORITY_SPEAKER),
+    ("use_voice_filters", Permissions::NO_VOICE_FILTERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),

@@ -8,5 +8,6 @@ license.workspace = true
 [dependencies]
 nnnoiseless = { version = "0.5", default-features = false }
 sonora = { version = "0.2", default-features = false }
+realfft = "3.5"
 rusty-opus = "1"
 thiserror = { workspace = true }

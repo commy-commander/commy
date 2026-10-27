@@ -21,16 +21,17 @@ const editable = [...(/pub const EDITABLE_PERMISSIONS[\s\S]*?\];/.exec(viewSourc
 const labels = [...(/const PERMISSION_LABELS = \[([\s\S]*?)\n\];/.exec(appSource)[1]).matchAll(/\["([a-z_]+)", "([^"]+)"\]/g)].map(m => [m[1], m[2]]);
 const grouped = [...(/const PERMISSION_GROUPS = \[([\s\S]*?)\n\];/.exec(appSource)[1]).matchAll(/"([a-z_]+)"/g)].map(m => m[1]).filter(n => n !== n.toUpperCase());
 
-test("the five restrictions take bits 36 to 40 in order and sit in the editor under positive names", () => {
+test("the six restrictions take bits 36 to 41 in order and sit in the editor under positive names", () => {
   const core = read("crates", "commy-core", "src", "permissions.rs");
   const names = new Map(editable);
-  for (const [name, bit] of [["embed_links", 36], ["read_message_history", 37], ["create_threads", 38], ["send_polls", 39], ["create_events", 40]]) {
-    const constant = `NO_${name === "send_polls" ? "SEND_POLLS" : name.toUpperCase()}`;
+  const constants = { send_polls: "NO_SEND_POLLS", use_voice_filters: "NO_VOICE_FILTERS" };
+  for (const [name, bit] of [["embed_links", 36], ["read_message_history", 37], ["create_threads", 38], ["send_polls", 39], ["create_events", 40], ["use_voice_filters", 41]]) {
+    const constant = constants[name] || `NO_${name.toUpperCase()}`;
     assert.ok(core.includes(`pub const ${constant}: Permissions = Permissions(1 << ${bit});`), `${constant} is bit ${bit}`);
     assert.equal(names.get(name), constant, `${name} maps to the inverted bit`);
     assert.ok(isRestriction(name));
   }
-  assert.deepEqual(RESTRICTION_NAMES, ["embed_links", "read_message_history", "create_threads", "send_polls", "create_events"]);
+  assert.deepEqual(RESTRICTION_NAMES, ["embed_links", "read_message_history", "create_threads", "send_polls", "create_events", "use_voice_filters"]);
   assert.ok(core.includes("pub const RESTRICTIONS: Permissions"));
   assert.ok(!isRestriction("manage_events") && !isRestriction("attach_files"));
   for (const [name, constant] of editable) assert.equal(constant.startsWith("NO_"), isRestriction(name), `${name} is listed as a restriction exactly when its bit is one`);
@@ -57,7 +58,7 @@ test("every editable permission has a label, a one-line hint and a place in the 
     const hint = permissionHint(name);
     assert.ok(hint.length > 0 && hint.length <= 90 && !hint.includes("\n"), `${name} has a one-line hint`);
   }
-  for (const name of ["embed_links", "read_message_history", "create_threads", "send_polls", "create_events"]) {
+  for (const name of RESTRICTION_NAMES) {
     assert.ok(grouped.includes(name), `${name} is in a group`);
   }
   assert.equal(labels.length, editable.length);
@@ -67,13 +68,14 @@ test("every editable permission has a label, a one-line hint and a place in the 
   const chat = /\["Chat", \[([^\]]*)\]/.exec(groupText)[1];
   for (const name of ["embed_links", "read_message_history", "create_threads", "send_polls"]) assert.ok(chat.includes(`"${name}"`), `${name} is a chat permission`);
   assert.ok(/\["Server", \[[^\]]*"create_events", "manage_events"/.test(groupText), "create events sits next to manage events");
+  assert.ok(/\["Voice", \[[^\]]*"use_voice_filters"/.test(groupText), "voice filters sit with the voice permissions");
 });
 
 test("the everyone switches name settings the backend knows and flags the view reports", () => {
   const backend = /fn role_access_permission[\s\S]*?\n\}/.exec(rolesSource)[0];
   const struct = /pub struct ChatRestrictions \{([\s\S]*?)\}/.exec(viewSource)[1];
   const labelNames = new Map(labels);
-  assert.equal(EVERYONE_CHAT_ACCESS.length, 5);
+  assert.equal(EVERYONE_CHAT_ACCESS.length, 6);
   for (const spec of EVERYONE_CHAT_ACCESS) {
     assert.ok(backend.includes(`"${spec.key}" =>`), `${spec.key} is a known access setting`);
     assert.ok(struct.includes(`pub ${spec.field}: bool`), `${spec.field} is reported`);
