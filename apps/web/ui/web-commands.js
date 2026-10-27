@@ -16,6 +16,7 @@ const WEB_DEFAULTS = {
   get_autostart: false,
   get_stream_deck: { enabled: false, status: "off", decks: [] },
   speech_voices: { native: false, voices: [] },
+  voice_pack_status: { available: false, voices: [] },
   get_awaited: 0,
   set_window_title: null,
   set_unread: null,

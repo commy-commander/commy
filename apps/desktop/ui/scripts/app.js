@@ -1168,6 +1168,9 @@ async function mockInvoke(cmd, args = {}) {
       return sent;
     }
     case "get_voice_message": return mockOgg((mock.voiceClips || {})[args.blob] ?? 30);
+    case "voice_pack_status": return mock.voicePack || { available: false, voices: [] };
+    case "voice_pack_download": return null;
+    case "voice_pack_file": return fetch(`${mock.voicePackFiles}/${args.name}`).then(r => r.arrayBuffer());
     case "start_dm_call": {
       const dm = mock.dms[args.userId];
       if (!dm) throw "no such conversation";
@@ -4651,6 +4654,8 @@ function saveTtsPrefs(prefs) {
 }
 
 const speech = { native: false, ready: false, voices: [], loading: null, utterance: null };
+const piper = { pack: null, packLoad: null, runtime: null, voice: null, ctx: null, sources: [], token: 0, downloads: new Map(), progress: new Map() };
+const PIPER_RUNTIME_FILES = ["ort-wasm-simd-threaded.wasm", "piper_phonemize.wasm", "piper_phonemize.data"];
 
 function windowSpeech() {
   return typeof window !== "undefined" && Boolean(window.speechSynthesis) && typeof SpeechSynthesisUtterance === "function";
@@ -4658,6 +4663,10 @@ function windowSpeech() {
 
 function speechAvailable() {
   return speech.native || windowSpeech();
+}
+
+function speechUsable() {
+  return builtInVoices().length > 0 || speechAvailable();
 }
 
 function windowVoices() {
@@ -4684,16 +4693,176 @@ function loadSpeechVoices() {
   return speech.loading;
 }
 
+function loadVoicePack() {
+  piper.packLoad = invoke("voice_pack_status")
+    .catch(() => null)
+    .then(found => {
+      piper.pack = found && found.available && Array.isArray(found.voices) ? found : null;
+      renderTtsSettings();
+    });
+  return piper.packLoad;
+}
+
+function builtInVoices() {
+  return piper.pack ? piper.pack.voices : [];
+}
+
+function builtInVoice(id) {
+  return builtInVoices().find(v => v.id === id) || null;
+}
+
+function currentTtsChoice(prefs = ttsPrefs()) {
+  return resolveTtsVoice(prefs.voice, builtInVoices(), speech.voices, navigator.language);
+}
+
+function loadVendorScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("the voice engine did not load"));
+    document.head.appendChild(script);
+  });
+}
+
+async function packBytes(name) {
+  return new Uint8Array(await invoke("voice_pack_file", { name }));
+}
+
+function blobUrl(bytes, type) {
+  return URL.createObjectURL(new Blob([bytes], type ? { type } : {}));
+}
+
+function piperRuntime() {
+  piper.runtime ||= (async () => {
+    await Promise.all([loadVendorScript("vendor/piper/ort.wasm.min.js"), loadVendorScript("vendor/piper/piper_phonemize.js")]);
+    const [ortWasm, phonemizeWasm, phonemizeData] = await Promise.all(PIPER_RUNTIME_FILES.map(packBytes));
+    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.wasmBinary = ortWasm;
+    ort.env.wasm.wasmPaths = { mjs: new URL("vendor/piper/ort-wasm-simd-threaded.mjs", location.href).href };
+    return { wasmUrl: blobUrl(phonemizeWasm, "application/wasm"), dataUrl: blobUrl(phonemizeData) };
+  })().catch(e => {
+    piper.runtime = null;
+    throw e;
+  });
+  return piper.runtime;
+}
+
+function piperVoice(id) {
+  if (piper.voice && piper.voice.id === id) return piper.voice.ready;
+  const previous = piper.voice;
+  const ready = (async () => {
+    if (previous) await previous.ready.then(v => v.session.release()).catch(() => {});
+    const [model, config] = await Promise.all([packBytes(`${id}.onnx`), packBytes(`${id}.onnx.json`)]);
+    const session = await ort.InferenceSession.create(model, { executionProviders: ["wasm"] });
+    return { session, config: JSON.parse(new TextDecoder().decode(config)) };
+  })();
+  piper.voice = { id, ready };
+  ready.catch(() => { if (piper.voice && piper.voice.ready === ready) piper.voice = null; });
+  return ready;
+}
+
+function piperPhonemes(runtime, text, language) {
+  return new Promise((resolve, reject) => {
+    createPiperPhonemize({
+      print: line => {
+        try {
+          resolve(JSON.parse(line).phoneme_ids || []);
+        } catch (e) {
+          reject(e);
+        }
+      },
+      printErr: () => {},
+      locateFile: name => (name.endsWith(".wasm") ? runtime.wasmUrl : name.endsWith(".data") ? runtime.dataUrl : name),
+    })
+      .then(module => {
+        module.callMain(["-l", language, "--input", JSON.stringify([{ text }]), "--espeak_data", "/espeak-ng-data"]);
+        resolve([]);
+      })
+      .catch(reject);
+  });
+}
+
+function piperFeeds(ids, config, scales) {
+  const feeds = {
+    input: new ort.Tensor("int64", BigInt64Array.from(ids, id => BigInt(id)), [1, ids.length]),
+    input_lengths: new ort.Tensor("int64", BigInt64Array.of(BigInt(ids.length))),
+    scales: new ort.Tensor("float32", Float32Array.from(scales)),
+  };
+  if (Object.keys(config.speaker_id_map || {}).length) feeds.sid = new ort.Tensor("int64", BigInt64Array.of(0n));
+  return feeds;
+}
+
+async function speakBuiltIn(text, id, prefs) {
+  stopBuiltIn();
+  const token = piper.token;
+  const runtime = await piperRuntime();
+  const { session, config } = await piperVoice(id);
+  const timing = piperTiming(config.inference, prefs.rate, prefs.pitch);
+  piper.ctx ||= new AudioContext();
+  const ctx = piper.ctx;
+  if (ctx.state === "suspended") await ctx.resume().catch(() => {});
+  let at = 0;
+  for (const chunk of speechChunks(text)) {
+    const ids = await piperPhonemes(runtime, chunk, config.espeak.voice);
+    if (token !== piper.token) return;
+    if (!ids.length) continue;
+    const { output } = await session.run(piperFeeds(ids, config, timing.scales));
+    if (token !== piper.token) return;
+    const buffer = ctx.createBuffer(1, output.data.length, config.audio.sample_rate);
+    buffer.copyToChannel(output.data, 0);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = timing.playbackRate;
+    source.connect(ctx.destination);
+    source.onended = () => { piper.sources = piper.sources.filter(s => s !== source); };
+    at = Math.max(at, ctx.currentTime);
+    source.start(at);
+    at += buffer.duration / timing.playbackRate;
+    piper.sources.push(source);
+  }
+}
+
+function stopBuiltIn() {
+  piper.token += 1;
+  for (const source of piper.sources) {
+    try { source.stop(); } catch {}
+  }
+  piper.sources = [];
+}
+
+function downloadBuiltIn(voice) {
+  if (piper.downloads.has(voice.id)) return piper.downloads.get(voice.id);
+  toast(`Downloading the ${voice.name} voice (${megabytes(voice.download_bytes)}). After this it works offline.`);
+  const job = invoke("voice_pack_download", { voice: voice.id })
+    .then(loadVoicePack)
+    .finally(() => {
+      piper.downloads.delete(voice.id);
+      piper.progress.delete(voice.id);
+      renderTtsSettings();
+    });
+  piper.downloads.set(voice.id, job);
+  renderTtsSettings();
+  return job;
+}
+
+function onVoicePackProgress(progress) {
+  if (!progress || !progress.voice) return;
+  piper.progress.set(progress.voice, progress);
+  renderTtsVoiceStatus();
+}
+
 function stopSpeaking() {
   speech.utterance = null;
+  stopBuiltIn();
   if (speech.native) invoke("speech_stop").catch(() => {});
   if (windowSpeech()) window.speechSynthesis.cancel();
 }
 
-function speakInWindow(text, prefs) {
+function speakInWindow(text, prefs, voiceId) {
   const synth = window.speechSynthesis;
   const utterance = new SpeechSynthesisUtterance(text);
-  const voice = chosenTtsVoice(speech.voices, prefs.voice);
+  const voice = chosenTtsVoice(speech.voices, voiceId);
   const match = voice && synth.getVoices().find(v => (v.voiceURI || v.name) === voice.id);
   if (match) {
     utterance.voice = match;
@@ -4711,29 +4880,43 @@ function speakInWindow(text, prefs) {
   }, 60);
 }
 
-function speakNow(text) {
-  const prefs = ttsPrefs();
+function speakWithSystem(text, prefs, voiceId) {
   if (speech.native) {
-    const voice = chosenTtsVoice(speech.voices, prefs.voice);
-    invoke("speech_speak", { text, voice: voice ? voice.id : null, rate: prefs.rate, pitch: prefs.pitch }).catch(e => toast(`Could not read it aloud: ${e}`));
+    invoke("speech_speak", { text, voice: voiceId, rate: prefs.rate, pitch: prefs.pitch }).catch(e => toast(`Could not read it aloud: ${e}`));
   } else if (windowSpeech()) {
-    speakInWindow(text, prefs);
+    speakInWindow(text, prefs, voiceId);
   }
 }
 
-function speakText(text) {
+function speakNow(text, waitForVoice) {
+  const prefs = ttsPrefs();
+  const choice = currentTtsChoice(prefs);
+  const voice = choice.kind === "builtin" ? builtInVoice(choice.id) : null;
+  if (!voice) return speakWithSystem(text, prefs, choice.id);
+  const builtIn = () => speakBuiltIn(text, voice.id, prefs).catch(e => {
+    toast(`Could not read it aloud with ${voice.name}: ${e && e.message ? e.message : e}`);
+    if (speechAvailable()) speakWithSystem(text, prefs, null);
+  });
+  if (voice.ready) return builtIn();
+  const download = downloadBuiltIn(voice);
+  const asked = piper.token;
+  if (waitForVoice || !speechAvailable()) return download.then(() => asked === piper.token && builtIn(), e => toast(String(e)));
+  speakWithSystem(text, prefs, null);
+}
+
+function speakText(text, waitForVoice = false) {
   if (!text) return false;
-  if (!speech.ready) {
-    loadSpeechVoices().then(() => (speechAvailable() ? speakNow(text) : toast("Text-to-speech is not available here")));
+  if (!speech.ready || !piper.packLoad) {
+    Promise.all([loadSpeechVoices(), piper.packLoad || loadVoicePack()]).then(() => (speechUsable() ? speakNow(text, waitForVoice) : toast("Text-to-speech is not available here")));
     return true;
   }
-  if (!speechAvailable()) return false;
-  speakNow(text);
+  if (!speechUsable()) return false;
+  speakNow(text, waitForVoice);
   return true;
 }
 
 function speakMessage(message) {
-  if (!speakText(spokenText(message.author_name, message.content, plainText))) toast("Text-to-speech is not available here");
+  if (!speakText(spokenText(message.author_name, message.content, plainText), true)) toast("Text-to-speech is not available here");
 }
 
 function speakIncoming(msg, viewing) {
@@ -4753,24 +4936,39 @@ function canSendTtsHere() {
   return canSendTts(state.currentServer);
 }
 
+function voiceOption(value, label) {
+  const option = el("option", null, label);
+  option.value = value;
+  return option;
+}
+
+function voiceGroup(label, options) {
+  const group = document.createElement("optgroup");
+  group.label = label;
+  group.append(...options);
+  return group;
+}
+
+function renderTtsVoiceStatus() {
+  const choice = currentTtsChoice();
+  const voice = choice.kind === "builtin" ? builtInVoice(choice.id) : null;
+  $("tts-voice-status").textContent = ttsVoiceStatus(choice, voice, voice ? piper.progress.get(voice.id) : null);
+}
+
 function renderTtsSettings() {
   const prefs = ttsPrefs();
-  const usable = speechAvailable();
+  const usable = speechUsable();
   $("tts-mode").value = prefs.mode;
   $("tts-rate").value = String(Math.round(prefs.rate * 10));
   $("tts-rate-label").textContent = `${prefs.rate.toFixed(1)}x`;
   $("tts-pitch").value = String(Math.round(prefs.pitch * 10));
   $("tts-pitch-label").textContent = `${prefs.pitch.toFixed(1)}`;
+  const builtIn = builtInVoices().map(v => voiceOption(BUILT_IN_VOICE_PREFIX + v.id, ttsVoiceLabel(v)));
+  const device = [voiceOption(SYSTEM_VOICE_PREFIX, "Device default"), ...speech.voices.map(v => voiceOption(SYSTEM_VOICE_PREFIX + v.id, ttsVoiceLabel(v)))];
   const select = $("tts-voice");
-  const options = [el("option", null, "Computer default")];
-  options[0].value = "";
-  for (const voice of speech.voices) {
-    const option = el("option", null, ttsVoiceLabel(voice));
-    option.value = voice.id;
-    options.push(option);
-  }
-  select.replaceChildren(...options);
-  select.value = chosenTtsVoice(speech.voices, prefs.voice) ? prefs.voice : "";
+  select.replaceChildren(...(builtIn.length ? [voiceGroup("Built in", builtIn), voiceGroup("On this device", device)] : device));
+  select.value = ttsVoiceValue(currentTtsChoice(prefs));
+  renderTtsVoiceStatus();
   for (const id of ["tts-mode", "tts-voice", "tts-rate", "tts-pitch", "tts-preview"]) $(id).disabled = !usable;
   $("tts-preview").title = usable ? "" : "Text-to-speech is not available here";
 }
@@ -14048,7 +14246,7 @@ function openMessageMenu(message, anchor) {
     item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
   }
   if (message.content) item("Forward", () => openForward(message));
-  if (message.content && speechAvailable()) item("Read Aloud", () => speakMessage(message));
+  if (message.content && speechUsable()) item("Read Aloud", () => speakMessage(message));
   savedMenuItems(item, message);
   if (state.view === "server" && state.currentChannel && !message.pending) item("Mark as Unread", () => markUnreadFrom(message));
   const r = anchor.getBoundingClientRect();
@@ -19067,10 +19265,11 @@ function wireEvents() {
   });
   $("tts-voice").addEventListener("change", e => {
     saveTtsPrefs({ ...ttsPrefs(), voice: e.target.value || null });
+    stopSpeaking();
     renderTtsSettings();
   });
   $("tts-preview").onclick = () => {
-    if (!speakText(spokenText(state.user ? state.user.display_name || state.user.username : "Commy", "this is how text-to-speech sounds"))) toast("Text-to-speech is not available here");
+    if (!speakText(spokenText(state.user ? state.user.display_name || state.user.username : "Commy", "this is how text-to-speech sounds"), true)) toast("Text-to-speech is not available here");
   };
   $("close-to-tray-toggle").addEventListener("change", async e => {
     try {
@@ -19462,6 +19661,7 @@ function wireEvents() {
       if (state.sharing && state.voiceServer) stopSharing();
     });
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
+    window.__TAURI__.event.listen("voice-pack-progress", event => onVoicePackProgress(event.payload));
     window.__TAURI__.event.listen("activity-set", event => onActivitySet(event.payload));
     window.__TAURI__.event.listen("activity-input", event => onActivityInput(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair", event => onStreamDeckPair(event.payload));
@@ -20294,6 +20494,7 @@ function openUserSettings(tab) {
   $("notify-level").value = notifyPrefs().level;
   $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
   renderTtsSettings();
+  loadVoicePack();
   $("close-to-tray-toggle").checked = state.voice.close_to_tray !== false;
   invoke("get_autostart").then(on => { $("autostart-toggle").checked = on; }).catch(() => {});
   invoke("autostart_allowed").then(ok => { $("autostart-toggle").closest("label").classList.toggle("hidden", !ok); }).catch(() => {});
@@ -21422,6 +21623,7 @@ async function boot() {
   await loadOverlaySettings();
   loadUpdateStatus();
   loadSpeechVoices();
+  loadVoicePack();
   await loadIntegrations();
   await loadAccount();
   if (!account.signed_in) {
