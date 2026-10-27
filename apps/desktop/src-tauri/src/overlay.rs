@@ -7,11 +7,45 @@ use tauri::{AppHandle, Manager};
 use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
 
 pub const LABEL: &str = "overlay";
+pub const CHAT_LABEL: &str = "overlay-chat";
 const WIDTH: f64 = 280.0;
 const HEIGHT: f64 = 420.0;
 const MARGIN: i32 = 16;
 
 pub const CORNERS: &[&str] = &["top-left", "top-right", "bottom-left", "bottom-right"];
+pub const MAX_LAYOUTS: usize = 8;
+pub const MAX_LAYOUT_NAME: usize = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Spot {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Spot {
+    fn clamped(self) -> Option<Self> {
+        (self.x.is_finite() && self.y.is_finite()).then(|| Spot { x: self.x.clamp(0.0, 1.0), y: self.y.clamp(0.0, 1.0) })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Layout {
+    pub voice: Spot,
+    pub chat: Spot,
+}
+
+impl Layout {
+    fn clamped(self) -> Option<Self> {
+        Some(Layout { voice: self.voice.clamped()?, chat: self.chat.clamped()? })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedLayout {
+    pub name: String,
+    #[serde(flatten)]
+    pub layout: Layout,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OverlaySettings {
@@ -31,6 +65,10 @@ pub struct OverlaySettings {
     pub toggle_hotkey: String,
     #[serde(default = "default_chat_hotkey")]
     pub chat_hotkey: String,
+    #[serde(default)]
+    pub layout: Option<Layout>,
+    #[serde(default)]
+    pub layouts: Vec<SavedLayout>,
 }
 
 fn default_corner() -> String {
@@ -57,6 +95,8 @@ impl Default for OverlaySettings {
             pictures_only: false,
             toggle_hotkey: default_toggle_hotkey(),
             chat_hotkey: default_chat_hotkey(),
+            layout: None,
+            layouts: Vec::new(),
         }
     }
 }
@@ -67,6 +107,20 @@ impl OverlaySettings {
             self.corner = default_corner();
         }
         self.opacity = if self.opacity.is_finite() { self.opacity.clamp(0.2, 1.0) } else { default_opacity() };
+        self.layout = self.layout.and_then(Layout::clamped);
+        let mut kept: Vec<SavedLayout> = Vec::new();
+        for saved in self.layouts.drain(..) {
+            let name: String = saved.name.trim().chars().filter(|c| !c.is_control()).take(MAX_LAYOUT_NAME).collect();
+            let Some(layout) = saved.layout.clamped() else { continue };
+            if name.is_empty() {
+                continue;
+            }
+            kept.retain(|k| !k.name.eq_ignore_ascii_case(&name));
+            kept.push(SavedLayout { name, layout });
+        }
+        let extra = kept.len().saturating_sub(MAX_LAYOUTS);
+        kept.drain(..extra);
+        self.layouts = kept;
         self
     }
 }
@@ -93,12 +147,32 @@ pub fn corner_position(area: (i32, i32, u32, u32), size: (u32, u32), corner: &st
     }
 }
 
+pub fn spot_position(area: (i32, i32, u32, u32), size: (u32, u32), spot: Spot) -> (i32, i32) {
+    let (x, y, w, h) = area;
+    let room_x = (w as i32 - size.0 as i32).max(0) as f32;
+    let room_y = (h as i32 - size.1 as i32).max(0) as f32;
+    (x + (spot.x * room_x).round() as i32, y + (spot.y * room_y).round() as i32)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Place<'a> {
+    Corner(&'a str),
+    Spot(Spot),
+}
+
+pub fn places(settings: &OverlaySettings) -> (Place<'_>, Option<Place<'_>>) {
+    match settings.layout {
+        None => (Place::Corner(&settings.corner), None),
+        Some(layout) => (Place::Spot(layout.voice), settings.show_chat.then_some(Place::Spot(layout.chat))),
+    }
+}
+
 #[cfg(desktop)]
-fn ensure_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
-    if let Some(window) = app.get_webview_window(LABEL) {
+fn ensure_window(app: &AppHandle, label: &str) -> tauri::Result<tauri::WebviewWindow> {
+    if let Some(window) = app.get_webview_window(label) {
         return Ok(window);
     }
-    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("overlay.html".into()))
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App("overlay.html".into()))
         .title("Commy Overlay")
         .inner_size(WIDTH, HEIGHT)
         .transparent(true)
@@ -151,15 +225,19 @@ pub fn hold_corner(_app: &AppHandle) {}
 pub fn hold_corner(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(window) = app.get_webview_window(LABEL) else { return };
-        if !window.is_visible().unwrap_or(false) {
-            return;
-        }
-        let corner = app.state::<crate::state::App>().voice.lock().unwrap().overlay.corner.clone();
-        let (Some(spot), Ok(at)) = (corner_spot(&window, &corner), window.outer_position()) else { return };
-        if (at.x, at.y) != spot {
-            tracing::info!("overlay drifted to {},{}; moving it back to {corner}", at.x, at.y);
-            refresh(&app);
+        let settings = app.state::<crate::state::App>().voice.lock().unwrap().overlay.clone();
+        let (voice, chat) = places(&settings);
+        for (label, place) in [(LABEL, Some(voice)), (CHAT_LABEL, chat)] {
+            let (Some(place), Some(window)) = (place, app.get_webview_window(label)) else { continue };
+            if !window.is_visible().unwrap_or(false) {
+                continue;
+            }
+            let (Some(spot), Ok(at)) = (place_spot(&window, place), window.outer_position()) else { continue };
+            if (at.x, at.y) != spot {
+                tracing::info!("{label} drifted to {},{}; moving it back", at.x, at.y);
+                refresh(&app);
+                return;
+            }
         }
     });
 }
@@ -169,29 +247,39 @@ fn apply(_app: &AppHandle, _settings: &OverlaySettings, _visible: bool) {}
 
 #[cfg(desktop)]
 fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
-    if !settings.enabled || !visible {
-        if let Some(window) = app.get_webview_window(LABEL) {
-            hide_window(app, &window);
-            if app.state::<crate::state::App>().voice_session.lock().unwrap().is_none() {
-                let _ = app.emit_to(LABEL, "overlay-reset", ());
+    let (voice, chat) = places(settings);
+    let showing = settings.enabled && visible;
+    for (label, place) in [(LABEL, Some(voice)), (CHAT_LABEL, chat)] {
+        match place.filter(|_| showing) {
+            Some(place) => show(app, label, place, settings),
+            None => {
+                if let Some(window) = app.get_webview_window(label) {
+                    hide_window(app, &window);
+                    if app.state::<crate::state::App>().voice_session.lock().unwrap().is_none() {
+                        let _ = app.emit_to(label, "overlay-reset", ());
+                    }
+                }
             }
         }
-        return;
     }
-    let window = match ensure_window(app) {
+}
+
+#[cfg(desktop)]
+fn show(app: &AppHandle, label: &str, place: Place<'_>, settings: &OverlaySettings) {
+    let window = match ensure_window(app, label) {
         Ok(window) => window,
         Err(e) => {
-            tracing::warn!("could not create the overlay window: {e}");
+            tracing::warn!("could not create the {label} window: {e}");
             return;
         }
     };
     let _ = window.set_ignore_cursor_events(true);
-    show_at(app, &window, corner_spot(&window, &settings.corner));
-    let _ = app.emit_to(LABEL, "overlay-config", settings);
+    show_at(app, &window, place_spot(&window, place));
+    let _ = app.emit_to(label, "overlay-config", settings);
 }
 
 #[cfg(desktop)]
-fn corner_spot(window: &tauri::WebviewWindow, corner: &str) -> Option<(i32, i32)> {
+fn place_spot(window: &tauri::WebviewWindow, place: Place<'_>) -> Option<(i32, i32)> {
     let monitor = window.primary_monitor().ok().flatten().or_else(|| window.current_monitor().ok().flatten())?;
     let area = monitor.work_area();
     if area.size.width == 0 || area.size.height == 0 {
@@ -199,7 +287,11 @@ fn corner_spot(window: &tauri::WebviewWindow, corner: &str) -> Option<(i32, i32)
     }
     let scale = monitor.scale_factor();
     let size = ((WIDTH * scale) as u32, (HEIGHT * scale) as u32);
-    Some(corner_position((area.position.x, area.position.y, area.size.width, area.size.height), size, corner))
+    let area = (area.position.x, area.position.y, area.size.width, area.size.height);
+    Some(match place {
+        Place::Corner(corner) => corner_position(area, size, corner),
+        Place::Spot(spot) => spot_position(area, size, spot),
+    })
 }
 
 #[cfg(windows)]
@@ -287,6 +379,53 @@ mod tests {
         assert_eq!((s.corner.as_str(), s.opacity), ("top-left", 1.0));
         let s = OverlaySettings { opacity: f32::NAN, ..Default::default() }.sanitized();
         assert_eq!(s.opacity, 0.9);
+    }
+
+    #[test]
+    fn spots_spread_over_the_room_left_by_the_window() {
+        let area = (0, 0, 1920, 1040);
+        assert_eq!(spot_position(area, (280, 420), Spot { x: 0.0, y: 0.0 }), (0, 0));
+        assert_eq!(spot_position(area, (280, 420), Spot { x: 1.0, y: 1.0 }), (1640, 620));
+        assert_eq!(spot_position((1920, 0, 2560, 1400), (280, 420), Spot { x: 0.5, y: 0.5 }), (1920 + 1140, 490));
+        assert_eq!(spot_position((0, 0, 200, 200), (280, 420), Spot { x: 1.0, y: 1.0 }), (0, 0));
+    }
+
+    #[test]
+    fn a_layout_splits_voice_and_chat_and_corners_keep_them_together() {
+        let s = OverlaySettings { corner: "bottom-right".into(), ..Default::default() };
+        assert_eq!(places(&s), (Place::Corner("bottom-right"), None));
+        let layout = Layout { voice: Spot { x: 0.0, y: 0.2 }, chat: Spot { x: 1.0, y: 1.0 } };
+        let s = OverlaySettings { layout: Some(layout), ..Default::default() };
+        assert_eq!(places(&s), (Place::Spot(layout.voice), Some(Place::Spot(layout.chat))));
+        let s = OverlaySettings { show_chat: false, ..s };
+        assert_eq!(places(&s), (Place::Spot(layout.voice), None));
+    }
+
+    #[test]
+    fn layouts_are_clamped_named_and_capped() {
+        let spot = |x, y| Spot { x, y };
+        let saved = |name: &str, x| SavedLayout { name: name.into(), layout: Layout { voice: spot(x, 0.0), chat: spot(0.0, 1.0) } };
+        let mut layouts: Vec<SavedLayout> = (0..12).map(|i| saved(&format!("Raid {i}"), 0.5)).collect();
+        layouts.push(saved("  ", 0.1));
+        layouts.push(saved("raid 11", 0.9));
+        layouts.push(SavedLayout { name: "Broken".into(), layout: Layout { voice: spot(f32::NAN, 0.0), chat: spot(0.0, 0.0) } });
+        layouts.push(saved(&"x".repeat(80), 0.2));
+        let s = OverlaySettings { layout: Some(Layout { voice: spot(4.0, -1.0), chat: spot(0.3, 0.3) }), layouts, ..Default::default() }.sanitized();
+        assert_eq!(s.layout, Some(Layout { voice: spot(1.0, 0.0), chat: spot(0.3, 0.3) }));
+        assert_eq!(s.layouts.len(), MAX_LAYOUTS);
+        assert!(s.layouts.iter().all(|l| !l.name.is_empty() && l.name.chars().count() <= MAX_LAYOUT_NAME && l.name != "Broken"));
+        assert_eq!(s.layouts.iter().filter(|l| l.name.eq_ignore_ascii_case("raid 11")).count(), 1);
+        assert_eq!(s.layouts.iter().find(|l| l.name == "raid 11").unwrap().layout.voice.x, 0.9);
+        let broken = OverlaySettings { layout: Some(Layout { voice: spot(f32::INFINITY, 0.0), chat: spot(0.0, 0.0) }), ..Default::default() };
+        assert_eq!(broken.sanitized().layout, None);
+    }
+
+    #[test]
+    fn saved_layouts_read_back_flat() {
+        let json = r#"{"layout":{"voice":{"x":0,"y":0},"chat":{"x":1,"y":1}},"layouts":[{"name":"Raid","voice":{"x":0.5,"y":0},"chat":{"x":0.5,"y":1}}]}"#;
+        let s: OverlaySettings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.layouts[0].layout.chat, Spot { x: 0.5, y: 1.0 });
+        assert!(serde_json::to_string(&s).unwrap().contains(r#""name":"Raid","voice""#));
     }
 
     #[test]
