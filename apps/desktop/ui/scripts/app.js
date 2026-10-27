@@ -384,7 +384,7 @@ function mockSeed() {
     { id: "x2", channel: c0, author_id: "m2", author_name: "nova",
       content: "No central servers, no paywall. Everything peer to peer.", created_at: new Date(Date.now() - 1800e3).toISOString(), edited: false, attachments: [] },
     { id: "x2b", channel: c0, author_id: "m1", author_name: "ferris",
-      content: "## Patch notes\n**Bold**, *italic*, __underline__, ~~struck~~, `inline code`, ||a spoiler|| and a [masked link](https://commy.chat).\n> Quoted from the changelog\n- noise gate tuned\n- overlay fixed\n```rust\nfn main() {\n    println!(\"hello\"); // 42\n}\n```\nShipped <t:1760900000:R>.",
+      content: "## Patch notes\n**Bold**, *italic*, __underline__, ~~struck~~, `inline code`, ||a spoiler|| and a [masked link](https://commy.chat).\n> Quoted from the changelog\n- noise gate tuned\n- overlay fixed\n```rust\nfn main() {\n    println!(\"hello\"); // 42\n}\n```\nShipped <t:1760900000:R>.\nNow with {red:colour}, {blue+wave:waves}, {rainbow:rainbows}, {serif:serif}, {pink+hand:handwriting}, {display+glow:glow} and {shake:shaky} text.",
       created_at: new Date(Date.now() - 1500e3).toISOString(), edited: true, attachments: [] },
     { id: "x3", channel: c0, author_id: "me", author_name: mock.user ? mock.user.username : "you",
       content: "Posted while everyone was away, so it waits on this device.", created_at: new Date(Date.now() - 120e3).toISOString(), edited: false, attachments: [], pending: true },
@@ -1977,7 +1977,7 @@ async function closeSettingsLayers() {
 }
 
 const APPEARANCE_KEY = "commy.appearance";
-const APPEARANCE_DEFAULTS = { chatSize: 16, compact: false };
+const APPEARANCE_DEFAULTS = { chatSize: 16, compact: false, textStyles: true };
 
 function loadAppearance() {
   try {
@@ -1990,6 +1990,7 @@ function loadAppearance() {
 function applyAppearance(prefs) {
   document.documentElement.style.setProperty("--chat-font-size", `${prefs.chatSize}px`);
   document.body.classList.toggle("compact", Boolean(prefs.compact));
+  document.body.classList.toggle("plain-text-styles", prefs.textStyles === false);
 }
 
 function saveAppearance(prefs) {
@@ -4651,7 +4652,7 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -8601,7 +8602,53 @@ function renderInlineNode(node) {
     return renderInlineInto(a, node.children);
   }
   if (node.type === "time") return renderTimestamp(node);
+  if (node.type === "style") return renderStyledText(node);
   return renderInlineInto(el(INLINE_TAGS[node.type] || "span"), node.children);
+}
+
+const MAX_EFFECT_LETTERS = 240;
+
+function renderStyledText(node) {
+  const span = renderInlineInto(el("span", textStyleClasses(node).join(" ")), node.children);
+  if (splitsLetters(node)) splitEffectLetters(span);
+  return span;
+}
+
+function graphemes(text) {
+  if (typeof Intl !== "undefined" && Intl.Segmenter) return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), s => s.segment);
+  return Array.from(text);
+}
+
+function splitEffectLetters(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: node => (node.parentElement && node.parentElement.closest("code, .tx-letter") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const texts = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node);
+  let index = 0;
+  for (const node of texts) {
+    if (index >= MAX_EFFECT_LETTERS) break;
+    const parts = document.createDocumentFragment();
+    for (const part of node.textContent.split(/(\s+)/)) {
+      if (!part) continue;
+      if (/^\s+$/.test(part)) {
+        parts.appendChild(document.createTextNode(part));
+        continue;
+      }
+      const word = el("span", "tx-word");
+      for (const letter of graphemes(part)) {
+        if (index >= MAX_EFFECT_LETTERS) {
+          word.appendChild(document.createTextNode(letter));
+          continue;
+        }
+        const span = el("span", "tx-letter", letter);
+        span.style.setProperty("--i", index++);
+        word.appendChild(span);
+      }
+      parts.appendChild(word);
+    }
+    node.replaceWith(parts);
+  }
 }
 
 function renderSpoiler(node) {
@@ -17096,6 +17143,11 @@ function wireEvents() {
     appearance.compact = e.target.checked;
     saveAppearance(appearance);
   });
+  $("text-styles-toggle").checked = appearance.textStyles !== false;
+  $("text-styles-toggle").addEventListener("change", e => {
+    appearance.textStyles = e.target.checked;
+    saveAppearance(appearance);
+  });
 
   $("mic-test-btn").onclick = async () => {
     try {
@@ -17745,6 +17797,7 @@ function wireEvents() {
   });
   wireComposerFormatting($("message-input"));
   wireComposerFormatting($("thread-input"));
+  wireTextStylePop();
   $("message-input").addEventListener("keydown", e => {
     if (e.key === "Escape" && state.replyingTo) cancelReply();
   });
@@ -19047,6 +19100,100 @@ function wireComposerFormatting(input) {
     input.value = wrapped.value;
     input.setSelectionRange(wrapped.start, wrapped.end);
     input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+const TEXT_STYLE_LABELS = {
+  red: "Red", orange: "Orange", yellow: "Yellow", green: "Green", teal: "Teal", blue: "Blue", purple: "Purple", pink: "Pink", gray: "Gray",
+  serif: "Serif", mono: "Mono", hand: "Handwriting", display: "Headline",
+  rainbow: "Rainbow", shimmer: "Shimmer", wave: "Wave", glow: "Glow", shake: "Shake",
+};
+const TEXT_FORMATS = [
+  { marker: "**", label: "Bold", text: "B", keys: "Ctrl+B" },
+  { marker: "*", label: "Italic", text: "I", keys: "Ctrl+I" },
+  { marker: "__", label: "Underline", text: "U", keys: "Ctrl+U" },
+  { marker: "~~", label: "Strikethrough", text: "S", keys: "Ctrl+Shift+S" },
+  { marker: "||", label: "Spoiler", text: "||" },
+  { marker: "`", label: "Code", text: "</>", keys: "Ctrl+E" },
+];
+
+function editComposer(input, change) {
+  const next = change(input.value, input.selectionStart, input.selectionEnd);
+  input.value = next.value;
+  input.focus();
+  input.setSelectionRange(next.start, next.end);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  renderTextStylePop();
+}
+
+function textStyleButton(name, className, label) {
+  const btn = el("button", `ts-btn ${className}`);
+  btn.type = "button";
+  btn.dataset.style = name;
+  btn.title = `${TEXT_STYLE_LABELS[name]}  {${name}:text}`;
+  btn.setAttribute("aria-label", TEXT_STYLE_LABELS[name]);
+  if (label !== undefined) btn.appendChild(label);
+  return btn;
+}
+
+function buildTextStylePop() {
+  const pop = $("text-style-pop");
+  const formats = el("div", "ts-row ts-formats");
+  for (const format of TEXT_FORMATS) {
+    const btn = el("button", "ts-btn ts-format", format.text);
+    btn.type = "button";
+    btn.dataset.marker = format.marker;
+    btn.title = format.keys ? `${format.label} (${format.keys})` : format.label;
+    btn.setAttribute("aria-label", format.label);
+    formats.appendChild(btn);
+  }
+  const colors = el("div", "ts-row ts-colors");
+  for (const name of TEXT_COLORS) colors.appendChild(textStyleButton(name, `ts-swatch tx-swatch-${name}`));
+  const fonts = el("div", "ts-row ts-fonts");
+  for (const name of TEXT_FONTS) fonts.appendChild(textStyleButton(name, "ts-font", renderStyledText({ type: "style", font: name, effects: [], children: [{ type: "text", text: TEXT_STYLE_LABELS[name] }] })));
+  const effects = el("div", "ts-row ts-effects");
+  for (const name of TEXT_EFFECTS) effects.appendChild(textStyleButton(name, "ts-effect", renderStyledText({ type: "style", effects: [name], children: [{ type: "text", text: TEXT_STYLE_LABELS[name] }] })));
+  pop.replaceChildren(
+    formats,
+    el("div", "ts-label", "Colour"), colors,
+    el("div", "ts-label", "Font"), fonts,
+    el("div", "ts-label", "Effect"), effects,
+    el("div", "ts-hint", "Or type {red:text}. Mix up to three, like {blue+wave:text}."),
+  );
+}
+
+function renderTextStylePop() {
+  const pop = $("text-style-pop");
+  if (pop.classList.contains("hidden")) return;
+  const input = $("message-input");
+  const active = activeTextStyles(input.value, input.selectionStart, input.selectionEnd);
+  for (const btn of pop.querySelectorAll("[data-style]")) btn.setAttribute("aria-pressed", String(active.includes(btn.dataset.style)));
+}
+
+function wireTextStylePop() {
+  const pop = $("text-style-pop");
+  const button = $("text-style-btn");
+  const input = $("message-input");
+  buildTextStylePop();
+  button.addEventListener("click", () => {
+    if (!pop.classList.contains("hidden")) {
+      pop.classList.add("hidden");
+      return;
+    }
+    closeFloating("text-style-pop");
+    placePopup(pop, button, "above");
+    renderTextStylePop();
+  });
+  pop.addEventListener("mousedown", e => e.preventDefault());
+  pop.addEventListener("click", e => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    if (btn.dataset.marker) editComposer(input, (value, start, end) => toggleWrap(value, start, end, btn.dataset.marker));
+    else if (btn.dataset.style) editComposer(input, (value, start, end) => applyTextStyle(value, start, end, btn.dataset.style));
+  });
+  for (const type of ["keyup", "mouseup", "select"]) input.addEventListener(type, renderTextStylePop);
+  document.addEventListener("mousedown", e => {
+    if (!pop.classList.contains("hidden") && !pop.contains(e.target) && !button.contains(e.target)) pop.classList.add("hidden");
   });
 }
 
