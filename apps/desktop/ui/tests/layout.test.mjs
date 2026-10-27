@@ -35,17 +35,10 @@ test("connection panel keeps the chosen person and falls back to the first", () 
   assert.equal(pickConnLink([], "a"), null);
 });
 
-test("a narrow layout is picked only from the known names", () => {
-  const { narrowLayoutFromQuery } = require("../scripts/layout.js");
-  assert.equal(narrowLayoutFromQuery("?narrow=slim"), "slim");
-  assert.equal(narrowLayoutFromQuery("?narrow=wide"), null);
-  assert.equal(narrowLayoutFromQuery(""), null);
-});
-
-test("voice rings fold the overflow into one more-people ring", () => {
+test("voice rings fold everyone past the fourth into one more-people ring", () => {
   const { voiceRingSplit } = require("../scripts/layout.js");
-  assert.deepEqual(voiceRingSplit(3, "slim"), { shown: 3, more: 0 });
-  assert.deepEqual(voiceRingSplit(4, "slim"), { shown: 4, more: 0 });
-  assert.deepEqual(voiceRingSplit(9, "slim"), { shown: 3, more: 6 });
-  assert.deepEqual(voiceRingSplit(9, "stack"), { shown: 5, more: 4 });
+  assert.deepEqual(voiceRingSplit(3), { shown: 3, more: 0 });
+  assert.deepEqual(voiceRingSplit(4), { shown: 4, more: 0 });
+  assert.deepEqual(voiceRingSplit(5), { shown: 3, more: 2 });
+  assert.deepEqual(voiceRingSplit(9), { shown: 3, more: 6 });
 });
