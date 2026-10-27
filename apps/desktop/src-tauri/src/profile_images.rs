@@ -67,7 +67,7 @@ pub fn cached(app: &App, blob: &str) -> Option<Vec<u8>> {
 }
 
 pub fn keep_if_wanted(app: &App, blob: &str, bytes: &[u8]) {
-    if bytes.len() > MAX_PROFILE_IMAGE_BYTES || !crate::is_jpeg_or_png(bytes) || !kept_blobs(app).contains(blob) {
+    if bytes.len() > MAX_PROFILE_IMAGE_BYTES || !commy_view::pictures::is_profile_picture(bytes) || !kept_blobs(app).contains(blob) {
         return;
     }
     let Some(path) = cache_path(app, blob) else { return };

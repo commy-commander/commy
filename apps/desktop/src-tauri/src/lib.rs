@@ -5624,9 +5624,8 @@ async fn set_avatar(
         "none" => None,
         "emoji" => Some(view::profile::emoji_avatar(data)?),
         "image" => {
-            let data = data.unwrap_or_default();
-            let (too_large, not_image) = ("avatar image is too large", "avatar must be a JPEG or PNG image");
-            let blob = store_profile_image(&app, &data, MAX_AVATAR_BYTES, too_large, not_image, AVATAR_FILE).await?;
+            let bytes = view::profile::avatar_bytes(&data.unwrap_or_default(), MAX_AVATAR_BYTES)?;
+            let blob = store_profile_image(&app, bytes, AVATAR_FILE).await?;
             Some(commy_core::Avatar::Image { blob })
         }
         _ => return Err("unknown avatar kind".into()),
@@ -5651,8 +5650,8 @@ async fn set_profile_banner(
     let banner = match data {
         None => None,
         Some(data) => {
-            let (too_large, not_image) = ("banner image is too large", "banner must be a JPEG or PNG image");
-            let blob = store_profile_image(&app, &data, MAX_BANNER_BYTES, too_large, not_image, BANNER_FILE).await?;
+            let bytes = view::profile::image_bytes(&data, MAX_BANNER_BYTES, "banner image is too large", "banner must be a JPEG or PNG image")?;
+            let blob = store_profile_image(&app, bytes, BANNER_FILE).await?;
             Some(commy_core::Avatar::Image { blob }.encode())
         }
     };
@@ -5670,15 +5669,7 @@ pub(crate) fn is_jpeg_or_png(bytes: &[u8]) -> bool {
     view::pictures::is_jpeg_or_png(bytes)
 }
 
-async fn store_profile_image(
-    app: &App,
-    data: &str,
-    max: usize,
-    too_large: &str,
-    not_image: &str,
-    file: &str,
-) -> CmdResult<String> {
-    let bytes = view::profile::image_bytes(data, max, too_large, not_image)?;
+async fn store_profile_image(app: &App, bytes: Vec<u8>, file: &str) -> CmdResult<String> {
     if let Some(dir) = app.data_dir() {
         commy_core::at_rest::write(&dir.join(file), &bytes).map_err(err_to_string)?;
     }
@@ -6159,7 +6150,7 @@ pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<
         return Ok(bytes);
     }
     let max = profile_images::MAX_PROFILE_IMAGE_BYTES as u64;
-    if let Some(bytes) = pictures::fetch(&app.http, blob, max).await.filter(|bytes| is_jpeg_or_png(bytes)) {
+    if let Some(bytes) = pictures::fetch(&app.http, blob, max).await.filter(|bytes| view::pictures::is_profile_picture(bytes)) {
         profile_images::keep_if_wanted(app, blob, &bytes);
         return Ok(bytes);
     }
@@ -6176,7 +6167,7 @@ pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<
     let mut failure = String::from("nobody who has it is online");
     for source in attempts {
         match fetcher.fetch(blob, source, max).await {
-            Ok(bytes) if is_jpeg_or_png(&bytes) => {
+            Ok(bytes) if view::pictures::is_profile_picture(&bytes) => {
                 profile_images::keep_if_wanted(app, blob, &bytes);
                 pictures::offer(&app.http, blob, &bytes);
                 return Ok(bytes);

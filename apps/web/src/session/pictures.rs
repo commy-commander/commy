@@ -4,7 +4,7 @@ use commy_core::server::ImageRef;
 use commy_net::node::is_blob_of;
 use commy_sync::picture::MAX_PICTURE_PLAIN;
 use commy_sync::PictureKey;
-use commy_view::pictures::{self, expression_mime, is_jpeg_or_png, picture_mime};
+use commy_view::pictures::{self, expression_mime, is_jpeg_or_png, is_profile_picture, picture_mime};
 use serde_json::Value;
 
 use super::{Args, Session};
@@ -22,7 +22,7 @@ impl Session {
         match cmd {
             "get_profile_image" => {
                 let blob = args.blob.as_deref().filter(|b| !b.is_empty()).ok_or("missing picture")?;
-                let bytes = self.picture(blob, args.provider.as_deref(), pictures::MAX_PROFILE_IMAGE_BYTES, is_jpeg_or_png).await?;
+                let bytes = self.picture(blob, args.provider.as_deref(), pictures::MAX_PROFILE_IMAGE_BYTES, is_profile_picture).await?;
                 Ok(Value::String(files::data_url(picture_mime(&bytes), &bytes)))
             }
             "fetch_server_image" => {
