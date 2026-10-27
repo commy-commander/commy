@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use chrono::Utc;
 use commy_core::channel_key::KeyScope;
-use commy_core::server::ImageRef;
+use commy_core::server::{GameTagMeta, ImageRef};
 use commy_core::{ChannelId, Permissions, RoleId, ServerEvent, ServerId, ServerState, UserId};
 use commy_net::{invite, WirePayload};
 use commy_view::act::Act;
@@ -24,6 +24,10 @@ pub(super) struct MoveArg {
 
 fn role_list(raw: Option<Vec<String>>) -> Result<Vec<RoleId>, String> {
     raw.unwrap_or_default().iter().map(|r| r.parse().map_err(|_| "invalid role".to_string())).collect()
+}
+
+fn games_of<T: serde::de::DeserializeOwned>(raw: Option<Value>) -> Result<Vec<T>, String> {
+    raw.filter(|v| !v.is_null()).map_or(Ok(Vec::new()), |v| serde_json::from_value(v).map_err(|_| "invalid games".to_string()))
 }
 
 fn role_form(args: &Args) -> roles::RoleForm {
@@ -230,6 +234,10 @@ impl Session {
             "set_rules" => {
                 let rules = args.rules.as_ref().and_then(Value::as_str);
                 vec![client().act(server, |state, me, _, _| moderate::rules(state, me.perms, rules))?]
+            }
+            "set_game_tags" => {
+                let (tags, meta): (Vec<String>, Vec<GameTagMeta>) = (games_of(args.tags.clone())?, games_of(args.meta.clone())?);
+                vec![client().act(server, |state, me, _, _| moderate::game_tags(state, me.perms, &tags, &meta))?]
             }
             "accept_rules" => vec![client().act(server, |state, me, _, _| moderate::accept_rules(state, me.user))?],
             "set_onboarding" => {

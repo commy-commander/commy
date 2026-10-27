@@ -4125,14 +4125,9 @@ async fn set_game_tags(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change game tags")?;
-    let tags = commy_core::server::clean_game_tags(&tags).ok_or(format!(
-        "up to {} games, each at most {} characters",
-        commy_core::server::MAX_GAME_TAGS,
-        commy_core::server::MAX_GAME_TAG_CHARS
-    ))?;
-    let meta = commy_core::server::clean_game_tag_meta(&tags, &meta.unwrap_or_default());
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::GameTagsSet { server: sid, tags, meta }).await
+    let meta = meta.unwrap_or_default();
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::game_tags(state, perms, &tags, &meta))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5854,7 +5849,7 @@ async fn resolve_game_via_account(app: &tauri::State<'_, App>, name: &str) -> Op
         return hit.clone();
     }
     let hit = match account::server_search::<igdb::GameHit>(app, "games", name).await {
-        Ok(Some(hits)) => igdb::best_match(name, &igdb::safe_hits(hits)).cloned(),
+        Ok(Some(hits)) => igdb::best_match(name, &igdb::safe_games(hits)).cloned(),
         Ok(None) => None,
         Err(_) => return None,
     };
@@ -5916,7 +5911,7 @@ async fn search_games(app: tauri::State<'_, App>, query: String) -> CmdResult<Ve
             return Ok(Vec::new());
         }
         let hits = account::server_search::<igdb::GameHit>(&app, "games", query.trim()).await?;
-        return Ok(igdb::safe_hits(hits.unwrap_or_default()));
+        return Ok(igdb::safe_games(hits.unwrap_or_default()));
     }
     app.igdb.lock().await.search(&app.http, &creds, &query).await
 }

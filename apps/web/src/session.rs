@@ -213,6 +213,7 @@ struct Args {
     end: Option<String>,
     rsvp: Option<String>,
     tags: Option<Value>,
+    meta: Option<Value>,
     speaker: Option<bool>,
     raised: Option<bool>,
     onboarding: Option<Value>,
@@ -322,6 +323,14 @@ impl Session {
                 let params = [("q", catalog::gif_query(args.query.as_deref().unwrap_or("")))];
                 let found: Option<catalog::Found<catalog::GifHit>> = self.search("gifs", &params).await?;
                 to_json(&found.map(|found| catalog::safe_gifs(found.results)))
+            }
+            "search_games" => {
+                let query = args.query.as_deref().unwrap_or("").trim();
+                if query.chars().count() < 2 {
+                    return Ok(Value::Array(Vec::new()));
+                }
+                let found: Option<catalog::Found<catalog::GameHit>> = self.search("games", &[("q", query.to_string())]).await?;
+                to_json(&catalog::safe_games(found.map(|found| found.results).unwrap_or_default()))
             }
             "sticker_search" => {
                 let params = catalog::sticker_params(args.query.as_deref().unwrap_or(""), args.from.as_deref(), args.page);
@@ -457,7 +466,7 @@ impl Session {
             "time_out_member" => self.server_command(cmd, args).await,
             "clear_timeout" => self.server_command(cmd, args).await,
             "set_nickname" => self.server_command(cmd, args).await,
-            "set_rules" => self.server_command(cmd, args).await,
+            "set_rules" | "set_game_tags" => self.server_command(cmd, args).await,
             "set_onboarding" | "answer_onboarding" | "set_automod" | "set_activities_enabled" => self.server_command(cmd, args).await,
             "export_server_template" => self.server_command(cmd, args).await,
             "browse_directory" | "server_listing" | "publish_listing" | "unlist_server" => self.directory_command(cmd, args).await,
