@@ -280,7 +280,11 @@ impl Client {
             _ => None,
         };
         let shown = profile.map(|(user, _)| state.profiles.get(&user).map_or(Presence::Offline, |p| p.presence));
+        let news = liveness::seat_news(&event).filter(|_| !stored);
         let applied = commy_net::catchup::apply_live(state, event, action);
+        if applied.0.is_ok() {
+            self.liveness.lock().unwrap().heard_seat_news(state, news, web_time::Instant::now());
+        }
         if let (Some((user, here_now)), Some(shown)) = (profile, shown) {
             if here_now && applied.0 == Ok(true) {
                 self.liveness.lock().unwrap().heard_through_service(server, user, web_time::Instant::now());
@@ -307,6 +311,7 @@ impl Client {
             ServerEvent::PresenceUpdate { user, presence } => Some((*user, *presence)),
             _ => None,
         };
+        let news = liveness::seat_news(&event);
         let now = web_time::Instant::now();
         let mut servers = self.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&server) else { return false };
@@ -315,6 +320,7 @@ impl Client {
             Err(_) => return false,
         };
         let mut live = self.liveness.lock().unwrap();
+        live.heard_seat_news(state, news, now);
         let said_at = action.map(|a| a.at);
         if let Some((user, presence)) = said {
             changed |= live.settle_device_presence(state, user, node, presence, now, said_at);
@@ -340,6 +346,7 @@ impl Client {
         let mut live = self.liveness.lock().unwrap();
         for (user, node) in peers {
             live.heard(server, *user, now);
+            live.heard_seat(server, *user, now);
             live.heard_device(server, *user, node, now);
         }
     }

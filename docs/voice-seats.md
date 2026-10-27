@@ -57,6 +57,12 @@ a seat when any of these happens:
   when they were last heard only through the sync service.
 - the member is still heard from another device, but the voice device itself
   has been quiet for the same window.
+- nobody has re-confirmed the seat for the same window. A seat is confirmed
+  only by news that names the room the member is in: a `VoiceState` or a
+  `DeviceAnnounce` for that room, or live media from them in our own call.
+  This ends seats we learned without their device (a snapshot's hearsay) and
+  seats whose leave we missed, for example while our app was restarting,
+  even when the member stays online.
 
 "Heard" means any live signed word from the member (presence beat, seat
 news, typing and so on) or live media from them in our own call. The voice
@@ -89,7 +95,8 @@ channel however many devices they have. Dial their media through
   in voice decides the room whatever its clock says, members without devices,
   ending voice, a fresh copy keeps who is in voice.
 - `commy-view` `liveness`: a quiet voice device, a seat that keeps beating,
-  someone appearing offline, the sync service window, going offline on the
-  voice device and a stale goodbye, waking from sleep.
+  a seat nobody confirms, news about another room, someone appearing
+  offline, the sync service window, going offline on the voice device and a
+  stale goodbye, waking from sleep.
 - `commy-web-client` `client`: the browser's greeting seats it for late
   joiners, a bare leave does not unseat the voice device.

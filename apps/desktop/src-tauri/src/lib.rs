@@ -6930,6 +6930,7 @@ async fn run_net_loop(
                     _ => None,
                 };
                 let device_news = matches!(event, ServerEvent::DeviceAnnounce { .. }).then(|| event.clone());
+                let seat_news = liveness::seat_news(&event);
                 let key_event = commy_net::community_streams::is_key_event(&event);
                 let speaker = liveness::speaker(&event, action.as_ref()).filter(|_| !replayed);
                 let (applied, was_online, new_message, pinned) = {
@@ -6943,6 +6944,9 @@ async fn run_net_loop(
                                 .filter(|_| replayed)
                                 .map(|user| state.profiles.get(&user).map_or(Presence::Offline, |p| p.presence));
                             let (mut applied, new_message, pinned) = catchup::apply_live(state, event, action);
+                            if applied.is_ok() {
+                                liveness::heard_seat_news(&app, state, seat_news, std::time::Instant::now());
+                            }
                             if let (Some(user), Some(shown)) = (profile_changed, shown) {
                                 if let Some(profile) = state.profiles.get_mut(&user) {
                                     profile.presence = shown;
