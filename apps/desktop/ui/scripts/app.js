@@ -4041,6 +4041,7 @@ function speakIncoming(msg, viewing) {
     viewing: Boolean(viewing),
     blocked: isBlocked(msg.author),
     presence: state.user?.presence,
+    inVoice: Boolean(state.voiceChannelId),
   });
   if (speak) speakText(spokenText(msg.author_name, msg.content, plainText));
 }
