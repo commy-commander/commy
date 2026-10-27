@@ -20,6 +20,20 @@ function membersCollapsed(pref, width) {
   return width < NARROW_WINDOW_PX;
 }
 
+const NARROW_LAYOUTS = ["stack", "slim", "switcher"];
+const VOICE_RING_LIMITS = { stack: 6, slim: 4, switcher: 4 };
+
+function narrowLayoutFromQuery(search) {
+  const asked = new URLSearchParams(search).get("narrow");
+  return NARROW_LAYOUTS.includes(asked) ? asked : null;
+}
+
+function voiceRingSplit(count, layout) {
+  const limit = VOICE_RING_LIMITS[layout] || count;
+  if (count <= limit) return { shown: count, more: 0 };
+  return { shown: limit - 1, more: count - limit + 1 };
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { NARROW_WINDOW_PX, CHAT_FIRST_PX, SIDEBAR_MIN_PX, SIDEBAR_MAX_PX, clampSidebarWidth, pickConnLink, membersCollapsed };
+  module.exports = { NARROW_WINDOW_PX, CHAT_FIRST_PX, SIDEBAR_MIN_PX, SIDEBAR_MAX_PX, clampSidebarWidth, pickConnLink, membersCollapsed, NARROW_LAYOUTS, narrowLayoutFromQuery, voiceRingSplit };
 }

@@ -2959,6 +2959,7 @@ function renderChannels() {
     return;
   }
   $("server-name").textContent = server.name;
+  paintNarrowSwitch();
   paintSidebarBanner();
   renderServerExtras(list, server);
 
@@ -3158,6 +3159,10 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
 }
 
 function appendVoiceUsers(list, channel) {
+  if (narrowSplit()) {
+    list.appendChild(voiceRings(channel));
+    return;
+  }
   const myName = state.user ? (state.user.display_name || state.user.username) : null;
   if (!isStageChannel(channel)) {
     for (const entry of stageRoster(channel)) list.appendChild(voiceUserRow(channel, entry, myName));
@@ -3168,6 +3173,50 @@ function appendVoiceUsers(list, channel) {
   for (const entry of speakers) list.appendChild(voiceUserRow(channel, entry, myName, "speaker"));
   if (audience.length) list.appendChild(stageGroupLabel("Audience", audience.length));
   for (const entry of audience) list.appendChild(voiceUserRow(channel, entry, myName, "audience"));
+}
+
+function voiceRingEntries(channel) {
+  if (!isStageChannel(channel)) return stageRoster(channel);
+  const { speakers, audience } = stageSections(channel);
+  return [...speakers, ...audience];
+}
+
+function voiceRings(channel) {
+  const rings = el("div", "voice-rings");
+  rings.dataset.room = channel.id;
+  const entries = voiceRingEntries(channel);
+  const { shown, more } = voiceRingSplit(entries.length, document.body.dataset.narrow);
+  for (const entry of entries.slice(0, shown)) rings.appendChild(voiceRing(channel, entry));
+  if (more) {
+    const extra = el("span", "voice-ring voice-ring-more", `+${more}`);
+    extra.title = entries.slice(shown).map(e => e.name).join(", ");
+    rings.appendChild(extra);
+  }
+  return rings;
+}
+
+function voiceRing(channel, entry) {
+  const ring = el("span", "voice-user voice-ring");
+  ring.dataset.room = channel.id;
+  ring.title = entry.muted ? `${entry.name} (muted)` : entry.name;
+  if (entry.id) {
+    ring.dataset.user = entry.id;
+    ring.classList.toggle("speaking", state.speaking.has(entry.id));
+  }
+  ring.classList.toggle("muted", Boolean(entry.muted));
+  ring.appendChild(makeAvatar(entry.id, entry.name, "avatar avatar-sm"));
+  const isMe = state.user && entry.id === state.user.id;
+  ring.onclick = e => {
+    e.stopPropagation();
+    if (isMe) {
+      openSelfVoiceMenu(e.clientX, e.clientY);
+      return;
+    }
+    const server = state.currentServer;
+    const member = server && server.members.find(m => m.id === entry.id);
+    openMemberMenu(member || { id: entry.id, name: entry.name }, e.clientX, e.clientY);
+  };
+  return ring;
 }
 
 function stageGroupLabel(title, count) {
@@ -14029,6 +14078,101 @@ function applyMembersLayout() {
   btn.title = collapsed ? "Show Members" : "Hide Members";
 }
 
+function narrowSplit() {
+  return Boolean(document.body.dataset.narrow) && isPhoneWidth(window.innerWidth) && !document.body.classList.contains("mobile-app");
+}
+
+function paintNarrowSwitch() {
+  const button = $("narrow-switch");
+  if (!button) return;
+  const server = state.view === "server" ? state.currentServer : null;
+  const icon = button.querySelector(".narrow-switch-icon");
+  icon.innerHTML = "";
+  icon.style.background = "";
+  if (server) {
+    paintServerIcon(icon, server);
+    icon.style.background = serverTint(server.id);
+  } else {
+    icon.appendChild(el("img")).src = "images/commy_v3_noback.png";
+  }
+  button.querySelector(".narrow-switch-name").textContent = server ? server.name : "Direct Messages";
+}
+
+function narrowFlyoutRow(label, paintIcon, onPick, active = false) {
+  const row = el("button", "narrow-flyout-row" + (active ? " active" : ""));
+  const icon = el("span", "narrow-flyout-icon");
+  paintIcon(icon);
+  row.append(icon, el("span", "narrow-flyout-name", label));
+  row.onclick = () => {
+    $("app").classList.remove("servers-open");
+    onPick();
+  };
+  return row;
+}
+
+function renderNarrowFlyout() {
+  const flyout = $("narrow-flyout");
+  const current = state.view === "server" && state.currentServer ? state.currentServer.id : null;
+  const glyph = name => icon => icon.appendChild(svgIcon(name, 18));
+  flyout.replaceChildren(
+    narrowFlyoutRow("Direct Messages", icon => (icon.appendChild(el("img")).src = "images/commy_v3_noback.png"), () => $("home-btn").click(), !current),
+    ...railServers().map(server => narrowFlyoutRow(server.name, icon => {
+      paintServerIcon(icon, server);
+      icon.style.background = serverTint(server.id);
+    }, () => selectServer(server.id), server.id === current)),
+    narrowFlyoutRow("Add a Server", glyph("plus"), () => $("add-server-btn").click()),
+    narrowFlyoutRow("Discover Servers", glyph("globe"), () => $("discover-btn").click()),
+    el("div", "narrow-flyout-sep"),
+    narrowFlyoutRow("Invite People", glyph("friendAdd"), () => $("invite-btn").click()),
+    narrowFlyoutRow("Server Settings", glyph("gear"), () => $("server-settings-btn").click()),
+  );
+}
+
+function applyNarrowLayout() {
+  const app = $("app");
+  const split = narrowSplit();
+  if (app.classList.contains("narrow-split") === split) return;
+  app.classList.toggle("narrow-split", split);
+  app.classList.remove("servers-open");
+  const panel = document.querySelector(".user-panel");
+  if (split) {
+    $("narrow-dock").appendChild(panel);
+    app.dataset.pane = "split";
+  } else {
+    $("rail").appendChild(panel);
+    app.dataset.pane = "list";
+  }
+  if (state.currentServer) renderChannels();
+}
+
+function wireNarrowLayout() {
+  const layout = narrowLayoutFromQuery(location.search);
+  if (!layout) return;
+  document.body.dataset.narrow = layout;
+  const dock = el("div", "narrow-dock");
+  dock.id = "narrow-dock";
+  document.querySelector(".sidebar").appendChild(dock);
+  const button = el("button", "narrow-switch");
+  button.id = "narrow-switch";
+  button.title = "Switch server";
+  button.append(el("span", "narrow-switch-icon"), el("span", "narrow-switch-name"));
+  button.appendChild(svgIcon("chevronDown", 18));
+  $("server-name-header").prepend(button);
+  const flyout = el("div", "narrow-flyout");
+  flyout.id = "narrow-flyout";
+  document.querySelector(".sidebar").appendChild(flyout);
+  button.onclick = () => {
+    const open = !$("app").classList.contains("servers-open");
+    if (open) renderNarrowFlyout();
+    $("app").classList.toggle("servers-open", open);
+  };
+  $("rail").addEventListener("click", e => {
+    if (e.target.closest(".server-icon, #home-btn")) $("app").classList.remove("servers-open");
+  });
+  window.addEventListener("resize", applyNarrowLayout);
+  applyNarrowLayout();
+}
+
 function phonePane() {
   return $("app").dataset.pane || "list";
 }
@@ -14041,7 +14185,7 @@ function setPhonePane(pane, { fromHistory = false } = {}) {
 }
 
 function phoneStep(action) {
-  if (!isPhoneWidth(window.innerWidth)) return false;
+  if (!isPhoneWidth(window.innerWidth) || narrowSplit()) return false;
   const from = phonePane();
   const to = phonePaneAfter(from, action);
   if (!phonePaneGoesDeeper(from, to) && history.state && history.state.pane) history.back();
@@ -14050,7 +14194,7 @@ function phoneStep(action) {
 }
 
 function phoneShowChat() {
-  if (!isPhoneWidth(window.innerWidth)) return;
+  if (!isPhoneWidth(window.innerWidth) || narrowSplit()) return;
   const pane = phonePane();
   if (pane === "people") phoneStep("back");
   else if (pane === "list") phoneStep("open");
@@ -14131,6 +14275,7 @@ function setViewMode(mode) {
   $("dm-call-btn").classList.toggle("hidden", !home);
   $("group-add-btn").classList.toggle("hidden", !home);
   $("group-leave-btn").classList.toggle("hidden", !group);
+  paintNarrowSwitch();
   $("members-btn").classList.toggle("hidden", dm);
   $("member-list").classList.toggle("hidden", dm);
   $("invite-btn").classList.toggle("hidden", home);
@@ -19349,6 +19494,7 @@ async function boot() {
   wireEvents();
   wireSaved();
   wirePhoneLayout();
+  wireNarrowLayout();
   wireTimeoutModal();
   wireModerationModal();
   wireActivityPing();
