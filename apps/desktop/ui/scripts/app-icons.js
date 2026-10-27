@@ -1,8 +1,7 @@
-const APP_ICON_IMAGE = "images/commy_v3.png";
 const APP_ICON_MARK = "images/commy_v3_noback.png";
 
 const APP_ICON_PRESETS = [
-  { id: "classic", label: "Classic", image: APP_ICON_IMAGE, tile: null },
+  { id: "classic", label: "Classic", image: APP_ICON_MARK, tile: "#ef443c" },
   { id: "amber", label: "Amber", image: APP_ICON_MARK, tile: "#e08a1e" },
   { id: "mint", label: "Mint", image: APP_ICON_MARK, tile: "#1f9e6e" },
   { id: "ocean", label: "Ocean", image: APP_ICON_MARK, tile: "#2a6fd1" },

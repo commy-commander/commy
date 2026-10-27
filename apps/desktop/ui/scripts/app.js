@@ -18184,7 +18184,7 @@ async function renderIconPickers() {
       } else if (choice.custom && !iconState.custom[target]) {
         art.appendChild(svgIcon("plus", 18));
       } else {
-        const img = el("img");
+        const img = el("img", choice.custom ? "" : "icon-mark");
         img.alt = "";
         img.draggable = false;
         img.src = choice.custom ? iconState.custom[target] : choice.image;
