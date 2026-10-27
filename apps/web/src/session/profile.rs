@@ -45,7 +45,7 @@ impl Session {
                     Some("none") => None,
                     Some("emoji") => Some(profile::emoji_avatar(args.data)?),
                     Some("image") => {
-                        let bytes = profile::image_bytes(args.data.as_deref().unwrap_or_default(), MAX_PROFILE_IMAGE_BYTES, "avatar image is too large", "avatar must be a JPEG or PNG image")?;
+                        let bytes = profile::avatar_bytes(args.data.as_deref().unwrap_or_default(), MAX_PROFILE_IMAGE_BYTES)?;
                         Some(Avatar::Image { blob: self.store_picture(bytes).await? })
                     }
                     _ => return Err("unknown avatar kind".into()),

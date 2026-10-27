@@ -2798,12 +2798,23 @@
 
   <div class="pop-menu hidden" id="avatar-menu">
     <button id="avatar-upload">Upload Image</button>
-    <button id="avatar-emoji">Use an Emoji</button>
+    <button id="avatar-emoji">Use an Emoji or GIF</button>
     <button id="avatar-remove" class="danger">Remove Avatar</button>
   </div>
   <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
   <input type="file" id="vrm-file" accept=".vrm" class="hidden" />
-  <div class="emoji-pop emoji-browser hidden" id="emoji-pop"></div>
+  <div class="emoji-pop hidden" id="emoji-pop">
+    <div class="picker-tabs pop-tabs hidden" id="emoji-pop-tabs" role="tablist">
+      <button type="button" role="tab" data-tab="emoji" class="active">Emoji</button>
+      <button type="button" role="tab" data-tab="gifs">GIFs</button>
+    </div>
+    <div class="emoji-browser" id="emoji-pop-browser"></div>
+    <div class="pop-gifs hidden" id="emoji-pop-gifs">
+      <input id="emoji-pop-gif-search" type="text" autocomplete="off" placeholder="Search GIFs" />
+      <div class="gif-grid" id="emoji-pop-gif-grid"></div>
+      <div class="gif-attrib" id="emoji-pop-gif-attrib"></div>
+    </div>
+  </div>
 
   <div class="soundboard-pop hidden" id="soundboard-pop">
     <div class="sb-head"><span>Soundboard</span><button class="btn-secondary btn-small sb-add hidden" id="sb-add">Add sound</button></div>
@@ -2883,6 +2894,7 @@
   <script src="scripts/avatar-rig.js"></script>
   <script src="scripts/camera-avatar.js"></script>
   <script src="scripts/account-ui.js"></script>
+  <script src="scripts/avatar-picture.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>
