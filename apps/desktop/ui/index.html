@@ -80,7 +80,7 @@
           </button>
           <div class="vp-live-source" id="vp-live-source"></div>
           <div class="vp-live-actions">
-            <button class="vp-pill" id="vp-change-source" title="Pick a different monitor or window">Switch</button>
+            <button class="vp-pill desktop-only" id="vp-change-source" title="Pick a different monitor or window">Switch</button>
             <button class="vp-pill danger" id="vp-stop-share">End Stream</button>
           </div>
         </div>
@@ -117,7 +117,7 @@
         <button class="vp-talk hidden" id="vp-talk" type="button">Hold to talk</button>
         <div class="vp-actions" id="vp-actions">
           <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
-          <button class="vp-activities vp-share desktop-only" id="share-btn" title="Share Your Screen"></button>
+          <button class="vp-activities vp-share screen-share-only" id="share-btn" title="Share Your Screen"></button>
           <button class="vp-activities vp-sound" id="vp-soundboard" title="Soundboard"></button>
         </div>
         <button class="vp-game-share hidden" id="vp-game-share"></button>
@@ -162,6 +162,13 @@
           </label>
         </div>
       </header>
+      <div class="phone-voice hidden" id="phone-voice">
+        <button class="phone-voice-where" id="phone-voice-where" type="button" title="Open voice controls"><span class="vp-signal" id="phone-voice-signal" data-quality="good"></span><span class="phone-voice-name" id="phone-voice-name"></span></button>
+        <button class="vp-talk hidden" id="phone-voice-talk" type="button">Hold to talk</button>
+        <button class="icon-btn" id="phone-voice-mute" type="button" title="Mute"></button>
+        <button class="icon-btn" id="phone-voice-deafen" type="button" title="Deafen"></button>
+        <button class="icon-btn vp-hangup" id="phone-voice-hangup" type="button" title="Disconnect"></button>
+      </div>
       <section class="search-pop hidden" id="search-pop" role="dialog" aria-label="Search Results">
         <header class="search-pop-head">
           <span class="search-pop-title" id="search-pop-title">Search this server</span>
@@ -255,7 +262,10 @@
             <div class="activity-screen">
               <video id="activity-video" controls playsinline preload="metadata"></video>
               <div class="activity-youtube hidden" id="activity-youtube"></div>
-              <div class="activity-screen-note hidden" id="activity-screen-note"></div>
+              <div class="activity-screen-note hidden" id="activity-screen-note">
+                <span id="activity-screen-note-text"></span>
+                <button class="btn-primary btn-small hidden" id="activity-youtube-allow">Load YouTube player</button>
+              </div>
               <div class="activity-screen-wait hidden" id="activity-video-wait"><div class="spinner"></div><span>Loading video</span></div>
             </div>
             <div class="activity-watch-line">
@@ -543,7 +553,7 @@
             <input id="activity-link-input" type="text" placeholder="A YouTube link, or https://… ending in .mp4, .webm or .ogg" spellcheck="false" autocomplete="off" />
           </label>
           <div class="activity-chips" id="activity-chips"></div>
-          <div class="setting-sub">YouTube loads for each person once they join. Video files are fetched by each viewer's computer, like a link preview.</div>
+          <div class="setting-sub">YouTube loads for each person only after they join and choose to load it. Video files are fetched by each viewer's computer, like a link preview.</div>
         </div>
       </div>
       <div class="modal-actions">
@@ -1363,6 +1373,10 @@
               </label>
               <label class="field-label">Pronouns
                 <input id="account-pronouns" type="text" maxlength="24" autocomplete="off" placeholder="Optional, like she/her, he/him or they/them" />
+              </label>
+              <label class="field-label">Server Tag
+                <select id="account-server-tag"></select>
+                <span class="setting-sub">Shows a server's tag next to your name in every server you share with people. Anyone who sees it can tell you are in that server.</span>
               </label>
               <label class="field-label">About Me
                 <span class="field-emoji">
@@ -2342,6 +2356,29 @@
               <div class="game-search hidden" id="game-search"></div>
             </div>
           </div>
+          <h2 class="settings-subhead">Server Tag</h2>
+          <div class="settings-card" id="server-tag-card">
+            <div class="setting-sub">Up to 4 letters or numbers that members can choose to wear next to their name, in this server and every other server they share with people.</div>
+            <div class="server-tag-editor">
+              <div class="server-tag-preview-row" id="server-tag-preview"></div>
+              <label class="field-label">Letters
+                <span class="emoji-slot-field">
+                  <button type="button" class="emoji-slot" id="server-tag-emoji" title="Tag emoji"></button>
+                  <input id="server-tag-letters" class="server-tag-letters" type="text" maxlength="8" autocomplete="off" spellcheck="false" placeholder="GG" />
+                </span>
+              </label>
+              <label class="field-label">Effect
+                <select id="server-tag-effect" class="compact-select"></select>
+              </label>
+              <div class="field-label">Colour
+                <div class="server-tag-colors" id="server-tag-colors" role="radiogroup" aria-label="Tag colour"></div>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="btn-link hidden" id="server-tag-remove">Remove Tag</button>
+              <button class="btn-primary btn-small" id="server-tag-save">Save Tag</button>
+            </div>
+          </div>
           <h2 class="settings-subhead">Inactivity</h2>
           <div class="settings-card setting-row">
             <div>
@@ -2895,6 +2932,7 @@
   <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
+  <script src="scripts/server-tags.js"></script>
   <script src="scripts/profile-look.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/voice-filters.js"></script>

@@ -53,6 +53,8 @@ pub struct UserProfile {
     #[serde(default)]
     pub banner: Option<String>,
     #[serde(default)]
+    pub server_tag: Option<crate::server_tag::WornTag>,
+    #[serde(default)]
     pub avatar_border: Option<String>,
     #[serde(default)]
     pub card_effect: Option<String>,
@@ -185,6 +187,7 @@ impl UserProfile {
             banner: None,
             identity: None,
             presence_until: None,
+            server_tag: None,
             avatar_border: None,
             card_effect: None,
         }
@@ -196,6 +199,7 @@ impl UserProfile {
 
     pub fn as_seen_by_others(&self) -> UserProfile {
         let mut shared = self.clone();
+        shared.server_tag = shared.server_tag.filter(crate::server_tag::WornTag::is_valid);
         shared.avatar_border = shared.avatar_border.filter(|b| valid_avatar_border(b));
         shared.card_effect = shared.card_effect.filter(|e| valid_card_effect(e));
         if self.presence == Presence::Invisible {
@@ -215,6 +219,7 @@ impl UserProfile {
             activity: None,
             activity_cover: None,
             activity_since: None,
+            server_tag: None,
             ..self.clone()
         }
     }

@@ -1432,6 +1432,13 @@ impl ServerState {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.join_sounds_off, !allowed))
             }
+            ServerEvent::ServerTagSet { server, tag } => {
+                self.same_server(server)?;
+                if tag.as_ref().is_some_and(|t| !t.is_valid()) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.server.tag, tag))
+            }
             ServerEvent::MemberNickname { server, user, nickname } => {
                 self.same_server(server)?;
                 let Some(member) = self.server.member_mut(user) else {
@@ -3787,6 +3794,35 @@ mod tests {
         });
         let file = crate::test_support::signed(&state, file);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
+    }
+
+    #[test]
+    fn a_server_tag_is_set_by_managers_and_worn_tags_must_be_well_formed() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let tag = crate::ServerTag::new("rkt", Some("\u{1f680}"), "blue", "glow").unwrap();
+        let set = |tag| ServerEvent::ServerTagSet { server: sid, tag };
+        assert_eq!(state.apply(set(Some(tag.clone()))), Ok(true));
+        assert_eq!(state.apply(set(Some(tag.clone()))), Ok(false));
+        let forged = crate::ServerTag { color: "neon".into(), ..tag.clone() };
+        assert_eq!(state.apply(set(Some(forged))), Ok(false));
+        assert_eq!(state.server.tag.as_ref(), Some(&tag));
+        assert!(crate::action::authorized(&state.server, owner, &set(None)));
+        assert!(!crate::action::authorized(&state.server, friend, &set(None)));
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        assert_eq!(ServerState::from_snapshot(serde_json::from_str(&json).unwrap()).server.tag, Some(tag.clone()));
+
+        let worn = crate::WornTag::of(&state.server).unwrap();
+        let mut profile = state.profiles[&friend].clone();
+        profile.server_tag = Some(worn.clone());
+        assert_eq!(state.apply(ServerEvent::ProfileUpdate { profile: profile.clone() }), Ok(true));
+        assert_eq!(state.profiles[&friend].server_tag, Some(worn.clone()));
+        profile.server_tag = Some(crate::WornTag { name: "x".repeat(40), ..worn });
+        assert_eq!(state.apply(ServerEvent::ProfileUpdate { profile }), Ok(true));
+        assert_eq!(state.profiles[&friend].server_tag, None, "a malformed tag is dropped, the rest of the profile kept");
+        assert_eq!(state.apply(set(None)), Ok(true));
+        assert_eq!(state.server.tag, None);
     }
 
     #[test]

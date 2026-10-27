@@ -4,6 +4,7 @@ use std::rc::Rc;
 use commy_core::{Action, ServerEvent, ServerId, ServerState};
 use commy_view::catalog;
 use commy_view::expressions::{self, NewSound, Picture};
+use commy_view::server_tags;
 use serde_json::{json, Value};
 
 use super::{parse, to_json, Args, Session};
@@ -38,7 +39,7 @@ impl Session {
         }
     }
 
-    fn with_servers<T>(&self, read: impl FnOnce(&HashMap<ServerId, ServerState>) -> T) -> T {
+    pub(super) fn with_servers<T>(&self, read: impl FnOnce(&HashMap<ServerId, ServerState>) -> T) -> T {
         let client = self.client.borrow();
         let servers = client.servers.lock().unwrap();
         read(&servers)
@@ -95,11 +96,20 @@ impl Session {
                 let sound = args.name.as_deref();
                 client().act(server, |state, me, _, _| expressions::join_sound(state, me.perms, me.user, sound))?
             }
+            "set_server_tag" => {
+                let (color, effect) = (args.color.as_deref().unwrap_or_default(), args.effect.as_deref().unwrap_or_default());
+                client().act(server, |state, me, _, _| {
+                    server_tags::set_tag(state, me.perms, args.letters.as_deref(), args.emoji.as_deref(), color, effect)
+                })?
+            }
             _ => return Err(format!("{cmd} is not available in the web app yet")),
         };
         self.publish(server, &payload);
         self.emit("server-event", json!(server.to_string()));
-        if matches!(cmd, "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" | "set_join_sounds_allowed") {
+        if cmd == "set_server_tag" {
+            self.refresh_worn_tag();
+        }
+        if matches!(cmd, "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" | "set_join_sounds_allowed" | "set_server_tag") {
             self.emit("servers-changed", Value::Null);
         }
         Ok(Value::Null)

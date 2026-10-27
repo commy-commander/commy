@@ -114,6 +114,8 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 struct Args {
     server_id: Option<String>,
+    letters: Option<String>,
+    effect: Option<String>,
     avatar_border: Option<String>,
     card_effect: Option<String>,
     url: Option<String>,
@@ -499,7 +501,7 @@ impl Session {
             "set_channel_access" => self.server_command(cmd, args).await,
             "add_emoji" | "add_sticker" | "add_emoticon" | "add_sound" => self.expression_command(cmd, args).await,
             "remove_emoji" | "remove_sticker" | "remove_emoticon" | "remove_sound" => self.expression_command(cmd, args).await,
-            "set_sound_emoji" | "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" | "set_join_sounds_allowed" | "set_join_sound" => {
+            "set_sound_emoji" | "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" | "set_join_sounds_allowed" | "set_join_sound" | "set_server_tag" => {
                 self.expression_command(cmd, args).await
             }
             "store_catalog_emoji" | "store_catalog_sticker" | "catalog_media_path" => self.expression_command(cmd, args).await,
@@ -513,6 +515,7 @@ impl Session {
             "set_avatar" => self.profile_command(cmd, args).await,
             "set_profile_banner" => self.profile_command(cmd, args).await,
             "set_pronouns" => self.profile_command(cmd, args).await,
+            "wear_server_tag" => self.profile_command(cmd, args).await,
             "set_profile_look" => self.profile_command(cmd, args).await,
             "set_status_expiry" => self.profile_command(cmd, args).await,
             "set_profile_privacy" => self.profile_command(cmd, args).await,
