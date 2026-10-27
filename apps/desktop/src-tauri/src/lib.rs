@@ -5501,7 +5501,7 @@ async fn set_activity(
             return Err("Activities are turned off in this server's settings".into());
         }
         if activity.as_ref().is_some_and(|a| !a.valid()) {
-            return Err("paste a direct https link to an .mp4, .webm or .ogg file".into());
+            return Err("pick a YouTube link or a direct https link to an .mp4, .webm or .ogg file".into());
         }
         if !commy_core::activity::admits_set(state, me.id, channel, activity.as_ref()) {
             return Err(match (&activity, state.activities.get(&channel)) {
