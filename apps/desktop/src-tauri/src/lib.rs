@@ -3568,6 +3568,26 @@ mod own_server_tests {
 }
 
 #[cfg(test)]
+mod removal_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_ban_or_someone_elses_removal_of_me_counts_as_being_put_out() {
+        let (sid, me, owner, friend) = (ServerId::new(), UserId::new(), UserId::new(), UserId::new());
+        let by = |who: UserId| commy_core::Action { by: who, at: 0, sig: Identity::generate().sign(b"x") };
+        let leave = |user| ServerEvent::MemberLeave { server: sid, user };
+        let ban = |user| ServerEvent::MemberBan { server: sid, user };
+        assert_eq!(removal_of_me(&leave(me), Some(&by(owner)), Some(me)), Some("kicked"));
+        assert_eq!(removal_of_me(&ban(me), Some(&by(owner)), Some(me)), Some("banned"));
+        assert_eq!(removal_of_me(&leave(me), Some(&by(me)), Some(me)), None, "we left from another device");
+        assert_eq!(removal_of_me(&leave(me), None, Some(me)), None);
+        assert_eq!(removal_of_me(&leave(friend), Some(&by(owner)), Some(me)), None);
+        assert_eq!(removal_of_me(&ban(friend), Some(&by(owner)), Some(me)), None);
+        assert_eq!(removal_of_me(&leave(me), Some(&by(owner)), None), None);
+    }
+}
+
+#[cfg(test)]
 mod placeholder_tests {
     use super::*;
 
@@ -4781,12 +4801,23 @@ fn end_voice_in(app: &App, sid: ServerId) {
     }
 }
 
-async fn on_banned(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
+fn removal_of_me(event: &ServerEvent, action: Option<&commy_core::Action>, me: Option<UserId>) -> Option<&'static str> {
+    let me = me?;
+    match event {
+        ServerEvent::MemberBan { user, .. } if *user == me => Some("banned"),
+        ServerEvent::MemberLeave { user, .. } if *user == me && action.is_some_and(|a| a.by != me) => Some("kicked"),
+        _ => None,
+    }
+}
+
+async fn on_removed(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: &str) {
     let name = forget_server_locally(app, sid).map(|s| s.server.name);
     end_voice_in(app, sid);
     leave_server_topic(app, sid).await;
+    entry_list::record_leave(app, sid);
+    entry_list::schedule(handle);
     community_sync::refresh_soon(handle);
-    let _ = handle.emit("banned", serde_json::json!({ "server": sid.to_string(), "name": name }));
+    let _ = handle.emit(notice, serde_json::json!({ "server": sid.to_string(), "name": name }));
     let _ = handle.emit("servers-changed", ());
 }
 
@@ -6400,10 +6431,8 @@ async fn run_net_loop(
                         | ServerEvent::RoleDelete { .. }
                         | ServerEvent::RoleUpdate { .. }
                 );
-                let banned_me = match &event {
-                    ServerEvent::MemberBan { user, .. } => app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user),
-                    _ => false,
-                };
+                let my_id = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+                let removal = removal_of_me(&event, action.as_ref(), my_id);
                 let new_owner = match &event {
                     ServerEvent::OwnerTransfer { user, .. } => Some(*user),
                     _ => None,
@@ -6488,8 +6517,8 @@ async fn run_net_loop(
                 }
                 match applied {
                     Ok(true) => {
-                        if banned_me {
-                            on_banned(&app, &handle, server).await;
+                        if let Some(notice) = removal {
+                            on_removed(&app, &handle, server, notice).await;
                             continue;
                         }
                         if let Some(notice) = deletion {
@@ -6578,10 +6607,16 @@ async fn run_net_loop(
                 let my_id = me.id;
                 let needs_sync = app.awaits_snapshot(server);
                 let mut profile = app.announced(me);
-                if let Some(state) = app.servers.lock().unwrap().get(&server) {
-                    devices::point_at_voice(state, &mut profile);
+                let member = match app.servers.lock().unwrap().get(&server) {
+                    Some(state) => {
+                        devices::point_at_voice(state, &mut profile);
+                        state.server.is_current_member(my_id)
+                    }
+                    None => false,
+                };
+                if member || needs_sync {
+                    broadcast_event(&app, server, ServerEvent::MemberJoin { server, profile }).await;
                 }
-                broadcast_event(&app, server, ServerEvent::MemberJoin { server, profile }).await;
                 if needs_sync {
                     broadcast(&app, server, WirePayload::SyncRequest).await;
                 }
