@@ -78,7 +78,8 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::HandRaise { user, .. }
         | E::DeviceAnnounce { user, .. }
         | E::PronounsSet { user, .. }
-        | E::JoinSoundSet { user, .. } => Some(*user),
+        | E::JoinSoundSet { user, .. }
+        | E::PetCare { user, .. } => Some(*user),
         E::MessagePin { by, .. }
         | E::MemberTimeout { by, .. }
         | E::PollClose { by, .. }
@@ -150,6 +151,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ServerTagSet { .. } => "server_tag".into(),
         E::JoinApprovalSet { .. } => "join_approval".into(),
         E::TipJarSet { .. } => "tip_jar".into(),
+        E::PetSet { .. } => "pet".into(),
+        E::PetCare { user, care, .. } => format!("pet_care:{user}:{}", crate::pet::care_name(*care)),
         E::JoinAsk { profile, .. } => format!("join_ask:{}", profile.id),
         E::JoinAnswer { user, .. } => format!("join_ask:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
@@ -345,7 +348,9 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::JoinSoundsAllowed { .. }
         | E::ServerTagSet { .. }
         | E::JoinApprovalSet { .. }
-        | E::TipJarSet { .. } => allows(Permissions::MANAGE_SERVER),
+        | E::TipJarSet { .. }
+        | E::PetSet { .. } => allows(Permissions::MANAGE_SERVER),
+        E::PetCare { .. } => member && actor(event) == Some(by) && server.pet.is_some(),
         E::JoinAsk { .. } => actor(event) == Some(by) && crate::join_request::may_ask(server, by),
         E::JoinAnswer { user, .. } => member && *user != by && allows(Permissions::KICK_MEMBERS),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),

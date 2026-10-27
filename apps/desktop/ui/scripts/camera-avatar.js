@@ -86,7 +86,7 @@ function reportAvatarFailure(error) {
   console.warn("Camera avatars unavailable", error);
   if (cameraAvatar.stageFailed) return;
   cameraAvatar.stageFailed = true;
-  if (cameraFxShowsAvatar(cameraFx.settings)) toast("Avatars are not available on this device, so your camera is blurred. Pick Off under Avatar in Settings, then Voice & Camera.");
+  if (cameraFxShowsAvatar(cameraFx.settings)) toast("Avatars are not available on this device, so your camera is blurred. Pick Off under Avatar in Settings, then Camera.");
 }
 
 async function createFaceTracker() {

@@ -27,6 +27,7 @@ const AUDIT_GROUP_OF = {
   join_sounds: "expressions",
   server_tag: "server",
   tip_jar: "server",
+  server_pet: "server",
   join_approval: "members",
   join_admit: "members",
   join_turn_away: "members",
@@ -132,6 +133,7 @@ function describeAudit(entry) {
     case "sound_sharing": return [detail === "on" ? "let members play this server's sounds in their other servers" : "stopped sharing this server's sounds"];
     case "join_sounds": return [detail === "on" ? "turned on join sounds in voice channels" : "turned off join sounds in voice channels"];
     case "server_tag": return detail ? ["set the server tag to ", auditStrong(detail)] : ["removed the server tag"];
+    case "server_pet": return detail ? ["named the server astronaut ", auditStrong(detail)] : ["said goodbye to the server astronaut"];
     case "tip_jar": return detail ? ["set the tip jar to ", auditStrong(tipJarText(detail))] : ["removed the tip jar"];
     case "join_approval": return [detail === "on" ? "asked new people to wait until a moderator lets them in" : "let new people join straight away"];
     case "join_admit": return ["let ", member, " in"];

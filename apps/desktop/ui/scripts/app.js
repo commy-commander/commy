@@ -336,6 +336,7 @@ function mockSeed() {
   server.members[1].card_effect = "aurora";
   server.join_approval = true;
   server.tip_jar = "https://ko-fi.com/rusthangout";
+  server.pet = { name: "Cosmo", suit: "orange", adopted: Date.now() - 9 * 24 * 3600 * 1000, last: { fed: Date.now() - 2 * 3600 * 1000, patted: Date.now() - 20 * 60 * 1000, played: 0 }, mine: { fed: 0, patted: 0, played: 0 }, xp: 14, level: 3, next_level_xp: 27, cooldown_ms: 600000 };
   server.join_requests = [
     { id: "j1", name: "Marlow", username: "marlow", avatar: null, avatar_provider: null, note: "ash invited me after the Tuesday raid. I mostly write Rust for embedded boards.", at: Date.now() - 42 * 60 * 1000 },
     { id: "j2", name: "kit", username: "kitcat", avatar: null, avatar_provider: null, note: "", at: Date.now() - 6 * 60 * 1000 },
@@ -758,7 +759,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
-        tip_jar: s.tip_jar || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
+        tip_jar: s.tip_jar || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
@@ -1419,6 +1420,31 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
     case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "set_pet": {
+      const srv = mock.servers[args.serverId];
+      if (!args.name) {
+        srv.pet = null;
+        return null;
+      }
+      const now = Date.now();
+      srv.pet = srv.pet ? { ...srv.pet, name: args.name, suit: args.color } : { name: args.name, suit: args.color, adopted: now, last: { fed: 0, patted: 0, played: 0 }, mine: { fed: 0, patted: 0, played: 0 }, xp: 0, level: 1, next_level_xp: 3, cooldown_ms: 600000 };
+      return null;
+    }
+    case "care_for_pet": {
+      const pet = mock.servers[args.serverId].pet;
+      const care = PET_CARES.find(c => c.kind === args.kind);
+      const now = Date.now();
+      const wait = petCareWait(pet, args.kind, now);
+      if (wait > 0) throw `${pet.name} needs a little break. Try again in ${Math.ceil(wait / 60000)} minutes`;
+      pet.last[care.field] = now;
+      pet.mine[care.field] = now;
+      pet.xp += 1;
+      while (pet.xp >= pet.next_level_xp) {
+        pet.level += 1;
+        pet.next_level_xp = 3 * pet.level * pet.level;
+      }
+      return null;
+    }
     case "set_tip_jar": {
       const url = args.url ? cleanTipJar(args.url) : null;
       if (args.url && !url) throw "Use your Ko-fi page, like ko-fi.com/yourname";
@@ -2034,7 +2060,138 @@ function selectSettingsTab(id, tab) {
   layer.querySelector(".settings-content").scrollTop = 0;
   layer.dataset.tab = tab;
   settingsPhoneView(layer, "page");
-  if (tab === "voice") prepareAvatarStage();
+  if (tab === "camera") prepareAvatarStage();
+}
+
+const SETTINGS_HIT_MS = 1600;
+let settingsHitTimer = null;
+
+function hiddenOnThisDevice(node) {
+  const onPhone = document.body.classList.contains("mobile-app");
+  const browser = document.documentElement.classList.contains("web-app") && node.closest(".native-only");
+  return Boolean((onPhone ? node.closest(".desktop-only") : node.closest(".mobile-only")) || browser);
+}
+
+function ownSettingText(node) {
+  if (node.classList.contains("field-label")) {
+    return [...node.childNodes].filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join(" ").trim();
+  }
+  const copy = node.cloneNode(true);
+  for (const value of copy.querySelectorAll("[id]")) value.remove();
+  return copy.textContent.trim();
+}
+
+function settingsPageEntries(page, base) {
+  const entries = [{ ...base, kind: "page", title: base.pageTitle, section: "", keywords: page.dataset.search || "", target: null }];
+  let section = "";
+  for (const node of page.querySelectorAll(".settings-subhead, .setting-title, .field-label")) {
+    if (hiddenOnThisDevice(node) || (node.classList.contains("setting-title") && node.id)) continue;
+    const title = ownSettingText(node);
+    if (!title) continue;
+    if (node.classList.contains("settings-subhead")) {
+      section = title;
+      entries.push({ ...base, kind: "section", title, section: "", keywords: node.dataset.search || "", target: node });
+      continue;
+    }
+    const target = node.closest(".setting-row, .slider-row, .settings-card") || node;
+    entries.push({ ...base, kind: "setting", title, section, keywords: node.dataset.search || target.dataset.search || "", target });
+  }
+  return entries;
+}
+
+function settingsSearchEntries() {
+  const layer = $("user-settings");
+  const entries = [];
+  for (const page of layer.querySelectorAll(".settings-page")) {
+    const tab = layer.querySelector(`.settings-tab[data-tab="${page.dataset.page}"]`);
+    if (!tab || tab.classList.contains("hidden") || hiddenOnThisDevice(tab)) continue;
+    entries.push(...settingsPageEntries(page, { page: page.dataset.page, pageTitle: tab.textContent.trim() }));
+  }
+  return entries;
+}
+
+function renderSettingsSearch() {
+  const query = $("settings-search").value;
+  const searching = Boolean(query.trim());
+  const list = $("settings-search-results");
+  $("user-settings-nav").classList.toggle("searching", searching);
+  list.classList.toggle("hidden", !searching);
+  list.replaceChildren();
+  if (!searching) return;
+  const hits = searchSettings(settingsSearchEntries(), query);
+  if (!hits.length) {
+    list.appendChild(el("div", "settings-search-empty", t("settings.search.none")));
+    return;
+  }
+  for (const hit of hits) {
+    const button = el("button", "settings-search-result");
+    button.type = "button";
+    button.appendChild(el("span", "ssr-title", hit.title));
+    const place = settingsResultPlace(hit);
+    if (place) button.appendChild(el("span", "ssr-place", place));
+    button.onclick = () => openSettingsSearchHit(hit, button);
+    list.appendChild(button);
+  }
+}
+
+function openSettingsSearchHit(hit, button) {
+  for (const other of $("settings-search-results").querySelectorAll(".active")) other.classList.remove("active");
+  button.classList.add("active");
+  selectSettingsTab("user-settings", hit.page);
+  if (!hit.target) return;
+  hit.target.scrollIntoView({ block: "center" });
+  flashSettingsTarget(hit.target);
+}
+
+function flashSettingsTarget(node) {
+  for (const old of document.querySelectorAll(".settings-hit")) old.classList.remove("settings-hit");
+  clearTimeout(settingsHitTimer);
+  node.classList.add("settings-hit");
+  settingsHitTimer = setTimeout(() => node.classList.remove("settings-hit"), SETTINGS_HIT_MS);
+}
+
+function clearSettingsSearch() {
+  $("settings-search").value = "";
+  renderSettingsSearch();
+}
+
+function moveSettingsSearchFocus(from, step) {
+  const results = [...$("settings-search-results").querySelectorAll(".settings-search-result")];
+  const next = results.indexOf(from) + step;
+  if (next < 0) $("settings-search").focus();
+  else if (results[next]) results[next].focus();
+}
+
+function wireSettingsSearch() {
+  const input = $("settings-search");
+  const list = $("settings-search-results");
+  input.before(svgIcon("search", 16));
+  input.addEventListener("input", renderSettingsSearch);
+  input.addEventListener("keydown", e => {
+    const first = list.querySelector(".settings-search-result");
+    if (e.key === "Escape" && input.value) {
+      e.preventDefault();
+      e.stopPropagation();
+      clearSettingsSearch();
+    } else if (e.key === "Enter" && first) {
+      e.preventDefault();
+      first.click();
+    } else if (e.key === "ArrowDown" && first) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+  list.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveSettingsSearchFocus(e.target, e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      clearSettingsSearch();
+      input.focus();
+    }
+  });
 }
 
 function hideEmptyNavGroups(layer) {
@@ -2103,6 +2260,7 @@ function loadAccessibility() {
 function applyTranslations(root) {
   for (const node of root.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
   for (const node of root.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
+  for (const node of root.querySelectorAll("[data-i18n-placeholder]")) node.placeholder = t(node.dataset.i18nPlaceholder);
 }
 
 function renderAccessibilitySettings(prefs, resolved) {
@@ -8325,7 +8483,7 @@ function onUpdateStatus(status) {
   $("settings-btn").dataset.i18nTitle = ready ? "nav.settings.updateReady" : "nav.settings";
   $("settings-btn").title = t($("settings-btn").dataset.i18nTitle);
   if (ready && !wasReady && openSettingsLayerId() !== "user-settings") {
-    toast(`Commy ${status.version} is ready. Restart from Settings > Updates.`);
+    toast(`Commy ${status.version} is ready. Restart from Settings > Startup & Updates.`);
   }
   renderUpdateStatus();
 }
@@ -9652,6 +9810,7 @@ function renderServerExtras(list, server) {
     roles.onclick = () => openChooseRoles();
     list.appendChild(roles);
   }
+  if (server.pet) list.appendChild(petWidget(server));
   if (server.tip_jar) {
     const tip = el("div", "channel sidebar-link");
     tip.appendChild(el("span", "channel-icon")).appendChild(svgIcon("coffee", 18));
@@ -10614,6 +10773,101 @@ function paintServerTagEditor() {
   else preview.appendChild(el("span", "setting-sub", "Type some letters to see the tag"));
 }
 
+let petSuitPick = "white";
+
+function petWidget(server) {
+  const pet = server.pet;
+  const now = Date.now();
+  const mood = petMood(pet, now);
+  const card = el("div", "pet-widget");
+  const figure = el("div", "pet-figure");
+  figure.innerHTML = petSvg(pet.suit, mood.mood);
+  const info = el("div", "pet-info");
+  const head = el("div", "pet-head");
+  head.append(el("span", "pet-name", pet.name), el("span", "pet-level", petLevelLabel(pet)));
+  const bar = el("div", "pet-bar");
+  bar.appendChild(el("span")).style.width = `${Math.round(petProgress(pet) * 100)}%`;
+  bar.title = `${pet.xp} care points`;
+  const actions = el("div", "pet-actions");
+  for (const care of PET_CARES) {
+    const button = el("button", "pet-care", care.label);
+    button.type = "button";
+    const wait = petCareWait(pet, care.kind, now);
+    if (wait > 0) button.title = `Ready again in ${Math.ceil(wait / 60000)} min`;
+    button.onclick = () => careForPet(server, care.kind, figure, button);
+    actions.appendChild(button);
+  }
+  info.append(head, el("div", "pet-mood", mood.line), bar, actions);
+  card.append(figure, info);
+  return card;
+}
+
+async function careForPet(server, kind, figure, button) {
+  button.disabled = true;
+  try {
+    await invoke("care_for_pet", { serverId: server.id, kind });
+    figure.classList.remove("cheer");
+    void figure.offsetWidth;
+    figure.classList.add("cheer");
+    toast(petCareDone(server.pet, kind));
+    setTimeout(() => refreshCurrentServer(), 700);
+  } catch (err) {
+    toast(String(err));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderPetEditor(server) {
+  const editable = Boolean(server.can_manage_server);
+  const pet = server.pet;
+  petSuitPick = pet ? pet.suit : petSuitPick;
+  $("pet-name").value = pet ? pet.name : "";
+  $("pet-name").disabled = !editable;
+  $("pet-save").textContent = pet ? "Save" : "Adopt";
+  $("pet-save").classList.toggle("hidden", !editable);
+  $("pet-release").classList.toggle("hidden", !editable || !pet);
+  paintPetEditor(editable);
+}
+
+function paintPetEditor(editable = true) {
+  const name = petCleanName($("pet-name").value) || "Cosmo";
+  $("pet-preview").innerHTML = petSvg(petSuitPick, "happy");
+  $("pet-preview").title = name;
+  const suits = $("pet-suits");
+  suits.replaceChildren();
+  for (const suit of PET_SUITS) {
+    const swatch = el("button", "pet-suit" + (suit.id === petSuitPick ? " selected" : ""));
+    swatch.type = "button";
+    swatch.style.background = suit.color;
+    swatch.title = suit.label;
+    swatch.setAttribute("role", "radio");
+    swatch.setAttribute("aria-label", suit.label);
+    swatch.setAttribute("aria-checked", String(suit.id === petSuitPick));
+    swatch.disabled = !editable;
+    swatch.onclick = () => {
+      petSuitPick = suit.id;
+      paintPetEditor(editable);
+    };
+    suits.appendChild(swatch);
+  }
+}
+
+async function savePet(release) {
+  const server = state.currentServer;
+  if (!server) return;
+  const name = release ? null : petCleanName($("pet-name").value);
+  if (!release && !name) return toast("Give your astronaut a name");
+  try {
+    await invoke("set_pet", { serverId: server.id, name, color: petSuitPick });
+    toast(release ? `Said goodbye to ${server.pet ? server.pet.name : "the astronaut"}` : server.pet ? `${name} is all set` : `${name} moved in`);
+    await refreshCurrentServer();
+    renderPetEditor(state.currentServer);
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
 function renderTipJarEditor(server) {
   const editable = Boolean(server.can_manage_server);
   $("tip-jar-input").value = tipJarLabel(server.tip_jar);
@@ -10686,6 +10940,9 @@ function wireServerTagEditor() {
   };
   $("server-tag-save").onclick = () => saveServerTag(false);
   $("server-tag-remove").onclick = () => saveServerTag(true);
+  $("pet-save").onclick = () => savePet(false);
+  $("pet-release").onclick = () => savePet(true);
+  $("pet-name").addEventListener("input", () => paintPetEditor());
   $("tip-jar-save").onclick = () => saveTipJar(false);
   $("tip-jar-remove").onclick = () => saveTipJar(true);
   $("tip-jar-input").addEventListener("keydown", e => {
@@ -15678,7 +15935,7 @@ function wireSettingsPhoneBars() {
     bar.append(back, el("span", "settings-phone-title"), close);
     layer.prepend(bar);
     layer.querySelector(".settings-nav").addEventListener("click", e => {
-      const tab = e.target.closest(".settings-tab[data-tab]");
+      const tab = e.target.closest(".settings-tab[data-tab], .settings-search-result");
       if (tab && isPhoneWidth(window.innerWidth)) history.pushState({ pane: phonePane(), settings: true, page: true }, "");
     }, true);
   }
@@ -18073,6 +18330,7 @@ function wireEvents() {
       btn.onclick = () => selectSettingsTab(layer.id, btn.dataset.tab);
     }
   }
+  wireSettingsSearch();
 
   const appearance = loadAppearance();
   applyAppearance(appearance);
@@ -20278,6 +20536,7 @@ async function pickCustomIcon(target) {
 
 function openUserSettings(tab) {
   if (!state.user) return;
+  clearSettingsSearch();
   renderIconPickers();
   $("nc-toggle").checked = state.voice.noise_cancellation;
   $("ec-toggle").checked = state.voice.echo_cancellation !== false;
@@ -20562,6 +20821,7 @@ function openServerSettings(tab) {
   renderGameTagEditor(server);
   renderServerTagEditor(server);
   renderTipJarEditor(server);
+  renderPetEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
   if (isOwner) renderReportSettings(server);

@@ -289,6 +289,30 @@ async fn set_tip_jar(app: tauri::State<'_, App>, handle: tauri::AppHandle, serve
 }
 
 #[tauri::command]
+async fn set_pet(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, name: Option<String>, color: Option<String>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let event = managed(&app, sid, me.id, |state, perms| match name.as_deref() {
+        Some(name) => view::pet::adopt(state, perms, name, color.as_deref().unwrap_or("white"), now),
+        None => view::pet::release(state, perms),
+    })?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn care_for_pet(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, kind: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let kind: commy_core::pet::Care = serde_json::from_value(serde_json::Value::String(kind)).map_err(|_| "unknown kind of care")?;
+    let me = current_profile(&app)?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let event = managed(&app, sid, me.id, |state, _| view::pet::care(state, me.id, kind, now))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn answer_join_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String, admit: bool) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
@@ -3074,6 +3098,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
         }
         if state.server.tip_jar.is_some() {
             events.push(ServerEvent::TipJarSet { server: sid, url: state.server.tip_jar.clone() });
+        }
+        if state.server.pet.is_some() {
+            events.push(ServerEvent::PetSet { server: sid, pet: state.server.pet.clone() });
         }
     }
     if state.server.rules_accepted.contains(&me) {
@@ -7900,6 +7927,8 @@ pub fn run() {
             set_join_sound,
             set_server_tag,
             set_tip_jar,
+            set_pet,
+            care_for_pet,
             wear_server_tag,
             set_activities_enabled,
             set_role_access,
