@@ -49,7 +49,7 @@ fn tile_colour(name: &str) -> Option<[u8; 3]> {
     TILE_COLOURS.iter().find(|(preset, _)| *preset == name).and_then(|(_, hex)| parse_hex(hex))
 }
 
-const CLASSIC_RGB: [u8; 3] = [239, 68, 60];
+pub const CLASSIC_TILE: &str = "#ef443c";
 const STAR_FIT: f32 = 0.7;
 
 fn star_geometry(star: &RgbaImage) -> (f32, f32, f32) {
@@ -84,7 +84,7 @@ fn round_tile(rgb: [u8; 3]) -> Option<RgbaImage> {
 
 pub fn preset(name: &str) -> Option<RgbaImage> {
     if name == CLASSIC {
-        return round_tile(CLASSIC_RGB);
+        return parse_hex(CLASSIC_TILE).and_then(round_tile);
     }
     tile_colour(name).and_then(round_tile)
 }
@@ -154,7 +154,9 @@ pub fn saved_taskbar_icon(base: &Path) -> Option<PathBuf> {
 fn load(dir: Option<&Path>, target: &str, choice: &str) -> Option<RgbaImage> {
     if choice == CUSTOM {
         if let Some(custom) = dir.and_then(|d| image::open(custom_path(d, target)).ok()) {
-            return Some(custom.to_rgba8());
+            let mut round = custom.to_rgba8();
+            crate::tray::round_off(&mut round);
+            return Some(round);
         }
     }
     preset(choice).or_else(|| preset(CLASSIC))
@@ -252,7 +254,10 @@ mod tests {
         save_custom(&dir, "app", &png).unwrap();
         let saved = image::open(custom_path(&dir, "app")).unwrap();
         assert_eq!((saved.width(), saved.height()), (CUSTOM_SIZE, CUSTOM_SIZE));
-        assert_eq!(load(Some(&dir), "app", CUSTOM).unwrap().dimensions(), (CUSTOM_SIZE, CUSTOM_SIZE));
+        let shown = load(Some(&dir), "app", CUSTOM).unwrap();
+        assert_eq!(shown.dimensions(), (CUSTOM_SIZE, CUSTOM_SIZE));
+        assert_eq!(shown.get_pixel(0, 0)[3], 0, "your own image is shown round like the logo");
+        assert_eq!(shown.get_pixel(CUSTOM_SIZE / 2, CUSTOM_SIZE / 2)[3], 255);
         assert_eq!(load(Some(&dir), "tray", CUSTOM).unwrap().dimensions(), preset(CLASSIC).unwrap().dimensions());
         assert!(save_custom(&dir, "app", b"not an image").is_err());
         assert!(save_custom(&dir, "other", &png).is_err());

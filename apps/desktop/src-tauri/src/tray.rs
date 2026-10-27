@@ -43,7 +43,7 @@ pub fn draw_badge(rgba: &mut [u8], width: u32, height: u32) {
     draw_bubble(rgba, width, height, width as f32 - radius, radius, radius);
 }
 
-fn round_off(rgba: &mut image::RgbaImage) {
+pub(crate) fn round_off(rgba: &mut image::RgbaImage) {
     let (w, h) = rgba.dimensions();
     let radius = w.min(h) as f32 / 2.0;
     let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
