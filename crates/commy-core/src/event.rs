@@ -380,6 +380,10 @@ pub enum ServerEvent {
         server: ServerId,
         allowed: bool,
     },
+    ServerTagSet {
+        server: ServerId,
+        tag: Option<crate::server_tag::ServerTag>,
+    },
 }
 
 #[cfg(test)]
@@ -461,6 +465,7 @@ mod tests {
         assert_eq!(wire_tag(device), 84);
         assert_eq!(wire_tag(ServerEvent::JoinSoundSet { server, user, sound: None }), 87);
         assert_eq!(wire_tag(ServerEvent::JoinSoundsAllowed { server, allowed: false }), 88);
+        assert_eq!(wire_tag(ServerEvent::ServerTagSet { server, tag: None }), 89);
     }
 
     #[test]

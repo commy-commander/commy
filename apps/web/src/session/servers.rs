@@ -350,6 +350,7 @@ impl Session {
         self.drop_from_list(server);
         let group = self.client.borrow().is_group(server);
         self.forget_left(server, group).await;
+        self.refresh_worn_tag();
         Ok(Value::Null)
     }
 

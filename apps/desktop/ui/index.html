@@ -1374,6 +1374,10 @@
               <label class="field-label">Pronouns
                 <input id="account-pronouns" type="text" maxlength="24" autocomplete="off" placeholder="Optional, like she/her, he/him or they/them" />
               </label>
+              <label class="field-label">Server Tag
+                <select id="account-server-tag"></select>
+                <span class="setting-sub">Shows a server's tag next to your name in every server you share with people. Anyone who sees it can tell you are in that server.</span>
+              </label>
               <label class="field-label">About Me
                 <span class="field-emoji">
                   <textarea id="account-about" rows="3" maxlength="190" placeholder="A line or two about you, shown on your profile"></textarea>
@@ -2346,6 +2350,29 @@
               <div class="game-search hidden" id="game-search"></div>
             </div>
           </div>
+          <h2 class="settings-subhead">Server Tag</h2>
+          <div class="settings-card" id="server-tag-card">
+            <div class="setting-sub">Up to 4 letters or numbers that members can choose to wear next to their name, in this server and every other server they share with people.</div>
+            <div class="server-tag-editor">
+              <div class="server-tag-preview-row" id="server-tag-preview"></div>
+              <label class="field-label">Letters
+                <span class="emoji-slot-field">
+                  <button type="button" class="emoji-slot" id="server-tag-emoji" title="Tag emoji"></button>
+                  <input id="server-tag-letters" class="server-tag-letters" type="text" maxlength="8" autocomplete="off" spellcheck="false" placeholder="GG" />
+                </span>
+              </label>
+              <label class="field-label">Effect
+                <select id="server-tag-effect" class="compact-select"></select>
+              </label>
+              <div class="field-label">Colour
+                <div class="server-tag-colors" id="server-tag-colors" role="radiogroup" aria-label="Tag colour"></div>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="btn-link hidden" id="server-tag-remove">Remove Tag</button>
+              <button class="btn-primary btn-small" id="server-tag-save">Save Tag</button>
+            </div>
+          </div>
           <h2 class="settings-subhead">Inactivity</h2>
           <div class="settings-card setting-row">
             <div>
@@ -2899,6 +2926,7 @@
   <div class="mention-pop hidden" id="mention-pop" role="listbox"></div>
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
+  <script src="scripts/server-tags.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/voice-filters.js"></script>
   <script src="scripts/stream-audio.js"></script>

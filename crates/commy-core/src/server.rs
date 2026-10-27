@@ -391,6 +391,8 @@ pub struct Server {
     pub join_sounds: std::collections::BTreeMap<UserId, String>,
     #[serde(default)]
     pub join_sounds_off: bool,
+    #[serde(default)]
+    pub tag: Option<crate::server_tag::ServerTag>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -472,6 +474,7 @@ impl Server {
             stepped_down: std::collections::BTreeMap::new(),
             join_sounds: std::collections::BTreeMap::new(),
             join_sounds_off: false,
+            tag: None,
         }
     }
 
