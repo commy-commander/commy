@@ -4819,7 +4819,9 @@ async fn transfer_ownership(
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let event = managed(&app, sid, me.id, |state, _| view::moderate::transfer(state, me.id, user, &confirm_name))?;
-    apply_and_broadcast(&app, &handle, sid, event).await
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    app.follow_owner(sid);
+    Ok(())
 }
 
 #[tauri::command]
@@ -6497,6 +6499,7 @@ async fn run_net_loop(
                         app.persist_server(server);
                         directory::server_changed(&app, server);
                         if let Some(user) = new_owner {
+                            app.follow_owner(server);
                             announce_new_owner(&app, &handle, server, user);
                         }
                         if let Some(event) = &new_emoji {

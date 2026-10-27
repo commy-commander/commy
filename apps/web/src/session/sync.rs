@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope};
-use commy_core::{Message, ServerEvent, ServerId, UserId};
+use commy_core::{IdentityKey, Message, ServerEvent, ServerId, UserId};
 use commy_net::community_streams::{self as streams, Lane};
 use commy_net::entry_list::{self, EntryList};
 use commy_net::sync_streams::SharedKey;
@@ -378,6 +378,7 @@ impl Session {
             }
             self.emit("server-event", json!(server.to_string()));
             self.refresh_sync();
+            self.follow_owner(server);
             self.retire_if_gone(server);
         } else {
             self.adopt(server);
@@ -387,7 +388,10 @@ impl Session {
     fn on_account_change(self: &Rc<Self>, change: Change) {
         match change {
             Change::Nothing => {}
-            Change::Keys => self.refresh_sync(),
+            Change::Keys => {
+                self.adopt_owners();
+                self.refresh_sync();
+            }
             Change::Servers => self.follow_server_list(),
             Change::Read(changed) => {
                 let view = self.sync.borrow().as_ref().map(|live| self.client.borrow().read_view(live.book.reads(), Some(&changed)));
@@ -500,6 +504,26 @@ impl Session {
             spawn_local(async move {
                 let _ = client.append(state, plain).await;
             });
+        }
+    }
+
+    fn adopt_owners(&self) {
+        let owners: Vec<(ServerId, (UserId, IdentityKey))> = {
+            let sync = self.sync.borrow();
+            let Some(live) = sync.as_ref() else { return };
+            self.client.borrow().tickets.keys().filter_map(|server| Some((*server, live.book.owner(*server)?))).collect()
+        };
+        let mut client = self.client.borrow_mut();
+        for (server, owner) in owners {
+            client.adopt_owner(server, owner);
+        }
+    }
+
+    pub(super) fn follow_owner(&self, server: ServerId) {
+        let Some(owner) = self.client.borrow_mut().follow_owner(server) else { return };
+        let shared = self.sync.borrow().as_ref().and_then(|live| live.book.shared_key(server));
+        if let Some(shared) = shared {
+            self.append_account(community_key_record(server, &shared, Utc::now().timestamp_millis(), Some(owner)));
         }
     }
 

@@ -395,7 +395,34 @@ impl App {
         ServerTicket::decode(&raw).ok()?.owner
     }
 
+    pub fn follow_owner(&self, server: ServerId) -> Option<(UserId, IdentityKey)> {
+        if self.awaits_snapshot(server) {
+            return None;
+        }
+        let (owner, known) = {
+            let servers = self.servers.lock().unwrap();
+            let state = servers.get(&server)?;
+            let owner = state.server.owner;
+            (owner, state.identity_of(owner))
+        };
+        let key = known.or_else(|| self.own_key_for_tickets().filter(|(id, _)| *id == owner).map(|(_, key)| key))?;
+        let mut invites = self.invites.lock().unwrap();
+        let mut ticket = ServerTicket::decode(invites.get(&server)?).ok()?;
+        if ticket.owner.is_none_or(|(held, _)| held == owner) {
+            return None;
+        }
+        ticket.owner = Some((owner, key));
+        invites.insert(server, ticket.encode());
+        drop(invites);
+        self.persist_invites();
+        if let Some((shared, secret)) = crate::account_log::community_key(self, server) {
+            crate::account_log::share_community_key(self, server, shared, &secret, Some((owner, key)));
+        }
+        Some((owner, key))
+    }
+
     pub fn vouched_ticket(&self, server: ServerId) -> Option<ServerTicket> {
+        self.follow_owner(server);
         let raw = self.invites.lock().unwrap().get(&server).cloned()?;
         let mut ticket = ServerTicket::decode(&raw).ok()?;
         if ticket.owner.is_none() {

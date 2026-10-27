@@ -1030,6 +1030,7 @@ impl Session {
                 self.emit("timed-out", json!({ "server": server.to_string(), "until": until }));
             }
             self.emit("server-event", json!(server.to_string()));
+            self.follow_owner(server);
             self.retire_if_gone(server);
         }
         applied
@@ -1038,6 +1039,7 @@ impl Session {
     async fn run_changes(self: Rc<Self>, mut changed: mpsc::UnboundedReceiver<ServerId>) {
         while let Some(server) = changed.recv().await {
             self.emit("server-event", json!(server.to_string()));
+            self.follow_owner(server);
             self.retire_if_gone(server);
         }
     }

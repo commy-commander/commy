@@ -525,7 +525,8 @@ pub fn adopt_owner(handle: &AppHandle, server: ServerId) {
     let Some(owner) = crate::account_log::shared_owner(&app, server) else { return };
     let Some(raw) = app.invites.lock().unwrap().get(&server).cloned() else { return };
     let Ok(mut ticket) = commy_net::ServerTicket::decode(&raw) else { return };
-    if ticket.owner.is_some() {
+    let live = app.servers.lock().unwrap().contains_key(&server) && !app.awaits_snapshot(server);
+    if ticket.owner == Some(owner) || (ticket.owner.is_some() && live) {
         return;
     }
     ticket.owner = Some(owner);

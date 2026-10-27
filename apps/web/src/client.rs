@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{
-    action, Action, Attachment, ChannelId, ChannelKind, Identity, Message, MessageId, Permissions, Presence, ServerEvent, ServerId,
+    action, Action, Attachment, ChannelId, ChannelKind, Identity, IdentityKey, Message, MessageId, Permissions, Presence, ServerEvent, ServerId,
     ServerState, SignedEvent, Snapshot, TagId, UserId, UserProfile,
 };
 use commy_net::community_streams::{self as streams, Lane, Want};
@@ -57,6 +57,31 @@ impl Client {
 
     pub fn has(&self, server: ServerId) -> bool {
         self.servers.lock().unwrap().contains_key(&server)
+    }
+
+    pub fn follow_owner(&mut self, server: ServerId) -> Option<(UserId, IdentityKey)> {
+        let (owner, known) = {
+            let servers = self.servers.lock().unwrap();
+            let state = servers.get(&server)?;
+            (state.server.owner, state.identity_of(state.server.owner))
+        };
+        let mine = self.me.lock().unwrap().as_ref().filter(|(me, _)| me.id == owner).map(|(_, identity)| identity.public());
+        let key = known.or(mine)?;
+        let ticket = self.tickets.get_mut(&server)?;
+        if ticket.owner.is_none_or(|(held, _)| held == owner) {
+            return None;
+        }
+        ticket.owner = Some((owner, key));
+        Some((owner, key))
+    }
+
+    pub fn adopt_owner(&mut self, server: ServerId, owner: (UserId, IdentityKey)) {
+        if self.has(server) {
+            return;
+        }
+        if let Some(ticket) = self.tickets.get_mut(&server) {
+            ticket.owner = Some(owner);
+        }
     }
 
     pub fn list_servers(&self) -> Vec<ServerSummary> {
@@ -1250,6 +1275,38 @@ mod tests {
         assert!(w.client.install_owner_snapshot(w.server, payload).unwrap());
         let messages = w.client.get_messages(w.server, w.channel, None).unwrap();
         assert_eq!(messages[0].content, "hello");
+    }
+
+    #[test]
+    fn after_an_ownership_transfer_the_ticket_follows_the_new_owner() {
+        let mut w = world();
+        let heir_identity = Identity::generate();
+        let mut heir = UserProfile::new("heir");
+        heir.identity = Some(heir_identity.public());
+        w.state.apply(ServerEvent::MemberJoin { server: w.server, profile: heir.clone() }).unwrap();
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        let copy_by = |state: &ServerState, by: UserId, identity: &Identity| {
+            let mut payload = build_sync_response(state, 50, by);
+            sign_sync_response(&mut payload, Utc::now().timestamp_millis(), identity);
+            payload
+        };
+        assert_eq!(w.client.follow_owner(w.server), None, "nothing installed yet");
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        assert_eq!(w.client.follow_owner(w.server), None, "the owner has not changed");
+        let transfer = SignedEvent::sign(w.server, w.owner.0.id, Utc::now().timestamp_millis(), ServerEvent::OwnerTransfer { server: w.server, user: heir.id }, &w.owner.1);
+        assert_eq!(w.client.apply_live(w.server, transfer.event.clone(), Some(transfer.action)), Applied::Changed);
+        let handed = Some((heir.id, heir_identity.public()));
+        assert_eq!(w.client.follow_owner(w.server), handed);
+        assert_eq!(w.client.tickets[&w.server].owner, handed);
+        w.state.apply(transfer.event).unwrap();
+        assert!(w.client.vouched(w.server, &copy_by(&w.state, heir.id, &heir_identity), SNAPSHOT_MAX_AGE_MS).is_ok());
+        assert!(w.client.vouched(w.server, &copy_by(&w.state, w.owner.0.id, &w.owner.1), SNAPSHOT_MAX_AGE_MS).is_err());
+
+        w.client.forget(w.server);
+        with_ticket(&mut w, owner_key);
+        w.client.adopt_owner(w.server, handed.unwrap());
+        assert_eq!(w.client.tickets[&w.server].owner, handed, "a server not yet loaded takes the owner our other devices shared");
     }
 
     #[test]
