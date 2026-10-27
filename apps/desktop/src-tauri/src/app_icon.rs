@@ -9,6 +9,8 @@ pub const CUSTOM: &str = "custom";
 pub const FOLLOW_APP: &str = "app";
 pub const PRESETS: &[&str] = &[CLASSIC, "amber", "mint", "ocean", "violet", "mono"];
 pub const TARGETS: &[&str] = &["app", "tray"];
+pub const TASKBAR_ICON_FILE: &str = "taskbar-icon.ico";
+const TASKBAR_ICON_SIZES: &[u32] = &[256, 64, 48, 32, 24, 16];
 pub const TILE_COLOURS: &[(&str, &str)] = &[
     ("amber", "#e08a1e"),
     ("mint", "#1f9e6e"),
@@ -111,6 +113,44 @@ pub fn save_custom(dir: &Path, target: &str, bytes: &[u8]) -> Result<(), String>
     icon.save(custom_path(dir, target)).map_err(|e| e.to_string())
 }
 
+pub fn taskbar_icon_path(base: &Path) -> PathBuf {
+    base.join(TASKBAR_ICON_FILE)
+}
+
+pub fn ico_bytes(icon: &RgbaImage) -> Result<Vec<u8>, String> {
+    let mut frames = Vec::new();
+    for &size in TASKBAR_ICON_SIZES {
+        let scaled = imageops::resize(icon, size, size, imageops::FilterType::Lanczos3);
+        let frame = image::codecs::ico::IcoFrame::as_png(scaled.as_raw(), size, size, image::ExtendedColorType::Rgba8)
+            .map_err(|e| e.to_string())?;
+        frames.push(frame);
+    }
+    let mut bytes = Vec::new();
+    image::codecs::ico::IcoEncoder::new(&mut bytes).encode_images(&frames).map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn save_taskbar_icon(base: &Path, icon: Option<&RgbaImage>) -> Option<PathBuf> {
+    let path = taskbar_icon_path(base);
+    let Some(icon) = icon else {
+        let _ = std::fs::remove_file(&path);
+        return None;
+    };
+    match ico_bytes(icon).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())) {
+        Ok(()) => Some(path),
+        Err(e) => {
+            tracing::warn!("could not save the taskbar icon: {e}");
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+    }
+}
+
+pub fn saved_taskbar_icon(base: &Path) -> Option<PathBuf> {
+    Some(taskbar_icon_path(base)).filter(|path| path.is_file())
+}
+
 fn load(dir: Option<&Path>, target: &str, choice: &str) -> Option<RgbaImage> {
     if choice == CUSTOM {
         if let Some(custom) = dir.and_then(|d| image::open(custom_path(d, target)).ok()) {
@@ -131,6 +171,8 @@ pub fn apply(handle: &tauri::AppHandle, dir: Option<&Path>, app_choice: &str, tr
     if let Ok(mut current) = CURRENT.write() {
         *current = Some((app_icon.clone(), tray_icon));
     }
+    #[cfg(windows)]
+    crate::taskbar::show(handle, (app_choice != CLASSIC).then_some(&app_icon));
     #[cfg(desktop)]
     if let Some(window) = tauri::Manager::get_webview_window(handle, "main") {
         let (w, h) = app_icon.dimensions();
@@ -214,6 +256,25 @@ mod tests {
         assert_eq!(load(Some(&dir), "tray", CUSTOM).unwrap().dimensions(), preset(CLASSIC).unwrap().dimensions());
         assert!(save_custom(&dir, "app", b"not an image").is_err());
         assert!(save_custom(&dir, "other", &png).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn taskbar_icons_carry_every_size_windows_asks_for() {
+        let bytes = ico_bytes(&preset("mint").unwrap()).unwrap();
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Ico).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (256, 256));
+        assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]) as usize, TASKBAR_ICON_SIZES.len());
+    }
+
+    #[test]
+    fn the_classic_choice_clears_the_saved_taskbar_icon() {
+        let dir = temp_dir("taskbar");
+        std::fs::create_dir_all(&dir).unwrap();
+        let saved = save_taskbar_icon(&dir, Some(&preset("ocean").unwrap())).unwrap();
+        assert_eq!(saved_taskbar_icon(&dir), Some(saved));
+        assert_eq!(save_taskbar_icon(&dir, None), None);
+        assert_eq!(saved_taskbar_icon(&dir), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
