@@ -34,7 +34,7 @@ pub use dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
 pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
 pub use knock::{KnockAsk, KnockReply, KnockRequest, Lobby, KNOCK_ALPN};
 pub use mirror::{MirrorAsk, MirrorRequest, MirroredServer, MIRROR_ALPN};
-pub use media::{MediaHello, MediaPacket, MEDIA_ALPN};
+pub use media::{InkMark, MediaHello, MediaPacket, MAX_INK_POINTS, MEDIA_ALPN};
 pub use node::BlobFetcher;
 pub use node::{link_path, CommyNode, LinkPath, MediaChannel, MediaDialer, NetEvent, SharedCatchupStore, MEDIA_DIAL_TIMEOUT};
 pub use protocol::{Envelope, WirePayload, PROTOCOL_VERSION};

@@ -153,13 +153,21 @@ pub struct ShareSource {
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod desktop;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub use desktop::{capture_source, list_sources, Capturer};
+pub use desktop::{capture_source, list_sources, source_rect, Capturer};
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
 mod phone;
 #[cfg(any(target_os = "android", target_os = "ios"))]
-pub use phone::{capture_source, list_sources, Capturer};
+pub use phone::{capture_source, list_sources, source_rect, Capturer};
 
 #[cfg(test)]
 mod tests {

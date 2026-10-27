@@ -19,6 +19,7 @@ mod directory;
 mod doorbell;
 mod expressions;
 mod media_engine;
+mod ink_window;
 mod mirror;
 mod igdb;
 mod instance;
@@ -31,6 +32,7 @@ mod local_key;
 mod liveness;
 mod outbox;
 mod overlay;
+mod stream_ink;
 mod persist;
 mod picker;
 mod pictures;
@@ -1846,6 +1848,14 @@ struct OwnShareView {
     viewers: usize,
     frames: u64,
     audio: bool,
+    ink: bool,
+    drawers: Vec<StreamDrawerView>,
+}
+
+#[derive(serde::Serialize)]
+struct StreamDrawerView {
+    id: String,
+    name: String,
 }
 
 #[tauri::command]
@@ -1860,6 +1870,13 @@ fn own_share_frame(app: tauri::State<App>) -> CmdResult<OwnShareView> {
         viewers: session.viewer_count(),
         frames: session.frames_encoded(),
         audio: session.shares_audio(),
+        ink: session.ink.allowed(),
+        drawers: session
+            .ink
+            .drawers()
+            .into_iter()
+            .map(|id| StreamDrawerView { id: id.to_string(), name: known_name(&app, id) })
+            .collect(),
     })
 }
 
@@ -1872,10 +1889,13 @@ async fn start_screen_share(
     source_id: Option<u32>,
     quality: Option<String>,
     audio: Option<bool>,
+    ink: Option<bool>,
+    ink_on_screen: Option<bool>,
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
     let channel = active_voice_channel(&app).ok_or("join a voice channel first")?;
+    let ink = ink.unwrap_or(false);
 
     let source = parse_source(source_kind.as_deref(), source_id);
     let quality = StreamQuality::from_name(quality.as_deref().unwrap_or(""));
@@ -1890,14 +1910,26 @@ async fn start_screen_share(
     };
     #[cfg(not(target_os = "android"))]
     let session = ScreenShareSession::start(sid, channel, quality.fps(), quality.max_width(), source, share_audio);
+    let session = session.with_ink(profile.id, ink);
+    session.ink.set_local(ink_sink(&handle, profile.id, true));
+    let blocked: Vec<UserId> = app.safety.lock().unwrap().blocked.iter().copied().collect();
+    for user in blocked {
+        session.ink.block(user);
+    }
     let (preview_tx, preview_rx) = tokio::sync::mpsc::unbounded_channel();
     session.add_subscriber(preview_tx);
     let emitter = handle.clone();
     let preview = ScreenWatch::from_frames(profile.id, preview_rx, None, None, move |user, seq, width, height, jpeg| {
         let _ = emitter.emit("video-frame", video_frame_payload(user, Some(seq), width, height, &jpeg));
-    });
+    }, None);
     *app.own_preview.lock().unwrap() = Some(preview);
     *app.screen_share.lock().unwrap() = Some(session);
+    *app.share_source.lock().unwrap() = source;
+    if ink && ink_on_screen.unwrap_or(true) {
+        ink_window::show(&handle, source);
+    } else {
+        ink_window::hide(&handle);
+    }
 
     let event = ServerEvent::ScreenShare {
         user: profile.id,
@@ -1924,6 +1956,7 @@ async fn stop_screen_share(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
     app.own_preview.lock().unwrap().take();
+    ink_window::hide(&handle);
     let Some(session) = app.screen_share.lock().unwrap().take() else {
         return Ok(());
     };
@@ -1979,7 +2012,7 @@ async fn watch_screen(
     let audio = stream_audio_sink(&app, user);
     let watch = ScreenWatch::start(user, media, audio, move |user, seq, width, height, jpeg| {
         let _ = emitter.emit("video-frame", video_frame_payload(user, Some(seq), width, height, &jpeg));
-    });
+    }, Some(ink_sink(&handle, user, false)));
     app.watches.lock().unwrap().insert(user, watch);
     Ok(())
 }
@@ -2109,7 +2142,7 @@ async fn watch_camera(
     let emitter = handle.clone();
     let watch = ScreenWatch::start(user, media, None, move |user, _seq, width, height, jpeg| {
         let _ = emitter.emit("camera-frame", video_frame_payload(user, None, width, height, &jpeg));
-    });
+    }, None);
     app.camera_watches.lock().unwrap().insert(user, watch);
     Ok(())
 }
@@ -2118,6 +2151,81 @@ async fn watch_camera(
 fn stop_watching_camera(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     app.camera_watches.lock().unwrap().remove(&user);
+    Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+struct StreamInkView {
+    sharer: String,
+    own: bool,
+    from: String,
+    name: String,
+    mark: stream_ink::InkMarkView,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct StreamInkAllowedView {
+    sharer: String,
+    on: bool,
+}
+
+fn ink_sink(handle: &tauri::AppHandle, sharer: UserId, own: bool) -> stream_ink::InkSink {
+    let handle = handle.clone();
+    std::sync::Arc::new(move |news| match news {
+        stream_ink::InkNews::Allowed(on) => {
+            let _ = handle.emit("stream-ink-allowed", StreamInkAllowedView { sharer: sharer.to_string(), on });
+        }
+        stream_ink::InkNews::Mark { from, mark } => {
+            let app = handle.state::<App>();
+            if app.safety.lock().unwrap().blocked.contains(&from) {
+                return;
+            }
+            let view = StreamInkView {
+                sharer: sharer.to_string(),
+                own,
+                from: from.to_string(),
+                name: known_name(&app, from),
+                mark: stream_ink::mark_view(&mark),
+            };
+            let _ = handle.emit("stream-ink", view);
+        }
+    })
+}
+
+#[tauri::command]
+fn send_stream_ink(app: tauri::State<App>, user_id: String, mark: stream_ink::InkMarkInput) -> CmdResult<()> {
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let mark = stream_ink::mark_from(&mark).ok_or("that drawing could not be sent")?;
+    let watches = app.watches.lock().unwrap();
+    let watch = watches.get(&user).ok_or("you are not watching that stream")?;
+    watch.send_ink(mark).map_err(err_to_string)
+}
+
+#[tauri::command]
+fn set_stream_ink(app: tauri::State<App>, handle: tauri::AppHandle, on: bool, on_screen: Option<bool>) -> CmdResult<()> {
+    let share = app.screen_share.lock().unwrap();
+    let session = share.as_ref().ok_or("not sharing")?;
+    session.ink.set_allowed(on);
+    if on && on_screen.unwrap_or(true) {
+        ink_window::show(&handle, *app.share_source.lock().unwrap());
+    } else {
+        ink_window::hide(&handle);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_stream_ink(app: tauri::State<App>) -> CmdResult<()> {
+    let share = app.screen_share.lock().unwrap();
+    share.as_ref().ok_or("not sharing")?.ink.clear_all();
+    Ok(())
+}
+
+#[tauri::command]
+fn block_stream_ink(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let share = app.screen_share.lock().unwrap();
+    share.as_ref().ok_or("not sharing")?.ink.block(user);
     Ok(())
 }
 
@@ -7299,7 +7407,7 @@ async fn run_media_loop(
                 match share.as_ref() {
                     Some(s) if s.channel == channel => {
                         let MediaChannel { incoming, outgoing, .. } = media;
-                        s.add_viewer(outgoing, incoming);
+                        s.add_viewer(user, outgoing, incoming);
                         tracing::info!("viewer {} subscribed to our screen", user);
                     }
                     _ => tracing::debug!("screen subscribe while not sharing"),
@@ -7996,6 +8104,10 @@ pub fn run() {
             get_voice_message,
             start_screen_share,
             stop_screen_share,
+            send_stream_ink,
+            set_stream_ink,
+            clear_stream_ink,
+            block_stream_ink,
             share_audio_supported,
             set_stream_volume,
             watch_screen,
