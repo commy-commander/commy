@@ -1,5 +1,5 @@
 const ACTIVITY_KINDS = [
-  { key: "watch", name: "Watch together", blurb: "Play YouTube, Plex, a video link or an attached video together", icon: "movie", pill: "Watch" },
+  { key: "watch", name: "Watch together", blurb: "Play a YouTube link, a video link or an attached video together", icon: "movie", pill: "Watch" },
   { key: "tictactoe", name: "Tic-tac-toe", blurb: "Two play, everyone else in the channel watches", icon: "gamepad", pill: "Game" },
 ];
 
@@ -21,7 +21,6 @@ const YOUTUBE_PATH_PREFIXES = ["shorts", "live", "embed", "v"];
 const YOUTUBE_STATE = { ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
 const YOUTUBE_SYNC_TOLERANCE_SECS = 2;
 const YOUTUBE_SEEK_JUMP_SECS = 2;
-const MAX_PLEX_TITLE_CHARS = 100;
 
 function activityKindKey(activity) {
   const kind = activity && activity.kind;
@@ -78,15 +77,6 @@ function youtubeVideoId(url) {
   return id && YOUTUBE_ID.test(id) ? id : null;
 }
 
-function cleanPlexTitle(title) {
-  return String(title || "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function isPlexTitle(title) {
-  const text = String(title || "");
-  return text.length > 0 && text === cleanPlexTitle(text) && [...text].length <= MAX_PLEX_TITLE_CHARS;
-}
-
 function isVideoAttachment(att) {
   return Boolean(att && att.blob && typeof att.mime === "string" && att.mime.startsWith("video/"));
 }
@@ -126,10 +116,6 @@ function watchYouTubeSource(video) {
   return { youtube: { video } };
 }
 
-function watchPlexSource(title) {
-  return { plex: { title: cleanPlexTitle(title) } };
-}
-
 function watchSource(activity) {
   const kind = activity && activity.kind;
   return kind && typeof kind === "object" && kind.watch ? kind.watch.source : null;
@@ -152,25 +138,17 @@ function watchYouTubeId(activity) {
   return source && source.youtube && YOUTUBE_ID.test(source.youtube.video) ? source.youtube.video : null;
 }
 
-function watchPlexTitle(activity) {
-  const source = watchSource(activity);
-  return source && source.plex ? String(source.plex.title || "") : null;
-}
-
 function watchSourceKind(activity) {
   const source = watchSource(activity);
   if (!source) return null;
   if (source.link) return "link";
   if (source.attachment) return "attachment";
   if (source.youtube) return "youtube";
-  if (source.plex) return "plex";
   return null;
 }
 
 function watchTitle(activity) {
   if (watchYouTubeId(activity)) return "YouTube video";
-  const plex = watchPlexTitle(activity);
-  if (plex) return plex;
   const url = watchLinkUrl(activity);
   if (url) {
     const file = url.split(/[?#]/)[0].split("/").pop();
@@ -254,14 +232,6 @@ function youtubeNeedsSeek(current, target) {
 function youtubeErrorText(code) {
   if (code === 100) return "This YouTube video was removed or made private";
   return "YouTube won't play this video here. Open on YouTube still works.";
-}
-
-function plexStatus(run, plex, meId) {
-  if (!run || watchSourceKind(run.activity) !== "plex") return { text: "", tone: "" };
-  if (!isParticipant(run, meId)) return { text: "Join to sync with Plex", tone: "" };
-  if (!plex || !plex.open) return { text: "Plex isn't open", tone: "catching" };
-  if (!plex.video) return { text: "Start the title in Plex", tone: "catching" };
-  return plex.playing === Boolean(run.playback.playing) ? { text: "In sync", tone: "good" } : { text: "Catching up", tone: "catching" };
 }
 
 function emptyBoard() {
@@ -478,9 +448,8 @@ if (typeof module !== "undefined" && module.exports) {
     ACTIVITY_KINDS, BOARD_CELLS, MARK_NONE, MARK_X, MARK_O, MARK_GLYPHS, WATCH_SYNC_TOLERANCE_SECS, ACTIVITY_MAX_AVATARS,
     activityKindKey, activityKindInfo, activityName, activityPillLabel, isVideoLink, isVideoAttachment, channelVideoAttachments,
     makeActivity, watchLinkSource, watchAttachmentSource, watchLinkUrl, watchAttachment, watchTitle,
-    YOUTUBE_ORIGIN, YOUTUBE_STATE, MAX_PLEX_TITLE_CHARS, youtubeVideoId, cleanPlexTitle, isPlexTitle, watchYouTubeSource, watchPlexSource,
-    watchYouTubeId, watchPlexTitle, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl, youtubeCommand, youtubeListening, readYouTubeMessage,
-    youtubePlaying, youtubeExpectedTime, youtubeUserSeeked, youtubeNeedsSeek, youtubeErrorText, plexStatus,
+    YOUTUBE_ORIGIN, YOUTUBE_STATE, youtubeVideoId, watchYouTubeSource, watchYouTubeId, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl,
+    youtubeCommand, youtubeListening, readYouTubeMessage, youtubePlaying, youtubeExpectedTime, youtubeUserSeeked, youtubeNeedsSeek, youtubeErrorText,
     newActivityRun, ticTacToeWinner, boardFull, gameOver, turnMark, markOf, isParticipant, isPlayer, applyActivityInput, syncInput,
     watchTargetPosition, watchNeedsSeek, activityParticipants, avatarRow, gameStatus, canMoveAt, canEndActivity,
   };

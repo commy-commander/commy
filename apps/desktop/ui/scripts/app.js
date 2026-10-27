@@ -13498,20 +13498,14 @@ const activityUi = {
   open: false,
   seq: 0,
   pick: "tictactoe",
-  source: "link",
   chip: null,
   videoBlob: null,
   settling: 0,
   yt: freshYouTubeView(),
-  plex: { open: false, video: false, playing: false },
 };
 
 function freshYouTubeView() {
   return { frame: null, video: null, ready: false, seen: null, settling: 0, title: null, error: null, greeter: null };
-}
-
-function plexAvailable() {
-  return !document.documentElement.classList.contains("web-app") && !document.body.classList.contains("mobile-app");
 }
 
 function activityMe() {
@@ -13555,7 +13549,6 @@ function adoptActivity(activity, by) {
   activityUi.open = activity.starter === me;
   if (by && by !== me) toast(`${activityMemberName(by)} started ${activityName(activity)}`);
   renderActivityUi();
-  if (watchSourceKind(activity) === "plex" && plexAvailable()) invoke("get_plex_state").then(onPlexState).catch(() => {});
 }
 
 function endActivityLocally(by) {
@@ -13744,19 +13737,16 @@ function renderTicTacToe(run, me) {
 function renderActivityWatch(run, me) {
   const kind = watchSourceKind(run.activity);
   const youtube = kind === "youtube";
-  const plex = kind === "plex";
   $("activity-watch-title").textContent = youtube && activityUi.yt.title ? activityUi.yt.title : watchTitle(run.activity);
-  $("activity-video").classList.toggle("hidden", youtube || plex);
+  $("activity-video").classList.toggle("hidden", youtube);
   $("activity-youtube").classList.toggle("hidden", !youtube);
-  $("activity-plex").classList.toggle("hidden", !plex);
   $("activity-watch-open").classList.toggle("hidden", !youtube);
   if (youtube) renderActivityYouTube(run, me);
-  else if (plex) renderActivityPlex(run, me);
   else {
     $("activity-video").controls = isParticipant(run, me);
     loadActivityVideo(run);
+    $("activity-screen-note").classList.add("hidden");
   }
-  if (!youtube) $("activity-screen-note").classList.add("hidden");
   renderActivitySyncLabel(run);
 }
 
@@ -13879,73 +13869,9 @@ function syncActivityYouTube() {
   renderActivitySyncLabel(run);
 }
 
-function renderActivityPlex(run, me) {
-  const joined = isParticipant(run, me);
-  const available = plexAvailable();
-  $("activity-plex-title").textContent = watchPlexTitle(run.activity) || "Plex";
-  let note = "Plex sync needs the Commy desktop app.";
-  if (available) {
-    note = joined
-      ? "Open Plex, sign in to your own account and start this title. Play and pause stay in sync for everyone who joined."
-      : "Join to keep play and pause in sync with your own Plex.";
-  }
-  $("activity-plex-note").textContent = note;
-  $("activity-plex-open").disabled = !joined || !available;
-  $("activity-plex-open").textContent = activityUi.plex.open ? "Show Plex" : "Open Plex";
-  const toggle = $("activity-plex-toggle");
-  toggle.disabled = !joined;
-  toggle.textContent = run.playback.playing ? "Pause for everyone" : "Play for everyone";
-}
-
-async function openPlexWindow() {
-  if (!plexAvailable()) return toast("Plex sync needs the Commy desktop app");
-  try {
-    await invoke("open_plex_window");
-  } catch (e) {
-    toast(`Could not open Plex: ${e}`);
-  }
-}
-
-function applyActivityPlex() {
-  const run = activityUi.run;
-  if (!run || watchSourceKind(run.activity) !== "plex" || !isParticipant(run, activityMe())) return;
-  if (!plexAvailable() || !activityUi.plex.open) return;
-  invoke("plex_play", { playing: Boolean(run.playback.playing) }).catch(() => {});
-}
-
-function onPlexState(payload) {
-  activityUi.plex = { open: Boolean(payload.open), video: Boolean(payload.video), playing: Boolean(payload.playing) };
-  const run = activityUi.run;
-  if (run && watchSourceKind(run.activity) === "plex") renderActivityUi();
-}
-
-function onPlexReport(payload) {
-  const run = activityUi.run;
-  if (!run || watchSourceKind(run.activity) !== "plex" || !isParticipant(run, activityMe())) return;
-  const playing = Boolean(payload.playing);
-  activityUi.plex.playing = playing;
-  if (playing === Boolean(run.playback.playing)) return renderActivityUi();
-  const position = Number(payload.position);
-  sendActivityInput({ playback: { playing, position: Number.isFinite(position) && position >= 0 ? position : 0, at: Date.now() } });
-}
-
-function togglePlexForEveryone() {
-  const run = activityUi.run;
-  if (!run || watchSourceKind(run.activity) !== "plex") return;
-  sendActivityInput({ playback: { playing: !run.playback.playing, position: 0, at: Date.now() } });
-  applyActivityPlex();
-}
-
 function renderActivitySyncLabel(run) {
   const label = $("activity-sync");
-  const kind = watchSourceKind(run.activity);
-  if (kind === "plex") {
-    const status = plexStatus(run, activityUi.plex, activityMe());
-    label.textContent = status.text;
-    label.className = `activity-sync ${status.tone}`.trim();
-    return;
-  }
-  if (kind === "youtube") {
+  if (watchSourceKind(run.activity) === "youtube") {
     const yt = activityUi.yt;
     const joined = isParticipant(run, activityMe());
     if (!joined || !yt.ready || !yt.seen || yt.error) {
@@ -14017,9 +13943,7 @@ function syncActivityVideo() {
   const run = activityUi.run;
   const video = $("activity-video");
   if (!run || run.kind !== "watch") return;
-  const kind = watchSourceKind(run.activity);
-  if (kind === "youtube") return syncActivityYouTube();
-  if (kind === "plex") return applyActivityPlex();
+  if (watchSourceKind(run.activity) === "youtube") return syncActivityYouTube();
   if (!video.src) return;
   const target = watchTargetPosition(run.playback, Date.now());
   activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
@@ -14043,10 +13967,8 @@ function openActivityPicker() {
     return;
   }
   activityUi.pick = "tictactoe";
-  activityUi.source = "link";
   activityUi.chip = null;
   $("activity-link-input").value = "";
-  $("activity-plex-input").value = "";
   renderActivityPicker();
   showModal("modal-activities");
 }
@@ -14071,7 +13993,6 @@ function renderActivityPicker() {
   const watch = activityUi.pick === "watch";
   $("activity-setup-game").classList.toggle("hidden", watch);
   $("activity-setup-watch").classList.toggle("hidden", !watch);
-  renderActivitySourcePicker();
   const chips = $("activity-chips");
   chips.innerHTML = "";
   for (const att of channelVideoAttachments(state.renderedMessages)) {
@@ -14091,32 +14012,10 @@ function renderActivityPicker() {
   $("activity-start").textContent = watch ? "Start watching" : "Start game";
 }
 
-function renderActivitySourcePicker() {
-  if (!plexAvailable() && activityUi.source === "plex") activityUi.source = "link";
-  for (const button of $("activity-source").querySelectorAll("button[data-source]")) {
-    const chosen = button.dataset.source === activityUi.source;
-    button.classList.toggle("active", chosen);
-    button.setAttribute("aria-checked", String(chosen));
-    if (button.dataset.source === "plex") {
-      button.disabled = !plexAvailable();
-      button.title = plexAvailable() ? "" : "Plex sync needs the Commy desktop app";
-    }
-  }
-  $("activity-source-link").classList.toggle("hidden", activityUi.source !== "link");
-  $("activity-source-plex").classList.toggle("hidden", activityUi.source !== "plex");
-}
-
 function pickedActivity() {
   const now = Date.now();
   const id = crypto.randomUUID();
   if (activityUi.pick !== "watch") return makeActivity("tictactoe", activityMe(), now, id);
-  if (activityUi.source === "plex") {
-    if (!plexAvailable()) throw new Error("Plex sync needs the Commy desktop app");
-    const title = cleanPlexTitle($("activity-plex-input").value);
-    if (!title) throw new Error("Type the title everyone should open in Plex");
-    if (!isPlexTitle(title)) throw new Error(`Keep the title to ${MAX_PLEX_TITLE_CHARS} characters`);
-    return makeActivity("watch", activityMe(), now, id, watchPlexSource(title));
-  }
   const url = $("activity-link-input").value.trim();
   if (url) {
     const youtube = youtubeVideoId(url);
@@ -14132,21 +14031,11 @@ function initActivityUi() {
   $("activity-cancel").onclick = hideModals;
   $("activity-start").onclick = async () => {
     try {
-      const activity = pickedActivity();
-      await startActivity(activity);
-      if (watchSourceKind(activity) === "plex" && activityUi.run && activityUi.run.id === activity.id) openPlexWindow();
+      await startActivity(pickedActivity());
     } catch (e) {
       toast(e.message || String(e));
     }
   };
-  for (const button of $("activity-source").querySelectorAll("button[data-source]")) {
-    button.onclick = () => {
-      activityUi.source = button.dataset.source;
-      renderActivitySourcePicker();
-    };
-  }
-  $("activity-plex-open").onclick = openPlexWindow;
-  $("activity-plex-toggle").onclick = togglePlexForEveryone;
   $("activity-watch-open").onclick = () => {
     const video = activityUi.run && watchYouTubeId(activityUi.run.activity);
     if (video) invoke("open_url", { url: youtubeWatchUrl(video) }).catch(err => toast(String(err)));
@@ -17811,8 +17700,6 @@ function wireEvents() {
     window.__TAURI__.event.listen("soundboard-play", event => onSoundboardPlay(event.payload));
     window.__TAURI__.event.listen("activity-set", event => onActivitySet(event.payload));
     window.__TAURI__.event.listen("activity-input", event => onActivityInput(event.payload));
-    window.__TAURI__.event.listen("plex-state", event => onPlexState(event.payload));
-    window.__TAURI__.event.listen("plex-report", event => onPlexReport(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair", event => onStreamDeckPair(event.payload));
     window.__TAURI__.event.listen("stream-deck-pair-closed", event => onStreamDeckPairClosed(event.payload));
     window.__TAURI__.event.listen("stream-deck-command", event => onStreamDeckCommand(event.payload));

@@ -9,9 +9,8 @@ const {
   makeActivity, watchLinkSource, watchAttachmentSource, watchLinkUrl, watchAttachment, watchTitle,
   newActivityRun, ticTacToeWinner, boardFull, gameOver, turnMark, markOf, isParticipant, isPlayer, applyActivityInput, syncInput,
   watchTargetPosition, watchNeedsSeek, activityParticipants, avatarRow, gameStatus, canMoveAt, canEndActivity,
-  YOUTUBE_ORIGIN, YOUTUBE_STATE, MAX_PLEX_TITLE_CHARS, youtubeVideoId, cleanPlexTitle, isPlexTitle, watchYouTubeSource, watchPlexSource,
-  watchYouTubeId, watchPlexTitle, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl, youtubeCommand, youtubeListening, readYouTubeMessage,
-  youtubePlaying, youtubeExpectedTime, youtubeUserSeeked, youtubeNeedsSeek, youtubeErrorText, plexStatus,
+  YOUTUBE_ORIGIN, YOUTUBE_STATE, youtubeVideoId, watchYouTubeSource, watchYouTubeId, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl,
+  youtubeCommand, youtubeListening, readYouTubeMessage, youtubePlaying, youtubeExpectedTime, youtubeUserSeeked, youtubeNeedsSeek, youtubeErrorText,
 } = require("../scripts/activities.js");
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -317,7 +316,7 @@ test("YouTube links of every common shape give the video id and nothing else doe
   }
 });
 
-test("YouTube and Plex sources carry only an id or a title, matching the backend", () => {
+test("YouTube sources carry only the video id, matching the backend", () => {
   const tube = makeActivity("watch", "m1", NOW, "run-3", watchYouTubeSource("dQw4w9WgXcQ"));
   assert.deepEqual(tube.kind, { watch: { source: { youtube: { video: "dQw4w9WgXcQ" } } } });
   assert.equal(watchSourceKind(tube), "youtube");
@@ -325,26 +324,9 @@ test("YouTube and Plex sources carry only an id or a title, matching the backend
   assert.equal(watchTitle(tube), "YouTube video");
   assert.equal(watchLinkUrl(tube), null);
   assert.equal(watchAttachment(tube), null);
-  const show = makeActivity("watch", "m1", NOW, "run-4", watchPlexSource("  Spirited\n Away "));
-  assert.deepEqual(show.kind, { watch: { source: { plex: { title: "Spirited Away" } } } });
-  assert.equal(watchSourceKind(show), "plex");
-  assert.equal(watchPlexTitle(show), "Spirited Away");
-  assert.equal(watchTitle(show), "Spirited Away");
-  assert.equal(watchYouTubeId(show), null);
   assert.equal(watchSourceKind(film()), "link");
   assert.equal(activityKindKey(tube), "watch");
 });
-
-test("Plex titles are plain, trimmed and at most a hundred characters", () => {
-  assert.equal(cleanPlexTitle("  The\tMatrix  "), "The Matrix");
-  assert.ok(isPlexTitle("The Matrix"));
-  assert.ok(isPlexTitle("é".repeat(MAX_PLEX_TITLE_CHARS)));
-  assert.ok(!isPlexTitle("x".repeat(MAX_PLEX_TITLE_CHARS + 1)));
-  assert.ok(!isPlexTitle(""));
-  assert.ok(!isPlexTitle(" padded"));
-  assert.ok(!isPlexTitle("two\nlines"));
-});
-
 test("the YouTube player loads from the privacy-enhanced site and only hears from there", () => {
   assert.equal(YOUTUBE_ORIGIN, "https://www.youtube-nocookie.com");
   const url = new URL(youtubeEmbedUrl("dQw4w9WgXcQ", "http://tauri.localhost"));
@@ -394,21 +376,3 @@ test("YouTube errors read as plain reasons", () => {
   for (const code of [101, 150, 153, 5]) assert.match(youtubeErrorText(code), /won't play this video here/);
 });
 
-test("the Plex line tells each viewer what to do next", () => {
-  const run = newActivityRun(makeActivity("watch", "me", NOW, "run-5", watchPlexSource("Film")));
-  assert.equal(plexStatus(run, { open: false }, "m2").text, "Join to sync with Plex");
-  assert.equal(plexStatus(run, { open: false }, "me").text, "Plex isn't open");
-  assert.equal(plexStatus(run, { open: true, video: false }, "me").text, "Start the title in Plex");
-  assert.deepEqual(plexStatus(run, { open: true, video: true, playing: false }, "me"), { text: "In sync", tone: "good" });
-  run.playback = { playing: true, position: 0, at: NOW };
-  assert.deepEqual(plexStatus(run, { open: true, video: true, playing: false }, "me"), { text: "Catching up", tone: "catching" });
-  assert.equal(plexStatus(newActivityRun(film()), { open: true }, "m1").text, "");
-});
-
-test("play and pause from a Plex viewer apply like any other playback", () => {
-  const run = newActivityRun(makeActivity("watch", "m1", NOW, "run-6", watchPlexSource("Film")));
-  assert.ok(applyActivityInput(run, "join", "m2", 1).ok);
-  assert.ok(applyActivityInput(run, { playback: { playing: true, position: 0, at: NOW } }, "m2", 2).ok);
-  assert.equal(run.playback.playing, true);
-  assert.ok(!applyActivityInput(run, { playback: { playing: false, position: 0, at: NOW } }, "m3", 1).ok, "only people who joined");
-});

@@ -34,7 +34,6 @@ mod persist;
 mod picker;
 mod pictures;
 mod pins;
-mod plex_window;
 mod profile_images;
 mod push_wake;
 mod read_state;
@@ -5506,7 +5505,7 @@ async fn set_activity(
             return Err("Activities are turned off in this server's settings".into());
         }
         if activity.as_ref().is_some_and(|a| !a.valid()) {
-            return Err("pick a YouTube link, a Plex title, or a direct https link to an .mp4, .webm or .ogg file".into());
+            return Err("pick a YouTube link or a direct https link to an .mp4, .webm or .ogg file".into());
         }
         if !commy_core::activity::admits_set(state, me.id, channel, activity.as_ref()) {
             return Err(match (&activity, state.activities.get(&channel)) {
@@ -7290,9 +7289,6 @@ pub fn run() {
         );
     builder
         .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
-                let _ = plex_window::close_plex_window(window.app_handle().clone());
-            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" {
                     return;
@@ -7496,10 +7492,6 @@ pub fn run() {
             play_soundboard,
             set_activity,
             send_activity_input,
-            plex_window::open_plex_window,
-            plex_window::plex_play,
-            plex_window::close_plex_window,
-            plex_window::get_plex_state,
             stream_deck::get_stream_deck,
             stream_deck::set_stream_deck_enabled,
             stream_deck::forget_stream_deck,
