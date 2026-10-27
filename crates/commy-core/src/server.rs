@@ -391,6 +391,12 @@ pub struct Server {
     pub join_sounds: std::collections::BTreeMap<UserId, String>,
     #[serde(default)]
     pub join_sounds_off: bool,
+    #[serde(default)]
+    pub join_approval: bool,
+    #[serde(default)]
+    pub join_requests: Vec<crate::join_request::JoinRequest>,
+    #[serde(default)]
+    pub turned_away: Vec<UserId>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -472,6 +478,9 @@ impl Server {
             stepped_down: std::collections::BTreeMap::new(),
             join_sounds: std::collections::BTreeMap::new(),
             join_sounds_off: false,
+            join_approval: false,
+            join_requests: vec![],
+            turned_away: vec![],
         }
     }
 

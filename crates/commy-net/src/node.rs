@@ -871,6 +871,7 @@ pub struct CommyNode {
     events_tx: mpsc::UnboundedSender<NetEvent>,
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
     mirror_requests: Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>>,
+    knock_requests: Option<mpsc::UnboundedReceiver<crate::knock::KnockAsk>>,
     catchup_store: StoreSlot,
     media_gate: GateSlot,
 }
@@ -947,6 +948,7 @@ impl CommyNode {
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
         let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
         let (mirror_tx, mirror_rx) = mpsc::unbounded_channel();
+        let (knock_tx, knock_rx) = mpsc::unbounded_channel();
         let lookup = MemoryLookup::new();
         let relay_mode = relays.map_or_else(iroh::endpoint::default_relay_mode, iroh::RelayMode::Custom);
         let can_discover_address = relay_mode.relay_map().relays::<Vec<Arc<iroh::RelayConfig>>>().iter().any(|relay| relay.quic.is_some());
@@ -1009,6 +1011,7 @@ impl CommyNode {
             .accept(CATCHUP_ALPN, catchup)
             .accept(crate::mirror::MIRROR_ALPN, crate::mirror::MirrorAcceptor { tx: mirror_tx, local })
             .accept(crate::wake::WAKE_ALPN, crate::wake::WakeAcceptor::new(events_tx.clone()))
+            .accept(crate::knock::KNOCK_ALPN, crate::knock::KnockAcceptor { tx: knock_tx })
             .spawn();
         let _ = n0_future::time::timeout(ADDRESS_WAIT, router.endpoint().online()).await;
         Ok((
@@ -1025,6 +1028,7 @@ impl CommyNode {
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
                 mirror_requests: Some(mirror_rx),
+                knock_requests: Some(knock_rx),
                 catchup_store,
                 media_gate,
             },
@@ -1040,6 +1044,31 @@ impl CommyNode {
 
     pub fn take_mirror_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>> {
         self.mirror_requests.take()
+    }
+
+    pub fn take_knock_requests(&mut self) -> Option<mpsc::UnboundedReceiver<crate::knock::KnockAsk>> {
+        self.knock_requests.take()
+    }
+
+    pub fn knock(&self, ticket: &ServerTicket, request: crate::knock::KnockRequest) -> impl Future<Output = Option<crate::knock::KnockReply>> + Send + 'static {
+        let addrs: Vec<EndpointAddr> = ticket.bootstrap.iter().filter_map(|a| a.endpoint_addr()).collect();
+        let nodes: Vec<EndpointId> = addrs.iter().map(|a| a.id).filter(|id| *id != self.router.endpoint().id()).collect();
+        for addr in addrs {
+            self.learn(addr);
+        }
+        let endpoint = self.endpoint();
+        async move {
+            let mut pending: futures_util::stream::FuturesUnordered<_> =
+                nodes.into_iter().map(|node| crate::knock::knock_one(endpoint.clone(), node, request.clone())).collect();
+            while let Some(reply) = futures_util::StreamExt::next(&mut pending).await {
+                match reply {
+                    Ok(reply) if reply.decisive() => return Some(reply),
+                    Ok(_) => {}
+                    Err(e) => tracing::debug!("knock went unanswered: {e:#}"),
+                }
+            }
+            None
+        }
     }
 
     pub fn endpoint(&self) -> Endpoint {

@@ -474,6 +474,10 @@ impl ServerState {
         self.profiles.get(&user).and_then(|p| p.identity)
     }
 
+    fn asker_identity(&self, user: UserId) -> Option<IdentityKey> {
+        crate::join_request::request_of(&self.server, user).and_then(|r| r.profile.identity)
+    }
+
     fn key_of(&self, user: UserId) -> Result<IdentityKey, StoreError> {
         self.identity_of(user).ok_or(StoreError::UnknownAuthorKey(user))
     }
@@ -890,6 +894,7 @@ impl ServerState {
             ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } if profile.id == by => {
                 profile.identity
             }
+            ServerEvent::JoinAsk { profile, .. } if profile.id == by => self.asker_identity(by).or(profile.identity),
             _ => None,
         }
     }
@@ -1066,7 +1071,7 @@ impl ServerState {
             }
             ServerEvent::MemberJoin { server, mut profile } => {
                 self.same_server(server)?;
-                if self.server.banned.contains(&profile.id) {
+                if self.server.banned.contains(&profile.id) || crate::join_request::may_ask(&self.server, profile.id) {
                     return Ok(false);
                 }
                 self.pin_identity(&mut profile)?;
@@ -1431,6 +1436,49 @@ impl ServerState {
             ServerEvent::JoinSoundsAllowed { server, allowed } => {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.join_sounds_off, !allowed))
+            }
+            ServerEvent::JoinApprovalSet { server, on } => {
+                self.same_server(server)?;
+                if !on {
+                    self.server.join_requests.clear();
+                }
+                Ok(replace(&mut self.server.join_approval, on))
+            }
+            ServerEvent::JoinAsk { server, mut profile, note, at } => {
+                self.same_server(server)?;
+                let Some(note) = crate::join_request::clean_note(&note) else { return Ok(false) };
+                if !crate::join_request::may_ask(&self.server, profile.id) || self.server.turned_away.contains(&profile.id) {
+                    return Ok(false);
+                }
+                let pinned = self.identity_of(profile.id).or_else(|| self.asker_identity(profile.id));
+                if !profile.pin_identity(pinned) {
+                    return Err(StoreError::IdentityMismatch);
+                }
+                let profile = profile.as_seen_by_others();
+                Ok(crate::join_request::record(&mut self.server, crate::join_request::JoinRequest { profile, note, at }))
+            }
+            ServerEvent::JoinAnswer { server, user, admit } => {
+                self.same_server(server)?;
+                if !admit {
+                    return Ok(crate::join_request::turn_away(&mut self.server, user));
+                }
+                let asked = crate::join_request::request_of(&self.server, user).map(|r| r.profile.clone());
+                let before = (self.server.join_requests.len(), self.server.turned_away.len());
+                self.server.join_requests.retain(|r| r.profile.id != user);
+                self.server.turned_away.retain(|u| *u != user);
+                let cleared = before != (self.server.join_requests.len(), self.server.turned_away.len());
+                if self.server.is_member(user) || self.server.banned.contains(&user) {
+                    return Ok(cleared);
+                }
+                if self.server.members.len() >= MAX_MEMBERS {
+                    return Err(StoreError::Limit);
+                }
+                self.make_profile_room(user)?;
+                self.server.members.push(Member { user, nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None });
+                if let Some(profile) = asked.filter(|_| !self.profiles.contains_key(&user)) {
+                    self.profiles.insert(user, profile);
+                }
+                Ok(true)
             }
             ServerEvent::MemberNickname { server, user, nickname } => {
                 self.same_server(server)?;
@@ -3787,6 +3835,83 @@ mod tests {
         });
         let file = crate::test_support::signed(&state, file);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
+    }
+
+    #[test]
+    fn with_join_approval_newcomers_wait_outside_until_a_moderator_lets_them_in() {
+        use crate::channel_key::{community_key_task, Keyring};
+        use crate::test_support::{identity_for, keyed_profile, signed_event};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let now = Utc::now();
+        let plain = join(&mut state, "plain");
+        let moderator = join(&mut state, "moderator");
+        let on = signed_event(&state, owner, now, ServerEvent::JoinApprovalSet { server: sid, on: true });
+        assert_eq!(state.apply_signed(&on), Ok(true));
+        let asker = keyed_profile("asker");
+        assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: asker.clone() }), Ok(false), "a plain join is refused");
+        assert!(!state.server.is_member(asker.id));
+        let ask = |at: i64, note: &str| ServerEvent::JoinAsk { server: sid, profile: asker.clone(), note: note.into(), at };
+        let signed_ask = crate::action::SignedEvent::sign(sid, asker.id, now.timestamp_millis(), ask(1, "hi, Sam sent me"), &identity_for(asker.id));
+        assert_eq!(state.apply_signed(&signed_ask), Ok(true));
+        assert_eq!(state.server.join_requests[0].note, "hi, Sam sent me");
+        assert!(!state.server.is_current_member(asker.id));
+        let mut ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        let task = community_key_task(&state, owner, &ring).expect("the owner makes the first key");
+        for event in ring.task_events(&state, crate::channel_key::KeyScope::Community, task, now.timestamp_millis()) {
+            state.apply(event).unwrap();
+        }
+        ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        assert!(community_key_task(&state, owner, &ring).is_none(), "nobody hands the key to someone still waiting");
+        assert!(state.community_keys().grant_for(asker.id).is_none());
+        let by_plain = signed_event(&state, plain, now, ServerEvent::JoinAnswer { server: sid, user: asker.id, admit: true });
+        assert_eq!(state.apply_signed(&by_plain), Err(StoreError::NotAllowed), "only moderators answer");
+        let mut mods = state.server.roles[0].clone();
+        mods.id = RoleId::new();
+        mods.name = "mods".into();
+        mods.position = 1;
+        mods.permissions = Permissions::KICK_MEMBERS;
+        let role = mods.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role: mods }).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: moderator, role }).unwrap();
+        let later = now + chrono::Duration::seconds(1);
+        let admit = signed_event(&state, moderator, later, ServerEvent::JoinAnswer { server: sid, user: asker.id, admit: true });
+        assert_eq!(state.apply_signed(&admit), Ok(true));
+        assert!(state.server.is_current_member(asker.id) && state.server.join_requests.is_empty());
+        assert_eq!(state.profiles[&asker.id].username, "asker");
+        assert_eq!(state.audit_log().last().unwrap().kind, crate::audit::AuditKind::JoinAdmit);
+        let task = community_key_task(&state, owner, &ring);
+        assert!(matches!(task, Some(crate::channel_key::KeyTask::Grant { ref to, .. }) if to.contains(&asker.id)), "now the key is theirs too");
+        assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: asker.clone() }), Ok(false), "their own join just refreshes the profile");
+        assert_eq!(state.apply_signed(&signed_ask), Err(StoreError::NotAllowed), "members have nothing to ask");
+    }
+
+    #[test]
+    fn turned_away_people_cannot_ask_again_and_switching_approval_off_lets_everyone_in() {
+        use crate::test_support::{identity_for, keyed_profile, signed_event};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let now = Utc::now();
+        state.apply(ServerEvent::JoinApprovalSet { server: sid, on: true }).unwrap();
+        let asker = keyed_profile("asker");
+        let ask = |profile: &UserProfile, at: i64| ServerEvent::JoinAsk { server: sid, profile: profile.clone(), note: String::new(), at };
+        assert_eq!(state.apply(ask(&asker, 1)), Ok(true));
+        let wait = keyed_profile("waiting");
+        assert_eq!(state.apply(ask(&wait, 2)), Ok(true));
+        let no = signed_event(&state, owner, now, ServerEvent::JoinAnswer { server: sid, user: asker.id, admit: false });
+        assert_eq!(state.apply_signed(&no), Ok(true));
+        assert_eq!(state.audit_log().last().unwrap().kind, crate::audit::AuditKind::JoinTurnAway);
+        assert_eq!(state.server.turned_away, vec![asker.id]);
+        assert_eq!(state.apply(ask(&asker, 3)), Ok(false));
+        let forged = ServerEvent::JoinAsk { server: sid, profile: asker.clone(), note: "x".repeat(400), at: 4 };
+        assert_eq!(state.apply(forged), Ok(false));
+        let mut liar = wait.clone();
+        liar.identity = Some(identity_for(UserId::new()).public());
+        assert_eq!(state.apply(ask(&liar, 5)), Err(StoreError::IdentityMismatch));
+        assert_eq!(state.apply(ServerEvent::JoinApprovalSet { server: sid, on: false }), Ok(true));
+        assert!(state.server.join_requests.is_empty());
+        assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: wait.clone() }), Ok(true));
+        assert_eq!(state.apply(ask(&keyed_profile("late"), 6)), Ok(false), "nobody asks while the door is open");
     }
 
     #[test]

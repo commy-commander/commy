@@ -9,6 +9,7 @@ pub mod entry_list;
 pub mod inbox;
 pub mod invite;
 pub mod key_handoff;
+pub mod knock;
 pub mod media;
 pub mod mirror;
 pub mod node;
@@ -31,6 +32,7 @@ pub use catchup::{
 pub use connection_check::{ConnectionCheck, ConnectionChecker};
 pub use dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
 pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
+pub use knock::{KnockAsk, KnockReply, KnockRequest, Lobby, KNOCK_ALPN};
 pub use mirror::{MirrorAsk, MirrorRequest, MirroredServer, MIRROR_ALPN};
 pub use media::{MediaHello, MediaPacket, MEDIA_ALPN};
 pub use node::BlobFetcher;
