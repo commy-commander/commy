@@ -27,6 +27,7 @@ const state = {
   view: "server",
   currentDm: null,
   micTesting: false,
+  voiceFilterHeld: null,
   people: new Map(),
   speaking: new Set(),
   dmThreads: [],
@@ -513,6 +514,16 @@ function mockSeed() {
   ] };
 }
 
+function mockJoinSoundClips(server) {
+  if (server.join_sounds_off) return {};
+  const clips = {};
+  for (const [user, sound] of Object.entries(server.join_sounds || {})) {
+    const clip = defaultSound(sound) ? sound : (server.sounds || []).find(s => s.name === sound)?.blob;
+    if (clip) clips[user] = clip;
+  }
+  return clips;
+}
+
 function mockMemberName(id) {
   if (id === "me") return mock.user ? mock.user.username : "you";
   const member = Object.values(mock.servers).flatMap(s => s.members).find(m => m.id === id);
@@ -705,9 +716,10 @@ async function mockInvoke(cmd, args = {}) {
       return {
         ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: !mock.plainMember, onboarding: s.onboarding || null,
-        chat_restricted: { embed_links: false, read_history: false, create_threads: false, send_polls: false, create_events: false, ...(s.chat_restricted || {}) },
+        chat_restricted: { embed_links: false, read_history: false, create_threads: false, send_polls: false, create_events: false, voice_filters: false, ...(s.chat_restricted || {}) },
         can_embed_links: !mockChatRestricted(s, "embed_links"), can_read_history: !mockChatRestricted(s, "read_history"), can_create_threads: !mockChatRestricted(s, "create_threads"),
         can_send_polls: !mockChatRestricted(s, "send_polls"), can_create_events: !mockChatRestricted(s, "create_events"),
+        can_use_voice_filters: !mockChatRestricted(s, "voice_filters"),
         channels: s.channels
           .map((c, i) => {
             const admits = ids => !(ids || []).length || ids.some(id => (s.myRoles || []).includes(id));
@@ -720,6 +732,7 @@ async function mockInvoke(cmd, args = {}) {
           .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
+        join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
@@ -960,6 +973,8 @@ async function mockInvoke(cmd, args = {}) {
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
     case "set_echo_cancellation": mock.voice.echo_cancellation = args.enabled; return mock.voice;
     case "set_auto_level": mock.voice.auto_level = args.enabled; return mock.voice;
+    case "press_talk": setTimeout(() => setTalking(args.pressed), 0); return null;
+    case "set_voice_filter": mock.voice.voice_filter = args.filter; return mock.voice;
     case "set_input_mode": Object.assign(mock.voice, { input_mode: args.mode, talk_key: args.talkKey, talk_release_ms: args.releaseMs }); return mock.voice;
     case "set_voice_hotkeys": Object.assign(mock.voice, { mute_hotkey: args.mute, deafen_hotkey: args.deafen }); return mock.voice;
     case "set_sensitivity": Object.assign(mock.voice, { auto_sensitivity: args.auto, sensitivity_db: args.thresholdDb }); return mock.voice;
@@ -1377,6 +1392,14 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
+    case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "set_join_sound": {
+      const srv = mock.servers[args.serverId];
+      srv.join_sounds = { ...(srv.join_sounds || {}) };
+      if (args.name) srv.join_sounds["me"] = args.name;
+      else delete srv.join_sounds["me"];
+      return null;
+    }
     case "set_activities_enabled": mock.servers[args.serverId].activities_enabled = args.enabled; return null;
     case "list_shareable_sounds":
       return Object.values(mock.servers).filter(s => s.sounds_shareable)
@@ -1515,7 +1538,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
       return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
-        { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
+        { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, lost_packets: Math.floor((mock.sent = (mock.sent || 0) + 400) / 1000), sent_packets: mock.sent, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
     case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false, unclaimed_profile: null, needs_account_folder: /[?&]claim\b/.test(location.search), others: [{ id: "u2", name: "Nova", email: "nova@example.test", server: "https://commy.chat", server_host: "commy.chat" }], max_accounts: 5 });
@@ -1678,7 +1701,7 @@ async function mockInvoke(cmd, args = {}) {
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
     case "autostart_allowed": return true;
-    case "tray_prompt_due": return !mock.voice.tray_prompt_seen;
+    case "tray_prompt_due": return !mock.voice.tray_prompt_seen && !new URLSearchParams(location.search).has("mobile");
     case "finish_tray_prompt": mock.autostart = args.autostart; mock.voice.close_to_tray = args.closeToTray; mock.voice.tray_prompt_seen = true; return mock.voice;
     case "get_autostart": return !!mock.autostart;
     case "debug_log_status": return { verbose: !!mock.verboseLogs, saving: true };
@@ -1929,9 +1952,9 @@ const SETTINGS_HIT_MS = 1600;
 let settingsHitTimer = null;
 
 function hiddenOnThisDevice(node) {
-  const phone = document.body.classList.contains("mobile-app") && node.closest(".desktop-only");
+  const onPhone = document.body.classList.contains("mobile-app");
   const browser = document.documentElement.classList.contains("web-app") && node.closest(".native-only");
-  return Boolean(phone || browser);
+  return Boolean((onPhone ? node.closest(".desktop-only") : node.closest(".mobile-only")) || browser);
 }
 
 function ownSettingText(node) {
@@ -2632,6 +2655,7 @@ function renderServerRail() {
     if (item.open) for (const s of servers) folder.appendChild(railServerButton(s, item.id));
     list.appendChild(folder);
   }
+  paintNarrowRail();
 }
 
 let menuServer = null;
@@ -2830,6 +2854,7 @@ function openServerMenu(server, x, y, folderId) {
   $("sm-rules").classList.add("hidden");
   $("sm-roles").classList.add("hidden");
   $("sm-onboarding").classList.add("hidden");
+  $("sm-join-sound").classList.add("hidden");
   $("sm-settings").textContent = "Server Settings";
   $("sm-invite").classList.add("hidden");
   invoke("get_server", { serverId: server.id }).then(full => {
@@ -2837,6 +2862,7 @@ function openServerMenu(server, x, y, folderId) {
     $("sm-rules").classList.toggle("hidden", !full.rules);
     $("sm-roles").classList.toggle("hidden", !selfAssignableRoles(full).length);
     $("sm-onboarding").classList.toggle("hidden", !full.onboarding);
+    $("sm-join-sound").classList.toggle("hidden", !full.join_sounds_allowed || !full.can_use_soundboard);
     $("sm-settings").textContent = canOpenServerSettings(full) ? "Server Settings" : "Server Info";
   }).catch(() => {});
   placeMenuAt($("server-menu"), x, y);
@@ -3102,6 +3128,7 @@ function renderChannels() {
     return;
   }
   $("server-name").textContent = server.name;
+  paintNarrowRail();
   paintSidebarBanner();
   renderServerExtras(list, server);
 
@@ -3301,6 +3328,10 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
 }
 
 function appendVoiceUsers(list, channel) {
+  if (narrowSplit()) {
+    list.appendChild(voiceRings(channel));
+    return;
+  }
   const myName = state.user ? (state.user.display_name || state.user.username) : null;
   if (!isStageChannel(channel)) {
     for (const entry of stageRoster(channel)) list.appendChild(voiceUserRow(channel, entry, myName));
@@ -3311,6 +3342,55 @@ function appendVoiceUsers(list, channel) {
   for (const entry of speakers) list.appendChild(voiceUserRow(channel, entry, myName, "speaker"));
   if (audience.length) list.appendChild(stageGroupLabel("Audience", audience.length));
   for (const entry of audience) list.appendChild(voiceUserRow(channel, entry, myName, "audience"));
+}
+
+function voiceRingEntries(channel) {
+  if (!isStageChannel(channel)) return stageRoster(channel);
+  const { speakers, audience } = stageSections(channel);
+  return [...speakers, ...audience];
+}
+
+function voiceRings(channel) {
+  const rings = el("div", "voice-rings");
+  rings.dataset.room = channel.id;
+  rings.append(...voiceRingCells(channel));
+  return rings;
+}
+
+function voiceRingCells(channel) {
+  const entries = voiceRingEntries(channel);
+  const { shown, more } = voiceRingSplit(entries.length);
+  const cells = entries.slice(0, shown).map(entry => voiceRing(channel, entry));
+  if (more) {
+    const extra = el("span", "voice-ring voice-ring-more", `+${more}`);
+    extra.title = entries.slice(shown).map(e => e.name).join(", ");
+    cells.push(extra);
+  }
+  return cells;
+}
+
+function voiceRing(channel, entry) {
+  const ring = el("span", "voice-user voice-ring");
+  ring.dataset.room = channel.id;
+  ring.title = entry.muted ? `${entry.name} (muted)` : entry.name;
+  if (entry.id) {
+    ring.dataset.user = entry.id;
+    ring.classList.toggle("speaking", state.speaking.has(entry.id));
+  }
+  ring.classList.toggle("muted", Boolean(entry.muted));
+  ring.appendChild(makeAvatar(entry.id, entry.name, "avatar avatar-sm"));
+  const isMe = state.user && entry.id === state.user.id;
+  ring.onclick = e => {
+    e.stopPropagation();
+    if (isMe) {
+      openSelfVoiceMenu(e.clientX, e.clientY);
+      return;
+    }
+    const server = state.currentServer;
+    const member = server && server.members.find(m => m.id === entry.id);
+    openMemberMenu(member || { id: entry.id, name: entry.name }, e.clientX, e.clientY);
+  };
+  return ring;
 }
 
 function stageGroupLabel(title, count) {
@@ -3609,10 +3689,11 @@ async function setServerImage(which, data) {
   }
 }
 
-const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
+const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", ring: "sounds/ring.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
 const SOUND_EVENTS = [
   { id: "message", label: "New message or mention", fallback: "notification" },
   { id: "dm", label: "Direct message", fallback: "ding" },
+  { id: "ring", label: "Incoming call", fallback: "ring" },
   { id: "join", label: "Someone joins your voice channel", fallback: "join" },
   { id: "leave", label: "Someone leaves your voice channel", fallback: "leave" },
 ];
@@ -3633,18 +3714,132 @@ function saveSoundPrefs(prefs) {
 
 function soundFor(eventId) {
   const event = SOUND_EVENTS.find(e => e.id === eventId);
-  const chosen = soundPrefs().events[eventId];
-  return chosen === undefined ? event?.fallback : chosen;
+  return resolveAlertSound(soundPrefs().events[eventId], event?.fallback, alertSounds.list);
+}
+
+function alertSoundUrl(name) {
+  if (isAlertSound(name)) return alertSounds.urls.get(name) || null;
+  return SOUND_FILES[name] || null;
 }
 
 function playSound(eventId, force) {
   const prefs = soundPrefs();
   const name = force || soundFor(eventId);
-  if (!name || name === "none" || !SOUND_FILES[name]) return;
-  if (!force && (!prefs.enabled || state.user?.presence === "do_not_disturb")) return;
-  const audio = new Audio(SOUND_FILES[name]);
+  const url = name && name !== NO_SOUND ? alertSoundUrl(name) : null;
+  if (!url) return null;
+  if (!force && (!prefs.enabled || state.user?.presence === "do_not_disturb")) return null;
+  const audio = new Audio(url);
   audio.volume = Math.max(0, Math.min(1, prefs.volume));
   audio.play().catch(() => {});
+  return audio;
+}
+
+const ALERT_SOUND_DB = "commy-alert-sounds";
+const ALERT_SOUND_STORE = "sounds";
+const alertSounds = { list: [], urls: new Map() };
+
+function openAlertSoundDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(ALERT_SOUND_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(ALERT_SOUND_STORE, { keyPath: "id" });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function alertSoundStore(mode, work) {
+  const db = await openAlertSoundDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(ALERT_SOUND_STORE, mode);
+      const request = work(tx.objectStore(ALERT_SOUND_STORE));
+      tx.oncomplete = () => resolve(request && request.result);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function loadAlertSounds() {
+  let rows = [];
+  try {
+    rows = (await alertSoundStore("readonly", store => store.getAll())) || [];
+  } catch {}
+  for (const url of alertSounds.urls.values()) URL.revokeObjectURL(url);
+  alertSounds.urls = new Map(rows.map(r => [r.id, URL.createObjectURL(r.blob)]));
+  alertSounds.list = rows.map(r => ({ id: r.id, name: r.name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function saveAlertSound(name, bytes) {
+  const id = alertSoundId(name, alertSounds.list.map(s => s.id));
+  await alertSoundStore("readwrite", store => store.put({ id, name, blob: new Blob([bytes], { type: soundMimeOf(bytes) }) }));
+  await loadAlertSounds();
+  return id;
+}
+
+async function deleteAlertSound(id) {
+  await alertSoundStore("readwrite", store => store.delete(id));
+  const prefs = soundPrefs();
+  for (const [event, chosen] of Object.entries(prefs.events)) if (chosen === id) delete prefs.events[event];
+  saveSoundPrefs(prefs);
+  await loadAlertSounds();
+}
+
+function soundMimeOf(bytes) {
+  const head = String.fromCharCode(...bytes.slice(0, 4));
+  if (head === "RIFF") return "audio/wav";
+  if (head === "OggS") return "audio/ogg";
+  return "audio/mpeg";
+}
+
+function chooseAlertSound(eventId, name) {
+  const next = soundPrefs();
+  next.events[eventId] = name;
+  saveSoundPrefs(next);
+  playSound(eventId, name);
+}
+
+function alertSoundSelect(event) {
+  const select = el("select", "compact-select");
+  for (const group of alertSoundChoices(Object.keys(SOUND_FILES), alertSounds.list, alertSounds.list.length < MAX_ALERT_SOUNDS)) {
+    const parent = group.label ? select.appendChild(Object.assign(document.createElement("optgroup"), { label: group.label })) : select;
+    for (const option of group.options) parent.appendChild(new Option(option.label, option.value));
+  }
+  select.value = soundFor(event.id) || NO_SOUND;
+  select.onchange = () => {
+    if (select.value !== ADD_ALERT_SOUND) return chooseAlertSound(event.id, select.value);
+    select.value = soundFor(event.id) || NO_SOUND;
+    openSoundUpload(null, null, { eventId: event.id });
+  };
+  return select;
+}
+
+function renderAlertSoundList() {
+  const list = $("sound-custom-list");
+  list.replaceChildren();
+  $("sound-custom-count").textContent = `${alertSounds.list.length} of ${MAX_ALERT_SOUNDS} used.`;
+  for (const sound of alertSounds.list) {
+    const row = el("div", "expr-row");
+    const play = el("button", "icon-btn sound-preview");
+    play.title = "Preview";
+    play.appendChild(svgIcon("play", 18));
+    play.onclick = () => playSound(null, sound.id);
+    const del = el("button", "icon-btn expr-delete");
+    del.title = `Delete ${sound.name}`;
+    del.appendChild(svgIcon("trash", 18));
+    del.onclick = async () => {
+      try {
+        await deleteAlertSound(sound.id);
+        renderSoundSettings();
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    row.append(play, el("span", "expr-name", sound.name), del);
+    list.appendChild(row);
+  }
+  if (!alertSounds.list.length) list.appendChild(el("div", "manage-empty", "Pick Add your own in any list above to use your own sound"));
 }
 
 function renderSoundSettings() {
@@ -3658,17 +3853,7 @@ function renderSoundSettings() {
   for (const event of SOUND_EVENTS) {
     const row = el("div", "sound-row");
     row.appendChild(el("span", "sound-label", event.label));
-    const select = el("select", "compact-select");
-    for (const name of [...Object.keys(SOUND_FILES), "none"]) {
-      select.appendChild(new Option(name === "none" ? "No sound" : name[0].toUpperCase() + name.slice(1), name));
-    }
-    select.value = soundFor(event.id) || "none";
-    select.onchange = () => {
-      const next = soundPrefs();
-      next.events[event.id] = select.value;
-      saveSoundPrefs(next);
-      playSound(event.id, select.value);
-    };
+    const select = alertSoundSelect(event);
     const preview = el("button", "icon-btn sound-preview");
     preview.title = "Preview";
     preview.appendChild(svgIcon("play", 18));
@@ -3676,14 +3861,24 @@ function renderSoundSettings() {
     row.append(select, preview);
     rows.appendChild(row);
   }
+  renderAlertSoundList();
   const board = soundboardPrefs();
   $("soundboard-toggle").checked = board.enabled;
+  $("join-sounds-hear-toggle").checked = board.joinSounds !== false;
   $("soundboard-volume").value = Math.round(board.volume * 100);
   $("soundboard-volume-label").textContent = `${$("soundboard-volume").value}%`;
   syncRangeFill($("soundboard-volume"));
 }
 
 let lastVoiceRoster = null;
+
+function playJoinCue(server, joined) {
+  const board = soundboardPrefs();
+  const clip = joinSoundToPlay({ joined, joinSounds: server.join_sounds, allowed: server.join_sounds_allowed, hearJoinSounds: board.joinSounds !== false });
+  if (!clip) return playSound("join");
+  if (!board.enabled || state.voice.deafened) return;
+  playExpressionSound(clip, board.volume);
+}
 
 function checkVoiceRoster() {
   const server = state.currentServer;
@@ -3695,9 +3890,9 @@ function checkVoiceRoster() {
   const others = new Set((channel.voice_user_ids || []).filter(id => !state.user || id !== state.user.id));
   const key = `${channel.id}`;
   if (lastVoiceRoster && lastVoiceRoster.key === key) {
-    const joined = [...others].some(id => !lastVoiceRoster.ids.has(id));
+    const joined = [...others].filter(id => !lastVoiceRoster.ids.has(id));
     const left = [...lastVoiceRoster.ids].some(id => !others.has(id));
-    if (joined) playSound("join");
+    if (joined.length) playJoinCue(server, joined);
     else if (left) playSound("leave");
   }
   lastVoiceRoster = { key, ids: others };
@@ -4173,6 +4368,7 @@ function speakIncoming(msg, viewing) {
     viewing: Boolean(viewing),
     blocked: isBlocked(msg.author),
     presence: state.user?.presence,
+    inVoice: Boolean(state.voiceChannelId),
   });
   if (speak) speakText(spokenText(msg.author_name, msg.content, plainText));
 }
@@ -4647,6 +4843,12 @@ function detectEmojiSupport() {
     if (renders("\u{1F600}") && !renders("\u{1F1FA}\u{1F1F8}")) document.documentElement.classList.add("emoji-flag-font");
   } catch {}
   return emojiSupport;
+}
+
+async function prepareEmojiFonts() {
+  detectEmojiSupport();
+  if (!document.documentElement.classList.contains("emoji-flag-font") || !document.fonts) return;
+  await document.fonts.load('1em "Commy Flags"', "\u{1F1EE}\u{1F1F9}").catch(() => {});
 }
 
 function usableEmojiRows() {
@@ -8131,6 +8333,46 @@ function renderVoiceInputSettings() {
   }).catch(() => {});
 }
 
+function renderVoiceFilter() {
+  const key = voiceFilterKey(state.voice);
+  for (const button of $("voice-filter").querySelectorAll("button")) {
+    const on = button.dataset.filter === key;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-checked", String(on));
+  }
+  const server = state.voiceServer;
+  $("voice-filter-note").textContent = voiceFilterNote(key, voiceFilterHeldHere(state.voiceFilterHeld, server), server && server.name);
+}
+
+function wireVoiceFilter() {
+  const group = $("voice-filter");
+  for (const filter of VOICE_FILTERS) {
+    const button = el("button");
+    button.type = "button";
+    button.dataset.filter = filter.key;
+    button.setAttribute("role", "radio");
+    button.title = filter.sub;
+    button.appendChild(el("strong", null, filter.label));
+    button.onclick = async () => {
+      try {
+        state.voice = await invoke("set_voice_filter", { filter: filter.key });
+      } catch (e) {
+        toast(String(e));
+      }
+      renderVoiceFilter();
+    };
+    group.appendChild(button);
+  }
+}
+
+function onVoiceFilterHeld(payload) {
+  const { held, server, news } = payload || {};
+  state.voiceFilterHeld = { held: Boolean(held), server: server || null };
+  const name = state.voiceServer && state.voiceServer.id === server ? state.voiceServer.name : null;
+  if (news) toast(voiceFilterNews(Boolean(held), name));
+  renderVoiceFilter();
+}
+
 async function saveVoiceInput(command, args) {
   try {
     state.voice = await invoke(command, args);
@@ -8138,6 +8380,7 @@ async function saveVoiceInput(command, args) {
     toast(String(e));
   }
   renderVoiceInputSettings();
+  renderTalkButton();
 }
 
 function wireVoiceInputSettings() {
@@ -8193,7 +8436,29 @@ function stopMicMeter() {
 function setTalking(talking) {
   state.talking = talking;
   $("mute-btn").classList.toggle("talking", talking && !state.voice.muted);
+  $("vp-talk").classList.toggle("on", talking);
+  $("vp-talk").textContent = talking ? "Talking" : "Hold to talk";
   renderUserPanel();
+}
+
+function renderTalkButton() {
+  const shown = document.body.classList.contains("mobile-app") && Boolean(state.voiceChannelId) && voiceInputState(state.voice).mode === "push_to_talk";
+  $("vp-talk").classList.toggle("hidden", !shown);
+}
+
+function wireTalkButton() {
+  const btn = $("vp-talk");
+  let held = false;
+  const press = down => {
+    if (held === down) return;
+    held = down;
+    invoke("press_talk", { pressed: down }).catch(e => toast(String(e)));
+  };
+  btn.addEventListener("pointerdown", e => {
+    btn.setPointerCapture(e.pointerId);
+    press(true);
+  });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(type, () => press(false));
 }
 
 function hotkeyFromEvent(e) {
@@ -8244,12 +8509,7 @@ function wireHotkeyInput(input, onPick, { clearable = false } = {}) {
 let connTimer = null;
 let connLast = null;
 let connPick = null;
-
-function quality(rtt, loss) {
-  if (rtt > 250 || loss > 5) return "bad";
-  if (rtt > 120 || loss > 1) return "ok";
-  return "good";
-}
+const signalTracker = createSignalTracker();
 
 function formatRate(bytesPerSec) {
   const kbps = (bytesPerSec * 8) / 1000;
@@ -8264,6 +8524,7 @@ async function refreshConnPop() {
     closeConnPop();
     return;
   }
+  stats = { ...stats, links: signalTracker.read(stats.links) };
   const now = performance.now();
   const tx = stats.links.reduce((a, l) => a + l.tx_bytes, 0);
   const rx = stats.links.reduce((a, l) => a + l.rx_bytes, 0);
@@ -8285,7 +8546,7 @@ async function refreshConnPop() {
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-selected", String(link === current));
     tab.title = link.name;
-    tab.dataset.quality = quality(link.rtt_ms, link.loss_pct);
+    tab.dataset.quality = link.quality;
     tab.classList.toggle("active", link === current);
     tab.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
     tab.onclick = () => {
@@ -8299,7 +8560,7 @@ async function refreshConnPop() {
     const head = el("div", "conn-link-head");
     head.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
     head.appendChild(el("span", "conn-name", link.name));
-    const q = quality(link.rtt_ms, link.loss_pct);
+    const q = link.quality;
     head.appendChild(el("span", `conn-badge ${q}`, { good: "Good", ok: "Fair", bad: "Poor" }[q]));
     row.appendChild(head);
     const grid = el("div", "conn-grid");
@@ -8320,18 +8581,11 @@ async function refreshConnPop() {
   }
   if (!stats.links.length) list.appendChild(el("div", "conn-empty", "Nobody else is connected yet."));
   $("conn-foot").textContent = `Audio: ${stats.codec}, ${stats.bitrate_kbps} kbps per person`;
-  paintSignal(stats);
+  paintSignal(stats.links);
 }
 
-function worstQuality(links) {
-  return links.reduce((w, l) => {
-    const q = quality(l.rtt_ms, l.loss_pct);
-    return q === "bad" || (q === "ok" && w === "good") ? q : w;
-  }, "good");
-}
-
-function paintSignal(stats) {
-  $("vp-signal").dataset.quality = stats ? worstQuality(stats.links) : "good";
+function paintSignal(links) {
+  $("vp-signal").dataset.quality = links ? worstLinkQuality(links) : "good";
 }
 
 let signalTimer = null;
@@ -8339,7 +8593,7 @@ let signalTimer = null;
 async function pollSignal() {
   if (!state.voiceChannelId) return;
   try {
-    paintSignal(await invoke("voice_stats"));
+    paintSignal(signalTracker.read((await invoke("voice_stats")).links));
   } catch (e) {
     paintSignal(null);
   }
@@ -8352,6 +8606,7 @@ function syncSignalPolling(active) {
   } else if (!active && signalTimer) {
     clearInterval(signalTimer);
     signalTimer = null;
+    signalTracker.reset();
     paintSignal(null);
   }
 }
@@ -8939,6 +9194,11 @@ async function saveGameTags(tags, meta = gameTagMetaDraft) {
   }
 }
 
+function upcomingEventCount(server) {
+  const now = Date.now();
+  return (server.events || []).filter(e => new Date(e.end || e.start).getTime() >= now).length;
+}
+
 function renderServerExtras(list, server) {
   if (server.game_tags && server.game_tags.length) {
     const row = el("div", "sidebar-game-tags");
@@ -8947,11 +9207,10 @@ function renderServerExtras(list, server) {
     }
     list.appendChild(row);
   }
-  const now = Date.now();
-  const upcoming = (server.events || []).filter(e => new Date(e.end || e.start).getTime() >= now);
+  const upcoming = upcomingEventCount(server);
   const events = el("div", "channel sidebar-link");
   events.appendChild(el("span", "channel-icon")).appendChild(svgIcon("calendar", 18));
-  events.appendChild(el("span", "channel-label", upcoming.length ? `${upcoming.length} Event${upcoming.length === 1 ? "" : "s"}` : "Events"));
+  events.appendChild(el("span", "channel-label", upcoming ? `${upcoming} Event${upcoming === 1 ? "" : "s"}` : "Events"));
   events.onclick = () => openEvents();
   list.appendChild(events);
   if (server.rules) {
@@ -10361,7 +10620,7 @@ const PERMISSION_GROUPS = [
   ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "create_events", "manage_events", "view_audit_log"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "embed_links", "read_message_history", "create_threads", "send_polls", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
-  ["Voice", ["priority_speaker"]],
+  ["Voice", ["priority_speaker", "use_voice_filters"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -12176,6 +12435,9 @@ function renderSoundboardSettings(server) {
   $("sound-open-toggle").checked = Boolean(server.soundboard_open);
   $("sound-open-toggle").disabled = !server.can_manage_server;
   $("sound-open-row").classList.toggle("readonly", !server.can_manage_server);
+  $("join-sounds-toggle").checked = Boolean(server.join_sounds_allowed);
+  $("join-sounds-toggle").disabled = !server.can_manage_server;
+  $("join-sounds-row").classList.toggle("readonly", !server.can_manage_server);
   $("sound-share-toggle").checked = Boolean(server.sounds_shareable);
   $("sound-share-toggle").disabled = !server.can_manage_server;
   $("sound-share-row").classList.toggle("readonly", !server.can_manage_server);
@@ -12191,10 +12453,10 @@ function renderSoundboardSettings(server) {
 }
 
 const SOUND_WAVE_BARS = 96;
-const soundDraft = { server: null, bytes: null, buffer: null, sel: null, emoji: null, afterSave: null, preview: null };
+const soundDraft = { server: null, alert: null, bytes: null, buffer: null, sel: null, emoji: null, afterSave: null, preview: null };
 
-async function openSoundUpload(server, afterSave = null) {
-  if (!server) return;
+async function openSoundUpload(server, afterSave = null, alert = null) {
+  if (!server && !alert) return;
   let picked;
   try {
     picked = await pickSoundFile();
@@ -12219,7 +12481,7 @@ async function openSoundUpload(server, afterSave = null) {
   }
   stopSoundPreview();
   $("soundboard-pop").classList.add("hidden");
-  Object.assign(soundDraft, { server, bytes, buffer, sel: initialSoundSelection(buffer.duration, MAX_SOUND_SECONDS), emoji: null, afterSave });
+  Object.assign(soundDraft, { server, alert, bytes, buffer, sel: initialSoundSelection(buffer.duration, MAX_SOUND_SECONDS), emoji: null, afterSave });
   const peaks = soundWaveformPeaks(Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i)), SOUND_WAVE_BARS);
   $("sound-wave").replaceChildren(...peaks.map(p => {
     const bar = el("span");
@@ -12228,8 +12490,12 @@ async function openSoundUpload(server, afterSave = null) {
   }));
   $("sound-hint").textContent = buffer.duration > MAX_SOUND_SECONDS + 0.2
     ? `This clip is ${formatTrimTime(buffer.duration)} long. Drag the handles to pick up to ${MAX_SOUND_SECONDS} seconds.`
-    : "Drag the handles to trim the start or end, then give it a name and an emoji.";
-  $("sound-name").value = freeExpressionName(expressionName(stem, "sound"), (server.sounds || []).map(s => s.name));
+    : alert ? "Drag the handles to trim the start or end, then give it a name." : "Drag the handles to trim the start or end, then give it a name and an emoji.";
+  $("sound-title").textContent = alert ? "Add your own sound" : "Add a sound";
+  $("sound-save").textContent = alert ? "Save" : "Add";
+  $("sound-emoji").classList.toggle("hidden", Boolean(alert));
+  const taken = alert ? alertSounds.list.map(s => s.name) : (server.sounds || []).map(s => s.name);
+  $("sound-name").value = freeExpressionName(expressionName(stem, "sound"), taken);
   $("sound-save").disabled = false;
   paintSoundEmoji();
   paintSoundSelection();
@@ -12351,7 +12617,31 @@ function toggleSoundPreview() {
   tick();
 }
 
+async function saveAlertSoundDraft() {
+  const name = expressionName($("sound-name").value, "");
+  if (!name) {
+    toast("Names are 2 to 32 letters, numbers or underscores");
+    return;
+  }
+  stopSoundPreview();
+  $("sound-save").disabled = true;
+  try {
+    const bytes = await renderTrimmedSound(soundDraft.bytes, soundDraft.buffer, soundDraft.sel);
+    if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error("That clip is still over 1 MB, pick a shorter part");
+    const id = await saveAlertSound(name, bytes);
+    hideModals();
+    chooseAlertSound(soundDraft.alert.eventId, id);
+    renderSoundSettings();
+    toast(`Saved ${name} on this device`);
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    $("sound-save").disabled = false;
+  }
+}
+
 async function saveSoundDraft() {
+  if (soundDraft.alert && soundDraft.buffer) return saveAlertSoundDraft();
   const { server, emoji, afterSave } = soundDraft;
   if (!server || !soundDraft.buffer) return;
   const name = expressionName($("sound-name").value, "");
@@ -12406,6 +12696,52 @@ function wireSoundUpload() {
 }
 
 let soundboardCooldown = 0;
+
+async function openJoinSoundPicker(serverId) {
+  let server;
+  try {
+    server = await invoke("get_server", { serverId });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  $("join-sound-server").textContent = server.name;
+  renderJoinSoundPicker(server, server.my_join_sound || null);
+  showModal("modal-join-sound");
+}
+
+function renderJoinSoundPicker(server, picked) {
+  const choices = [
+    { name: null, label: "None", sub: "The usual join sound" },
+    ...(server.sounds || []).map(s => ({ name: s.name, label: s.name, emoji: s.emoji, clip: s.blob, volume: s.volume })),
+    ...DEFAULT_SOUNDS.map(s => ({ name: `default:${s.id}`, label: s.label, sub: "Built in", clip: `default:${s.id}`, volume: 1 })),
+  ];
+  const list = $("join-sound-list");
+  list.replaceChildren();
+  for (const choice of choices) {
+    const row = el("button", "notify-level");
+    row.type = "button";
+    row.setAttribute("role", "radio");
+    row.setAttribute("aria-checked", String(choice.name === picked));
+    row.classList.toggle("picked", choice.name === picked);
+    const words = el("span");
+    words.append(el("span", "notify-level-name", choice.label));
+    if (choice.sub) words.append(el("span", "notify-level-sub", choice.sub));
+    row.append(el("span", "notify-mark"), words);
+    if (choice.emoji) row.append(soundEmojiNode(choice.emoji));
+    row.onclick = async () => {
+      if (choice.clip) playExpressionSound(choice.clip, (choice.volume ?? 1) * soundboardPrefs().volume);
+      if (choice.name === picked) return;
+      try {
+        await invoke("set_join_sound", { serverId: server.id, name: choice.name });
+        renderJoinSoundPicker(server, choice.name);
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    list.appendChild(row);
+  }
+}
 
 async function toggleSoundboardPop() {
   const pop = $("soundboard-pop");
@@ -13717,6 +14053,7 @@ function renderVoicePanel() {
     gameBtn.title = `Stream ${playing} to your voice channel at 60 fps`;
   }
   $("vp-signal").replaceChildren(svgIcon("signal", 14));
+  renderTalkButton();
   setIcon($("vp-disconnect"), "hangup", 20);
 
   $("vp-camera-icon").replaceChildren(svgIcon(state.cameraOn ? "camera" : "cameraOff", 18));
@@ -13771,8 +14108,29 @@ function renderStageStrip(server) {
 }
 const ACTIVITY_REMOTE_SETTLE_MS = 400;
 const ACTIVITY_DRIFT_CHECK_MS = 2000;
+const YOUTUBE_SETTLE_MS = 1500;
+const YOUTUBE_GREET_MS = 250;
+const YOUTUBE_GREET_TRIES = 40;
+const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
 
-const activityUi = { run: null, open: false, seq: 0, pick: "tictactoe", chip: null, videoBlob: null, settling: 0 };
+const activityUi = {
+  run: null,
+  open: false,
+  seq: 0,
+  pick: "tictactoe",
+  chip: null,
+  videoBlob: null,
+  settling: 0,
+  yt: freshYouTubeView(),
+};
+
+function inBrowserApp() {
+  return document.documentElement.classList.contains("web-app");
+}
+
+function freshYouTubeView() {
+  return { frame: null, video: null, ready: false, seen: null, settling: 0, title: null, error: null, greeter: null };
+}
 
 function activityMe() {
   return state.user ? state.user.id : null;
@@ -14001,15 +14359,160 @@ function renderTicTacToe(run, me) {
 }
 
 function renderActivityWatch(run, me) {
-  $("activity-watch-title").textContent = watchTitle(run.activity);
-  const video = $("activity-video");
-  video.controls = isParticipant(run, me);
-  loadActivityVideo(run);
+  const kind = watchSourceKind(run.activity);
+  const youtube = kind === "youtube";
+  $("activity-watch-title").textContent = youtube && activityUi.yt.title ? activityUi.yt.title : watchTitle(run.activity);
+  $("activity-video").classList.toggle("hidden", youtube);
+  $("activity-youtube").classList.toggle("hidden", !youtube);
+  $("activity-watch-open").classList.toggle("hidden", !youtube);
+  if (youtube) renderActivityYouTube(run, me);
+  else {
+    const blocked = kind === "link" && inBrowserApp();
+    $("activity-video").controls = isParticipant(run, me);
+    if (!blocked) loadActivityVideo(run);
+    const note = $("activity-screen-note");
+    note.textContent = blocked ? WEB_DIRECT_LINK_NOTE : "";
+    note.classList.toggle("hidden", !blocked);
+  }
+  renderActivitySyncLabel(run);
+}
+
+function renderActivityYouTube(run, me) {
+  const joined = isParticipant(run, me);
+  const video = watchYouTubeId(run.activity);
+  const yt = activityUi.yt;
+  if (joined && video && yt.video !== video) mountYouTube(video);
+  else if (!joined && yt.frame) releaseYouTube();
+  const note = joined ? activityUi.yt.error || "" : "Join to watch. The video plays from YouTube once you join.";
+  const box = $("activity-screen-note");
+  box.textContent = note;
+  box.classList.toggle("hidden", !note);
+}
+
+function mountYouTube(video) {
+  releaseYouTube();
+  const frame = document.createElement("iframe");
+  frame.title = "YouTube video player";
+  frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+  frame.allowFullscreen = true;
+  frame.referrerPolicy = "strict-origin-when-cross-origin";
+  frame.src = youtubeEmbedUrl(video, location.origin);
+  activityUi.yt = { ...freshYouTubeView(), frame, video };
+  frame.addEventListener("load", () => greetYouTube(frame));
+  $("activity-youtube").replaceChildren(frame);
+}
+
+function greetYouTube(frame) {
+  const yt = activityUi.yt;
+  if (yt.frame !== frame) return;
+  clearInterval(yt.greeter);
+  let tries = 0;
+  const greet = () => {
+    if (activityUi.yt.frame !== frame || activityUi.yt.ready || ++tries > YOUTUBE_GREET_TRIES) {
+      clearInterval(yt.greeter);
+      return;
+    }
+    frame.contentWindow.postMessage(youtubeListening(), YOUTUBE_ORIGIN);
+  };
+  yt.greeter = setInterval(greet, YOUTUBE_GREET_MS);
+  greet();
+}
+
+function releaseYouTube() {
+  const yt = activityUi.yt;
+  clearInterval(yt.greeter);
+  if (yt.frame) yt.frame.remove();
+  activityUi.yt = freshYouTubeView();
+}
+
+function postYouTube(func, args) {
+  const yt = activityUi.yt;
+  if (yt.frame && yt.frame.contentWindow) yt.frame.contentWindow.postMessage(youtubeCommand(func, args), YOUTUBE_ORIGIN);
+}
+
+function onYouTubeMessage(event) {
+  const yt = activityUi.yt;
+  if (!yt.frame || event.origin !== YOUTUBE_ORIGIN || event.source !== yt.frame.contentWindow) return;
+  const message = readYouTubeMessage(event.data);
+  if (!message) return;
+  if (!yt.ready) onYouTubeReady();
+  if (message.kind === "error") {
+    yt.error = youtubeErrorText(message.code);
+    renderActivityUi();
+  } else if (message.kind === "info") {
+    onYouTubeInfo(message);
+  }
+}
+
+function onYouTubeReady() {
+  const yt = activityUi.yt;
+  yt.ready = true;
+  clearInterval(yt.greeter);
+  postYouTube("addEventListener", ["onStateChange"]);
+  postYouTube("addEventListener", ["onError"]);
+  syncActivityYouTube();
+}
+
+function onYouTubeInfo(message) {
+  const yt = activityUi.yt;
+  const run = activityUi.run;
+  const now = Date.now();
+  if (message.title && message.title !== yt.title) {
+    yt.title = message.title;
+    $("activity-watch-title").textContent = message.title;
+  }
+  const before = yt.seen;
+  const state = message.state ?? (before ? before.state : null);
+  const time = message.time ?? youtubeExpectedTime(before, now);
+  const turned = message.state !== undefined && (!before || before.state !== message.state);
+  const seeked = message.time !== undefined && youtubeUserSeeked(before, message.time, now);
+  yt.seen = { state, time, at: now };
+  if (!run || watchSourceKind(run.activity) !== "youtube") return;
+  if (now >= yt.settling && isParticipant(run, activityMe()) && Number.isFinite(time)) {
+    const pressed = turned && (state === YOUTUBE_STATE.PLAYING || state === YOUTUBE_STATE.PAUSED);
+    const playing = youtubePlaying(state);
+    if ((pressed && playing !== Boolean(run.playback.playing)) || seeked) {
+      sendActivityInput({ playback: { playing, position: time, at: now } });
+    }
+  }
+  renderActivitySyncLabel(run);
+}
+
+function syncActivityYouTube() {
+  const run = activityUi.run;
+  const yt = activityUi.yt;
+  if (!run || !yt.ready || !yt.frame || !isParticipant(run, activityMe())) return;
+  const now = Date.now();
+  const target = watchTargetPosition(run.playback, now);
+  const current = youtubeExpectedTime(yt.seen, now);
+  const playing = yt.seen ? youtubePlaying(yt.seen.state) : false;
+  const seek = current === null ? target > 0 : youtubeNeedsSeek(current, target);
+  const toggle = playing !== Boolean(run.playback.playing);
+  if (seek || toggle) {
+    yt.settling = now + YOUTUBE_SETTLE_MS;
+    if (seek) postYouTube("seekTo", [target, true]);
+    postYouTube(run.playback.playing ? "playVideo" : "pauseVideo");
+  }
   renderActivitySyncLabel(run);
 }
 
 function renderActivitySyncLabel(run) {
   const label = $("activity-sync");
+  if (watchSourceKind(run.activity) === "youtube") {
+    const yt = activityUi.yt;
+    const joined = isParticipant(run, activityMe());
+    if (!joined || !yt.ready || !yt.seen || yt.error) {
+      label.textContent = joined ? "" : "Join to control playback";
+      label.className = "activity-sync";
+      return;
+    }
+    const now = Date.now();
+    const current = youtubeExpectedTime(yt.seen, now);
+    const off = current === null || youtubeNeedsSeek(current, watchTargetPosition(run.playback, now)) || youtubePlaying(yt.seen.state) !== Boolean(run.playback.playing);
+    label.textContent = off ? "Catching up" : "In sync";
+    label.className = `activity-sync ${off ? "catching" : "good"}`;
+    return;
+  }
   const video = $("activity-video");
   if (!video.src || !isParticipant(run, activityMe())) {
     label.textContent = isParticipant(run, activityMe()) ? "" : "Join to control playback";
@@ -14053,6 +14556,7 @@ async function loadActivityVideo(run) {
 }
 
 function releaseActivityVideo() {
+  releaseYouTube();
   const video = $("activity-video");
   if (!video) return;
   activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
@@ -14065,7 +14569,9 @@ function releaseActivityVideo() {
 function syncActivityVideo() {
   const run = activityUi.run;
   const video = $("activity-video");
-  if (!run || run.kind !== "watch" || !video.src) return;
+  if (!run || run.kind !== "watch") return;
+  if (watchSourceKind(run.activity) === "youtube") return syncActivityYouTube();
+  if (!video.src) return;
   const target = watchTargetPosition(run.playback, Date.now());
   activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
   if (Number.isFinite(video.duration) && watchNeedsSeek(video.currentTime, target)) video.currentTime = target;
@@ -14139,7 +14645,10 @@ function pickedActivity() {
   if (activityUi.pick !== "watch") return makeActivity("tictactoe", activityMe(), now, id);
   const url = $("activity-link-input").value.trim();
   if (url) {
-    if (!isVideoLink(url)) throw new Error("Paste a direct https link that ends in .mp4, .webm or .ogg");
+    const youtube = youtubeVideoId(url);
+    if (youtube) return makeActivity("watch", activityMe(), now, id, watchYouTubeSource(youtube));
+    if (!isVideoLink(url)) throw new Error("Paste a YouTube link, or a direct https link that ends in .mp4, .webm or .ogg");
+    if (inBrowserApp()) throw new Error(WEB_DIRECT_LINK_NOTE);
     return makeActivity("watch", activityMe(), now, id, watchLinkSource(url));
   }
   if (activityUi.chip) return makeActivity("watch", activityMe(), now, id, watchAttachmentSource(activityUi.chip));
@@ -14155,6 +14664,11 @@ function initActivityUi() {
       toast(e.message || String(e));
     }
   };
+  $("activity-watch-open").onclick = () => {
+    const video = activityUi.run && watchYouTubeId(activityUi.run.activity);
+    if (video) invoke("open_url", { url: youtubeWatchUrl(video) }).catch(err => toast(String(err)));
+  };
+  window.addEventListener("message", onYouTubeMessage);
   $("activity-link-input").addEventListener("input", () => {
     if ($("activity-link-input").value.trim()) {
       activityUi.chip = null;
@@ -14311,11 +14825,205 @@ function applyMembersLayout() {
   btn.title = collapsed ? "Show Members" : "Hide Members";
 }
 
+function narrowSplit() {
+  return isPhoneWidth(window.innerWidth) && !document.body.classList.contains("mobile-app") && window.matchMedia("(pointer: fine)").matches;
+}
+
+function narrowViewServer() {
+  return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
+}
+
+function paintNarrowServerIcon(icon, server) {
+  icon.replaceChildren();
+  icon.style.background = "";
+  if (!server) {
+    icon.appendChild(el("img")).src = "images/commy_v3_noback.png";
+    return;
+  }
+  paintServerIcon(icon, server);
+  icon.style.background = serverTint(server.id);
+}
+
+function paintNarrowRail() {
+  if (!$("narrow-active")) return;
+  const server = narrowViewServer();
+  paintNarrowServers(server);
+  $("narrow-column").replaceChildren(narrowChannelTile(server), ...(server ? narrowVoiceTiles(server) : []));
+}
+
+function paintNarrowServers(server) {
+  const active = $("narrow-active");
+  paintNarrowServerIcon(active.querySelector(".narrow-active-icon"), server);
+  active.title = server ? `${server.name}: server controls` : "Direct Messages";
+  const others = railServers().filter(s => !server || s.id !== server.id);
+  const shown = others.length > 4 ? others.slice(0, 3) : others;
+  const cells = shown.map(other => {
+    const cell = el("span", "narrow-grid-cell");
+    paintNarrowServerIcon(cell, other);
+    return cell;
+  });
+  if (others.length > shown.length) cells.push(el("span", "narrow-grid-cell narrow-grid-more", `+${others.length - shown.length}`));
+  const grid = $("narrow-grid");
+  grid.replaceChildren(...cells);
+  grid.title = others.length ? `Switch server: ${others.map(s => s.name).join(", ")}` : "Switch server";
+  grid.classList.toggle("unread", others.some(s => serverUnreadCount(s.id) > 0));
+}
+
+function narrowChannelTile(server) {
+  const channel = state.currentChannel;
+  const tile = el("button", "narrow-channel");
+  tile.id = "narrow-channel";
+  tile.title = "Switch channel";
+  const mark = el("span", "narrow-channel-mark");
+  mark.appendChild(server && channel ? channelMark(channel) : svgIcon("chat", 18));
+  const name = el("span", "narrow-channel-name");
+  if (server && channel) name.appendChild(channelNameNode(channel));
+  else name.textContent = state.currentDm ? state.currentDm.name : "Messages";
+  tile.append(mark, name, svgIcon("chevronDown", 12));
+  tile.classList.toggle("unread", Boolean(server) && server.channels.some(c => (!channel || c.id !== channel.id) && shownUnread(server.id, c.id)));
+  tile.onclick = () => toggleNarrowChannels(tile);
+  return tile;
+}
+
+function toggleNarrowChannels(tile) {
+  const app = $("app");
+  app.classList.remove("flyout-open");
+  const open = app.classList.toggle("channels-open");
+  if (open) $("channel-list").style.top = `${Math.round(tile.getBoundingClientRect().top)}px`;
+}
+
+function narrowVoiceTiles(server) {
+  return server.channels
+    .filter(c => isVoiceKind(c.kind) && (c.id === state.voiceChannelId || voiceRingEntries(c).length))
+    .map(narrowVoiceTile);
+}
+
+function narrowVoiceTile(channel) {
+  const connected = channel.id === state.voiceChannelId;
+  const tile = el("button", "narrow-voice-tile" + (connected ? " connected" : ""));
+  tile.title = connected ? `You are in ${channel.name}` : `Join ${channel.name}`;
+  const grid = el("span", "narrow-voice-grid");
+  grid.append(...voiceRingCells(channel));
+  const head = el("span", "narrow-voice-head");
+  head.append(voiceKindIcon(channel.kind, 12), el("span", "narrow-voice-name", channel.name));
+  tile.append(grid, head);
+  tile.onclick = () => {
+    if (connected) return;
+    if (voiceFull(channel)) toast("That voice channel is full");
+    else toggleVoice(channel);
+  };
+  return tile;
+}
+
+function narrowMenuRow(label, paintIcon, onPick, active = false) {
+  const row = el("button", "narrow-menu-row" + (active ? " active" : ""));
+  const icon = el("span", "narrow-menu-icon");
+  paintIcon(icon);
+  row.append(icon, el("span", "narrow-menu-name", label));
+  row.onclick = () => {
+    $("app").classList.remove("flyout-open");
+    onPick();
+  };
+  return row;
+}
+
+function narrowGlyph(name) {
+  return icon => icon.appendChild(svgIcon(name, 18));
+}
+
+function serverSwitchRows() {
+  const current = narrowViewServer();
+  return [
+    narrowMenuRow("Direct Messages", icon => paintNarrowServerIcon(icon, null), () => $("home-btn").click(), !current),
+    ...railServers().map(server => narrowMenuRow(server.name, icon => paintNarrowServerIcon(icon, server), () => selectServer(server.id), Boolean(current) && server.id === current.id)),
+    narrowMenuRow("Add a Server", narrowGlyph("plus"), () => $("add-server-btn").click()),
+    narrowMenuRow("Discover Servers", narrowGlyph("globe"), () => $("discover-btn").click()),
+  ];
+}
+
+function serverControlRows(server) {
+  const events = upcomingEventCount(server);
+  const rows = [
+    el("div", "narrow-menu-title", server.name),
+    narrowMenuRow(events ? `${events} Event${events === 1 ? "" : "s"}` : "Events", narrowGlyph("calendar"), () => openEvents()),
+  ];
+  if (server.rules) rows.push(narrowMenuRow("Server Rules", narrowGlyph("book"), () => openRules()));
+  if (selfAssignableRoles(server).length) rows.push(narrowMenuRow("Roles", narrowGlyph("roles"), () => openChooseRoles()));
+  rows.push(el("div", "narrow-menu-sep"));
+  if (server.can_invite) rows.push(narrowMenuRow("Invite People", narrowGlyph("friendAdd"), () => $("invite-btn").click()));
+  rows.push(narrowMenuRow("Server Settings", narrowGlyph("gear"), () => $("server-settings-btn").click()));
+  return rows;
+}
+
+function toggleNarrowMenu(kind, anchor) {
+  const app = $("app");
+  const menu = $("narrow-menu");
+  app.classList.remove("channels-open");
+  if (app.classList.contains("flyout-open") && menu.dataset.kind === kind) {
+    app.classList.remove("flyout-open");
+    return;
+  }
+  const server = narrowViewServer();
+  menu.dataset.kind = kind;
+  menu.replaceChildren(...(kind === "controls" && server ? serverControlRows(server) : serverSwitchRows()));
+  menu.style.top = `${Math.round(anchor.getBoundingClientRect().top)}px`;
+  app.classList.add("flyout-open");
+}
+
+function applyNarrowLayout() {
+  const app = $("app");
+  const split = narrowSplit();
+  if (app.classList.contains("narrow-split") === split) return;
+  app.classList.toggle("narrow-split", split);
+  app.classList.remove("flyout-open", "channels-open");
+  const panel = document.querySelector(".user-panel");
+  if (split) {
+    $("narrow-dock").appendChild(panel);
+    app.dataset.pane = "split";
+  } else {
+    $("rail").appendChild(panel);
+    app.dataset.pane = "list";
+  }
+  if (state.currentServer) renderChannels();
+}
+
+function wireNarrowLayout() {
+  const sidebar = document.querySelector(".sidebar");
+  const active = el("button", "narrow-active");
+  active.id = "narrow-active";
+  active.appendChild(el("span", "narrow-active-icon"));
+  active.onclick = () => toggleNarrowMenu(narrowViewServer() ? "controls" : "servers", active);
+  const grid = el("button", "narrow-grid");
+  grid.id = "narrow-grid";
+  grid.onclick = () => toggleNarrowMenu("servers", grid);
+  const servers = el("div", "narrow-servers");
+  servers.append(active, grid);
+  sidebar.prepend(servers);
+  const column = el("div", "narrow-column");
+  column.id = "narrow-column";
+  $("channel-list").after(column);
+  const menu = el("div", "narrow-menu");
+  menu.id = "narrow-menu";
+  const dock = el("div", "narrow-dock");
+  dock.id = "narrow-dock";
+  sidebar.append(menu, dock);
+  document.addEventListener("pointerdown", e => {
+    if (!e.target.closest(".narrow-menu, .narrow-active, .narrow-grid")) $("app").classList.remove("flyout-open");
+    if (!e.target.closest(".channel-scroll, .narrow-channel")) $("app").classList.remove("channels-open");
+  });
+  $("channel-list").addEventListener("click", e => {
+    if (e.target.closest(".channel:not(.voice-channel)") && !e.target.closest("button")) $("app").classList.remove("channels-open");
+  });
+  window.addEventListener("resize", applyNarrowLayout);
+  applyNarrowLayout();
+}
+
 function phonePane() {
   return $("app").dataset.pane || "list";
 }
 
 function setPhonePane(pane, { fromHistory = false } = {}) {
+  if (narrowSplit()) return;
   const was = phonePane();
   if (was === pane) return;
   $("app").dataset.pane = pane;
@@ -14323,7 +15031,7 @@ function setPhonePane(pane, { fromHistory = false } = {}) {
 }
 
 function phoneStep(action) {
-  if (!isPhoneWidth(window.innerWidth)) return false;
+  if (!isPhoneWidth(window.innerWidth) || narrowSplit()) return false;
   const from = phonePane();
   const to = phonePaneAfter(from, action);
   if (!phonePaneGoesDeeper(from, to) && history.state && history.state.pane) history.back();
@@ -14332,7 +15040,7 @@ function phoneStep(action) {
 }
 
 function phoneShowChat() {
-  if (!isPhoneWidth(window.innerWidth)) return;
+  if (!isPhoneWidth(window.innerWidth) || narrowSplit()) return;
   const pane = phonePane();
   if (pane === "people") phoneStep("back");
   else if (pane === "list") phoneStep("open");
@@ -14399,6 +15107,18 @@ function wirePhoneLayout() {
   });
 }
 
+function wireTouchMessages() {
+  document.addEventListener("click", e => {
+    if (!document.body.classList.contains("mobile-app")) return;
+    const msg = e.target.closest(".msg");
+    if (msg && e.target.closest("a, button, input, textarea, video, audio, .msg-actions")) return;
+    for (const other of document.querySelectorAll(".msg.touched")) {
+      if (other !== msg) other.classList.remove("touched");
+    }
+    if (msg) msg.classList.toggle("touched");
+  });
+}
+
 async function markMobileApp() {
   const mobile = await invoke("is_mobile_app").catch(() => false);
   document.body.classList.toggle("mobile-app", Boolean(mobile));
@@ -14413,6 +15133,7 @@ function setViewMode(mode) {
   $("dm-call-btn").classList.toggle("hidden", !home);
   $("group-add-btn").classList.toggle("hidden", !home);
   $("group-leave-btn").classList.toggle("hidden", !group);
+  paintNarrowRail();
   $("members-btn").classList.toggle("hidden", dm);
   $("member-list").classList.toggle("hidden", dm);
   $("invite-btn").classList.toggle("hidden", home);
@@ -14896,8 +15617,28 @@ function renderCallButton() {
 let callRing = null;
 
 function stopCallRing() {
-  if (callRing) clearInterval(callRing);
+  if (callRing) {
+    clearTimeout(callRing.timer);
+    callRing.audio?.pause();
+  }
   callRing = null;
+}
+
+function startCallRing() {
+  stopCallRing();
+  const ring = { timer: 0, audio: null };
+  callRing = ring;
+  const again = () => {
+    if (callRing !== ring) return;
+    ring.audio = playSound("ring");
+    const gap = () => { ring.timer = setTimeout(again, RING_GAP_MS); };
+    if (ring.audio) {
+      ring.audio.addEventListener("ended", gap, { once: true });
+      ring.audio.addEventListener("error", gap, { once: true });
+    }
+    else ring.timer = setTimeout(again, 3000);
+  };
+  again();
 }
 
 function callPanel(view) {
@@ -14964,9 +15705,7 @@ function onDmCall(view) {
     avatar.replaceChildren(makeAvatar(view.user, view.name, "avatar avatar-xl"));
     $("call-name").textContent = view.name;
     showModal("modal-call");
-    stopCallRing();
-    playSound("dm");
-    callRing = setInterval(() => playSound("dm"), 3000);
+    startCallRing();
     return;
   }
   if (view.state === "active") {
@@ -16591,6 +17330,17 @@ function wireEvents() {
     }
   };
   $("emoji-share-toggle").addEventListener("change", saveExpressionSettings);
+  $("join-sounds-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_join_sounds_allowed", { serverId: server.id, enabled: e.target.checked });
+      await refreshExpressions();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  });
   $("sound-share-toggle").addEventListener("change", async e => {
     const server = state.currentServer;
     if (!server) return;
@@ -16630,6 +17380,9 @@ function wireEvents() {
 
   $("vp-soundboard").replaceChildren(svgIcon("soundboard", 16), el("span", null, "Soundboard"));
   $("vp-soundboard").onclick = toggleSoundboardPop;
+  $("join-sounds-hear-toggle").addEventListener("change", e => {
+    saveSoundboardPrefs({ ...soundboardPrefs(), joinSounds: e.target.checked });
+  });
   $("soundboard-toggle").addEventListener("change", e => {
     saveSoundboardPrefs({ ...soundboardPrefs(), enabled: e.target.checked });
   });
@@ -17008,6 +17761,7 @@ function wireEvents() {
   wireHotkeyInput($("overlay-toggle-key"), combo => saveOverlaySettings({ toggle_hotkey: combo }));
   wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
   wireVoiceInputSettings();
+  wireVoiceFilter();
   $("dm-policy").addEventListener("change", saveDmSettings);
   wireProfilePrivacy();
   $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
@@ -17201,6 +17955,12 @@ function wireEvents() {
     closeFloating();
     if (server) openServerNotify(server);
   };
+  $("sm-join-sound").onclick = () => {
+    const server = menuServer;
+    closeFloating();
+    if (server) openJoinSoundPicker(server.id);
+  };
+  $("join-sound-done").onclick = hideModals;
   for (const btn of $("server-notify-levels").querySelectorAll(".notify-level")) {
     btn.onclick = () => {
       if (!notifyServer) return;
@@ -17862,6 +18622,7 @@ function wireEvents() {
       document.body.classList.toggle("server-muted", muted || deafened);
       renderChannels();
     });
+    window.__TAURI__.event.listen("voice-filter-held", event => onVoiceFilterHeld(event.payload));
     window.__TAURI__.event.listen("stage-role", event => {
       const { audience } = event.payload || {};
       toast(audience ? "You are in the audience now" : "You can speak now");
@@ -18452,6 +19213,7 @@ const PERMISSION_LABELS = [
   ["mute_members", "Mute Members"],
   ["time_out_members", "Time Out Members"],
   ["priority_speaker", "Priority Speaker"],
+  ["use_voice_filters", "Use Voice Filters"],
   ["manage_nicknames", "Manage Nicknames"],
   ["change_nickname", "Change Nickname"],
   ["move_members", "Move Members"],
@@ -18558,6 +19320,7 @@ function openUserSettings(tab) {
   $("output-vol-label").textContent = `${$("output-vol").value}%`;
   $("input-gain-label").textContent = `${$("input-gain").value}%`;
   renderVoiceInputSettings();
+  renderVoiceFilter();
   startMicMeter();
   $("account-display-name").value = state.user.display_name || "";
   $("account-status").value = decodeCustomEmojis(state.user.custom_status);
@@ -19643,10 +20406,14 @@ function wireActivityPing() {
 
 async function boot() {
   await markMobileApp();
+  await prepareEmojiFonts();
   wireAccessibility();
   wireEvents();
   wireSaved();
   wirePhoneLayout();
+  wireNarrowLayout();
+  wireTouchMessages();
+  wireTalkButton();
   wireTimeoutModal();
   wireModerationModal();
   wireActivityPing();
@@ -19656,6 +20423,7 @@ async function boot() {
   } else {
     toast("Preview mode: running on mock data, not the real backend");
   }
+  await loadAlertSounds();
   state.voice = await invoke("get_voice_settings");
   await loadSafety();
   await loadFriends();

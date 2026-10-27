@@ -29,6 +29,7 @@ use crate::dm_book::DmBook;
 use crate::host::Host;
 use crate::store::WebStore;
 
+mod activities;
 mod calls;
 mod community;
 mod directory;
@@ -49,12 +50,12 @@ const MAX_PREFS_PER_CALL: usize = 500;
 const FAREWELL_LINGER: std::time::Duration = std::time::Duration::from_millis(300);
 const LOOK_FOR_KEY: std::time::Duration = std::time::Duration::from_secs(90);
 const RECHECK_ACCOUNT_KEY: std::time::Duration = std::time::Duration::from_secs(5);
+const START_FRESH_AFTER: chrono::TimeDelta = chrono::TimeDelta::seconds(20);
 const OPENING: &str = "Opening your servers";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Unlock {
     SignedOut,
-    NoList,
     Locked,
     Asking,
     Unlocked,
@@ -64,7 +65,6 @@ impl Unlock {
     fn name(self) -> &'static str {
         match self {
             Unlock::SignedOut => "signed_out",
-            Unlock::NoList => "no_list",
             Unlock::Locked => "locked",
             Unlock::Asking => "asking",
             Unlock::Unlocked => "unlocked",
@@ -81,6 +81,16 @@ struct Status {
     features: Option<account::Features>,
     looking: bool,
     key_copy: KeyCopy,
+}
+
+enum Found {
+    Key(SealKey),
+    Lost,
+}
+
+enum Started {
+    Opened,
+    Raced(String),
 }
 
 pub struct Session {
@@ -222,6 +232,9 @@ struct Args {
     report_id: Option<String>,
     due: Option<i64>,
     id: Option<String>,
+    activity: Option<commy_core::Activity>,
+    seq: Option<u64>,
+    input: Option<commy_core::ActivityInput>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -416,6 +429,7 @@ impl Session {
             "answer_dm_call" => self.call_command(cmd, args).await,
             "end_dm_call" => self.call_command(cmd, args).await,
             "set_voice_channel" => self.call_command(cmd, args).await,
+            "set_activity" | "send_activity_input" => self.activity_command(cmd, args).await,
             "get_voice_settings" => self.call_command(cmd, args).await,
             "set_muted" => self.call_command(cmd, args).await,
             "set_deafened" => self.call_command(cmd, args).await,
@@ -483,7 +497,7 @@ impl Session {
             "set_channel_access" => self.server_command(cmd, args).await,
             "add_emoji" | "add_sticker" | "add_emoticon" | "add_sound" => self.expression_command(cmd, args).await,
             "remove_emoji" | "remove_sticker" | "remove_emoticon" | "remove_sound" => self.expression_command(cmd, args).await,
-            "set_sound_emoji" | "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" => {
+            "set_sound_emoji" | "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" | "set_join_sounds_allowed" | "set_join_sound" => {
                 self.expression_command(cmd, args).await
             }
             "store_catalog_emoji" | "store_catalog_sticker" | "catalog_media_path" => self.expression_command(cmd, args).await,
@@ -661,9 +675,12 @@ impl Session {
         self.start_node(secret).await.ok();
         self.link_device(secret).await?;
         let reply = self.request("GET", account::VAULT_PATH, None).await?;
-        let Some(sealed) = account::vault_data(&reply)? else {
-            self.set_unlock(Unlock::NoList, "Open Commy on your computer and sign in there first. The web app opens the servers your computer has.");
-            return Ok(self.unlock_view());
+        let sealed = match account::vault_data(&reply)? {
+            Some(sealed) => sealed,
+            None => match self.start_new_list(&account, account::vault_version(&reply).unwrap_or(0)).await? {
+                Started::Opened => return Ok(self.unlock_view()),
+                Started::Raced(sealed) => sealed,
+            },
         };
         self.status.borrow_mut().sealed = Some(sealed.clone());
         let stored = account::stored_entry_key(self.host.load(account::ENTRY_KEY_KEY).as_deref(), &account.id);
@@ -687,22 +704,31 @@ impl Session {
         let this = self.clone();
         spawn_local(async move {
             let found = n0_future::time::timeout(LOOK_FOR_KEY, this.find_key(&account)).await.ok().flatten();
-            this.status.borrow_mut().looking = false;
             if this.status.borrow().unlock == Unlock::Unlocked {
+                this.status.borrow_mut().looking = false;
                 return;
             }
-            match found.map(|key| this.accept_key(&account, key)) {
-                Some(Ok(())) => {}
-                Some(Err(e)) => this.set_unlock(Unlock::Locked, e),
+            let result = match found {
+                Some(Found::Key(key)) => this.accept_key(&account, key).map(|_| false),
+                Some(Found::Lost) => this.replace_lost_list(&account).await,
                 None => {
                     let copy = this.status.borrow().key_copy;
-                    this.set_unlock(Unlock::Locked, copy.note());
+                    Err(copy.note().to_string())
                 }
+            };
+            this.status.borrow_mut().looking = false;
+            match result {
+                Ok(false) => {}
+                Ok(true) => {
+                    let _ = this.unlock().await;
+                }
+                Err(e) => this.set_unlock(Unlock::Locked, e),
             }
         });
     }
 
-    async fn find_key(self: &Rc<Self>, account: &AccountUser) -> Option<SealKey> {
+    async fn find_key(self: &Rc<Self>, account: &AccountUser) -> Option<Found> {
+        let started = Utc::now();
         let (found, mut heard) = mpsc::unbounded_channel();
         self.ask_own_devices(account, found.clone()).await;
         loop {
@@ -719,10 +745,49 @@ impl Session {
                 Some(key) => Some(key).filter(|key| self.opens_list(key)),
                 None => self.account_key().await,
             };
-            if key.is_some() {
-                return key;
+            if let Some(key) = key {
+                return Some(Found::Key(key));
+            }
+            if Utc::now() - started >= START_FRESH_AFTER && self.status.borrow().key_copy.lost() {
+                return Some(Found::Lost);
             }
         }
+    }
+
+    async fn replace_lost_list(self: &Rc<Self>, account: &AccountUser) -> Result<bool, String> {
+        let reply = self.request("GET", account::VAULT_PATH, None).await?;
+        let version = account::vault_version(&reply).ok_or("Could not fetch your server list")?;
+        let sealed = account::vault_data(&reply)?;
+        if let Some(sealed) = &sealed {
+            self.status.borrow_mut().sealed = Some(sealed.clone());
+            if let Some(key) = self.account_key().await {
+                return self.accept_key(account, key).map(|_| false);
+            }
+        }
+        match self.start_new_list(account, version).await? {
+            Started::Opened => Ok(false),
+            Started::Raced(_) => Ok(true),
+        }
+    }
+
+    async fn start_new_list(self: &Rc<Self>, account: &AccountUser, version: u64) -> Result<Started, String> {
+        let key = SealKey::generate();
+        let list = EntryList::fresh(&account::username_for(account), &commy_core::Identity::generate());
+        let sealed = list.seal(&key);
+        let body = json!({ "name": account::LIST_ITEM, "data": sealed, "version": version });
+        let reply = self.request("POST", account::VAULT_PUT_PATH, Some(body)).await?;
+        if reply.status == account::CONFLICT {
+            let reply = self.request("GET", account::VAULT_PATH, None).await?;
+            return account::vault_data(&reply)?.map(Started::Raced).ok_or_else(|| "Your server list changed while this browser opened it. Press Try again.".into());
+        }
+        if !reply.ok() {
+            return Err("Your account server could not keep your new server list. Press Try again.".into());
+        }
+        self.status.borrow_mut().sealed = Some(sealed);
+        self.host.save(account::ENTRY_KEY_KEY, &account::entry_key_record(&account.id, &key));
+        self.escrow(&key).await;
+        self.finish(list, key)?;
+        Ok(Started::Opened)
     }
 
     fn opens_list(&self, key: &SealKey) -> bool {
@@ -1000,7 +1065,7 @@ impl Session {
         while let Some(event) = events.recv().await {
             match event {
                 NetEvent::Event { server, sender, event, action } => {
-                    if self.hear_sound(server, &event, action) {
+                    if self.hear_sound(server, &event, action) || self.hear_activity(server, &event, action) {
                         continue;
                     }
                     if self.client.borrow().admits(server, &event, action) {

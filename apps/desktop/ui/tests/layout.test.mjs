@@ -34,3 +34,11 @@ test("connection panel keeps the chosen person and falls back to the first", () 
   assert.equal(pickConnLink(links, null).user, "a");
   assert.equal(pickConnLink([], "a"), null);
 });
+
+test("voice rings fold everyone past the fourth into one more-people ring", () => {
+  const { voiceRingSplit } = require("../scripts/layout.js");
+  assert.deepEqual(voiceRingSplit(3), { shown: 3, more: 0 });
+  assert.deepEqual(voiceRingSplit(4), { shown: 4, more: 0 });
+  assert.deepEqual(voiceRingSplit(5), { shown: 3, more: 2 });
+  assert.deepEqual(voiceRingSplit(9), { shown: 3, more: 6 });
+});

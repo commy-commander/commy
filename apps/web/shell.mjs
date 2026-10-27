@@ -13,7 +13,7 @@ export function contentSecurityPolicy(relays) {
     "media-src 'self' data: blob:",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
-    "frame-src 'none'",
+    "frame-src https://www.youtube-nocookie.com",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

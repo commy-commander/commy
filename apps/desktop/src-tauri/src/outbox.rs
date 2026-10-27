@@ -351,6 +351,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         app.dms.lock().unwrap().remember_contact(sender.clone());
         app.persist_dms();
         app.persist_safety();
+        crate::account_log::note_relation(app, partner);
         let note = app.safety.lock().unwrap().friend_notes.get(&partner).cloned();
         access.emit(
             "friends-changed",

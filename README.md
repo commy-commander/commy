@@ -48,7 +48,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
 - **Voice.** Opus voice with one-click noise cancellation and echo
   cancellation toggles, per-person volume, shared mute and deafen, priority
   speakers who turn everyone else down while they talk, a status line per
-  voice channel, and a soundboard with per-server clips. Invite a friend or
+  voice channel, a soundboard with per-server clips, and voice filters
+  (higher, lower, robot, radio, cave and whisper) that a server can switch
+  off for some roles or everyone. Invite a friend or
   a channel to a call with a card that shows who is in it right now and a
   Join button. Stage channels seat an audience that only listens and can
   raise a hand; hosts invite people up to speak. Activities in a
@@ -138,7 +140,7 @@ crates/commy-net        Peer to peer transport: invite tickets, gossip
                         protocol, node wrapper, blob transfer
 crates/commy-view       The view models the UI renders, shared by both apps
 crates/commy-audio      Voice processing: noise cancellation, mute gate,
-                        voice activity detection, Opus codec
+                        voice activity detection, voice filters, Opus codec
 crates/commy-media      Device I/O: microphone, playback mixing with jitter
                         buffers, screen and window capture
 crates/commy-bot        Headless member that enforces auto moderation

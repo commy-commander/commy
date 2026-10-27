@@ -122,13 +122,13 @@ test("the browser's sign-in text is not replaced by the desktop's translations",
 
 test("the unlock text prefers the backend's detail", () => {
   assert.equal(webUnlockText({ state: "locked", detail: "Try again" }), "Try again");
-  assert.match(webUnlockText({ state: "no_list", detail: "" }), /computer/);
+  assert.match(webUnlockText({ state: "asking", detail: "" }), /Opening your servers/);
   assert.match(webUnlockText(null), /recovery code/);
 });
 
 test("signing in is all the browser asks for, never an Allow on another device", () => {
-  for (const state of ["signed_out", "no_list", "locked", "asking", "opening"]) {
-    assert.doesNotMatch(webUnlockText({ state, detail: "" }), /allow|approve/i);
+  for (const state of ["signed_out", "locked", "asking", "opening"]) {
+    assert.doesNotMatch(webUnlockText({ state, detail: "" }), /allow|approve|on your computer/i);
   }
   const bridge = read("apps", "web", "ui", "web-bridge.js");
   assert.doesNotMatch(bridge, /choose Allow|web_ask_devices/);
@@ -139,11 +139,11 @@ test("replies cross into the backend as a status line and body", () => {
   assert.equal(webReplyLine(200, '{"a":1}'), '200\n{"a":1}');
 });
 
-test("the page may only talk to its own site and the relay, and loads nothing from elsewhere", () => {
+test("the page may only talk to its own site and the relay, and frames nothing but the YouTube player", () => {
   const csp = contentSecurityPolicy(relayOrigins("https://relay.commy.chat:8443"));
   assert.match(csp, /default-src 'self'/);
   assert.match(csp, /connect-src 'self' https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443;/);
-  assert.match(csp, /frame-src 'none'/);
+  assert.match(csp, /frame-src https:\/\/www\.youtube-nocookie\.com;/);
   assert.doesNotMatch(csp, /\*/);
 });
 

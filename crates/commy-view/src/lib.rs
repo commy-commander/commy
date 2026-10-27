@@ -1,4 +1,5 @@
 pub mod act;
+pub mod activities;
 pub mod afk;
 pub mod calls;
 pub mod catalog;
@@ -348,11 +349,15 @@ pub struct ServerView {
     pub can_create_threads: bool,
     pub can_send_polls: bool,
     pub can_create_events: bool,
+    pub can_use_voice_filters: bool,
     pub chat_restricted: ChatRestrictions,
     pub public: bool,
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
     pub can_use_soundboard: bool,
+    pub join_sounds_allowed: bool,
+    pub join_sounds: std::collections::BTreeMap<String, String>,
+    pub my_join_sound: Option<String>,
     pub automod: Option<AutoMod>,
     pub onboarding: Option<commy_core::Onboarding>,
     pub commands: Vec<BotCommandsView>,
@@ -411,6 +416,7 @@ pub struct ChatRestrictions {
     pub create_threads: bool,
     pub send_polls: bool,
     pub create_events: bool,
+    pub voice_filters: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -708,17 +714,22 @@ impl ServerView {
             can_create_threads: is_member && perms.can_create_threads(),
             can_send_polls: is_member && perms.can_send_polls(),
             can_create_events: is_member && perms.can_create_events(),
+            can_use_voice_filters: perms.can_use_voice_filters(),
             chat_restricted: ChatRestrictions {
                 embed_links: everyone_holds(state, Permissions::NO_EMBED_LINKS),
                 read_history: everyone_holds(state, Permissions::NO_READ_MESSAGE_HISTORY),
                 create_threads: everyone_holds(state, Permissions::NO_CREATE_THREADS),
                 send_polls: everyone_holds(state, Permissions::NO_SEND_POLLS),
                 create_events: everyone_holds(state, Permissions::NO_CREATE_EVENTS),
+                voice_filters: everyone_holds(state, Permissions::NO_VOICE_FILTERS),
             },
             public: state.server.public,
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
+            join_sounds_allowed: !state.server.join_sounds_off,
+            join_sounds: join_sound_clips(state),
+            my_join_sound: viewer.and_then(|v| state.server.join_sounds.get(&v).cloned()),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
             onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
                 o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))
@@ -730,6 +741,19 @@ impl ServerView {
                 .collect(),
         }
     }
+}
+
+fn join_sound_clips(state: &ServerState) -> std::collections::BTreeMap<String, String> {
+    let clip_of = |sound: &str| match sound.strip_prefix(commy_core::server::BUILT_IN_SOUND_PREFIX) {
+        Some(_) => Some(sound.to_string()),
+        None => state.server.soundboard.iter().find(|s| s.name == sound).map(|s| s.blob.clone()),
+    };
+    state
+        .server
+        .join_sounds
+        .keys()
+        .filter_map(|user| Some((user.to_string(), clip_of(state.server.join_sound_of(*user)?)?)))
+        .collect()
 }
 
 fn everyone_holds(state: &ServerState, permission: Permissions) -> bool {
@@ -763,6 +787,7 @@ pub const EDITABLE_PERMISSIONS: &[(&str, Permissions)] = &[
     ("change_nickname", Permissions::CHANGE_NICKNAME),
     ("move_members", Permissions::MOVE_MEMBERS),
     ("priority_speaker", Permissions::PRIORITY_SPEAKER),
+    ("use_voice_filters", Permissions::NO_VOICE_FILTERS),
     ("manage_expressions", Permissions::MANAGE_EXPRESSIONS),
     ("add_emojis", Permissions::ADD_EMOJIS),
     ("add_stickers", Permissions::ADD_STICKERS),

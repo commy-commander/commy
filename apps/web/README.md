@@ -11,10 +11,13 @@ pronouns, a status that runs out and who sees your profile details), set server,
 add custom emoji, stickers, emoticons and sounds, play the soundboard, plan
 events and RSVP, post in forums, run stage channels (speakers, raised hands,
 server mute and deafen), set voice channel statuses, set up onboarding
-questions, AutoMod and the Activities switch, export a server as a template,
+questions, AutoMod and the Activities switch, run activities in a voice
+channel (Watch together with YouTube links or attached videos, and
+Tic-tac-toe), export a server as a template,
 report members to the server owner, set message reminders, and browse or list
 servers in Discover. Links from another
-account server, video and screen sharing still need the desktop app.
+account server, video and screen sharing, and direct video links in Watch
+together still need the desktop app.
 
 Pictures (avatars, server icons and banners, custom emoji) come from the sync
 service's encrypted picture copies when it has them, and otherwise straight
@@ -44,8 +47,15 @@ only while the tab is in the background. Clicking one opens that channel or DM.
   not there yet, the browser keeps checking for it for a short while and asks
   your own signed-in devices for the key, which they hand over without a
   prompt, through the sync service when the account server names one and
-  straight over the relay only when it does not. If neither answers, it says
-  so and offers Try again and your recovery code. It then asks
+  straight over the relay only when it does not. An account with no server
+  list yet gets a new one from the browser, named after the account. If the
+  account's copy of the key is gone or no longer opens the list and none of
+  your devices hands the key over within 20 seconds, the browser starts a new
+  list and keeps its key with your account, so signing in alone always opens
+  the web app. A device that still has servers under its own identity takes
+  over a list started this way while it is empty. If the account server
+  cannot be reached, the browser says so and offers Try again and your
+  recovery code. It then asks
   one of your own devices for a copy of each server; that request is signed with your
   account identity, so the account server alone cannot obtain messages.
   Missing history comes from other members through the usual catch-up.

@@ -58,6 +58,7 @@ mod toast;
 mod tray;
 mod updater;
 use commy_view as view;
+mod voice_filter;
 mod voice_keys;
 mod voice_message;
 mod voice_invite;
@@ -1169,6 +1170,7 @@ async fn leave_voice(
 async fn stop_voice_here(app: &App, sid: ServerId, profile: &UserProfile) {
     let testing = pause_mic_test(app);
     *app.voice_session.lock().unwrap() = None;
+    voice_filter::apply(app);
     resume_mic_test(app, testing);
     *app.camera.lock().unwrap() = None;
     app.camera_watches.lock().unwrap().clear();
@@ -1226,6 +1228,7 @@ fn start_voice_session(
     me: UserId,
 ) {
     let testing = pause_mic_test(app);
+    announce_voice_filter(app, handle, Some(sid), true);
     let emitter = handle.clone();
     let on_speaking: media_engine::SpeakingSink = std::sync::Arc::new(move |user: UserId, speaking: bool| {
         let _ = emitter.emit(
@@ -2187,6 +2190,7 @@ async fn friend_action(
         }
     }
     app.persist_safety();
+    account_log::note_relation(&app, user);
     let _ = handle.emit("friends-changed", serde_json::json!({ "user": user.to_string() }));
     Ok(())
 }
@@ -2235,6 +2239,7 @@ fn set_blocked(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: St
     }
     if app.safety.lock().unwrap().set_blocked(user, blocked) {
         app.persist_safety();
+        account_log::note_relation(&app, user);
         let _ = handle.emit("safety-changed", ());
     }
     Ok(())
@@ -2701,11 +2706,26 @@ async fn apply_and_broadcast(
             None => state.apply(event.clone()).map_err(err_to_string)?,
         };
     }
+    let changes_roles = changes_who_may_do_what(&event);
     outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
     directory::server_changed(app, sid);
+    if changes_roles {
+        refresh_forced_voice(app, handle);
+    }
     let _ = handle.emit("server-event", &sid.to_string());
     Ok(())
+}
+
+fn changes_who_may_do_what(event: &ServerEvent) -> bool {
+    matches!(
+        event,
+        ServerEvent::RoleAssign { .. }
+            | ServerEvent::RoleUnassign { .. }
+            | ServerEvent::RoleUpdate { .. }
+            | ServerEvent::RoleDelete { .. }
+            | ServerEvent::OwnerTransfer { .. }
+    )
 }
 
 #[tauri::command]
@@ -2786,6 +2806,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if let Some(pronouns) = pronouns {
         events.push(ServerEvent::PronounsSet { server: sid, user: me, pronouns: Some(pronouns) });
+    }
+    if let Some(sound) = state.server.join_sounds.get(&me) {
+        events.push(ServerEvent::JoinSoundSet { server: sid, user: me, sound: Some(sound.clone()) });
     }
     for event in &state.server.events {
         events.push(ServerEvent::EventUpsert { server: sid, event: event.clone() });
@@ -2879,6 +2902,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if state.server.activities_enabled && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ActivitiesSet { server: sid, enabled: true });
+    }
+    if state.server.join_sounds_off && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::JoinSoundsAllowed { server: sid, allowed: false });
     }
     let sharing = state.server.stickers_shareable || state.server.emoticons_shareable;
     if sharing && perms.allows(Permissions::MANAGE_SERVER) {
@@ -3862,7 +3888,6 @@ fn emit_voice_settings(handle: &tauri::AppHandle, voice: &VoiceSettings) {
     let _ = handle.emit("voice-settings-changed", voice);
 }
 
-#[cfg(desktop)]
 fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
     let app = handle.state::<App>();
     let press = app.talk_press.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -3881,6 +3906,14 @@ fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
         app.processor.lock().unwrap().set_talk_key_down(false);
         let _ = handle.emit("talk-key", false);
     });
+}
+
+#[tauri::command]
+fn press_talk(handle: tauri::AppHandle, pressed: bool) {
+    let voice = handle.state::<App>().voice.lock().unwrap().clone();
+    if voice.input_mode == voice_keys::InputMode::PushToTalk || !pressed {
+        set_talk_key(&handle, pressed, voice.talk_release_ms);
+    }
 }
 
 #[tauri::command]
@@ -4634,6 +4667,8 @@ struct LinkView {
     name: String,
     rtt_ms: f32,
     loss_pct: f32,
+    lost_packets: u64,
+    sent_packets: u64,
     jitter_ms: f32,
     path: String,
     relay: Option<String>,
@@ -4674,6 +4709,8 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
                 name,
                 rtt_ms: s.rtt_ms,
                 loss_pct: s.loss_pct,
+                lost_packets: s.lost_packets,
+                sent_packets: s.sent_packets,
                 jitter_ms: s.jitter_ms,
                 path: s.path.kind.into(),
                 relay: s.path.relay,
@@ -4819,6 +4856,7 @@ fn end_voice_in(app: &App, sid: ServerId) {
     if in_voice_there {
         let testing = pause_mic_test(app);
         *app.voice_session.lock().unwrap() = None;
+        voice_filter::apply(app);
         resume_mic_test(app, testing);
         app.own_preview.lock().unwrap().take();
         *app.screen_share.lock().unwrap() = None;
@@ -5334,6 +5372,34 @@ async fn set_sound_sharing(
 }
 
 #[tauri::command]
+async fn set_join_sounds_allowed(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    enabled: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::join_sounds_allowed(state, perms, enabled))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_join_sound(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    name: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::join_sound(state, perms, me.id, name.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
 async fn set_activities_enabled(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -5493,27 +5559,11 @@ async fn set_activity(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let channel = my_voice_channel(&app, sid)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_not_timed_out(state, me.id)?;
-        if activity.is_some() && !state.server.activities_enabled {
-            return Err("Activities are turned off in this server's settings".into());
-        }
-        if activity.as_ref().is_some_and(|a| !a.valid()) {
-            return Err("paste a direct https link to an .mp4, .webm or .ogg file".into());
-        }
-        if !commy_core::activity::admits_set(state, me.id, channel, activity.as_ref()) {
-            return Err(match (&activity, state.activities.get(&channel)) {
-                (Some(_), Some(_)) => "another activity is already running in this channel",
-                (None, Some(_)) => "only the person who started it or a moderator can end it",
-                (None, None) => "nothing is running in this channel",
-                (Some(_), None) => "you are not in this voice channel",
-            }
-            .into());
-        }
-    }
-    let event = ServerEvent::ActivitySet { server: sid, channel, activity: activity.clone(), by: me.id };
+        view::activities::set(state, me.id, channel, activity.clone(), chrono::Utc::now())?
+    };
     apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("activity-set", activity_set_view(sid, channel, &activity, me.id));
     Ok(())
@@ -5529,15 +5579,12 @@ async fn send_activity_input(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let channel = my_voice_channel(&app, sid)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_not_timed_out(state, me.id)?;
-        if !commy_core::activity::admits_input(state, me.id, channel, &input) {
-            return Err("that is not possible in the running activity".into());
-        }
-    }
-    broadcast_event(&app, sid, ServerEvent::ActivityInput { server: sid, channel, seq, input, by: me.id }).await;
+        view::activities::input(state, me.id, channel, seq, input, chrono::Utc::now())?
+    };
+    broadcast_event(&app, sid, event).await;
     Ok(())
 }
 
@@ -6206,6 +6253,23 @@ fn set_echo_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSettings
 }
 
 #[tauri::command]
+fn set_voice_filter(app: tauri::State<App>, handle: tauri::AppHandle, filter: String) -> CmdResult<VoiceSettings> {
+    let chosen = commy_audio::filters::VoiceFilter::from_name(&filter).ok_or("unknown voice filter")?;
+    let snapshot = app.update_voice(|voice| voice.voice_filter = chosen.name().to_string());
+    let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+    announce_voice_filter(&app, &handle, server, false);
+    Ok(snapshot)
+}
+
+fn announce_voice_filter(app: &App, handle: &tauri::AppHandle, server: Option<ServerId>, joining: bool) {
+    let changed = voice_filter::apply_for(app, server).is_some();
+    if changed || joining {
+        let held = app.voice_filter_held_back.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = handle.emit("voice-filter-held", serde_json::json!({ "held": held, "server": server.map(|s| s.to_string()), "news": changed }));
+    }
+}
+
+#[tauri::command]
 fn set_auto_level(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| {
         voice.auto_level = enabled;
@@ -6320,6 +6384,7 @@ fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
     );
     let was_audience = app.audience.swap(audience, std::sync::atomic::Ordering::Relaxed);
     apply_voice_gates(app);
+    announce_voice_filter(app, handle, session.map(|(sid, _)| sid), false);
     if was != (muted, deafened) {
         let _ = handle.emit("voice-moderated", serde_json::json!({ "muted": muted, "deafened": deafened }));
     }
@@ -6413,16 +6478,8 @@ async fn run_net_loop(
                 if let ServerEvent::ScreenShare { user, active: true, .. } = &event {
                     app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
                 }
-                let moderation = matches!(
-                    event,
-                    ServerEvent::VoiceModerate { .. }
-                        | ServerEvent::MemberTimeout { .. }
-                        | ServerEvent::StageSet { .. }
-                        | ServerEvent::RoleAssign { .. }
-                        | ServerEvent::RoleUnassign { .. }
-                        | ServerEvent::RoleUpdate { .. }
-                        | ServerEvent::RoleDelete { .. }
-                );
+                let moderation = changes_who_may_do_what(&event)
+                    || matches!(event, ServerEvent::VoiceModerate { .. } | ServerEvent::MemberTimeout { .. } | ServerEvent::StageSet { .. });
                 let priority = matches!(
                     event,
                     ServerEvent::VoiceState { .. }
@@ -7420,6 +7477,7 @@ pub fn run() {
             overlay_hotkey_problems,
             voice_hotkey_problems,
             set_input_mode,
+            press_talk,
             set_voice_hotkeys,
             set_sensitivity,
             mic_level,
@@ -7462,6 +7520,8 @@ pub fn run() {
             set_sound_emoji,
             set_expression_settings,
             set_sound_sharing,
+            set_join_sounds_allowed,
+            set_join_sound,
             set_activities_enabled,
             set_role_access,
             add_sticker,
@@ -7643,6 +7703,7 @@ pub fn run() {
             set_noise_cancellation,
             set_echo_cancellation,
             set_auto_level,
+            set_voice_filter,
             set_muted,
             set_deafened,
         ])

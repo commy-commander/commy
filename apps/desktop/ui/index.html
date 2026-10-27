@@ -96,7 +96,7 @@
         </div>
         <div class="vp-conn">
           <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
-            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span><span id="vp-status-text">Voice Connected</span></div>
+            <div class="vp-status"><span class="vp-signal" id="vp-signal" data-quality="good"></span><span id="vp-status-text">Voice Connected</span></div>
             <div class="vp-where" id="vp-where"></div>
             <div class="vp-topic hidden" id="vp-topic"></div>
           </div>
@@ -114,6 +114,7 @@
           </div>
           <button class="icon-btn" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
         </div>
+        <button class="vp-talk hidden" id="vp-talk" type="button">Hold to talk</button>
         <div class="vp-actions" id="vp-actions">
           <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
           <button class="vp-activities vp-share desktop-only" id="share-btn" title="Share Your Screen"></button>
@@ -253,10 +254,13 @@
           <div class="activity-watch hidden" id="activity-watch">
             <div class="activity-screen">
               <video id="activity-video" controls playsinline preload="metadata"></video>
+              <div class="activity-youtube hidden" id="activity-youtube"></div>
+              <div class="activity-screen-note hidden" id="activity-screen-note"></div>
               <div class="activity-screen-wait hidden" id="activity-video-wait"><div class="spinner"></div><span>Loading video</span></div>
             </div>
             <div class="activity-watch-line">
               <span class="activity-watch-title" id="activity-watch-title"></span>
+              <button class="btn-link activity-watch-open hidden" id="activity-watch-open">Open on YouTube</button>
               <span class="activity-sync" id="activity-sync"></span>
             </div>
           </div>
@@ -533,10 +537,10 @@
         </div>
         <div class="activity-setup-watch hidden" id="activity-setup-watch">
           <label class="field-label">Video link
-            <input id="activity-link-input" type="text" placeholder="https://… ending in .mp4, .webm or .ogg" spellcheck="false" autocomplete="off" />
+            <input id="activity-link-input" type="text" placeholder="A YouTube link, or https://… ending in .mp4, .webm or .ogg" spellcheck="false" autocomplete="off" />
           </label>
           <div class="activity-chips" id="activity-chips"></div>
-          <div class="setting-sub">Each viewer's computer fetches the file itself, like a link preview. Only direct video files play, nothing else loads.</div>
+          <div class="setting-sub">YouTube loads for each person once they join. Video files are fetched by each viewer's computer, like a link preview.</div>
         </div>
       </div>
       <div class="modal-actions">
@@ -751,6 +755,18 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="poll-cancel">Cancel</button>
         <button class="btn-primary" id="poll-send">Post Poll</button>
+      </div>
+    </div>
+
+    <div class="modal modal-notify hidden" id="modal-join-sound" role="dialog" aria-labelledby="join-sound-title">
+      <div class="notify-head">
+        <h2 id="join-sound-title">Join Sound</h2>
+        <p id="join-sound-server"></p>
+      </div>
+      <div class="setting-sub">Plays for everyone in the voice channel when you join it in this server.</div>
+      <div class="notify-levels join-sound-list" id="join-sound-list" role="radiogroup" aria-label="Join sound"></div>
+      <div class="modal-actions">
+        <button class="btn-primary" id="join-sound-done">Done</button>
       </div>
     </div>
 
@@ -1528,10 +1544,10 @@
           <div class="settings-card">
             <div class="segmented input-mode" id="input-mode" role="radiogroup" aria-label="Input mode">
               <button data-mode="voice_activity" role="radio"><strong>Voice Activity</strong><span>Opens when you speak</span></button>
-              <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span>Hold a key to talk</span></button>
+              <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span class="desktop-only">Hold a key to talk</span><span class="mobile-only">Hold the talk button</span></button>
             </div>
             <div class="setting-sub" id="input-mode-note"></div>
-            <div class="setting-row talk-only" data-search="ptt hotkey keybind" id="talk-key-row">
+            <div class="setting-row talk-only desktop-only" data-search="ptt hotkey keybind" id="talk-key-row">
               <div>
                 <div class="setting-title">Push to talk key</div>
                 <div class="setting-sub">Works while a game has focus. Click the box and press a new combination.</div>
@@ -1560,6 +1576,12 @@
               <input type="range" id="sensitivity-db" min="-100" max="0" value="-45" aria-label="Sensitivity threshold" />
               <div class="setting-sub" id="mic-meter-note">Start a mic test or join a voice channel to see your level.</div>
             </div>
+          </div>
+          <h2 class="settings-subhead native-only">Voice Filter</h2>
+          <div class="settings-card native-only" id="voice-filter-card" data-search="voice changer effects">
+            <div class="setting-sub">Change how you sound in voice channels and calls. A server can switch filters off for some roles or everyone.</div>
+            <div class="segmented voice-filters" id="voice-filter" role="radiogroup" aria-label="Voice filter"></div>
+            <div class="setting-sub voice-filter-note" id="voice-filter-note"></div>
           </div>
           <h2 class="settings-subhead">Voice Processing</h2>
           <label class="settings-card setting-row" data-search="background noise suppression rnnoise">
@@ -1759,6 +1781,9 @@
             </div>
             <div class="sound-rows" id="sound-rows"></div>
           </div>
+          <h2 class="settings-subhead">Your Sounds</h2>
+          <div class="setting-sub expr-intro">Sounds you added for the alerts above. They stay on this device and only you hear them. <span id="sound-custom-count"></span></div>
+          <div id="sound-custom-list" class="expr-list sound-list"></div>
           <h2 class="settings-subhead">Soundboard</h2>
           <div class="settings-card">
             <label class="setting-row" data-search="clips mute">
@@ -1767,6 +1792,13 @@
                 <div class="setting-sub">Turn off to mute clips other people play in voice.</div>
               </div>
               <input type="checkbox" id="soundboard-toggle" class="switch" />
+            </label>
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Hear join sounds</div>
+                <div class="setting-sub">Play the sound a member picked when they join your voice channel. Off plays the usual join sound.</div>
+              </div>
+              <input type="checkbox" id="join-sounds-hear-toggle" class="switch" />
             </label>
             <div class="slider-row">
               <div class="setting-title">Soundboard Volume <span id="soundboard-volume-label">60%</span></div>
@@ -1781,7 +1813,7 @@
           <div class="settings-card setting-row" data-search="tts read aloud speech">
             <div>
               <div class="setting-title">Read messages aloud</div>
-              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice. Never while you are deafened or Do Not Disturb, never your own, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
+              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice, only while you are connected to voice. Never while you are deafened or Do Not Disturb, never your own, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
             </div>
             <select id="tts-mode" class="compact-select">
               <option value="never">Never</option>
@@ -2524,6 +2556,13 @@
             </div>
             <input type="checkbox" id="sound-share-toggle" class="switch" />
           </label>
+          <label class="settings-card setting-row" id="join-sounds-row">
+            <div>
+              <div class="setting-title">Join sounds</div>
+              <div class="setting-sub">On: members who can use the soundboard can pick a sound from it that plays when they join a voice channel here.</div>
+            </div>
+            <input type="checkbox" id="join-sounds-toggle" class="switch" />
+          </label>
           <div class="expr-toolbar">
             <button class="btn-primary btn-small" id="sound-upload">Upload Sound</button>
             <span class="expr-count" id="sound-count"></span>
@@ -2815,6 +2854,7 @@
     <button id="sm-rules" class="hidden">Server Rules</button>
     <button id="sm-roles" class="hidden">Choose Roles</button>
     <button id="sm-onboarding" class="hidden">Change My Answers</button>
+    <button id="sm-join-sound" class="hidden">Join Sound</button>
     <button id="sm-settings">Server Settings</button>
     <button id="sm-ungroup" class="hidden">Remove From Folder</button>
     <div class="ctx-sep"></div>
@@ -2879,6 +2919,7 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
   <script src="scripts/voice-input.js"></script>
+  <script src="scripts/voice-filters.js"></script>
   <script src="scripts/stream-audio.js"></script>
   <script src="scripts/typing.js"></script>
   <script src="scripts/nicknames.js"></script>
@@ -2887,6 +2928,7 @@
   <script src="scripts/slow-mode.js"></script>
   <script src="scripts/threads.js"></script>
   <script src="scripts/voice-status.js"></script>
+  <script src="scripts/voice-signal.js"></script>
   <script src="scripts/forum.js"></script>
   <script src="scripts/stage.js"></script>
   <script src="scripts/emoji.js"></script>
@@ -2900,6 +2942,7 @@
   <script src="scripts/embeds.js"></script>
   <script src="scripts/voice-message.js"></script>
   <script src="scripts/sound-trim.js"></script>
+  <script src="scripts/alert-sounds.js"></script>
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/link-safety.js"></script>
   <script src="scripts/notify.js"></script>
