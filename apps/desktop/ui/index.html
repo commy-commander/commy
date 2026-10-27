@@ -382,6 +382,9 @@
           <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm.5-13H11v6l5.2 3.1.8-1.2-4.5-2.7z"/></svg>
           <span id="composer-slow-text">5s</span>
         </span>
+        <button class="icon-btn text-style-btn" id="text-style-btn" type="button" title="Text Style" aria-label="Text Style">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 18 8 6l4.5 12M5.2 13.6h5.6"/><path d="M14.5 12.2c.6-1 1.6-1.5 2.8-1.5 1.8 0 2.7 1 2.7 2.7V18m0-3.4c-.8-.4-1.7-.5-2.6-.5-1.6 0-2.9.7-2.9 2 0 1.1.9 1.9 2.2 1.9 1.4 0 2.6-.8 3.3-1.9"/></svg>
+        </button>
         <button class="icon-btn gif-btn hidden" id="gif-btn" title="GIFs">GIF</button>
         <button class="icon-btn" id="emoji-btn" title="Emoji">
           <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zM8.5 11A1.5 1.5 0 1 0 7 9.5 1.5 1.5 0 0 0 8.5 11zm7 0A1.5 1.5 0 1 0 14 9.5 1.5 1.5 0 0 0 15.5 11zm-8 3a5 5 0 0 0 9 0z"/></svg>
@@ -1987,6 +1990,13 @@
             </div>
             <input type="checkbox" id="compact-toggle" class="switch" />
           </label>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title" data-i18n="appearance.textStyles">Text Colours and Effects</div>
+              <div class="setting-sub" data-i18n="appearance.textStyles.sub">Show the colours, fonts and moving effects people add to their messages.</div>
+            </div>
+            <input type="checkbox" id="text-styles-toggle" class="switch" checked />
+          </label>
           <h2 class="settings-subhead desktop-only" data-i18n="appearance.shortcuts">Keyboard Shortcuts</h2>
           <div class="settings-card shortcut-card desktop-only">
             <div class="shortcut-row">
@@ -2735,6 +2745,7 @@
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu"></div>
   <div class="pop-menu ctx-menu hidden" id="msg-menu" role="menu"></div>
   <div class="pop-menu ctx-menu remind-pop hidden" id="remind-pop" role="menu"></div>
+  <div class="text-style-pop hidden" id="text-style-pop" role="dialog" aria-label="Text Style"></div>
   <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
     <button id="cm-file" role="menuitem">Upload a File</button>
     <button id="cm-video" role="menuitem">Post a Video</button>

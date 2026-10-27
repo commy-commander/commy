@@ -26,6 +26,8 @@ const LOCALE_ES = {
   "appearance.chatSize": "Tamaño del texto del chat",
   "appearance.compact": "Modo compacto",
   "appearance.compact.sub": "Menos espacio entre mensajes.",
+  "appearance.textStyles": "Colores y efectos del texto",
+  "appearance.textStyles.sub": "Muestra los colores, fuentes y efectos animados que la gente añade a sus mensajes.",
   "appearance.shortcuts": "Atajos de teclado",
   "appearance.switcher": "Cambio rápido",
   "appearance.switcher.sub": "Salta a cualquier canal, conversación o servidor.",
