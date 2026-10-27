@@ -9,6 +9,7 @@ pub mod command;
 pub mod devices;
 pub mod dm;
 pub mod doorbell;
+pub mod drive;
 pub mod event;
 pub mod identity;
 pub mod invites;

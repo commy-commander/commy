@@ -4,6 +4,7 @@ pub mod afk;
 pub mod calls;
 pub mod catalog;
 pub mod dms;
+pub mod drive;
 pub mod events;
 pub mod expressions;
 pub mod forum;

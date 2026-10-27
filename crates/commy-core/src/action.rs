@@ -79,7 +79,9 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::DeviceAnnounce { user, .. }
         | E::PronounsSet { user, .. }
         | E::JoinSoundSet { user, .. }
-        | E::PetCare { user, .. } => Some(*user),
+        | E::PetCare { user, .. }
+        | E::DriveHold { user, .. } => Some(*user),
+        E::DriveAdd { item, .. } => Some(item.by),
         E::MessagePin { by, .. }
         | E::MemberTimeout { by, .. }
         | E::PollClose { by, .. }
@@ -153,6 +155,10 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::TipJarSet { .. } => "tip_jar".into(),
         E::PetSet { .. } => "pet".into(),
         E::PetCare { user, care, .. } => format!("pet_care:{user}:{}", crate::pet::care_name(*care)),
+        E::DriveAdd { item, .. } => format!("drive:{}", item.id),
+        E::DriveRemove { item, .. } => format!("drive:{item}"),
+        E::DriveEdit { item, .. } => format!("drive.edit:{item}"),
+        E::DriveHold { item, user, .. } => format!("drive.hold:{item}:{user}"),
         E::JoinAsk { profile, .. } => format!("join_ask:{}", profile.id),
         E::JoinAnswer { user, .. } => format!("join_ask:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
@@ -214,8 +220,8 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 16] = [
-        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "community.key:", "community.grant:", "timeout:", "vote:", "poll:",
+    const OMITTED: [&str; 19] = [
+        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "community.key:", "community.grant:", "timeout:", "vote:", "poll:", "drive:", "drive.edit:", "drive.hold:",
     ];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
@@ -351,6 +357,19 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::TipJarSet { .. }
         | E::PetSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::PetCare { .. } => member && actor(event) == Some(by) && server.pet.is_some(),
+        E::DriveAdd { item, .. } => {
+            let drive = server.channel(item.channel).is_some_and(|c| c.is_drive());
+            let fresh = crate::drive::find(&server.drive, item.id).is_none_or(|known| known.by == by);
+            drive && fresh && member && speaks && actor(event) == Some(by) && server.can_view(item.channel, by) && server.can_post_in(item.channel, by)
+                && (item.is_folder() || allows(Permissions::ATTACH_FILES))
+        }
+        E::DriveEdit { item, .. } | E::DriveRemove { item, .. } => crate::drive::find(&server.drive, *item).is_some_and(|known| {
+            member && server.can_view(known.channel, by) && (known.by == by || allows(Permissions::MANAGE_MESSAGES))
+        }),
+        E::DriveHold { item, .. } => {
+            let visible = crate::drive::find(&server.drive, *item).is_some_and(|known| server.can_view(known.channel, by));
+            member && actor(event) == Some(by) && visible
+        }
         E::JoinAsk { .. } => actor(event) == Some(by) && crate::join_request::may_ask(server, by),
         E::JoinAnswer { user, .. } => member && *user != by && allows(Permissions::KICK_MEMBERS),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
