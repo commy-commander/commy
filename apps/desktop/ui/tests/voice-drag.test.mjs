@@ -17,9 +17,8 @@ const server = {
   ],
 };
 
-test("only people who may move members drag someone else who is not the owner", () => {
+test("only people who may move members drag someone else, and never the owner", () => {
   assert.ok(canDragVoiceMember(server, "friend", "me"));
-  assert.ok(!canDragVoiceMember(server, "me", "me"), "your own row opens your voice menu");
   assert.ok(!canDragVoiceMember(server, "owner", "me"));
   assert.ok(!canDragVoiceMember({ ...server, can_move: false }, "friend", "me"));
   assert.ok(!canDragVoiceMember(server, null, "me"));
@@ -61,4 +60,10 @@ test("a move has landed once the person shows in the room, or out of voice after
   assert.ok(voiceMoveLanded(view, "gone", "afk"), "someone who left the server is not waited on");
   assert.match(voiceMoveStuckText("Sam", "AFK"), /Sam has not switched to AFK yet/);
   assert.match(voiceMoveStuckText("Sam", null), /Sam is still in voice/);
+});
+
+test("everyone may drag themselves to another room, the owner too", () => {
+  assert.ok(canDragVoiceMember(server, "me", "me"));
+  assert.ok(canDragVoiceMember({ ...server, can_move: false }, "me", "me"));
+  assert.ok(canDragVoiceMember({ ...server, owner: "me", can_move: false }, "me", "me"));
 });

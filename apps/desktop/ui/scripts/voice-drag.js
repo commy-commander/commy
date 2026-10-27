@@ -2,7 +2,9 @@ const VOICE_DRAG = { mouseSlop: 5, touchSlop: 8, touchHoldMs: 350, clickGuardMs:
 const VOICE_MOVE_CHECK_MS = 6000;
 
 function canDragVoiceMember(server, userId, myId) {
-  return Boolean(server && server.can_move && userId && userId !== myId && userId !== server.owner);
+  if (!server || !userId) return false;
+  if (userId === myId) return true;
+  return Boolean(server.can_move && userId !== server.owner);
 }
 
 function voiceDragStep(pointerType, dx, dy, heldMs) {
