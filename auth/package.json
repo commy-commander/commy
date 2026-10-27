@@ -13,11 +13,11 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@better-auth/kysely-adapter": "1.7.12",
-    "@better-auth/passkey": "1.7.12",
-    "better-auth": "1.7.12",
+    "@better-auth/kysely-adapter": "1.7.14",
+    "@better-auth/passkey": "1.7.14",
+    "better-auth": "1.7.14",
     "kysely": "0.29.7",
-    "nodemailer": "10.1.7",
+    "nodemailer": "10.2.1",
     "pg": "8.23.1",
     "redis": "6.3.0",
     "zod": "4.6.7"
