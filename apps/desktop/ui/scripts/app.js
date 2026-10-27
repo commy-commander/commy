@@ -3738,8 +3738,12 @@ function voiceRing(channel, entry) {
   ring.classList.toggle("muted", Boolean(entry.muted));
   ring.appendChild(makeAvatar(entry.id, entry.name, "avatar avatar-sm"));
   const isMe = state.user && entry.id === state.user.id;
+  if (canDragVoiceMember(state.currentServer, entry.id, state.user && state.user.id)) {
+    ring.onpointerdown = e => armVoiceDrag(e, ring, channel.id, entry.id, entry.name);
+  }
   ring.onclick = e => {
     e.stopPropagation();
+    if (voiceDragHoldsClick()) return;
     if (isMe) {
       openSelfVoiceMenu(e.clientX, e.clientY);
       return;
@@ -3810,15 +3814,16 @@ function voiceUserRow(channel, entry, myName, role = null) {
       const member = server && server.members.find(m => m.id === userId);
       openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
     };
-    if (canDragVoiceMember(server, userId, state.user && state.user.id)) {
-      vu.onpointerdown = e => armVoiceDrag(e, vu, channel.id, userId, user);
-    }
   } else if (isMe) {
     vu.onclick = vu.oncontextmenu = e => {
       e.preventDefault();
       e.stopPropagation();
+      if (voiceDragHoldsClick()) return;
       openSelfVoiceMenu(e.clientX, e.clientY);
     };
+  }
+  if (canDragVoiceMember(server, userId, state.user && state.user.id)) {
+    vu.onpointerdown = e => armVoiceDrag(e, vu, channel.id, userId, user);
   }
   if (isMe && channel.id === state.voiceChannelId && role !== "audience") {
     if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
@@ -3884,7 +3889,7 @@ function startVoiceDrag(drag) {
 
 function voiceDropAt(x, y) {
   const hit = document.elementFromPoint(x, y);
-  const node = hit && hit.closest("#channel-list [data-room]");
+  const node = hit && hit.closest(":is(#channel-list, #narrow-column) [data-room]");
   return node ? voiceDropRoom(state.currentServer, voiceDrag.fromId, node.dataset.room) : null;
 }
 
@@ -3892,8 +3897,8 @@ function markVoiceDrop(room) {
   const id = room ? room.id : null;
   if (voiceDrag.over === id) return;
   voiceDrag.over = id;
-  for (const node of document.querySelectorAll(".voice-channel.voice-drop")) node.classList.remove("voice-drop");
-  if (id) for (const node of document.querySelectorAll(`.voice-channel[data-room="${CSS.escape(id)}"]`)) node.classList.add("voice-drop");
+  for (const node of document.querySelectorAll(".voice-drop")) node.classList.remove("voice-drop");
+  if (id) for (const node of document.querySelectorAll(`:is(.voice-channel, .narrow-voice-tile)[data-room="${CSS.escape(id)}"]`)) node.classList.add("voice-drop");
 }
 
 function holdVoiceDragTouch(e) {
@@ -3906,9 +3911,22 @@ function onVoiceDragUp(e) {
   const room = drag.live ? voiceDropAt(e.clientX, e.clientY) : null;
   endVoiceDrag();
   if (!room) return;
+  if (state.user && drag.userId === state.user.id) {
+    joinDroppedRoom(room);
+    return;
+  }
   const server = state.currentServer;
   const member = (server && server.members.find(m => m.id === drag.userId)) || { id: drag.userId, name: drag.name };
   moveVoiceMember(member, room);
+}
+
+function joinDroppedRoom(room) {
+  if (room.id === state.voiceChannelId) return;
+  if (voiceFull(room)) {
+    toast("That voice channel is full");
+    return;
+  }
+  toggleVoice(room);
 }
 
 function onVoiceDragCancel(e) {
@@ -3934,7 +3952,7 @@ function endVoiceDrag() {
   drag.ghost.remove();
   document.body.classList.remove("voice-dragging");
   for (const node of document.querySelectorAll(".voice-user.dragging")) node.classList.remove("dragging");
-  for (const node of document.querySelectorAll(".voice-channel.voice-drop")) node.classList.remove("voice-drop");
+  for (const node of document.querySelectorAll(".voice-drop")) node.classList.remove("voice-drop");
 }
 
 const serverImages = new Map();
@@ -15727,6 +15745,7 @@ function narrowVoiceTiles(server) {
 function narrowVoiceTile(channel) {
   const connected = channel.id === state.voiceChannelId;
   const tile = el("button", "narrow-voice-tile" + (connected ? " connected" : ""));
+  tile.dataset.room = channel.id;
   tile.title = connected ? `You are in ${channel.name}` : `Join ${channel.name}`;
   const grid = el("span", "narrow-voice-grid");
   grid.append(...voiceRingCells(channel));
@@ -15734,7 +15753,7 @@ function narrowVoiceTile(channel) {
   head.append(voiceKindIcon(channel.kind, 12), el("span", "narrow-voice-name", channel.name));
   tile.append(grid, head);
   tile.onclick = () => {
-    if (connected) return;
+    if (connected || voiceDragHoldsClick()) return;
     if (voiceFull(channel)) toast("That voice channel is full");
     else toggleVoice(channel);
   };

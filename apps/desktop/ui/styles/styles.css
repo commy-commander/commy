@@ -8168,6 +8168,7 @@ body.mobile-app .vp-actions > * { flex: 1 1 0; }
   .app.narrow-split .voice-ring .avatar::after { border-color: var(--accent); inset: -3px; }
   .app.narrow-split .voice-ring.speaking .avatar::before { animation-name: ring-speaking; }
   .app.narrow-split .voice-ring.muted .avatar { opacity: .55; }
+  .app.narrow-split .narrow-voice-tile.voice-drop { box-shadow: inset 0 0 0 2px var(--accent); }
   .app.narrow-split .voice-ring .sb-flash { display: none; }
   .app.narrow-split .voice-ring-more { font-size: 11px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
   .app.narrow-split .narrow-voice-grid .voice-ring { width: 24px; height: 24px; margin: 0; box-shadow: none; }
