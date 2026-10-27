@@ -97,6 +97,33 @@ pub fn escrow_path() -> String {
     format!("/api/auth/commy/vault?name={}", commy_net::entry_escrow::VAULT_ITEM)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KeyCopy {
+    Missing,
+    Unreadable,
+    ForAnotherList,
+    Unreachable,
+}
+
+impl KeyCopy {
+    pub fn note(self) -> &'static str {
+        match self {
+            KeyCopy::Missing => "Your account has no saved key for your servers yet. Open Commy on your computer and wait until Settings, Commy Account shows Up to date, then press Try again. You can also paste your recovery code.",
+            KeyCopy::ForAnotherList => "The key saved with your account is for an older server list. Open Commy on your computer and wait until Settings, Commy Account shows Up to date, then press Try again. You can also paste your recovery code.",
+            KeyCopy::Unreadable => "The key saved with your account could not be opened. Open Commy on your computer so it saves the key again, then press Try again. You can also paste your recovery code.",
+            KeyCopy::Unreachable => "Could not reach your account server to get your key. Check your connection, then press Try again.",
+        }
+    }
+}
+
+pub fn key_copy(reply: &Reply) -> Result<String, KeyCopy> {
+    match vault_data(reply) {
+        Ok(Some(sealed)) => Ok(sealed),
+        Ok(None) => Err(KeyCopy::Missing),
+        Err(_) => Err(KeyCopy::Unreachable),
+    }
+}
+
 pub fn vault_version(reply: &Reply) -> Option<u64> {
     #[derive(Deserialize)]
     struct Item {
@@ -290,6 +317,18 @@ mod tests {
         assert_eq!(vault_data(&reply(200, r#"{"name":"servers","data":"sealed1.x","version":3}"#)), Ok(Some("sealed1.x".into())));
         assert_eq!(vault_data(&reply(200, r#"{"name":"servers","data":null,"version":0}"#)), Ok(None));
         assert!(vault_data(&reply(404, "")).is_err());
+    }
+
+    #[test]
+    fn tells_a_missing_key_copy_from_an_unreachable_one() {
+        assert_eq!(key_copy(&reply(200, r#"{"name":"entry-key","data":"sealed1.x","version":2}"#)), Ok("sealed1.x".into()));
+        assert_eq!(key_copy(&reply(200, r#"{"name":"entry-key","data":null,"version":0}"#)), Err(KeyCopy::Missing));
+        assert_eq!(key_copy(&reply(429, "")), Err(KeyCopy::Unreachable));
+        assert_eq!(key_copy(&reply(200, "<html>")), Err(KeyCopy::Unreachable));
+        for copy in [KeyCopy::Missing, KeyCopy::Unreadable, KeyCopy::ForAnotherList, KeyCopy::Unreachable] {
+            assert!(copy.note().contains("Try again"));
+            assert!(!copy.note().to_lowercase().contains("allow"));
+        }
     }
 
     #[test]

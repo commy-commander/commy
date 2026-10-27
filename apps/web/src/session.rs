@@ -23,7 +23,7 @@ use commy_view::catalog;
 use commy_view::pins::Pins;
 use commy_view::search::{Page, SearchQuery};
 
-use crate::account::{self, AccountUser, Reply};
+use crate::account::{self, AccountUser, KeyCopy, Reply};
 use crate::client::{Applied, Client, PollForm};
 use crate::dm_book::DmBook;
 use crate::host::Host;
@@ -50,7 +50,6 @@ const FAREWELL_LINGER: std::time::Duration = std::time::Duration::from_millis(30
 const LOOK_FOR_KEY: std::time::Duration = std::time::Duration::from_secs(90);
 const RECHECK_ACCOUNT_KEY: std::time::Duration = std::time::Duration::from_secs(5);
 const OPENING: &str = "Opening your servers";
-const NOT_OPENED_YET: &str = "This browser could not open your servers yet. Open Commy on your computer so it can save your key to your account, then press Try again. You can also paste your recovery code.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Unlock {
@@ -81,6 +80,7 @@ struct Status {
     sealed: Option<String>,
     features: Option<account::Features>,
     looking: bool,
+    key_copy: KeyCopy,
 }
 
 pub struct Session {
@@ -246,6 +246,7 @@ impl Session {
                 sealed: None,
                 features: None,
                 looking: false,
+                key_copy: KeyCopy::Missing,
             }),
             node: Mutex::new(None),
             store: RefCell::new(None),
@@ -661,7 +662,7 @@ impl Session {
             self.finish(list, key)?;
             return Ok(self.unlock_view());
         }
-        if let Some(key) = self.escrowed_key().await.filter(|key| EntryList::open(key, &sealed).is_ok()) {
+        if let Some(key) = self.account_key().await {
             self.accept_key(&account, key)?;
             return Ok(self.unlock_view());
         }
@@ -684,7 +685,10 @@ impl Session {
             match found.map(|key| this.accept_key(&account, key)) {
                 Some(Ok(())) => {}
                 Some(Err(e)) => this.set_unlock(Unlock::Locked, e),
-                None => this.set_unlock(Unlock::Locked, NOT_OPENED_YET),
+                None => {
+                    let copy = this.status.borrow().key_copy;
+                    this.set_unlock(Unlock::Locked, copy.note());
+                }
             }
         });
     }
@@ -703,11 +707,11 @@ impl Session {
                 return None;
             }
             let key = match from_device {
-                Some(key) => Some(key),
-                None => self.escrowed_key().await,
+                Some(key) => Some(key).filter(|key| self.opens_list(key)),
+                None => self.account_key().await,
             };
-            if let Some(key) = key.filter(|key| self.opens_list(key)) {
-                return Some(key);
+            if key.is_some() {
+                return key;
             }
         }
     }
@@ -825,10 +829,36 @@ impl Session {
         commy_net::entry_escrow::wrapping_key(&account::folder_key(&reply)?)
     }
 
-    async fn escrowed_key(&self) -> Option<SealKey> {
-        let reply = self.request("GET", &account::escrow_path(), None).await.ok()?;
-        let sealed = account::vault_data(&reply).ok()??;
-        commy_net::entry_escrow::unwrap(&self.wrapping_key().await?, &sealed)
+    async fn account_key(&self) -> Option<SealKey> {
+        let found = self.escrowed_key().await;
+        let opened = match found {
+            Ok(key) if self.opens_list(&key) || (self.refresh_list().await && self.opens_list(&key)) => Ok(key),
+            Ok(_) => Err(KeyCopy::ForAnotherList),
+            Err(copy) => Err(copy),
+        };
+        match opened {
+            Ok(key) => Some(key),
+            Err(copy) => {
+                self.status.borrow_mut().key_copy = copy;
+                None
+            }
+        }
+    }
+
+    async fn refresh_list(&self) -> bool {
+        let Ok(reply) = self.request("GET", account::VAULT_PATH, None).await else { return false };
+        let Ok(Some(sealed)) = account::vault_data(&reply) else { return false };
+        let mut status = self.status.borrow_mut();
+        let changed = status.sealed.as_deref() != Some(sealed.as_str());
+        status.sealed = Some(sealed);
+        changed
+    }
+
+    async fn escrowed_key(&self) -> Result<SealKey, KeyCopy> {
+        let reply = self.request("GET", &account::escrow_path(), None).await.map_err(|_| KeyCopy::Unreachable)?;
+        let sealed = account::key_copy(&reply)?;
+        let wrapping = self.wrapping_key().await.ok_or(KeyCopy::Unreachable)?;
+        commy_net::entry_escrow::unwrap(&wrapping, &sealed).ok_or(KeyCopy::Unreadable)
     }
 
     async fn escrow(&self, key: &SealKey) {
