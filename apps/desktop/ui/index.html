@@ -1516,6 +1516,12 @@
             </div>
             <button class="btn-primary btn-small" id="mic-test-btn">Start Test</button>
           </div>
+          <h2 class="settings-subhead native-only">Voice Filter</h2>
+          <div class="settings-card native-only" id="voice-filter-card">
+            <div class="setting-sub">Change how you sound in voice channels and calls. A server can switch filters off for some roles or everyone.</div>
+            <div class="segmented voice-filters" id="voice-filter" role="radiogroup" aria-label="Voice filter"></div>
+            <div class="setting-sub voice-filter-note" id="voice-filter-note"></div>
+          </div>
           <h2 class="settings-subhead">Voice Processing</h2>
           <label class="settings-card setting-row">
             <div>
@@ -2842,6 +2848,7 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
   <script src="scripts/voice-input.js"></script>
+  <script src="scripts/voice-filters.js"></script>
   <script src="scripts/stream-audio.js"></script>
   <script src="scripts/typing.js"></script>
   <script src="scripts/nicknames.js"></script>

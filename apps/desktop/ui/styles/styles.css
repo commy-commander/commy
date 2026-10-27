@@ -4558,6 +4558,9 @@ h3.md-heading { font-size: 1.1em; }
 .corner-opt[data-corner="bottom-right"] { bottom: 5px; right: 5px; }
 .hotkey-warning { color: var(--yellow); margin-top: 10px; }
 .input-mode button { padding: 9px 8px; }
+.voice-filters { margin: 10px 0 8px; }
+.voice-filters button { padding: 8px 4px; }
+.voice-filter-note { min-height: 2.6em; }
 .input-mode button.active span { color: var(--text-normal); }
 .settings-card .talk-only, .settings-card .voice-only { display: none; }
 .settings-card[data-mode="push_to_talk"] .talk-only { display: flex; }

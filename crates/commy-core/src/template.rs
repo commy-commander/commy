@@ -138,6 +138,7 @@ fn known_permissions() -> Permissions {
         Permissions::NO_CREATE_THREADS,
         Permissions::NO_SEND_POLLS,
         Permissions::NO_CREATE_EVENTS,
+        Permissions::NO_VOICE_FILTERS,
     ]
     .into_iter()
     .fold(Permissions::NONE, |acc, p| acc | p)

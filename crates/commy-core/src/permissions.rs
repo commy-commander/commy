@@ -48,8 +48,14 @@ impl Permissions {
     pub const NO_CREATE_THREADS: Permissions = Permissions(1 << 38);
     pub const NO_SEND_POLLS: Permissions = Permissions(1 << 39);
     pub const NO_CREATE_EVENTS: Permissions = Permissions(1 << 40);
+    pub const NO_VOICE_FILTERS: Permissions = Permissions(1 << 41);
     pub const RESTRICTIONS: Permissions = Permissions(
-        Self::NO_EMBED_LINKS.0 | Self::NO_READ_MESSAGE_HISTORY.0 | Self::NO_CREATE_THREADS.0 | Self::NO_SEND_POLLS.0 | Self::NO_CREATE_EVENTS.0,
+        Self::NO_EMBED_LINKS.0
+            | Self::NO_READ_MESSAGE_HISTORY.0
+            | Self::NO_CREATE_THREADS.0
+            | Self::NO_SEND_POLLS.0
+            | Self::NO_CREATE_EVENTS.0
+            | Self::NO_VOICE_FILTERS.0,
     );
 
     pub fn default_member() -> Permissions {
@@ -157,6 +163,10 @@ impl Permissions {
     pub fn can_create_events(self) -> bool {
         !self.contains(Self::NO_CREATE_EVENTS) || self.allows(Self::MANAGE_EVENTS)
     }
+
+    pub fn can_use_voice_filters(self) -> bool {
+        !self.contains(Self::NO_VOICE_FILTERS)
+    }
 }
 
 impl BitOr for Permissions {
@@ -254,18 +264,20 @@ mod tests {
         assert_eq!(Permissions::NO_CREATE_THREADS.0, 1 << 38);
         assert_eq!(Permissions::NO_SEND_POLLS.0, 1 << 39);
         assert_eq!(Permissions::NO_CREATE_EVENTS.0, 1 << 40);
-        let five = Permissions::NO_EMBED_LINKS
+        assert_eq!(Permissions::NO_VOICE_FILTERS.0, 1 << 41);
+        let six = Permissions::NO_EMBED_LINKS
             | Permissions::NO_READ_MESSAGE_HISTORY
             | Permissions::NO_CREATE_THREADS
             | Permissions::NO_SEND_POLLS
-            | Permissions::NO_CREATE_EVENTS;
-        assert_eq!(Permissions::RESTRICTIONS, five);
+            | Permissions::NO_CREATE_EVENTS
+            | Permissions::NO_VOICE_FILTERS;
+        assert_eq!(Permissions::RESTRICTIONS, six);
         assert!(Permissions::NO_SEND_POLLS.is_restriction());
         assert!(!Permissions::SEND_MESSAGES.is_restriction());
         assert!(!Permissions::NONE.is_restriction());
         for p in [Permissions::NONE, Permissions::default_member(), Permissions::SEND_MESSAGES, Permissions::all()] {
             assert!(p.can_embed_links() && p.can_read_history() && p.can_create_threads());
-            assert!(p.can_send_polls() && p.can_create_events());
+            assert!(p.can_send_polls() && p.can_create_events() && p.can_use_voice_filters());
             assert!(!p.contains(Permissions::RESTRICTIONS));
         }
         assert_eq!(Permissions::all() & Permissions::RESTRICTIONS, Permissions::NONE, "the owner and administrators are never restricted");
@@ -280,6 +292,7 @@ mod tests {
         assert!(!(member | Permissions::NO_CREATE_THREADS).can_create_threads());
         assert!(!(member | Permissions::NO_SEND_POLLS).can_send_polls());
         assert!(!(member | Permissions::NO_CREATE_EVENTS).can_create_events());
+        assert!(!(member | Permissions::NO_VOICE_FILTERS).can_use_voice_filters());
         let all_but_links = member | Permissions::NO_EMBED_LINKS;
         assert!(all_but_links.can_read_history() && all_but_links.can_send_polls(), "each restriction stands alone");
         assert!((Permissions::ADMINISTRATOR | Permissions::RESTRICTIONS).contains(Permissions::NO_SEND_POLLS));
@@ -293,6 +306,7 @@ mod tests {
         assert!((Permissions::MANAGE_EVENTS | Permissions::NO_CREATE_EVENTS).can_create_events());
         assert!(!(Permissions::MANAGE_SERVER | Permissions::NO_CREATE_EVENTS).can_create_events());
         assert!(!(Permissions::MANAGE_MESSAGES | Permissions::NO_SEND_POLLS).can_send_polls(), "polls have no manager bypass");
+        assert!(!(Permissions::MUTE_MEMBERS | Permissions::NO_VOICE_FILTERS).can_use_voice_filters(), "voice filters have no moderator bypass");
     }
 
     #[test]

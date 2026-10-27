@@ -993,6 +993,7 @@ name = "commy-audio"
 version = "0.1.0"
 dependencies = [
  "nnnoiseless",
+ "realfft",
  "rusty-opus",
  "sonora",
  "thiserror 2.0.21",
