@@ -5646,6 +5646,7 @@ h3.md-heading { font-size: 1.1em; }
 .phone-back { display: none; }
 body.mobile-app .desktop-only { display: none !important; }
 body:not(.mobile-app) .mobile-only { display: none !important; }
+body.mobile-app:not(.can-share-screen) .screen-share-only { display: none !important; }
 
 @media (max-width: 1000px) and (min-width: 701px) {
   .app { --sidebar-w: 208px; grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 232px; }

@@ -11,6 +11,7 @@ export const PERMISSIONS = [
   "android.permission.FOREGROUND_SERVICE",
   "android.permission.FOREGROUND_SERVICE_MICROPHONE",
   "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+  "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
   "android.permission.WAKE_LOCK",
   "android.permission.BLUETOOTH",
 ];
@@ -26,6 +27,10 @@ export const COMPONENTS = [
   {
     name: ".CallService",
     xml: `<service android:name=".CallService" android:exported="false" android:foregroundServiceType="microphone|mediaPlayback" />`,
+  },
+  {
+    name: ".ScreenShareService",
+    xml: `<service android:name=".ScreenShareService" android:exported="false" android:foregroundServiceType="mediaProjection" />`,
   },
   {
     name: ".WakeService",
@@ -162,7 +167,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const withDependencies = withDebugSigning(withCommyDependencies(gradle), process.env.ANDROID_DEBUG_KEYSTORE_FILE);
   if (withDependencies !== gradle) writeFileSync(gradlePath, withDependencies);
   console.log(process.env.ANDROID_DEBUG_KEYSTORE_FILE ? "Debug builds sign with the kept debug key" : "ANDROID_DEBUG_KEYSTORE_FILE is not set, so debug builds sign with a new key");
-  console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call service, relaunching and invite links");
+  console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call and screen share services, relaunching and invite links");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
   const packageName = applicationId(withDependencies);
