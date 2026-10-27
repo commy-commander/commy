@@ -414,29 +414,42 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                 generated = true;
                 (key, EntryList::default())
             }
-            (None, Some(data)) => {
-                if let Some(key) = escrowed_key(&app, &s).await.filter(|key| EntryList::open(key, data).is_ok()) {
+            (None, Some(data)) => match account_copy(&app, &s, data).await {
+                AccountCopy::Opens(key) => {
                     save_key(&dir, &s.server, &s.account, &key);
                     continue;
                 }
-                set_status(handle, "waiting", OPEN_ANOTHER_DEVICE, 0, false);
-                ask_other_devices(handle);
-                return Ok(());
-            }
+                AccountCopy::Absent if !local.servers.is_empty() => {
+                    set_status(handle, "waiting", REBUILDING, 0, false);
+                    rebuild_unless_a_device_answers(handle);
+                    return Ok(());
+                }
+                _ => {
+                    set_status(handle, "waiting", OPEN_ANOTHER_DEVICE, 0, false);
+                    ask_other_devices(handle);
+                    return Ok(());
+                }
+            },
             (Some(key), None) => (key, EntryList::default()),
             (Some(key), Some(data)) => match EntryList::open(&key, data) {
                 Ok(list) => {
                     escrow(&app, &s, &key).await;
                     (key, list)
                 }
-                Err(e) => {
-                    if let Some(newer) = escrowed_key(&app, &s).await.filter(|newer| *newer != key && EntryList::open(newer, data).is_ok()) {
+                Err(e) => match account_copy(&app, &s, data).await {
+                    AccountCopy::Opens(newer) => {
                         save_key(&dir, &s.server, &s.account, &newer);
                         continue;
                     }
-                    set_status(handle, "error", e.clone(), 0, true);
-                    return Err(e);
-                }
+                    AccountCopy::Absent if !local.servers.is_empty() => {
+                        put(&app, &s, VAULT_ITEM, local.seal(&key), item.version).await?;
+                        continue;
+                    }
+                    _ => {
+                        set_status(handle, "error", e.clone(), 0, true);
+                        return Err(e);
+                    }
+                },
             },
         };
 
@@ -527,11 +540,23 @@ async fn wrapping_key(app: &App, s: &Session) -> Option<SealKey> {
     commy_net::entry_escrow::wrapping_key(&hex)
 }
 
-async fn escrowed_key(app: &App, s: &Session) -> Option<SealKey> {
-    let Ok(Fetched::Item(VaultItem { data: Some(data), .. })) = fetch(app, s, commy_net::entry_escrow::VAULT_ITEM).await else {
-        return None;
+enum AccountCopy {
+    Opens(SealKey),
+    Absent,
+    Unknown,
+}
+
+async fn account_copy(app: &App, s: &Session, list: &str) -> AccountCopy {
+    let sealed = match fetch(app, s, commy_net::entry_escrow::VAULT_ITEM).await {
+        Ok(Fetched::Item(VaultItem { data: Some(sealed), .. })) => sealed,
+        Ok(Fetched::Item(_)) => return AccountCopy::Absent,
+        Ok(Fetched::Unsupported) | Err(_) => return AccountCopy::Unknown,
     };
-    commy_net::entry_escrow::unwrap(&wrapping_key(app, s).await?, &data)
+    let Some(wrapping) = wrapping_key(app, s).await else { return AccountCopy::Unknown };
+    match commy_net::entry_escrow::unwrap(&wrapping, &sealed) {
+        Some(key) if EntryList::open(&key, list).is_ok() => AccountCopy::Opens(key),
+        _ => AccountCopy::Absent,
+    }
 }
 
 async fn escrow(app: &App, s: &Session, key: &SealKey) {
@@ -725,6 +750,8 @@ fn device_name() -> String {
     "iPhone or iPad".into()
 }
 
+const REBUILD_AFTER: std::time::Duration = std::time::Duration::from_secs(20);
+const REBUILDING: &str = "Opening your servers from your account.";
 const OPEN_ANOTHER_DEVICE: &str =
     "Open Commy on one of your other devices signed in to this account and this one opens by itself, or enter your recovery code.";
 
@@ -745,6 +772,24 @@ fn ask_other_devices(handle: &AppHandle) {
         set_status(&handle, "waiting", detail, 0, false);
         if KEY_WAIT.start() {
             schedule_later(&handle, KEY_WAIT_RETRY);
+        }
+    });
+}
+
+fn rebuild_unless_a_device_answers(handle: &AppHandle) {
+    if ASKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let answered = tokio::time::timeout(REBUILD_AFTER, ask(&handle)).await;
+        ASKING.store(false, Ordering::SeqCst);
+        if matches!(answered, Ok(Ok(Asked::Got))) {
+            return schedule(&handle);
+        }
+        if let Err(e) = start_new_list(&handle).await {
+            tracing::warn!("could not rebuild the server list from this device: {e}");
+            set_status(&handle, "waiting", OPEN_ANOTHER_DEVICE, 0, false);
         }
     });
 }
@@ -860,6 +905,11 @@ pub async fn entry_list_use_recovery_code(handle: AppHandle, code: String) -> Re
 
 #[tauri::command]
 pub async fn entry_list_start_over(handle: AppHandle) -> Result<EntryStatus, String> {
+    start_new_list(&handle).await?;
+    Ok(entry_list_status())
+}
+
+async fn start_new_list(handle: &AppHandle) -> Result<(), String> {
     {
         let _guard = SYNC.lock().await;
         let app = handle.state::<App>();
@@ -876,8 +926,7 @@ pub async fn entry_list_start_over(handle: AppHandle) -> Result<EntryStatus, Str
             Put::Conflict => return Err("Another device changed your server list just now. Try again.".into()),
         }
     }
-    sync(&handle).await?;
-    Ok(entry_list_status())
+    sync(handle).await
 }
 
 #[cfg(test)]
