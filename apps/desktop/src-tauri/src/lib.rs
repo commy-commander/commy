@@ -5493,27 +5493,11 @@ async fn set_activity(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let channel = my_voice_channel(&app, sid)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_not_timed_out(state, me.id)?;
-        if activity.is_some() && !state.server.activities_enabled {
-            return Err("Activities are turned off in this server's settings".into());
-        }
-        if activity.as_ref().is_some_and(|a| !a.valid()) {
-            return Err("pick a YouTube link or a direct https link to an .mp4, .webm or .ogg file".into());
-        }
-        if !commy_core::activity::admits_set(state, me.id, channel, activity.as_ref()) {
-            return Err(match (&activity, state.activities.get(&channel)) {
-                (Some(_), Some(_)) => "another activity is already running in this channel",
-                (None, Some(_)) => "only the person who started it or a moderator can end it",
-                (None, None) => "nothing is running in this channel",
-                (Some(_), None) => "you are not in this voice channel",
-            }
-            .into());
-        }
-    }
-    let event = ServerEvent::ActivitySet { server: sid, channel, activity: activity.clone(), by: me.id };
+        view::activities::set(state, me.id, channel, activity.clone(), chrono::Utc::now())?
+    };
     apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("activity-set", activity_set_view(sid, channel, &activity, me.id));
     Ok(())
@@ -5529,15 +5513,12 @@ async fn send_activity_input(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let channel = my_voice_channel(&app, sid)?;
-    {
+    let event = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_not_timed_out(state, me.id)?;
-        if !commy_core::activity::admits_input(state, me.id, channel, &input) {
-            return Err("that is not possible in the running activity".into());
-        }
-    }
-    broadcast_event(&app, sid, ServerEvent::ActivityInput { server: sid, channel, seq, input, by: me.id }).await;
+        view::activities::input(state, me.id, channel, seq, input, chrono::Utc::now())?
+    };
+    broadcast_event(&app, sid, event).await;
     Ok(())
 }
 

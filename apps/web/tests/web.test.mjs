@@ -139,11 +139,11 @@ test("replies cross into the backend as a status line and body", () => {
   assert.equal(webReplyLine(200, '{"a":1}'), '200\n{"a":1}');
 });
 
-test("the page may only talk to its own site and the relay, and loads nothing from elsewhere", () => {
+test("the page may only talk to its own site and the relay, and frames nothing but the YouTube player", () => {
   const csp = contentSecurityPolicy(relayOrigins("https://relay.commy.chat:8443"));
   assert.match(csp, /default-src 'self'/);
   assert.match(csp, /connect-src 'self' https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443;/);
-  assert.match(csp, /frame-src 'none'/);
+  assert.match(csp, /frame-src https:\/\/www\.youtube-nocookie\.com;/);
   assert.doesNotMatch(csp, /\*/);
 });
 

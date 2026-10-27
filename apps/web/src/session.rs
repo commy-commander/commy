@@ -29,6 +29,7 @@ use crate::dm_book::DmBook;
 use crate::host::Host;
 use crate::store::WebStore;
 
+mod activities;
 mod calls;
 mod community;
 mod directory;
@@ -231,6 +232,9 @@ struct Args {
     report_id: Option<String>,
     due: Option<i64>,
     id: Option<String>,
+    activity: Option<commy_core::Activity>,
+    seq: Option<u64>,
+    input: Option<commy_core::ActivityInput>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -425,6 +429,7 @@ impl Session {
             "answer_dm_call" => self.call_command(cmd, args).await,
             "end_dm_call" => self.call_command(cmd, args).await,
             "set_voice_channel" => self.call_command(cmd, args).await,
+            "set_activity" | "send_activity_input" => self.activity_command(cmd, args).await,
             "get_voice_settings" => self.call_command(cmd, args).await,
             "set_muted" => self.call_command(cmd, args).await,
             "set_deafened" => self.call_command(cmd, args).await,
@@ -1060,7 +1065,7 @@ impl Session {
         while let Some(event) = events.recv().await {
             match event {
                 NetEvent::Event { server, sender, event, action } => {
-                    if self.hear_sound(server, &event, action) {
+                    if self.hear_sound(server, &event, action) || self.hear_activity(server, &event, action) {
                         continue;
                     }
                     if self.client.borrow().admits(server, &event, action) {

@@ -13702,6 +13702,7 @@ const ACTIVITY_DRIFT_CHECK_MS = 2000;
 const YOUTUBE_SETTLE_MS = 1500;
 const YOUTUBE_GREET_MS = 250;
 const YOUTUBE_GREET_TRIES = 40;
+const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
 
 const activityUi = {
   run: null,
@@ -13713,6 +13714,10 @@ const activityUi = {
   settling: 0,
   yt: freshYouTubeView(),
 };
+
+function inBrowserApp() {
+  return document.documentElement.classList.contains("web-app");
+}
 
 function freshYouTubeView() {
   return { frame: null, video: null, ready: false, seen: null, settling: 0, title: null, error: null, greeter: null };
@@ -13953,9 +13958,12 @@ function renderActivityWatch(run, me) {
   $("activity-watch-open").classList.toggle("hidden", !youtube);
   if (youtube) renderActivityYouTube(run, me);
   else {
+    const blocked = kind === "link" && inBrowserApp();
     $("activity-video").controls = isParticipant(run, me);
-    loadActivityVideo(run);
-    $("activity-screen-note").classList.add("hidden");
+    if (!blocked) loadActivityVideo(run);
+    const note = $("activity-screen-note");
+    note.textContent = blocked ? WEB_DIRECT_LINK_NOTE : "";
+    note.classList.toggle("hidden", !blocked);
   }
   renderActivitySyncLabel(run);
 }
@@ -14231,6 +14239,7 @@ function pickedActivity() {
     const youtube = youtubeVideoId(url);
     if (youtube) return makeActivity("watch", activityMe(), now, id, watchYouTubeSource(youtube));
     if (!isVideoLink(url)) throw new Error("Paste a YouTube link, or a direct https link that ends in .mp4, .webm or .ogg");
+    if (inBrowserApp()) throw new Error(WEB_DIRECT_LINK_NOTE);
     return makeActivity("watch", activityMe(), now, id, watchLinkSource(url));
   }
   if (activityUi.chip) return makeActivity("watch", activityMe(), now, id, watchAttachmentSource(activityUi.chip));
