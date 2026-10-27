@@ -225,18 +225,24 @@ pub fn hold_corner(_app: &AppHandle) {}
 pub fn hold_corner(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let settings = app.state::<crate::state::App>().voice.lock().unwrap().overlay.clone();
+        let _one_at_a_time = APPLYING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (settings, visible) = wanted_now(&app);
+        let showing = settings.enabled && visible;
         let (voice, chat) = places(&settings);
         for (label, place) in [(LABEL, Some(voice)), (CHAT_LABEL, chat)] {
-            let (Some(place), Some(window)) = (place, app.get_webview_window(label)) else { continue };
+            let Some(window) = app.get_webview_window(label) else { continue };
             if !window.is_visible().unwrap_or(false) {
                 continue;
             }
+            let Some(place) = place.filter(|_| showing) else {
+                tracing::info!("{label} was showing when it should not; hiding it");
+                hide_window(&app, &window);
+                continue;
+            };
             let (Some(spot), Ok(at)) = (place_spot(&window, place), window.outer_position()) else { continue };
             if (at.x, at.y) != spot {
                 tracing::info!("{label} drifted to {},{}; moving it back", at.x, at.y);
-                refresh(&app);
-                return;
+                show_at(&app, &window, Some(spot));
             }
         }
     });

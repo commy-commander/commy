@@ -55,3 +55,14 @@ test("saving a layout replaces one with the same name and keeps the newest few",
   assert.equal(overlaySaveLayout(saved, "   ", layout), saved);
   assert.equal(overlayLayoutName(`  ${"x".repeat(50)}\u0007 `).length, OVERLAY_MAX_LAYOUT_NAME);
 });
+
+test("the overlay only announces itself after it moves", () => {
+  const { overlayMovedNotice } = require("../scripts/overlay-view.js");
+  const corner = { corner: "top-right" };
+  assert.equal(overlayMovedNotice(null, corner), null);
+  assert.equal(overlayMovedNotice(corner, { corner: "top-right", show_chat: false }), null);
+  assert.equal(overlayMovedNotice(corner, { corner: "bottom-left" }), "Overlay on · Bottom left");
+  const layout = { voice: { x: 1, y: 0 }, chat: { x: 0, y: 1 } };
+  assert.equal(overlayMovedNotice({ corner: "top-right", layout }, { corner: "top-right", layout: { ...layout } }), null);
+  assert.equal(overlayMovedNotice(corner, { corner: "top-right", layout }), "Overlay on · Your layout");
+});

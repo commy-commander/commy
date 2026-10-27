@@ -65,6 +65,17 @@ function overlayPart(config, label) {
   return { part, bottom: spot.y > 0.5, right: spot.x > 0.5 };
 }
 
+function overlayPlaceKey(config) {
+  const layout = config && config.layout;
+  if (!layout) return overlayCorner(config && config.corner).name;
+  return ["voice", "chat"].map(k => `${(layout[k] || {}).x},${(layout[k] || {}).y}`).join("|");
+}
+
+function overlayMovedNotice(previous, config) {
+  if (!previous || overlayPlaceKey(previous) === overlayPlaceKey(config)) return null;
+  return config.layout ? "Overlay on · Your layout" : `Overlay on · ${overlayCornerLabel(config.corner)}`;
+}
+
 function overlayStartLayout(corner) {
   const c = overlayCorner(corner);
   const x = c.right ? 1 : 0;
@@ -88,5 +99,5 @@ function overlaySaveLayout(layouts, name, layout) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { OVERLAY_MAX_LAYOUTS, OVERLAY_MAX_LAYOUT_NAME, OVERLAY_SNAP, OVERLAY_CHAT_LABEL, overlaySnap, overlayPart, overlayStartLayout, overlaySameLayout, overlayLayoutName, overlaySaveLayout, OVERLAY_NOTICE_MS, OVERLAY_TEST_MS, overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_MS, OVERLAY_CHAT_LINES, OVERLAY_LINGER_MS, overlayCorner, overlayUniqueMembers, overlayVisibleMembers, overlayPushLine };
+  module.exports = { OVERLAY_MAX_LAYOUTS, OVERLAY_MAX_LAYOUT_NAME, OVERLAY_SNAP, OVERLAY_CHAT_LABEL, overlaySnap, overlayPart, overlayPlaceKey, overlayMovedNotice, overlayStartLayout, overlaySameLayout, overlayLayoutName, overlaySaveLayout, OVERLAY_NOTICE_MS, OVERLAY_TEST_MS, overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_MS, OVERLAY_CHAT_LINES, OVERLAY_LINGER_MS, overlayCorner, overlayUniqueMembers, overlayVisibleMembers, overlayPushLine };
 }
