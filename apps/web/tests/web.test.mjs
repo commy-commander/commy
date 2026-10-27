@@ -122,13 +122,13 @@ test("the browser's sign-in text is not replaced by the desktop's translations",
 
 test("the unlock text prefers the backend's detail", () => {
   assert.equal(webUnlockText({ state: "locked", detail: "Try again" }), "Try again");
-  assert.match(webUnlockText({ state: "no_list", detail: "" }), /computer/);
+  assert.match(webUnlockText({ state: "asking", detail: "" }), /Opening your servers/);
   assert.match(webUnlockText(null), /recovery code/);
 });
 
 test("signing in is all the browser asks for, never an Allow on another device", () => {
-  for (const state of ["signed_out", "no_list", "locked", "asking", "opening"]) {
-    assert.doesNotMatch(webUnlockText({ state, detail: "" }), /allow|approve/i);
+  for (const state of ["signed_out", "locked", "asking", "opening"]) {
+    assert.doesNotMatch(webUnlockText({ state, detail: "" }), /allow|approve|on your computer/i);
   }
   const bridge = read("apps", "web", "ui", "web-bridge.js");
   assert.doesNotMatch(bridge, /choose Allow|web_ask_devices/);

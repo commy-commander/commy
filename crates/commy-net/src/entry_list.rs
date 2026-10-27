@@ -76,6 +76,11 @@ impl EntryList {
     }
 }
 
+pub fn encode_identity(identity: &Identity) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data_encoding::HEXLOWER.encode(&identity.to_bytes()))
+}
+
 pub fn decode_identity(encoded: &str) -> Option<Identity> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
@@ -87,5 +92,42 @@ pub fn decode_identity(encoded: &str) -> Option<Identity> {
 impl EntryList {
     pub fn shared_identity(&self) -> Option<Identity> {
         self.identity.as_deref().and_then(decode_identity)
+    }
+
+    pub fn fresh(username: &str, identity: &Identity) -> EntryList {
+        let profile = UserProfile { identity: Some(identity.public()), ..UserProfile::new(username) };
+        EntryList { profile: Some(profile), identity: Some(encode_identity(identity)), ..Default::default() }
+    }
+
+    pub fn is_empty_list(&self) -> bool {
+        self.servers.is_empty() && self.left.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fresh_list_carries_an_identity_every_device_can_read() {
+        let identity = Identity::generate();
+        let list = EntryList::fresh("ada", &identity);
+        assert_eq!(list.shared_identity().map(|i| i.public()), Some(identity.public()));
+        let profile = list.profile.as_ref().unwrap();
+        assert_eq!(profile.username, "ada");
+        assert_eq!(profile.identity, Some(identity.public()));
+        assert!(list.is_empty_list());
+        let key = SealKey::generate();
+        assert_eq!(EntryList::open(&key, &list.seal(&key)).unwrap(), list);
+    }
+
+    #[test]
+    fn the_identity_reads_back_like_the_desktop_identity_file() {
+        use base64::Engine;
+        let identity = Identity::generate();
+        let file = format!("{}\n", data_encoding::HEXLOWER.encode(&identity.to_bytes()));
+        let from_file = base64::engine::general_purpose::STANDARD.encode(file);
+        assert_eq!(decode_identity(&from_file).unwrap().public(), identity.public());
+        assert_eq!(decode_identity(&encode_identity(&identity)).unwrap().public(), identity.public());
     }
 }
