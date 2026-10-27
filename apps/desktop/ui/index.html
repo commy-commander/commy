@@ -255,7 +255,10 @@
             <div class="activity-screen">
               <video id="activity-video" controls playsinline preload="metadata"></video>
               <div class="activity-youtube hidden" id="activity-youtube"></div>
-              <div class="activity-screen-note hidden" id="activity-screen-note"></div>
+              <div class="activity-screen-note hidden" id="activity-screen-note">
+                <span id="activity-screen-note-text"></span>
+                <button class="btn-primary btn-small hidden" id="activity-youtube-allow">Load YouTube player</button>
+              </div>
               <div class="activity-screen-wait hidden" id="activity-video-wait"><div class="spinner"></div><span>Loading video</span></div>
             </div>
             <div class="activity-watch-line">
@@ -543,7 +546,7 @@
             <input id="activity-link-input" type="text" placeholder="A YouTube link, or https://… ending in .mp4, .webm or .ogg" spellcheck="false" autocomplete="off" />
           </label>
           <div class="activity-chips" id="activity-chips"></div>
-          <div class="setting-sub">YouTube loads for each person once they join. Video files are fetched by each viewer's computer, like a link preview.</div>
+          <div class="setting-sub">YouTube loads for each person only after they join and choose to load it. Video files are fetched by each viewer's computer, like a link preview.</div>
         </div>
       </div>
       <div class="modal-actions">
