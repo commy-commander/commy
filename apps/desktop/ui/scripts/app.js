@@ -328,6 +328,8 @@ function mockSeed() {
   server.members[0].tag = "RAID";
   server.members[0].tag_color = "9b7bff";
   server.members[0].color = "9b7bff";
+  server.members[0].server_tag = { letters: "RUST", emoji: "\u{1f980}", color: "orange", effect: "shine", server: "Rust Hangout" };
+  server.server_tag = { letters: "RUST", emoji: "\u{1f980}", color: "orange", effect: "shine" };
   mock.servers[server.id] = server;
   mock.directory = [
     { code: "KQ7M3N4P", key: "q".repeat(43), name: "Rust Hangout", category: "tech", members: 250, description: "Borrow checker support group, weekly code reviews and a friendly place to ask the questions you were afraid to ask. Beginners welcome, lifetimes optional." },
@@ -514,6 +516,15 @@ function mockSeed() {
   ] };
 }
 
+function mockServerTagView(server) {
+  return server.server_tag ? { ...server.server_tag, server: server.name } : null;
+}
+
+function mockWornTagView() {
+  const worn = mock.user && mock.user.server_tag;
+  return worn ? { ...worn.tag, server: worn.name } : null;
+}
+
 function mockJoinSoundClips(server) {
   if (server.join_sounds_off) return {};
   const clips = {};
@@ -677,7 +688,7 @@ async function mockInvoke(cmd, args = {}) {
       if (Object.keys(mock.servers).length === 0) mockSeed();
       return mock.user;
     case "list_servers":
-      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember, group: Boolean(s.group) }));
+      return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember, group: Boolean(s.group), tag: mockServerTagView(s) }));
     case "create_group_dm": {
       const members = Object.values(mock.servers).flatMap(s => s.members).filter(m => args.userIds.includes(m.id));
       const seen = new Set();
@@ -705,7 +716,7 @@ async function mockInvoke(cmd, args = {}) {
       const members = s.members.map(m => mockProfileFor({ username: m.username || m.name, nickname: m.nickname || null, priority_speaker: false, ...m }));
       if (mock.user && !members.some(m => m.id === "me")) {
         const presence = mock.user.presence === "invisible" ? "offline" : mock.user.presence || "online";
-        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: mock.user.custom_status || null, status_emoji: mock.user.status_emoji || null, about: mock.user.about || null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember };
+        const me = { id: "me", name: s.myNickname || mock.user.username, username: mock.user.username, nickname: s.myNickname || null, presence, custom_status: mock.user.custom_status || null, status_emoji: mock.user.status_emoji || null, about: mock.user.about || null, roles: s.myRoles || [], can_mention_everyone: !mock.plainMember, server_tag: mockWornTagView() };
         const vc = s.channels.find(c => isVoiceKind(c.kind) && (c.voice_user_ids || []).includes("me"));
         if (vc) {
           const at = vc.voice_user_ids.indexOf("me");
@@ -733,6 +744,7 @@ async function mockInvoke(cmd, args = {}) {
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
+        server_tag: mockServerTagView(s),
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
@@ -1393,6 +1405,20 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
     case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "set_server_tag": {
+      const srv = mock.servers[args.serverId];
+      const letters = cleanTagLetters(args.letters);
+      srv.server_tag = letters ? { letters, emoji: args.emoji || null, color: args.color, effect: args.effect } : null;
+      const worn = mock.user && mock.user.server_tag;
+      if (worn && worn.server === srv.id) mock.user.server_tag = srv.server_tag ? { server: srv.id, name: srv.name, tag: srv.server_tag } : null;
+      return null;
+    }
+    case "wear_server_tag": {
+      const srv = args.serverId && mock.servers[args.serverId];
+      if (args.serverId && !(srv && srv.server_tag)) throw "This server has no tag yet";
+      mock.user.server_tag = srv ? { server: srv.id, name: srv.name, tag: srv.server_tag } : null;
+      return mock.user;
+    }
     case "set_join_sound": {
       const srv = mock.servers[args.serverId];
       srv.join_sounds = { ...(srv.join_sounds || {}) };
@@ -5666,6 +5692,7 @@ function renderMembers() {
       paintRole(nameRow, member.color);
       if (member.bot) nameRow.appendChild(botTag());
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
+      if (member.server_tag) nameRow.appendChild(serverTagChip(member.server_tag));
       if (timeoutActive(member.timeout_until)) nameRow.appendChild(timeoutBadge(member.timeout_until));
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
@@ -10015,6 +10042,107 @@ function botTag() {
   return chip;
 }
 
+function serverTagChip(tag) {
+  const chip = el("span", `server-tag st-${tag.color} st-fx-${tag.effect}`);
+  if (tag.emoji) chip.appendChild(el("span", "server-tag-emoji", tag.emoji));
+  chip.appendChild(document.createTextNode(tag.letters));
+  chip.title = serverTagTitle(tag);
+  return chip;
+}
+
+let serverTagEdit = serverTagDraft(null);
+
+function renderServerTagEditor(server) {
+  serverTagEdit = serverTagDraft(server.server_tag);
+  const editable = Boolean(server.can_manage_server);
+  for (const id of ["server-tag-letters", "server-tag-effect", "server-tag-emoji", "server-tag-save"]) $(id).disabled = !editable;
+  for (const swatch of $("server-tag-colors").children) swatch.disabled = !editable;
+  $("server-tag-save").classList.toggle("hidden", !editable);
+  $("server-tag-remove").classList.toggle("hidden", !editable || !server.server_tag);
+  $("server-tag-letters").value = serverTagEdit.letters;
+  $("server-tag-effect").value = serverTagEdit.effect;
+  paintServerTagEditor();
+}
+
+function paintServerTagEditor() {
+  paintEmojiSlot($("server-tag-emoji"), serverTagEdit.emoji);
+  for (const swatch of $("server-tag-colors").children) swatch.setAttribute("aria-checked", String(swatch.dataset.color === serverTagEdit.color));
+  const preview = $("server-tag-preview");
+  const me = state.user ? state.user.display_name || state.user.username : "You";
+  preview.replaceChildren(el("span", null, me));
+  if (serverTagEdit.letters) preview.appendChild(serverTagChip({ ...serverTagEdit, server: state.currentServer && state.currentServer.name }));
+  else preview.appendChild(el("span", "setting-sub", "Type some letters to see the tag"));
+}
+
+async function saveServerTag(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const letters = remove ? null : serverTagEdit.letters || null;
+  try {
+    await invoke("set_server_tag", { serverId: server.id, letters, emoji: serverTagEdit.emoji || null, color: serverTagEdit.color, effect: serverTagEdit.effect });
+    toast(letters ? "Server tag saved" : "Server tag removed");
+    await refreshServers();
+    await refreshCurrentServer();
+    renderServerTagEditor(state.currentServer);
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
+function wireServerTagEditor() {
+  $("server-tag-effect").replaceChildren(...SERVER_TAG_EFFECTS.map(e => new Option(e.label, e.value)));
+  $("server-tag-colors").replaceChildren(...SERVER_TAG_COLORS.map(color => {
+    const swatch = el("button", `server-tag-swatch st-${color}`);
+    swatch.type = "button";
+    swatch.dataset.color = color;
+    swatch.setAttribute("role", "radio");
+    swatch.setAttribute("aria-label", color[0].toUpperCase() + color.slice(1));
+    swatch.onclick = () => {
+      serverTagEdit.color = color;
+      paintServerTagEditor();
+    };
+    return swatch;
+  }));
+  $("server-tag-letters").addEventListener("input", e => {
+    const cleaned = cleanTagLetters(e.target.value);
+    if (e.target.value !== cleaned) e.target.value = cleaned;
+    serverTagEdit.letters = cleaned;
+    paintServerTagEditor();
+  });
+  $("server-tag-effect").addEventListener("change", e => {
+    serverTagEdit.effect = e.target.value;
+    paintServerTagEditor();
+  });
+  $("server-tag-emoji").onclick = e => {
+    const set = emoji => {
+      serverTagEdit.emoji = emoji;
+      paintServerTagEditor();
+    };
+    openEmojiPop(e.currentTarget, set, { onClear: serverTagEdit.emoji ? () => set("") : null });
+  };
+  $("server-tag-save").onclick = () => saveServerTag(false);
+  $("server-tag-remove").onclick = () => saveServerTag(true);
+  $("account-server-tag").addEventListener("change", async e => {
+    try {
+      state.user = await invoke("wear_server_tag", { serverId: e.target.value || null });
+      toast(e.target.value ? "You are wearing that tag" : "Server tag hidden");
+      if (state.currentServer) await refreshCurrentServer();
+    } catch (err) {
+      toast(String(err));
+    }
+    renderAccountServerTag();
+  });
+}
+
+function renderAccountServerTag() {
+  const select = $("account-server-tag");
+  const worn = wornServerId(state.user);
+  const options = wearableTags(state.servers);
+  select.replaceChildren(new Option("None", NO_SERVER_TAG), ...options.map(o => new Option(o.label, o.value)));
+  select.value = options.some(o => o.value === worn) ? worn : NO_SERVER_TAG;
+  select.disabled = !options.length && !worn;
+}
+
 function roleTagChip(tag, color) {
   const custom = parseEmojiToken(tag);
   if (custom) {
@@ -10219,7 +10347,8 @@ async function openFullProfile(member) {
   av.appendChild(el("span", "presence-dot " + (person.presence || "offline")));
   $("fp-name").textContent = person.name;
   paintRole($("fp-name"), person.color);
-  $("fp-name").parentElement.querySelector(".role-tag")?.remove();
+  $("fp-name").parentElement.querySelectorAll(".role-tag, .server-tag").forEach(n => n.remove());
+  if (person.server_tag) $("fp-name").after(serverTagChip(person.server_tag));
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
   setEmojiText($("fp-status"), (isShowingActivity(person) ? statusBesideGame(person) : subLine(person)) || presenceLabel(person));
@@ -10325,8 +10454,9 @@ function openMemberCard(member, anchor) {
   const name = $("mc-name");
   name.textContent = member.name;
   paintRole(name, member.color);
-  name.parentElement.querySelectorAll(".role-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
+  name.parentElement.querySelectorAll(".role-tag, .server-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
   if (timeoutActive(member.timeout_until)) name.after(timeoutBadge(member.timeout_until));
+  if (member.server_tag) name.after(serverTagChip(member.server_tag));
   if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) name.after(botTag());
   if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
@@ -10412,6 +10542,7 @@ function decorateAuthor(node, authorId) {
   const member = state.view === "server" && currentServerMember(authorId);
   if (!member) return;
   paintRole(node, member.color);
+  if (member.server_tag) node.after(serverTagChip(member.server_tag));
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) node.after(botTag());
 }
@@ -17900,6 +18031,7 @@ function wireEvents() {
   $("sm-rules").onclick = fromMenu(openRules);
   $("sm-roles").onclick = fromMenu(openChooseRoles);
   $("sm-onboarding").onclick = fromMenu(() => openOnboarding("change"));
+  wireServerTagEditor();
   $("game-tag-input").addEventListener("keydown", e => {
     if (e.key === "Escape") closeGameSearch();
     if (e.key !== "Enter") return;
@@ -19166,6 +19298,7 @@ function openUserSettings(tab) {
   loadStorageSettings().then(renderStorageSettings);
   $("account-about").value = decodeCustomEmojis(state.user.about);
   $("account-pronouns").value = state.voice.pronouns || "";
+  renderAccountServerTag();
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
   if (!document.documentElement.classList.contains("web-app")) loadDebugLogStatus();
@@ -19428,6 +19561,7 @@ function openServerSettings(tab) {
   $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
   if (server.can_manage_server) renderAutomodSettings(server);
   renderGameTagEditor(server);
+  renderServerTagEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
   if (isOwner) renderReportSettings(server);

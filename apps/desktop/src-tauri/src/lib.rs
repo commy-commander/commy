@@ -2906,6 +2906,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     if state.server.join_sounds_off && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::JoinSoundsAllowed { server: sid, allowed: false });
     }
+    if state.server.tag.is_some() && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::ServerTagSet { server: sid, tag: state.server.tag.clone() });
+    }
     let sharing = state.server.stickers_shareable || state.server.emoticons_shareable;
     if sharing && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ExpressionSharingSet {
@@ -3127,6 +3130,7 @@ async fn leave_server(
     .await;
     leave_server_topic(&app, sid).await;
     forget_server_locally(&app, sid);
+    refresh_worn_tag(&app, &handle).await;
     entry_list::record_leave(&app, sid);
     entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
@@ -4875,6 +4879,7 @@ fn removal_of_me(event: &ServerEvent, action: Option<&commy_core::Action>, me: O
 async fn on_removed(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: &str) {
     let name = forget_server_locally(app, sid).map(|s| s.server.name);
     end_voice_in(app, sid);
+    refresh_worn_tag(app, handle).await;
     leave_server_topic(app, sid).await;
     entry_list::record_leave(app, sid);
     entry_list::schedule(handle);
@@ -4887,6 +4892,8 @@ fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, no
     let ticket = (!owned).then(|| app.invites.lock().unwrap().get(&sid).cloned()).flatten();
     let name = forget_server_locally(app, sid).map(|s| s.server.name).unwrap_or_default();
     end_voice_in(app, sid);
+    let later = handle.clone();
+    tauri::async_runtime::spawn(async move { refresh_worn_tag(&later.state::<App>(), &later).await });
     let kept = deleted::DeletedServer { name: name.clone(), notice, ticket };
     app.deleted.lock().unwrap().insert(sid, kept);
     app.persist_deleted();
@@ -5397,6 +5404,60 @@ async fn set_join_sound(
     let me = current_profile(&app)?;
     let event = managed(&app, sid, me.id, |state, perms| view::expressions::join_sound(state, perms, me.id, name.as_deref()))?;
     apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
+async fn set_server_tag(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    letters: Option<String>,
+    emoji: Option<String>,
+    color: String,
+    effect: String,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| {
+        view::server_tags::set_tag(state, perms, letters.as_deref(), emoji.as_deref(), &color, &effect)
+    })?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    refresh_worn_tag(&app, &handle).await;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn wear_server_tag(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: Option<String>) -> CmdResult<UserProfile> {
+    let me = current_profile(&app)?;
+    let worn = match server_id {
+        None => None,
+        Some(id) => {
+            let sid: ServerId = id.parse().map_err(err_to_string)?;
+            let servers = app.servers.lock().unwrap();
+            let state = servers.get(&sid).ok_or("unknown server")?;
+            Some(view::server_tags::wear(state, me.id)?)
+        }
+    };
+    let profile = edit_profile(&app, |profile| profile.server_tag = worn)?;
+    publish_profile(&app, &handle, &profile).await;
+    Ok(profile)
+}
+
+async fn refresh_worn_tag(app: &App, handle: &tauri::AppHandle) {
+    let Some((me, worn)) = app.profile.lock().unwrap().as_ref().and_then(|p| p.server_tag.clone().map(|w| (p.id, w))) else {
+        return;
+    };
+    let fresh = {
+        let servers = app.servers.lock().unwrap();
+        worn.refreshed(servers.get(&worn.server).map(|s| &s.server), me)
+    };
+    if fresh.as_ref() == Some(&worn) {
+        return;
+    }
+    if let Ok(profile) = edit_profile(app, |profile| profile.server_tag = fresh) {
+        publish_profile(app, handle, &profile).await;
+    }
 }
 
 #[tauri::command]
@@ -6531,6 +6592,7 @@ async fn run_net_loop(
                 let early = app.awaits_snapshot(server);
                 let kept = (holdable || action.is_some()).then(|| event.clone());
                 let new_emoji = matches!(event, ServerEvent::EmojiAdd { .. }).then(|| event.clone());
+                let tag_news = matches!(event, ServerEvent::ServerTagSet { .. } | ServerEvent::ServerRename { .. });
                 let profile_changed = match &event {
                     ServerEvent::ProfileUpdate { profile } | ServerEvent::MemberJoin { profile, .. } => Some(profile.id),
                     _ => None,
@@ -6601,6 +6663,9 @@ async fn run_net_loop(
                         }
                         app.persist_server(server);
                         directory::server_changed(&app, server);
+                        if tag_news {
+                            refresh_worn_tag(&app, &handle).await;
+                        }
                         if let Some(user) = new_owner {
                             app.follow_owner(server);
                             announce_new_owner(&app, &handle, server, user);
@@ -7522,6 +7587,8 @@ pub fn run() {
             set_sound_sharing,
             set_join_sounds_allowed,
             set_join_sound,
+            set_server_tag,
+            wear_server_tag,
             set_activities_enabled,
             set_role_access,
             add_sticker,

@@ -52,6 +52,8 @@ pub struct UserProfile {
     pub presence_until: Option<i64>,
     #[serde(default)]
     pub banner: Option<String>,
+    #[serde(default)]
+    pub server_tag: Option<crate::server_tag::WornTag>,
 }
 
 pub const MAX_ABOUT_CHARS: usize = 190;
@@ -170,6 +172,7 @@ impl UserProfile {
             banner: None,
             identity: None,
             presence_until: None,
+            server_tag: None,
         }
     }
 
@@ -179,6 +182,7 @@ impl UserProfile {
 
     pub fn as_seen_by_others(&self) -> UserProfile {
         let mut shared = self.clone();
+        shared.server_tag = shared.server_tag.filter(crate::server_tag::WornTag::is_valid);
         if self.presence == Presence::Invisible {
             shared.presence = Presence::Offline;
             shared.activity = None;
@@ -196,6 +200,7 @@ impl UserProfile {
             activity: None,
             activity_cover: None,
             activity_since: None,
+            server_tag: None,
             ..self.clone()
         }
     }

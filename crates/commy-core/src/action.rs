@@ -147,6 +147,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::PronounsSet { user, .. } => format!("pronouns:{user}"),
         E::JoinSoundSet { user, .. } => format!("join_sound:{user}"),
         E::JoinSoundsAllowed { .. } => "join_sounds".into(),
+        E::ServerTagSet { .. } => "server_tag".into(),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
         E::SoundSharingSet { .. } => "sound_sharing".into(),
@@ -337,7 +338,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::SoundSharingSet { .. }
         | E::ActivitiesSet { .. }
         | E::ExpressionSharingSet { .. }
-        | E::JoinSoundsAllowed { .. } => allows(Permissions::MANAGE_SERVER),
+        | E::JoinSoundsAllowed { .. }
+        | E::ServerTagSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
             allows(Permissions::MANAGE_ROLES)
