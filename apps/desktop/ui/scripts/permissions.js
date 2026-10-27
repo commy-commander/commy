@@ -33,6 +33,7 @@ const PERMISSION_HINTS = {
   manage_nicknames: "Change other members' nicknames in this server.",
   change_nickname: "Pick their own nickname in this server.",
   priority_speaker: "Turn everyone else down while they talk.",
+  use_voice_filters: "Change how they sound in voice with a voice filter.",
   administrator: "Everything, and nothing can be refused.",
 };
 
@@ -42,9 +43,10 @@ const EVERYONE_CHAT_ACCESS = [
   { key: "threads", permission: "create_threads", field: "create_threads", title: "Start threads", sub: "Members name, archive or lock threads under their own messages." },
   { key: "polls", permission: "send_polls", field: "send_polls", title: "Create polls", sub: "Members post polls from the composer menu." },
   { key: "events", permission: "create_events", field: "create_events", title: "Create events", sub: "Members schedule events and edit or delete their own." },
+  { key: "voice_filters", permission: "use_voice_filters", field: "voice_filters", title: "Use voice filters", sub: "Members change how they sound in voice. Switched off, everyone hears their own voice." },
 ];
 
-const RESTRICTION_NAMES = ["embed_links", "read_message_history", "create_threads", "send_polls", "create_events"];
+const RESTRICTION_NAMES = ["embed_links", "read_message_history", "create_threads", "send_polls", "create_events", "use_voice_filters"];
 const HISTORY_NOTICE = "You can see new messages only";
 const LINK_EMBED_OFF = { title: "Link previews are off for you here", sub: "Your link posts as plain text" };
 

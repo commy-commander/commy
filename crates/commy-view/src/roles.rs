@@ -118,6 +118,7 @@ pub fn role_access_permission(access: &str) -> Act<(Permissions, &'static str)> 
         "threads" => Ok((Permissions::NO_CREATE_THREADS, "change who can start threads")),
         "polls" => Ok((Permissions::NO_SEND_POLLS, "change who can create polls")),
         "events" => Ok((Permissions::NO_CREATE_EVENTS, "change who can create events")),
+        "voice_filters" => Ok((Permissions::NO_VOICE_FILTERS, "change who can use voice filters")),
         _ => Err("unknown setting".into()),
     }
 }
@@ -238,6 +239,28 @@ mod tests {
         assert_eq!(perms[0], Permissions::default_member());
         assert_eq!(perms[1], Permissions::MANAGE_MESSAGES);
         assert_eq!(perms[2], Permissions::NONE);
+    }
+
+    #[test]
+    fn switching_voice_filters_off_for_everyone_holds_members_back_until_a_role_lets_them_through() {
+        let (mut state, owner, _) = hangout();
+        let sid = state.server.id;
+        let member = commy_core::UserProfile::new("member");
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: member.clone() }).unwrap();
+        let keys = crate::KeyHolder::default();
+        let seen = |state: &ServerState| crate::ServerView::for_viewer(state, Some(member.id), &keys);
+        assert!(seen(&state).can_use_voice_filters && !seen(&state).chat_restricted.voice_filters);
+        assert!(role_access(&state, state.server.permissions_for(member.id), "voice_filters", true, &[]).is_err());
+        for event in role_access(&state, state.server.permissions_for(owner), "voice_filters", true, &[]).unwrap() {
+            state.apply(event).unwrap();
+        }
+        assert!(!seen(&state).can_use_voice_filters && seen(&state).chat_restricted.voice_filters);
+        assert!(state.server.permissions_for(owner).can_use_voice_filters(), "the owner is never held back");
+        let (singers, event) = create_role(&state, state.server.permissions_for(owner), RoleForm { name: "Singers".into(), ..RoleForm::default() }).unwrap();
+        state.apply(event).unwrap();
+        state.apply(ServerEvent::RoleAssign { server: sid, user: member.id, role: singers }).unwrap();
+        assert!(seen(&state).can_use_voice_filters, "a role without the restriction lets its members through");
+        assert_eq!(crate::permission_names(Permissions::NO_VOICE_FILTERS), vec!["use_voice_filters".to_string()]);
     }
 
     #[test]

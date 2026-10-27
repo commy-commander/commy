@@ -75,6 +75,7 @@ fn stop_session(app: &App, channel: ChannelId) {
     if mine {
         let testing = crate::pause_mic_test(app);
         *app.voice_session.lock().unwrap() = None;
+        crate::voice_filter::apply(app);
         crate::resume_mic_test(app, testing);
     }
 }

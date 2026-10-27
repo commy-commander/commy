@@ -8,6 +8,7 @@ const RNNOISE_I16_FULL_SCALE: f32 = 32767.0;
 
 pub mod codec;
 pub mod echo;
+pub mod filters;
 pub mod level;
 pub mod ogg;
 pub mod speaking;
@@ -54,6 +55,8 @@ pub struct VoiceProcessor {
     sensitivity: Sensitivity,
     last_level_db: f32,
     gate: VoiceGate,
+    changer: filters::VoiceChanger,
+    was_held: bool,
 }
 
 pub fn level_db(samples: &[f32]) -> f32 {
@@ -88,6 +91,8 @@ impl VoiceProcessor {
             sensitivity: Sensitivity::Automatic,
             last_level_db: SILENCE_DB,
             gate: VoiceGate::default(),
+            changer: filters::VoiceChanger::new(),
+            was_held: false,
         }
     }
 
@@ -133,6 +138,15 @@ impl VoiceProcessor {
         }
         self.denoiser = DenoiseState::new();
         self.gate = VoiceGate::default();
+        self.changer.clear();
+    }
+
+    pub fn set_voice_filter(&mut self, filter: filters::VoiceFilter) {
+        self.changer.set(filter);
+    }
+
+    pub fn voice_filter(&self) -> filters::VoiceFilter {
+        self.changer.filter()
     }
 
     pub fn echo_cancellation(&self) -> bool {
@@ -219,7 +233,12 @@ impl VoiceProcessor {
         let input_level_db = level_db(&gained);
         self.last_level_db = input_level_db;
 
-        if self.held_closed() {
+        let held = self.held_closed();
+        if held && !self.was_held {
+            self.changer.clear();
+        }
+        self.was_held = held;
+        if held {
             return Ok(ProcessedFrame {
                 samples: vec![0.0; FRAME_SIZE],
                 voice_probability: 0.0,
@@ -251,6 +270,7 @@ impl VoiceProcessor {
         if vad.is_some() || self.sensitivity != Sensitivity::Automatic {
             self.gate.apply(&mut samples, open);
         }
+        self.changer.process(&mut samples);
         Ok(ProcessedFrame {
             samples,
             voice_probability: vad.unwrap_or(0.0),
@@ -587,6 +607,50 @@ mod tests {
         }
         assert!(out.should_transmit);
         assert!(level_db(&out.samples) > -20.0, "the voice passes after a fresh start");
+    }
+
+    #[test]
+    fn a_voice_filter_changes_what_is_sent_and_off_brings_the_plain_voice_back() {
+        let plain = |p: &mut VoiceProcessor| {
+            p.set_noise_cancellation(false);
+            p.set_echo_cancellation(false);
+            p.set_auto_level(false);
+        };
+        let mut p = VoiceProcessor::new();
+        plain(&mut p);
+        assert_eq!(p.voice_filter(), filters::VoiceFilter::Off);
+        let frame = sine_frame(440.0, 0.3);
+        p.set_voice_filter(filters::VoiceFilter::Radio);
+        let mut out = p.process(&frame).unwrap();
+        for _ in 0..10 {
+            out = p.process(&frame).unwrap();
+        }
+        assert!(out.samples.iter().zip(&frame).any(|(a, b)| (a - b).abs() > 0.01), "the radio filter left the voice alone");
+        p.set_voice_filter(filters::VoiceFilter::Off);
+        let out = p.process(&frame).unwrap();
+        for (a, b) in frame.iter().zip(&out.samples) {
+            assert!((a - b).abs() < 1e-3, "off should send the plain voice");
+        }
+    }
+
+    #[test]
+    fn a_cave_echo_stops_when_you_mute_and_does_not_replay_after() {
+        let mut p = VoiceProcessor::new();
+        p.set_noise_cancellation(false);
+        p.set_echo_cancellation(false);
+        p.set_auto_level(false);
+        p.set_voice_filter(filters::VoiceFilter::Cave);
+        p.start_fresh();
+        assert_eq!(p.voice_filter(), filters::VoiceFilter::Cave, "a fresh start keeps the filter");
+        let frame = sine_frame(300.0, 0.4);
+        for _ in 0..30 {
+            p.process(&frame).unwrap();
+        }
+        p.set_muted(true);
+        assert!(p.process(&frame).unwrap().samples.iter().all(|s| *s == 0.0));
+        p.set_muted(false);
+        let out = p.process(&vec![0.0; FRAME_SIZE]).unwrap();
+        assert!(out.samples.iter().all(|s| *s == 0.0), "echo from before the mute came back");
     }
 
     #[test]
