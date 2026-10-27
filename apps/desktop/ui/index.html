@@ -80,6 +80,10 @@
             <span class="vp-viewers" id="vp-viewers"></span>
           </button>
           <div class="vp-live-source" id="vp-live-source"></div>
+          <label class="vp-ink hidden" id="vp-ink-row">
+            <span>Let viewers draw</span>
+            <input type="checkbox" id="vp-ink" class="switch" aria-label="Let viewers draw" />
+          </label>
           <div class="vp-live-actions">
             <button class="vp-pill desktop-only" id="vp-change-source" title="Pick a different monitor or window">Switch</button>
             <button class="vp-pill danger" id="vp-stop-share">End Stream</button>
@@ -211,6 +215,7 @@
       <div class="stage hidden" id="video-pane">
         <div class="stage-view" id="stage-view">
           <img id="video-frame" alt="Shared screen" />
+          <canvas class="stage-ink" id="stage-ink" aria-hidden="true"></canvas>
           <div class="stage-wait" id="stage-wait">
             <div class="spinner"></div>
             <span>Connecting to stream</span>
@@ -221,6 +226,7 @@
               <span class="stage-label" id="video-label">Screen</span>
               <span class="stage-viewers hidden" id="stage-viewers"></span>
             </div>
+            <div class="stage-chip stage-drawers hidden" id="stage-drawers"></div>
             <div class="stage-chip stage-stats" id="stage-stats"></div>
           </div>
           <div class="stage-controls">
@@ -228,6 +234,11 @@
               <span class="stage-volume-icon" id="stage-volume-icon"></span>
               <input type="range" id="stage-volume-range" min="0" max="200" value="100" aria-label="Stream volume" />
             </label>
+            <div class="stage-ink-tools hidden" id="stage-ink-tools" role="group" aria-label="Drawing">
+              <button class="stage-btn" id="stage-ink-point" title="Point" aria-pressed="false"></button>
+              <button class="stage-btn" id="stage-ink-pen" title="Draw" aria-pressed="false"></button>
+              <button class="stage-btn" id="stage-ink-clear" title="Clear my drawings"></button>
+            </div>
             <button class="stage-btn" id="stage-focus" title="Focus Mode"></button>
             <button class="stage-btn" id="stage-fullscreen" title="Fullscreen"></button>
             <button class="stage-btn danger" id="video-close" title="Stop Watching"></button>
@@ -1331,6 +1342,13 @@
         </div>
         <input type="checkbox" id="share-audio" class="switch" aria-label="Share audio" />
       </label>
+      <label class="setting-row share-ink-row hidden" id="share-ink-row">
+        <div>
+          <div class="setting-title">Let viewers draw</div>
+          <div class="setting-sub">Viewers can point and draw on your stream. You can turn it off or clear it at any time.</div>
+        </div>
+        <input type="checkbox" id="share-ink" class="switch" aria-label="Let viewers draw" />
+      </label>
       <div class="modal-actions">
         <button class="btn-secondary" id="share-cancel">Cancel</button>
         <button class="btn-primary" id="share-go" disabled>Go Live</button>
@@ -1604,6 +1622,21 @@
               <div class="setting-sub">Evens out your voice so everyone hears you at a steady, comfortable volume, even with a quiet mic. Turn it off if your mic software already levels your voice.</div>
             </div>
             <input type="checkbox" id="agc-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead">Streaming</h2>
+          <label class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Let viewers draw on my streams</div>
+              <div class="setting-sub">Off unless you turn it on. When it's on, you choose whether to allow drawing each time you go live, and can change it during the stream.</div>
+            </div>
+            <input type="checkbox" id="stream-ink-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row desktop-only">
+            <div>
+              <div class="setting-title">Show drawings on my screen</div>
+              <div class="setting-sub">See viewers' pointers and pens on top of what you share. They stay out of the stream itself.</div>
+            </div>
+            <input type="checkbox" id="stream-ink-screen-toggle" class="switch" />
           </label>
           <h2 class="settings-subhead">Idle</h2>
           <div class="settings-card setting-row">
@@ -2987,6 +3020,7 @@
   <script src="scripts/voice-signal.js"></script>
   <script src="scripts/forum.js"></script>
   <script src="scripts/stage.js"></script>
+  <script src="scripts/ink-view.js"></script>
   <script src="scripts/emoji.js"></script>
   <script src="scripts/emoji-picker.js"></script>
   <script src="scripts/expressions.js"></script>

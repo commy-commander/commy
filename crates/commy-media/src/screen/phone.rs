@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use image::RgbaImage;
 
-use super::{ScreenFrame, ShareSource, SourceKind};
+use super::{ScreenFrame, ShareSource, SourceKind, SourceRect};
 
 const UNAVAILABLE: &str = "screen sharing is not available on phones yet";
 
@@ -23,4 +23,8 @@ pub fn list_sources() -> Result<Vec<ShareSource>> {
 
 pub fn capture_source(_kind: SourceKind, _id: u32, _max_width: u32, _quality: u8) -> Result<ScreenFrame> {
     bail!(UNAVAILABLE)
+}
+
+pub fn source_rect(_kind: SourceKind, _id: u32) -> Option<SourceRect> {
+    None
 }

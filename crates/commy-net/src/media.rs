@@ -8,6 +8,8 @@ pub const MEDIA_ALPN: &[u8] = b"commy/media/1";
 
 pub const MAX_MEDIA_FRAME: u32 = 4 * 1024 * 1024;
 
+pub const MAX_INK_POINTS: usize = 64;
+
 #[derive(Debug, Error)]
 pub enum MediaError {
     #[error("media frame of {0} bytes exceeds limit")]
@@ -37,6 +39,26 @@ pub enum MediaPacket {
     Opus { seq: u32, data: Vec<u8> },
     StreamAudio { seq: u32, data: Vec<u8> },
     StreamAudioWanted,
+    InkReady,
+    InkAllowed { on: bool },
+    Ink { mark: InkMark },
+    InkFrom { user: UserId, mark: InkMark },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InkMark {
+    Point { x: u16, y: u16 },
+    Line { stroke: u32, points: Vec<[u16; 2]> },
+    Clear,
+}
+
+impl InkMark {
+    pub fn is_valid(&self) -> bool {
+        match self {
+            InkMark::Line { points, .. } => !points.is_empty() && points.len() <= MAX_INK_POINTS,
+            InkMark::Point { .. } | InkMark::Clear => true,
+        }
+    }
 }
 
 impl MediaPacket {
@@ -138,6 +160,39 @@ mod tests {
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::Opus { seq: 0, data: vec![] }).unwrap()), 2);
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::StreamAudio { seq: 0, data: vec![] }).unwrap()), 3);
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::StreamAudioWanted).unwrap()), 4);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::InkReady).unwrap()), 5);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::InkAllowed { on: true }).unwrap()), 6);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::Ink { mark: InkMark::Clear }).unwrap()), 7);
+        assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::InkFrom { user, mark: InkMark::Clear }).unwrap()), 8);
+    }
+
+    #[test]
+    fn ink_lines_carry_a_bounded_number_of_points() {
+        let line = |n: usize| InkMark::Line { stroke: 1, points: vec![[0, 0]; n] };
+        assert!(!line(0).is_valid());
+        assert!(line(1).is_valid());
+        assert!(line(MAX_INK_POINTS).is_valid());
+        assert!(!line(MAX_INK_POINTS + 1).is_valid());
+        assert!(InkMark::Point { x: u16::MAX, y: 0 }.is_valid());
+    }
+
+    #[tokio::test]
+    async fn ink_kinds_roundtrip() {
+        let (mut a, mut b) = tokio::io::duplex(4096);
+        let user = UserId::new();
+        let sent = [
+            MediaPacket::InkReady,
+            MediaPacket::InkAllowed { on: true },
+            MediaPacket::Ink { mark: InkMark::Line { stroke: 7, points: vec![[1, 2], [3, 4]] } },
+            MediaPacket::InkFrom { user, mark: InkMark::Point { x: 9, y: 10 } },
+        ];
+        for packet in &sent {
+            write_frame(&mut a, packet).await.unwrap();
+        }
+        for packet in sent {
+            let got: MediaPacket = read_frame(&mut b).await.unwrap().unwrap();
+            assert_eq!(got, packet);
+        }
     }
 
     #[derive(Debug, PartialEq, Deserialize)]

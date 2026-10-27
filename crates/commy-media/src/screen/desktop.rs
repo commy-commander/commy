@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use image::RgbaImage;
 use std::time::{Duration, Instant};
 
-use super::{encode_frame, BackgroundPause, ScreenFrame, ShareSource, SourceKind};
+use super::{encode_frame, BackgroundPause, ScreenFrame, ShareSource, SourceKind, SourceRect};
 
 const PAUSED_FRAME_EVERY: Duration = Duration::from_millis(500);
 const FRONT_CHECK_EVERY: Duration = Duration::from_millis(50);
@@ -156,6 +156,23 @@ pub fn list_sources() -> Result<Vec<ShareSource>> {
         });
     }
     Ok(sources)
+}
+
+pub fn source_rect(kind: SourceKind, id: u32) -> Option<SourceRect> {
+    let rect = match kind {
+        SourceKind::Monitor => {
+            let monitor = xcap::Monitor::all().ok()?.into_iter().find(|m| m.id().is_ok_and(|m_id| m_id == id))?;
+            SourceRect { x: monitor.x().ok()?, y: monitor.y().ok()?, width: monitor.width().ok()?, height: monitor.height().ok()? }
+        }
+        SourceKind::Window => {
+            let window = find_window(id).ok()?;
+            if window.is_minimized().unwrap_or(false) {
+                return None;
+            }
+            SourceRect { x: window.x().ok()?, y: window.y().ok()?, width: window.width().ok()?, height: window.height().ok()? }
+        }
+    };
+    (rect.width > 0 && rect.height > 0).then_some(rect)
 }
 
 pub fn capture_source(
