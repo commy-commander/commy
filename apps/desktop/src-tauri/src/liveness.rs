@@ -1,11 +1,11 @@
 use crate::catchup::AppAccess;
 use crate::state::App;
 use commy_core::ids::CALL_SERVER;
-use commy_core::{Presence, ServerEvent, ServerId, ServerState, UserId};
+use commy_core::{ChannelId, Presence, ServerEvent, ServerId, ServerState, UserId};
 use commy_net::WirePayload;
 use std::time::{Duration, Instant};
 
-pub use commy_view::liveness::{speaker, Liveness, BEAT, EXPIRE, SERVICE_BEAT, SWEEP_EVERY};
+pub use commy_view::liveness::{seat_news, speaker, Liveness, BEAT, EXPIRE, SERVICE_BEAT, SWEEP_EVERY};
 #[cfg(test)]
 use commy_view::liveness::SERVICE_EXPIRE;
 
@@ -23,6 +23,10 @@ pub fn heard_through_service(app: &App, server: ServerId, user: UserId, now: Ins
 
 pub fn heard_device(app: &App, server: ServerId, user: UserId, node: &str, now: Instant) {
     app.liveness.lock().unwrap().heard_device(server, user, node, now);
+}
+
+pub fn heard_seat_news(app: &App, state: &ServerState, news: Option<(UserId, ChannelId)>, now: Instant) {
+    app.liveness.lock().unwrap().heard_seat_news(state, news, now);
 }
 
 pub fn settle_device_presence(
@@ -49,10 +53,12 @@ fn hear_voice_peers(app: &App, now: Instant) {
         (s.server, peers)
     });
     let Some((server, peers)) = voice else { return };
+    let mut live = app.liveness.lock().unwrap();
     for (user, node) in peers {
-        heard(app, server, user, now);
+        live.heard(server, user, now);
+        live.heard_seat(server, user, now);
         if let Some(node) = node {
-            heard_device(app, server, user, &node, now);
+            live.heard_device(server, user, &node, now);
         }
     }
 }

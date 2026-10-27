@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use commy_core::{action, devices, Action, Presence, ServerEvent, ServerId, ServerState, UserId};
+use commy_core::{action, devices, Action, ChannelId, Presence, ServerEvent, ServerId, ServerState, UserId};
 use web_time::Instant;
 
 pub const BEAT: Duration = Duration::from_secs(45);
@@ -22,6 +22,7 @@ pub struct Liveness {
     lasting: HashMap<(ServerId, UserId), Instant>,
     devices: HashMap<(ServerId, UserId), DeviceSaid>,
     device_heard: HashMap<(ServerId, UserId, String), Instant>,
+    seats_heard: HashMap<(ServerId, UserId), Instant>,
     last_sweep_ms: Option<i64>,
 }
 
@@ -31,6 +32,15 @@ pub fn speaker(event: &ServerEvent, signed_by: Option<&Action>) -> Option<UserId
     }
     let actor = action::actor(event)?;
     signed_by.is_none_or(|a| a.by == actor).then_some(actor)
+}
+
+pub fn seat_news(event: &ServerEvent) -> Option<(UserId, ChannelId)> {
+    match event {
+        ServerEvent::VoiceState { user, channel: Some(channel), .. } | ServerEvent::DeviceAnnounce { user, voice: Some(channel), .. } => {
+            Some((*user, *channel))
+        }
+        _ => None,
+    }
 }
 
 pub fn node_hex(node: &[u8; 32]) -> String {
@@ -49,6 +59,17 @@ impl Liveness {
 
     pub fn heard_device(&mut self, server: ServerId, user: UserId, node: &str, now: Instant) {
         self.device_heard.insert((server, user, node.to_ascii_lowercase()), now);
+    }
+
+    pub fn heard_seat(&mut self, server: ServerId, user: UserId, now: Instant) {
+        self.seats_heard.insert((server, user), now);
+    }
+
+    pub fn heard_seat_news(&mut self, state: &ServerState, news: Option<(UserId, ChannelId)>, now: Instant) {
+        let Some((user, channel)) = news else { return };
+        if state.voice_states.get(&user) == Some(&channel) {
+            self.heard_seat(state.server.id, user, now);
+        }
     }
 
     pub fn settle_device_presence(
@@ -100,6 +121,7 @@ impl Liveness {
             self.heard.clear();
             self.lasting.clear();
             self.device_heard.clear();
+            self.seats_heard.clear();
         }
         self.lasting.retain(|_, until| now < *until);
         let mut changed = Vec::new();
@@ -125,7 +147,7 @@ impl Liveness {
                     continue;
                 }
                 alive.insert((*sid, user));
-                if self.voice_device_went_quiet(state, user, now, expire, lasting) {
+                if self.voice_device_went_quiet(state, user, now, expire, lasting) || self.seat_went_unconfirmed(state, user, now, expire, lasting) {
                     gone |= state.end_voice(user);
                 }
             }
@@ -136,7 +158,19 @@ impl Liveness {
         self.heard.retain(|key, _| alive.contains(key));
         self.devices.retain(|key, _| alive.contains(key));
         self.device_heard.retain(|(sid, user, _), _| alive.contains(&(*sid, *user)));
+        self.seats_heard.retain(|key, _| alive.contains(key));
         changed
+    }
+
+    fn seat_went_unconfirmed(&mut self, state: &ServerState, user: UserId, now: Instant, expire: Duration, lasting: bool) -> bool {
+        let key = (state.server.id, user);
+        if !state.voice_states.contains_key(&user) {
+            self.seats_heard.remove(&key);
+            return false;
+        }
+        let last = *self.seats_heard.entry(key).or_insert(now);
+        let window = if lasting { expire.max(SERVICE_EXPIRE) } else { expire };
+        now.duration_since(last) > window
     }
 
     fn voice_device_went_quiet(&mut self, state: &ServerState, user: UserId, now: Instant, expire: Duration, lasting: bool) -> bool {
@@ -151,6 +185,7 @@ impl Liveness {
         self.lasting.clear();
         self.devices.clear();
         self.device_heard.clear();
+        self.seats_heard.clear();
     }
 }
 
@@ -256,10 +291,53 @@ mod tests {
         for beat in 0..6 {
             live.heard(sid, friend, at);
             live.heard_device(sid, friend, &node_hex(&DESKTOP), at);
+            live.heard_seat_news(&room.servers[&sid], Some((friend, voice)), at);
             assert!(room.sweep(&mut live, at, beat * 15_000).is_empty());
             at += BEAT;
         }
         assert_eq!(room.seated(), Some(voice));
+    }
+
+    #[test]
+    fn a_seat_nobody_confirms_ends_while_the_person_stays_online() {
+        let mut room = room();
+        let mut live = Liveness::default();
+        let (sid, friend, voice) = (room.sid, room.friend, room.voice);
+        room.state().apply(ServerEvent::VoiceState { user: friend, channel: Some(voice), muted: false, deafened: false, since: None }).unwrap();
+        room.announce(DESKTOP, None, 0);
+        let start = Instant::now();
+        let mut at = start;
+        for beat in 0..3 {
+            live.heard(sid, friend, at);
+            live.heard_device(sid, friend, &node_hex(&DESKTOP), at);
+            assert!(room.sweep(&mut live, at, beat * 15_000).is_empty());
+            at += BEAT;
+        }
+        live.heard(sid, friend, at);
+        assert_eq!(room.sweep(&mut live, at, 45_000), vec![sid]);
+        assert_eq!(room.seated(), None, "a seat we only heard about once, and the leave we missed");
+        assert_eq!(room.servers[&sid].profiles[&friend].presence, Presence::Online);
+    }
+
+    #[test]
+    fn seat_news_only_counts_for_the_room_the_person_is_in() {
+        let mut room = room();
+        let mut live = Liveness::default();
+        let (sid, friend, voice) = (room.sid, room.friend, room.voice);
+        let elsewhere = ChannelId::new();
+        room.announce(DESKTOP, Some(voice), 1_000);
+        let start = Instant::now();
+        room.sweep(&mut live, start, 0);
+        let mut at = start;
+        for beat in 1..4 {
+            at += BEAT;
+            live.heard(sid, friend, at);
+            live.heard_device(sid, friend, &node_hex(&DESKTOP), at);
+            live.heard_seat_news(&room.servers[&sid], Some((friend, elsewhere)), at);
+            live.heard_seat_news(&room.servers[&sid], seat_news(&ServerEvent::TypingStart { channel: voice, user: friend }), at);
+            room.sweep(&mut live, at, beat * 15_000);
+        }
+        assert_eq!(room.seated(), None);
     }
 
     #[test]
