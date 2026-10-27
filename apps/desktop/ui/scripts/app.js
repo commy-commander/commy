@@ -8305,29 +8305,62 @@ function stopMicMeter() {
 function setTalking(talking) {
   state.talking = talking;
   $("mute-btn").classList.toggle("talking", talking && !state.voice.muted);
-  $("vp-talk").classList.toggle("on", talking);
-  $("vp-talk").textContent = talking ? "Talking" : "Hold to talk";
+  for (const btn of talkButtons()) {
+    btn.classList.toggle("on", talking);
+    btn.textContent = talking ? "Talking" : "Hold to talk";
+  }
   renderUserPanel();
+}
+
+function talkButtons() {
+  return [$("vp-talk"), $("phone-voice-talk")];
 }
 
 function renderTalkButton() {
   const shown = document.body.classList.contains("mobile-app") && Boolean(state.voiceChannelId) && voiceInputState(state.voice).mode === "push_to_talk";
-  $("vp-talk").classList.toggle("hidden", !shown);
+  for (const btn of talkButtons()) btn.classList.toggle("hidden", !shown);
 }
 
 function wireTalkButton() {
-  const btn = $("vp-talk");
   let held = false;
   const press = down => {
     if (held === down) return;
     held = down;
     invoke("press_talk", { pressed: down }).catch(e => toast(String(e)));
   };
-  btn.addEventListener("pointerdown", e => {
-    btn.setPointerCapture(e.pointerId);
-    press(true);
-  });
-  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(type, () => press(false));
+  for (const btn of talkButtons()) {
+    btn.addEventListener("pointerdown", e => {
+      btn.setPointerCapture(e.pointerId);
+      press(true);
+    });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(type, () => press(false));
+  }
+}
+
+function renderPhoneVoice() {
+  const vs = state.voiceServer;
+  const live = Boolean(state.voiceChannelId && vs);
+  $("phone-voice").classList.toggle("hidden", !live);
+  if (!live) return;
+  $("phone-voice-name").textContent = vs.call ? `Call with ${vs.name}` : vs.channelName;
+  $("phone-voice-signal").replaceChildren(svgIcon("signal", 14));
+  setIcon($("phone-voice-mute"), state.voice.muted ? "micOff" : "mic");
+  setIcon($("phone-voice-deafen"), state.voice.deafened ? "headsetOff" : "headset");
+  setIcon($("phone-voice-hangup"), "hangup", 20);
+  $("phone-voice-mute").classList.toggle("danger", state.voice.muted);
+  $("phone-voice-deafen").classList.toggle("danger", state.voice.deafened);
+  $("phone-voice-mute").title = state.voice.muted ? "Unmute" : "Mute";
+  $("phone-voice-deafen").title = state.voice.deafened ? "Undeafen" : "Deafen";
+}
+
+function wirePhoneVoice() {
+  $("phone-voice-mute").onclick = () => $("mute-btn").click();
+  $("phone-voice-deafen").onclick = () => $("deafen-btn").click();
+  $("phone-voice-hangup").onclick = disconnectVoice;
+  $("phone-voice-where").onclick = () => {
+    $("vp-conn-meta").click();
+    phoneStep("back");
+  };
 }
 
 function hotkeyFromEvent(e) {
@@ -8454,7 +8487,9 @@ async function refreshConnPop() {
 }
 
 function paintSignal(links) {
-  $("vp-signal").dataset.quality = links ? worstLinkQuality(links) : "good";
+  const quality = links ? worstLinkQuality(links) : "good";
+  $("vp-signal").dataset.quality = quality;
+  $("phone-voice-signal").dataset.quality = quality;
 }
 
 let signalTimer = null;
@@ -13950,6 +13985,7 @@ function renderVoicePanel() {
   const vs = state.voiceServer;
   panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
   syncSignalPolling(Boolean(state.voiceChannelId && vs));
+  renderPhoneVoice();
   if (!state.voiceChannelId || !vs) return;
 
   const call = vs.call ? state.call : null;
@@ -14652,6 +14688,7 @@ function renderUserPanel() {
   $("mute-btn").title = state.voice.muted ? "Unmute" : talkTitle || "Mute";
   $("mute-btn").classList.toggle("talking", Boolean(state.talking) && !state.voice.muted);
   $("deafen-btn").title = state.voice.deafened ? "Undeafen" : "Deafen";
+  renderPhoneVoice();
   if (state.currentServer && state.voiceChannelId && state.view === "server") renderChannels();
 }
 
@@ -20427,6 +20464,7 @@ async function boot() {
   wireNarrowLayout();
   wireTouchMessages();
   wireTalkButton();
+  wirePhoneVoice();
   wireTimeoutModal();
   wireModerationModal();
   wireActivityPing();
