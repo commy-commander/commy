@@ -2344,6 +2344,35 @@ mod tests {
         assert!(app.servers.lock().unwrap()[&sid].server.is_current_member(me.id()), "the unban came before our rejoin");
     }
 
+    #[test]
+    fn after_an_ownership_transfer_our_invites_and_resyncs_follow_the_new_owner() {
+        let owner = Member::new("owner");
+        let heir = Member::new("heir");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &heir);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let app = app_with(&me, real.clone());
+        invited_by(&app, sid, &owner);
+        real.apply(ServerEvent::OwnerTransfer { server: sid, user: heir.id() }).unwrap();
+        let handed = Some((heir.id(), heir.identity.public()));
+
+        app.set_awaiting_snapshot(sid, true);
+        assert_eq!(app.vouched_ticket(sid).unwrap().owner, Some((owner.id(), owner.identity.public())), "a copy we wait for cannot vouch");
+        app.set_awaiting_snapshot(sid, false);
+        app.servers.lock().unwrap().insert(sid, real.clone());
+        assert_eq!(app.follow_owner(sid), handed);
+        assert_eq!(app.vouched_ticket(sid).unwrap().owner, handed, "new invites name the new owner");
+        assert_eq!(app.follow_owner(sid), None, "nothing more to follow");
+
+        app.set_awaiting_snapshot(sid, true);
+        let handle = TestHandle::new(app.clone());
+        assert!(!apply_snapshot(&handle, sid, snapshot_by(&real, &owner)), "the old owner no longer vouches");
+        assert!(apply_snapshot(&handle, sid, snapshot_by(&real, &heir)));
+        assert_eq!(app.servers.lock().unwrap()[&sid].server.owner, heir.id());
+    }
+
     fn placeholder(me: &Member, sid: ServerId) -> ServerState {
         let mut provisional = commy_core::Server::new("s", me.id());
         provisional.id = sid;

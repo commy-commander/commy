@@ -300,6 +300,9 @@ impl Session {
         if cmd == "rename_server" {
             wasm_bindgen_futures::spawn_local(self.clone().refresh_listing(server));
         }
+        if cmd == "transfer_ownership" {
+            self.follow_owner(server);
+        }
         if matches!(cmd, "rename_server" | "set_role_access" | "set_server_public" | "transfer_ownership" | "set_activities_enabled") {
             self.emit("servers-changed", Value::Null);
         }

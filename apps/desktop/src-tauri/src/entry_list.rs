@@ -674,7 +674,10 @@ async fn join_missing(handle: &AppHandle, app: &App, merged: &EntryList, local: 
         if present.contains(id) || local.left.contains_key(id) {
             continue;
         }
-        let Ok(ticket) = ServerTicket::decode(&entry.ticket) else { continue };
+        let Ok(mut ticket) = ServerTicket::decode(&entry.ticket) else { continue };
+        if let Some(owner) = crate::account_log::shared_owner(app, *id) {
+            ticket.owner = Some(owner);
+        }
         match crate::join_ticket(app, handle, ticket).await {
             Ok(_) => record_join(app, *id),
             Err(e) => tracing::warn!("could not join {} from your server list: {e}", entry.name),

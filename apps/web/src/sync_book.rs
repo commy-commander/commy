@@ -19,7 +19,13 @@ pub const MAX_PARKED: usize = 2_000;
 #[serde(tag = "k", rename_all = "snake_case")]
 pub enum Record {
     Servers { list: Box<EntryList> },
-    CommunityKey { server: ServerId, key: SharedKey, at: i64 },
+    CommunityKey {
+        server: ServerId,
+        key: SharedKey,
+        at: i64,
+        #[serde(default)]
+        owner: Option<(UserId, IdentityKey)>,
+    },
     Read { marks: BTreeMap<String, ReadMark> },
     Prefs { set: BTreeMap<String, PrefPiece> },
     Saved { ops: Vec<SavedOp> },
@@ -96,6 +102,7 @@ pub struct Plan {
 pub struct Book {
     list: EntryList,
     keys: HashMap<ServerId, (SharedKey, i64)>,
+    owners: HashMap<ServerId, (UserId, IdentityKey)>,
     after: HashMap<StreamId, u64>,
     routes: HashMap<StreamId, (ServerId, Want)>,
     live: HashSet<StreamId>,
@@ -123,14 +130,15 @@ impl Book {
                 self.list = next;
                 Change::Servers
             }
-            Record::CommunityKey { server, key, at } => {
+            Record::CommunityKey { server, key, at, owner } => {
+                let owned = owner.filter(|owner| self.owners.get(&server) != Some(owner)).map(|owner| self.owners.insert(server, owner)).is_some();
                 let known = self.keys.get(&server);
                 if known.is_some_and(|(_, seen)| at <= *seen) {
-                    return Change::Nothing;
+                    return if owned { Change::Keys } else { Change::Nothing };
                 }
                 let same = known.is_some_and(|(held, _)| *held == key);
                 self.keys.insert(server, (key, at));
-                if same { Change::Nothing } else { Change::Keys }
+                if same && !owned { Change::Nothing } else { Change::Keys }
             }
             Record::Read { marks } => {
                 let changed = self.note_reads(marks);
@@ -196,8 +204,19 @@ impl Book {
             .servers
             .values()
             .filter_map(|entry| ServerTicket::decode(&entry.ticket).ok())
-            .map(|ticket| (ticket.server_id, ticket))
+            .map(|mut ticket| {
+                ticket.owner = self.owner(ticket.server_id).or(ticket.owner);
+                (ticket.server_id, ticket)
+            })
             .collect()
+    }
+
+    pub fn owner(&self, server: ServerId) -> Option<(UserId, IdentityKey)> {
+        self.owners.get(&server).copied()
+    }
+
+    pub fn shared_key(&self, server: ServerId) -> Option<SharedKey> {
+        self.keys.get(&server).map(|(key, _)| key.clone())
     }
 
     pub fn join(&mut self, server: ServerId, entry: Entry, key: SharedKey, at: i64) -> bool {
@@ -351,7 +370,7 @@ mod tests {
         let server = ServerId::new();
         let shared = SharedKey::of(KeyId::random(), &ChannelSecret::random());
         let json = serde_json::json!({ "k": "community_key", "server": server, "key": shared, "at": 5 }).to_string();
-        assert_eq!(Record::parse(json.as_bytes()), Record::CommunityKey { server, key: shared, at: 5 });
+        assert_eq!(Record::parse(json.as_bytes()), Record::CommunityKey { server, key: shared, at: 5, owner: None });
         let list = EntryList { servers: [(server, entry(server, Utc::now()))].into(), ..Default::default() };
         let json = serde_json::json!({ "k": "servers", "list": list }).to_string();
         assert_eq!(Record::parse(json.as_bytes()), Record::Servers { list: Box::new(list) });
@@ -441,9 +460,29 @@ mod tests {
         let (old, new) = (KeyId::random(), KeyId::random());
         let mut book = Book::new(EntryList::default());
         let key = |id| SharedKey::of(id, &ChannelSecret::random());
-        assert_eq!(book.fold(Record::CommunityKey { server, key: key(new), at: 10 }), Change::Keys);
-        assert_eq!(book.fold(Record::CommunityKey { server, key: key(old), at: 5 }), Change::Nothing);
+        assert_eq!(book.fold(Record::CommunityKey { server, key: key(new), at: 10, owner: None }), Change::Keys);
+        assert_eq!(book.fold(Record::CommunityKey { server, key: key(old), at: 5, owner: None }), Change::Nothing);
         assert_eq!(book.given()[&server].0, new);
+    }
+
+    #[test]
+    fn the_server_list_names_the_owner_another_device_last_shared() {
+        let server = ServerId::new();
+        let mut list = EntryList::default();
+        let old_owner = (UserId::new(), commy_core::Identity::generate().public());
+        let heir = (UserId::new(), commy_core::Identity::generate().public());
+        let mut ticket = ServerTicket::new(server, "s", [0; 32], Vec::new());
+        ticket.owner = Some(old_owner);
+        list.servers.insert(server, Entry { name: "s".into(), ticket: ticket.encode(), since: Utc::now() });
+        let mut book = Book::new(list);
+        assert_eq!(book.tickets()[&server].owner, Some(old_owner));
+        let shared = SharedKey::of(KeyId::random(), &ChannelSecret::random());
+        assert_eq!(book.fold(Record::parse(&community_key_record(server, &shared, 10, Some(heir)))), Change::Keys);
+        assert_eq!(book.tickets()[&server].owner, Some(heir));
+        assert_eq!(book.fold(Record::parse(&community_key_record(server, &shared, 5, Some(heir)))), Change::Nothing, "nothing new");
+        let other = (UserId::new(), commy_core::Identity::generate().public());
+        assert_eq!(book.fold(Record::parse(&community_key_record(server, &shared, 5, Some(other)))), Change::Keys, "an older key record still names the owner");
+        assert_eq!(book.owner(server), Some(other));
     }
 
     #[test]
