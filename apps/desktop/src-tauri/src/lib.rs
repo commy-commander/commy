@@ -236,19 +236,16 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     }
 
     let joining = async {
-        let reached_peer = {
+        {
             let mut net = app.net.lock().await;
             let node = net.as_mut().ok_or("network is not ready yet")?;
-            node.join_server(&ticket).await.map_err(err_to_string)?
-        };
+            node.rejoin_server(&ticket).await.map_err(err_to_string)?;
+        }
         app.invites
             .lock()
             .unwrap()
             .insert(ticket.server_id, ticket.encode());
         app.persist_invites();
-        if !reached_peer {
-            tracing::warn!("joined topic but no members are online yet");
-        }
         Ok(())
     };
 
@@ -3564,6 +3561,35 @@ mod own_server_tests {
         drop(signing);
         assert!(app.signing.try_write().is_ok());
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+    use crate::catchup::TestHandle;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn joining_while_nobody_is_online_does_not_wait_for_peers() {
+        let (mut host, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        let sid = ServerId::new();
+        let ticket = tokio::time::timeout(std::time::Duration::from_secs(30), host.host_server(sid, "s", None)).await.unwrap().unwrap();
+        host.shutdown().await.ok();
+        let (node, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        let app = Arc::new(App::default());
+        let identity = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(identity.public());
+        *app.profile.lock().unwrap() = Some(me);
+        *app.identity.lock().unwrap() = Some(identity);
+        *app.net.lock().await = Some(node);
+        let started = std::time::Instant::now();
+        let joined = join_ticket(&app, &TestHandle::new(app.clone()), ticket).await;
+        assert!(joined.is_ok(), "{joined:?}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+        assert!(app.awaits_snapshot(sid));
+        assert!(app.net.try_lock().is_ok(), "the network is free for other work");
     }
 }
 
