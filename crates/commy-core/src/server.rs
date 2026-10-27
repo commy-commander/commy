@@ -385,6 +385,8 @@ pub struct Server {
     pub defaults_version: u32,
     #[serde(default)]
     pub activities_enabled: bool,
+    #[serde(default)]
+    pub stepped_down: std::collections::BTreeMap<UserId, i64>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -463,6 +465,7 @@ impl Server {
             onboarding: None,
             defaults_version: MEMBER_DEFAULTS_VERSION,
             activities_enabled: false,
+            stepped_down: std::collections::BTreeMap::new(),
         }
     }
 

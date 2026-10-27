@@ -1229,7 +1229,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         fixture, identity_for, join, join_moderator, keyed_profile, post, post_at, proof_at,
-        MemStore,
+        signed_event, MemStore,
     };
     use chrono::{DateTime, Utc};
     use commy_core::{Channel, ChannelId, ChannelKind, Snapshot};
@@ -1856,7 +1856,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_delete_applies_where_its_signers_role_never_arrived() {
+    async fn a_delete_waits_where_its_signers_role_has_not_arrived() {
         for a_dials in [true, false] {
             let (mut state, channel, owner) = fixture();
             let author = join(&mut state, "author");
@@ -1876,13 +1876,14 @@ mod tests {
                 banner: None,
             };
             let rid = role.id;
-            state.apply(ServerEvent::RoleCreate { server, role }).unwrap();
+            let create = ServerEvent::RoleCreate { server, role };
+            state.apply(create.clone()).unwrap();
             let grant = ServerEvent::RoleAssign {
                 server,
                 user: moderator,
                 role: rid,
             };
-            state.apply(grant).unwrap();
+            state.apply(grant.clone()).unwrap();
             let a = MemStore::new(state, owner);
             let b = MemStore::new(missed, author);
             let spam = a.post_as(author, channel, "spam");
@@ -1892,7 +1893,13 @@ mod tests {
             let case = format!("a dials {a_dials}");
 
             let (ra, _) = either_way(&a, &b, a_dials).await;
-            assert!(!b.has(spam.id), "{case}");
+            assert!(b.has(spam.id), "{case}: b does not know they are a moderator yet");
+            b.with(|s| {
+                for event in [&create, &grant] {
+                    s.apply(event.clone()).unwrap();
+                }
+            });
+            assert!(!b.has(spam.id), "{case}: the held delete applies once the role arrives");
             let kept: Vec<TombstoneProof> =
                 b.with(|s| s.tombstones_for(spam.id).into_iter().cloned().collect());
             assert_eq!(kept, vec![proof], "{case}");
@@ -2827,7 +2834,7 @@ mod tests {
             })
             .unwrap();
         for m in [&own, &theirs, &unseen] {
-            let p = proof_at(&a_state, m, banned, Utc::now());
+            let p = proof_at(&a_state, m, m.author, Utc::now());
             assert_eq!(a_state.apply(p.into_event()), Ok(true));
         }
         let ban = ServerEvent::MemberBan {
@@ -3271,13 +3278,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_delete_by_someone_who_left_or_was_banned_converges() {
+    async fn a_delete_by_a_moderator_who_left_or_was_banned_converges() {
         for how in ["leave", "ban"] {
             for a_dials in [true, false] {
                 let (mut state, channel, owner) = fixture();
                 let server = state.server.id;
                 let author = join(&mut state, "author");
-                let signer = join(&mut state, "signer");
+                let signer = join_moderator(&mut state, "signer");
                 let friend = join(&mut state, "friend");
                 let holder = MemStore::new(state.clone(), owner);
                 let lacking = MemStore::new(state, friend);
@@ -3302,8 +3309,10 @@ mod tests {
                         user: signer,
                     },
                 };
+                let by = if how == "ban" { owner } else { signer };
+                let out = holder.with(|s| signed_event(s, by, Utc::now() + chrono::Duration::seconds(1), out));
                 for store in [&holder, &lacking] {
-                    store.with(|s| s.apply(out.clone()).unwrap());
+                    store.with(|s| s.apply_signed(&out).unwrap());
                 }
                 let case = format!("{how}, a dials {a_dials}");
                 for _ in 0..2 {

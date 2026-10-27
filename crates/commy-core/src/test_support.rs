@@ -84,3 +84,7 @@ pub fn delete(state: &ServerState, message: &Message, by: UserId) -> ServerEvent
 pub fn proof(state: &ServerState, message: &Message, by: UserId, at: DateTime<Utc>) -> TombstoneProof {
     TombstoneProof::sign(state.server.id, message.channel, message.id, by, at, &identity_for(by))
 }
+
+pub fn signed_event(state: &ServerState, by: UserId, at: DateTime<Utc>, event: ServerEvent) -> crate::action::SignedEvent {
+    crate::action::SignedEvent::sign(state.server.id, by, at.timestamp_millis(), event, &identity_for(by))
+}
