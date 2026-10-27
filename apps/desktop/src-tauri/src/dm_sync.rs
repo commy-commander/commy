@@ -61,7 +61,7 @@ fn partner_key(app: &App, user: UserId) -> Option<IdentityKey> {
     pinned.or_else(|| outbox::member_profile(&app.servers.lock().unwrap(), user).and_then(|p| p.identity))
 }
 
-fn partner_profile(app: &App, user: UserId) -> Option<UserProfile> {
+pub(crate) fn partner_profile(app: &App, user: UserId) -> Option<UserProfile> {
     let known = app.dms.lock().unwrap().contacts.get(&user).cloned();
     known.or_else(|| outbox::member_profile(&app.servers.lock().unwrap(), user)).filter(|p| p.identity.is_some())
 }

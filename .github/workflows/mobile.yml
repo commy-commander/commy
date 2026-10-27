@@ -3,15 +3,22 @@ name: Mobile builds
 on:
   push:
     branches: [main]
-    paths: &mobile-paths
+    paths:
+      - "crates/**"
+      - "apps/desktop/src-tauri/**"
+      - "apps/desktop/mobile/**"
+      - "apps/desktop/ui/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/mobile.yml"
+  pull_request:
+    paths:
       - "crates/**"
       - "apps/desktop/src-tauri/**"
       - "apps/desktop/mobile/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/mobile.yml"
-  pull_request:
-    paths: *mobile-paths
   workflow_dispatch:
 
 permissions:

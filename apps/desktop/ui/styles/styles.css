@@ -2072,7 +2072,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   font-size: 14px;
   font-weight: 700;
 }
-.vp-signal { display: inline-flex; color: var(--accent); }
+.vp-signal { display: inline-flex; color: var(--green); }
 .vp-where { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vp-hangup:hover { color: var(--red); }
 
@@ -2987,7 +2987,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   box-shadow: 0 6px 16px rgba(0, 0, 0, .35);
   z-index: 2;
 }
-.msg:hover .msg-actions { display: flex; }
+.msg:hover .msg-actions, .msg.touched .msg-actions { display: flex; }
 .msg.editing .msg-actions, .delete-preview .msg-actions { display: none; }
 .msg-actions button {
   width: 30px;
@@ -5645,6 +5645,7 @@ h3.md-heading { font-size: 1.1em; }
 
 .phone-back { display: none; }
 body.mobile-app .desktop-only { display: none !important; }
+body:not(.mobile-app) .mobile-only { display: none !important; }
 
 @media (max-width: 1000px) and (min-width: 701px) {
   .app { --sidebar-w: 208px; grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 232px; }
@@ -7634,6 +7635,41 @@ body.has-titlebar .app { height: calc(100vh - 32px); margin-top: 32px; }
 .modal-notify.muted .notify-levels { opacity: .45; }
 .join-sound-list { max-height: 320px; overflow-y: auto; }
 .notify-level:disabled { cursor: default; }
+
+.vp-talk {
+  height: 44px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  color: var(--header-primary);
+  font: 700 14px var(--font);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: pointer;
+}
+.vp-talk.on { background: var(--accent); color: var(--accent-ink); }
+
+body.mobile-app .vp-actions { display: flex; }
+body.mobile-app .vp-actions > * { flex: 1 1 0; }
+
+@media (min-width: 701px) {
+  body.mobile-app .app {
+    height: 100dvh;
+    padding: env(safe-area-inset-top) calc(10px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
+  }
+}
+
+@media (min-width: 701px) and (max-width: 1000px) {
+  body.mobile-app .app { --sidebar-w: 248px; }
+}
+
+@media (min-width: 701px) and (max-height: 600px) {
+  body.mobile-app .app { grid-template-rows: 52px minmax(0, 1fr); gap: 8px; }
+  body.mobile-app .sidebar-header.has-banner { height: 84px; }
+  body.mobile-app .voice-panel { gap: 6px; padding: 6px; }
+}
 
 .narrow-servers, .narrow-column, .narrow-menu, .narrow-dock, .voice-rings { display: none; }
 

@@ -96,7 +96,7 @@
         </div>
         <div class="vp-conn">
           <div class="vp-conn-meta" id="vp-conn-meta" title="Go to voice channel">
-            <div class="vp-status"><span class="vp-signal" id="vp-signal"></span><span id="vp-status-text">Voice Connected</span></div>
+            <div class="vp-status"><span class="vp-signal" id="vp-signal" data-quality="good"></span><span id="vp-status-text">Voice Connected</span></div>
             <div class="vp-where" id="vp-where"></div>
             <div class="vp-topic hidden" id="vp-topic"></div>
           </div>
@@ -114,6 +114,7 @@
           </div>
           <button class="icon-btn" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
         </div>
+        <button class="vp-talk hidden" id="vp-talk" type="button">Hold to talk</button>
         <div class="vp-actions" id="vp-actions">
           <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
           <button class="vp-activities vp-share desktop-only" id="share-btn" title="Share Your Screen"></button>
@@ -1472,10 +1473,10 @@
           <div class="settings-card">
             <div class="segmented input-mode" id="input-mode" role="radiogroup" aria-label="Input mode">
               <button data-mode="voice_activity" role="radio"><strong>Voice Activity</strong><span>Opens when you speak</span></button>
-              <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span>Hold a key to talk</span></button>
+              <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span class="desktop-only">Hold a key to talk</span><span class="mobile-only">Hold the talk button</span></button>
             </div>
             <div class="setting-sub" id="input-mode-note"></div>
-            <div class="setting-row talk-only" id="talk-key-row">
+            <div class="setting-row talk-only desktop-only" id="talk-key-row">
               <div>
                 <div class="setting-title">Push to talk key</div>
                 <div class="setting-sub">Works while a game has focus. Click the box and press a new combination.</div>
@@ -1505,8 +1506,8 @@
               <div class="setting-sub" id="mic-meter-note">Start a mic test or join a voice channel to see your level.</div>
             </div>
           </div>
-          <h2 class="settings-subhead">Voice Hotkeys</h2>
-          <div class="settings-card">
+          <h2 class="settings-subhead desktop-only">Voice Hotkeys</h2>
+          <div class="settings-card desktop-only">
             <div class="setting-row">
               <div>
                 <div class="setting-title">Mute or unmute</div>
@@ -2887,6 +2888,7 @@
   <script src="scripts/slow-mode.js"></script>
   <script src="scripts/threads.js"></script>
   <script src="scripts/voice-status.js"></script>
+  <script src="scripts/voice-signal.js"></script>
   <script src="scripts/forum.js"></script>
   <script src="scripts/stage.js"></script>
   <script src="scripts/emoji.js"></script>

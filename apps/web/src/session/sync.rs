@@ -278,7 +278,7 @@ impl Session {
                 let change = live.book.fold(Record::parse(plain));
                 let settled = live.account_live;
                 drop(guard);
-                if settled || matches!(change, Change::Partner(..)) {
+                if settled || matches!(change, Change::Partner(..) | Change::Relations(_)) {
                     self.on_account_change(change);
                 }
                 return;
@@ -402,6 +402,7 @@ impl Session {
             Change::Prefs(set) => self.emit("sync-prefs-changed", json!(set)),
             Change::Saved => self.emit("saved-changed", json!(self.saved())),
             Change::Partner(profile, at, accepted) => self.adopt_partner(*profile, at, accepted),
+            Change::Relations(set) => self.adopt_relations(set),
         }
     }
 

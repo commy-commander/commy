@@ -848,6 +848,8 @@ impl Session {
                     "name": name_of(*user),
                     "rtt_ms": rtt.as_secs_f32() * 1000.0,
                     "loss_pct": stats.lost_packets as f32 * 100.0 / stats.udp_tx.datagrams.max(1) as f32,
+                    "lost_packets": stats.lost_packets,
+                    "sent_packets": stats.udp_tx.datagrams,
                     "jitter_ms": 0.0,
                     "path": path.kind,
                     "relay": path.relay,

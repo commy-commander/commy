@@ -2190,6 +2190,7 @@ async fn friend_action(
         }
     }
     app.persist_safety();
+    account_log::note_relation(&app, user);
     let _ = handle.emit("friends-changed", serde_json::json!({ "user": user.to_string() }));
     Ok(())
 }
@@ -2238,6 +2239,7 @@ fn set_blocked(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: St
     }
     if app.safety.lock().unwrap().set_blocked(user, blocked) {
         app.persist_safety();
+        account_log::note_relation(&app, user);
         let _ = handle.emit("safety-changed", ());
     }
     Ok(())
@@ -3886,7 +3888,6 @@ fn emit_voice_settings(handle: &tauri::AppHandle, voice: &VoiceSettings) {
     let _ = handle.emit("voice-settings-changed", voice);
 }
 
-#[cfg(desktop)]
 fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
     let app = handle.state::<App>();
     let press = app.talk_press.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -3905,6 +3906,14 @@ fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
         app.processor.lock().unwrap().set_talk_key_down(false);
         let _ = handle.emit("talk-key", false);
     });
+}
+
+#[tauri::command]
+fn press_talk(handle: tauri::AppHandle, pressed: bool) {
+    let voice = handle.state::<App>().voice.lock().unwrap().clone();
+    if voice.input_mode == voice_keys::InputMode::PushToTalk || !pressed {
+        set_talk_key(&handle, pressed, voice.talk_release_ms);
+    }
 }
 
 #[tauri::command]
@@ -4658,6 +4667,8 @@ struct LinkView {
     name: String,
     rtt_ms: f32,
     loss_pct: f32,
+    lost_packets: u64,
+    sent_packets: u64,
     jitter_ms: f32,
     path: String,
     relay: Option<String>,
@@ -4698,6 +4709,8 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
                 name,
                 rtt_ms: s.rtt_ms,
                 loss_pct: s.loss_pct,
+                lost_packets: s.lost_packets,
+                sent_packets: s.sent_packets,
                 jitter_ms: s.jitter_ms,
                 path: s.path.kind.into(),
                 relay: s.path.relay,
@@ -7464,6 +7477,7 @@ pub fn run() {
             overlay_hotkey_problems,
             voice_hotkey_problems,
             set_input_mode,
+            press_talk,
             set_voice_hotkeys,
             set_sensitivity,
             mic_level,
