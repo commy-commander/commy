@@ -7924,13 +7924,23 @@ function renderAttachment(att) {
   const btn = el("button", "btn-secondary btn-small", "Download");
   btn.onclick = async () => {
     btn.disabled = true;
-    btn.textContent = "Fetching";
+    btn.textContent = isBigFile(att.size_bytes) ? "Choose where" : "Fetching";
+    const watching = (downloadButtons.get(att.blob) || new Set()).add(btn);
+    downloadButtons.set(att.blob, watching);
     await saveAttachment(att);
+    watching.delete(btn);
+    if (!watching.size) downloadButtons.delete(att.blob);
     btn.disabled = false;
     btn.textContent = "Download";
   };
   box.appendChild(btn);
   return box;
+}
+
+const downloadButtons = new Map();
+
+function onFileProgress({ blob, done, total }) {
+  for (const btn of downloadButtons.get(blob) || []) btn.textContent = downloadProgressText(done, total);
 }
 
 async function saveAttachment(att) {
@@ -18638,6 +18648,7 @@ function wireEvents() {
       }
     });
     window.__TAURI__.event.listen("event-reminder", () => playSound("message"));
+    window.__TAURI__.event.listen("file-progress", event => onFileProgress(event.payload));
     window.__TAURI__.event.listen("safety-changed", async () => {
       await loadSafety();
       afterSafetyChange();

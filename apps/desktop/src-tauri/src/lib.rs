@@ -796,8 +796,53 @@ async fn delete_message(
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
-const MAX_ATTACHMENT_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES: u64 = commy_net::node::MAX_IN_MEMORY_FILE_BYTES;
 const ATTACHMENT_TOO_LARGE: &str = "files larger than 512 MB are not supported yet";
+#[cfg(desktop)]
+const MAX_PICKED_ATTACHMENT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+#[cfg(desktop)]
+const PICKED_ATTACHMENT_TOO_LARGE: &str = "files larger than 4 GB are not supported yet";
+#[cfg(mobile)]
+const MAX_PICKED_ATTACHMENT_BYTES: u64 = MAX_ATTACHMENT_BYTES;
+#[cfg(mobile)]
+const PICKED_ATTACHMENT_TOO_LARGE: &str = ATTACHMENT_TOO_LARGE;
+
+async fn pick_attachment(handle: &tauri::AppHandle, title: &str, filter: Option<picker::Filter<'_>>) -> CmdResult<Option<picker::PickedFile>> {
+    let keep_on_disk_over = commy_net::node::BIG_FILE_BYTES;
+    picker::pick_attachment(handle, title, filter, keep_on_disk_over, MAX_PICKED_ATTACHMENT_BYTES, PICKED_ATTACHMENT_TOO_LARGE).await
+}
+
+async fn store_file(app: &App, contents: picker::Contents) -> CmdResult<(String, Option<String>, u64)> {
+    match contents {
+        picker::Contents::Bytes(bytes) => {
+            if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+                return Err(ATTACHMENT_TOO_LARGE.into());
+            }
+            let size = bytes.len() as u64;
+            let (blob, provider) = store_blob(app, bytes).await?;
+            Ok((blob, provider, size))
+        }
+        picker::Contents::OnDisk { path, size } => {
+            if size > MAX_PICKED_ATTACHMENT_BYTES {
+                return Err(PICKED_ATTACHMENT_TOO_LARGE.into());
+            }
+            share_from_disk(app, &path).await
+        }
+    }
+}
+
+#[cfg(desktop)]
+async fn share_from_disk(app: &App, path: &std::path::Path) -> CmdResult<(String, Option<String>, u64)> {
+    let net = app.net.lock().await;
+    let node = net.as_ref().ok_or("network is not ready yet")?;
+    let (blob, size) = node.share_file(path).await.map_err(err_to_string)?;
+    Ok((blob, Some(node.node_id_hex()), size))
+}
+
+#[cfg(mobile)]
+async fn share_from_disk(_app: &App, _path: &std::path::Path) -> CmdResult<(String, Option<String>, u64)> {
+    Err(ATTACHMENT_TOO_LARGE.into())
+}
 
 async fn send_attachment(
     app: &tauri::State<'_, App>,
@@ -805,19 +850,15 @@ async fn send_attachment(
     sid: ServerId,
     cid: ChannelId,
     filename: String,
-    bytes: Vec<u8>,
+    contents: picker::Contents,
 ) -> CmdResult<MessageView> {
-    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err(ATTACHMENT_TOO_LARGE.into());
-    }
     let profile = current_profile(app)?;
     {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(app, state, profile.id, Permissions::ATTACH_FILES, "send files or images here")?;
     }
-    let size_bytes = bytes.len() as u64;
-    let (blob, provider) = store_blob(app, bytes).await?;
+    let (blob, provider, size_bytes) = store_file(app, contents).await?;
 
     let mime_type = mime_guess::from_path(&filename)
         .first_raw()
@@ -949,10 +990,10 @@ async fn attach_file(
         Some("video") => ("Post a video", Some(picker::Filter { label: "Videos", extensions: INLINE_VIDEO_EXTENSIONS })),
         _ => ("Share a file", None),
     };
-    let Some(picked) = picker::pick_file(&handle, title, filter, MAX_ATTACHMENT_BYTES, ATTACHMENT_TOO_LARGE).await? else {
+    let Some(picked) = pick_attachment(&handle, title, filter).await? else {
         return Ok(None);
     };
-    send_attachment(&app, &handle, sid, cid, picked.name, picked.bytes)
+    send_attachment(&app, &handle, sid, cid, picked.name, picked.contents)
         .await
         .map(Some)
 }
@@ -1033,7 +1074,7 @@ async fn attach_bytes(
     if bytes.is_empty() {
         return Err("empty file".into());
     }
-    send_attachment(&app, &handle, sid, cid, filename, bytes).await
+    send_attachment(&app, &handle, sid, cid, filename, picker::Contents::Bytes(bytes)).await
 }
 
 #[tauri::command]
@@ -1103,11 +1144,51 @@ async fn download_attachment(
     size_bytes: Option<u64>,
     server_id: Option<String>,
 ) -> CmdResult<Option<String>> {
+    #[cfg(desktop)]
+    if size_bytes.is_some_and(commy_net::node::is_big_file) {
+        return download_to_disk(&app, &handle, &blob, &filename, provider.as_deref(), server_id.as_deref()).await;
+    }
     if let Some(size) = size_bytes {
         commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
     }
     let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), MAX_ATTACHMENT_BYTES).await?;
     picker::save_file(&handle, &safe_file_name(&filename), bytes).await
+}
+
+#[derive(Clone, serde::Serialize)]
+struct FileProgress<'a> {
+    blob: &'a str,
+    done: u64,
+    total: u64,
+}
+
+#[cfg(desktop)]
+async fn download_to_disk(
+    app: &App,
+    handle: &tauri::AppHandle,
+    blob: &str,
+    filename: &str,
+    provider: Option<&str>,
+    server: Option<&str>,
+) -> CmdResult<Option<String>> {
+    let Some(target) = picker::save_path(handle, &safe_file_name(filename)).await else {
+        return Ok(None);
+    };
+    let server = server.and_then(|s| s.parse::<ServerId>().ok());
+    let (fetcher, sources) = {
+        let net = app.net.lock().await;
+        let node = net.as_ref().ok_or("network is not ready yet")?;
+        let neighbors = server.map(|s| node.neighbors(s)).unwrap_or_default();
+        (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors))
+    };
+    let report = |done, total| {
+        let _ = handle.emit("file-progress", FileProgress { blob, done, total });
+    };
+    fetcher
+        .download_to(blob, sources.iter().map(String::as_str), MAX_PICKED_ATTACHMENT_BYTES, &target, report)
+        .await
+        .map_err(err_to_string)?;
+    Ok(Some(target.display().to_string()))
 }
 
 #[tauri::command]
@@ -1559,6 +1640,18 @@ async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Optio
         (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors))
     };
     fetcher.fetch_from(blob, sources.iter().map(String::as_str), max).await.map_err(err_to_string)
+}
+
+#[cfg(desktop)]
+const SHARED_FILES_DIR: &str = "shared-files";
+
+#[cfg(desktop)]
+async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
+    let Some(dir) = app.data_dir().map(|d| d.join(SHARED_FILES_DIR)) else { return };
+    match commy_net::shelf::Shelf::open(&dir).await {
+        Ok(shelf) => node.set_shelf(shelf),
+        Err(e) => tracing::warn!("big files cannot be shared from this device: {e:#}"),
+    }
 }
 
 fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
@@ -2602,14 +2695,10 @@ async fn send_dm_attachment(
     handle: &tauri::AppHandle,
     user_id: &str,
     filename: String,
-    bytes: Vec<u8>,
+    contents: picker::Contents,
 ) -> CmdResult<DmMessageView> {
-    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err(ATTACHMENT_TOO_LARGE.into());
-    }
     let (me, partner) = dm_partner(app, user_id)?;
-    let size_bytes = bytes.len() as u64;
-    let (blob, provider) = store_blob(app, bytes).await?;
+    let (blob, provider, size_bytes) = store_file(app, contents).await?;
     let mime_type = mime_guess::from_path(&filename)
         .first_raw()
         .unwrap_or("application/octet-stream")
@@ -2632,10 +2721,10 @@ async fn attach_dm_file(
         Some("video") => ("Send a video", Some(picker::Filter { label: "Videos", extensions: INLINE_VIDEO_EXTENSIONS })),
         _ => ("Send a file", None),
     };
-    let Some(picked) = picker::pick_file(&handle, title, filter, MAX_ATTACHMENT_BYTES, ATTACHMENT_TOO_LARGE).await? else {
+    let Some(picked) = pick_attachment(&handle, title, filter).await? else {
         return Ok(None);
     };
-    send_dm_attachment(&app, &handle, &user_id, picked.name, picked.bytes).await.map(Some)
+    send_dm_attachment(&app, &handle, &user_id, picked.name, picked.contents).await.map(Some)
 }
 
 #[tauri::command]
@@ -2656,7 +2745,7 @@ async fn attach_dm_bytes(
     if bytes.is_empty() {
         return Err("empty file".into());
     }
-    send_dm_attachment(&app, &handle, &user_id, filename, bytes).await
+    send_dm_attachment(&app, &handle, &user_id, filename, picker::Contents::Bytes(bytes)).await
 }
 
 fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
@@ -7236,6 +7325,8 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 }
                 node.set_catchup_store(catchup::store(&handle));
                 node.set_media_gate(media_gate(&handle));
+                #[cfg(desktop)]
+                open_shelf(&app, &node).await;
                 *app.net.lock().await = Some(node);
                 tracing::info!("iroh node online");
 
