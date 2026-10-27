@@ -1340,29 +1340,39 @@
 
   <div class="settings-layer hidden" id="user-settings" role="dialog" aria-label="User Settings">
     <nav class="settings-nav">
-      <div class="settings-nav-inner">
-        <div class="settings-nav-group" data-i18n="settings.group.user">User Settings</div>
+      <div class="settings-nav-inner" id="user-settings-nav">
+        <div class="settings-search-wrap">
+          <input id="settings-search" class="settings-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search settings" aria-label="Search settings" data-i18n-placeholder="settings.search" />
+        </div>
+        <div class="settings-search-results hidden" id="settings-search-results" aria-label="Matching settings"></div>
+        <div class="settings-nav-group" data-i18n="settings.group.you">You</div>
         <button class="settings-tab" data-tab="account" data-i18n="settings.tab.profile">Profile</button>
         <button class="settings-tab" data-tab="commy-account" data-i18n="settings.tab.account">Commy Account</button>
         <button class="settings-tab" data-tab="privacy" data-i18n="settings.tab.privacy">Privacy &amp; Safety</button>
         <div class="settings-nav-group" data-i18n="settings.group.voice">Voice &amp; Video</div>
-        <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">Voice &amp; Camera</button>
-        <button class="settings-tab desktop-only" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
-        <div class="settings-nav-group" data-i18n="settings.group.app">App Settings</div>
+        <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">Voice</button>
+        <button class="settings-tab" data-tab="camera" data-i18n="settings.tab.camera">Camera</button>
+        <button class="settings-tab desktop-only native-only" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
+        <div class="settings-nav-group" data-i18n="settings.group.alerts">Alerts &amp; Sounds</div>
+        <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
+        <button class="settings-tab" data-tab="sounds" data-i18n="settings.tab.sounds">Sounds</button>
+        <button class="settings-tab" data-tab="tts" data-i18n="settings.tab.tts">Text-to-Speech</button>
+        <div class="settings-nav-group" data-i18n="settings.group.app">App</div>
         <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">Appearance</button>
         <button class="settings-tab" data-tab="accessibility" data-i18n="settings.tab.accessibility">Accessibility</button>
-        <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
+        <button class="settings-tab desktop-only" data-tab="keybinds" data-i18n="settings.tab.keybinds">Keybinds</button>
         <button class="settings-tab" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
+        <div class="settings-nav-group" data-i18n="settings.group.advanced">Advanced</div>
         <button class="settings-tab" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
-        <button class="settings-tab desktop-only" data-tab="startup" data-i18n="settings.tab.startup">Startup</button>
-        <button class="settings-tab desktop-only" data-tab="updates" data-i18n="settings.tab.updates">Updates</button>
+        <button class="settings-tab desktop-only native-only" data-tab="updates" data-i18n="settings.tab.startupUpdates">Startup &amp; Updates</button>
         <button class="settings-tab" data-tab="diagnostics" data-i18n="settings.tab.diagnostics">Diagnostics</button>
       </div>
     </nav>
     <div class="settings-content">
       <div class="settings-content-inner">
-        <section class="settings-page" data-page="account">
+        <section class="settings-page" data-page="account" data-search="avatar picture photo banner name bio about status pronouns">
           <h1 data-i18n="settings.tab.profile">Profile</h1>
+          <p class="settings-intro" data-i18n="settings.intro.profile">How you look to everyone in your servers and messages.</p>
           <div class="profile-card">
             <div class="profile-banner" id="account-banner">
               <div class="role-banner-tools">
@@ -1422,8 +1432,9 @@
           </div>
         </section>
 
-        <section class="settings-page" data-page="commy-account">
+        <section class="settings-page" data-page="commy-account" data-search="sign in sign out log out email password devices sync recovery">
           <h1 data-i18n="settings.tab.account">Commy Account</h1>
+          <p class="settings-intro" data-i18n="settings.intro.account">Your sign-in, and the server list that follows you to every device.</p>
           <div class="settings-card account-card">
             <div class="account-line">
               <div>
@@ -1462,9 +1473,96 @@
           </div>
         </section>
 
-        <section class="settings-page" data-page="voice">
-          <h1 data-i18n="settings.tab.voice">Voice &amp; Camera</h1>
-          <div class="settings-card device-grid">
+        <section class="settings-page" data-page="privacy" data-search="safety block security">
+          <h1 data-i18n="settings.tab.privacy">Privacy &amp; Safety</h1>
+          <p class="settings-intro" data-i18n="settings.intro.privacy">Who can reach you, what they see, and who you have blocked.</p>
+          <h2 class="settings-subhead">Direct Messages</h2>
+          <div class="settings-card">
+            <div class="setting-row" data-search="dm requests strangers">
+              <div>
+                <div class="setting-title">Who can send you direct messages</div>
+                <div class="setting-sub">People you already talk to can always reach you. First messages from anyone else wait in Message Requests.</div>
+              </div>
+              <select id="dm-policy" class="compact-select">
+                <option value="everyone">Everyone</option>
+                <option value="server_members">People in my servers</option>
+                <option value="accepted">Only people I talk to</option>
+              </select>
+            </div>
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Filter likely spam</div>
+                <div class="setting-sub">Message requests with lots of links or the same text over and over go to a Spam folder without a notification. Strangers sending more than 5 messages a minute are dropped.</div>
+              </div>
+              <input type="checkbox" id="spam-filter-toggle" class="switch" />
+            </label>
+          </div>
+          <h2 class="settings-subhead">Profile</h2>
+          <div class="settings-card">
+            <div class="setting-row" data-search="bio friends only visibility">
+              <div>
+                <div class="setting-title">Who can see your profile</div>
+                <div class="setting-sub">Your bio, banner, pronouns and what you're playing. Everyone still sees your name and avatar so the chat reads normally. Friends only also hides these from the servers you share.</div>
+              </div>
+              <select id="profile-policy" class="compact-select">
+                <option value="everyone">Everyone</option>
+                <option value="shared_servers">Friends and servers we share</option>
+                <option value="friends">Friends only</option>
+              </select>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Activity</h2>
+          <label class="settings-card setting-row" data-search="game status playing activity">
+            <div>
+              <div class="setting-title">Share what I'm playing or using</div>
+              <div class="setting-sub">Shows the game or app in front on your screen as "Playing ..." or "Using ..." under your name, for everyone in your servers. Turn it off and it clears right away.</div>
+            </div>
+            <input type="checkbox" id="share-activity-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead" data-search="block unblock">Blocked Users</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Blocked people cannot send you direct messages, and their messages in servers are collapsed for you. They are not told.</div>
+            <div id="blocked-list" class="blocked-list"></div>
+          </div>
+          <h2 class="settings-subhead">Links</h2>
+          <div class="settings-card">
+            <label class="setting-row" data-search="embeds link cards">
+              <div>
+                <div class="setting-title">Add previews to links I send</div>
+                <div class="setting-sub">Your app reads the page's title, description and picture and sends them with your message, so the people who see it never contact that site. The site sees your address when your app reads it.</div>
+              </div>
+              <input type="checkbox" id="link-preview-send-toggle" class="switch" />
+            </label>
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Show link previews</div>
+                <div class="setting-sub">Shows the cards other people's links come with. They arrive from the sender, not from the site.</div>
+              </div>
+              <input type="checkbox" id="link-preview-show-toggle" class="switch" />
+            </label>
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">Trusted sites</div>
+                <div class="setting-sub" id="trusted-links-summary">Every site outside Commy asks before it opens.</div>
+              </div>
+              <button class="btn-secondary btn-small" type="button" id="trusted-links-forget">Forget All</button>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Age-restricted Channels</h2>
+          <div class="settings-card setting-row">
+            <div>
+              <div class="setting-title">Reset age-restricted confirmations</div>
+              <div class="setting-sub">Every age-restricted channel asks again before it shows anything on this device.</div>
+            </div>
+            <button class="btn-secondary btn-small" type="button" id="sensitive-reset">Reset</button>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="voice" data-search="audio microphone mic headset speakers sound">
+          <h1 data-i18n="settings.tab.voice">Voice</h1>
+          <p class="settings-intro" data-i18n="settings.intro.voice">Your mic and speakers, how your mic opens, and how you sound.</p>
+          <h2 class="settings-subhead">Devices</h2>
+          <div class="settings-card device-grid" data-search="microphone mic headset headphones speakers audio">
             <label class="field-label">Input Device
               <select id="input-device"><option value="">Default</option></select>
             </label>
@@ -1472,7 +1570,110 @@
               <select id="output-device"><option value="">Default</option></select>
             </label>
           </div>
-          <h2 class="settings-subhead">Camera</h2>
+          <div class="settings-card">
+            <div class="slider-row" data-search="mic gain loudness">
+              <div class="setting-title">Input Volume <span id="input-gain-label">100%</span></div>
+              <input type="range" id="input-gain" min="0" max="200" value="100" />
+            </div>
+            <div class="slider-row" data-search="speakers headphones loudness">
+              <div class="setting-title">Output Volume <span id="output-vol-label">100%</span></div>
+              <input type="range" id="output-vol" min="0" max="200" value="100" />
+            </div>
+          </div>
+          <h2 class="settings-subhead">Mic Test</h2>
+          <div class="settings-card setting-row" data-search="mic test microphone loopback">
+            <div>
+              <div class="setting-title">Hear yourself</div>
+              <div class="setting-sub">Plays your mic back through the full voice pipeline, including noise cancellation.</div>
+            </div>
+            <button class="btn-primary btn-small" id="mic-test-btn">Start Test</button>
+          </div>
+          <h2 class="settings-subhead" data-search="push to talk ptt voice activity open mic">Input Mode</h2>
+          <div class="settings-card">
+            <div class="segmented input-mode" id="input-mode" role="radiogroup" aria-label="Input mode">
+              <button data-mode="voice_activity" role="radio"><strong>Voice Activity</strong><span>Opens when you speak</span></button>
+              <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span class="desktop-only">Hold a key to talk</span><span class="mobile-only">Hold the talk button</span></button>
+            </div>
+            <div class="setting-sub" id="input-mode-note"></div>
+            <div class="setting-row talk-only desktop-only" data-search="ptt hotkey keybind" id="talk-key-row">
+              <div>
+                <div class="setting-title">Push to talk key</div>
+                <div class="setting-sub">Works while a game has focus. Click the box and press a new combination.</div>
+              </div>
+              <input id="talk-key" class="hotkey-input" type="text" readonly aria-label="Push to talk key" />
+            </div>
+            <div class="setting-row talk-only" id="talk-release-row">
+              <div>
+                <div class="setting-title">Release delay</div>
+                <div class="setting-sub">Keeps your mic open for a moment after you let go, so the end of a sentence is not cut off.</div>
+              </div>
+              <select id="talk-release" class="compact-select" aria-label="Release delay"></select>
+            </div>
+            <div class="voice-only" id="sensitivity-block">
+              <div class="setting-row" data-search="threshold gate">
+                <div>
+                  <div class="setting-title">Input Sensitivity <span id="sensitivity-label">Automatic</span></div>
+                  <div class="setting-sub">Automatic listens for a voice. Turn it off to open the mic by loudness instead.</div>
+                </div>
+                <input type="checkbox" id="sensitivity-auto" class="switch" aria-label="Automatic sensitivity" />
+              </div>
+              <div class="mic-meter" id="mic-meter" aria-hidden="true">
+                <div class="mic-meter-fill" id="mic-meter-fill"></div>
+                <div class="mic-meter-mark" id="mic-meter-mark"></div>
+              </div>
+              <input type="range" id="sensitivity-db" min="-100" max="0" value="-45" aria-label="Sensitivity threshold" />
+              <div class="setting-sub" id="mic-meter-note">Start a mic test or join a voice channel to see your level.</div>
+            </div>
+          </div>
+          <h2 class="settings-subhead native-only">Voice Filter</h2>
+          <div class="settings-card native-only" id="voice-filter-card" data-search="voice changer effects">
+            <div class="setting-sub">Change how you sound in voice channels and calls. A server can switch filters off for some roles or everyone.</div>
+            <div class="segmented voice-filters" id="voice-filter" role="radiogroup" aria-label="Voice filter"></div>
+            <div class="setting-sub voice-filter-note" id="voice-filter-note"></div>
+          </div>
+          <h2 class="settings-subhead">Voice Processing</h2>
+          <label class="settings-card setting-row" data-search="background noise suppression rnnoise">
+            <div>
+              <div class="setting-title">Noise Cancellation</div>
+              <div class="setting-sub">Removes keyboards, fans and other background noise using RNNoise. If your headset or mic software also removes noise, turn one of them off; stacking two can cause hiss.</div>
+            </div>
+            <input type="checkbox" id="nc-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row" data-search="feedback speakers">
+            <div>
+              <div class="setting-title">Echo Cancellation</div>
+              <div class="setting-sub">Stops the call audio coming out of your speakers from being sent back to everyone through your mic. Keep it on unless you always use a headset.</div>
+            </div>
+            <input type="checkbox" id="ec-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row" data-search="gain agc quiet microphone">
+            <div>
+              <div class="setting-title">Automatic Mic Level</div>
+              <div class="setting-sub">Evens out your voice so everyone hears you at a steady, comfortable volume, even with a quiet mic. Turn it off if your mic software already levels your voice.</div>
+            </div>
+            <input type="checkbox" id="agc-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead">Idle</h2>
+          <div class="settings-card setting-row" data-search="idle away inactive afk">
+            <div>
+              <div class="setting-title">Go AFK after</div>
+              <div class="setting-sub">After this long with no typing, clicking or talking, everyone sees you as Idle and you move to the server's AFK channel. Any activity brings you back online.</div>
+            </div>
+            <select id="afk-timeout" class="compact-select">
+              <option value="0">Never</option>
+              <option value="1">1 minute</option>
+              <option value="5">5 minutes</option>
+              <option value="10">10 minutes</option>
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="60">1 hour</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="camera" data-search="video webcam">
+          <h1 data-i18n="settings.tab.camera">Camera</h1>
+          <p class="settings-intro" data-i18n="settings.intro.camera">Your camera, with a background or an avatar in place of your face.</p>
           <div class="settings-card camera-card">
             <div class="cam-stage" id="cam-stage">
               <div class="cam-stage-idle" id="cam-stage-idle">Your camera is off</div>
@@ -1495,7 +1696,7 @@
                 <button data-avatar="alien" role="radio" title="Alien"><img alt="Alien" /></button>
                 <button data-avatar="custom" role="radio" title="Your own VRM avatar"><img alt="Your own avatar" /><strong class="cam-avatar-add">+</strong></button>
               </div>
-              <label class="setting-row cam-mirror-row">
+              <label class="setting-row cam-mirror-row" data-search="flip">
                 <span class="setting-title">Mirror my video</span>
                 <input type="checkbox" id="cam-mirror" class="switch" />
               </label>
@@ -1507,324 +1708,11 @@
               </div>
             </div>
           </div>
-          <div class="settings-card">
-            <div class="slider-row">
-              <div class="setting-title">Input Volume <span id="input-gain-label">100%</span></div>
-              <input type="range" id="input-gain" min="0" max="200" value="100" />
-            </div>
-            <div class="slider-row">
-              <div class="setting-title">Output Volume <span id="output-vol-label">100%</span></div>
-              <input type="range" id="output-vol" min="0" max="200" value="100" />
-            </div>
-          </div>
-          <h2 class="settings-subhead">Input Mode</h2>
-          <div class="settings-card">
-            <div class="segmented input-mode" id="input-mode" role="radiogroup" aria-label="Input mode">
-              <button data-mode="voice_activity" role="radio"><strong>Voice Activity</strong><span>Opens when you speak</span></button>
-              <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span class="desktop-only">Hold a key to talk</span><span class="mobile-only">Hold the talk button</span></button>
-            </div>
-            <div class="setting-sub" id="input-mode-note"></div>
-            <div class="setting-row talk-only desktop-only" id="talk-key-row">
-              <div>
-                <div class="setting-title">Push to talk key</div>
-                <div class="setting-sub">Works while a game has focus. Click the box and press a new combination.</div>
-              </div>
-              <input id="talk-key" class="hotkey-input" type="text" readonly aria-label="Push to talk key" />
-            </div>
-            <div class="setting-row talk-only" id="talk-release-row">
-              <div>
-                <div class="setting-title">Release delay</div>
-                <div class="setting-sub">Keeps your mic open for a moment after you let go, so the end of a sentence is not cut off.</div>
-              </div>
-              <select id="talk-release" class="compact-select" aria-label="Release delay"></select>
-            </div>
-            <div class="voice-only" id="sensitivity-block">
-              <div class="setting-row">
-                <div>
-                  <div class="setting-title">Input Sensitivity <span id="sensitivity-label">Automatic</span></div>
-                  <div class="setting-sub">Automatic listens for a voice. Turn it off to open the mic by loudness instead.</div>
-                </div>
-                <input type="checkbox" id="sensitivity-auto" class="switch" aria-label="Automatic sensitivity" />
-              </div>
-              <div class="mic-meter" id="mic-meter" aria-hidden="true">
-                <div class="mic-meter-fill" id="mic-meter-fill"></div>
-                <div class="mic-meter-mark" id="mic-meter-mark"></div>
-              </div>
-              <input type="range" id="sensitivity-db" min="-100" max="0" value="-45" aria-label="Sensitivity threshold" />
-              <div class="setting-sub" id="mic-meter-note">Start a mic test or join a voice channel to see your level.</div>
-            </div>
-          </div>
-          <h2 class="settings-subhead desktop-only">Voice Hotkeys</h2>
-          <div class="settings-card desktop-only">
-            <div class="setting-row">
-              <div>
-                <div class="setting-title">Mute or unmute</div>
-                <div class="setting-sub">Works in any app. Click the box and press a combination, or Backspace to clear it.</div>
-              </div>
-              <input id="mute-key" class="hotkey-input" type="text" readonly placeholder="None" aria-label="Mute hotkey" />
-            </div>
-            <div class="setting-row">
-              <div class="setting-title">Deafen or undeafen</div>
-              <input id="deafen-key" class="hotkey-input" type="text" readonly placeholder="None" aria-label="Deafen hotkey" />
-            </div>
-            <div class="setting-sub hotkey-warning hidden" id="voice-hotkey-warning"></div>
-          </div>
-          <h2 class="settings-subhead">Mic Test</h2>
-          <div class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Hear yourself</div>
-              <div class="setting-sub">Plays your mic back through the full voice pipeline, including noise cancellation.</div>
-            </div>
-            <button class="btn-primary btn-small" id="mic-test-btn">Start Test</button>
-          </div>
-          <h2 class="settings-subhead native-only">Voice Filter</h2>
-          <div class="settings-card native-only" id="voice-filter-card">
-            <div class="setting-sub">Change how you sound in voice channels and calls. A server can switch filters off for some roles or everyone.</div>
-            <div class="segmented voice-filters" id="voice-filter" role="radiogroup" aria-label="Voice filter"></div>
-            <div class="setting-sub voice-filter-note" id="voice-filter-note"></div>
-          </div>
-          <h2 class="settings-subhead">Voice Processing</h2>
-          <label class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Noise Cancellation</div>
-              <div class="setting-sub">Removes keyboards, fans and other background noise using RNNoise. If your headset or mic software also removes noise, turn one of them off; stacking two can cause hiss.</div>
-            </div>
-            <input type="checkbox" id="nc-toggle" class="switch" />
-          </label>
-          <label class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Echo Cancellation</div>
-              <div class="setting-sub">Stops the call audio coming out of your speakers from being sent back to everyone through your mic. Keep it on unless you always use a headset.</div>
-            </div>
-            <input type="checkbox" id="ec-toggle" class="switch" />
-          </label>
-          <label class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Automatic Mic Level</div>
-              <div class="setting-sub">Evens out your voice so everyone hears you at a steady, comfortable volume, even with a quiet mic. Turn it off if your mic software already levels your voice.</div>
-            </div>
-            <input type="checkbox" id="agc-toggle" class="switch" />
-          </label>
-          <h2 class="settings-subhead">Idle</h2>
-          <div class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Go AFK after</div>
-              <div class="setting-sub">After this long with no typing, clicking or talking, everyone sees you as Idle and you move to the server's AFK channel. Any activity brings you back online.</div>
-            </div>
-            <select id="afk-timeout" class="compact-select">
-              <option value="0">Never</option>
-              <option value="1">1 minute</option>
-              <option value="5">5 minutes</option>
-              <option value="10">10 minutes</option>
-              <option value="15">15 minutes</option>
-              <option value="30">30 minutes</option>
-              <option value="60">1 hour</option>
-            </select>
-          </div>
         </section>
 
-
-        <section class="settings-page" data-page="storage">
-          <h1 data-i18n="settings.tab.storage">Storage</h1>
-          <div class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Keep server messages for</div>
-              <div class="setting-sub">Older messages are removed from this device to save space. Pinned messages stay, and so does any message a newer reply points to. Other members keep their own copies.</div>
-            </div>
-            <select id="keep-default" class="compact-select">
-              <option value="30">30 days</option>
-              <option value="90">90 days</option>
-              <option value="180">6 months</option>
-              <option value="365">1 year</option>
-              <option value="forever">Forever</option>
-            </select>
-          </div>
-          <h2 class="settings-subhead">Per Server</h2>
-          <div class="settings-card">
-            <div class="setting-sub">Keep a busy server for less time, or a small one forever.</div>
-            <div id="keep-servers" class="keep-servers"></div>
-          </div>
-          <div class="setting-sub">Videos and files download only when you click them, and so do images over 5 MB. Joining a server brings its recent messages, not its whole history.</div>
-        </section>
-
-        <section class="settings-page" data-page="notifications">
-          <h1 data-i18n="settings.tab.notifications">Notifications</h1>
-          <div class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Desktop notifications</div>
-              <div class="setting-sub">Desktop notifications and a sound for new messages while you are not looking at that conversation, including messages that arrive while Commy catches up after a wake-up. Direct messages always count. Right-click a server to change it for that server. Do Not Disturb silences everything.</div>
-            </div>
-            <select id="notify-level" class="compact-select">
-              <option value="all">All messages</option>
-              <option value="mentions">Mentions and DMs</option>
-              <option value="none">Nothing</option>
-            </select>
-          </div>
-          <label class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Friend comes online</div>
-              <div class="setting-sub">A small toast when a friend goes from offline to online, at most once every ten minutes for each friend. Right-click a friend to turn it on for just that person, or off for just that person when this is on. Nothing while you are Do Not Disturb or appearing offline.</div>
-            </div>
-            <input type="checkbox" id="friend-online-toggle" class="switch" />
-          </label>
-          <div class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Text-to-speech</div>
-              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice, only while you are connected to voice. Never while you are deafened or Do Not Disturb, never your own, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
-            </div>
-            <select id="tts-mode" class="compact-select">
-              <option value="never">Never</option>
-              <option value="open">Only when the channel is open</option>
-              <option value="all">All channels</option>
-            </select>
-          </div>
-          <div class="settings-card">
-            <div class="setting-row tts-voice-row">
-              <div>
-                <div class="setting-title">Voice</div>
-                <div class="setting-sub">Any voice installed on this device.</div>
-              </div>
-              <select id="tts-voice" class="compact-select tts-voice-select">
-                <option value="">Computer default</option>
-              </select>
-            </div>
-            <div class="slider-row">
-              <div class="setting-title">Voice rate <span id="tts-rate-label">1.0x</span></div>
-              <input type="range" id="tts-rate" min="5" max="20" value="10" />
-            </div>
-            <div class="slider-row">
-              <div class="setting-title">Voice pitch <span id="tts-pitch-label">1.0</span></div>
-              <input type="range" id="tts-pitch" min="5" max="20" value="10" />
-            </div>
-            <div class="setting-row tts-preview-row">
-              <div class="setting-sub">Hear this voice at this rate and pitch.</div>
-              <button class="btn-secondary btn-small" id="tts-preview">Preview</button>
-            </div>
-          </div>
-          <div class="settings-card setting-row">
-            <div>
-              <div class="setting-title">Test it</div>
-              <div class="setting-sub">Sends a sample notification.</div>
-            </div>
-            <button class="btn-secondary btn-small" id="notify-test">Send Test</button>
-          </div>
-          <h2 class="settings-subhead">Sounds</h2>
-          <div class="settings-card sound-card">
-            <label class="setting-row sound-mute">
-              <div>
-                <div class="setting-title">Play sounds</div>
-                <div class="setting-sub">Turn off to mute every Commy sound. Do Not Disturb also silences them.</div>
-              </div>
-              <input type="checkbox" id="sounds-toggle" class="switch" />
-            </label>
-            <div class="slider-row">
-              <div class="setting-title">Sound Volume <span id="sound-volume-label">80%</span></div>
-              <input type="range" id="sound-volume" min="0" max="100" value="80" />
-            </div>
-            <div class="sound-rows" id="sound-rows"></div>
-          </div>
-          <h2 class="settings-subhead">Your Sounds</h2>
-          <div class="setting-sub expr-intro">Sounds you added for the alerts above. They stay on this device and only you hear them. <span id="sound-custom-count"></span></div>
-          <div id="sound-custom-list" class="expr-list sound-list"></div>
-          <h2 class="settings-subhead">Soundboard</h2>
-          <div class="settings-card">
-            <label class="setting-row">
-              <div>
-                <div class="setting-title">Hear soundboard clips</div>
-                <div class="setting-sub">Turn off to mute clips other people play in voice.</div>
-              </div>
-              <input type="checkbox" id="soundboard-toggle" class="switch" />
-            </label>
-            <label class="setting-row">
-              <div>
-                <div class="setting-title">Hear join sounds</div>
-                <div class="setting-sub">Play the sound a member picked when they join your voice channel. Off plays the usual join sound.</div>
-              </div>
-              <input type="checkbox" id="join-sounds-hear-toggle" class="switch" />
-            </label>
-            <div class="slider-row">
-              <div class="setting-title">Soundboard Volume <span id="soundboard-volume-label">60%</span></div>
-              <input type="range" id="soundboard-volume" min="0" max="100" value="60" />
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-page" data-page="integrations">
-          <h1 data-i18n="settings.tab.integrations">Integrations</h1>
-          <div class="settings-card integration-card" id="gif-card">
-            <div class="integration-head">
-              <div class="integration-logo integration-logo-deck">
-                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M8.5 10.2H7.2a1.2 1.2 0 0 0-1.2 1.2v1.2a1.2 1.2 0 0 0 1.2 1.2h1.3v-1.2H7.8M11.5 10v4M14.2 14v-4h2.3M14.2 12h1.8"/></svg>
-              </div>
-              <div class="integration-copy">
-                <div class="setting-title">GIFs</div>
-                <div class="setting-sub">Type <strong>/gif</strong> in the message box or click the GIF button to search. Without a key, searches go through your Commy account server, which never shares its key with the app. A key of your own is stored only on this device and is never sent to other members.</div>
-              </div>
-            </div>
-            <label class="field-label">Provider
-              <select id="gif-provider">
-                <option value="klipy">KLIPY (recommended)</option>
-                <option value="giphy">GIPHY</option>
-              </select>
-            </label>
-            <label class="field-label">Your own API key (optional)
-              <input id="gif-key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the built-in search" />
-            </label>
-            <div class="setting-sub" id="gif-key-help"></div>
-            <div class="form-actions">
-              <button class="btn-secondary btn-small" id="gif-key-test">Test Key</button>
-              <button class="btn-primary btn-small" id="gif-key-save">Save</button>
-            </div>
-          </div>
-          <div class="settings-card integration-card desktop-only" id="stream-deck-card">
-            <div class="integration-head">
-              <div class="integration-logo integration-logo-deck">
-                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="3"/><rect x="5.5" y="7" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="7" width="3.5" height="3.5" rx=".8"/><rect x="15" y="7" width="3.5" height="3.5" rx=".8"/><rect x="5.5" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="15" y="13.5" width="3.5" height="3.5" rx=".8"/></svg>
-              </div>
-              <div class="integration-copy">
-                <div class="setting-title">Stream Deck <span class="integration-state" id="stream-deck-state"></span></div>
-                <div class="setting-sub">Mute, deafen, push to talk, join channels, change volumes and play or add soundboard sounds from your Stream Deck keys. Commy only listens for it on this computer, and asks you before a Stream Deck can connect.</div>
-              </div>
-              <input type="checkbox" id="stream-deck-enabled" class="switch" aria-label="Allow Stream Deck" />
-            </div>
-            <ol class="integration-steps">
-              <li>Download <strong>commy-soundboard.streamDeckPlugin</strong> from the <a data-href="https://github.com/commy-commander/commy/releases/latest">latest Commy release</a> and open it. Stream Deck 7.1 or newer installs it.</li>
-              <li>Turn on the switch above, then drag an action such as <strong>Mute</strong> or <strong>Play sound</strong> from the Commy category onto a key.</li>
-              <li>Fill in the key settings if it has any, and choose <strong>Allow</strong> when Commy asks.</li>
-            </ol>
-            <div class="setting-sub stream-deck-note" id="stream-deck-note"></div>
-            <div class="stream-deck-decks" id="stream-deck-decks"></div>
-          </div>
-          <div class="settings-card integration-card">
-            <div class="integration-head">
-              <div class="integration-logo">IGDB</div>
-              <div>
-                <div class="setting-title">IGDB game database <span class="integration-state" id="igdb-state"></span></div>
-                <div class="setting-sub">Game search with cover art when tagging servers, and the proper title and cover for the game you are playing. Built in through your Commy account; add credentials here only if your account server does not offer game search.</div>
-              </div>
-            </div>
-            <ol class="integration-steps">
-              <li>Sign in at <a data-href="https://dev.twitch.tv/console/apps">dev.twitch.tv/console/apps</a> (IGDB uses Twitch developer accounts; two-factor sign-in must be on).</li>
-              <li>Choose <strong>Register Your Application</strong>. Any name works, OAuth Redirect URL <code>http://localhost</code>, Category <strong>Application Integration</strong>, Client Type <strong>Confidential</strong>.</li>
-              <li>Open the app, copy the <strong>Client ID</strong>, press <strong>New Secret</strong> and copy the secret.</li>
-            </ol>
-            <label class="field-label">Client ID
-              <input id="igdb-client-id" type="text" autocomplete="off" spellcheck="false" />
-            </label>
-            <label class="field-label">Client Secret
-              <input id="igdb-client-secret" type="password" autocomplete="off" spellcheck="false" />
-            </label>
-            <div class="setting-sub">Saved only on this device, in its settings folder.</div>
-            <div class="form-actions integration-actions">
-              <span class="integration-result" id="igdb-result"></span>
-              <button class="btn-link danger hidden" id="igdb-remove">Disconnect</button>
-              <button class="btn-primary btn-small" id="igdb-save">Save and Test</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-page" data-page="overlay">
+        <section class="settings-page" data-page="overlay" data-search="in game hud">
           <h1 data-i18n="settings.tab.overlay">Game Overlay</h1>
+          <p class="settings-intro" data-i18n="settings.intro.overlay">Who is talking and recent chat, on top of your game.</p>
           <label class="settings-card setting-row">
             <div>
               <div class="setting-title">Enable in-game overlay</div>
@@ -1836,7 +1724,7 @@
             <div class="setting-row">
               <div>
                 <div class="setting-title">Position</div>
-                <div class="setting-sub">Pick the corner of your screen. It moves as soon as you choose.</div>
+                <div class="setting-sub">Pick a corner to keep the voice list and chat together. It moves as soon as you choose.</div>
               </div>
               <div class="corner-picker" id="overlay-corner" role="radiogroup" aria-label="Overlay position">
                 <button class="corner-opt" data-corner="top-left" role="radio" aria-label="Top left" title="Top left"></button>
@@ -1844,6 +1732,19 @@
                 <button class="corner-opt" data-corner="bottom-left" role="radio" aria-label="Bottom left" title="Bottom left"></button>
                 <button class="corner-opt" data-corner="bottom-right" role="radio" aria-label="Bottom right" title="Bottom right"></button>
               </div>
+            </div>
+            <div class="overlay-layout">
+              <div class="setting-title">Your layout</div>
+              <div class="setting-sub">Drag the voice list and chat anywhere on your screen. They snap to the edges and the middle, and arrow keys nudge the one you picked.</div>
+              <div class="overlay-map" id="overlay-map">
+                <div class="overlay-map-box" data-part="voice" tabindex="0" role="slider" aria-label="Voice list position"><span>Voice</span></div>
+                <div class="overlay-map-box" data-part="chat" tabindex="0" role="slider" aria-label="Chat position"><span>Chat</span></div>
+              </div>
+              <div class="overlay-layout-save">
+                <input id="overlay-layout-name" type="text" maxlength="32" autocomplete="off" placeholder="Name this layout" />
+                <button class="btn-secondary btn-small" id="overlay-layout-save">Save Layout</button>
+              </div>
+              <div class="overlay-layout-list" id="overlay-layout-list"></div>
             </div>
             <div class="slider-row">
               <div class="setting-title">Opacity <span id="overlay-opacity-label">90%</span></div>
@@ -1893,110 +1794,349 @@
           <div class="setting-sub overlay-note">Games in exclusive fullscreen draw over every other window, so the overlay will not show there. Switch the game to borderless windowed (often called "Fullscreen Windowed") to see it.</div>
         </section>
 
-        <section class="settings-page" data-page="privacy">
-          <h1 data-i18n="settings.tab.privacy">Privacy &amp; Safety</h1>
-          <h2 class="settings-subhead">Direct Messages</h2>
-          <div class="settings-card">
-            <div class="setting-row">
-              <div>
-                <div class="setting-title">Who can send you direct messages</div>
-                <div class="setting-sub">People you already talk to can always reach you. First messages from anyone else wait in Message Requests.</div>
-              </div>
-              <select id="dm-policy" class="compact-select">
-                <option value="everyone">Everyone</option>
-                <option value="server_members">People in my servers</option>
-                <option value="accepted">Only people I talk to</option>
-              </select>
+        <section class="settings-page" data-page="notifications" data-search="alerts popups toasts badges">
+          <h1 data-i18n="settings.tab.notifications">Notifications</h1>
+          <p class="settings-intro" data-i18n="settings.intro.notifications">When Commy lets you know about messages and friends.</p>
+          <div class="settings-card setting-row" data-search="alerts popups mentions">
+            <div>
+              <div class="setting-title">Desktop notifications</div>
+              <div class="setting-sub">Desktop notifications and a sound for new messages while you are not looking at that conversation, including messages that arrive while Commy catches up after a wake-up. Direct messages always count. Right-click a server to change it for that server. Do Not Disturb silences everything.</div>
             </div>
-            <label class="setting-row">
-              <div>
-                <div class="setting-title">Filter likely spam</div>
-                <div class="setting-sub">Message requests with lots of links or the same text over and over go to a Spam folder without a notification. Strangers sending more than 5 messages a minute are dropped.</div>
-              </div>
-              <input type="checkbox" id="spam-filter-toggle" class="switch" />
-            </label>
+            <select id="notify-level" class="compact-select">
+              <option value="all">All messages</option>
+              <option value="mentions">Mentions and DMs</option>
+              <option value="none">Nothing</option>
+            </select>
           </div>
-          <h2 class="settings-subhead">Profile</h2>
-          <div class="settings-card">
-            <div class="setting-row">
-              <div>
-                <div class="setting-title">Who can see your profile</div>
-                <div class="setting-sub">Your bio, banner, pronouns and what you're playing. Everyone still sees your name and avatar so the chat reads normally. Friends only also hides these from the servers you share.</div>
-              </div>
-              <select id="profile-policy" class="compact-select">
-                <option value="everyone">Everyone</option>
-                <option value="shared_servers">Friends and servers we share</option>
-                <option value="friends">Friends only</option>
-              </select>
+          <label class="settings-card setting-row" data-search="toast friends">
+            <div>
+              <div class="setting-title">Friend comes online</div>
+              <div class="setting-sub">A small toast when a friend goes from offline to online, at most once every ten minutes for each friend. Right-click a friend to turn it on for just that person, or off for just that person when this is on. Nothing while you are Do Not Disturb or appearing offline.</div>
             </div>
-          </div>
-          <h2 class="settings-subhead">Links</h2>
-          <div class="settings-card">
-            <label class="setting-row">
-              <div>
-                <div class="setting-title">Add previews to links I send</div>
-                <div class="setting-sub">Your app reads the page's title, description and picture and sends them with your message, so the people who see it never contact that site. The site sees your address when your app reads it.</div>
-              </div>
-              <input type="checkbox" id="link-preview-send-toggle" class="switch" />
-            </label>
-            <label class="setting-row">
-              <div>
-                <div class="setting-title">Show link previews</div>
-                <div class="setting-sub">Shows the cards other people's links come with. They arrive from the sender, not from the site.</div>
-              </div>
-              <input type="checkbox" id="link-preview-show-toggle" class="switch" />
-            </label>
-            <div class="setting-row">
-              <div>
-                <div class="setting-title">Trusted sites</div>
-                <div class="setting-sub" id="trusted-links-summary">Every site outside Commy asks before it opens.</div>
-              </div>
-              <button class="btn-secondary btn-small" type="button" id="trusted-links-forget">Forget All</button>
-            </div>
-          </div>
-          <h2 class="settings-subhead">Age-restricted Channels</h2>
+            <input type="checkbox" id="friend-online-toggle" class="switch" />
+          </label>
           <div class="settings-card setting-row">
             <div>
-              <div class="setting-title">Reset age-restricted confirmations</div>
-              <div class="setting-sub">Every age-restricted channel asks again before it shows anything on this device.</div>
+              <div class="setting-title">Test it</div>
+              <div class="setting-sub">Sends a sample notification.</div>
             </div>
-            <button class="btn-secondary btn-small" type="button" id="sensitive-reset">Reset</button>
+            <button class="btn-secondary btn-small" id="notify-test">Send Test</button>
           </div>
-          <h2 class="settings-subhead">Blocked Users</h2>
+        </section>
+
+        <section class="settings-page" data-page="sounds" data-search="audio effects volume">
+          <h1 data-i18n="settings.tab.sounds">Sounds</h1>
+          <p class="settings-intro" data-i18n="settings.intro.sounds">The sounds Commy plays, and the soundboard clips you hear in voice.</p>
+          <h2 class="settings-subhead">App Sounds</h2>
+          <div class="settings-card sound-card">
+            <label class="setting-row sound-mute" data-search="mute audio effects">
+              <div>
+                <div class="setting-title">Play sounds</div>
+                <div class="setting-sub">Turn off to mute every Commy sound. Do Not Disturb also silences them.</div>
+              </div>
+              <input type="checkbox" id="sounds-toggle" class="switch" />
+            </label>
+            <div class="slider-row">
+              <div class="setting-title">Sound Volume <span id="sound-volume-label">80%</span></div>
+              <input type="range" id="sound-volume" min="0" max="100" value="80" />
+            </div>
+            <div class="sound-rows" id="sound-rows"></div>
+          </div>
+          <h2 class="settings-subhead">Your Sounds</h2>
+          <div class="setting-sub expr-intro">Sounds you added for the alerts above. They stay on this device and only you hear them. <span id="sound-custom-count"></span></div>
+          <div id="sound-custom-list" class="expr-list sound-list"></div>
+          <h2 class="settings-subhead">Soundboard</h2>
           <div class="settings-card">
-            <div class="setting-sub">Blocked people cannot send you direct messages, and their messages in servers are collapsed for you. They are not told.</div>
-            <div id="blocked-list" class="blocked-list"></div>
+            <label class="setting-row" data-search="clips mute">
+              <div>
+                <div class="setting-title">Hear soundboard clips</div>
+                <div class="setting-sub">Turn off to mute clips other people play in voice.</div>
+              </div>
+              <input type="checkbox" id="soundboard-toggle" class="switch" />
+            </label>
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Hear join sounds</div>
+                <div class="setting-sub">Play the sound a member picked when they join your voice channel. Off plays the usual join sound.</div>
+              </div>
+              <input type="checkbox" id="join-sounds-hear-toggle" class="switch" />
+            </label>
+            <div class="slider-row">
+              <div class="setting-title">Soundboard Volume <span id="soundboard-volume-label">60%</span></div>
+              <input type="range" id="soundboard-volume" min="0" max="100" value="60" />
+            </div>
           </div>
-          <h2 class="settings-subhead">Activity</h2>
-          <label class="settings-card setting-row">
+        </section>
+
+        <section class="settings-page" data-page="tts" data-search="read aloud speech voice tts">
+          <h1 data-i18n="settings.tab.tts">Text-to-Speech</h1>
+          <p class="settings-intro" data-i18n="settings.intro.tts">Have messages read aloud, in the voice you pick.</p>
+          <div class="settings-card setting-row" data-search="tts read aloud speech">
             <div>
-              <div class="setting-title">Share what I'm playing or using</div>
-              <div class="setting-sub">Shows the game or app in front on your screen as "Playing ..." or "Using ..." under your name, for everyone in your servers. Turn it off and it clears right away.</div>
+              <div class="setting-title">Read messages aloud</div>
+              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice, only while you are connected to voice. Your own are read aloud to you too. Never while you are deafened or Do Not Disturb, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
             </div>
-            <input type="checkbox" id="share-activity-toggle" class="switch" />
+            <select id="tts-mode" class="compact-select">
+              <option value="never">Never</option>
+              <option value="open">Only when the channel is open</option>
+              <option value="all">All channels</option>
+            </select>
+          </div>
+          <div class="settings-card">
+            <div class="setting-row tts-voice-row" data-search="speaker narrator">
+              <div>
+                <div class="setting-title">Voice</div>
+                <div class="setting-sub">Any voice installed on this device.</div>
+              </div>
+              <select id="tts-voice" class="compact-select tts-voice-select">
+                <option value="">Computer default</option>
+              </select>
+            </div>
+            <div class="slider-row" data-search="speed">
+              <div class="setting-title">Voice rate <span id="tts-rate-label">1.0x</span></div>
+              <input type="range" id="tts-rate" min="5" max="20" value="10" />
+            </div>
+            <div class="slider-row">
+              <div class="setting-title">Voice pitch <span id="tts-pitch-label">1.0</span></div>
+              <input type="range" id="tts-pitch" min="5" max="20" value="10" />
+            </div>
+            <div class="setting-row tts-preview-row">
+              <div class="setting-sub">Hear this voice at this rate and pitch.</div>
+              <button class="btn-secondary btn-small" id="tts-preview">Preview</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="appearance" data-search="look theme dark light">
+          <h1 data-i18n="settings.tab.appearance">Appearance</h1>
+          <p class="settings-intro" data-i18n="settings.intro.appearance">Theme, language, chat text and the Commy icon.</p>
+          <div class="settings-card setting-row" data-search="dark mode light mode colours colors">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.theme">Theme</div>
+              <div class="setting-sub" data-i18n="accessibility.theme.sub">Dark, light, or whatever your system uses.</div>
+            </div>
+            <select id="theme-select" class="compact-select">
+              <option value="dark" data-i18n="accessibility.theme.dark">Dark</option>
+              <option value="light" data-i18n="accessibility.theme.light">Light</option>
+              <option value="system" data-i18n="accessibility.theme.system">Follow system</option>
+            </select>
+          </div>
+          <div class="settings-card setting-row" data-search="translate translation spanish espanol">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.language">Language</div>
+              <div class="setting-sub" data-i18n="accessibility.language.sub">Settings, navigation and sign-in are translated so far; the rest of the app stays in English for now.</div>
+            </div>
+            <select id="language-select" class="compact-select"></select>
+          </div>
+          <h2 class="settings-subhead" data-i18n="appearance.chat">Chat Text</h2>
+          <div class="appearance-preview">
+            <div class="msg first">
+              <div class="avatar">C</div>
+              <div class="msg-body">
+                <div class="msg-head"><span class="msg-author">Commy</span><span class="msg-time">Today at 12:00</span></div>
+                <div class="msg-content">This is how chat text will look. Drag the slider to resize it.</div>
+              </div>
+            </div>
+          </div>
+          <div class="settings-card">
+            <div class="slider-row" data-search="text size zoom bigger smaller">
+              <div class="setting-title"><span data-i18n="appearance.chatSize">Chat Font Size</span> <span id="chat-size-label">16px</span></div>
+              <input type="range" id="chat-size" min="12" max="20" step="1" value="16" />
+            </div>
+          </div>
+          <label class="settings-card setting-row" data-search="density spacing">
+            <div>
+              <div class="setting-title" data-i18n="appearance.compact">Compact Mode</div>
+              <div class="setting-sub" data-i18n="appearance.compact.sub">Tighter spacing between messages.</div>
+            </div>
+            <input type="checkbox" id="compact-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row" data-search="message colours colors fonts effects styles">
+            <div>
+              <div class="setting-title" data-i18n="appearance.textStyles">Text Colours and Effects</div>
+              <div class="setting-sub" data-i18n="appearance.textStyles.sub">Show the colours, fonts and moving effects people add to their messages.</div>
+            </div>
+            <input type="checkbox" id="text-styles-toggle" class="switch" checked />
+          </label>
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.appIcon">App Icon</h2>
+          <div class="settings-card icon-card desktop-only">
+            <div class="setting-sub" data-i18n="appearance.appIcon.sub">Shown in your taskbar or dock while Commy is running.</div>
+            <div class="icon-grid" id="app-icon-grid" role="radiogroup" aria-label="App icon"></div>
+          </div>
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.trayIcon">Tray Icon</h2>
+          <div class="settings-card icon-card desktop-only">
+            <div class="setting-sub" data-i18n="appearance.trayIcon.sub">Shown in the system tray, with your unread count on it.</div>
+            <div class="icon-grid" id="tray-icon-grid" role="radiogroup" aria-label="Tray icon"></div>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="accessibility">
+          <h1 data-i18n="settings.tab.accessibility">Accessibility</h1>
+          <p class="settings-intro" data-i18n="settings.intro.accessibility">Motion, colour and contrast.</p>
+          <label class="settings-card setting-row" data-search="animations transitions">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.reducedMotion">Reduced motion</div>
+              <div class="setting-sub" data-i18n="accessibility.reducedMotion.sub">Turns off the app's own animations and transitions. Follows your system setting until you change it here.</div>
+              <div class="setting-hint" id="reduced-motion-hint" data-i18n="accessibility.reducedMotion.system">Following your system</div>
+            </div>
+            <input type="checkbox" id="reduced-motion-toggle" class="switch" />
+          </label>
+          <div class="settings-card">
+            <div class="slider-row">
+              <div class="setting-title"><span data-i18n="accessibility.saturation">Colour saturation</span> <span id="saturation-label">100%</span></div>
+              <div class="setting-sub" data-i18n="accessibility.saturation.sub">Tones down role colours, mentions and status colours. Pictures and avatars stay as they are.</div>
+              <input type="range" id="saturation" min="0" max="100" step="5" value="100" />
+            </div>
+          </div>
+          <label class="settings-card setting-row" data-search="readability borders">
+            <div>
+              <div class="setting-title" data-i18n="accessibility.highContrast">High contrast</div>
+              <div class="setting-sub" data-i18n="accessibility.highContrast.sub">Stronger text and visible edges on cards, rows and inputs.</div>
+            </div>
+            <input type="checkbox" id="high-contrast-toggle" class="switch" />
           </label>
         </section>
 
-        <section class="settings-page" data-page="startup">
-          <h1 data-i18n="settings.tab.startup">Startup</h1>
-          <label class="settings-card setting-row desktop-only">
-            <div>
-              <div class="setting-title">Keep running in the tray</div>
-              <div class="setting-sub">Closing the window keeps Commy running in the system tray so messages, notifications and calls keep arriving. Quit from the tray icon.</div>
+        <section class="settings-page" data-page="keybinds" data-search="hotkeys keyboard shortcuts keys">
+          <h1 data-i18n="settings.tab.keybinds">Keybinds</h1>
+          <p class="settings-intro" data-i18n="settings.intro.keybinds">Keys that work in any app, and shortcuts inside Commy.</p>
+          <h2 class="settings-subhead desktop-only native-only">Voice</h2>
+          <div class="settings-card desktop-only native-only">
+            <div class="setting-row" data-search="hotkey keybind mic">
+              <div>
+                <div class="setting-title">Mute or unmute</div>
+                <div class="setting-sub">Works in any app. Click the box and press a combination, or Backspace to clear it.</div>
+              </div>
+              <input id="mute-key" class="hotkey-input" type="text" readonly placeholder="None" aria-label="Mute hotkey" />
             </div>
-            <input type="checkbox" id="close-to-tray-toggle" class="switch" />
-          </label>
-          <label class="settings-card setting-row desktop-only">
-            <div>
-              <div class="setting-title">Start with my computer</div>
-              <div class="setting-sub">Commy opens hidden in the system tray when you sign in to your computer, so you keep getting message notifications without opening the window.</div>
+            <div class="setting-row" data-search="hotkey keybind headset">
+              <div class="setting-title">Deafen or undeafen</div>
+              <input id="deafen-key" class="hotkey-input" type="text" readonly placeholder="None" aria-label="Deafen hotkey" />
             </div>
-            <input type="checkbox" id="autostart-toggle" class="switch" />
-          </label>
+            <div class="setting-sub hotkey-warning hidden" id="voice-hotkey-warning"></div>
+          </div>
+          <h2 class="settings-subhead desktop-only" data-i18n="appearance.shortcuts">Keyboard Shortcuts</h2>
+          <div class="settings-card shortcut-card desktop-only">
+            <div class="shortcut-row">
+              <div>
+                <div class="setting-title" data-i18n="appearance.switcher">Quick Switcher</div>
+                <div class="setting-sub" data-i18n="appearance.switcher.sub">Jump to any channel, conversation or server.</div>
+              </div>
+              <kbd class="shortcut-key" data-shortcut="K">Ctrl+K</kbd>
+            </div>
+            <div class="shortcut-row">
+              <div>
+                <div class="setting-title" data-i18n="appearance.search">Search This Server</div>
+                <div class="setting-sub" data-i18n="appearance.search.sub">Find messages by keyword, author or channel.</div>
+              </div>
+              <kbd class="shortcut-key" data-shortcut="F">Ctrl+F</kbd>
+            </div>
+          </div>
         </section>
 
-        <section class="settings-page" data-page="updates">
-          <h1 data-i18n="settings.tab.updates">Updates</h1>
+        <section class="settings-page" data-page="integrations">
+          <h1 data-i18n="settings.tab.integrations">Integrations</h1>
+          <p class="settings-intro" data-i18n="settings.intro.integrations">Connect Commy to GIF search, game info and more.</p>
+          <div class="settings-card integration-card" data-search="klipy api key gif search" id="gif-card">
+            <div class="integration-head">
+              <div class="integration-logo integration-logo-deck">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M8.5 10.2H7.2a1.2 1.2 0 0 0-1.2 1.2v1.2a1.2 1.2 0 0 0 1.2 1.2h1.3v-1.2H7.8M11.5 10v4M14.2 14v-4h2.3M14.2 12h1.8"/></svg>
+              </div>
+              <div class="integration-copy">
+                <div class="setting-title">GIFs</div>
+                <div class="setting-sub">Type <strong>/gif</strong> in the message box or click the GIF button to search. Without a key, searches go through your Commy account server, which never shares its key with the app. A key of your own is stored only on this device and is never sent to other members.</div>
+              </div>
+            </div>
+            <label class="field-label">Provider
+              <select id="gif-provider">
+                <option value="klipy">KLIPY (recommended)</option>
+                <option value="giphy">GIPHY</option>
+              </select>
+            </label>
+            <label class="field-label">Your own API key (optional)
+              <input id="gif-key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the built-in search" />
+            </label>
+            <div class="setting-sub" id="gif-key-help"></div>
+            <div class="form-actions">
+              <button class="btn-secondary btn-small" id="gif-key-test">Test Key</button>
+              <button class="btn-primary btn-small" id="gif-key-save">Save</button>
+            </div>
+          </div>
+          <div class="settings-card integration-card desktop-only" data-search="elgato keys buttons" id="stream-deck-card">
+            <div class="integration-head">
+              <div class="integration-logo integration-logo-deck">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="3"/><rect x="5.5" y="7" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="7" width="3.5" height="3.5" rx=".8"/><rect x="15" y="7" width="3.5" height="3.5" rx=".8"/><rect x="5.5" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="15" y="13.5" width="3.5" height="3.5" rx=".8"/></svg>
+              </div>
+              <div class="integration-copy">
+                <div class="setting-title">Stream Deck <span class="integration-state" id="stream-deck-state"></span></div>
+                <div class="setting-sub">Mute, deafen, push to talk, join channels, change volumes and play or add soundboard sounds from your Stream Deck keys. Commy only listens for it on this computer, and asks you before a Stream Deck can connect.</div>
+              </div>
+              <input type="checkbox" id="stream-deck-enabled" class="switch" aria-label="Allow Stream Deck" />
+            </div>
+            <ol class="integration-steps">
+              <li>Download <strong>commy-soundboard.streamDeckPlugin</strong> from the <a data-href="https://github.com/commy-commander/commy/releases/latest">latest Commy release</a> and open it. Stream Deck 7.1 or newer installs it.</li>
+              <li>Turn on the switch above, then drag an action such as <strong>Mute</strong> or <strong>Play sound</strong> from the Commy category onto a key.</li>
+              <li>Fill in the key settings if it has any, and choose <strong>Allow</strong> when Commy asks.</li>
+            </ol>
+            <div class="setting-sub stream-deck-note" id="stream-deck-note"></div>
+            <div class="stream-deck-decks" id="stream-deck-decks"></div>
+          </div>
+          <div class="settings-card integration-card" data-search="games twitch cover art">
+            <div class="integration-head">
+              <div class="integration-logo">IGDB</div>
+              <div>
+                <div class="setting-title">IGDB game database <span class="integration-state" id="igdb-state"></span></div>
+                <div class="setting-sub">Game search with cover art when tagging servers, and the proper title and cover for the game you are playing. Built in through your Commy account; add credentials here only if your account server does not offer game search.</div>
+              </div>
+            </div>
+            <ol class="integration-steps">
+              <li>Sign in at <a data-href="https://dev.twitch.tv/console/apps">dev.twitch.tv/console/apps</a> (IGDB uses Twitch developer accounts; two-factor sign-in must be on).</li>
+              <li>Choose <strong>Register Your Application</strong>. Any name works, OAuth Redirect URL <code>http://localhost</code>, Category <strong>Application Integration</strong>, Client Type <strong>Confidential</strong>.</li>
+              <li>Open the app, copy the <strong>Client ID</strong>, press <strong>New Secret</strong> and copy the secret.</li>
+            </ol>
+            <label class="field-label">Client ID
+              <input id="igdb-client-id" type="text" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="field-label">Client Secret
+              <input id="igdb-client-secret" type="password" autocomplete="off" spellcheck="false" />
+            </label>
+            <div class="setting-sub">Saved only on this device, in its settings folder.</div>
+            <div class="form-actions integration-actions">
+              <span class="integration-result" id="igdb-result"></span>
+              <button class="btn-link danger hidden" id="igdb-remove">Disconnect</button>
+              <button class="btn-primary btn-small" id="igdb-save">Save and Test</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-page" data-page="storage" data-search="disk space history">
+          <h1 data-i18n="settings.tab.storage">Storage</h1>
+          <p class="settings-intro" data-i18n="settings.intro.storage">How long messages stay on this device.</p>
+          <div class="settings-card setting-row" data-search="retention delete old messages">
+            <div>
+              <div class="setting-title">Keep server messages for</div>
+              <div class="setting-sub">Older messages are removed from this device to save space. Pinned messages stay, and so does any message a newer reply points to. Other members keep their own copies.</div>
+            </div>
+            <select id="keep-default" class="compact-select">
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+              <option value="180">6 months</option>
+              <option value="365">1 year</option>
+              <option value="forever">Forever</option>
+            </select>
+          </div>
+          <h2 class="settings-subhead">Per Server</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Keep a busy server for less time, or a small one forever.</div>
+            <div id="keep-servers" class="keep-servers"></div>
+          </div>
+          <div class="setting-sub">Videos and files download only when you click them, and so do images over 5 MB. Joining a server brings its recent messages, not its whole history.</div>
+        </section>
+
+        <section class="settings-page" data-page="updates" data-search="version upgrade tray autostart">
+          <h1 data-i18n="settings.tab.startupUpdates">Startup &amp; Updates</h1>
+          <p class="settings-intro" data-i18n="settings.intro.updates">How Commy starts, and how it stays up to date.</p>
+          <h2 class="settings-subhead" data-i18n="settings.tab.updates">Updates</h2>
           <div class="settings-card setting-row update-card">
             <div>
               <div class="setting-title" id="update-version">Commy</div>
@@ -2011,12 +2151,28 @@
             </div>
             <input type="checkbox" id="auto-update-toggle" class="switch" />
           </label>
+          <h2 class="settings-subhead desktop-only" data-i18n="settings.tab.startup">Startup</h2>
+          <label class="settings-card setting-row desktop-only" data-search="minimize close background">
+            <div>
+              <div class="setting-title">Keep running in the tray</div>
+              <div class="setting-sub">Closing the window keeps Commy running in the system tray so messages, notifications and calls keep arriving. Quit from the tray icon.</div>
+            </div>
+            <input type="checkbox" id="close-to-tray-toggle" class="switch" />
+          </label>
+          <label class="settings-card setting-row desktop-only" data-search="autostart boot launch login">
+            <div>
+              <div class="setting-title">Start with my computer</div>
+              <div class="setting-sub">Commy opens hidden in the system tray when you sign in to your computer, so you keep getting message notifications without opening the window.</div>
+            </div>
+            <input type="checkbox" id="autostart-toggle" class="switch" />
+          </label>
         </section>
 
-        <section class="settings-page" data-page="diagnostics">
+        <section class="settings-page" data-page="diagnostics" data-search="debug logs network troubleshoot">
           <h1 data-i18n="settings.tab.diagnostics">Diagnostics</h1>
+          <p class="settings-intro" data-i18n="settings.intro.diagnostics">Check your connection, and save logs when something goes wrong.</p>
           <h2 class="settings-subhead">Connection Test</h2>
-          <div class="settings-card conn-test">
+          <div class="settings-card conn-test" data-search="network ping latency relay">
             <div class="conn-test-intro">
               <div>
                 <div class="setting-title">Test my connection</div>
@@ -2053,109 +2209,6 @@
               <button class="btn-secondary btn-small desktop-only" type="button" id="log-folder-open">Open Folder</button>
               <button class="btn-secondary btn-small" type="button" id="log-bundle-save">Save Logs</button>
             </div>
-          </div>
-        </section>
-
-        <section class="settings-page" data-page="appearance">
-          <h1 data-i18n="settings.tab.appearance">Appearance</h1>
-          <div class="appearance-preview">
-            <div class="msg first">
-              <div class="avatar">C</div>
-              <div class="msg-body">
-                <div class="msg-head"><span class="msg-author">Commy</span><span class="msg-time">Today at 12:00</span></div>
-                <div class="msg-content">This is how chat text will look. Drag the slider to resize it.</div>
-              </div>
-            </div>
-          </div>
-          <div class="settings-card">
-            <div class="slider-row">
-              <div class="setting-title"><span data-i18n="appearance.chatSize">Chat Font Size</span> <span id="chat-size-label">16px</span></div>
-              <input type="range" id="chat-size" min="12" max="20" step="1" value="16" />
-            </div>
-          </div>
-          <label class="settings-card setting-row">
-            <div>
-              <div class="setting-title" data-i18n="appearance.compact">Compact Mode</div>
-              <div class="setting-sub" data-i18n="appearance.compact.sub">Tighter spacing between messages.</div>
-            </div>
-            <input type="checkbox" id="compact-toggle" class="switch" />
-          </label>
-          <label class="settings-card setting-row">
-            <div>
-              <div class="setting-title" data-i18n="appearance.textStyles">Text Colours and Effects</div>
-              <div class="setting-sub" data-i18n="appearance.textStyles.sub">Show the colours, fonts and moving effects people add to their messages.</div>
-            </div>
-            <input type="checkbox" id="text-styles-toggle" class="switch" checked />
-          </label>
-          <h2 class="settings-subhead desktop-only" data-i18n="appearance.shortcuts">Keyboard Shortcuts</h2>
-          <div class="settings-card shortcut-card desktop-only">
-            <div class="shortcut-row">
-              <div>
-                <div class="setting-title" data-i18n="appearance.switcher">Quick Switcher</div>
-                <div class="setting-sub" data-i18n="appearance.switcher.sub">Jump to any channel, conversation or server.</div>
-              </div>
-              <kbd class="shortcut-key" data-shortcut="K">Ctrl+K</kbd>
-            </div>
-            <div class="shortcut-row">
-              <div>
-                <div class="setting-title" data-i18n="appearance.search">Search This Server</div>
-                <div class="setting-sub" data-i18n="appearance.search.sub">Find messages by keyword, author or channel.</div>
-              </div>
-              <kbd class="shortcut-key" data-shortcut="F">Ctrl+F</kbd>
-            </div>
-          </div>
-          <h2 class="settings-subhead desktop-only" data-i18n="appearance.appIcon">App Icon</h2>
-          <div class="settings-card icon-card desktop-only">
-            <div class="setting-sub" data-i18n="appearance.appIcon.sub">Shown in your taskbar or dock while Commy is running.</div>
-            <div class="icon-grid" id="app-icon-grid" role="radiogroup" aria-label="App icon"></div>
-          </div>
-          <h2 class="settings-subhead desktop-only" data-i18n="appearance.trayIcon">Tray Icon</h2>
-          <div class="settings-card icon-card desktop-only">
-            <div class="setting-sub" data-i18n="appearance.trayIcon.sub">Shown in the system tray, with your unread count on it.</div>
-            <div class="icon-grid" id="tray-icon-grid" role="radiogroup" aria-label="Tray icon"></div>
-          </div>
-        </section>
-        <section class="settings-page" data-page="accessibility">
-          <h1 data-i18n="settings.tab.accessibility">Accessibility</h1>
-          <label class="settings-card setting-row">
-            <div>
-              <div class="setting-title" data-i18n="accessibility.reducedMotion">Reduced motion</div>
-              <div class="setting-sub" data-i18n="accessibility.reducedMotion.sub">Turns off the app's own animations and transitions. Follows your system setting until you change it here.</div>
-              <div class="setting-hint" id="reduced-motion-hint" data-i18n="accessibility.reducedMotion.system">Following your system</div>
-            </div>
-            <input type="checkbox" id="reduced-motion-toggle" class="switch" />
-          </label>
-          <div class="settings-card">
-            <div class="slider-row">
-              <div class="setting-title"><span data-i18n="accessibility.saturation">Colour saturation</span> <span id="saturation-label">100%</span></div>
-              <div class="setting-sub" data-i18n="accessibility.saturation.sub">Tones down role colours, mentions and status colours. Pictures and avatars stay as they are.</div>
-              <input type="range" id="saturation" min="0" max="100" step="5" value="100" />
-            </div>
-          </div>
-          <label class="settings-card setting-row">
-            <div>
-              <div class="setting-title" data-i18n="accessibility.highContrast">High contrast</div>
-              <div class="setting-sub" data-i18n="accessibility.highContrast.sub">Stronger text and visible edges on cards, rows and inputs.</div>
-            </div>
-            <input type="checkbox" id="high-contrast-toggle" class="switch" />
-          </label>
-          <div class="settings-card setting-row">
-            <div>
-              <div class="setting-title" data-i18n="accessibility.theme">Theme</div>
-              <div class="setting-sub" data-i18n="accessibility.theme.sub">Dark, light, or whatever your system uses.</div>
-            </div>
-            <select id="theme-select" class="compact-select">
-              <option value="dark" data-i18n="accessibility.theme.dark">Dark</option>
-              <option value="light" data-i18n="accessibility.theme.light">Light</option>
-              <option value="system" data-i18n="accessibility.theme.system">Follow system</option>
-            </select>
-          </div>
-          <div class="settings-card setting-row">
-            <div>
-              <div class="setting-title" data-i18n="accessibility.language">Language</div>
-              <div class="setting-sub" data-i18n="accessibility.language.sub">Settings, navigation and sign-in are translated so far; the rest of the app stays in English for now.</div>
-            </div>
-            <select id="language-select" class="compact-select"></select>
           </div>
         </section>
       </div>
@@ -3000,6 +3053,7 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
   <script src="scripts/server-tags.js"></script>
+  <script src="scripts/overlay-view.js"></script>
   <script src="scripts/profile-look.js"></script>
   <script src="scripts/join-requests.js"></script>
   <script src="scripts/tip-jar.js"></script>
@@ -3051,6 +3105,7 @@
   <script src="scripts/search.js"></script>
   <script src="scripts/search-paging.js"></script>
   <script src="scripts/switcher.js"></script>
+  <script src="scripts/settings-search.js"></script>
   <script src="scripts/presence.js"></script>
   <script src="scripts/activity.js"></script>
   <script src="scripts/people.js"></script>
