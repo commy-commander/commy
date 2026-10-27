@@ -14073,6 +14073,7 @@ const ACTIVITY_DRIFT_CHECK_MS = 2000;
 const YOUTUBE_SETTLE_MS = 1500;
 const YOUTUBE_GREET_MS = 250;
 const YOUTUBE_GREET_TRIES = 40;
+const YOUTUBE_NOTICE = "This video plays from YouTube. Loading it connects you to YouTube, which can see your IP address and may store data under Google's privacy policy.";
 const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
 
 const activityUi = {
@@ -14084,6 +14085,7 @@ const activityUi = {
   videoBlob: null,
   settling: 0,
   yt: freshYouTubeView(),
+  youtubeAllowedRun: null,
 };
 
 function inBrowserApp() {
@@ -14332,23 +14334,33 @@ function renderActivityWatch(run, me) {
     const blocked = kind === "link" && inBrowserApp();
     $("activity-video").controls = isParticipant(run, me);
     if (!blocked) loadActivityVideo(run);
-    const note = $("activity-screen-note");
-    note.textContent = blocked ? WEB_DIRECT_LINK_NOTE : "";
-    note.classList.toggle("hidden", !blocked);
+    showActivityScreenNote(blocked ? WEB_DIRECT_LINK_NOTE : "", false);
   }
   renderActivitySyncLabel(run);
 }
 
 function renderActivityYouTube(run, me) {
   const joined = isParticipant(run, me);
+  const allowed = activityUi.youtubeAllowedRun === run.id;
   const video = watchYouTubeId(run.activity);
   const yt = activityUi.yt;
-  if (joined && video && yt.video !== video) mountYouTube(video);
-  else if (!joined && yt.frame) releaseYouTube();
-  const note = joined ? activityUi.yt.error || "" : "Join to watch. The video plays from YouTube once you join.";
-  const box = $("activity-screen-note");
-  box.textContent = note;
-  box.classList.toggle("hidden", !note);
+  if (joined && allowed && video && yt.video !== video) mountYouTube(video);
+  else if ((!joined || !allowed) && yt.frame) releaseYouTube();
+  if (!joined) showActivityScreenNote("Join to watch. This video plays from YouTube.", false);
+  else if (!allowed) showActivityScreenNote(YOUTUBE_NOTICE, true);
+  else showActivityScreenNote(yt.error || "", false);
+}
+
+function showActivityScreenNote(text, asking) {
+  $("activity-screen-note-text").textContent = text;
+  $("activity-youtube-allow").classList.toggle("hidden", !asking);
+  $("activity-screen-note").classList.toggle("hidden", !text);
+}
+
+function allowYouTubeForRun() {
+  if (!activityUi.run) return;
+  activityUi.youtubeAllowedRun = activityUi.run.id;
+  renderActivityUi();
 }
 
 function mountYouTube(video) {
@@ -14631,6 +14643,7 @@ function initActivityUi() {
     if (video) invoke("open_url", { url: youtubeWatchUrl(video) }).catch(err => toast(String(err)));
   };
   window.addEventListener("message", onYouTubeMessage);
+  $("activity-youtube-allow").onclick = allowYouTubeForRun;
   $("activity-link-input").addEventListener("input", () => {
     if ($("activity-link-input").value.trim()) {
       activityUi.chip = null;
