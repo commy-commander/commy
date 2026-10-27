@@ -2272,6 +2272,15 @@
             </div>
           </div>
           <input type="file" id="server-image-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
+          <h2 class="settings-subhead">Games</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
+            <div class="tag-editor" id="game-tag-editor">
+              <div class="tag-chips" id="game-tag-chips"></div>
+              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
+              <div class="game-search hidden" id="game-search"></div>
+            </div>
+          </div>
           <h2 class="settings-subhead">Inactivity</h2>
           <div class="settings-card setting-row">
             <div>
@@ -2356,15 +2365,6 @@
               <button class="btn-primary btn-small" id="discovery-list">List in Discover</button>
               <button class="btn-primary btn-small hidden" id="discovery-update">Update Listing</button>
               <button class="btn-link danger hidden" id="discovery-unlist">Unlist</button>
-            </div>
-          </div>
-          <h2 class="settings-subhead">Games</h2>
-          <div class="settings-card">
-            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
-            <div class="tag-editor" id="game-tag-editor">
-              <div class="tag-chips" id="game-tag-chips"></div>
-              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
-              <div class="game-search hidden" id="game-search"></div>
             </div>
           </div>
         </section>

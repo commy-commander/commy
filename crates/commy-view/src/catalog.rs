@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::truncate;
+use crate::{truncate, valid_image_id};
 
 pub const EMOJIGG_IMAGES: &str = "https://cdn3.emoji.gg/emojis/";
 pub const KLIPY_IMAGES: &str = "https://static.klipy.com/";
@@ -13,6 +13,16 @@ pub struct GifHit {
     pub ratio: f64,
     #[serde(default)]
     pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameHit {
+    pub id: u64,
+    pub name: String,
+    pub cover: Option<String>,
+    pub year: Option<i32>,
+    #[serde(default)]
+    pub steam: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +110,13 @@ pub fn safe_gifs(hits: Vec<GifHit>) -> Vec<GifHit> {
     hits.into_iter()
         .filter(|g| g.preview.starts_with("https://") && g.url.starts_with("https://"))
         .map(|g| GifHit { title: truncate(&g.title, 200), ..g })
+        .collect()
+}
+
+pub fn safe_games(hits: Vec<GameHit>) -> Vec<GameHit> {
+    hits.into_iter()
+        .filter(|h| !h.name.trim().is_empty())
+        .map(|h| GameHit { cover: h.cover.filter(|id| valid_image_id(id)), steam: h.steam.filter(|id| *id > 0), ..h })
         .collect()
 }
 
