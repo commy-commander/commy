@@ -52,6 +52,21 @@ pub struct UserProfile {
     pub presence_until: Option<i64>,
     #[serde(default)]
     pub banner: Option<String>,
+    #[serde(default)]
+    pub avatar_border: Option<String>,
+    #[serde(default)]
+    pub card_effect: Option<String>,
+}
+
+pub const AVATAR_BORDERS: [&str; 8] = ["ring", "double", "sunset", "ocean", "neon", "stars", "leaves", "orbit"];
+pub const CARD_EFFECTS: [&str; 4] = ["sparkles", "snow", "aurora", "bubbles"];
+
+pub fn valid_avatar_border(name: &str) -> bool {
+    AVATAR_BORDERS.contains(&name)
+}
+
+pub fn valid_card_effect(name: &str) -> bool {
+    CARD_EFFECTS.contains(&name)
 }
 
 pub const MAX_ABOUT_CHARS: usize = 190;
@@ -170,6 +185,8 @@ impl UserProfile {
             banner: None,
             identity: None,
             presence_until: None,
+            avatar_border: None,
+            card_effect: None,
         }
     }
 
@@ -179,6 +196,8 @@ impl UserProfile {
 
     pub fn as_seen_by_others(&self) -> UserProfile {
         let mut shared = self.clone();
+        shared.avatar_border = shared.avatar_border.filter(|b| valid_avatar_border(b));
+        shared.card_effect = shared.card_effect.filter(|e| valid_card_effect(e));
         if self.presence == Presence::Invisible {
             shared.presence = Presence::Offline;
             shared.activity = None;
@@ -215,6 +234,21 @@ impl UserProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_built_in_borders_and_card_effects_travel() {
+        let mut user = UserProfile::new("commy");
+        user.avatar_border = Some("stars".into());
+        user.card_effect = Some("snow".into());
+        let shared = user.as_seen_by_others();
+        assert_eq!((shared.avatar_border.as_deref(), shared.card_effect.as_deref()), (Some("stars"), Some("snow")));
+        user.avatar_border = Some("https://example.com/frame.png".into());
+        user.card_effect = Some("fireworks".into());
+        let shared = user.as_seen_by_others();
+        assert_eq!((shared.avatar_border, shared.card_effect), (None, None));
+        assert!(AVATAR_BORDERS.iter().all(|b| valid_avatar_border(b)));
+        assert!(CARD_EFFECTS.iter().all(|e| valid_card_effect(e)));
+    }
 
     #[test]
     fn visible_name_prefers_display_name() {

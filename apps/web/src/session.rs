@@ -114,6 +114,8 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 struct Args {
     server_id: Option<String>,
+    avatar_border: Option<String>,
+    card_effect: Option<String>,
     url: Option<String>,
     label: Option<String>,
     trusted: Option<Vec<String>>,
@@ -511,6 +513,7 @@ impl Session {
             "set_avatar" => self.profile_command(cmd, args).await,
             "set_profile_banner" => self.profile_command(cmd, args).await,
             "set_pronouns" => self.profile_command(cmd, args).await,
+            "set_profile_look" => self.profile_command(cmd, args).await,
             "set_status_expiry" => self.profile_command(cmd, args).await,
             "set_profile_privacy" => self.profile_command(cmd, args).await,
             "web_farewell" => {

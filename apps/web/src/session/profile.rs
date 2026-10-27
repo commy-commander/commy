@@ -40,6 +40,10 @@ impl Session {
                 let about = profile::about(args.about.as_deref().unwrap_or_default())?;
                 self.edit_profile(false, |p| p.about = (!about.is_empty()).then_some(about))?
             }
+            "set_profile_look" => {
+                let look = profile::look(args.avatar_border.as_deref(), args.card_effect.as_deref())?;
+                self.edit_profile(false, |p| profile::apply_look(p, look))?
+            }
             "set_avatar" => {
                 let avatar = match args.kind.as_deref() {
                     Some("none") => None,

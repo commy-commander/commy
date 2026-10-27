@@ -242,6 +242,8 @@ pub struct MemberView {
     pub priority_speaker: bool,
     pub timeout_until: Option<i64>,
     pub timeout_by: Option<String>,
+    pub avatar_border: Option<String>,
+    pub card_effect: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -551,6 +553,8 @@ impl ServerView {
                     priority_speaker: state.server.permissions_for(p.id).is_priority_speaker(),
                     timeout_until: state.server.timeout_of(p.id, now).map(|t| t.until.timestamp_millis()),
                     timeout_by: state.server.timeout_of(p.id, now).map(|t| t.by.to_string()),
+                    avatar_border: p.avatar_border.clone().filter(|b| commy_core::user::valid_avatar_border(b)),
+                    card_effect: p.card_effect.clone().filter(|e| commy_core::user::valid_card_effect(e)),
                 }
             })
             .collect();
