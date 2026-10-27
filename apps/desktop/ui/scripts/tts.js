@@ -7,7 +7,7 @@ const TTS_MODES = [
   { id: "open", label: "Only when the channel is open" },
   { id: "all", label: "All channels" },
 ];
-const DEFAULT_TTS_MODE = "open";
+const DEFAULT_TTS_MODE = "never";
 const TTS_RATE_MIN = 0.5;
 const TTS_RATE_MAX = 2;
 const DEFAULT_TTS_RATE = 1;

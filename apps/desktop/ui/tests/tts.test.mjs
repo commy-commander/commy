@@ -49,7 +49,7 @@ test("/tts is offered as a composer command next to /gif", () => {
 test("settings read back with safe defaults", () => {
   const defaults = { mode: DEFAULT_TTS_MODE, rate: DEFAULT_TTS_RATE, pitch: DEFAULT_TTS_PITCH, voice: null };
   assert.deepEqual(readTtsPrefs(null), defaults);
-  assert.equal(DEFAULT_TTS_MODE, "open");
+  assert.equal(DEFAULT_TTS_MODE, "never");
   assert.deepEqual(readTtsPrefs("not json"), defaults);
   assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "all", rate: 1.5 })), { ...defaults, mode: "all", rate: 1.5 });
   assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "never" })), { ...defaults, mode: "never" });
