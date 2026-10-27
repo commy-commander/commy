@@ -152,7 +152,7 @@ function reportCameraFxFailure(error) {
   console.warn("Background effects unavailable", error);
   if (cameraFx.failed) return;
   cameraFx.failed = true;
-  toast("Background effects are not available on this device, so your camera is blurred. Pick Off under Settings, then Voice & Camera.");
+  toast("Background effects are not available on this device, so your camera is blurred. Pick Off under Settings, then Camera.");
 }
 
 function nextSegmentTimestamp() {

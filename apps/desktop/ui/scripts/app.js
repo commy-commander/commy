@@ -1922,7 +1922,138 @@ function selectSettingsTab(id, tab) {
   layer.querySelector(".settings-content").scrollTop = 0;
   layer.dataset.tab = tab;
   settingsPhoneView(layer, "page");
-  if (tab === "voice") prepareAvatarStage();
+  if (tab === "camera") prepareAvatarStage();
+}
+
+const SETTINGS_HIT_MS = 1600;
+let settingsHitTimer = null;
+
+function hiddenOnThisDevice(node) {
+  const phone = document.body.classList.contains("mobile-app") && node.closest(".desktop-only");
+  const browser = document.documentElement.classList.contains("web-app") && node.closest(".native-only");
+  return Boolean(phone || browser);
+}
+
+function ownSettingText(node) {
+  if (node.classList.contains("field-label")) {
+    return [...node.childNodes].filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join(" ").trim();
+  }
+  const copy = node.cloneNode(true);
+  for (const value of copy.querySelectorAll("[id]")) value.remove();
+  return copy.textContent.trim();
+}
+
+function settingsPageEntries(page, base) {
+  const entries = [{ ...base, kind: "page", title: base.pageTitle, section: "", keywords: page.dataset.search || "", target: null }];
+  let section = "";
+  for (const node of page.querySelectorAll(".settings-subhead, .setting-title, .field-label")) {
+    if (hiddenOnThisDevice(node) || (node.classList.contains("setting-title") && node.id)) continue;
+    const title = ownSettingText(node);
+    if (!title) continue;
+    if (node.classList.contains("settings-subhead")) {
+      section = title;
+      entries.push({ ...base, kind: "section", title, section: "", keywords: node.dataset.search || "", target: node });
+      continue;
+    }
+    const target = node.closest(".setting-row, .slider-row, .settings-card") || node;
+    entries.push({ ...base, kind: "setting", title, section, keywords: node.dataset.search || target.dataset.search || "", target });
+  }
+  return entries;
+}
+
+function settingsSearchEntries() {
+  const layer = $("user-settings");
+  const entries = [];
+  for (const page of layer.querySelectorAll(".settings-page")) {
+    const tab = layer.querySelector(`.settings-tab[data-tab="${page.dataset.page}"]`);
+    if (!tab || tab.classList.contains("hidden") || hiddenOnThisDevice(tab)) continue;
+    entries.push(...settingsPageEntries(page, { page: page.dataset.page, pageTitle: tab.textContent.trim() }));
+  }
+  return entries;
+}
+
+function renderSettingsSearch() {
+  const query = $("settings-search").value;
+  const searching = Boolean(query.trim());
+  const list = $("settings-search-results");
+  $("user-settings-nav").classList.toggle("searching", searching);
+  list.classList.toggle("hidden", !searching);
+  list.replaceChildren();
+  if (!searching) return;
+  const hits = searchSettings(settingsSearchEntries(), query);
+  if (!hits.length) {
+    list.appendChild(el("div", "settings-search-empty", t("settings.search.none")));
+    return;
+  }
+  for (const hit of hits) {
+    const button = el("button", "settings-search-result");
+    button.type = "button";
+    button.appendChild(el("span", "ssr-title", hit.title));
+    const place = settingsResultPlace(hit);
+    if (place) button.appendChild(el("span", "ssr-place", place));
+    button.onclick = () => openSettingsSearchHit(hit, button);
+    list.appendChild(button);
+  }
+}
+
+function openSettingsSearchHit(hit, button) {
+  for (const other of $("settings-search-results").querySelectorAll(".active")) other.classList.remove("active");
+  button.classList.add("active");
+  selectSettingsTab("user-settings", hit.page);
+  if (!hit.target) return;
+  hit.target.scrollIntoView({ block: "center" });
+  flashSettingsTarget(hit.target);
+}
+
+function flashSettingsTarget(node) {
+  for (const old of document.querySelectorAll(".settings-hit")) old.classList.remove("settings-hit");
+  clearTimeout(settingsHitTimer);
+  node.classList.add("settings-hit");
+  settingsHitTimer = setTimeout(() => node.classList.remove("settings-hit"), SETTINGS_HIT_MS);
+}
+
+function clearSettingsSearch() {
+  $("settings-search").value = "";
+  renderSettingsSearch();
+}
+
+function moveSettingsSearchFocus(from, step) {
+  const results = [...$("settings-search-results").querySelectorAll(".settings-search-result")];
+  const next = results.indexOf(from) + step;
+  if (next < 0) $("settings-search").focus();
+  else if (results[next]) results[next].focus();
+}
+
+function wireSettingsSearch() {
+  const input = $("settings-search");
+  const list = $("settings-search-results");
+  input.before(svgIcon("search", 16));
+  input.addEventListener("input", renderSettingsSearch);
+  input.addEventListener("keydown", e => {
+    const first = list.querySelector(".settings-search-result");
+    if (e.key === "Escape" && input.value) {
+      e.preventDefault();
+      e.stopPropagation();
+      clearSettingsSearch();
+    } else if (e.key === "Enter" && first) {
+      e.preventDefault();
+      first.click();
+    } else if (e.key === "ArrowDown" && first) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+  list.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveSettingsSearchFocus(e.target, e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      clearSettingsSearch();
+      input.focus();
+    }
+  });
 }
 
 function hideEmptyNavGroups(layer) {
@@ -1990,6 +2121,7 @@ function loadAccessibility() {
 function applyTranslations(root) {
   for (const node of root.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
   for (const node of root.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
+  for (const node of root.querySelectorAll("[data-i18n-placeholder]")) node.placeholder = t(node.dataset.i18nPlaceholder);
 }
 
 function renderAccessibilitySettings(prefs, resolved) {
@@ -7686,7 +7818,7 @@ function onUpdateStatus(status) {
   $("settings-btn").dataset.i18nTitle = ready ? "nav.settings.updateReady" : "nav.settings";
   $("settings-btn").title = t($("settings-btn").dataset.i18nTitle);
   if (ready && !wasReady && openSettingsLayerId() !== "user-settings") {
-    toast(`Commy ${status.version} is ready. Restart from Settings > Updates.`);
+    toast(`Commy ${status.version} is ready. Restart from Settings > Startup & Updates.`);
   }
   renderUpdateStatus();
 }
@@ -14173,7 +14305,7 @@ function wireSettingsPhoneBars() {
     bar.append(back, el("span", "settings-phone-title"), close);
     layer.prepend(bar);
     layer.querySelector(".settings-nav").addEventListener("click", e => {
-      const tab = e.target.closest(".settings-tab[data-tab]");
+      const tab = e.target.closest(".settings-tab[data-tab], .settings-search-result");
       if (tab && isPhoneWidth(window.innerWidth)) history.pushState({ pane: phonePane(), settings: true, page: true }, "");
     }, true);
   }
@@ -16265,6 +16397,7 @@ function wireEvents() {
       btn.onclick = () => selectSettingsTab(layer.id, btn.dataset.tab);
     }
   }
+  wireSettingsSearch();
 
   const appearance = loadAppearance();
   applyAppearance(appearance);
@@ -18306,6 +18439,7 @@ async function pickCustomIcon(target) {
 
 function openUserSettings(tab) {
   if (!state.user) return;
+  clearSettingsSearch();
   renderIconPickers();
   $("nc-toggle").checked = state.voice.noise_cancellation;
   $("ec-toggle").checked = state.voice.echo_cancellation !== false;

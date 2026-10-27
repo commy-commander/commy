@@ -73,10 +73,13 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   your server list.
 - **Game overlay.** On Windows, an in-game overlay shows who is talking and
   recent chat, in the screen corner you choose.
+- **Settings you can find.** Settings are grouped into You, Voice & Video,
+  Alerts & Sounds, App and Advanced, and a search box at the top of the list
+  jumps straight to any setting.
 - **Accessibility.** Settings > Accessibility has reduced motion (on by
   default when your system asks for it), a colour saturation slider for role
-  and status colours, high contrast, a light theme or follow-system theme,
-  and a language picker. Settings, navigation and sign-in are translated
+  and status colours, and high contrast. Settings > Appearance has a light
+  theme or follow-system theme and a language picker. Settings, navigation and sign-in are translated
   into Spanish so far; the dictionaries live in
   `apps/desktop/ui/scripts/locales/`, one file per language, and the rest of
   the app can be translated the same way. Everything here is per device.
