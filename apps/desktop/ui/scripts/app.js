@@ -4696,7 +4696,6 @@ function speakIncoming(msg, viewing) {
   const speak = shouldSpeakIncoming({
     mode: ttsPrefs().mode,
     tts: Boolean(msg.tts),
-    ownMessage: Boolean(state.user && msg.author === state.user.id),
     deafened: Boolean(state.voice.deafened),
     viewing: Boolean(viewing),
     blocked: isBlocked(msg.author),
@@ -16707,6 +16706,7 @@ async function sendMessage() {
       command,
     });
     pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
+    if (tts) speakIncoming({ author: state.user.id, author_name: state.user.display_name || state.user.username, content, tts: true }, true);
     noteSlowSend(state.currentChannel.id, 0);
     await selectChannel(state.currentChannel);
   } catch (e) {

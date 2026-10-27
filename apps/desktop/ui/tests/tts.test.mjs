@@ -110,7 +110,7 @@ test("the rate stays within what a voice can do", () => {
 });
 
 test("the setting matrix decides what gets read aloud", () => {
-  const base = { mode: "all", tts: true, ownMessage: false, deafened: false, viewing: false, blocked: false, presence: "online", inVoice: true };
+  const base = { mode: "all", tts: true, deafened: false, viewing: false, blocked: false, presence: "online", inVoice: true };
   assert.equal(shouldSpeakIncoming(base), true);
   assert.equal(shouldSpeakIncoming({ ...base, inVoice: false }), false);
   assert.equal(shouldSpeakIncoming({ ...base, mode: "open", viewing: true, inVoice: false }), false);
@@ -119,7 +119,6 @@ test("the setting matrix decides what gets read aloud", () => {
   assert.equal(shouldSpeakIncoming({ ...base, mode: "open", viewing: true }), true);
   assert.equal(shouldSpeakIncoming({ ...base, mode: "never", viewing: true }), false);
   assert.equal(shouldSpeakIncoming({ ...base, tts: false }), false);
-  assert.equal(shouldSpeakIncoming({ ...base, ownMessage: true }), false);
   assert.equal(shouldSpeakIncoming({ ...base, deafened: true }), false);
   assert.equal(shouldSpeakIncoming({ ...base, blocked: true }), false);
   assert.equal(shouldSpeakIncoming({ ...base, presence: "do_not_disturb" }), false);
