@@ -44,8 +44,15 @@ only while the tab is in the background. Clicking one opens that channel or DM.
   not there yet, the browser keeps checking for it for a short while and asks
   your own signed-in devices for the key, which they hand over without a
   prompt, through the sync service when the account server names one and
-  straight over the relay only when it does not. If neither answers, it says
-  so and offers Try again and your recovery code. It then asks
+  straight over the relay only when it does not. An account with no server
+  list yet gets a new one from the browser, named after the account. If the
+  account's copy of the key is gone or no longer opens the list and none of
+  your devices hands the key over within 20 seconds, the browser starts a new
+  list and keeps its key with your account, so signing in alone always opens
+  the web app. A device that still has servers under its own identity takes
+  over a list started this way while it is empty. If the account server
+  cannot be reached, the browser says so and offers Try again and your
+  recovery code. It then asks
   one of your own devices for a copy of each server; that request is signed with your
   account identity, so the account server alone cannot obtain messages.
   Missing history comes from other members through the usual catch-up.

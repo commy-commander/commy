@@ -169,9 +169,8 @@
   function paintUnlock(view) {
     const modal = unlockModal();
     const asking = view.state === "asking" || view.state === "opening";
-    const noList = view.state === "no_list";
     modal.querySelector("#web-unlock-ask-row").classList.toggle("hidden", asking);
-    modal.querySelector("#web-unlock-code-row").classList.toggle("hidden", noList || view.state === "opening");
+    modal.querySelector("#web-unlock-code-row").classList.toggle("hidden", view.state === "opening");
     modal.querySelector("#web-unlock-wait").classList.toggle("hidden", !asking);
     modal.querySelector("#web-unlock-wait-text").textContent = asking ? webUnlockText(view) : "";
     modal.querySelector("#web-unlock-detail").textContent = asking ? "" : webUnlockText(view);

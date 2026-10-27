@@ -178,6 +178,7 @@ enum IdentityStep {
     Adopt,
     WaitForKey,
     OwnIdentity,
+    TakeOver,
 }
 
 fn identity_step(local: &EntryList, shared: &EntryList) -> IdentityStep {
@@ -185,7 +186,9 @@ fn identity_step(local: &EntryList, shared: &EntryList) -> IdentityStep {
     let theirs = shared.profile.as_ref().map(|p| p.id);
     let (Some(mine), Some(theirs)) = (mine, theirs) else { return IdentityStep::Keep };
     if mine != theirs {
-        return if !local.servers.is_empty() || !local.left.is_empty() {
+        return if shared.is_empty_list() && !local.is_empty_list() {
+            IdentityStep::TakeOver
+        } else if !local.is_empty_list() {
             IdentityStep::OwnIdentity
         } else if shared.identity.as_deref().and_then(decode_identity).is_none() {
             IdentityStep::WaitForKey
@@ -454,8 +457,9 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         };
 
         let (after, retry) = identity_part(&app, &dir, &local, &shared, &KEY_WAIT).await;
+        let shared = if after == AfterStep::TakeOver { EntryList::default() } else { shared };
         match after {
-            AfterStep::Merge => {}
+            AfterStep::Merge | AfterStep::TakeOver => {}
             AfterStep::Announce => crate::settle::use_settled_key(handle).await,
             AfterStep::Wait => {
                 set_status(
@@ -626,6 +630,7 @@ async fn identity_part(app: &App, dir: &Path, local: &EntryList, shared: &EntryL
 #[derive(Debug, PartialEq)]
 enum AfterStep {
     Merge,
+    TakeOver,
     Announce,
     Wait,
     StayOut,
@@ -636,6 +641,7 @@ async fn take_identity_step(app: &App, dir: &Path, step: IdentityStep, shared: &
         IdentityStep::Keep => return AfterStep::Merge,
         IdentityStep::WaitForKey => return AfterStep::Wait,
         IdentityStep::OwnIdentity => return AfterStep::StayOut,
+        IdentityStep::TakeOver => return AfterStep::TakeOver,
         IdentityStep::UseShared(encoded) => {
             let swap = app.signing.write().await;
             if !write_identity(dir, &encoded) {
@@ -1048,7 +1054,31 @@ mod tests {
             servers: BTreeMap::from([(ServerId::new(), entry("mine", Utc::now()))]),
             ..list(&device, Some(&ours))
         };
-        assert_eq!(identity_step(&busy, &shared), IdentityStep::OwnIdentity);
+        assert_eq!(identity_step(&busy, &shared), IdentityStep::TakeOver);
+        let started_elsewhere = EntryList {
+            servers: BTreeMap::from([(ServerId::new(), entry("theirs", Utc::now()))]),
+            ..shared.clone()
+        };
+        assert_eq!(identity_step(&busy, &started_elsewhere), IdentityStep::OwnIdentity);
+    }
+
+    #[test]
+    fn a_device_with_servers_takes_over_a_list_started_empty_elsewhere() {
+        let ours = Identity::generate();
+        let mine = EntryList {
+            profile: Some(UserProfile::new("desktop")),
+            identity: Some(shared_identity(&ours)),
+            servers: BTreeMap::from([(ServerId::new(), entry("mine", Utc::now()))]),
+            ..Default::default()
+        };
+        let fresh = EntryList::fresh("from the browser", &Identity::generate());
+        assert_eq!(identity_step(&mine, &fresh), IdentityStep::TakeOver);
+        let merged = EntryList::merge(&EntryList::default(), &mine);
+        assert_eq!(merged.identity, mine.identity);
+        assert_eq!(merged.profile, mine.profile);
+        assert_eq!(merged.servers, mine.servers);
+        let newcomer = EntryList { profile: fresh.profile.clone(), identity: fresh.identity.clone(), ..Default::default() };
+        assert_eq!(identity_step(&newcomer, &merged), IdentityStep::Adopt);
     }
 
     #[test]
