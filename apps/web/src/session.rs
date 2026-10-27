@@ -161,6 +161,7 @@ struct Args {
     note: Option<String>,
     user_ids: Option<Vec<String>>,
     accept: Option<bool>,
+    admit: Option<bool>,
     muted: Option<bool>,
     deafened: Option<bool>,
     filename: Option<String>,
@@ -478,6 +479,7 @@ impl Session {
             "set_own_role" => self.server_command(cmd, args).await,
             "set_role_access" => self.server_command(cmd, args).await,
             "kick_member" => self.server_command(cmd, args).await,
+            "set_join_approval" | "answer_join_request" => self.server_command(cmd, args).await,
             "move_voice_member" => self.server_command(cmd, args).await,
             "ban_member" => self.server_command(cmd, args).await,
             "unban_member" => self.server_command(cmd, args).await,
@@ -847,6 +849,7 @@ impl Session {
         node.set_media_gate(calls::media_gate(self.admit.clone()));
         let _ = node.take_entry_key_requests();
         let _ = node.take_mirror_requests();
+        let _ = node.take_knock_requests();
         *self.store.borrow_mut() = Some(store);
         *slot = Some(node);
         spawn_local(self.clone().run_events(events));

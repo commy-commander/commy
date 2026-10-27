@@ -202,6 +202,7 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) 
 }
 
 pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: UserId, budget: usize) -> WirePayload {
+    let per_channel = if state.server.join_approval { 0 } else { per_channel };
     let mut server = state.server.clone();
     server.emojis.clear();
     server.stickers.clear();

@@ -3231,6 +3231,49 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .server-icon.has-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .server-icon.has-image:hover, .server-icon.has-image.active { background: var(--bg-dark); }
 .server-icon.muted:not(.active) { opacity: .55; }
+.server-icon.waiting { opacity: .6; border: 2px dashed var(--bg-active); box-sizing: border-box; }
+.server-icon.waiting:hover { opacity: 1; }
+.rail-wait-mark {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--header-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px var(--bg-darkest);
+  pointer-events: none;
+}
+.rail-wait-mark.away { background: var(--red); color: #fff; }
+#server-settings-btn { position: relative; }
+.join-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-dark);
+  pointer-events: none;
+}
+.join-wait-status { margin: 0; font-size: 14px; color: var(--text-muted); line-height: 1.45; }
+.join-wait-rules, .join-wait-note-wrap { display: flex; flex-direction: column; gap: 6px; }
+.join-wait-rules-text {
+  max-height: 160px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg-darkest);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text-normal);
+}
 .server-icon[data-drop="before"] { box-shadow: -6px 0 0 -3px var(--accent); }
 .server-icon[data-drop="after"] { box-shadow: 6px 0 0 -3px var(--accent); }
 .server-icon[data-drop="into"], .folder-head[data-drop="into"] { outline: 3px solid var(--accent); outline-offset: 2px; }
@@ -4194,7 +4237,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 }
 .report-reasons label:hover { background: var(--bg-active); }
 .report-reasons input { accent-color: var(--accent); margin: 0; }
-#report-note {
+#report-note, #join-wait-note {
   width: 100%;
   box-sizing: border-box;
   resize: vertical;
@@ -4207,7 +4250,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   font-size: 14px;
   outline: none;
 }
-#report-note:focus { border-color: var(--accent); }
+#report-note:focus, #join-wait-note:focus { border-color: var(--accent); }
 .report-also-block { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--text-muted); cursor: pointer; }
 .report-also-block input { accent-color: var(--accent); margin: 0; }
 #report-preview { margin-top: 10px; }

@@ -26,6 +26,9 @@ const AUDIT_GROUP_OF = {
   activities: "server",
   join_sounds: "expressions",
   server_tag: "server",
+  join_approval: "members",
+  join_admit: "members",
+  join_turn_away: "members",
   channel_create: "channels",
   channel_delete: "channels",
   channel_rename: "channels",
@@ -124,6 +127,9 @@ function describeAudit(entry) {
     case "sound_sharing": return [detail === "on" ? "let members play this server's sounds in their other servers" : "stopped sharing this server's sounds"];
     case "join_sounds": return [detail === "on" ? "turned on join sounds in voice channels" : "turned off join sounds in voice channels"];
     case "server_tag": return detail ? ["set the server tag to ", auditStrong(detail)] : ["removed the server tag"];
+    case "join_approval": return [detail === "on" ? "asked new people to wait until a moderator lets them in" : "let new people join straight away"];
+    case "join_admit": return ["let ", member, " in"];
+    case "join_turn_away": return ["turned away ", member];
     case "activities": return [detail === "on" ? "turned on Activities in voice channels" : "turned off Activities in voice channels"];
     case "channel_create": return [`created the ${CHANNEL_KIND_WORDS[detail] || "channel"} `, channel];
     case "channel_delete": return label ? ["deleted the channel ", channel] : ["deleted a channel"];

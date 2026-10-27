@@ -78,6 +78,9 @@ pub enum AuditKind {
     Activities,
     JoinSounds,
     ServerTag,
+    JoinApproval,
+    JoinAdmit,
+    JoinTurnAway,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +193,12 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::ActivitiesSet { enabled, .. } => (K::Activities, None, None, on_off(*enabled)),
         E::JoinSoundsAllowed { allowed, .. } => (K::JoinSounds, None, None, on_off(*allowed)),
         E::ServerTagSet { tag, .. } => (K::ServerTag, None, None, tag.as_ref().map(|t| t.letters.clone())),
+        E::JoinApprovalSet { on, .. } => (K::JoinApproval, None, None, on_off(*on)),
+        E::JoinAnswer { user, admit, .. } => {
+            let asked = crate::join_request::request_of(server, *user).map(|r| &r.profile);
+            let name = asked.map(|p| clip(p.display_name.as_deref().unwrap_or(&p.username))).or_else(|| member_name(state, *user));
+            (if *admit { K::JoinAdmit } else { K::JoinTurnAway }, Some(user.to_string()), name, None)
+        }
         E::ChannelCreate { channel: c, .. } => {
             let kind = serde_json::to_value(c.kind).ok().and_then(|v| v.as_str().map(str::to_string));
             (K::ChannelCreate, Some(c.id.to_string()), Some(clip(&c.name)), kind)

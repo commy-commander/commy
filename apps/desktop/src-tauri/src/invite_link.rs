@@ -183,7 +183,8 @@ pub(crate) async fn create(
     if crate::community_sync::invite_key(app, id).is_none() {
         crate::channel_lock::tend_scope(app, handle, id, commy_core::channel_key::KeyScope::Community).await;
     }
-    let community = crate::community_sync::invite_key(app, id);
+    let asks_to_join = app.servers.lock().unwrap().get(&id).is_some_and(|s| s.server.join_approval);
+    let community = crate::community_sync::invite_key(app, id).filter(|_| !asks_to_join);
     let needs_account = expiry == Expiry::Never || name.is_some() || background.is_some();
     let token = needs_account.then(|| signed_in_token(app)).flatten();
     if name.is_some() && token.is_none() {

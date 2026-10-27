@@ -60,7 +60,7 @@ pub fn self_signed(event: &ServerEvent) -> bool {
 pub fn actor(event: &ServerEvent) -> Option<UserId> {
     use ServerEvent as E;
     match event {
-        E::MemberJoin { profile, .. } | E::ProfileUpdate { profile } => Some(profile.id),
+        E::MemberJoin { profile, .. } | E::ProfileUpdate { profile } | E::JoinAsk { profile, .. } => Some(profile.id),
         E::PresenceUpdate { user, .. }
         | E::VoiceState { user, .. }
         | E::TypingStart { user, .. }
@@ -148,6 +148,9 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::JoinSoundSet { user, .. } => format!("join_sound:{user}"),
         E::JoinSoundsAllowed { .. } => "join_sounds".into(),
         E::ServerTagSet { .. } => "server_tag".into(),
+        E::JoinApprovalSet { .. } => "join_approval".into(),
+        E::JoinAsk { profile, .. } => format!("join_ask:{}", profile.id),
+        E::JoinAnswer { user, .. } => format!("join_ask:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
         E::SoundSharingSet { .. } => "sound_sharing".into(),
@@ -339,7 +342,10 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ActivitiesSet { .. }
         | E::ExpressionSharingSet { .. }
         | E::JoinSoundsAllowed { .. }
-        | E::ServerTagSet { .. } => allows(Permissions::MANAGE_SERVER),
+        | E::ServerTagSet { .. }
+        | E::JoinApprovalSet { .. } => allows(Permissions::MANAGE_SERVER),
+        E::JoinAsk { .. } => actor(event) == Some(by) && crate::join_request::may_ask(server, by),
+        E::JoinAnswer { user, .. } => member && *user != by && allows(Permissions::KICK_MEMBERS),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
             allows(Permissions::MANAGE_ROLES)

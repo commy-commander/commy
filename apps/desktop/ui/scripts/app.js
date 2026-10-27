@@ -334,6 +334,14 @@ function mockSeed() {
   server.members[0].card_effect = "sparkles";
   server.members[1].avatar_border = "sunset";
   server.members[1].card_effect = "aurora";
+  server.join_approval = true;
+  server.join_requests = [
+    { id: "j1", name: "Marlow", username: "marlow", avatar: null, avatar_provider: null, note: "ash invited me after the Tuesday raid. I mostly write Rust for embedded boards.", at: Date.now() - 42 * 60 * 1000 },
+    { id: "j2", name: "kit", username: "kitcat", avatar: null, avatar_provider: null, note: "", at: Date.now() - 6 * 60 * 1000 },
+  ];
+  mock.joinWaits = [
+    { id: crypto.randomUUID(), name: "Night Owls Book Club", rules: "1. Be kind.\n2. No spoilers outside the spoiler channels.\n3. Keep it cozy.", members: 38, note: "", asked_at: Date.now() - 20 * 60 * 1000, turned_away: false, waiting: true },
+  ];
   mock.servers[server.id] = server;
   mock.directory = [
     { code: "KQ7M3N4P", key: "q".repeat(43), name: "Rust Hangout", category: "tech", members: 250, description: "Borrow checker support group, weekly code reviews and a friendly place to ask the questions you were afraid to ask. Beginners welcome, lifetimes optional." },
@@ -749,6 +757,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
+        join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
@@ -1409,6 +1418,27 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
     case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "set_join_approval": {
+      const srv = mock.servers[args.serverId];
+      srv.join_approval = args.enabled;
+      if (!args.enabled) srv.join_requests = [];
+      return null;
+    }
+    case "answer_join_request": {
+      const srv = mock.servers[args.serverId];
+      const asked = (srv.join_requests || []).find(r => r.id === args.userId);
+      if (!asked) throw "That person is no longer waiting to join";
+      srv.join_requests = srv.join_requests.filter(r => r.id !== args.userId);
+      if (args.admit) srv.members.push({ id: asked.id, name: asked.name, presence: "online", custom_status: null });
+      return null;
+    }
+    case "list_join_waits": return mock.joinWaits || [];
+    case "cancel_join_request": mock.joinWaits = (mock.joinWaits || []).filter(w => w.id !== args.serverId); return null;
+    case "send_join_note": {
+      const wait = (mock.joinWaits || []).find(w => w.id === args.serverId);
+      if (wait) wait.note = String(args.note || "").trim();
+      return null;
+    }
     case "set_server_tag": {
       const srv = mock.servers[args.serverId];
       const letters = cleanTagLetters(args.letters);
@@ -2659,7 +2689,165 @@ function renderServerRail() {
     if (item.open) for (const s of servers) folder.appendChild(railServerButton(s, item.id));
     list.appendChild(folder);
   }
+  for (const wait of joinWaits) list.appendChild(railWaitButton(wait));
   paintNarrowRail();
+}
+
+let joinWaits = [];
+let joinWaitShown = null;
+const seenJoinRequests = new Map();
+
+async function loadJoinWaits() {
+  try {
+    joinWaits = await invoke("list_join_waits");
+  } catch {
+    joinWaits = [];
+  }
+  if (joinWaitShown && !$("modal-join-wait").classList.contains("hidden")) {
+    if (joinWaits.some(w => w.id === joinWaitShown)) paintJoinWait(joinWaitShown);
+    else hideModals();
+  }
+}
+
+function railWaitButton(wait) {
+  const btn = el("button", "server-icon waiting");
+  paintServerIcon(btn, { id: wait.id, name: wait.name, icon: null });
+  btn.title = joinWaitStatus(wait).title;
+  btn.setAttribute("aria-label", btn.title);
+  const wrap = el("div", "rail-item");
+  wrap.appendChild(btn);
+  const mark = el("span", "rail-wait-mark" + (wait.turned_away ? " away" : ""));
+  mark.appendChild(svgIcon(wait.turned_away ? "close" : "clock", 11));
+  wrap.appendChild(mark);
+  btn.onclick = () => openJoinWait(wait.id);
+  return wrap;
+}
+
+function paintJoinWait(id) {
+  const wait = joinWaits.find(w => w.id === id);
+  if (!wait) return false;
+  const icon = $("join-wait-icon");
+  paintServerIcon(icon, { id: wait.id, name: wait.name, icon: null });
+  icon.style.background = serverTint(wait.id);
+  const status = joinWaitStatus(wait);
+  $("join-wait-title").textContent = status.title;
+  $("join-wait-members").textContent = joinWaitMembers(wait.members);
+  $("join-wait-status").textContent = status.text;
+  $("join-wait-rules-wrap").classList.toggle("hidden", !wait.rules);
+  $("join-wait-rules").textContent = wait.rules || "";
+  $("join-wait-note-wrap").classList.toggle("hidden", wait.turned_away);
+  $("join-wait-send").classList.toggle("hidden", wait.turned_away);
+  $("join-wait-cancel").textContent = wait.turned_away ? "Remove" : "Withdraw Request";
+  return true;
+}
+
+function openJoinWait(id) {
+  if (!paintJoinWait(id)) return;
+  joinWaitShown = id;
+  const wait = joinWaits.find(w => w.id === id);
+  $("join-wait-note").value = wait.note || "";
+  showModal("modal-join-wait");
+}
+
+function setupJoinWait() {
+  $("join-wait-close").onclick = hideModals;
+  $("join-wait-cancel").onclick = async () => {
+    const id = joinWaitShown;
+    if (!id) return;
+    try {
+      await invoke("cancel_join_request", { serverId: id });
+      hideModals();
+      await refreshServers();
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  $("join-wait-send").onclick = async () => {
+    const id = joinWaitShown;
+    const note = $("join-wait-note").value;
+    if (!id) return;
+    if (joinNoteLeft(note) < 0) return toast(`Keep your note to ${JOIN_NOTE_MAX} characters`);
+    const button = $("join-wait-send");
+    button.disabled = true;
+    try {
+      await invoke("send_join_note", { serverId: id, note });
+      toast("Your note is with the moderators");
+      await refreshServers();
+    } catch (e) {
+      toast(String(e));
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+function paintJoinBadge() {
+  const server = plainServer();
+  const count = server && server.can_answer_joins ? (server.join_requests || []).length : 0;
+  $("join-request-badge").classList.toggle("hidden", !count);
+  if (server && count) $("server-settings-btn").title = `Server Settings, ${count} waiting to join`;
+}
+
+function noteJoinRequests(server) {
+  if (server && server.can_answer_joins) {
+    const now = server.join_requests || [];
+    const before = seenJoinRequests.get(server.id);
+    seenJoinRequests.set(server.id, now);
+    const message = before ? joinRequestToast(server.name, newJoinRequests(before, now)) : "";
+    if (message) toast(message);
+    const layer = $("server-settings");
+    if (!layer.classList.contains("hidden") && layer.dataset.tab === "joins") renderJoinRequestSettings(server);
+  }
+  paintJoinBadge();
+}
+
+function renderJoinRequestSettings(server) {
+  const toggle = $("join-approval-toggle");
+  toggle.checked = Boolean(server.join_approval);
+  toggle.disabled = !server.can_manage_server;
+  $("join-approval-row").classList.toggle("readonly", !server.can_manage_server);
+  const requests = server.can_answer_joins ? server.join_requests || [] : [];
+  $("tab-joins").textContent = joinRequestsLabel(requests.length);
+  $("join-requests-count").textContent = requests.length ? `Waiting - ${requests.length}` : "Waiting";
+  const list = $("join-request-list");
+  list.replaceChildren();
+  if (!requests.length) {
+    const empty = server.join_approval ? "Nobody is waiting right now." : "Turn on Ask to join to meet new people before they come in.";
+    list.appendChild(el("div", "manage-empty", empty));
+    return;
+  }
+  for (const request of requests) {
+    const card = el("div", "report-card");
+    const head = el("div", "report-head");
+    head.appendChild(makeAvatar(request.id, request.name, "avatar avatar-sm"));
+    const who = el("div", "report-who");
+    who.appendChild(el("div", "report-name", request.name));
+    who.appendChild(el("div", "report-meta", `@${request.username} - asked ${formatShortTime(request.at)}`));
+    head.appendChild(who);
+    card.appendChild(head);
+    if (request.note) card.appendChild(el("div", "report-note", request.note));
+    const actions = el("div", "report-actions");
+    const admit = el("button", "btn-primary btn-small", "Let In");
+    const away = el("button", "btn-secondary btn-small", "Turn Away");
+    admit.onclick = () => answerJoinRequest(server, request, true, [admit, away]);
+    away.onclick = () => answerJoinRequest(server, request, false, [admit, away]);
+    actions.append(admit, away);
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+}
+
+async function answerJoinRequest(server, request, admit, buttons) {
+  for (const button of buttons) button.disabled = true;
+  try {
+    await invoke("answer_join_request", { serverId: server.id, userId: request.id, admit });
+    toast(admit ? `${request.name} can come in now` : `${request.name} was turned away`);
+    await refreshCurrentServer();
+    if (state.currentServer && state.currentServer.id === server.id) renderJoinRequestSettings(state.currentServer);
+  } catch (e) {
+    for (const button of buttons) button.disabled = false;
+    toast(String(e));
+  }
 }
 
 let menuServer = null;
@@ -3612,6 +3800,7 @@ function paintSidebarBanner() {
     $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? "Server Settings" : "Server Info";
     $("invite-btn").classList.toggle("hidden", !state.currentServer.can_invite);
   }
+  paintJoinBadge();
   const banner = $("sidebar-banner");
   const server = plainServer();
   const ref = server ? server.banner : null;
@@ -9388,6 +9577,10 @@ function openServerWelcome(step) {
 const rolePromptPending = new Set();
 
 async function enterJoinedServer(summary) {
+  if (summary.waiting) {
+    await refreshServers();
+    return openJoinWait(summary.id);
+  }
   rolePromptPending.add(summary.id);
   await refreshServers();
   await selectServer(summary.id);
@@ -14959,6 +15152,7 @@ function renderUserPanel() {
 
 async function refreshServers() {
   state.servers = await invoke("list_servers");
+  await loadJoinWaits();
   for (const id of [...friendPresenceViews.keys()]) {
     if (!state.servers.some(s => s.id === id)) friendPresenceViews.delete(id);
   }
@@ -17577,6 +17771,19 @@ function wireEvents() {
       openServerSettings();
     }
   });
+  setupJoinWait();
+  $("join-approval-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_join_approval", { serverId: server.id, enabled: e.target.checked });
+      await refreshCurrentServer();
+      renderJoinRequestSettings(state.currentServer);
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  });
   $("server-activities-toggle").addEventListener("change", async e => {
     const server = state.currentServer;
     if (!server) return;
@@ -18886,6 +19093,17 @@ function wireEvents() {
     };
     window.__TAURI__.event.listen("banned", removedFrom("banned from"));
     window.__TAURI__.event.listen("kicked", removedFrom("removed from"));
+    window.__TAURI__.event.listen("join-waits-changed", refreshServers);
+    window.__TAURI__.event.listen("join-request-accepted", async event => {
+      const { server, name } = event.payload || {};
+      toast(`${name || "The server"} let you in`);
+      const waiting = joinWaitShown === server && !$("modal-join-wait").classList.contains("hidden");
+      await refreshServers();
+      if (waiting) {
+        hideModals();
+        await selectServer(server);
+      }
+    });
     window.__TAURI__.event.listen("voice-left", async event => {
       if (state.voiceServer && state.voiceServer.id === event.payload) {
         state.voiceChannelId = null;
@@ -19876,6 +20094,9 @@ function openServerSettings(tab) {
   $("tab-channels").classList.toggle("hidden", !server.can_manage_channels);
   $("tab-roles").classList.toggle("hidden", !server.can_manage_roles);
   $("tab-members").classList.toggle("hidden", !canMembers);
+  const canJoins = Boolean(server.can_answer_joins || server.can_manage_server);
+  $("tab-joins").classList.toggle("hidden", !canJoins);
+  if (canJoins) renderJoinRequestSettings(server);
   const manages = server.can_manage_expressions || server.can_manage_server;
   const canEmoji = manages || server.can_add_emojis;
   const canStickers = manages || server.can_add_stickers;
@@ -19921,6 +20142,7 @@ function openServerSettings(tab) {
     onboarding: server.can_manage_server,
     automod: server.can_manage_server,
     members: canMembers,
+    joins: canJoins,
     audit: server.can_view_audit_log,
   };
   renderEmojiSettings(server);
@@ -20683,6 +20905,7 @@ async function refreshCurrentServer() {
   renderServerRail();
   renderMembers();
   renderChannels();
+  noteJoinRequests(state.currentServer);
   refreshVoiceInviteCards();
   renderVoicePanelActivity();
   syncRulesGate();

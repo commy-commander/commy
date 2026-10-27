@@ -61,6 +61,7 @@
             <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
           </button>
           <button class="icon-btn" id="server-settings-btn" title="Server Settings">
+            <span class="join-badge hidden" id="join-request-badge" aria-hidden="true"></span>
             <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.4 13a7.9 7.9 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.9 7.9 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.9 7.9 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.9 7.9 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.9 7.9 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.9 7.9 0 0 0 1.7-1l2.4 1 2-3.4zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z"/></svg>
           </button>
         </span>
@@ -665,6 +666,30 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="invite-link-cancel">Cancel</button>
         <button class="btn-primary" id="invite-link-join">Join Server</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-join-wait" role="dialog" aria-labelledby="join-wait-title">
+      <div class="sw-head">
+        <div class="server-icon sw-icon" id="join-wait-icon" aria-hidden="true"></div>
+        <div class="sw-titles">
+          <h2 id="join-wait-title"></h2>
+          <p id="join-wait-members"></p>
+        </div>
+      </div>
+      <p class="join-wait-status" id="join-wait-status"></p>
+      <div class="join-wait-rules hidden" id="join-wait-rules-wrap">
+        <div class="field-label">Rules</div>
+        <div class="join-wait-rules-text" id="join-wait-rules"></div>
+      </div>
+      <div class="join-wait-note-wrap" id="join-wait-note-wrap">
+        <label class="field-label" for="join-wait-note">Note for the moderators</label>
+        <textarea id="join-wait-note" maxlength="300" rows="3" placeholder="Who invited you, or why you'd like to join"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="join-wait-cancel">Withdraw Request</button>
+        <button class="btn-secondary" id="join-wait-send">Send Note</button>
+        <button class="btn-primary" id="join-wait-close">Close</button>
       </div>
     </div>
 
@@ -2296,6 +2321,7 @@
         <button class="settings-tab" data-tab="channels" id="tab-channels">Channels</button>
         <div class="settings-nav-group">People</div>
         <button class="settings-tab" data-tab="members" id="tab-members">Members</button>
+        <button class="settings-tab" data-tab="joins" id="tab-joins">Join Requests</button>
         <button class="settings-tab" data-tab="roles" id="tab-roles">Roles</button>
         <button class="settings-tab" data-tab="invites" id="tab-invites">Invites</button>
         <div class="settings-nav-group">Community</div>
@@ -2709,6 +2735,19 @@
           <h1>Members</h1>
           <div id="manage-member-list" class="manage-list"></div>
         </section>
+        <section class="settings-page" data-page="joins">
+          <h1>Join Requests</h1>
+          <div class="setting-sub expr-intro">With Ask to join on, new people wait outside until a moderator lets them in. Until then they can't see channels, messages or who is here.</div>
+          <label class="settings-card setting-row" id="join-approval-row">
+            <div>
+              <div class="setting-title">Ask to join</div>
+              <div class="setting-sub">People with an invite send a request instead of coming straight in. Anyone who can kick members can answer. Turning it on also changes the server's key, so older invite links stop opening its history.</div>
+            </div>
+            <input type="checkbox" id="join-approval-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead" id="join-requests-count">Waiting</h2>
+          <div id="join-request-list" class="report-list"></div>
+        </section>
         <section class="settings-page" data-page="bots">
           <h1>Bots</h1>
           <div class="setting-sub expr-intro">Bots are members that run on their own, on a computer or server someone keeps online. They join with an invite like anyone else, wear a BOT badge, and can only do what their roles allow.</div>
@@ -2934,6 +2973,7 @@
   <script src="scripts/markdown.js"></script>
   <script src="scripts/server-tags.js"></script>
   <script src="scripts/profile-look.js"></script>
+  <script src="scripts/join-requests.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/voice-filters.js"></script>
   <script src="scripts/stream-audio.js"></script>
