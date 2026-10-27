@@ -483,7 +483,7 @@ impl Session {
             "set_channel_access" => self.server_command(cmd, args).await,
             "add_emoji" | "add_sticker" | "add_emoticon" | "add_sound" => self.expression_command(cmd, args).await,
             "remove_emoji" | "remove_sticker" | "remove_emoticon" | "remove_sound" => self.expression_command(cmd, args).await,
-            "set_sound_emoji" | "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" => {
+            "set_sound_emoji" | "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" | "set_join_sounds_allowed" | "set_join_sound" => {
                 self.expression_command(cmd, args).await
             }
             "store_catalog_emoji" | "store_catalog_sticker" | "catalog_media_path" => self.expression_command(cmd, args).await,

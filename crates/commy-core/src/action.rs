@@ -77,7 +77,8 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::PollVote { user, .. }
         | E::HandRaise { user, .. }
         | E::DeviceAnnounce { user, .. }
-        | E::PronounsSet { user, .. } => Some(*user),
+        | E::PronounsSet { user, .. }
+        | E::JoinSoundSet { user, .. } => Some(*user),
         E::MessagePin { by, .. }
         | E::MemberTimeout { by, .. }
         | E::PollClose { by, .. }
@@ -144,6 +145,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::BotSet { user, .. } => format!("bot:{user}"),
         E::BotCommandsSet { bot, .. } => format!("bot_commands:{bot}"),
         E::PronounsSet { user, .. } => format!("pronouns:{user}"),
+        E::JoinSoundSet { user, .. } => format!("join_sound:{user}"),
+        E::JoinSoundsAllowed { .. } => "join_sounds".into(),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
         E::ExpressionSettings { .. } => "expressions".into(),
         E::SoundSharingSet { .. } => "sound_sharing".into(),
@@ -265,7 +268,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MemberJoin { .. } => actor(event) == Some(by),
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
-        E::BotSet { .. } | E::PronounsSet { .. } => member && actor(event) == Some(by),
+        E::BotSet { .. } | E::PronounsSet { .. } | E::JoinSoundSet { .. } => member && actor(event) == Some(by),
         E::BotCommandsSet { bot, .. } => member && *bot == by && actor(event) == Some(by),
         E::PresenceUpdate { .. } | E::RulesAccept { .. } | E::EventRsvp { .. } => member && actor(event) == Some(by),
         E::VoiceState { .. } | E::ScreenShare { .. } | E::CameraState { .. } | E::DeviceAnnounce { .. } => {
@@ -333,7 +336,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ExpressionSettings { .. }
         | E::SoundSharingSet { .. }
         | E::ActivitiesSet { .. }
-        | E::ExpressionSharingSet { .. } => allows(Permissions::MANAGE_SERVER),
+        | E::ExpressionSharingSet { .. }
+        | E::JoinSoundsAllowed { .. } => allows(Permissions::MANAGE_SERVER),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
             allows(Permissions::MANAGE_ROLES)

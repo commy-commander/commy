@@ -2786,6 +2786,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     if let Some(pronouns) = pronouns {
         events.push(ServerEvent::PronounsSet { server: sid, user: me, pronouns: Some(pronouns) });
     }
+    if let Some(sound) = state.server.join_sounds.get(&me) {
+        events.push(ServerEvent::JoinSoundSet { server: sid, user: me, sound: Some(sound.clone()) });
+    }
     for event in &state.server.events {
         events.push(ServerEvent::EventUpsert { server: sid, event: event.clone() });
         for (user, rsvp) in &event.rsvps {
@@ -2878,6 +2881,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if state.server.activities_enabled && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ActivitiesSet { server: sid, enabled: true });
+    }
+    if state.server.join_sounds_off && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::JoinSoundsAllowed { server: sid, allowed: false });
     }
     let sharing = state.server.stickers_shareable || state.server.emoticons_shareable;
     if sharing && perms.allows(Permissions::MANAGE_SERVER) {
@@ -5333,6 +5339,34 @@ async fn set_sound_sharing(
 }
 
 #[tauri::command]
+async fn set_join_sounds_allowed(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    enabled: bool,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::join_sounds_allowed(state, perms, enabled))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_join_sound(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    name: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::expressions::join_sound(state, perms, me.id, name.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
 async fn set_activities_enabled(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
@@ -7461,6 +7495,8 @@ pub fn run() {
             set_sound_emoji,
             set_expression_settings,
             set_sound_sharing,
+            set_join_sounds_allowed,
+            set_join_sound,
             set_activities_enabled,
             set_role_access,
             add_sticker,

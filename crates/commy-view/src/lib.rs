@@ -353,6 +353,9 @@ pub struct ServerView {
     pub can_manage_expressions: bool,
     pub can_upload_sounds: bool,
     pub can_use_soundboard: bool,
+    pub join_sounds_allowed: bool,
+    pub join_sounds: std::collections::BTreeMap<String, String>,
+    pub my_join_sound: Option<String>,
     pub automod: Option<AutoMod>,
     pub onboarding: Option<commy_core::Onboarding>,
     pub commands: Vec<BotCommandsView>,
@@ -719,6 +722,9 @@ impl ServerView {
             can_manage_expressions: perms.allows(Permissions::MANAGE_EXPRESSIONS),
             can_upload_sounds: perms.allows(Permissions::MANAGE_EXPRESSIONS) || (state.server.soundboard_open && is_member),
             can_use_soundboard: perms.allows(Permissions::USE_SOUNDBOARD),
+            join_sounds_allowed: !state.server.join_sounds_off,
+            join_sounds: join_sound_clips(state),
+            my_join_sound: viewer.and_then(|v| state.server.join_sounds.get(&v).cloned()),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
             onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
                 o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))
@@ -730,6 +736,19 @@ impl ServerView {
                 .collect(),
         }
     }
+}
+
+fn join_sound_clips(state: &ServerState) -> std::collections::BTreeMap<String, String> {
+    let clip_of = |sound: &str| match sound.strip_prefix(commy_core::server::BUILT_IN_SOUND_PREFIX) {
+        Some(_) => Some(sound.to_string()),
+        None => state.server.soundboard.iter().find(|s| s.name == sound).map(|s| s.blob.clone()),
+    };
+    state
+        .server
+        .join_sounds
+        .keys()
+        .filter_map(|user| Some((user.to_string(), clip_of(state.server.join_sound_of(*user)?)?)))
+        .collect()
 }
 
 fn everyone_holds(state: &ServerState, permission: Permissions) -> bool {

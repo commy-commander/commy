@@ -149,6 +149,26 @@ pub fn sound_sharing(state: &ServerState, perms: Permissions, shareable: bool) -
     Ok(ServerEvent::SoundSharingSet { server: state.server.id, shareable })
 }
 
+pub fn join_sounds_allowed(state: &ServerState, perms: Permissions, allowed: bool) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_SERVER, "turn join sounds on or off")?;
+    Ok(ServerEvent::JoinSoundsAllowed { server: state.server.id, allowed })
+}
+
+pub fn join_sound(state: &ServerState, perms: Permissions, me: UserId, name: Option<&str>) -> Act<ServerEvent> {
+    let server = state.server.id;
+    let Some(name) = name.map(str::trim).filter(|n| !n.is_empty()) else {
+        return Ok(ServerEvent::JoinSoundSet { server, user: me, sound: None });
+    };
+    if state.server.join_sounds_off {
+        return Err("This server has join sounds turned off".into());
+    }
+    need(perms, Permissions::USE_SOUNDBOARD, "use the soundboard")?;
+    if !is_default_sound(name) && !state.server.soundboard.iter().any(|s| s.name == name) {
+        return Err("Pick one of this server's sounds".into());
+    }
+    Ok(ServerEvent::JoinSoundSet { server, user: me, sound: Some(name.to_string()) })
+}
+
 pub fn check_sound(bytes: &[u8]) -> Act<()> {
     if bytes.len() > MAX_SOUND_BYTES || audio_mime(bytes).is_none() {
         return Err(SOUND_INVALID.into());
@@ -375,6 +395,32 @@ mod tests {
     }
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n0000";
+
+    #[test]
+    fn a_join_sound_is_one_of_the_servers_sounds_or_a_built_in_one() {
+        let (mut state, _, member) = hangout();
+        let perms = state.server.permissions_for(member);
+        state.server.soundboard.push(SoundboardSound { name: "tada".into(), blob: "blob".into(), volume: 1.0, emoji: None });
+        let picked = |state: &ServerState, name| join_sound(state, perms, member, name);
+        assert!(matches!(picked(&state, Some("tada")), Ok(ServerEvent::JoinSoundSet { sound: Some(s), .. }) if s == "tada"));
+        assert!(matches!(picked(&state, Some("default:airhorn")), Ok(ServerEvent::JoinSoundSet { sound: Some(_), .. })));
+        assert!(matches!(picked(&state, Some(" ")), Ok(ServerEvent::JoinSoundSet { sound: None, .. })));
+        assert!(matches!(picked(&state, None), Ok(ServerEvent::JoinSoundSet { sound: None, .. })));
+        assert!(picked(&state, Some("missing")).is_err());
+        assert!(picked(&state, Some("default:missing")).is_err());
+        assert!(join_sound(&state, Permissions::NONE, member, Some("tada")).is_err(), "needs the soundboard");
+        state.server.join_sounds_off = true;
+        assert_eq!(picked(&state, Some("tada")).unwrap_err(), "This server has join sounds turned off");
+        assert!(picked(&state, None).is_ok(), "clearing always works");
+    }
+
+    #[test]
+    fn only_managers_turn_join_sounds_off() {
+        let (state, owner, member) = hangout();
+        assert!(join_sounds_allowed(&state, state.server.permissions_for(member), false).is_err());
+        let off = join_sounds_allowed(&state, state.server.permissions_for(owner), false);
+        assert!(matches!(off, Ok(ServerEvent::JoinSoundsAllowed { allowed: false, .. })));
+    }
 
     #[test]
     fn default_sounds_need_the_prefix_and_a_known_id() {
