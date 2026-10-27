@@ -401,6 +401,8 @@ pub struct Server {
     pub turned_away: Vec<UserId>,
     #[serde(default)]
     pub join_approval_since: i64,
+    #[serde(default)]
+    pub tip_jar: Option<String>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -487,6 +489,7 @@ impl Server {
             join_requests: vec![],
             turned_away: vec![],
             join_approval_since: 0,
+            tip_jar: None,
         }
     }
 

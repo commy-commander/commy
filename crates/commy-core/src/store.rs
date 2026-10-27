@@ -1444,6 +1444,13 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.server.tag, tag))
             }
+            ServerEvent::TipJarSet { server, url } => {
+                self.same_server(server)?;
+                if url.as_deref().is_some_and(|u| !crate::tip_jar::is_tip_jar(u)) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.server.tip_jar, url))
+            }
             ServerEvent::JoinApprovalSet { server, on, at } => {
                 self.same_server(server)?;
                 if !on {
@@ -3845,6 +3852,22 @@ mod tests {
         });
         let file = crate::test_support::signed(&state, file);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
+    }
+
+    #[test]
+    fn a_tip_jar_is_a_ko_fi_page_set_by_managers() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let set = |url: Option<&str>| ServerEvent::TipJarSet { server: sid, url: url.map(str::to_string) };
+        assert_eq!(state.apply(set(Some("https://ko-fi.com/rockets"))), Ok(true));
+        assert_eq!(state.apply(set(Some("https://evil.example/rockets"))), Ok(false));
+        assert_eq!(state.apply(set(Some("ko-fi.com/rockets"))), Ok(false));
+        assert_eq!(state.server.tip_jar.as_deref(), Some("https://ko-fi.com/rockets"));
+        assert!(crate::action::authorized(&state.server, owner, &set(None)));
+        assert!(!crate::action::authorized(&state.server, friend, &set(None)));
+        assert_eq!(state.apply(set(None)), Ok(true));
+        assert_eq!(state.server.tip_jar, None);
     }
 
     #[test]

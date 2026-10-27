@@ -24,6 +24,7 @@ pub mod server;
 pub mod server_tag;
 pub mod store;
 pub mod template;
+pub mod tip_jar;
 pub mod user;
 pub mod voice_invite;
 

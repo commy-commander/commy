@@ -400,6 +400,10 @@ pub enum ServerEvent {
         user: UserId,
         admit: bool,
     },
+    TipJarSet {
+        server: ServerId,
+        url: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -486,6 +490,7 @@ mod tests {
         let profile = UserProfile::new("asker");
         assert_eq!(wire_tag(ServerEvent::JoinAsk { server, profile, note: String::new(), at: 1 }), 91);
         assert_eq!(wire_tag(ServerEvent::JoinAnswer { server, user, admit: true }), 92);
+        assert_eq!(wire_tag(ServerEvent::TipJarSet { server, url: None }), 93);
     }
 
     #[test]
