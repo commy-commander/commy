@@ -8064,6 +8064,7 @@ pub fn run() {
             notify,
             speech::speech_voices,
             speech::speech_speak,
+            speech::speech_play,
             speech::speech_stop,
             voice_pack::voice_pack_status,
             voice_pack::voice_pack_download,
