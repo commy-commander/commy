@@ -9,6 +9,9 @@ const {
   makeActivity, watchLinkSource, watchAttachmentSource, watchLinkUrl, watchAttachment, watchTitle,
   newActivityRun, ticTacToeWinner, boardFull, gameOver, turnMark, markOf, isParticipant, isPlayer, applyActivityInput, syncInput,
   watchTargetPosition, watchNeedsSeek, activityParticipants, avatarRow, gameStatus, canMoveAt, canEndActivity,
+  YOUTUBE_ORIGIN, YOUTUBE_STATE, MAX_PLEX_TITLE_CHARS, youtubeVideoId, cleanPlexTitle, isPlexTitle, watchYouTubeSource, watchPlexSource,
+  watchYouTubeId, watchPlexTitle, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl, youtubeCommand, youtubeListening, readYouTubeMessage,
+  youtubePlaying, youtubeExpectedTime, youtubeUserSeeked, youtubeNeedsSeek, youtubeErrorText, plexStatus,
 } = require("../scripts/activities.js");
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -280,4 +283,132 @@ test("the starter or a voice moderator ends an activity", () => {
 test("the board constants match the backend's cell marks", () => {
   assert.equal(BOARD_CELLS, 9);
   assert.deepEqual([MARK_NONE, MARK_X, MARK_O], [0, 1, 2]);
+});
+
+test("YouTube links of every common shape give the video id and nothing else does", () => {
+  const id = "dQw4w9WgXcQ";
+  for (const url of [
+    `https://www.youtube.com/watch?v=${id}`,
+    `https://youtube.com/watch?v=${id}&t=42s`,
+    `https://m.youtube.com/watch?feature=share&v=${id}`,
+    `https://music.youtube.com/watch?v=${id}`,
+    `https://youtu.be/${id}?si=abc`,
+    `https://www.youtube.com/shorts/${id}`,
+    `https://www.youtube.com/live/${id}`,
+    `https://www.youtube.com/embed/${id}`,
+    `https://www.youtube-nocookie.com/embed/${id}`,
+    `youtube.com/watch?v=${id}`,
+    ` https://youtu.be/${id} `,
+  ]) {
+    assert.equal(youtubeVideoId(url), id, url);
+  }
+  for (const url of [
+    "",
+    "https://example.org/clips/final.mp4",
+    "https://www.youtube.com/watch?v=short",
+    "https://www.youtube.com/channel/UCabcdefghijk",
+    `https://www.youtube.com.evil.example/watch?v=${id}`,
+    `https://evil.example/youtu.be/${id}`,
+    `javascript:alert(1)//youtu.be/${id}`,
+    `https://youtu.be/${id}x`,
+    `https://www.youtube.com/watch?v=${id} extra`,
+  ]) {
+    assert.equal(youtubeVideoId(url), null, url);
+  }
+});
+
+test("YouTube and Plex sources carry only an id or a title, matching the backend", () => {
+  const tube = makeActivity("watch", "m1", NOW, "run-3", watchYouTubeSource("dQw4w9WgXcQ"));
+  assert.deepEqual(tube.kind, { watch: { source: { youtube: { video: "dQw4w9WgXcQ" } } } });
+  assert.equal(watchSourceKind(tube), "youtube");
+  assert.equal(watchYouTubeId(tube), "dQw4w9WgXcQ");
+  assert.equal(watchTitle(tube), "YouTube video");
+  assert.equal(watchLinkUrl(tube), null);
+  assert.equal(watchAttachment(tube), null);
+  const show = makeActivity("watch", "m1", NOW, "run-4", watchPlexSource("  Spirited\n Away "));
+  assert.deepEqual(show.kind, { watch: { source: { plex: { title: "Spirited Away" } } } });
+  assert.equal(watchSourceKind(show), "plex");
+  assert.equal(watchPlexTitle(show), "Spirited Away");
+  assert.equal(watchTitle(show), "Spirited Away");
+  assert.equal(watchYouTubeId(show), null);
+  assert.equal(watchSourceKind(film()), "link");
+  assert.equal(activityKindKey(tube), "watch");
+});
+
+test("Plex titles are plain, trimmed and at most a hundred characters", () => {
+  assert.equal(cleanPlexTitle("  The\tMatrix  "), "The Matrix");
+  assert.ok(isPlexTitle("The Matrix"));
+  assert.ok(isPlexTitle("é".repeat(MAX_PLEX_TITLE_CHARS)));
+  assert.ok(!isPlexTitle("x".repeat(MAX_PLEX_TITLE_CHARS + 1)));
+  assert.ok(!isPlexTitle(""));
+  assert.ok(!isPlexTitle(" padded"));
+  assert.ok(!isPlexTitle("two\nlines"));
+});
+
+test("the YouTube player loads from the privacy-enhanced site and only hears from there", () => {
+  assert.equal(YOUTUBE_ORIGIN, "https://www.youtube-nocookie.com");
+  const url = new URL(youtubeEmbedUrl("dQw4w9WgXcQ", "http://tauri.localhost"));
+  assert.equal(url.origin, YOUTUBE_ORIGIN);
+  assert.equal(url.pathname, "/embed/dQw4w9WgXcQ");
+  assert.equal(url.searchParams.get("enablejsapi"), "1");
+  assert.equal(url.searchParams.get("origin"), "http://tauri.localhost");
+  const custom = new URL(youtubeEmbedUrl("dQw4w9WgXcQ", "tauri://localhost"));
+  assert.equal(custom.searchParams.get("origin"), null);
+  assert.equal(youtubeWatchUrl("dQw4w9WgXcQ"), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+  assert.deepEqual(JSON.parse(youtubeCommand("seekTo", [12, true])), { event: "command", func: "seekTo", args: [12, true], id: 1, channel: "widget" });
+  assert.deepEqual(JSON.parse(youtubeListening()), { event: "listening", id: 1, channel: "widget" });
+});
+
+test("player messages turn into ready, errors, states, times and titles", () => {
+  assert.deepEqual(readYouTubeMessage('{"event":"onReady"}'), { kind: "ready" });
+  assert.deepEqual(readYouTubeMessage('{"event":"onError","info":150}'), { kind: "error", code: 150 });
+  assert.deepEqual(readYouTubeMessage('{"event":"onStateChange","info":1}'), { kind: "info", state: YOUTUBE_STATE.PLAYING });
+  assert.deepEqual(
+    readYouTubeMessage(JSON.stringify({ event: "infoDelivery", info: { currentTime: 31.5, playerState: 2, videoData: { title: " Big Film " } } })),
+    { kind: "info", state: YOUTUBE_STATE.PAUSED, time: 31.5, title: "Big Film" },
+  );
+  assert.deepEqual(readYouTubeMessage({ event: "infoDelivery", info: { currentTime: 4 } }), { kind: "info", time: 4 });
+  assert.equal(readYouTubeMessage({ event: "infoDelivery", info: { volume: 50 } }), null);
+  assert.equal(readYouTubeMessage({ event: "infoDelivery", info: { currentTime: -1 } }), null);
+  assert.equal(readYouTubeMessage("not json"), null);
+  assert.equal(readYouTubeMessage({ event: "somethingNew" }), null);
+  assert.equal(readYouTubeMessage(null), null);
+});
+
+test("a jump in the player's time counts as a seek, steady playback does not", () => {
+  const seen = { state: YOUTUBE_STATE.PLAYING, time: 10, at: NOW };
+  assert.equal(youtubeExpectedTime(seen, NOW + 5000), 15);
+  assert.equal(youtubeExpectedTime({ ...seen, state: YOUTUBE_STATE.PAUSED }, NOW + 5000), 10);
+  assert.equal(youtubeExpectedTime(null, NOW), null);
+  assert.ok(!youtubeUserSeeked(seen, 15.4, NOW + 5000));
+  assert.ok(youtubeUserSeeked(seen, 60, NOW + 5000));
+  assert.ok(youtubeUserSeeked({ ...seen, state: YOUTUBE_STATE.PAUSED }, 4, NOW + 5000));
+  assert.ok(!youtubeUserSeeked(null, 60, NOW));
+  assert.ok(youtubePlaying(YOUTUBE_STATE.PLAYING) && youtubePlaying(YOUTUBE_STATE.BUFFERING));
+  assert.ok(!youtubePlaying(YOUTUBE_STATE.PAUSED) && !youtubePlaying(YOUTUBE_STATE.CUED) && !youtubePlaying(YOUTUBE_STATE.ENDED));
+  assert.ok(!youtubeNeedsSeek(10, 11.5) && youtubeNeedsSeek(10, 12.5));
+});
+
+test("YouTube errors read as plain reasons", () => {
+  assert.match(youtubeErrorText(100), /removed or made private/);
+  for (const code of [101, 150, 153, 5]) assert.match(youtubeErrorText(code), /won't play this video here/);
+});
+
+test("the Plex line tells each viewer what to do next", () => {
+  const run = newActivityRun(makeActivity("watch", "me", NOW, "run-5", watchPlexSource("Film")));
+  assert.equal(plexStatus(run, { open: false }, "m2").text, "Join to sync with Plex");
+  assert.equal(plexStatus(run, { open: false }, "me").text, "Plex isn't open");
+  assert.equal(plexStatus(run, { open: true, video: false }, "me").text, "Start the title in Plex");
+  assert.deepEqual(plexStatus(run, { open: true, video: true, playing: false }, "me"), { text: "In sync", tone: "good" });
+  run.playback = { playing: true, position: 0, at: NOW };
+  assert.deepEqual(plexStatus(run, { open: true, video: true, playing: false }, "me"), { text: "Catching up", tone: "catching" });
+  assert.equal(plexStatus(newActivityRun(film()), { open: true }, "m1").text, "");
+});
+
+test("play and pause from a Plex viewer apply like any other playback", () => {
+  const run = newActivityRun(makeActivity("watch", "m1", NOW, "run-6", watchPlexSource("Film")));
+  assert.ok(applyActivityInput(run, "join", "m2", 1).ok);
+  assert.ok(applyActivityInput(run, { playback: { playing: true, position: 0, at: NOW } }, "m2", 2).ok);
+  assert.equal(run.playback.playing, true);
+  assert.ok(!applyActivityInput(run, { playback: { playing: false, position: 0, at: NOW } }, "m3", 1).ok, "only people who joined");
 });

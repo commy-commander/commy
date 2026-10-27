@@ -1,5 +1,5 @@
 const ACTIVITY_KINDS = [
-  { key: "watch", name: "Watch together", blurb: "Play a direct video link or an attached video together", icon: "movie", pill: "Watch" },
+  { key: "watch", name: "Watch together", blurb: "Play YouTube, Plex, a video link or an attached video together", icon: "movie", pill: "Watch" },
   { key: "tictactoe", name: "Tic-tac-toe", blurb: "Two play, everyone else in the channel watches", icon: "gamepad", pill: "Game" },
 ];
 
@@ -14,6 +14,14 @@ const ACTIVITY_MAX_AVATARS = 8;
 const MAX_CHANNEL_VIDEOS = 6;
 const VIDEO_LINK_EXTENSIONS = ["mp4", "webm", "ogg"];
 const MAX_WATCH_URL_CHARS = 2048;
+const YOUTUBE_ORIGIN = "https://www.youtube-nocookie.com";
+const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = ["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtube-nocookie.com", "www.youtube-nocookie.com"];
+const YOUTUBE_PATH_PREFIXES = ["shorts", "live", "embed", "v"];
+const YOUTUBE_STATE = { ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
+const YOUTUBE_SYNC_TOLERANCE_SECS = 2;
+const YOUTUBE_SEEK_JUMP_SECS = 2;
+const MAX_PLEX_TITLE_CHARS = 100;
 
 function activityKindKey(activity) {
   const kind = activity && activity.kind;
@@ -47,6 +55,36 @@ function isVideoLink(url) {
   const dot = file.lastIndexOf(".");
   if (dot <= 0) return false;
   return VIDEO_LINK_EXTENSIONS.includes(file.slice(dot + 1).toLowerCase());
+}
+
+function youtubeVideoId(url) {
+  const text = String(url || "").trim();
+  if (!text || text.length > MAX_WATCH_URL_CHARS || /\s/.test(text)) return null;
+  let parsed;
+  try {
+    parsed = new URL(/^[a-z]+:\/\//i.test(text) ? text : `https://${text}`);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+  const host = parsed.hostname.toLowerCase();
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  let id = null;
+  if (host === "youtu.be" || host === "www.youtu.be") id = parts[0] || null;
+  else if (YOUTUBE_HOSTS.includes(host)) {
+    if (parts[0] === "watch") id = parsed.searchParams.get("v");
+    else if (YOUTUBE_PATH_PREFIXES.includes(parts[0])) id = parts[1] || null;
+  }
+  return id && YOUTUBE_ID.test(id) ? id : null;
+}
+
+function cleanPlexTitle(title) {
+  return String(title || "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function isPlexTitle(title) {
+  const text = String(title || "");
+  return text.length > 0 && text === cleanPlexTitle(text) && [...text].length <= MAX_PLEX_TITLE_CHARS;
 }
 
 function isVideoAttachment(att) {
@@ -84,6 +122,14 @@ function watchAttachmentSource(att) {
   };
 }
 
+function watchYouTubeSource(video) {
+  return { youtube: { video } };
+}
+
+function watchPlexSource(title) {
+  return { plex: { title: cleanPlexTitle(title) } };
+}
+
 function watchSource(activity) {
   const kind = activity && activity.kind;
   return kind && typeof kind === "object" && kind.watch ? kind.watch.source : null;
@@ -101,7 +147,30 @@ function watchAttachment(activity) {
   return { blob: att.blob, filename: att.filename, size_bytes: att.size_bytes, mime: att.mime_type, provider: att.provider ?? null };
 }
 
+function watchYouTubeId(activity) {
+  const source = watchSource(activity);
+  return source && source.youtube && YOUTUBE_ID.test(source.youtube.video) ? source.youtube.video : null;
+}
+
+function watchPlexTitle(activity) {
+  const source = watchSource(activity);
+  return source && source.plex ? String(source.plex.title || "") : null;
+}
+
+function watchSourceKind(activity) {
+  const source = watchSource(activity);
+  if (!source) return null;
+  if (source.link) return "link";
+  if (source.attachment) return "attachment";
+  if (source.youtube) return "youtube";
+  if (source.plex) return "plex";
+  return null;
+}
+
 function watchTitle(activity) {
+  if (watchYouTubeId(activity)) return "YouTube video";
+  const plex = watchPlexTitle(activity);
+  if (plex) return plex;
   const url = watchLinkUrl(activity);
   if (url) {
     const file = url.split(/[?#]/)[0].split("/").pop();
@@ -109,6 +178,90 @@ function watchTitle(activity) {
   }
   const att = watchAttachment(activity);
   return att ? att.filename : "Video";
+}
+
+function youtubeEmbedUrl(video, origin) {
+  const params = new URLSearchParams({ enablejsapi: "1", playsinline: "1", rel: "0", modestbranding: "1" });
+  if (/^https?:\/\//.test(String(origin || ""))) {
+    params.set("origin", origin);
+    params.set("widget_referrer", origin);
+  }
+  return `${YOUTUBE_ORIGIN}/embed/${encodeURIComponent(video)}?${params}`;
+}
+
+function youtubeWatchUrl(video) {
+  return `https://www.youtube.com/watch?v=${encodeURIComponent(video)}`;
+}
+
+function youtubeCommand(func, args = []) {
+  return JSON.stringify({ event: "command", func, args, id: 1, channel: "widget" });
+}
+
+function youtubeListening() {
+  return JSON.stringify({ event: "listening", id: 1, channel: "widget" });
+}
+
+function readYouTubeMessage(data) {
+  let message = data;
+  if (typeof data === "string") {
+    try {
+      message = JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  if (!message || typeof message !== "object" || typeof message.event !== "string") return null;
+  const info = message.info;
+  switch (message.event) {
+    case "onReady":
+      return { kind: "ready" };
+    case "onError":
+      return { kind: "error", code: Number(info) };
+    case "onStateChange":
+      return Number.isInteger(info) ? { kind: "info", state: info } : null;
+    case "initialDelivery":
+    case "infoDelivery": {
+      if (!info || typeof info !== "object") return null;
+      const out = { kind: "info" };
+      if (Number.isInteger(info.playerState)) out.state = info.playerState;
+      if (Number.isFinite(info.currentTime) && info.currentTime >= 0) out.time = info.currentTime;
+      if (info.videoData && typeof info.videoData.title === "string" && info.videoData.title.trim()) out.title = info.videoData.title.trim();
+      return out.state === undefined && out.time === undefined && out.title === undefined ? null : out;
+    }
+    default:
+      return null;
+  }
+}
+
+function youtubePlaying(state) {
+  return state === YOUTUBE_STATE.PLAYING || state === YOUTUBE_STATE.BUFFERING;
+}
+
+function youtubeExpectedTime(seen, now) {
+  if (!seen || !Number.isFinite(seen.time)) return null;
+  return seen.state === YOUTUBE_STATE.PLAYING ? seen.time + Math.max(0, now - seen.at) / 1000 : seen.time;
+}
+
+function youtubeUserSeeked(seen, time, now) {
+  const expected = youtubeExpectedTime(seen, now);
+  return expected !== null && Number.isFinite(time) && Math.abs(time - expected) > YOUTUBE_SEEK_JUMP_SECS;
+}
+
+function youtubeNeedsSeek(current, target) {
+  return Math.abs(Number(current) - Number(target)) > YOUTUBE_SYNC_TOLERANCE_SECS;
+}
+
+function youtubeErrorText(code) {
+  if (code === 100) return "This YouTube video was removed or made private";
+  return "YouTube won't play this video here. Open on YouTube still works.";
+}
+
+function plexStatus(run, plex, meId) {
+  if (!run || watchSourceKind(run.activity) !== "plex") return { text: "", tone: "" };
+  if (!isParticipant(run, meId)) return { text: "Join to sync with Plex", tone: "" };
+  if (!plex || !plex.open) return { text: "Plex isn't open", tone: "catching" };
+  if (!plex.video) return { text: "Start the title in Plex", tone: "catching" };
+  return plex.playing === Boolean(run.playback.playing) ? { text: "In sync", tone: "good" } : { text: "Catching up", tone: "catching" };
 }
 
 function emptyBoard() {
@@ -325,6 +478,9 @@ if (typeof module !== "undefined" && module.exports) {
     ACTIVITY_KINDS, BOARD_CELLS, MARK_NONE, MARK_X, MARK_O, MARK_GLYPHS, WATCH_SYNC_TOLERANCE_SECS, ACTIVITY_MAX_AVATARS,
     activityKindKey, activityKindInfo, activityName, activityPillLabel, isVideoLink, isVideoAttachment, channelVideoAttachments,
     makeActivity, watchLinkSource, watchAttachmentSource, watchLinkUrl, watchAttachment, watchTitle,
+    YOUTUBE_ORIGIN, YOUTUBE_STATE, MAX_PLEX_TITLE_CHARS, youtubeVideoId, cleanPlexTitle, isPlexTitle, watchYouTubeSource, watchPlexSource,
+    watchYouTubeId, watchPlexTitle, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl, youtubeCommand, youtubeListening, readYouTubeMessage,
+    youtubePlaying, youtubeExpectedTime, youtubeUserSeeked, youtubeNeedsSeek, youtubeErrorText, plexStatus,
     newActivityRun, ticTacToeWinner, boardFull, gameOver, turnMark, markOf, isParticipant, isPlayer, applyActivityInput, syncInput,
     watchTargetPosition, watchNeedsSeek, activityParticipants, avatarRow, gameStatus, canMoveAt, canEndActivity,
   };

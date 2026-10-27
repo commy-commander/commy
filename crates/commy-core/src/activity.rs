@@ -11,6 +11,8 @@ pub const BOARD_CELLS: usize = 9;
 pub const MAX_PLAYERS: usize = 2;
 pub const MAX_PARTICIPANTS: usize = 99;
 pub const VIDEO_LINK_EXTENSIONS: [&str; 3] = ["mp4", "webm", "ogg"];
+pub const YOUTUBE_VIDEO_ID_CHARS: usize = 11;
+pub const MAX_PLEX_TITLE_CHARS: usize = 100;
 const CELL_EMPTY: u8 = 0;
 const CELL_O: u8 = 2;
 
@@ -19,6 +21,9 @@ const CELL_O: u8 = 2;
 pub enum WatchSource {
     Link { url: String },
     Attachment { attachment: Attachment },
+    #[serde(rename = "youtube")]
+    YouTube { video: String },
+    Plex { title: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,6 +74,15 @@ pub fn is_video_link(url: &str) -> bool {
     !stem.is_empty() && VIDEO_LINK_EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e))
 }
 
+pub fn is_youtube_video_id(id: &str) -> bool {
+    id.len() == YOUTUBE_VIDEO_ID_CHARS && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+pub fn is_plex_title(title: &str) -> bool {
+    let trimmed = title.trim();
+    !trimmed.is_empty() && trimmed == title && title.chars().count() <= MAX_PLEX_TITLE_CHARS && !title.chars().any(char::is_control)
+}
+
 impl WatchSource {
     pub fn valid(&self) -> bool {
         match self {
@@ -76,6 +90,8 @@ impl WatchSource {
             WatchSource::Attachment { attachment } => {
                 attachment.mime_type.starts_with("video/") && !attachment.blob.is_empty() && !attachment.filename.is_empty()
             }
+            WatchSource::YouTube { video } => is_youtube_video_id(video),
+            WatchSource::Plex { title } => is_plex_title(title),
         }
     }
 }
@@ -205,6 +221,38 @@ mod tests {
         assert!(!WatchSource::Attachment { attachment: image }.valid());
         let blank = Attachment { blob: String::new(), ..video };
         assert!(!WatchSource::Attachment { attachment: blank }.valid());
+    }
+
+    #[test]
+    fn youtube_sources_carry_only_a_video_id() {
+        assert!(WatchSource::YouTube { video: "dQw4w9WgXcQ".into() }.valid());
+        assert!(WatchSource::YouTube { video: "a-b_c-d_e-f".into() }.valid());
+        assert!(!WatchSource::YouTube { video: "short".into() }.valid());
+        assert!(!WatchSource::YouTube { video: "dQw4w9WgXcQx".into() }.valid());
+        assert!(!WatchSource::YouTube { video: "dQw4w9WgX/Q".into() }.valid());
+        assert!(!WatchSource::YouTube { video: "https://you".into() }.valid());
+    }
+
+    #[test]
+    fn plex_sources_name_a_short_plain_title() {
+        assert!(WatchSource::Plex { title: "Spirited Away".into() }.valid());
+        assert!(WatchSource::Plex { title: "é".repeat(MAX_PLEX_TITLE_CHARS) }.valid());
+        assert!(!WatchSource::Plex { title: "x".repeat(MAX_PLEX_TITLE_CHARS + 1) }.valid());
+        assert!(!WatchSource::Plex { title: String::new() }.valid());
+        assert!(!WatchSource::Plex { title: " padded ".into() }.valid());
+        assert!(!WatchSource::Plex { title: "two\nlines".into() }.valid());
+    }
+
+    #[test]
+    fn new_sources_keep_earlier_wire_tags_and_json_names() {
+        let tag = |source: WatchSource| postcard::to_stdvec(&source).unwrap()[0];
+        assert_eq!(tag(WatchSource::Link { url: "https://example.org/a.mp4".into() }), 0);
+        assert_eq!(tag(WatchSource::YouTube { video: "dQw4w9WgXcQ".into() }), 2);
+        assert_eq!(tag(WatchSource::Plex { title: "Film".into() }), 3);
+        let json = serde_json::to_string(&WatchSource::YouTube { video: "dQw4w9WgXcQ".into() }).unwrap();
+        assert_eq!(json, r#"{"youtube":{"video":"dQw4w9WgXcQ"}}"#);
+        let json = serde_json::to_string(&WatchSource::Plex { title: "Film".into() }).unwrap();
+        assert_eq!(json, r#"{"plex":{"title":"Film"}}"#);
     }
 
     #[test]
