@@ -37,7 +37,7 @@ const LOCALE_EN = {
   "settings.intro.overlay": "Who is talking and recent chat, on top of your game.",
   "settings.intro.notifications": "When Commy lets you know about messages and friends.",
   "settings.intro.sounds": "The sounds Commy plays, and the soundboard clips you hear in voice.",
-  "settings.intro.tts": "Have messages read aloud, and how fast.",
+  "settings.intro.tts": "Have messages read aloud, in the voice you pick.",
   "settings.intro.appearance": "Theme, language, chat text and the Commy icon.",
   "settings.intro.accessibility": "Motion, colour and contrast.",
   "settings.intro.keybinds": "Keys that work in any app, and shortcuts inside Commy.",

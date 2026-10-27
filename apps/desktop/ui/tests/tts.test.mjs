@@ -5,7 +5,9 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   TTS_COMMAND, TTS_MODES, DEFAULT_TTS_MODE, TTS_RATE_MIN, TTS_RATE_MAX, DEFAULT_TTS_RATE, TTS_MAX_SPOKEN_CHARS,
-  parseTtsPrefix, canSendTts, clampRate, readTtsPrefs, shouldSpeakIncoming, spokenText, ttsCommandHint,
+  TTS_PITCH_MIN, TTS_PITCH_MAX, DEFAULT_TTS_PITCH,
+  parseTtsPrefix, canSendTts, clampRate, clampPitch, readTtsPrefs, shouldSpeakIncoming, spokenText, ttsCommandHint,
+  ttsVoices, ttsVoiceLabel, chosenTtsVoice,
 } = require("../scripts/tts.js");
 const { COMPOSER_COMMANDS, suggestTokenAt, commandSuggestions, suggestionInsert } = require("../scripts/composer-suggest.js");
 
@@ -45,13 +47,58 @@ test("/tts is offered as a composer command next to /gif", () => {
 });
 
 test("settings read back with safe defaults", () => {
-  assert.deepEqual(readTtsPrefs(null), { mode: DEFAULT_TTS_MODE, rate: DEFAULT_TTS_RATE });
-  assert.deepEqual(readTtsPrefs("not json"), { mode: "never", rate: 1 });
-  assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "all", rate: 1.5 })), { mode: "all", rate: 1.5 });
-  assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "open" })), { mode: "open", rate: 1 });
-  assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "loud", rate: 9 })), { mode: "never", rate: TTS_RATE_MAX });
+  const defaults = { mode: DEFAULT_TTS_MODE, rate: DEFAULT_TTS_RATE, pitch: DEFAULT_TTS_PITCH, voice: null };
+  assert.deepEqual(readTtsPrefs(null), defaults);
+  assert.equal(DEFAULT_TTS_MODE, "open");
+  assert.deepEqual(readTtsPrefs("not json"), defaults);
+  assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "all", rate: 1.5 })), { ...defaults, mode: "all", rate: 1.5 });
+  assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "never" })), { ...defaults, mode: "never" });
+  assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "loud", rate: 9, pitch: -3 })), { ...defaults, rate: TTS_RATE_MAX, pitch: TTS_PITCH_MIN });
+  assert.deepEqual(readTtsPrefs(JSON.stringify({ voice: "zira", pitch: 1.4 })), { ...defaults, voice: "zira", pitch: 1.4 });
+  assert.deepEqual(readTtsPrefs(JSON.stringify({ voice: "" })), defaults);
+  assert.deepEqual(readTtsPrefs(JSON.stringify({ voice: 7 })), defaults);
   assert.deepEqual(TTS_MODES.map(m => m.id), ["never", "open", "all"]);
   assert.ok(TTS_MODES.every(m => m.label));
+});
+
+test("the pitch stays within what a voice can do", () => {
+  assert.equal(clampPitch(0), TTS_PITCH_MIN);
+  assert.equal(clampPitch(4), TTS_PITCH_MAX);
+  assert.equal(clampPitch("1.26"), 1.3);
+  assert.equal(clampPitch(null), DEFAULT_TTS_PITCH);
+  assert.equal(clampPitch(NaN), DEFAULT_TTS_PITCH);
+});
+
+test("voices list once each, your language first, then by language and name", () => {
+  const raw = [
+    { id: "b", name: "Microsoft Hedda", lang: "de-DE" },
+    { id: "z", name: "Microsoft Zira", lang: "en-US", default: true },
+    { id: "d", name: "Microsoft David", lang: "en-US" },
+    { id: "z", name: "Duplicate", lang: "en-US" },
+    { id: "", name: "No id", lang: "en-US" },
+    { id: "g", name: "Microsoft George - English (United Kingdom)", lang: "en-GB" },
+    null,
+  ];
+  const voices = ttsVoices(raw, "en-US");
+  assert.deepEqual(voices.map(v => v.id), ["g", "d", "z", "b"]);
+  assert.equal(voices.find(v => v.id === "z").default, true);
+  assert.deepEqual(ttsVoices(raw, "de").map(v => v.id), ["b", "g", "d", "z"]);
+  assert.deepEqual(ttsVoices(null, "en"), []);
+  assert.deepEqual(ttsVoices([{ id: "x" }]), [{ id: "x", name: "x", lang: "", default: false }]);
+});
+
+test("voice labels are short and say the language", () => {
+  assert.equal(ttsVoiceLabel({ name: "Microsoft Zira", lang: "en-US" }), "Zira (en-US)");
+  assert.equal(ttsVoiceLabel({ name: "Microsoft George - English (United Kingdom)", lang: "en-GB" }), "George (en-GB)");
+  assert.equal(ttsVoiceLabel({ name: "Samantha", lang: "" }), "Samantha");
+});
+
+test("a saved voice that is gone falls back to the computer default", () => {
+  const voices = ttsVoices([{ id: "z", name: "Zira", lang: "en-US" }]);
+  assert.equal(chosenTtsVoice(voices, "z").name, "Zira");
+  assert.equal(chosenTtsVoice(voices, "gone"), null);
+  assert.equal(chosenTtsVoice(voices, null), null);
+  assert.equal(chosenTtsVoice([], "z"), null);
 });
 
 test("the rate stays within what a voice can do", () => {

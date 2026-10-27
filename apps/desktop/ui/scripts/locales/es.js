@@ -37,7 +37,7 @@ const LOCALE_ES = {
   "settings.intro.overlay": "Quién habla y el chat reciente, encima de tu juego.",
   "settings.intro.notifications": "Cuándo te avisa Commy de mensajes y amigos.",
   "settings.intro.sounds": "Los sonidos de Commy y los clips de la mesa de sonidos que oyes en voz.",
-  "settings.intro.tts": "Escucha los mensajes en voz alta, y a qué velocidad.",
+  "settings.intro.tts": "Escucha los mensajes en voz alta, con la voz que elijas.",
   "settings.intro.appearance": "Tema, idioma, texto del chat y el icono de Commy.",
   "settings.intro.accessibility": "Movimiento, color y contraste.",
   "settings.intro.keybinds": "Teclas que funcionan en cualquier aplicación y atajos dentro de Commy.",
