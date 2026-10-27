@@ -403,6 +403,10 @@ pub struct Server {
     pub join_approval_since: i64,
     #[serde(default)]
     pub tip_jar: Option<String>,
+    #[serde(default)]
+    pub pet: Option<crate::pet::Pet>,
+    #[serde(default)]
+    pub pet_care: std::collections::BTreeMap<UserId, crate::pet::CareLog>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -490,6 +494,8 @@ impl Server {
             turned_away: vec![],
             join_approval_since: 0,
             tip_jar: None,
+            pet: None,
+            pet_care: std::collections::BTreeMap::new(),
         }
     }
 

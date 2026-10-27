@@ -336,6 +336,7 @@ function mockSeed() {
   server.members[1].card_effect = "aurora";
   server.join_approval = true;
   server.tip_jar = "https://ko-fi.com/rusthangout";
+  server.pet = { name: "Cosmo", suit: "orange", adopted: Date.now() - 9 * 24 * 3600 * 1000, last: { fed: Date.now() - 2 * 3600 * 1000, patted: Date.now() - 20 * 60 * 1000, played: 0 }, mine: { fed: 0, patted: 0, played: 0 }, xp: 14, level: 3, next_level_xp: 27, cooldown_ms: 600000 };
   server.join_requests = [
     { id: "j1", name: "Marlow", username: "marlow", avatar: null, avatar_provider: null, note: "ash invited me after the Tuesday raid. I mostly write Rust for embedded boards.", at: Date.now() - 42 * 60 * 1000 },
     { id: "j2", name: "kit", username: "kitcat", avatar: null, avatar_provider: null, note: "", at: Date.now() - 6 * 60 * 1000 },
@@ -758,7 +759,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
-        tip_jar: s.tip_jar || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
+        tip_jar: s.tip_jar || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
@@ -1419,6 +1420,31 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
     case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "set_pet": {
+      const srv = mock.servers[args.serverId];
+      if (!args.name) {
+        srv.pet = null;
+        return null;
+      }
+      const now = Date.now();
+      srv.pet = srv.pet ? { ...srv.pet, name: args.name, suit: args.color } : { name: args.name, suit: args.color, adopted: now, last: { fed: 0, patted: 0, played: 0 }, mine: { fed: 0, patted: 0, played: 0 }, xp: 0, level: 1, next_level_xp: 3, cooldown_ms: 600000 };
+      return null;
+    }
+    case "care_for_pet": {
+      const pet = mock.servers[args.serverId].pet;
+      const care = PET_CARES.find(c => c.kind === args.kind);
+      const now = Date.now();
+      const wait = petCareWait(pet, args.kind, now);
+      if (wait > 0) throw `${pet.name} needs a little break. Try again in ${Math.ceil(wait / 60000)} minutes`;
+      pet.last[care.field] = now;
+      pet.mine[care.field] = now;
+      pet.xp += 1;
+      while (pet.xp >= pet.next_level_xp) {
+        pet.level += 1;
+        pet.next_level_xp = 3 * pet.level * pet.level;
+      }
+      return null;
+    }
     case "set_tip_jar": {
       const url = args.url ? cleanTipJar(args.url) : null;
       if (args.url && !url) throw "Use your Ko-fi page, like ko-fi.com/yourname";
@@ -9522,6 +9548,7 @@ function renderServerExtras(list, server) {
     roles.onclick = () => openChooseRoles();
     list.appendChild(roles);
   }
+  if (server.pet) list.appendChild(petWidget(server));
   if (server.tip_jar) {
     const tip = el("div", "channel sidebar-link");
     tip.appendChild(el("span", "channel-icon")).appendChild(svgIcon("coffee", 18));
@@ -10484,6 +10511,101 @@ function paintServerTagEditor() {
   else preview.appendChild(el("span", "setting-sub", "Type some letters to see the tag"));
 }
 
+let petSuitPick = "white";
+
+function petWidget(server) {
+  const pet = server.pet;
+  const now = Date.now();
+  const mood = petMood(pet, now);
+  const card = el("div", "pet-widget");
+  const figure = el("div", "pet-figure");
+  figure.innerHTML = petSvg(pet.suit, mood.mood);
+  const info = el("div", "pet-info");
+  const head = el("div", "pet-head");
+  head.append(el("span", "pet-name", pet.name), el("span", "pet-level", petLevelLabel(pet)));
+  const bar = el("div", "pet-bar");
+  bar.appendChild(el("span")).style.width = `${Math.round(petProgress(pet) * 100)}%`;
+  bar.title = `${pet.xp} care points`;
+  const actions = el("div", "pet-actions");
+  for (const care of PET_CARES) {
+    const button = el("button", "pet-care", care.label);
+    button.type = "button";
+    const wait = petCareWait(pet, care.kind, now);
+    if (wait > 0) button.title = `Ready again in ${Math.ceil(wait / 60000)} min`;
+    button.onclick = () => careForPet(server, care.kind, figure, button);
+    actions.appendChild(button);
+  }
+  info.append(head, el("div", "pet-mood", mood.line), bar, actions);
+  card.append(figure, info);
+  return card;
+}
+
+async function careForPet(server, kind, figure, button) {
+  button.disabled = true;
+  try {
+    await invoke("care_for_pet", { serverId: server.id, kind });
+    figure.classList.remove("cheer");
+    void figure.offsetWidth;
+    figure.classList.add("cheer");
+    toast(petCareDone(server.pet, kind));
+    setTimeout(() => refreshCurrentServer(), 700);
+  } catch (err) {
+    toast(String(err));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderPetEditor(server) {
+  const editable = Boolean(server.can_manage_server);
+  const pet = server.pet;
+  petSuitPick = pet ? pet.suit : petSuitPick;
+  $("pet-name").value = pet ? pet.name : "";
+  $("pet-name").disabled = !editable;
+  $("pet-save").textContent = pet ? "Save" : "Adopt";
+  $("pet-save").classList.toggle("hidden", !editable);
+  $("pet-release").classList.toggle("hidden", !editable || !pet);
+  paintPetEditor(editable);
+}
+
+function paintPetEditor(editable = true) {
+  const name = petCleanName($("pet-name").value) || "Cosmo";
+  $("pet-preview").innerHTML = petSvg(petSuitPick, "happy");
+  $("pet-preview").title = name;
+  const suits = $("pet-suits");
+  suits.replaceChildren();
+  for (const suit of PET_SUITS) {
+    const swatch = el("button", "pet-suit" + (suit.id === petSuitPick ? " selected" : ""));
+    swatch.type = "button";
+    swatch.style.background = suit.color;
+    swatch.title = suit.label;
+    swatch.setAttribute("role", "radio");
+    swatch.setAttribute("aria-label", suit.label);
+    swatch.setAttribute("aria-checked", String(suit.id === petSuitPick));
+    swatch.disabled = !editable;
+    swatch.onclick = () => {
+      petSuitPick = suit.id;
+      paintPetEditor(editable);
+    };
+    suits.appendChild(swatch);
+  }
+}
+
+async function savePet(release) {
+  const server = state.currentServer;
+  if (!server) return;
+  const name = release ? null : petCleanName($("pet-name").value);
+  if (!release && !name) return toast("Give your astronaut a name");
+  try {
+    await invoke("set_pet", { serverId: server.id, name, color: petSuitPick });
+    toast(release ? `Said goodbye to ${server.pet ? server.pet.name : "the astronaut"}` : server.pet ? `${name} is all set` : `${name} moved in`);
+    await refreshCurrentServer();
+    renderPetEditor(state.currentServer);
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
 function renderTipJarEditor(server) {
   const editable = Boolean(server.can_manage_server);
   $("tip-jar-input").value = tipJarLabel(server.tip_jar);
@@ -10556,6 +10678,9 @@ function wireServerTagEditor() {
   };
   $("server-tag-save").onclick = () => saveServerTag(false);
   $("server-tag-remove").onclick = () => saveServerTag(true);
+  $("pet-save").onclick = () => savePet(false);
+  $("pet-release").onclick = () => savePet(true);
+  $("pet-name").addEventListener("input", () => paintPetEditor());
   $("tip-jar-save").onclick = () => saveTipJar(false);
   $("tip-jar-remove").onclick = () => saveTipJar(true);
   $("tip-jar-input").addEventListener("keydown", e => {
@@ -20157,6 +20282,7 @@ function openServerSettings(tab) {
   renderGameTagEditor(server);
   renderServerTagEditor(server);
   renderTipJarEditor(server);
+  renderPetEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
   if (isOwner) renderReportSettings(server);

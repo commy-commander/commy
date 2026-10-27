@@ -1444,6 +1444,17 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.server.tag, tag))
             }
+            ServerEvent::PetSet { server, pet } => {
+                self.same_server(server)?;
+                Ok(crate::pet::set(&mut self.server.pet, &mut self.server.pet_care, pet))
+            }
+            ServerEvent::PetCare { server, user, care, at } => {
+                self.same_server(server)?;
+                if self.server.pet.is_none() || !self.server.is_current_member(user) {
+                    return Ok(false);
+                }
+                Ok(crate::pet::tend(&mut self.server.pet_care, user, care, at))
+            }
             ServerEvent::TipJarSet { server, url } => {
                 self.same_server(server)?;
                 if url.as_deref().is_some_and(|u| !crate::tip_jar::is_tip_jar(u)) {
@@ -3852,6 +3863,31 @@ mod tests {
         });
         let file = crate::test_support::signed(&state, file);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
+    }
+
+    #[test]
+    fn members_care_for_the_server_pet_that_managers_adopt() {
+        use crate::pet::{Care, Pet, CARE_COOLDOWN_MS};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let care = |user, care, at| ServerEvent::PetCare { server: sid, user, care, at };
+        assert_eq!(state.apply(care(friend, Care::Feed, 1)), Ok(false));
+        assert!(!crate::action::authorized(&state.server, friend, &care(friend, Care::Feed, 1)));
+        let adopt = ServerEvent::PetSet { server: sid, pet: Pet::new("Cosmo", "orange", 1) };
+        assert!(crate::action::authorized(&state.server, owner, &adopt));
+        assert!(!crate::action::authorized(&state.server, friend, &adopt));
+        assert_eq!(state.apply(adopt), Ok(true));
+        assert!(crate::action::authorized(&state.server, friend, &care(friend, Care::Feed, 1)));
+        assert!(!crate::action::authorized(&state.server, owner, &care(friend, Care::Feed, 1)));
+        assert_eq!(state.apply(care(friend, Care::Feed, 100)), Ok(true));
+        assert_eq!(state.apply(care(friend, Care::Feed, 200)), Ok(false));
+        assert_eq!(state.apply(care(friend, Care::Feed, 100 + CARE_COOLDOWN_MS)), Ok(true));
+        assert_eq!(state.apply(care(UserId::new(), Care::Pat, 100)), Ok(false));
+        assert_eq!(crate::pet::xp(&state.server.pet_care), 2);
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let back = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!((back.server.pet.as_ref().map(|p| p.name.as_str()), back.server.pet_care.len()), (Some("Cosmo"), 1));
     }
 
     #[test]

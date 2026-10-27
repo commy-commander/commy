@@ -480,7 +480,7 @@ impl Session {
             "set_role_access" => self.server_command(cmd, args).await,
             "kick_member" => self.server_command(cmd, args).await,
             "set_join_approval" | "answer_join_request" => self.server_command(cmd, args).await,
-            "set_tip_jar" => self.server_command(cmd, args).await,
+            "set_tip_jar" | "set_pet" | "care_for_pet" => self.server_command(cmd, args).await,
             "move_voice_member" => self.server_command(cmd, args).await,
             "ban_member" => self.server_command(cmd, args).await,
             "unban_member" => self.server_command(cmd, args).await,
