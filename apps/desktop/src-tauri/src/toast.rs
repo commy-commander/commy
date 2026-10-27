@@ -63,14 +63,14 @@ pub fn register(icon_png: Option<&std::path::Path>) {
 }
 
 #[cfg(windows)]
-pub fn ensure_start_menu_shortcut() {
-    if let Err(e) = write_shortcut() {
+pub fn ensure_start_menu_shortcut(icon: Option<&std::path::Path>) {
+    if let Err(e) = write_shortcut(icon) {
         tracing::warn!("could not create the Start menu shortcut for notifications: {e}");
     }
 }
 
 #[cfg(windows)]
-fn write_shortcut() -> windows::core::Result<()> {
+fn write_shortcut(icon: Option<&std::path::Path>) -> windows::core::Result<()> {
     use windows::core::{Interface, HSTRING};
     use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
     use windows::Win32::System::Com::{
@@ -91,7 +91,7 @@ fn write_shortcut() -> windows::core::Result<()> {
         if let Some(dir) = exe.parent() {
             link.SetWorkingDirectory(&HSTRING::from(dir.as_os_str()))?;
         }
-        link.SetIconLocation(&HSTRING::from(exe.as_os_str()), 0)?;
+        link.SetIconLocation(&HSTRING::from(icon.unwrap_or(&exe).as_os_str()), 0)?;
         link.SetDescription(&HSTRING::from("Commy"))?;
         let store: IPropertyStore = link.cast()?;
         store.SetValue(&PKEY_AppUserModel_ID, &windows::core::PROPVARIANT::from(APP_ID))?;
@@ -99,11 +99,20 @@ fn write_shortcut() -> windows::core::Result<()> {
         let file: IPersistFile = link.cast()?;
         file.Save(&HSTRING::from(lnk.as_os_str()), true)?;
     }
+    tell_shell_about(&lnk);
     Ok(())
 }
 
+#[cfg(windows)]
+fn tell_shell_about(path: &std::path::Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::{SHChangeNotify, SHCNE_UPDATEITEM, SHCNF_PATHW};
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    unsafe { SHChangeNotify(SHCNE_UPDATEITEM as i32, SHCNF_PATHW, wide.as_ptr().cast(), std::ptr::null()) };
+}
+
 #[cfg(not(windows))]
-pub fn ensure_start_menu_shortcut() {}
+pub fn ensure_start_menu_shortcut(_icon: Option<&std::path::Path>) {}
 
 #[cfg(not(windows))]
 pub fn register(_icon_png: Option<&std::path::Path>) {}

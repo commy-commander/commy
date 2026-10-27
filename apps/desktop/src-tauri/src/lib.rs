@@ -50,6 +50,8 @@ mod state;
 mod storage;
 mod stream_deck;
 mod sync_link;
+#[cfg(windows)]
+mod taskbar;
 mod templates;
 mod toast;
 mod tray;
@@ -7354,7 +7356,7 @@ pub fn run() {
                 Some(path)
             });
             toast::register(toast_icon.as_deref());
-            toast::ensure_start_menu_shortcut();
+            toast::ensure_start_menu_shortcut(data_dir.as_deref().and_then(app_icon::saved_taskbar_icon).as_deref());
             let app = tauri_app.state::<App>();
 
             if let Some(dir) = data_dir {
