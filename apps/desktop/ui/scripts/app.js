@@ -2986,6 +2986,7 @@ function renderChannels() {
     }
   }
   scheduleMuteExpiry(server);
+  paintNarrowColumn();
   pushOverlayRoster();
 }
 
@@ -3184,15 +3185,20 @@ function voiceRingEntries(channel) {
 function voiceRings(channel) {
   const rings = el("div", "voice-rings");
   rings.dataset.room = channel.id;
+  rings.append(...voiceRingCells(channel));
+  return rings;
+}
+
+function voiceRingCells(channel) {
   const entries = voiceRingEntries(channel);
   const { shown, more } = voiceRingSplit(entries.length, document.body.dataset.narrow);
-  for (const entry of entries.slice(0, shown)) rings.appendChild(voiceRing(channel, entry));
+  const cells = entries.slice(0, shown).map(entry => voiceRing(channel, entry));
   if (more) {
     const extra = el("span", "voice-ring voice-ring-more", `+${more}`);
     extra.title = entries.slice(shown).map(e => e.name).join(", ");
-    rings.appendChild(extra);
+    cells.push(extra);
   }
-  return rings;
+  return cells;
 }
 
 function voiceRing(channel, entry) {
@@ -14108,6 +14114,7 @@ function paintNarrowSwitch() {
   paintNarrowServerIcon(button.querySelector(".narrow-switch-icon"), server);
   button.querySelector(".narrow-switch-name").textContent = server ? server.name : "Direct Messages";
   paintNarrowServers(server);
+  paintNarrowColumn();
 }
 
 function paintNarrowServers(server) {
@@ -14126,6 +14133,51 @@ function paintNarrowServers(server) {
   grid.replaceChildren(...cells);
   grid.title = others.length ? `Switch server: ${others.map(s => s.name).join(", ")}` : "Switch server";
   grid.classList.toggle("unread", others.some(s => serverUnreadCount(s.id) > 0));
+}
+
+function paintNarrowColumn() {
+  const column = $("narrow-column");
+  if (!column) return;
+  const server = narrowViewServer();
+  column.replaceChildren(narrowChannelTile(server), ...(server ? narrowVoiceTiles(server) : []));
+}
+
+function narrowChannelTile(server) {
+  const channel = state.currentChannel;
+  const tile = el("button", "narrow-channel");
+  tile.id = "narrow-channel";
+  tile.title = "Switch channel";
+  const mark = el("span", "narrow-channel-mark");
+  mark.appendChild(server && channel ? channelMark(channel) : svgIcon("chat", 18));
+  const name = el("span", "narrow-channel-name");
+  if (server && channel) name.appendChild(channelNameNode(channel));
+  else name.textContent = state.currentDm ? state.currentDm.name : "Messages";
+  tile.append(mark, name, svgIcon("chevronDown", 12));
+  tile.classList.toggle("unread", Boolean(server) && server.channels.some(c => (!channel || c.id !== channel.id) && shownUnread(server.id, c.id)));
+  tile.onclick = () => {
+    $("app").classList.remove("servers-open");
+    const open = $("app").classList.toggle("channels-open");
+    if (open) $("channel-list").style.top = `${Math.round(tile.getBoundingClientRect().top)}px`;
+  };
+  return tile;
+}
+
+function narrowVoiceTiles(server) {
+  return server.channels
+    .filter(c => isVoiceKind(c.kind) && (c.id === state.voiceChannelId || voiceRingEntries(c).length))
+    .map(channel => {
+      const tile = el("button", "narrow-voice-tile" + (channel.id === state.voiceChannelId ? " connected" : ""));
+      tile.title = channel.id === state.voiceChannelId ? `You are in ${channel.name}` : `Join ${channel.name}`;
+      const head = el("span", "narrow-voice-head");
+      head.append(voiceKindIcon(channel.kind, 12), el("span", "narrow-voice-name", channel.name));
+      const grid = el("span", "narrow-voice-grid");
+      grid.append(...voiceRingCells(channel));
+      tile.append(grid, head);
+      tile.onclick = () => {
+        if (channel.id !== state.voiceChannelId && !voiceFull(channel)) toggleVoice(channel);
+      };
+      return tile;
+    });
 }
 
 function narrowFlyoutRow(label, paintIcon, onPick, active = false) {
@@ -14175,6 +14227,7 @@ function narrowFlyoutRows(kind) {
 function toggleNarrowFlyout(kind, anchor) {
   const app = $("app");
   const flyout = $("narrow-flyout");
+  app.classList.remove("channels-open");
   if (app.classList.contains("servers-open") && flyout.dataset.kind === kind) {
     app.classList.remove("servers-open");
     return;
@@ -14190,7 +14243,7 @@ function applyNarrowLayout() {
   const split = narrowSplit();
   if (app.classList.contains("narrow-split") === split) return;
   app.classList.toggle("narrow-split", split);
-  app.classList.remove("servers-open");
+  app.classList.remove("servers-open", "channels-open");
   const panel = document.querySelector(".user-panel");
   if (split) {
     $("narrow-dock").appendChild(panel);
@@ -14228,9 +14281,16 @@ function wireNarrowLayout() {
   grid.onclick = () => toggleNarrowFlyout("servers", grid);
   const servers = el("div", "narrow-servers");
   servers.append(active, grid);
+  const column = el("div", "narrow-column");
+  column.id = "narrow-column";
+  $("channel-list").after(column);
   document.querySelector(".sidebar").prepend(servers);
   document.addEventListener("pointerdown", e => {
     if (!e.target.closest(".narrow-flyout, .narrow-switch, .narrow-active, .narrow-grid")) $("app").classList.remove("servers-open");
+    if (!e.target.closest(".channel-scroll, .narrow-channel")) $("app").classList.remove("channels-open");
+  });
+  $("channel-list").addEventListener("click", e => {
+    if (e.target.closest(".channel:not(.voice-channel)") && !e.target.closest("button")) $("app").classList.remove("channels-open");
   });
   $("rail").addEventListener("click", e => {
     if (e.target.closest(".server-icon, #home-btn")) $("app").classList.remove("servers-open");

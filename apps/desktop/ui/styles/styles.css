@@ -7607,7 +7607,7 @@ body.has-titlebar .app { height: calc(100vh - 32px); margin-top: 32px; }
 .modal-notify.muted .notify-levels { opacity: .45; }
 .notify-level:disabled { cursor: default; }
 
-.narrow-switch, .narrow-dock, .voice-rings, .narrow-flyout, .narrow-servers { display: none; }
+.narrow-switch, .narrow-dock, .voice-rings, .narrow-flyout, .narrow-servers, .narrow-column { display: none; }
 
 @keyframes ring-speaking {
   0% { box-shadow: 0 0 0 0 rgba(255, 77, 77, .5); }
@@ -7709,10 +7709,10 @@ body.has-titlebar .app { height: calc(100vh - 32px); margin-top: 32px; }
   body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .rail-add { border-radius: 50%; }
   body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .rail-home img { width: 40px; height: 40px; }
   body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split :is(.sidebar-header, .sidebar-sep, .sidebar-link, .rail-discover) { display: none; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .channel-scroll { padding: 8px 4px; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .channel-group { height: 1px; padding: 0; margin: 8px 14px; background: var(--line); font-size: 0; overflow: hidden; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .channel-group > * { display: none; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .channel {
+  body[data-narrow="slim"] .app.narrow-split .channel-scroll { padding: 8px 4px; }
+  body[data-narrow="slim"] .app.narrow-split .channel-group { height: 1px; padding: 0; margin: 8px 14px; background: var(--line); font-size: 0; overflow: hidden; }
+  body[data-narrow="slim"] .app.narrow-split .channel-group > * { display: none; }
+  body[data-narrow="slim"] .app.narrow-split .channel {
     flex-direction: column;
     justify-content: center;
     gap: 2px;
@@ -7723,12 +7723,12 @@ body.has-titlebar .app { height: calc(100vh - 32px); margin-top: 32px; }
     border-radius: 14px;
     font-size: 11px;
   }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .channel > :not(.hash, .channel-icon, .channel-label) { display: none; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .channel .hash { font-size: 18px; line-height: 20px; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .channel-label { max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .voice-rings { flex-direction: column; flex-wrap: nowrap; padding: 2px 0 8px; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .voice-ring { margin: -6px 0 0; }
-  body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .voice-ring:first-child { margin-top: 0; }
+  body[data-narrow="slim"] .app.narrow-split .channel > :not(.hash, .channel-icon, .channel-label) { display: none; }
+  body[data-narrow="slim"] .app.narrow-split .channel .hash { font-size: 18px; line-height: 20px; }
+  body[data-narrow="slim"] .app.narrow-split .channel-label { max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+  body[data-narrow="slim"] .app.narrow-split .voice-rings { flex-direction: column; flex-wrap: nowrap; padding: 2px 0 8px; }
+  body[data-narrow="slim"] .app.narrow-split .voice-ring { margin: -6px 0 0; }
+  body[data-narrow="slim"] .app.narrow-split .voice-ring:first-child { margin-top: 0; }
   body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .voice-panel { margin: 0 6px 8px; align-items: center; }
   body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split :is(.vp-conn-meta, .vp-live, .vp-watch, .vp-streams, .vp-stage, .vp-game-share) { display: none; }
   body:is([data-narrow="slim"], [data-narrow="mix"]) .app.narrow-split .voice-panel { display: grid; grid-template-columns: 26px 26px; gap: 6px; padding: 6px; }
@@ -7784,6 +7784,56 @@ body.has-titlebar .app { height: calc(100vh - 32px); margin-top: 32px; }
   body[data-narrow="mix"] .app.narrow-split .narrow-grid-cell img { width: 100%; height: 100%; object-fit: cover; }
   body[data-narrow="mix"] .app.narrow-split .narrow-grid-more { background: var(--bg-active); color: var(--text-muted); font-size: 9px; font-variant-numeric: tabular-nums; }
   body[data-narrow="mix"] .app.narrow-split .narrow-grid.unread::after { content: ""; position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-dark); }
+  body[data-narrow="mix"] .app.narrow-split .channel-scroll { display: none; }
+  body[data-narrow="mix"] .app.narrow-split.channels-open .channel-scroll {
+    display: block;
+    position: fixed;
+    z-index: 40;
+    left: calc(var(--narrow-left) + 16px);
+    width: 268px;
+    max-height: calc(100vh - 24px);
+    padding: 8px;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, .45);
+  }
+  body[data-narrow="mix"] .app.narrow-split.channels-open .channel-scroll .channel.active { background: var(--bg-active); }
+  body[data-narrow="mix"] .app.narrow-split .channel-scroll .voice-rings { padding-left: 32px; }
+  body[data-narrow="mix"] .app.narrow-split .narrow-column { display: flex; flex-direction: column; align-items: center; gap: 10px; flex: 1; min-height: 0; overflow-y: auto; padding: 10px 0; }
+  body[data-narrow="mix"] .app.narrow-split :is(.narrow-channel, .narrow-voice-tile) {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    width: 64px;
+    flex: none;
+    padding: 8px 2px 6px;
+    border: none;
+    border-radius: 14px;
+    background: var(--bg-mid);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  body[data-narrow="mix"] .app.narrow-split :is(.narrow-channel, .narrow-voice-tile):hover { background: var(--bg-hover); color: var(--text-normal); }
+  body[data-narrow="mix"] .app.narrow-split .narrow-channel { background: var(--bg-active); color: var(--ink-strong); }
+  body[data-narrow="mix"] .app.narrow-split.channels-open .narrow-channel { box-shadow: 0 0 0 2px var(--header-primary); }
+  body[data-narrow="mix"] .app.narrow-split .narrow-channel-mark { display: flex; align-items: center; height: 20px; font-size: 18px; color: var(--text-faint); }
+  body[data-narrow="mix"] .app.narrow-split :is(.narrow-channel-name, .narrow-voice-name) { max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body[data-narrow="mix"] .app.narrow-split .narrow-channel > svg { color: var(--text-faint); margin-top: -2px; }
+  body[data-narrow="mix"] .app.narrow-split .narrow-channel.unread::after { content: ""; position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-dark); }
+  body[data-narrow="mix"] .app.narrow-split .narrow-voice-head { display: flex; align-items: center; gap: 3px; max-width: 58px; }
+  body[data-narrow="mix"] .app.narrow-split .narrow-voice-head svg { flex: none; }
+  body[data-narrow="mix"] .app.narrow-split .narrow-voice-tile.connected { color: var(--header-primary); box-shadow: inset 0 0 0 1px rgba(242, 239, 230, .35); }
+  body[data-narrow="mix"] .app.narrow-split .narrow-voice-tile.connected .narrow-voice-head svg { color: var(--accent); }
+  body[data-narrow="mix"] .app.narrow-split .narrow-voice-grid { display: grid; grid-template-columns: repeat(2, 24px); grid-auto-rows: 24px; gap: 6px; padding: 2px 0; }
+  body[data-narrow="mix"] .app.narrow-split .narrow-voice-grid .voice-ring { width: 24px; height: 24px; margin: 0; box-shadow: none; }
+  body[data-narrow="mix"] .app.narrow-split .narrow-voice-grid .voice-ring .avatar { width: 24px; height: 24px; font-size: 9px; }
+  body[data-narrow="mix"] .app.narrow-split .narrow-voice-grid .voice-ring-more { font-size: 9px; background: var(--bg-active); }
   body[data-narrow="switcher"] .app.narrow-split .sidebar-header, body[data-narrow="switcher"] .app.narrow-split .sidebar-header.has-banner { height: 64px; min-height: 64px; padding: 0 8px; gap: 4px; align-items: center; }
   body[data-narrow="switcher"] .app.narrow-split #server-name { display: none; }
   body[data-narrow="switcher"] .app.narrow-split .narrow-switch {
