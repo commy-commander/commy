@@ -335,6 +335,7 @@ function mockSeed() {
   server.members[1].avatar_border = "sunset";
   server.members[1].card_effect = "aurora";
   server.join_approval = true;
+  server.tip_jar = "https://ko-fi.com/rusthangout";
   server.join_requests = [
     { id: "j1", name: "Marlow", username: "marlow", avatar: null, avatar_provider: null, note: "ash invited me after the Tuesday raid. I mostly write Rust for embedded boards.", at: Date.now() - 42 * 60 * 1000 },
     { id: "j2", name: "kit", username: "kitcat", avatar: null, avatar_provider: null, note: "", at: Date.now() - 6 * 60 * 1000 },
@@ -757,7 +758,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
-        join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
+        tip_jar: s.tip_jar || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
@@ -1418,6 +1419,12 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
     case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "set_tip_jar": {
+      const url = args.url ? cleanTipJar(args.url) : null;
+      if (args.url && !url) throw "Use your Ko-fi page, like ko-fi.com/yourname";
+      mock.servers[args.serverId].tip_jar = url;
+      return null;
+    }
     case "set_join_approval": {
       const srv = mock.servers[args.serverId];
       srv.join_approval = args.enabled;
@@ -1894,6 +1901,7 @@ const ICONS = {
   expand: "M4 4h7v2H6v5H4zm16 16h-7v-2h5v-5h2z",
   collapse: "M11 11H4V9h5V4h2zm2 2h7v2h-5v5h-2z",
   calendar: "M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V10h14zm0-12H5V6h14z",
+  coffee: "M18.5 3H6c-1.1 0-2 .9-2 2v5.71c0 3.83 2.95 7.18 6.78 7.29 3.96.12 7.22-3.06 7.22-7v-1h.5c1.93 0 3.5-1.57 3.5-3.5S20.43 3 18.5 3zM16 5v3H6V5h10zm2.5 3H18V5h.5c.83 0 1.5.67 1.5 1.5S19.33 8 18.5 8zM4 19h16v2H4v-2z",
   book: "M18 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zM9 4h2v5l-1-.75L9 9zm9 16H6V4h1v9l3-2.25L13 13V4h5z",
   chevronLeft: "M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z",
   chevronRight: "M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z",
@@ -9514,6 +9522,14 @@ function renderServerExtras(list, server) {
     roles.onclick = () => openChooseRoles();
     list.appendChild(roles);
   }
+  if (server.tip_jar) {
+    const tip = el("div", "channel sidebar-link");
+    tip.appendChild(el("span", "channel-icon")).appendChild(svgIcon("coffee", 18));
+    tip.appendChild(el("span", "channel-label", "Support this server"));
+    tip.title = `Opens ${tipJarLabel(server.tip_jar)} in your browser`;
+    tip.onclick = () => openOutsideLink(server.tip_jar);
+    list.appendChild(tip);
+  }
   list.appendChild(el("div", "sidebar-sep"));
 }
 
@@ -10468,6 +10484,30 @@ function paintServerTagEditor() {
   else preview.appendChild(el("span", "setting-sub", "Type some letters to see the tag"));
 }
 
+function renderTipJarEditor(server) {
+  const editable = Boolean(server.can_manage_server);
+  $("tip-jar-input").value = tipJarLabel(server.tip_jar);
+  $("tip-jar-input").disabled = !editable;
+  $("tip-jar-save").classList.toggle("hidden", !editable);
+  $("tip-jar-remove").classList.toggle("hidden", !editable || !server.tip_jar);
+}
+
+async function saveTipJar(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const typed = $("tip-jar-input").value.trim();
+  const url = remove || !typed ? null : cleanTipJar(typed);
+  if (!remove && typed && !url) return toast("Use your Ko-fi page, like ko-fi.com/yourname");
+  try {
+    await invoke("set_tip_jar", { serverId: server.id, url });
+    toast(url ? "Tip jar saved" : "Tip jar removed");
+    await refreshCurrentServer();
+    renderTipJarEditor(state.currentServer);
+  } catch (err) {
+    toast(String(err));
+  }
+}
+
 async function saveServerTag(remove) {
   const server = state.currentServer;
   if (!server) return;
@@ -10516,6 +10556,11 @@ function wireServerTagEditor() {
   };
   $("server-tag-save").onclick = () => saveServerTag(false);
   $("server-tag-remove").onclick = () => saveServerTag(true);
+  $("tip-jar-save").onclick = () => saveTipJar(false);
+  $("tip-jar-remove").onclick = () => saveTipJar(true);
+  $("tip-jar-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveTipJar(false);
+  });
   $("account-server-tag").addEventListener("change", async e => {
     try {
       state.user = await invoke("wear_server_tag", { serverId: e.target.value || null });
@@ -15360,6 +15405,7 @@ function serverControlRows(server) {
   ];
   if (server.rules) rows.push(narrowMenuRow("Server Rules", narrowGlyph("book"), () => openRules()));
   if (selfAssignableRoles(server).length) rows.push(narrowMenuRow("Roles", narrowGlyph("roles"), () => openChooseRoles()));
+  if (server.tip_jar) rows.push(narrowMenuRow("Support this server", narrowGlyph("coffee"), () => openOutsideLink(server.tip_jar)));
   rows.push(el("div", "narrow-menu-sep"));
   if (server.can_invite) rows.push(narrowMenuRow("Invite People", narrowGlyph("friendAdd"), () => $("invite-btn").click()));
   rows.push(narrowMenuRow("Server Settings", narrowGlyph("gear"), () => $("server-settings-btn").click()));
@@ -20110,6 +20156,7 @@ function openServerSettings(tab) {
   if (server.can_manage_server) renderAutomodSettings(server);
   renderGameTagEditor(server);
   renderServerTagEditor(server);
+  renderTipJarEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
   if (isOwner) renderReportSettings(server);

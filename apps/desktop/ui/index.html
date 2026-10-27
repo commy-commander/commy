@@ -2405,6 +2405,15 @@
               <button class="btn-primary btn-small" id="server-tag-save">Save Tag</button>
             </div>
           </div>
+          <h2 class="settings-subhead">Tip Jar</h2>
+          <div class="settings-card" id="tip-jar-card">
+            <div class="setting-sub">Add your Ko-fi page and members get a Support button that opens it in their browser. Tips go straight to Ko-fi; Commy never sees them.</div>
+            <input id="tip-jar-input" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="ko-fi.com/yourname" />
+            <div class="form-actions">
+              <button class="btn-link hidden" id="tip-jar-remove">Remove</button>
+              <button class="btn-primary btn-small" id="tip-jar-save">Save</button>
+            </div>
+          </div>
           <h2 class="settings-subhead">Inactivity</h2>
           <div class="settings-card setting-row">
             <div>
@@ -2974,6 +2983,7 @@
   <script src="scripts/server-tags.js"></script>
   <script src="scripts/profile-look.js"></script>
   <script src="scripts/join-requests.js"></script>
+  <script src="scripts/tip-jar.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/voice-filters.js"></script>
   <script src="scripts/stream-audio.js"></script>
