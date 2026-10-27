@@ -1,12 +1,14 @@
 use commy_core::{ChannelId, ServerId, UserId};
 use commy_media::{InputHandle, Mixer, OutputHandle, StreamGuards};
-use commy_net::media::MediaPacket;
+use commy_net::media::{InkMark, MediaPacket};
 use commy_net::node::MediaChannel;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
+
+use crate::stream_ink::{Bucket, InkHub, InkNews, InkSink};
 
 pub use commy_view::calls::should_dial;
 
@@ -413,6 +415,7 @@ pub struct ScreenShareSession {
     encoded: Arc<std::sync::atomic::AtomicU64>,
     _audio_capture: Option<InputHandle>,
     audio_task: Option<JoinHandle<()>>,
+    pub ink: Arc<InkHub>,
 }
 
 const ENCODERS: usize = 2;
@@ -561,21 +564,46 @@ impl ScreenShareSession {
             encoded,
             _audio_capture: audio_capture,
             audio_task,
+            ink: Arc::new(InkHub::new(UserId::new(), false)),
         }
+    }
+
+    pub fn with_ink(mut self, owner: UserId, allowed: bool) -> Self {
+        self.ink = Arc::new(InkHub::new(owner, allowed));
+        self
     }
 
     pub fn add_subscriber(&self, tx: mpsc::UnboundedSender<MediaPacket>) {
         self.subscribers.lock().unwrap().push(tx);
     }
 
-    pub fn add_viewer(&self, tx: mpsc::UnboundedSender<MediaPacket>, mut requests: mpsc::UnboundedReceiver<MediaPacket>) {
+    pub fn add_viewer(
+        &self,
+        user: UserId,
+        tx: mpsc::UnboundedSender<MediaPacket>,
+        mut requests: mpsc::UnboundedReceiver<MediaPacket>,
+    ) {
         self.add_subscriber(tx.clone());
-        let Some(listeners) = self.audio_subscribers.clone() else { return };
+        let mut listeners = self.audio_subscribers.clone();
+        let ink = self.ink.clone();
         tokio::spawn(async move {
+            let mut bucket = Bucket::new(std::time::Instant::now());
+            let mut joined = false;
             while let Some(packet) = requests.recv().await {
-                if packet == MediaPacket::StreamAudioWanted {
-                    listeners.lock().unwrap().push(tx);
-                    break;
+                match packet {
+                    MediaPacket::StreamAudioWanted => {
+                        if let Some(listeners) = listeners.take() {
+                            listeners.lock().unwrap().push(tx.clone());
+                        }
+                    }
+                    MediaPacket::InkReady if !joined => {
+                        joined = true;
+                        ink.join(user, tx.clone());
+                    }
+                    MediaPacket::Ink { mark } if joined => {
+                        ink.draw(user, mark, &mut bucket, std::time::Instant::now());
+                    }
+                    _ => {}
                 }
             }
         });
@@ -678,7 +706,8 @@ pub fn newest_video_with_all_audio(batch: Vec<MediaPacket>) -> Vec<MediaPacket> 
 pub struct ScreenWatch {
     pub task: JoinHandle<()>,
     audio: Option<Arc<StreamAudioSink>>,
-    _channel: Option<mpsc::UnboundedSender<MediaPacket>>,
+    channel: Option<mpsc::UnboundedSender<MediaPacket>>,
+    ink_allowed: Arc<AtomicBool>,
 }
 
 impl ScreenWatch {
@@ -687,12 +716,16 @@ impl ScreenWatch {
         media: MediaChannel,
         audio: Option<StreamAudioSink>,
         emit: impl Fn(UserId, u64, u32, u32, Vec<u8>) + Send + 'static,
+        ink: Option<InkSink>,
     ) -> Self {
         let MediaChannel { incoming, outgoing, .. } = media;
         if audio.is_some() {
             let _ = outgoing.send(MediaPacket::StreamAudioWanted);
         }
-        Self::from_frames(user, incoming, Some(outgoing), audio, emit)
+        if ink.is_some() {
+            let _ = outgoing.send(MediaPacket::InkReady);
+        }
+        Self::from_frames(user, incoming, Some(outgoing), audio, emit, ink)
     }
 
     pub fn from_frames(
@@ -701,9 +734,12 @@ impl ScreenWatch {
         channel: Option<mpsc::UnboundedSender<MediaPacket>>,
         audio: Option<StreamAudioSink>,
         emit: impl Fn(UserId, u64, u32, u32, Vec<u8>) + Send + 'static,
+        ink: Option<InkSink>,
     ) -> Self {
         let audio = audio.map(Arc::new);
         let sink = audio.clone();
+        let ink_allowed = Arc::new(AtomicBool::new(false));
+        let allowed = ink_allowed.clone();
         let task = tokio::spawn(async move {
             let mut last_seq: Option<u64> = None;
             let mut decoder = commy_audio::codec::VoiceDecoder::new();
@@ -726,12 +762,31 @@ impl ScreenWatch {
                                 sink.push(seq, decoder.decode(&data));
                             }
                         }
+                        MediaPacket::InkAllowed { on } => {
+                            if let Some(ink) = &ink {
+                                allowed.store(on, Ordering::Relaxed);
+                                ink(InkNews::Allowed(on));
+                            }
+                        }
+                        MediaPacket::InkFrom { user: from, mark } if mark.is_valid() => {
+                            if let Some(ink) = &ink {
+                                ink(InkNews::Mark { from, mark });
+                            }
+                        }
                         _ => {}
                     }
                 }
             }
         });
-        Self { task, audio, _channel: channel }
+        Self { task, audio, channel, ink_allowed }
+    }
+
+    pub fn send_ink(&self, mark: InkMark) -> Result<(), &'static str> {
+        if !self.ink_allowed.load(Ordering::Relaxed) {
+            return Err("drawing is not allowed on this stream");
+        }
+        let channel = self.channel.as_ref().ok_or("not watching")?;
+        channel.send(MediaPacket::Ink { mark }).map_err(|_| "the stream ended")
     }
 
     pub fn set_stream_volume(&self, gain: f32) {
@@ -1116,7 +1171,7 @@ mod share_tests {
             assert_eq!((w, h), (64, 48));
             assert_eq!(&jpeg[..2], &[0xff, 0xd8]);
             counter.fetch_add(1, Ordering::Relaxed);
-        });
+        }, None);
         let mut viewer_frames = 0u64;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
         while let Ok(Some(packet)) = tokio::time::timeout_at(deadline, viewer_rx.recv()).await {
@@ -1165,14 +1220,14 @@ mod share_tests {
         assert!(session.shares_audio());
         let (old_tx, mut old_rx) = mpsc::unbounded_channel();
         let (old_req_tx, old_req_rx) = mpsc::unbounded_channel();
-        session.add_viewer(old_tx, old_req_rx);
+        session.add_viewer(UserId::new(), old_tx, old_req_rx);
         let (new_tx, new_rx) = mpsc::unbounded_channel();
         let (new_req_tx, new_req_rx) = mpsc::unbounded_channel();
-        session.add_viewer(new_tx, new_req_rx);
+        session.add_viewer(UserId::new(), new_tx, new_req_rx);
         let mixer = Arc::new(Mutex::new(Mixer::new()));
         let sharer = UserId::new();
         let sink = StreamAudioSink::in_call(mixer.clone(), sharer, 1.0);
-        let _watch = ScreenWatch::from_frames(sharer, new_rx, Some(new_req_tx.clone()), Some(sink), |_, _, _, _, _| {});
+        let _watch = ScreenWatch::from_frames(sharer, new_rx, Some(new_req_tx.clone()), Some(sink), |_, _, _, _, _| {}, None);
         new_req_tx.send(MediaPacket::StreamAudioWanted).unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         for frame in 0..20usize {
@@ -1194,6 +1249,42 @@ mod share_tests {
             old_audio += usize::from(matches!(packet, MediaPacket::StreamAudio { .. }));
         }
         assert_eq!(old_audio, 0, "a viewer who never asked gets no audio packets");
+        drop(session);
+    }
+
+    fn ink_watch(
+        sharer: UserId,
+        session: &ScreenShareSession,
+        viewer: UserId,
+    ) -> (ScreenWatch, Arc<Mutex<Vec<InkNews>>>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (req_tx, req_rx) = mpsc::unbounded_channel();
+        session.add_viewer(viewer, tx, req_rx);
+        let news = Arc::new(Mutex::new(Vec::new()));
+        let seen = news.clone();
+        let sink: InkSink = Arc::new(move |item| seen.lock().unwrap().push(item));
+        req_tx.send(MediaPacket::InkReady).unwrap();
+        (ScreenWatch::from_frames(sharer, rx, Some(req_tx), None, |_, _, _, _, _| {}, Some(sink)), news)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn viewers_draw_once_the_streamer_allows_it_and_everyone_else_sees_it() {
+        let sharer = UserId::new();
+        let session = ScreenShareSession::start_with(ServerId::new(), ChannelId::new(), 30, 64, synthetic(), None)
+            .with_ink(sharer, false);
+        let local = Arc::new(Mutex::new(Vec::new()));
+        let streamer_saw = local.clone();
+        session.ink.set_local(Arc::new(move |item| streamer_saw.lock().unwrap().push(item)));
+        let (sam, lee) = (UserId::new(), UserId::new());
+        let (sam_watch, _) = ink_watch(sharer, &session, sam);
+        let (_lee_watch, lee_news) = ink_watch(sharer, &session, lee);
+        until(|| lee_news.lock().unwrap().contains(&InkNews::Allowed(false))).await;
+        assert!(sam_watch.send_ink(InkMark::Clear).is_err(), "nothing is sent before the streamer allows it");
+        session.ink.set_allowed(true);
+        until(|| sam_watch.send_ink(InkMark::Point { x: 1, y: 2 }).is_ok()).await;
+        let point = InkNews::Mark { from: sam, mark: InkMark::Point { x: 1, y: 2 } };
+        until(|| lee_news.lock().unwrap().contains(&point)).await;
+        until(|| local.lock().unwrap().contains(&point)).await;
         drop(session);
     }
 }

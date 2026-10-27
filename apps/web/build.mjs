@@ -11,7 +11,7 @@ const release = !process.argv.includes("--dev");
 const relays = webRelayList(process.env.COMMY_WEB_RELAYS, process.env.COMMY_DEFAULT_RELAY || "https://relay.commy.chat:8443");
 const base = process.env.COMMY_WEB_BASE || "";
 
-const SKIPPED = ["apps/desktop/ui/tests/", "apps/desktop/ui/vendor/", "apps/desktop/ui/overlay.html"];
+const SKIPPED = ["apps/desktop/ui/tests/", "apps/desktop/ui/vendor/", "apps/desktop/ui/overlay.html", "apps/desktop/ui/ink.html"];
 
 const run = (cmd, args, env = {}) => execFileSync(cmd, args, { cwd: repo, stdio: "inherit", env: { ...process.env, ...env } });
 

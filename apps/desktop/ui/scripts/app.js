@@ -1889,19 +1889,33 @@ async function mockInvoke(cmd, args = {}) {
       ];
     case "share_source_preview": return mockFrame(`Source ${args.sourceId}`, 360, 203, args.sourceId * 47);
     case "can_share_screen": return true;
-    case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47, audio: args.audio }; return null;
+    case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47, audio: args.audio, ink: Boolean(args.ink), drawers: [] }; return null;
+    case "set_stream_ink":
+      if (!mock.share) throw "not sharing";
+      mock.share.ink = Boolean(args.on);
+      if (!args.on) mock.share.drawers = [];
+      return null;
+    case "clear_stream_ink":
+      if (mock.share) onStreamInk({ sharer: state.user.id, from: state.user.id, name: "", mark: { kind: "clear", stroke: 0, points: [] } });
+      return null;
+    case "block_stream_ink":
+      if (mock.share) mock.share.drawers = mock.share.drawers.filter(d => d.id !== args.userId);
+      onStreamInk({ sharer: state.user.id, from: args.userId, name: "", mark: { kind: "clear", stroke: 0, points: [] } });
+      return null;
+    case "send_stream_ink": return null;
     case "share_audio_supported": return true;
     case "set_stream_volume": mock.voice.stream_volume = args.volume; return mock.voice;
     case "stop_screen_share": mock.share = null; return null;
     case "own_share_frame":
       if (!mock.share) throw "not sharing";
-      return { width: 1280, height: 720, jpeg: mockFrame(mock.share.name, 640, 360, mock.share.hue), viewers: 2, audio: Boolean(mock.share.audio) };
+      return { width: 1280, height: 720, jpeg: mockFrame(mock.share.name, 640, 360, mock.share.hue), viewers: 2, audio: Boolean(mock.share.audio), ink: mock.share.ink, drawers: mock.share.drawers };
     case "watch_screen":
       clearInterval(mock.watchTimer);
       mock.watchTimer = setInterval(() => {
         if (!state.watchingUser) return clearInterval(mock.watchTimer);
         showStageFrame(`data:image/jpeg;base64,${mockFrame("Remote stream", 960, 540, 200)}`, 1280, 720);
       }, 125);
+      setTimeout(() => onStreamInkAllowed({ sharer: args.userId, on: true }), 300);
       return null;
     case "stop_watching": clearInterval(mock.watchTimer); return null;
     case "create_role": {
@@ -1979,6 +1993,8 @@ const ICONS = {
   cameraOff: "M21 6.5l-4 4V7a1 1 0 0 0-1-1H9.82L21 17.18zM3.27 2 2 3.27 4.73 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 .55-.17L19.73 21 21 19.73z",
   gear: "M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84a.47.47 0 0 0-.47.41l-.36 2.54a7.4 7.4 0 0 0-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87a.47.47 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54a7 7 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61zM12 15.6A3.6 3.6 0 1 1 15.6 12a3.6 3.6 0 0 1-3.6 3.6z",
   pencil: "M3 17.25V21h3.75L17.8 9.94l-3.75-3.75zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z",
+  pointer: "M5 2.5v17.2l4.6-4.3 2.9 6.6 3-1.3-2.9-6.5H19z",
+  eraser: "M16.2 3.6 21 8.4a2 2 0 0 1 0 2.8L12.2 20H20v2H7.8l-4.4-4.4a2 2 0 0 1 0-2.8L13.4 3.6a2 2 0 0 1 2.8 0zM5.2 16.2 8.6 19.6h.8l3.3-3.3-5-5z",
   person: "M12 6a2 2 0 1 1-2 2 2 2 0 0 1 2-2m0 10c2.7 0 5.8 1.29 6 2H6c.23-.72 3.31-2 6-2m0-12a4 4 0 1 0 4 4 4 4 0 0 0-4-4zm0 10c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z",
   friendAdd: "M15 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z",
   serverAdd: "M13 7h-2v4H7v2h4v4h2v-4h4v-2h-4zm-1-5a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z",
@@ -3805,8 +3821,12 @@ function voiceRing(channel, entry) {
   ring.classList.toggle("muted", Boolean(entry.muted));
   ring.appendChild(makeAvatar(entry.id, entry.name, "avatar avatar-sm"));
   const isMe = state.user && entry.id === state.user.id;
+  if (canDragVoiceMember(state.currentServer, entry.id, state.user && state.user.id)) {
+    ring.onpointerdown = e => armVoiceDrag(e, ring, channel.id, entry.id, entry.name);
+  }
   ring.onclick = e => {
     e.stopPropagation();
+    if (voiceDragHoldsClick()) return;
     if (isMe) {
       openSelfVoiceMenu(e.clientX, e.clientY);
       return;
@@ -3877,15 +3897,16 @@ function voiceUserRow(channel, entry, myName, role = null) {
       const member = server && server.members.find(m => m.id === userId);
       openMemberMenu(member || { id: userId, name: user }, e.clientX, e.clientY);
     };
-    if (canDragVoiceMember(server, userId, state.user && state.user.id)) {
-      vu.onpointerdown = e => armVoiceDrag(e, vu, channel.id, userId, user);
-    }
   } else if (isMe) {
     vu.onclick = vu.oncontextmenu = e => {
       e.preventDefault();
       e.stopPropagation();
+      if (voiceDragHoldsClick()) return;
       openSelfVoiceMenu(e.clientX, e.clientY);
     };
+  }
+  if (canDragVoiceMember(server, userId, state.user && state.user.id)) {
+    vu.onpointerdown = e => armVoiceDrag(e, vu, channel.id, userId, user);
   }
   if (isMe && channel.id === state.voiceChannelId && role !== "audience") {
     if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
@@ -3951,7 +3972,7 @@ function startVoiceDrag(drag) {
 
 function voiceDropAt(x, y) {
   const hit = document.elementFromPoint(x, y);
-  const node = hit && hit.closest("#channel-list [data-room]");
+  const node = hit && hit.closest(":is(#channel-list, #narrow-column) [data-room]");
   return node ? voiceDropRoom(state.currentServer, voiceDrag.fromId, node.dataset.room) : null;
 }
 
@@ -3959,8 +3980,8 @@ function markVoiceDrop(room) {
   const id = room ? room.id : null;
   if (voiceDrag.over === id) return;
   voiceDrag.over = id;
-  for (const node of document.querySelectorAll(".voice-channel.voice-drop")) node.classList.remove("voice-drop");
-  if (id) for (const node of document.querySelectorAll(`.voice-channel[data-room="${CSS.escape(id)}"]`)) node.classList.add("voice-drop");
+  for (const node of document.querySelectorAll(".voice-drop")) node.classList.remove("voice-drop");
+  if (id) for (const node of document.querySelectorAll(`:is(.voice-channel, .narrow-voice-tile)[data-room="${CSS.escape(id)}"]`)) node.classList.add("voice-drop");
 }
 
 function holdVoiceDragTouch(e) {
@@ -3973,9 +3994,22 @@ function onVoiceDragUp(e) {
   const room = drag.live ? voiceDropAt(e.clientX, e.clientY) : null;
   endVoiceDrag();
   if (!room) return;
+  if (state.user && drag.userId === state.user.id) {
+    joinDroppedRoom(room);
+    return;
+  }
   const server = state.currentServer;
   const member = (server && server.members.find(m => m.id === drag.userId)) || { id: drag.userId, name: drag.name };
   moveVoiceMember(member, room);
+}
+
+function joinDroppedRoom(room) {
+  if (room.id === state.voiceChannelId) return;
+  if (voiceFull(room)) {
+    toast("That voice channel is full");
+    return;
+  }
+  toggleVoice(room);
 }
 
 function onVoiceDragCancel(e) {
@@ -4001,7 +4035,7 @@ function endVoiceDrag() {
   drag.ghost.remove();
   document.body.classList.remove("voice-dragging");
   for (const node of document.querySelectorAll(".voice-user.dragging")) node.classList.remove("dragging");
-  for (const node of document.querySelectorAll(".voice-channel.voice-drop")) node.classList.remove("voice-drop");
+  for (const node of document.querySelectorAll(".voice-drop")) node.classList.remove("voice-drop");
 }
 
 const serverImages = new Map();
@@ -15198,6 +15232,7 @@ function renderVoicePanel() {
 
   renderVoicePanelActivity();
   $("vp-live").classList.toggle("hidden", !state.sharing);
+  renderStreamInkSwitch();
   $("vp-live-source").textContent = state.shareSource ? `Streaming ${state.shareSource}` : "";
   $("vp-live-title").textContent = `Live in ${vs.channelName}`;
 
@@ -16051,6 +16086,7 @@ function narrowVoiceTiles(server) {
 function narrowVoiceTile(channel) {
   const connected = channel.id === state.voiceChannelId;
   const tile = el("button", "narrow-voice-tile" + (connected ? " connected" : ""));
+  tile.dataset.room = channel.id;
   tile.title = connected ? `You are in ${channel.name}` : `Join ${channel.name}`;
   const grid = el("span", "narrow-voice-grid");
   grid.append(...voiceRingCells(channel));
@@ -16058,7 +16094,7 @@ function narrowVoiceTile(channel) {
   head.append(voiceKindIcon(channel.kind, 12), el("span", "narrow-voice-name", channel.name));
   tile.append(grid, head);
   tile.onclick = () => {
-    if (connected) return;
+    if (connected || voiceDragHoldsClick()) return;
     if (voiceFull(channel)) toast("That voice channel is full");
     else toggleVoice(channel);
   };
@@ -17844,6 +17880,11 @@ async function renderShareAudioRow() {
   $("share-audio").checked = shareAudioWanted(sharePicker.audioSupported);
 }
 
+function renderShareInkRow() {
+  $("share-ink-row").classList.toggle("hidden", !streamInkSetting());
+  $("share-ink").checked = streamInkWanted();
+}
+
 function shareQuality() {
   try {
     const saved = localStorage.getItem(SHARE_QUALITY_KEY);
@@ -17869,6 +17910,7 @@ async function openSharePicker() {
   sharePicker.kind = "monitor";
   setShareQuality(shareQuality());
   renderShareAudioRow();
+  renderShareInkRow();
   $("share-go").textContent = state.sharing ? "Switch Stream" : "Go Live";
   const list = $("share-source-list");
   list.innerHTML = "";
@@ -17977,13 +18019,17 @@ async function startShareWith(source, quality, audio = shareAudioWanted()) {
   sharePicker.token++;
   try {
     if (state.sharing) await invoke("stop_screen_share", { serverId: state.voiceServer.id });
+    const allowInk = streamInkWanted();
     await invoke("start_screen_share", {
       serverId: state.voiceServer.id,
       sourceKind: source.kind,
       sourceId: source.id,
       quality,
       audio,
+      ink: allowInk,
+      inkOnScreen: streamInkScreen(),
     });
+    state.shareInk = allowInk;
     state.sharing = true;
     state.shareSource = source.name;
     state.shareQuality = quality;
@@ -18031,6 +18077,12 @@ function startOwnPreview() {
         $("stage-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
         $("stage-viewers").classList.toggle("hidden", !own.viewers);
       }
+      if (typeof own.ink === "boolean" && own.ink !== state.shareInk) {
+        state.shareInk = own.ink;
+        renderStreamInkSwitch();
+        renderStageInkTools();
+      }
+      renderStageDrawers(own.drawers);
       const now = performance.now();
       if (ownFpsSample && own.frames >= ownFpsSample.frames) {
         const fps = Math.round((own.frames - ownFpsSample.frames) / ((now - ownFpsSample.at) / 1000));
@@ -18056,6 +18108,7 @@ setInterval(() => {
 
 function openStage(mode, label) {
   state.stageMode = mode;
+  resetStageInk();
   stageStats.times = [];
   $("video-label").textContent = label;
   $("stage-stats").textContent = "";
@@ -18086,6 +18139,7 @@ async function setStreamVolume(percent) {
 
 function closeStage() {
   state.stageMode = null;
+  resetStageInk();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   document.querySelector(".main").classList.remove("stage-focus");
   $("video-pane").classList.add("hidden");
@@ -18109,6 +18163,254 @@ function toggleStageFocus() {
   const focused = document.querySelector(".main").classList.toggle("stage-focus");
   $("stage-focus").title = focused ? "Exit Focus Mode" : "Focus Mode";
   setIcon($("stage-focus"), focused ? "collapse" : "expand", 20);
+}
+
+const ink = { store: inkStore(), sharer: null, allowed: new Map(), tool: null, stroke: 0, pending: [], last: null, flushTimer: null, raf: 0, drawing: false, drawersKey: "" };
+
+function inkSaved(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function inkSave(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
+
+function streamInkSetting() {
+  return inkSettingOn(inkSaved(INK_SETTING_KEY));
+}
+
+function streamInkScreen() {
+  return inkScreenOn(inkSaved(INK_SCREEN_KEY));
+}
+
+function streamInkWanted() {
+  return streamInkSetting() && inkSaved(INK_STREAM_KEY) === "1";
+}
+
+function inkStageSharer() {
+  if (state.stageMode === "watch") return state.watchingUser;
+  if (state.stageMode === "self") return state.user && state.user.id;
+  return null;
+}
+
+function resetStageInk() {
+  ink.store = inkStore();
+  ink.sharer = inkStageSharer();
+  ink.drawersKey = "";
+  setInkTool(null);
+  renderStageInkTools();
+  renderStageDrawers([]);
+  scheduleInkPaint();
+}
+
+function inkStoreFor(sharer) {
+  if (ink.sharer !== sharer) {
+    ink.store = inkStore();
+    ink.sharer = sharer;
+  }
+  return ink.store;
+}
+
+function onStreamInk(news) {
+  if (!news || !news.sharer || news.sharer !== inkStageSharer()) return;
+  inkAdd(inkStoreFor(news.sharer), news, performance.now(), news.sharer);
+  scheduleInkPaint();
+}
+
+function onStreamInkAllowed(news) {
+  if (!news || !news.sharer) return;
+  ink.allowed.set(news.sharer, Boolean(news.on));
+  if (!news.on && news.sharer === inkStageSharer()) ink.store = inkStore();
+  renderStageInkTools();
+  scheduleInkPaint();
+}
+
+function renderStageInkTools() {
+  const watching = state.stageMode === "watch" && ink.allowed.get(state.watchingUser) === true;
+  const self = state.stageMode === "self" && state.sharing && Boolean(state.shareInk);
+  $("stage-ink-tools").classList.toggle("hidden", !(watching || self));
+  $("stage-ink-point").classList.toggle("hidden", !watching);
+  $("stage-ink-pen").classList.toggle("hidden", !watching);
+  $("stage-ink-clear").title = self ? "Clear all drawings" : "Clear my drawings";
+  if (!watching && ink.tool) setInkTool(null);
+}
+
+function setInkTool(tool) {
+  ink.tool = tool;
+  for (const [id, name] of [["stage-ink-point", "point"], ["stage-ink-pen", "pen"]]) {
+    $(id).classList.toggle("active", tool === name);
+    $(id).setAttribute("aria-pressed", String(tool === name));
+  }
+  $("stage-ink").classList.toggle("drawing", Boolean(tool));
+  $("stage-ink").dataset.tool = tool || "";
+  if (!tool) finishInkStroke();
+}
+
+function renderStreamInkSwitch() {
+  const shown = Boolean(state.sharing) && (streamInkSetting() || Boolean(state.shareInk));
+  $("vp-ink-row").classList.toggle("hidden", !shown);
+  $("vp-ink").checked = Boolean(state.sharing && state.shareInk);
+}
+
+async function setStreamInk(on) {
+  try {
+    await invoke("set_stream_ink", { on, onScreen: streamInkScreen() });
+    state.shareInk = on;
+    inkSave(INK_STREAM_KEY, on ? "1" : "0");
+    if (!on && state.stageMode === "self") ink.store = inkStore();
+  } catch (e) {
+    toast(String(e));
+  }
+  renderStreamInkSwitch();
+  renderStageInkTools();
+  renderStageDrawers([]);
+  scheduleInkPaint();
+}
+
+function renderStageDrawers(drawers) {
+  const list = state.stageMode === "self" && state.shareInk ? (drawers || []) : [];
+  const key = list.map(d => `${d.id}:${d.name}`).join("|");
+  if (key === ink.drawersKey) return;
+  ink.drawersKey = key;
+  const chip = $("stage-drawers");
+  chip.classList.toggle("hidden", !list.length);
+  const items = [el("span", "stage-drawers-label", "Drawing")];
+  for (const drawer of list) {
+    const who = el("span", "stage-drawer");
+    const dot = el("span", "stage-drawer-dot");
+    dot.style.background = inkColor(drawer.id);
+    const stop = el("button", "stage-drawer-stop");
+    stop.type = "button";
+    stop.title = `Stop ${drawer.name} drawing on this stream`;
+    stop.setAttribute("aria-label", stop.title);
+    stop.appendChild(svgIcon("close", 12));
+    stop.onclick = () => invoke("block_stream_ink", { userId: drawer.id }).catch(e => toast(String(e)));
+    who.append(dot, el("span", "stage-drawer-name", drawer.name), stop);
+    items.push(who);
+  }
+  chip.replaceChildren(...items);
+}
+
+function stageInkRect() {
+  const canvas = $("stage-ink");
+  const img = $("video-frame");
+  return inkFit(img.naturalWidth, img.naturalHeight, canvas.clientWidth, canvas.clientHeight);
+}
+
+function scheduleInkPaint() {
+  if (!ink.raf) ink.raf = requestAnimationFrame(paintStageInk);
+}
+
+function paintStageInk() {
+  ink.raf = 0;
+  const canvas = $("stage-ink");
+  const ratio = window.devicePixelRatio || 1;
+  const width = Math.round(canvas.clientWidth * ratio);
+  const height = Math.round(canvas.clientHeight * ratio);
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  const frame = inkFrame(ink.store, performance.now(), document.documentElement.hasAttribute("data-reduced-motion"));
+  inkPaint(ctx, frame, stageInkRect());
+  if (frame.busy) scheduleInkPaint();
+}
+
+function inkPointAt(event) {
+  const box = $("stage-ink").getBoundingClientRect();
+  return inkToFrame(event.clientX - box.left, event.clientY - box.top, stageInkRect());
+}
+
+function sendStreamInk(mark) {
+  const sharer = state.watchingUser;
+  if (!sharer || !state.user) return;
+  inkAdd(inkStoreFor(sharer), { from: state.user.id, name: "", mark }, performance.now(), sharer);
+  scheduleInkPaint();
+  invoke("send_stream_ink", { userId: sharer, mark }).catch(() => {});
+}
+
+function flushInkStroke() {
+  if (!ink.pending.length || !state.watchingUser) return;
+  const points = ink.pending;
+  ink.pending = [];
+  for (const chunk of inkChunks(points)) {
+    invoke("send_stream_ink", { userId: state.watchingUser, mark: { kind: "line", stroke: ink.stroke, points: chunk } }).catch(() => {});
+  }
+}
+
+function finishInkStroke() {
+  if (!ink.drawing) return;
+  ink.drawing = false;
+  clearInterval(ink.flushTimer);
+  ink.flushTimer = null;
+  flushInkStroke();
+}
+
+function addOwnInkPoint(point) {
+  ink.pending.push(point);
+  ink.last = point;
+  inkAdd(inkStoreFor(state.watchingUser), { from: state.user.id, name: "", mark: { kind: "line", stroke: ink.stroke, points: [point] } }, performance.now(), state.watchingUser);
+  scheduleInkPaint();
+}
+
+function onInkPointerDown(event) {
+  if (!ink.tool || !state.user) return;
+  const point = inkPointAt(event);
+  if (!point) return;
+  event.preventDefault();
+  if (ink.tool === "point") return sendStreamInk({ kind: "point", stroke: 0, points: [point] });
+  finishInkStroke();
+  ink.stroke = (ink.stroke + 1) % 0xffffffff;
+  ink.drawing = true;
+  ink.pending = [];
+  try { $("stage-ink").setPointerCapture(event.pointerId); } catch {}
+  addOwnInkPoint(point);
+  ink.flushTimer = setInterval(flushInkStroke, INK_SEND_EVERY_MS);
+}
+
+function onInkPointerMove(event) {
+  if (!ink.drawing) return;
+  const point = inkPointAt(event);
+  if (point && inkFarEnough(ink.last, point)) addOwnInkPoint(point);
+}
+
+function clearStageInk() {
+  if (state.stageMode === "self") {
+    invoke("clear_stream_ink").catch(e => toast(String(e)));
+    return;
+  }
+  sendStreamInk({ kind: "clear", stroke: 0, points: [] });
+}
+
+function wireStageInk() {
+  setIcon($("stage-ink-point"), "pointer", 18);
+  setIcon($("stage-ink-pen"), "pencil", 18);
+  setIcon($("stage-ink-clear"), "eraser", 18);
+  $("stage-ink-point").onclick = () => setInkTool(ink.tool === "point" ? null : "point");
+  $("stage-ink-pen").onclick = () => setInkTool(ink.tool === "pen" ? null : "pen");
+  $("stage-ink-clear").onclick = clearStageInk;
+  const canvas = $("stage-ink");
+  canvas.addEventListener("pointerdown", onInkPointerDown);
+  canvas.addEventListener("pointermove", onInkPointerMove);
+  canvas.addEventListener("pointerup", finishInkStroke);
+  canvas.addEventListener("pointercancel", finishInkStroke);
+  $("video-frame").addEventListener("load", () => { if (ink.store.lines.size || ink.store.pings.length) scheduleInkPaint(); });
+  new ResizeObserver(() => scheduleInkPaint()).observe($("stage-view"));
+  $("vp-ink").onchange = e => setStreamInk(e.target.checked);
+  $("share-ink").onchange = e => inkSave(INK_STREAM_KEY, e.target.checked ? "1" : "0");
+  $("stream-ink-toggle").onchange = e => {
+    inkSave(INK_SETTING_KEY, e.target.checked ? "1" : "0");
+    if (!e.target.checked && state.sharing && state.shareInk) setStreamInk(false);
+    renderStreamInkSwitch();
+  };
+  $("stream-ink-screen-toggle").onchange = e => {
+    inkSave(INK_SCREEN_KEY, e.target.checked ? "1" : "0");
+    if (state.sharing && state.shareInk) setStreamInk(true);
+  };
 }
 
 function toggleStageFullscreen() {
@@ -18167,6 +18469,7 @@ async function watchScreen(userId, name) {
     await invoke("watch_screen", { serverId, userId });
     state.watchingUser = userId;
     state.watchingName = name;
+    renderStageInkTools();
     renderVoicePanel();
   } catch (e) {
     closeStage();
@@ -18179,6 +18482,7 @@ async function stopWatching() {
     try {
       await invoke("stop_watching", { userId: state.watchingUser });
     } catch (e) {}
+    ink.allowed.delete(state.watchingUser);
   }
   state.watchingUser = null;
   state.watchingName = null;
@@ -18767,6 +19071,7 @@ function wireEvents() {
     try { localStorage.setItem(SHARE_AUDIO_KEY, shareAudioSaveValue($("share-audio").checked)); } catch {}
   };
   $("stage-focus").onclick = toggleStageFocus;
+  wireStageInk();
   $("stage-fullscreen").onclick = toggleStageFullscreen;
   $("stage-view").ondblclick = toggleStageFullscreen;
   $("vp-preview").onclick = openOwnPreview;
@@ -19981,6 +20286,8 @@ function wireEvents() {
     window.__TAURI__.event.listen("voice-speaking", event => {
       setSpeaking(event.payload.user, Boolean(event.payload.speaking));
     });
+    window.__TAURI__.event.listen("stream-ink", event => onStreamInk(event.payload));
+    window.__TAURI__.event.listen("stream-ink-allowed", event => onStreamInkAllowed(event.payload));
     window.__TAURI__.event.listen("video-frame", event => {
       const frame = event.payload;
       if (state.watchingUser && frame.user === state.watchingUser) {
@@ -20581,6 +20888,8 @@ function openUserSettings(tab) {
   $("nc-toggle").checked = state.voice.noise_cancellation;
   $("ec-toggle").checked = state.voice.echo_cancellation !== false;
   $("agc-toggle").checked = state.voice.auto_level !== false;
+  $("stream-ink-toggle").checked = streamInkSetting();
+  $("stream-ink-screen-toggle").checked = streamInkScreen();
   $("afk-timeout").value = String(state.voice.afk_timeout_minutes ?? 10);
   $("share-activity-toggle").checked = state.voice.share_activity !== false;
   loadAudioDevices();
