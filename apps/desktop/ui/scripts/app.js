@@ -514,6 +514,16 @@ function mockSeed() {
   ] };
 }
 
+function mockJoinSoundClips(server) {
+  if (server.join_sounds_off) return {};
+  const clips = {};
+  for (const [user, sound] of Object.entries(server.join_sounds || {})) {
+    const clip = defaultSound(sound) ? sound : (server.sounds || []).find(s => s.name === sound)?.blob;
+    if (clip) clips[user] = clip;
+  }
+  return clips;
+}
+
 function mockMemberName(id) {
   if (id === "me") return mock.user ? mock.user.username : "you";
   const member = Object.values(mock.servers).flatMap(s => s.members).find(m => m.id === id);
@@ -722,6 +732,7 @@ async function mockInvoke(cmd, args = {}) {
           .filter(c => c.can_view || !mock.plainMember),
         can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
+        join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
@@ -1380,6 +1391,14 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
+    case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "set_join_sound": {
+      const srv = mock.servers[args.serverId];
+      srv.join_sounds = { ...(srv.join_sounds || {}) };
+      if (args.name) srv.join_sounds["me"] = args.name;
+      else delete srv.join_sounds["me"];
+      return null;
+    }
     case "set_activities_enabled": mock.servers[args.serverId].activities_enabled = args.enabled; return null;
     case "list_shareable_sounds":
       return Object.values(mock.servers).filter(s => s.sounds_shareable)
@@ -2702,6 +2721,7 @@ function openServerMenu(server, x, y, folderId) {
   $("sm-rules").classList.add("hidden");
   $("sm-roles").classList.add("hidden");
   $("sm-onboarding").classList.add("hidden");
+  $("sm-join-sound").classList.add("hidden");
   $("sm-settings").textContent = "Server Settings";
   $("sm-invite").classList.add("hidden");
   invoke("get_server", { serverId: server.id }).then(full => {
@@ -2709,6 +2729,7 @@ function openServerMenu(server, x, y, folderId) {
     $("sm-rules").classList.toggle("hidden", !full.rules);
     $("sm-roles").classList.toggle("hidden", !selfAssignableRoles(full).length);
     $("sm-onboarding").classList.toggle("hidden", !full.onboarding);
+    $("sm-join-sound").classList.toggle("hidden", !full.join_sounds_allowed || !full.can_use_soundboard);
     $("sm-settings").textContent = canOpenServerSettings(full) ? "Server Settings" : "Server Info";
   }).catch(() => {});
   placeMenuAt($("server-menu"), x, y);
@@ -3535,10 +3556,11 @@ async function setServerImage(which, data) {
   }
 }
 
-const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
+const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", ring: "sounds/ring.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
 const SOUND_EVENTS = [
   { id: "message", label: "New message or mention", fallback: "notification" },
   { id: "dm", label: "Direct message", fallback: "ding" },
+  { id: "ring", label: "Incoming call", fallback: "ring" },
   { id: "join", label: "Someone joins your voice channel", fallback: "join" },
   { id: "leave", label: "Someone leaves your voice channel", fallback: "leave" },
 ];
@@ -3559,18 +3581,132 @@ function saveSoundPrefs(prefs) {
 
 function soundFor(eventId) {
   const event = SOUND_EVENTS.find(e => e.id === eventId);
-  const chosen = soundPrefs().events[eventId];
-  return chosen === undefined ? event?.fallback : chosen;
+  return resolveAlertSound(soundPrefs().events[eventId], event?.fallback, alertSounds.list);
+}
+
+function alertSoundUrl(name) {
+  if (isAlertSound(name)) return alertSounds.urls.get(name) || null;
+  return SOUND_FILES[name] || null;
 }
 
 function playSound(eventId, force) {
   const prefs = soundPrefs();
   const name = force || soundFor(eventId);
-  if (!name || name === "none" || !SOUND_FILES[name]) return;
-  if (!force && (!prefs.enabled || state.user?.presence === "do_not_disturb")) return;
-  const audio = new Audio(SOUND_FILES[name]);
+  const url = name && name !== NO_SOUND ? alertSoundUrl(name) : null;
+  if (!url) return null;
+  if (!force && (!prefs.enabled || state.user?.presence === "do_not_disturb")) return null;
+  const audio = new Audio(url);
   audio.volume = Math.max(0, Math.min(1, prefs.volume));
   audio.play().catch(() => {});
+  return audio;
+}
+
+const ALERT_SOUND_DB = "commy-alert-sounds";
+const ALERT_SOUND_STORE = "sounds";
+const alertSounds = { list: [], urls: new Map() };
+
+function openAlertSoundDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(ALERT_SOUND_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(ALERT_SOUND_STORE, { keyPath: "id" });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function alertSoundStore(mode, work) {
+  const db = await openAlertSoundDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(ALERT_SOUND_STORE, mode);
+      const request = work(tx.objectStore(ALERT_SOUND_STORE));
+      tx.oncomplete = () => resolve(request && request.result);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function loadAlertSounds() {
+  let rows = [];
+  try {
+    rows = (await alertSoundStore("readonly", store => store.getAll())) || [];
+  } catch {}
+  for (const url of alertSounds.urls.values()) URL.revokeObjectURL(url);
+  alertSounds.urls = new Map(rows.map(r => [r.id, URL.createObjectURL(r.blob)]));
+  alertSounds.list = rows.map(r => ({ id: r.id, name: r.name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function saveAlertSound(name, bytes) {
+  const id = alertSoundId(name, alertSounds.list.map(s => s.id));
+  await alertSoundStore("readwrite", store => store.put({ id, name, blob: new Blob([bytes], { type: soundMimeOf(bytes) }) }));
+  await loadAlertSounds();
+  return id;
+}
+
+async function deleteAlertSound(id) {
+  await alertSoundStore("readwrite", store => store.delete(id));
+  const prefs = soundPrefs();
+  for (const [event, chosen] of Object.entries(prefs.events)) if (chosen === id) delete prefs.events[event];
+  saveSoundPrefs(prefs);
+  await loadAlertSounds();
+}
+
+function soundMimeOf(bytes) {
+  const head = String.fromCharCode(...bytes.slice(0, 4));
+  if (head === "RIFF") return "audio/wav";
+  if (head === "OggS") return "audio/ogg";
+  return "audio/mpeg";
+}
+
+function chooseAlertSound(eventId, name) {
+  const next = soundPrefs();
+  next.events[eventId] = name;
+  saveSoundPrefs(next);
+  playSound(eventId, name);
+}
+
+function alertSoundSelect(event) {
+  const select = el("select", "compact-select");
+  for (const group of alertSoundChoices(Object.keys(SOUND_FILES), alertSounds.list, alertSounds.list.length < MAX_ALERT_SOUNDS)) {
+    const parent = group.label ? select.appendChild(Object.assign(document.createElement("optgroup"), { label: group.label })) : select;
+    for (const option of group.options) parent.appendChild(new Option(option.label, option.value));
+  }
+  select.value = soundFor(event.id) || NO_SOUND;
+  select.onchange = () => {
+    if (select.value !== ADD_ALERT_SOUND) return chooseAlertSound(event.id, select.value);
+    select.value = soundFor(event.id) || NO_SOUND;
+    openSoundUpload(null, null, { eventId: event.id });
+  };
+  return select;
+}
+
+function renderAlertSoundList() {
+  const list = $("sound-custom-list");
+  list.replaceChildren();
+  $("sound-custom-count").textContent = `${alertSounds.list.length} of ${MAX_ALERT_SOUNDS} used.`;
+  for (const sound of alertSounds.list) {
+    const row = el("div", "expr-row");
+    const play = el("button", "icon-btn sound-preview");
+    play.title = "Preview";
+    play.appendChild(svgIcon("play", 18));
+    play.onclick = () => playSound(null, sound.id);
+    const del = el("button", "icon-btn expr-delete");
+    del.title = `Delete ${sound.name}`;
+    del.appendChild(svgIcon("trash", 18));
+    del.onclick = async () => {
+      try {
+        await deleteAlertSound(sound.id);
+        renderSoundSettings();
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    row.append(play, el("span", "expr-name", sound.name), del);
+    list.appendChild(row);
+  }
+  if (!alertSounds.list.length) list.appendChild(el("div", "manage-empty", "Pick Add your own in any list above to use your own sound"));
 }
 
 function renderSoundSettings() {
@@ -3584,17 +3720,7 @@ function renderSoundSettings() {
   for (const event of SOUND_EVENTS) {
     const row = el("div", "sound-row");
     row.appendChild(el("span", "sound-label", event.label));
-    const select = el("select", "compact-select");
-    for (const name of [...Object.keys(SOUND_FILES), "none"]) {
-      select.appendChild(new Option(name === "none" ? "No sound" : name[0].toUpperCase() + name.slice(1), name));
-    }
-    select.value = soundFor(event.id) || "none";
-    select.onchange = () => {
-      const next = soundPrefs();
-      next.events[event.id] = select.value;
-      saveSoundPrefs(next);
-      playSound(event.id, select.value);
-    };
+    const select = alertSoundSelect(event);
     const preview = el("button", "icon-btn sound-preview");
     preview.title = "Preview";
     preview.appendChild(svgIcon("play", 18));
@@ -3602,14 +3728,24 @@ function renderSoundSettings() {
     row.append(select, preview);
     rows.appendChild(row);
   }
+  renderAlertSoundList();
   const board = soundboardPrefs();
   $("soundboard-toggle").checked = board.enabled;
+  $("join-sounds-hear-toggle").checked = board.joinSounds !== false;
   $("soundboard-volume").value = Math.round(board.volume * 100);
   $("soundboard-volume-label").textContent = `${$("soundboard-volume").value}%`;
   syncRangeFill($("soundboard-volume"));
 }
 
 let lastVoiceRoster = null;
+
+function playJoinCue(server, joined) {
+  const board = soundboardPrefs();
+  const clip = joinSoundToPlay({ joined, joinSounds: server.join_sounds, allowed: server.join_sounds_allowed, hearJoinSounds: board.joinSounds !== false });
+  if (!clip) return playSound("join");
+  if (!board.enabled || state.voice.deafened) return;
+  playExpressionSound(clip, board.volume);
+}
 
 function checkVoiceRoster() {
   const server = state.currentServer;
@@ -3621,9 +3757,9 @@ function checkVoiceRoster() {
   const others = new Set((channel.voice_user_ids || []).filter(id => !state.user || id !== state.user.id));
   const key = `${channel.id}`;
   if (lastVoiceRoster && lastVoiceRoster.key === key) {
-    const joined = [...others].some(id => !lastVoiceRoster.ids.has(id));
+    const joined = [...others].filter(id => !lastVoiceRoster.ids.has(id));
     const left = [...lastVoiceRoster.ids].some(id => !others.has(id));
-    if (joined) playSound("join");
+    if (joined.length) playJoinCue(server, joined);
     else if (left) playSound("leave");
   }
   lastVoiceRoster = { key, ids: others };
@@ -12147,6 +12283,9 @@ function renderSoundboardSettings(server) {
   $("sound-open-toggle").checked = Boolean(server.soundboard_open);
   $("sound-open-toggle").disabled = !server.can_manage_server;
   $("sound-open-row").classList.toggle("readonly", !server.can_manage_server);
+  $("join-sounds-toggle").checked = Boolean(server.join_sounds_allowed);
+  $("join-sounds-toggle").disabled = !server.can_manage_server;
+  $("join-sounds-row").classList.toggle("readonly", !server.can_manage_server);
   $("sound-share-toggle").checked = Boolean(server.sounds_shareable);
   $("sound-share-toggle").disabled = !server.can_manage_server;
   $("sound-share-row").classList.toggle("readonly", !server.can_manage_server);
@@ -12162,10 +12301,10 @@ function renderSoundboardSettings(server) {
 }
 
 const SOUND_WAVE_BARS = 96;
-const soundDraft = { server: null, bytes: null, buffer: null, sel: null, emoji: null, afterSave: null, preview: null };
+const soundDraft = { server: null, alert: null, bytes: null, buffer: null, sel: null, emoji: null, afterSave: null, preview: null };
 
-async function openSoundUpload(server, afterSave = null) {
-  if (!server) return;
+async function openSoundUpload(server, afterSave = null, alert = null) {
+  if (!server && !alert) return;
   let picked;
   try {
     picked = await pickSoundFile();
@@ -12190,7 +12329,7 @@ async function openSoundUpload(server, afterSave = null) {
   }
   stopSoundPreview();
   $("soundboard-pop").classList.add("hidden");
-  Object.assign(soundDraft, { server, bytes, buffer, sel: initialSoundSelection(buffer.duration, MAX_SOUND_SECONDS), emoji: null, afterSave });
+  Object.assign(soundDraft, { server, alert, bytes, buffer, sel: initialSoundSelection(buffer.duration, MAX_SOUND_SECONDS), emoji: null, afterSave });
   const peaks = soundWaveformPeaks(Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i)), SOUND_WAVE_BARS);
   $("sound-wave").replaceChildren(...peaks.map(p => {
     const bar = el("span");
@@ -12199,8 +12338,12 @@ async function openSoundUpload(server, afterSave = null) {
   }));
   $("sound-hint").textContent = buffer.duration > MAX_SOUND_SECONDS + 0.2
     ? `This clip is ${formatTrimTime(buffer.duration)} long. Drag the handles to pick up to ${MAX_SOUND_SECONDS} seconds.`
-    : "Drag the handles to trim the start or end, then give it a name and an emoji.";
-  $("sound-name").value = freeExpressionName(expressionName(stem, "sound"), (server.sounds || []).map(s => s.name));
+    : alert ? "Drag the handles to trim the start or end, then give it a name." : "Drag the handles to trim the start or end, then give it a name and an emoji.";
+  $("sound-title").textContent = alert ? "Add your own sound" : "Add a sound";
+  $("sound-save").textContent = alert ? "Save" : "Add";
+  $("sound-emoji").classList.toggle("hidden", Boolean(alert));
+  const taken = alert ? alertSounds.list.map(s => s.name) : (server.sounds || []).map(s => s.name);
+  $("sound-name").value = freeExpressionName(expressionName(stem, "sound"), taken);
   $("sound-save").disabled = false;
   paintSoundEmoji();
   paintSoundSelection();
@@ -12322,7 +12465,31 @@ function toggleSoundPreview() {
   tick();
 }
 
+async function saveAlertSoundDraft() {
+  const name = expressionName($("sound-name").value, "");
+  if (!name) {
+    toast("Names are 2 to 32 letters, numbers or underscores");
+    return;
+  }
+  stopSoundPreview();
+  $("sound-save").disabled = true;
+  try {
+    const bytes = await renderTrimmedSound(soundDraft.bytes, soundDraft.buffer, soundDraft.sel);
+    if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error("That clip is still over 1 MB, pick a shorter part");
+    const id = await saveAlertSound(name, bytes);
+    hideModals();
+    chooseAlertSound(soundDraft.alert.eventId, id);
+    renderSoundSettings();
+    toast(`Saved ${name} on this device`);
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    $("sound-save").disabled = false;
+  }
+}
+
 async function saveSoundDraft() {
+  if (soundDraft.alert && soundDraft.buffer) return saveAlertSoundDraft();
   const { server, emoji, afterSave } = soundDraft;
   if (!server || !soundDraft.buffer) return;
   const name = expressionName($("sound-name").value, "");
@@ -12377,6 +12544,52 @@ function wireSoundUpload() {
 }
 
 let soundboardCooldown = 0;
+
+async function openJoinSoundPicker(serverId) {
+  let server;
+  try {
+    server = await invoke("get_server", { serverId });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  $("join-sound-server").textContent = server.name;
+  renderJoinSoundPicker(server, server.my_join_sound || null);
+  showModal("modal-join-sound");
+}
+
+function renderJoinSoundPicker(server, picked) {
+  const choices = [
+    { name: null, label: "None", sub: "The usual join sound" },
+    ...(server.sounds || []).map(s => ({ name: s.name, label: s.name, emoji: s.emoji, clip: s.blob, volume: s.volume })),
+    ...DEFAULT_SOUNDS.map(s => ({ name: `default:${s.id}`, label: s.label, sub: "Built in", clip: `default:${s.id}`, volume: 1 })),
+  ];
+  const list = $("join-sound-list");
+  list.replaceChildren();
+  for (const choice of choices) {
+    const row = el("button", "notify-level");
+    row.type = "button";
+    row.setAttribute("role", "radio");
+    row.setAttribute("aria-checked", String(choice.name === picked));
+    row.classList.toggle("picked", choice.name === picked);
+    const words = el("span");
+    words.append(el("span", "notify-level-name", choice.label));
+    if (choice.sub) words.append(el("span", "notify-level-sub", choice.sub));
+    row.append(el("span", "notify-mark"), words);
+    if (choice.emoji) row.append(soundEmojiNode(choice.emoji));
+    row.onclick = async () => {
+      if (choice.clip) playExpressionSound(choice.clip, (choice.volume ?? 1) * soundboardPrefs().volume);
+      if (choice.name === picked) return;
+      try {
+        await invoke("set_join_sound", { serverId: server.id, name: choice.name });
+        renderJoinSoundPicker(server, choice.name);
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    list.appendChild(row);
+  }
+}
 
 async function toggleSoundboardPop() {
   const pop = $("soundboard-pop");
@@ -15239,8 +15452,28 @@ function renderCallButton() {
 let callRing = null;
 
 function stopCallRing() {
-  if (callRing) clearInterval(callRing);
+  if (callRing) {
+    clearTimeout(callRing.timer);
+    callRing.audio?.pause();
+  }
   callRing = null;
+}
+
+function startCallRing() {
+  stopCallRing();
+  const ring = { timer: 0, audio: null };
+  callRing = ring;
+  const again = () => {
+    if (callRing !== ring) return;
+    ring.audio = playSound("ring");
+    const gap = () => { ring.timer = setTimeout(again, RING_GAP_MS); };
+    if (ring.audio) {
+      ring.audio.addEventListener("ended", gap, { once: true });
+      ring.audio.addEventListener("error", gap, { once: true });
+    }
+    else ring.timer = setTimeout(again, 3000);
+  };
+  again();
 }
 
 function callPanel(view) {
@@ -15307,9 +15540,7 @@ function onDmCall(view) {
     avatar.replaceChildren(makeAvatar(view.user, view.name, "avatar avatar-xl"));
     $("call-name").textContent = view.name;
     showModal("modal-call");
-    stopCallRing();
-    playSound("dm");
-    callRing = setInterval(() => playSound("dm"), 3000);
+    startCallRing();
     return;
   }
   if (view.state === "active") {
@@ -16933,6 +17164,17 @@ function wireEvents() {
     }
   };
   $("emoji-share-toggle").addEventListener("change", saveExpressionSettings);
+  $("join-sounds-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_join_sounds_allowed", { serverId: server.id, enabled: e.target.checked });
+      await refreshExpressions();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  });
   $("sound-share-toggle").addEventListener("change", async e => {
     const server = state.currentServer;
     if (!server) return;
@@ -16972,6 +17214,9 @@ function wireEvents() {
 
   $("vp-soundboard").replaceChildren(svgIcon("soundboard", 16), el("span", null, "Soundboard"));
   $("vp-soundboard").onclick = toggleSoundboardPop;
+  $("join-sounds-hear-toggle").addEventListener("change", e => {
+    saveSoundboardPrefs({ ...soundboardPrefs(), joinSounds: e.target.checked });
+  });
   $("soundboard-toggle").addEventListener("change", e => {
     saveSoundboardPrefs({ ...soundboardPrefs(), enabled: e.target.checked });
   });
@@ -17544,6 +17789,12 @@ function wireEvents() {
     closeFloating();
     if (server) openServerNotify(server);
   };
+  $("sm-join-sound").onclick = () => {
+    const server = menuServer;
+    closeFloating();
+    if (server) openJoinSoundPicker(server.id);
+  };
+  $("join-sound-done").onclick = hideModals;
   for (const btn of $("server-notify-levels").querySelectorAll(".notify-level")) {
     btn.onclick = () => {
       if (!notifyServer) return;
@@ -20002,6 +20253,7 @@ async function boot() {
   } else {
     toast("Preview mode: running on mock data, not the real backend");
   }
+  await loadAlertSounds();
   state.voice = await invoke("get_voice_settings");
   await loadSafety();
   await loadFriends();

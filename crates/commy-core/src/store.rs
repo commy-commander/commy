@@ -1417,6 +1417,21 @@ impl ServerState {
                     Some(Some(text)) => Ok(self.server.pronouns.insert(user, text.clone()).as_deref() != Some(text.as_str())),
                 }
             }
+            ServerEvent::JoinSoundSet { server, user, sound } => {
+                self.same_server(server)?;
+                if !self.server.is_member(user) {
+                    return Ok(false);
+                }
+                match sound {
+                    None => Ok(self.server.join_sounds.remove(&user).is_some()),
+                    Some(sound) if !crate::server::valid_join_sound(&sound) => Ok(false),
+                    Some(sound) => Ok(self.server.join_sounds.insert(user, sound.clone()).as_deref() != Some(sound.as_str())),
+                }
+            }
+            ServerEvent::JoinSoundsAllowed { server, allowed } => {
+                self.same_server(server)?;
+                Ok(replace(&mut self.server.join_sounds_off, !allowed))
+            }
             ServerEvent::MemberNickname { server, user, nickname } => {
                 self.same_server(server)?;
                 let Some(member) = self.server.member_mut(user) else {
@@ -3772,6 +3787,37 @@ mod tests {
         });
         let file = crate::test_support::signed(&state, file);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
+    }
+
+    #[test]
+    fn join_sounds_are_the_members_own_and_follow_the_server_switch() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        state.server.soundboard.push(crate::server::SoundboardSound { name: "tada".into(), blob: "b".into(), volume: 1.0, emoji: None });
+        let set = |user, sound: Option<&str>| ServerEvent::JoinSoundSet { server: sid, user, sound: sound.map(Into::into) };
+        assert_eq!(state.apply(set(friend, Some("tada"))), Ok(true));
+        assert_eq!(state.apply(set(friend, Some("tada"))), Ok(false));
+        assert_eq!(state.apply(set(friend, Some("Not A Name!"))), Ok(false));
+        assert_eq!(state.apply(set(UserId::new(), Some("tada"))), Ok(false), "strangers have none");
+        assert_eq!(state.server.join_sound_of(friend), Some("tada"));
+        assert_eq!(state.apply(set(owner, Some("default:airhorn"))), Ok(true));
+        assert_eq!(state.server.join_sound_of(owner), Some("default:airhorn"));
+        state.server.soundboard.clear();
+        assert_eq!(state.server.join_sound_of(friend), None, "a removed sound stops playing");
+        assert_eq!(state.apply(ServerEvent::JoinSoundsAllowed { server: sid, allowed: false }), Ok(true));
+        assert_eq!(state.server.join_sound_of(owner), None);
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let restored = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert!(restored.server.join_sounds_off);
+        assert_eq!(restored.server.join_sounds.len(), 2);
+        assert_eq!(state.apply(set(friend, None)), Ok(true));
+        let signed = |by, user| crate::SignedEvent::sign(sid, by, 1, set(user, Some("tada")), &identity_for(by));
+        assert!(crate::action::authorized(&state.server, friend, &signed(friend, friend).event));
+        assert!(!crate::action::authorized(&state.server, owner, &signed(owner, friend).event));
+        let switch = ServerEvent::JoinSoundsAllowed { server: sid, allowed: true };
+        assert!(crate::action::authorized(&state.server, owner, &switch));
+        assert!(!crate::action::authorized(&state.server, friend, &switch));
     }
 
     #[test]

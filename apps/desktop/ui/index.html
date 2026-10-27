@@ -757,6 +757,18 @@
       </div>
     </div>
 
+    <div class="modal modal-notify hidden" id="modal-join-sound" role="dialog" aria-labelledby="join-sound-title">
+      <div class="notify-head">
+        <h2 id="join-sound-title">Join Sound</h2>
+        <p id="join-sound-server"></p>
+      </div>
+      <div class="setting-sub">Plays for everyone in the voice channel when you join it in this server.</div>
+      <div class="notify-levels join-sound-list" id="join-sound-list" role="radiogroup" aria-label="Join sound"></div>
+      <div class="modal-actions">
+        <button class="btn-primary" id="join-sound-done">Done</button>
+      </div>
+    </div>
+
     <div class="modal modal-notify hidden" id="modal-server-notify" role="dialog" aria-labelledby="server-notify-title">
       <div class="notify-head">
         <h2 id="server-notify-title">Notification Settings</h2>
@@ -1662,6 +1674,9 @@
             </div>
             <div class="sound-rows" id="sound-rows"></div>
           </div>
+          <h2 class="settings-subhead">Your Sounds</h2>
+          <div class="setting-sub expr-intro">Sounds you added for the alerts above. They stay on this device and only you hear them. <span id="sound-custom-count"></span></div>
+          <div id="sound-custom-list" class="expr-list sound-list"></div>
           <h2 class="settings-subhead">Soundboard</h2>
           <div class="settings-card">
             <label class="setting-row">
@@ -1670,6 +1685,13 @@
                 <div class="setting-sub">Turn off to mute clips other people play in voice.</div>
               </div>
               <input type="checkbox" id="soundboard-toggle" class="switch" />
+            </label>
+            <label class="setting-row">
+              <div>
+                <div class="setting-title">Hear join sounds</div>
+                <div class="setting-sub">Play the sound a member picked when they join your voice channel. Off plays the usual join sound.</div>
+              </div>
+              <input type="checkbox" id="join-sounds-hear-toggle" class="switch" />
             </label>
             <div class="slider-row">
               <div class="setting-title">Soundboard Volume <span id="soundboard-volume-label">60%</span></div>
@@ -2493,6 +2515,13 @@
             </div>
             <input type="checkbox" id="sound-share-toggle" class="switch" />
           </label>
+          <label class="settings-card setting-row" id="join-sounds-row">
+            <div>
+              <div class="setting-title">Join sounds</div>
+              <div class="setting-sub">On: members who can use the soundboard can pick a sound from it that plays when they join a voice channel here.</div>
+            </div>
+            <input type="checkbox" id="join-sounds-toggle" class="switch" />
+          </label>
           <div class="expr-toolbar">
             <button class="btn-primary btn-small" id="sound-upload">Upload Sound</button>
             <span class="expr-count" id="sound-count"></span>
@@ -2784,6 +2813,7 @@
     <button id="sm-rules" class="hidden">Server Rules</button>
     <button id="sm-roles" class="hidden">Choose Roles</button>
     <button id="sm-onboarding" class="hidden">Change My Answers</button>
+    <button id="sm-join-sound" class="hidden">Join Sound</button>
     <button id="sm-settings">Server Settings</button>
     <button id="sm-ungroup" class="hidden">Remove From Folder</button>
     <div class="ctx-sep"></div>
@@ -2870,6 +2900,7 @@
   <script src="scripts/embeds.js"></script>
   <script src="scripts/voice-message.js"></script>
   <script src="scripts/sound-trim.js"></script>
+  <script src="scripts/alert-sounds.js"></script>
   <script src="scripts/link-preview.js"></script>
   <script src="scripts/link-safety.js"></script>
   <script src="scripts/notify.js"></script>

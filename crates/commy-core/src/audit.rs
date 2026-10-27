@@ -76,6 +76,7 @@ pub enum AuditKind {
     StageSpeaker,
     BotCommands,
     Activities,
+    JoinSounds,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +187,7 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::ExpressionSettings { .. } => (K::Expressions, None, None, None),
         E::SoundSharingSet { shareable, .. } => (K::SoundSharing, None, None, on_off(*shareable)),
         E::ActivitiesSet { enabled, .. } => (K::Activities, None, None, on_off(*enabled)),
+        E::JoinSoundsAllowed { allowed, .. } => (K::JoinSounds, None, None, on_off(*allowed)),
         E::ChannelCreate { channel: c, .. } => {
             let kind = serde_json::to_value(c.kind).ok().and_then(|v| v.as_str().map(str::to_string));
             (K::ChannelCreate, Some(c.id.to_string()), Some(clip(&c.name)), kind)

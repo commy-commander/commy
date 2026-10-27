@@ -87,11 +87,19 @@ impl Session {
                 let shareable = args.shareable.unwrap_or(false);
                 client().act(server, |state, me, _, _| expressions::sound_sharing(state, me.perms, shareable))?
             }
+            "set_join_sounds_allowed" => {
+                let allowed = args.enabled.unwrap_or(true);
+                client().act(server, |state, me, _, _| expressions::join_sounds_allowed(state, me.perms, allowed))?
+            }
+            "set_join_sound" => {
+                let sound = args.name.as_deref();
+                client().act(server, |state, me, _, _| expressions::join_sound(state, me.perms, me.user, sound))?
+            }
             _ => return Err(format!("{cmd} is not available in the web app yet")),
         };
         self.publish(server, &payload);
         self.emit("server-event", json!(server.to_string()));
-        if matches!(cmd, "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing") {
+        if matches!(cmd, "set_expression_sharing" | "set_expression_settings" | "set_sound_sharing" | "set_join_sounds_allowed") {
             self.emit("servers-changed", Value::Null);
         }
         Ok(Value::Null)

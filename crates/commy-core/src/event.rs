@@ -371,6 +371,15 @@ pub enum ServerEvent {
         user: UserId,
         grant: crate::channel_key::SealedKey,
     },
+    JoinSoundSet {
+        server: ServerId,
+        user: UserId,
+        sound: Option<String>,
+    },
+    JoinSoundsAllowed {
+        server: ServerId,
+        allowed: bool,
+    },
 }
 
 #[cfg(test)]
@@ -450,6 +459,8 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::ActivitiesSet { server, enabled: true }), 83);
         let device = ServerEvent::DeviceAnnounce { server, user, node: "n".into(), voice: Some(channel), since: Some(1) };
         assert_eq!(wire_tag(device), 84);
+        assert_eq!(wire_tag(ServerEvent::JoinSoundSet { server, user, sound: None }), 87);
+        assert_eq!(wire_tag(ServerEvent::JoinSoundsAllowed { server, allowed: false }), 88);
     }
 
     #[test]

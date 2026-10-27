@@ -387,6 +387,10 @@ pub struct Server {
     pub activities_enabled: bool,
     #[serde(default)]
     pub stepped_down: std::collections::BTreeMap<UserId, i64>,
+    #[serde(default)]
+    pub join_sounds: std::collections::BTreeMap<UserId, String>,
+    #[serde(default)]
+    pub join_sounds_off: bool,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -466,6 +470,8 @@ impl Server {
             defaults_version: MEMBER_DEFAULTS_VERSION,
             activities_enabled: false,
             stepped_down: std::collections::BTreeMap::new(),
+            join_sounds: std::collections::BTreeMap::new(),
+            join_sounds_off: false,
         }
     }
 
@@ -1182,6 +1188,23 @@ pub fn clean_game_tags(tags: &[String]) -> Option<Vec<String>> {
         }
     }
     (out.len() <= MAX_GAME_TAGS).then_some(out)
+}
+
+pub const BUILT_IN_SOUND_PREFIX: &str = "default:";
+
+pub fn valid_join_sound(sound: &str) -> bool {
+    valid_expression_name(sound.strip_prefix(BUILT_IN_SOUND_PREFIX).unwrap_or(sound))
+}
+
+impl Server {
+    pub fn join_sound_of(&self, user: UserId) -> Option<&str> {
+        if self.join_sounds_off || !self.permissions_for(user).allows(crate::Permissions::USE_SOUNDBOARD) {
+            return None;
+        }
+        let sound = self.join_sounds.get(&user)?;
+        let known = sound.starts_with(BUILT_IN_SOUND_PREFIX) || self.soundboard.iter().any(|s| &s.name == sound);
+        known.then_some(sound.as_str())
+    }
 }
 
 pub fn valid_rules(rules: &str) -> bool {
