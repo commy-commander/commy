@@ -1587,6 +1587,18 @@ fn dial_voice_members(
     }
 }
 
+fn drop_links_outside(app: &App, sid: ServerId, channel: ChannelId) {
+    let seated: std::collections::HashSet<UserId> = match app.servers.lock().unwrap().get(&sid) {
+        Some(state) => state.voice_states.iter().filter(|(_, ch)| **ch == channel).map(|(user, _)| *user).collect(),
+        None => return,
+    };
+    let mut session = app.voice_session.lock().unwrap();
+    let Some(session) = session.as_mut().filter(|s| s.server == sid && s.channel == channel) else { return };
+    for user in session.linked_users().into_iter().filter(|user| !seated.contains(user)) {
+        session.detach_peer(user);
+    }
+}
+
 fn claim_voice_dial(app: &App, channel: ChannelId, user: UserId) -> bool {
     app.voice_session
         .lock()
@@ -1607,6 +1619,7 @@ async fn run_voice_redialer(handle: tauri::AppHandle) {
         if sid == commy_core::ids::CALL_SERVER {
             calls::dial_partner(&app, &handle, &me);
         } else {
+            drop_links_outside(&app, sid, channel);
             dial_voice_members(&app, &handle, sid, channel, &me);
         }
     }

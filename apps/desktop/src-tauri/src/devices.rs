@@ -1,6 +1,7 @@
 use crate::state::App;
 use commy_core::ids::CALL_SERVER;
 use commy_core::{ChannelId, ServerEvent, ServerId, ServerState, UserId, UserProfile};
+use std::time::Duration;
 use tauri::{Emitter, Manager};
 
 pub(crate) fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
@@ -62,19 +63,50 @@ pub(crate) async fn on_announce(handle: &tauri::AppHandle, server: ServerId, eve
         }
     }
     if *user != me {
-        follow_device(&app, handle, server, *user, node, *voice);
+        follow_device(&app, handle, server, *user, node, *voice, since_of(event));
     }
 }
 
-fn follow_device(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, server: ServerId, user: UserId, node: &str, voice: Option<ChannelId>) {
-    {
+fn since_of(event: &ServerEvent) -> Option<i64> {
+    match event {
+        ServerEvent::DeviceAnnounce { since, .. } => *since,
+        _ => None,
+    }
+}
+
+const LINK_GRACE: Duration = Duration::from_secs(10);
+
+pub(crate) fn link_outlived(link: Option<(&str, Duration)>, here: bool, node: &str, joined_before: Option<i64>, since: Option<i64>) -> bool {
+    let Some((linked, age)) = link else { return false };
+    if !linked.eq_ignore_ascii_case(node) {
+        return false;
+    }
+    let rejoined = matches!((joined_before, since), (Some(before), Some(now)) if before != now);
+    !here || (rejoined && age > LINK_GRACE)
+}
+
+fn follow_device(
+    app: &tauri::State<'_, App>,
+    handle: &tauri::AppHandle,
+    server: ServerId,
+    user: UserId,
+    node: &str,
+    voice: Option<ChannelId>,
+    since: Option<i64>,
+) {
+    let here = {
         let mut session = app.voice_session.lock().unwrap();
-        let Some(session) = session.as_mut().filter(|s| s.server == server && Some(s.channel) == voice) else { return };
-        if session.peer_node(user).is_some_and(|linked| !linked.eq_ignore_ascii_case(node)) {
+        let Some(session) = session.as_mut().filter(|s| s.server == server) else { return };
+        let here = Some(session.channel) == voice;
+        let other_device = here && session.peer_node(user).is_some_and(|linked| !linked.eq_ignore_ascii_case(node));
+        if session.link_outlived(user, node, voice, since) || other_device {
             session.detach_peer(user);
         }
+        here
+    };
+    if here {
+        crate::react_to_voice_change(app, handle, server, user, voice);
     }
-    crate::react_to_voice_change(app, handle, server, user, voice);
 }
 
 async fn hand_over(app: &App, handle: &tauri::AppHandle) {
@@ -122,6 +154,20 @@ mod tests {
         assert!(!has_sibling(&state, owner.id, &tablet));
         point_at_voice(&state, &mut profile);
         assert_eq!(profile.node, Some(tablet));
+    }
+
+    #[test]
+    fn a_link_ends_when_its_device_leaves_or_joins_again() {
+        let (desktop, phone) = ("ab".repeat(32), "cd".repeat(32));
+        let old = Some((desktop.as_str(), Duration::from_secs(60)));
+        let fresh = Some((desktop.as_str(), Duration::from_secs(2)));
+        assert!(link_outlived(old, false, &desktop.to_uppercase(), Some(1_000), None), "the linked device says it is not in our room");
+        assert!(!link_outlived(old, false, &phone, Some(1_000), None), "another device of theirs is not in voice");
+        assert!(!link_outlived(old, true, &desktop, Some(1_000), Some(1_000)), "the seat repeated");
+        assert!(link_outlived(old, true, &desktop, Some(1_000), Some(9_000)), "the app restarted and joined again");
+        assert!(!link_outlived(fresh, true, &desktop, Some(1_000), Some(9_000)), "the link already belongs to the new join");
+        assert!(!link_outlived(old, true, &desktop, None, Some(9_000)), "the first join we hear of");
+        assert!(!link_outlived(None, false, &desktop, Some(1_000), None), "no link");
     }
 
     fn announce_from_server(server: ServerId, user: UserId, node: &str, voice: Option<ChannelId>) -> ServerEvent {
