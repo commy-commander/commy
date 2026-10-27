@@ -42,6 +42,8 @@ pub struct VoiceSession {
     peers: HashMap<UserId, JoinHandle<()>>,
     links: HashMap<UserId, (commy_net::node::Connection, Arc<Mutex<JitterMeter>>)>,
     dialing: HashSet<UserId>,
+    linked_at: HashMap<UserId, std::time::Instant>,
+    joins: HashMap<UserId, i64>,
     devices: StreamGuards,
     on_speaking: SpeakingSink,
     mic_tx: mpsc::UnboundedSender<Vec<i16>>,
@@ -189,6 +191,8 @@ impl VoiceSession {
             peers: HashMap::new(),
             links: HashMap::new(),
             dialing: HashSet::new(),
+            linked_at: HashMap::new(),
+            joins: HashMap::new(),
             devices,
             on_speaking,
             mic_tx,
@@ -260,8 +264,24 @@ impl VoiceSession {
         self.peers.iter().filter(|(_, task)| !task.is_finished()).map(|(user, _)| *user).collect()
     }
 
+    pub fn linked_users(&self) -> Vec<UserId> {
+        self.peers.keys().copied().collect()
+    }
+
+    pub fn link_outlived(&mut self, user: UserId, node: &str, voice: Option<ChannelId>, since: Option<i64>) -> bool {
+        let here = voice == Some(self.channel);
+        let joined_before = self.joins.get(&user).copied();
+        if let (true, Some(since)) = (here, since) {
+            self.joins.insert(user, since);
+        }
+        let linked = self.peer_node(user).zip(self.linked_at.get(&user).map(|at| at.elapsed()));
+        let link = linked.as_ref().map(|(node, age)| (node.as_str(), *age));
+        crate::devices::link_outlived(link, here, node, joined_before, since)
+    }
+
     pub fn attach_peer(&mut self, user: UserId, media: MediaChannel) {
         let meter = Arc::new(Mutex::new(JitterMeter::default()));
+        self.linked_at.insert(user, std::time::Instant::now());
         self.links.insert(user, (media.connection.clone(), meter.clone()));
         let MediaChannel { incoming, outgoing, .. } = media;
         self.pump_peer(user, incoming, outgoing, meter);
@@ -387,6 +407,7 @@ impl VoiceSession {
 
     pub fn detach_peer(&mut self, user: UserId) {
         self.links.remove(&user);
+        self.linked_at.remove(&user);
         self.peer_silence.remove(&user);
         if let Some(task) = self.peers.remove(&user) {
             task.abort();

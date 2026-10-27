@@ -70,6 +70,18 @@ device repeats its `DeviceAnnounce` and `VoiceState` every `BEAT` (45
 seconds), also while appearing offline, so a live seat never times out.
 Quitting the desktop app sends the leave messages before `Offline`.
 
+## Audio links follow seats
+
+An app that quits without saying goodbye (an update install, a crash) leaves
+the others holding a dead audio link to it for a while. A link must never
+stop a fresh call from forming:
+
+- when the device a link goes to says it is not in our room, the link ends;
+- when it announces a new join (a different `since`) and the link is older
+  than a few seconds, the link belonged to its last session and ends, so the
+  dialer calls the new one;
+- every few seconds, links to members no longer seated in our room end.
+
 ## Late joiners
 
 - Every device's greeting (`here`) carries its `DeviceAnnounce` and, when in
