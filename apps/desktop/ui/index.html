@@ -1609,12 +1609,25 @@
             </select>
           </div>
           <div class="settings-card">
+            <div class="setting-row tts-voice-row">
+              <div>
+                <div class="setting-title">Voice</div>
+                <div class="setting-sub">Any voice installed on this device.</div>
+              </div>
+              <select id="tts-voice" class="compact-select tts-voice-select">
+                <option value="">Computer default</option>
+              </select>
+            </div>
             <div class="slider-row">
               <div class="setting-title">Voice rate <span id="tts-rate-label">1.0x</span></div>
               <input type="range" id="tts-rate" min="5" max="20" value="10" />
             </div>
+            <div class="slider-row">
+              <div class="setting-title">Voice pitch <span id="tts-pitch-label">1.0</span></div>
+              <input type="range" id="tts-pitch" min="5" max="20" value="10" />
+            </div>
             <div class="setting-row tts-preview-row">
-              <div class="setting-sub">Hear the voice at this rate.</div>
+              <div class="setting-sub">Hear this voice at this rate and pitch.</div>
               <button class="btn-secondary btn-small" id="tts-preview">Preview</button>
             </div>
           </div>

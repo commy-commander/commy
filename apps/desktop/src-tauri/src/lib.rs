@@ -44,6 +44,7 @@ use commy_view::catalog;
 use commy_view::search;
 mod server_wake;
 mod settle;
+mod speech;
 #[cfg(desktop)]
 mod single_instance;
 mod state;
@@ -7566,6 +7567,9 @@ pub fn run() {
             watch_camera,
             stop_watching_camera,
             notify,
+            speech::speech_voices,
+            speech::speech_speak,
+            speech::speech_stop,
             set_unread,
             set_close_to_tray,
             debug_log_status,

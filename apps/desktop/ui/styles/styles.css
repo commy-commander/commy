@@ -5225,6 +5225,8 @@ h3.md-heading { font-size: 1.1em; }
 }
 .msg-tts svg { color: var(--accent); flex-shrink: 0; }
 .tts-preview-row { padding-top: 10px; margin-top: 8px; border-top: 1px solid var(--line); }
+.tts-voice-row { padding-bottom: 10px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.settings-page select.tts-voice-select { width: 240px; min-width: 0; flex: none; text-overflow: ellipsis; }
 .msg.held { box-shadow: inset 3px 0 0 var(--text-faint); }
 .msg.held .msg-body > :not(.msg-head) { opacity: .55; }
 
