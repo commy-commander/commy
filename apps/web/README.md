@@ -6,8 +6,8 @@ your servers, chat in text channels, send files and voice messages, use direct
 messages and group DMs, call people, join voice channels, create servers,
 arrange their channels, make and open invite links, manage roles, moderate
 members, set the rules, tag the games a server features, delete or hand over
-a server, and edit your profile (name, status, About Me, avatar, banner, pronouns, a status that runs out
-and who sees your profile details), set server, channel and role pictures,
+a server, and edit your profile (name, status, About Me, avatar, banner,
+pronouns, a status that runs out and who sees your profile details), set server, channel and role pictures,
 add custom emoji, stickers, emoticons and sounds, play the soundboard, plan
 events and RSVP, post in forums, run stage channels (speakers, raised hands,
 server mute and deafen), set voice channel statuses, set up onboarding
