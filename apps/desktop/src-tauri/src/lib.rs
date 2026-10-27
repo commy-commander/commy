@@ -4164,6 +4164,19 @@ fn preview_overlay(app: tauri::State<'_, App>, handle: tauri::AppHandle) {
 }
 
 #[tauri::command]
+async fn set_profile_look(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    avatar_border: Option<String>,
+    card_effect: Option<String>,
+) -> CmdResult<UserProfile> {
+    let look = view::profile::look(avatar_border.as_deref(), card_effect.as_deref())?;
+    let profile = edit_profile(&app, |profile| view::profile::apply_look(profile, look))?;
+    publish_profile(&app, &handle, &profile).await;
+    Ok(profile)
+}
+
+#[tauri::command]
 async fn set_about(app: tauri::State<'_, App>, handle: tauri::AppHandle, about: String) -> CmdResult<UserProfile> {
     let about = carry_profile_emojis(&app, view::profile::about(&about)?).await;
     let profile = edit_profile(&app, |profile| profile.about = (!about.is_empty()).then_some(about))?;
@@ -7621,6 +7634,7 @@ pub fn run() {
             list_friends,
             friend_action,
             set_about,
+            set_profile_look,
             set_window_title,
             has_custom_titlebar,
             window_action,

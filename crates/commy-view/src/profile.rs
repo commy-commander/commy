@@ -1,4 +1,7 @@
-use commy_core::user::{clean_pronouns, is_emoji_like, rich_text_fits, valid_status_emoji, MAX_ABOUT_CHARS, MAX_PRONOUNS_CHARS, MAX_PROFILE_EMOJIS, MAX_STATUS_CHARS};
+use commy_core::user::{
+    clean_pronouns, is_emoji_like, rich_text_fits, valid_avatar_border, valid_card_effect, valid_status_emoji, MAX_ABOUT_CHARS, MAX_PRONOUNS_CHARS,
+    MAX_PROFILE_EMOJIS, MAX_STATUS_CHARS,
+};
 use commy_core::{Avatar, Presence, UserProfile};
 
 use crate::act::Act;
@@ -32,6 +35,28 @@ pub fn status_text(raw: Option<String>) -> Option<String> {
 
 pub fn display_name(raw: Option<String>) -> Option<String> {
     status_text(raw).filter(|name| name.len() <= MAX_DISPLAY_NAME_BYTES)
+}
+
+pub struct ProfileLook {
+    pub avatar_border: Option<String>,
+    pub card_effect: Option<String>,
+}
+
+pub fn look(avatar_border: Option<&str>, card_effect: Option<&str>) -> Act<ProfileLook> {
+    let pick = |raw: Option<&str>, valid: fn(&str) -> bool, what: &str| match raw.map(str::trim).filter(|r| !r.is_empty()) {
+        None => Ok(None),
+        Some(name) if valid(name) => Ok(Some(name.to_string())),
+        Some(_) => Err(format!("unknown {what}")),
+    };
+    Ok(ProfileLook {
+        avatar_border: pick(avatar_border, valid_avatar_border, "avatar border")?,
+        card_effect: pick(card_effect, valid_card_effect, "profile effect")?,
+    })
+}
+
+pub fn apply_look(profile: &mut UserProfile, look: ProfileLook) {
+    profile.avatar_border = look.avatar_border;
+    profile.card_effect = look.card_effect;
 }
 
 pub fn about(raw: &str) -> Act<String> {
@@ -136,6 +161,20 @@ mod tests {
     use super::*;
 
     const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0];
+
+    #[test]
+    fn a_profile_look_uses_built_in_borders_and_effects_only() {
+        let chosen = look(Some("orbit"), Some(" aurora ")).unwrap();
+        assert_eq!((chosen.avatar_border.as_deref(), chosen.card_effect.as_deref()), (Some("orbit"), Some("aurora")));
+        let none = look(Some(""), None).unwrap();
+        assert_eq!((none.avatar_border, none.card_effect), (None, None));
+        assert_eq!(look(Some("gold"), None).err(), Some("unknown avatar border".into()));
+        assert_eq!(look(None, Some("fire")).err(), Some("unknown profile effect".into()));
+        let mut profile = UserProfile::new("a");
+        apply_look(&mut profile, look(Some("ring"), Some("snow")).unwrap());
+        assert_eq!(profile.avatar_border.as_deref(), Some("ring"));
+        assert_eq!(profile.card_effect.as_deref(), Some("snow"));
+    }
 
     #[test]
     fn presence_names_match_the_ui() {
