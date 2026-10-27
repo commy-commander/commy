@@ -15,6 +15,7 @@ const WEB_DEFAULTS = {
   get_storage_settings: { keep: "90", servers: {} },
   get_autostart: false,
   get_stream_deck: { enabled: false, status: "off", decks: [] },
+  speech_voices: { native: false, voices: [] },
   get_awaited: 0,
   set_window_title: null,
   set_unread: null,
@@ -49,7 +50,6 @@ const WEB_NOTICE_ASKED_KEY = "commy.web.notices-asked";
 
 const WEB_UNLOCK_TEXT = {
   signed_out: "Sign in to open your servers.",
-  no_list: "Open Commy on your computer and sign in there first. The web app opens the servers your computer has.",
   locked: "This browser could not open your servers yet. Press Try again, or paste your recovery code.",
   asking: "Opening your servers",
   opening: "Opening your servers",

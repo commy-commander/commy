@@ -6,9 +6,11 @@ pub const SIGN_OUT_PATH: &str = "/api/auth/sign-out";
 pub const DEVICES_PATH: &str = "/api/auth/commy/devices";
 pub const LINK_CHALLENGE_PATH: &str = "/api/auth/commy/devices/challenge";
 pub const LINK_REGISTER_PATH: &str = "/api/auth/commy/devices/register";
+pub const LIST_ITEM: &str = "servers";
 pub const VAULT_PATH: &str = "/api/auth/commy/vault?name=servers";
 pub const VAULT_PUT_PATH: &str = "/api/auth/commy/vault/put";
 pub const FOLDER_KEY_PATH: &str = "/api/auth/commy/folder-key";
+pub const CONFLICT: u16 = 409;
 pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 
 pub const DEVICE_SECRET_KEY: &str = "commy.device";
@@ -114,6 +116,25 @@ impl KeyCopy {
             KeyCopy::Unreachable => "Could not reach your account server to get your key. Check your connection, then press Try again.",
         }
     }
+}
+
+impl KeyCopy {
+    pub fn lost(self) -> bool {
+        !matches!(self, KeyCopy::Unreachable)
+    }
+}
+
+pub const MAX_USERNAME_BYTES: usize = 32;
+const FALLBACK_USERNAME: &str = "Commy user";
+
+pub fn username_for(account: &AccountUser) -> String {
+    let from_email = account.email.split('@').next().unwrap_or_default();
+    let name = [account.name.trim(), from_email.trim()].into_iter().find(|name| !name.is_empty()).unwrap_or(FALLBACK_USERNAME);
+    let mut end = name.len().min(MAX_USERNAME_BYTES);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    name[..end].trim_end().to_string()
 }
 
 pub fn key_copy(reply: &Reply) -> Result<String, KeyCopy> {
@@ -317,6 +338,24 @@ mod tests {
         assert_eq!(vault_data(&reply(200, r#"{"name":"servers","data":"sealed1.x","version":3}"#)), Ok(Some("sealed1.x".into())));
         assert_eq!(vault_data(&reply(200, r#"{"name":"servers","data":null,"version":0}"#)), Ok(None));
         assert!(vault_data(&reply(404, "")).is_err());
+    }
+
+    #[test]
+    fn names_a_new_list_after_the_account() {
+        let account = |name: &str, email: &str| AccountUser { id: "u1".into(), name: name.into(), email: email.into() };
+        assert_eq!(username_for(&account("  Ada Lovelace ", "ada@example.test")), "Ada Lovelace");
+        assert_eq!(username_for(&account("", "grace@example.test")), "grace");
+        assert_eq!(username_for(&account(" ", "")), "Commy user");
+        let long = username_for(&account(&"é".repeat(40), ""));
+        assert!(long.len() <= MAX_USERNAME_BYTES && !long.is_empty());
+    }
+
+    #[test]
+    fn only_an_unreachable_key_copy_may_still_turn_up() {
+        assert!(KeyCopy::Missing.lost());
+        assert!(KeyCopy::Unreadable.lost());
+        assert!(KeyCopy::ForAnotherList.lost());
+        assert!(!KeyCopy::Unreachable.lost());
     }
 
     #[test]

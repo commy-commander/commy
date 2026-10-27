@@ -5,9 +5,9 @@ of the same Rust code the desktop app uses. It is a preview: sign in, open
 your servers, chat in text channels, send files and voice messages, use direct
 messages and group DMs, call people, join voice channels, create servers,
 arrange their channels, make and open invite links, manage roles, moderate
-members, set the rules, delete or hand over a server, and edit your profile
-(name, status, About Me, avatar, banner, pronouns, a status that runs out
-and who sees your profile details), set server, channel and role pictures,
+members, set the rules, tag the games a server features, delete or hand over
+a server, and edit your profile (name, status, About Me, avatar, banner,
+pronouns, a status that runs out and who sees your profile details), set server, channel and role pictures,
 add custom emoji, stickers, emoticons and sounds, play the soundboard, plan
 events and RSVP, post in forums, run stage channels (speakers, raised hands,
 server mute and deafen), set voice channel statuses, set up onboarding
@@ -44,8 +44,15 @@ only while the tab is in the background. Clicking one opens that channel or DM.
   not there yet, the browser keeps checking for it for a short while and asks
   your own signed-in devices for the key, which they hand over without a
   prompt, through the sync service when the account server names one and
-  straight over the relay only when it does not. If neither answers, it says
-  so and offers Try again and your recovery code. It then asks
+  straight over the relay only when it does not. An account with no server
+  list yet gets a new one from the browser, named after the account. If the
+  account's copy of the key is gone or no longer opens the list and none of
+  your devices hands the key over within 20 seconds, the browser starts a new
+  list and keeps its key with your account, so signing in alone always opens
+  the web app. A device that still has servers under its own identity takes
+  over a list started this way while it is empty. If the account server
+  cannot be reached, the browser says so and offers Try again and your
+  recovery code. It then asks
   one of your own devices for a copy of each server; that request is signed with your
   account identity, so the account server alone cannot obtain messages.
   Missing history comes from other members through the usual catch-up.

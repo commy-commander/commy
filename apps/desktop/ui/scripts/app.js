@@ -2501,6 +2501,7 @@ function renderServerRail() {
     if (item.open) for (const s of servers) folder.appendChild(railServerButton(s, item.id));
     list.appendChild(folder);
   }
+  paintNarrowRail();
 }
 
 let menuServer = null;
@@ -2971,6 +2972,7 @@ function renderChannels() {
     return;
   }
   $("server-name").textContent = server.name;
+  paintNarrowRail();
   paintSidebarBanner();
   renderServerExtras(list, server);
 
@@ -3170,6 +3172,10 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
 }
 
 function appendVoiceUsers(list, channel) {
+  if (narrowSplit()) {
+    list.appendChild(voiceRings(channel));
+    return;
+  }
   const myName = state.user ? (state.user.display_name || state.user.username) : null;
   if (!isStageChannel(channel)) {
     for (const entry of stageRoster(channel)) list.appendChild(voiceUserRow(channel, entry, myName));
@@ -3180,6 +3186,55 @@ function appendVoiceUsers(list, channel) {
   for (const entry of speakers) list.appendChild(voiceUserRow(channel, entry, myName, "speaker"));
   if (audience.length) list.appendChild(stageGroupLabel("Audience", audience.length));
   for (const entry of audience) list.appendChild(voiceUserRow(channel, entry, myName, "audience"));
+}
+
+function voiceRingEntries(channel) {
+  if (!isStageChannel(channel)) return stageRoster(channel);
+  const { speakers, audience } = stageSections(channel);
+  return [...speakers, ...audience];
+}
+
+function voiceRings(channel) {
+  const rings = el("div", "voice-rings");
+  rings.dataset.room = channel.id;
+  rings.append(...voiceRingCells(channel));
+  return rings;
+}
+
+function voiceRingCells(channel) {
+  const entries = voiceRingEntries(channel);
+  const { shown, more } = voiceRingSplit(entries.length);
+  const cells = entries.slice(0, shown).map(entry => voiceRing(channel, entry));
+  if (more) {
+    const extra = el("span", "voice-ring voice-ring-more", `+${more}`);
+    extra.title = entries.slice(shown).map(e => e.name).join(", ");
+    cells.push(extra);
+  }
+  return cells;
+}
+
+function voiceRing(channel, entry) {
+  const ring = el("span", "voice-user voice-ring");
+  ring.dataset.room = channel.id;
+  ring.title = entry.muted ? `${entry.name} (muted)` : entry.name;
+  if (entry.id) {
+    ring.dataset.user = entry.id;
+    ring.classList.toggle("speaking", state.speaking.has(entry.id));
+  }
+  ring.classList.toggle("muted", Boolean(entry.muted));
+  ring.appendChild(makeAvatar(entry.id, entry.name, "avatar avatar-sm"));
+  const isMe = state.user && entry.id === state.user.id;
+  ring.onclick = e => {
+    e.stopPropagation();
+    if (isMe) {
+      openSelfVoiceMenu(e.clientX, e.clientY);
+      return;
+    }
+    const server = state.currentServer;
+    const member = server && server.members.find(m => m.id === entry.id);
+    openMemberMenu(member || { id: entry.id, name: entry.name }, e.clientX, e.clientY);
+  };
+  return ring;
 }
 
 function stageGroupLabel(title, count) {
@@ -3947,20 +4002,85 @@ function saveTtsPrefs(prefs) {
   try { localStorage.setItem(TTS_KEY, JSON.stringify(prefs)); } catch {}
 }
 
-function speechAvailable() {
+const speech = { native: false, ready: false, voices: [], loading: null, utterance: null };
+
+function windowSpeech() {
   return typeof window !== "undefined" && Boolean(window.speechSynthesis) && typeof SpeechSynthesisUtterance === "function";
 }
 
+function speechAvailable() {
+  return speech.native || windowSpeech();
+}
+
+function windowVoices() {
+  if (!windowSpeech()) return [];
+  return window.speechSynthesis.getVoices().map(v => ({ id: v.voiceURI || v.name, name: v.name, lang: v.lang, default: v.default }));
+}
+
+function loadSpeechVoices() {
+  if (speech.loading) return speech.loading;
+  speech.loading = invoke("speech_voices")
+    .catch(() => null)
+    .then(found => {
+      speech.native = Boolean(found && found.native && Array.isArray(found.voices) && found.voices.length);
+      if (!speech.native && windowSpeech()) {
+        window.speechSynthesis.addEventListener("voiceschanged", () => {
+          speech.voices = ttsVoices(windowVoices(), navigator.language);
+          renderTtsSettings();
+        });
+      }
+      speech.voices = ttsVoices(speech.native ? found.voices : windowVoices(), navigator.language);
+      speech.ready = true;
+      renderTtsSettings();
+    });
+  return speech.loading;
+}
+
 function stopSpeaking() {
-  if (speechAvailable()) window.speechSynthesis.cancel();
+  speech.utterance = null;
+  if (speech.native) invoke("speech_stop").catch(() => {});
+  if (windowSpeech()) window.speechSynthesis.cancel();
+}
+
+function speakInWindow(text, prefs) {
+  const synth = window.speechSynthesis;
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = chosenTtsVoice(speech.voices, prefs.voice);
+  const match = voice && synth.getVoices().find(v => (v.voiceURI || v.name) === voice.id);
+  if (match) {
+    utterance.voice = match;
+    utterance.lang = match.lang;
+  }
+  utterance.rate = prefs.rate;
+  utterance.pitch = prefs.pitch;
+  utterance.onend = utterance.onerror = () => { if (speech.utterance === utterance) speech.utterance = null; };
+  speech.utterance = utterance;
+  synth.cancel();
+  setTimeout(() => {
+    if (speech.utterance !== utterance) return;
+    synth.resume();
+    synth.speak(utterance);
+  }, 60);
+}
+
+function speakNow(text) {
+  const prefs = ttsPrefs();
+  if (speech.native) {
+    const voice = chosenTtsVoice(speech.voices, prefs.voice);
+    invoke("speech_speak", { text, voice: voice ? voice.id : null, rate: prefs.rate, pitch: prefs.pitch }).catch(e => toast(`Could not read it aloud: ${e}`));
+  } else if (windowSpeech()) {
+    speakInWindow(text, prefs);
+  }
 }
 
 function speakText(text) {
-  if (!text || !speechAvailable()) return false;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = ttsPrefs().rate;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
+  if (!text) return false;
+  if (!speech.ready) {
+    loadSpeechVoices().then(() => (speechAvailable() ? speakNow(text) : toast("Text-to-speech is not available here")));
+    return true;
+  }
+  if (!speechAvailable()) return false;
+  speakNow(text);
   return true;
 }
 
@@ -3977,6 +4097,7 @@ function speakIncoming(msg, viewing) {
     viewing: Boolean(viewing),
     blocked: isBlocked(msg.author),
     presence: state.user?.presence,
+    inVoice: Boolean(state.voiceChannelId),
   });
   if (speak) speakText(spokenText(msg.author_name, msg.content, plainText));
 }
@@ -3987,12 +4108,24 @@ function canSendTtsHere() {
 
 function renderTtsSettings() {
   const prefs = ttsPrefs();
+  const usable = speechAvailable();
   $("tts-mode").value = prefs.mode;
   $("tts-rate").value = String(Math.round(prefs.rate * 10));
   $("tts-rate-label").textContent = `${prefs.rate.toFixed(1)}x`;
-  $("tts-mode").disabled = !speechAvailable();
-  $("tts-preview").disabled = !speechAvailable();
-  $("tts-preview").title = speechAvailable() ? "" : "Text-to-speech is not available here";
+  $("tts-pitch").value = String(Math.round(prefs.pitch * 10));
+  $("tts-pitch-label").textContent = `${prefs.pitch.toFixed(1)}`;
+  const select = $("tts-voice");
+  const options = [el("option", null, "Computer default")];
+  options[0].value = "";
+  for (const voice of speech.voices) {
+    const option = el("option", null, ttsVoiceLabel(voice));
+    option.value = voice.id;
+    options.push(option);
+  }
+  select.replaceChildren(...options);
+  select.value = chosenTtsVoice(speech.voices, prefs.voice) ? prefs.voice : "";
+  for (const id of ["tts-mode", "tts-voice", "tts-rate", "tts-pitch", "tts-preview"]) $(id).disabled = !usable;
+  $("tts-preview").title = usable ? "" : "Text-to-speech is not available here";
 }
 
 function onMessagesCaughtUp(payload) {
@@ -8750,6 +8883,11 @@ async function saveGameTags(tags, meta = gameTagMetaDraft) {
   }
 }
 
+function upcomingEventCount(server) {
+  const now = Date.now();
+  return (server.events || []).filter(e => new Date(e.end || e.start).getTime() >= now).length;
+}
+
 function renderServerExtras(list, server) {
   if (server.game_tags && server.game_tags.length) {
     const row = el("div", "sidebar-game-tags");
@@ -8758,11 +8896,10 @@ function renderServerExtras(list, server) {
     }
     list.appendChild(row);
   }
-  const now = Date.now();
-  const upcoming = (server.events || []).filter(e => new Date(e.end || e.start).getTime() >= now);
+  const upcoming = upcomingEventCount(server);
   const events = el("div", "channel sidebar-link");
   events.appendChild(el("span", "channel-icon")).appendChild(svgIcon("calendar", 18));
-  events.appendChild(el("span", "channel-label", upcoming.length ? `${upcoming.length} Event${upcoming.length === 1 ? "" : "s"}` : "Events"));
+  events.appendChild(el("span", "channel-label", upcoming ? `${upcoming} Event${upcoming === 1 ? "" : "s"}` : "Events"));
   events.onclick = () => openEvents();
   list.appendChild(events);
   if (server.rules) {
@@ -13583,8 +13720,24 @@ function renderStageStrip(server) {
 }
 const ACTIVITY_REMOTE_SETTLE_MS = 400;
 const ACTIVITY_DRIFT_CHECK_MS = 2000;
+const YOUTUBE_SETTLE_MS = 1500;
+const YOUTUBE_GREET_MS = 250;
+const YOUTUBE_GREET_TRIES = 40;
 
-const activityUi = { run: null, open: false, seq: 0, pick: "tictactoe", chip: null, videoBlob: null, settling: 0 };
+const activityUi = {
+  run: null,
+  open: false,
+  seq: 0,
+  pick: "tictactoe",
+  chip: null,
+  videoBlob: null,
+  settling: 0,
+  yt: freshYouTubeView(),
+};
+
+function freshYouTubeView() {
+  return { frame: null, video: null, ready: false, seen: null, settling: 0, title: null, error: null, greeter: null };
+}
 
 function activityMe() {
   return state.user ? state.user.id : null;
@@ -13813,15 +13966,157 @@ function renderTicTacToe(run, me) {
 }
 
 function renderActivityWatch(run, me) {
-  $("activity-watch-title").textContent = watchTitle(run.activity);
-  const video = $("activity-video");
-  video.controls = isParticipant(run, me);
-  loadActivityVideo(run);
+  const kind = watchSourceKind(run.activity);
+  const youtube = kind === "youtube";
+  $("activity-watch-title").textContent = youtube && activityUi.yt.title ? activityUi.yt.title : watchTitle(run.activity);
+  $("activity-video").classList.toggle("hidden", youtube);
+  $("activity-youtube").classList.toggle("hidden", !youtube);
+  $("activity-watch-open").classList.toggle("hidden", !youtube);
+  if (youtube) renderActivityYouTube(run, me);
+  else {
+    $("activity-video").controls = isParticipant(run, me);
+    loadActivityVideo(run);
+    $("activity-screen-note").classList.add("hidden");
+  }
+  renderActivitySyncLabel(run);
+}
+
+function renderActivityYouTube(run, me) {
+  const joined = isParticipant(run, me);
+  const video = watchYouTubeId(run.activity);
+  const yt = activityUi.yt;
+  if (joined && video && yt.video !== video) mountYouTube(video);
+  else if (!joined && yt.frame) releaseYouTube();
+  const note = joined ? activityUi.yt.error || "" : "Join to watch. The video plays from YouTube once you join.";
+  const box = $("activity-screen-note");
+  box.textContent = note;
+  box.classList.toggle("hidden", !note);
+}
+
+function mountYouTube(video) {
+  releaseYouTube();
+  const frame = document.createElement("iframe");
+  frame.title = "YouTube video player";
+  frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+  frame.allowFullscreen = true;
+  frame.referrerPolicy = "strict-origin-when-cross-origin";
+  frame.src = youtubeEmbedUrl(video, location.origin);
+  activityUi.yt = { ...freshYouTubeView(), frame, video };
+  frame.addEventListener("load", () => greetYouTube(frame));
+  $("activity-youtube").replaceChildren(frame);
+}
+
+function greetYouTube(frame) {
+  const yt = activityUi.yt;
+  if (yt.frame !== frame) return;
+  clearInterval(yt.greeter);
+  let tries = 0;
+  const greet = () => {
+    if (activityUi.yt.frame !== frame || activityUi.yt.ready || ++tries > YOUTUBE_GREET_TRIES) {
+      clearInterval(yt.greeter);
+      return;
+    }
+    frame.contentWindow.postMessage(youtubeListening(), YOUTUBE_ORIGIN);
+  };
+  yt.greeter = setInterval(greet, YOUTUBE_GREET_MS);
+  greet();
+}
+
+function releaseYouTube() {
+  const yt = activityUi.yt;
+  clearInterval(yt.greeter);
+  if (yt.frame) yt.frame.remove();
+  activityUi.yt = freshYouTubeView();
+}
+
+function postYouTube(func, args) {
+  const yt = activityUi.yt;
+  if (yt.frame && yt.frame.contentWindow) yt.frame.contentWindow.postMessage(youtubeCommand(func, args), YOUTUBE_ORIGIN);
+}
+
+function onYouTubeMessage(event) {
+  const yt = activityUi.yt;
+  if (!yt.frame || event.origin !== YOUTUBE_ORIGIN || event.source !== yt.frame.contentWindow) return;
+  const message = readYouTubeMessage(event.data);
+  if (!message) return;
+  if (!yt.ready) onYouTubeReady();
+  if (message.kind === "error") {
+    yt.error = youtubeErrorText(message.code);
+    renderActivityUi();
+  } else if (message.kind === "info") {
+    onYouTubeInfo(message);
+  }
+}
+
+function onYouTubeReady() {
+  const yt = activityUi.yt;
+  yt.ready = true;
+  clearInterval(yt.greeter);
+  postYouTube("addEventListener", ["onStateChange"]);
+  postYouTube("addEventListener", ["onError"]);
+  syncActivityYouTube();
+}
+
+function onYouTubeInfo(message) {
+  const yt = activityUi.yt;
+  const run = activityUi.run;
+  const now = Date.now();
+  if (message.title && message.title !== yt.title) {
+    yt.title = message.title;
+    $("activity-watch-title").textContent = message.title;
+  }
+  const before = yt.seen;
+  const state = message.state ?? (before ? before.state : null);
+  const time = message.time ?? youtubeExpectedTime(before, now);
+  const turned = message.state !== undefined && (!before || before.state !== message.state);
+  const seeked = message.time !== undefined && youtubeUserSeeked(before, message.time, now);
+  yt.seen = { state, time, at: now };
+  if (!run || watchSourceKind(run.activity) !== "youtube") return;
+  if (now >= yt.settling && isParticipant(run, activityMe()) && Number.isFinite(time)) {
+    const pressed = turned && (state === YOUTUBE_STATE.PLAYING || state === YOUTUBE_STATE.PAUSED);
+    const playing = youtubePlaying(state);
+    if ((pressed && playing !== Boolean(run.playback.playing)) || seeked) {
+      sendActivityInput({ playback: { playing, position: time, at: now } });
+    }
+  }
+  renderActivitySyncLabel(run);
+}
+
+function syncActivityYouTube() {
+  const run = activityUi.run;
+  const yt = activityUi.yt;
+  if (!run || !yt.ready || !yt.frame || !isParticipant(run, activityMe())) return;
+  const now = Date.now();
+  const target = watchTargetPosition(run.playback, now);
+  const current = youtubeExpectedTime(yt.seen, now);
+  const playing = yt.seen ? youtubePlaying(yt.seen.state) : false;
+  const seek = current === null ? target > 0 : youtubeNeedsSeek(current, target);
+  const toggle = playing !== Boolean(run.playback.playing);
+  if (seek || toggle) {
+    yt.settling = now + YOUTUBE_SETTLE_MS;
+    if (seek) postYouTube("seekTo", [target, true]);
+    postYouTube(run.playback.playing ? "playVideo" : "pauseVideo");
+  }
   renderActivitySyncLabel(run);
 }
 
 function renderActivitySyncLabel(run) {
   const label = $("activity-sync");
+  if (watchSourceKind(run.activity) === "youtube") {
+    const yt = activityUi.yt;
+    const joined = isParticipant(run, activityMe());
+    if (!joined || !yt.ready || !yt.seen || yt.error) {
+      label.textContent = joined ? "" : "Join to control playback";
+      label.className = "activity-sync";
+      return;
+    }
+    const now = Date.now();
+    const current = youtubeExpectedTime(yt.seen, now);
+    const off = current === null || youtubeNeedsSeek(current, watchTargetPosition(run.playback, now)) || youtubePlaying(yt.seen.state) !== Boolean(run.playback.playing);
+    label.textContent = off ? "Catching up" : "In sync";
+    label.className = `activity-sync ${off ? "catching" : "good"}`;
+    return;
+  }
   const video = $("activity-video");
   if (!video.src || !isParticipant(run, activityMe())) {
     label.textContent = isParticipant(run, activityMe()) ? "" : "Join to control playback";
@@ -13865,6 +14160,7 @@ async function loadActivityVideo(run) {
 }
 
 function releaseActivityVideo() {
+  releaseYouTube();
   const video = $("activity-video");
   if (!video) return;
   activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
@@ -13877,7 +14173,9 @@ function releaseActivityVideo() {
 function syncActivityVideo() {
   const run = activityUi.run;
   const video = $("activity-video");
-  if (!run || run.kind !== "watch" || !video.src) return;
+  if (!run || run.kind !== "watch") return;
+  if (watchSourceKind(run.activity) === "youtube") return syncActivityYouTube();
+  if (!video.src) return;
   const target = watchTargetPosition(run.playback, Date.now());
   activityUi.settling = performance.now() + ACTIVITY_REMOTE_SETTLE_MS;
   if (Number.isFinite(video.duration) && watchNeedsSeek(video.currentTime, target)) video.currentTime = target;
@@ -13951,7 +14249,9 @@ function pickedActivity() {
   if (activityUi.pick !== "watch") return makeActivity("tictactoe", activityMe(), now, id);
   const url = $("activity-link-input").value.trim();
   if (url) {
-    if (!isVideoLink(url)) throw new Error("Paste a direct https link that ends in .mp4, .webm or .ogg");
+    const youtube = youtubeVideoId(url);
+    if (youtube) return makeActivity("watch", activityMe(), now, id, watchYouTubeSource(youtube));
+    if (!isVideoLink(url)) throw new Error("Paste a YouTube link, or a direct https link that ends in .mp4, .webm or .ogg");
     return makeActivity("watch", activityMe(), now, id, watchLinkSource(url));
   }
   if (activityUi.chip) return makeActivity("watch", activityMe(), now, id, watchAttachmentSource(activityUi.chip));
@@ -13967,6 +14267,11 @@ function initActivityUi() {
       toast(e.message || String(e));
     }
   };
+  $("activity-watch-open").onclick = () => {
+    const video = activityUi.run && watchYouTubeId(activityUi.run.activity);
+    if (video) invoke("open_url", { url: youtubeWatchUrl(video) }).catch(err => toast(String(err)));
+  };
+  window.addEventListener("message", onYouTubeMessage);
   $("activity-link-input").addEventListener("input", () => {
     if ($("activity-link-input").value.trim()) {
       activityUi.chip = null;
@@ -14123,11 +14428,205 @@ function applyMembersLayout() {
   btn.title = collapsed ? "Show Members" : "Hide Members";
 }
 
+function narrowSplit() {
+  return isPhoneWidth(window.innerWidth) && !document.body.classList.contains("mobile-app") && window.matchMedia("(pointer: fine)").matches;
+}
+
+function narrowViewServer() {
+  return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
+}
+
+function paintNarrowServerIcon(icon, server) {
+  icon.replaceChildren();
+  icon.style.background = "";
+  if (!server) {
+    icon.appendChild(el("img")).src = "images/commy_v3_noback.png";
+    return;
+  }
+  paintServerIcon(icon, server);
+  icon.style.background = serverTint(server.id);
+}
+
+function paintNarrowRail() {
+  if (!$("narrow-active")) return;
+  const server = narrowViewServer();
+  paintNarrowServers(server);
+  $("narrow-column").replaceChildren(narrowChannelTile(server), ...(server ? narrowVoiceTiles(server) : []));
+}
+
+function paintNarrowServers(server) {
+  const active = $("narrow-active");
+  paintNarrowServerIcon(active.querySelector(".narrow-active-icon"), server);
+  active.title = server ? `${server.name}: server controls` : "Direct Messages";
+  const others = railServers().filter(s => !server || s.id !== server.id);
+  const shown = others.length > 4 ? others.slice(0, 3) : others;
+  const cells = shown.map(other => {
+    const cell = el("span", "narrow-grid-cell");
+    paintNarrowServerIcon(cell, other);
+    return cell;
+  });
+  if (others.length > shown.length) cells.push(el("span", "narrow-grid-cell narrow-grid-more", `+${others.length - shown.length}`));
+  const grid = $("narrow-grid");
+  grid.replaceChildren(...cells);
+  grid.title = others.length ? `Switch server: ${others.map(s => s.name).join(", ")}` : "Switch server";
+  grid.classList.toggle("unread", others.some(s => serverUnreadCount(s.id) > 0));
+}
+
+function narrowChannelTile(server) {
+  const channel = state.currentChannel;
+  const tile = el("button", "narrow-channel");
+  tile.id = "narrow-channel";
+  tile.title = "Switch channel";
+  const mark = el("span", "narrow-channel-mark");
+  mark.appendChild(server && channel ? channelMark(channel) : svgIcon("chat", 18));
+  const name = el("span", "narrow-channel-name");
+  if (server && channel) name.appendChild(channelNameNode(channel));
+  else name.textContent = state.currentDm ? state.currentDm.name : "Messages";
+  tile.append(mark, name, svgIcon("chevronDown", 12));
+  tile.classList.toggle("unread", Boolean(server) && server.channels.some(c => (!channel || c.id !== channel.id) && shownUnread(server.id, c.id)));
+  tile.onclick = () => toggleNarrowChannels(tile);
+  return tile;
+}
+
+function toggleNarrowChannels(tile) {
+  const app = $("app");
+  app.classList.remove("flyout-open");
+  const open = app.classList.toggle("channels-open");
+  if (open) $("channel-list").style.top = `${Math.round(tile.getBoundingClientRect().top)}px`;
+}
+
+function narrowVoiceTiles(server) {
+  return server.channels
+    .filter(c => isVoiceKind(c.kind) && (c.id === state.voiceChannelId || voiceRingEntries(c).length))
+    .map(narrowVoiceTile);
+}
+
+function narrowVoiceTile(channel) {
+  const connected = channel.id === state.voiceChannelId;
+  const tile = el("button", "narrow-voice-tile" + (connected ? " connected" : ""));
+  tile.title = connected ? `You are in ${channel.name}` : `Join ${channel.name}`;
+  const grid = el("span", "narrow-voice-grid");
+  grid.append(...voiceRingCells(channel));
+  const head = el("span", "narrow-voice-head");
+  head.append(voiceKindIcon(channel.kind, 12), el("span", "narrow-voice-name", channel.name));
+  tile.append(grid, head);
+  tile.onclick = () => {
+    if (connected) return;
+    if (voiceFull(channel)) toast("That voice channel is full");
+    else toggleVoice(channel);
+  };
+  return tile;
+}
+
+function narrowMenuRow(label, paintIcon, onPick, active = false) {
+  const row = el("button", "narrow-menu-row" + (active ? " active" : ""));
+  const icon = el("span", "narrow-menu-icon");
+  paintIcon(icon);
+  row.append(icon, el("span", "narrow-menu-name", label));
+  row.onclick = () => {
+    $("app").classList.remove("flyout-open");
+    onPick();
+  };
+  return row;
+}
+
+function narrowGlyph(name) {
+  return icon => icon.appendChild(svgIcon(name, 18));
+}
+
+function serverSwitchRows() {
+  const current = narrowViewServer();
+  return [
+    narrowMenuRow("Direct Messages", icon => paintNarrowServerIcon(icon, null), () => $("home-btn").click(), !current),
+    ...railServers().map(server => narrowMenuRow(server.name, icon => paintNarrowServerIcon(icon, server), () => selectServer(server.id), Boolean(current) && server.id === current.id)),
+    narrowMenuRow("Add a Server", narrowGlyph("plus"), () => $("add-server-btn").click()),
+    narrowMenuRow("Discover Servers", narrowGlyph("globe"), () => $("discover-btn").click()),
+  ];
+}
+
+function serverControlRows(server) {
+  const events = upcomingEventCount(server);
+  const rows = [
+    el("div", "narrow-menu-title", server.name),
+    narrowMenuRow(events ? `${events} Event${events === 1 ? "" : "s"}` : "Events", narrowGlyph("calendar"), () => openEvents()),
+  ];
+  if (server.rules) rows.push(narrowMenuRow("Server Rules", narrowGlyph("book"), () => openRules()));
+  if (selfAssignableRoles(server).length) rows.push(narrowMenuRow("Roles", narrowGlyph("roles"), () => openChooseRoles()));
+  rows.push(el("div", "narrow-menu-sep"));
+  if (server.can_invite) rows.push(narrowMenuRow("Invite People", narrowGlyph("friendAdd"), () => $("invite-btn").click()));
+  rows.push(narrowMenuRow("Server Settings", narrowGlyph("gear"), () => $("server-settings-btn").click()));
+  return rows;
+}
+
+function toggleNarrowMenu(kind, anchor) {
+  const app = $("app");
+  const menu = $("narrow-menu");
+  app.classList.remove("channels-open");
+  if (app.classList.contains("flyout-open") && menu.dataset.kind === kind) {
+    app.classList.remove("flyout-open");
+    return;
+  }
+  const server = narrowViewServer();
+  menu.dataset.kind = kind;
+  menu.replaceChildren(...(kind === "controls" && server ? serverControlRows(server) : serverSwitchRows()));
+  menu.style.top = `${Math.round(anchor.getBoundingClientRect().top)}px`;
+  app.classList.add("flyout-open");
+}
+
+function applyNarrowLayout() {
+  const app = $("app");
+  const split = narrowSplit();
+  if (app.classList.contains("narrow-split") === split) return;
+  app.classList.toggle("narrow-split", split);
+  app.classList.remove("flyout-open", "channels-open");
+  const panel = document.querySelector(".user-panel");
+  if (split) {
+    $("narrow-dock").appendChild(panel);
+    app.dataset.pane = "split";
+  } else {
+    $("rail").appendChild(panel);
+    app.dataset.pane = "list";
+  }
+  if (state.currentServer) renderChannels();
+}
+
+function wireNarrowLayout() {
+  const sidebar = document.querySelector(".sidebar");
+  const active = el("button", "narrow-active");
+  active.id = "narrow-active";
+  active.appendChild(el("span", "narrow-active-icon"));
+  active.onclick = () => toggleNarrowMenu(narrowViewServer() ? "controls" : "servers", active);
+  const grid = el("button", "narrow-grid");
+  grid.id = "narrow-grid";
+  grid.onclick = () => toggleNarrowMenu("servers", grid);
+  const servers = el("div", "narrow-servers");
+  servers.append(active, grid);
+  sidebar.prepend(servers);
+  const column = el("div", "narrow-column");
+  column.id = "narrow-column";
+  $("channel-list").after(column);
+  const menu = el("div", "narrow-menu");
+  menu.id = "narrow-menu";
+  const dock = el("div", "narrow-dock");
+  dock.id = "narrow-dock";
+  sidebar.append(menu, dock);
+  document.addEventListener("pointerdown", e => {
+    if (!e.target.closest(".narrow-menu, .narrow-active, .narrow-grid")) $("app").classList.remove("flyout-open");
+    if (!e.target.closest(".channel-scroll, .narrow-channel")) $("app").classList.remove("channels-open");
+  });
+  $("channel-list").addEventListener("click", e => {
+    if (e.target.closest(".channel:not(.voice-channel)") && !e.target.closest("button")) $("app").classList.remove("channels-open");
+  });
+  window.addEventListener("resize", applyNarrowLayout);
+  applyNarrowLayout();
+}
+
 function phonePane() {
   return $("app").dataset.pane || "list";
 }
 
 function setPhonePane(pane, { fromHistory = false } = {}) {
+  if (narrowSplit()) return;
   const was = phonePane();
   if (was === pane) return;
   $("app").dataset.pane = pane;
@@ -14135,7 +14634,7 @@ function setPhonePane(pane, { fromHistory = false } = {}) {
 }
 
 function phoneStep(action) {
-  if (!isPhoneWidth(window.innerWidth)) return false;
+  if (!isPhoneWidth(window.innerWidth) || narrowSplit()) return false;
   const from = phonePane();
   const to = phonePaneAfter(from, action);
   if (!phonePaneGoesDeeper(from, to) && history.state && history.state.pane) history.back();
@@ -14144,7 +14643,7 @@ function phoneStep(action) {
 }
 
 function phoneShowChat() {
-  if (!isPhoneWidth(window.innerWidth)) return;
+  if (!isPhoneWidth(window.innerWidth) || narrowSplit()) return;
   const pane = phonePane();
   if (pane === "people") phoneStep("back");
   else if (pane === "list") phoneStep("open");
@@ -14237,6 +14736,7 @@ function setViewMode(mode) {
   $("dm-call-btn").classList.toggle("hidden", !home);
   $("group-add-btn").classList.toggle("hidden", !home);
   $("group-leave-btn").classList.toggle("hidden", !group);
+  paintNarrowRail();
   $("members-btn").classList.toggle("hidden", dm);
   $("member-list").classList.toggle("hidden", dm);
   $("invite-btn").classList.toggle("hidden", home);
@@ -17252,6 +17752,14 @@ function wireEvents() {
     saveTtsPrefs({ ...ttsPrefs(), rate: clampRate(Number(e.target.value) / 10) });
     renderTtsSettings();
   });
+  $("tts-pitch").addEventListener("input", e => {
+    saveTtsPrefs({ ...ttsPrefs(), pitch: clampPitch(Number(e.target.value) / 10) });
+    renderTtsSettings();
+  });
+  $("tts-voice").addEventListener("change", e => {
+    saveTtsPrefs({ ...ttsPrefs(), voice: e.target.value || null });
+    renderTtsSettings();
+  });
   $("tts-preview").onclick = () => {
     if (!speakText(spokenText(state.user ? state.user.display_name || state.user.username : "Commy", "this is how text-to-speech sounds"))) toast("Text-to-speech is not available here");
   };
@@ -19462,6 +19970,7 @@ async function boot() {
   wireEvents();
   wireSaved();
   wirePhoneLayout();
+  wireNarrowLayout();
   wireTouchMessages();
   wireTalkButton();
   wireTimeoutModal();
@@ -19478,6 +19987,7 @@ async function boot() {
   await loadFriends();
   await loadOverlaySettings();
   loadUpdateStatus();
+  loadSpeechVoices();
   await loadIntegrations();
   await loadAccount();
   if (!account.signed_in) {

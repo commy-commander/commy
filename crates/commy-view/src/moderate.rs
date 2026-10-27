@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use commy_core::server::{
-    clean_nickname, valid_hex_color, valid_rules, MAX_ACCESS_ROLES, MAX_NICKNAME_CHARS, MAX_SLOW_MODE, MAX_TIMEOUT_SECS, MAX_USER_LIMIT,
-    MAX_VOICE_STATUS_CHARS, SERVER_AFK_MINUTES,
+    clean_game_tag_meta, clean_game_tags, clean_nickname, valid_hex_color, valid_rules, GameTagMeta, MAX_ACCESS_ROLES, MAX_GAME_TAGS,
+    MAX_GAME_TAG_CHARS, MAX_NICKNAME_CHARS, MAX_SLOW_MODE, MAX_TIMEOUT_SECS, MAX_USER_LIMIT, MAX_VOICE_STATUS_CHARS, SERVER_AFK_MINUTES,
 };
 use commy_core::{AutoMod, ChannelId, ChannelKind, Onboarding, Permissions, RoleId, ServerEvent, ServerState, UserId};
 
@@ -126,6 +126,13 @@ pub fn rules(state: &ServerState, perms: Permissions, rules: Option<&str>) -> Ac
         return Err("rules are too long; keep them under about 3000 characters".into());
     }
     Ok(ServerEvent::RulesSet { server: state.server.id, rules })
+}
+
+pub fn game_tags(state: &ServerState, perms: Permissions, tags: &[String], meta: &[GameTagMeta]) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_SERVER, "change game tags")?;
+    let tags = clean_game_tags(tags).ok_or(format!("up to {MAX_GAME_TAGS} games, each at most {MAX_GAME_TAG_CHARS} characters"))?;
+    let meta = clean_game_tag_meta(&tags, meta);
+    Ok(ServerEvent::GameTagsSet { server: state.server.id, tags, meta })
 }
 
 pub fn accept_rules(state: &ServerState, me: UserId) -> Act<ServerEvent> {
@@ -313,6 +320,23 @@ mod tests {
         assert!(ban(&state, theirs, member, owner).is_err());
         assert!(matches!(ban(&state, mine, owner, member), Ok(ServerEvent::MemberBan { .. })));
         assert!(unban(&state, theirs, member).is_err());
+    }
+
+    #[test]
+    fn managers_tag_the_games_a_server_features() {
+        let (state, owner, member) = hangout();
+        let (mine, theirs) = (state.server.permissions_for(owner), state.server.permissions_for(member));
+        let tags = vec!["  Portal   2 ".to_string(), "Celeste".to_string()];
+        let meta = vec![
+            GameTagMeta { name: "Portal 2".into(), igdb_id: 72, cover: Some("co1rs4".into()) },
+            GameTagMeta { name: "Gone".into(), igdb_id: 9, cover: None },
+        ];
+        assert!(game_tags(&state, theirs, &tags, &meta).is_err());
+        let Ok(ServerEvent::GameTagsSet { tags, meta, .. }) = game_tags(&state, mine, &tags, &meta) else { panic!("expected game tags") };
+        assert_eq!(tags, ["Portal 2", "Celeste"]);
+        assert_eq!(meta.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["Portal 2"]);
+        let too_many: Vec<String> = (0..=MAX_GAME_TAGS).map(|i| format!("Game {i}")).collect();
+        assert!(game_tags(&state, mine, &too_many, &[]).is_err());
     }
 
     #[test]

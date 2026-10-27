@@ -11,6 +11,7 @@ pub const BOARD_CELLS: usize = 9;
 pub const MAX_PLAYERS: usize = 2;
 pub const MAX_PARTICIPANTS: usize = 99;
 pub const VIDEO_LINK_EXTENSIONS: [&str; 3] = ["mp4", "webm", "ogg"];
+pub const YOUTUBE_VIDEO_ID_CHARS: usize = 11;
 const CELL_EMPTY: u8 = 0;
 const CELL_O: u8 = 2;
 
@@ -19,6 +20,8 @@ const CELL_O: u8 = 2;
 pub enum WatchSource {
     Link { url: String },
     Attachment { attachment: Attachment },
+    #[serde(rename = "youtube")]
+    YouTube { video: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,6 +72,10 @@ pub fn is_video_link(url: &str) -> bool {
     !stem.is_empty() && VIDEO_LINK_EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e))
 }
 
+pub fn is_youtube_video_id(id: &str) -> bool {
+    id.len() == YOUTUBE_VIDEO_ID_CHARS && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 impl WatchSource {
     pub fn valid(&self) -> bool {
         match self {
@@ -76,6 +83,7 @@ impl WatchSource {
             WatchSource::Attachment { attachment } => {
                 attachment.mime_type.starts_with("video/") && !attachment.blob.is_empty() && !attachment.filename.is_empty()
             }
+            WatchSource::YouTube { video } => is_youtube_video_id(video),
         }
     }
 }
@@ -205,6 +213,25 @@ mod tests {
         assert!(!WatchSource::Attachment { attachment: image }.valid());
         let blank = Attachment { blob: String::new(), ..video };
         assert!(!WatchSource::Attachment { attachment: blank }.valid());
+    }
+
+    #[test]
+    fn youtube_sources_carry_only_a_video_id() {
+        assert!(WatchSource::YouTube { video: "dQw4w9WgXcQ".into() }.valid());
+        assert!(WatchSource::YouTube { video: "a-b_c-d_e-f".into() }.valid());
+        assert!(!WatchSource::YouTube { video: "short".into() }.valid());
+        assert!(!WatchSource::YouTube { video: "dQw4w9WgXcQx".into() }.valid());
+        assert!(!WatchSource::YouTube { video: "dQw4w9WgX/Q".into() }.valid());
+        assert!(!WatchSource::YouTube { video: "https://you".into() }.valid());
+    }
+
+    #[test]
+    fn youtube_keeps_earlier_wire_tags_and_has_a_plain_json_name() {
+        let tag = |source: WatchSource| postcard::to_stdvec(&source).unwrap()[0];
+        assert_eq!(tag(WatchSource::Link { url: "https://example.org/a.mp4".into() }), 0);
+        assert_eq!(tag(WatchSource::YouTube { video: "dQw4w9WgXcQ".into() }), 2);
+        let json = serde_json::to_string(&WatchSource::YouTube { video: "dQw4w9WgXcQ".into() }).unwrap();
+        assert_eq!(json, r#"{"youtube":{"video":"dQw4w9WgXcQ"}}"#);
     }
 
     #[test]

@@ -44,6 +44,7 @@ use commy_view::catalog;
 use commy_view::search;
 mod server_wake;
 mod settle;
+mod speech;
 #[cfg(desktop)]
 mod single_instance;
 mod state;
@@ -4134,14 +4135,9 @@ async fn set_game_tags(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    manage_check(&app, sid, me.id, Permissions::MANAGE_SERVER, "change game tags")?;
-    let tags = commy_core::server::clean_game_tags(&tags).ok_or(format!(
-        "up to {} games, each at most {} characters",
-        commy_core::server::MAX_GAME_TAGS,
-        commy_core::server::MAX_GAME_TAG_CHARS
-    ))?;
-    let meta = commy_core::server::clean_game_tag_meta(&tags, &meta.unwrap_or_default());
-    apply_and_broadcast(&app, &handle, sid, ServerEvent::GameTagsSet { server: sid, tags, meta }).await
+    let meta = meta.unwrap_or_default();
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::game_tags(state, perms, &tags, &meta))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
 }
 
 #[tauri::command]
@@ -5518,7 +5514,7 @@ async fn set_activity(
             return Err("Activities are turned off in this server's settings".into());
         }
         if activity.as_ref().is_some_and(|a| !a.valid()) {
-            return Err("paste a direct https link to an .mp4, .webm or .ogg file".into());
+            return Err("pick a YouTube link or a direct https link to an .mp4, .webm or .ogg file".into());
         }
         if !commy_core::activity::admits_set(state, me.id, channel, activity.as_ref()) {
             return Err(match (&activity, state.activities.get(&channel)) {
@@ -5858,7 +5854,7 @@ async fn resolve_game_via_account(app: &tauri::State<'_, App>, name: &str) -> Op
         return hit.clone();
     }
     let hit = match account::server_search::<igdb::GameHit>(app, "games", name).await {
-        Ok(Some(hits)) => igdb::best_match(name, &igdb::safe_hits(hits)).cloned(),
+        Ok(Some(hits)) => igdb::best_match(name, &igdb::safe_games(hits)).cloned(),
         Ok(None) => None,
         Err(_) => return None,
     };
@@ -5920,7 +5916,7 @@ async fn search_games(app: tauri::State<'_, App>, query: String) -> CmdResult<Ve
             return Ok(Vec::new());
         }
         let hits = account::server_search::<igdb::GameHit>(&app, "games", query.trim()).await?;
-        return Ok(igdb::safe_hits(hits.unwrap_or_default()));
+        return Ok(igdb::safe_games(hits.unwrap_or_default()));
     }
     app.igdb.lock().await.search(&app.http, &creds, &query).await
 }
@@ -7585,6 +7581,9 @@ pub fn run() {
             watch_camera,
             stop_watching_camera,
             notify,
+            speech::speech_voices,
+            speech::speech_speak,
+            speech::speech_stop,
             set_unread,
             set_close_to_tray,
             debug_log_status,

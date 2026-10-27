@@ -254,10 +254,13 @@
           <div class="activity-watch hidden" id="activity-watch">
             <div class="activity-screen">
               <video id="activity-video" controls playsinline preload="metadata"></video>
+              <div class="activity-youtube hidden" id="activity-youtube"></div>
+              <div class="activity-screen-note hidden" id="activity-screen-note"></div>
               <div class="activity-screen-wait hidden" id="activity-video-wait"><div class="spinner"></div><span>Loading video</span></div>
             </div>
             <div class="activity-watch-line">
               <span class="activity-watch-title" id="activity-watch-title"></span>
+              <button class="btn-link activity-watch-open hidden" id="activity-watch-open">Open on YouTube</button>
               <span class="activity-sync" id="activity-sync"></span>
             </div>
           </div>
@@ -534,10 +537,10 @@
         </div>
         <div class="activity-setup-watch hidden" id="activity-setup-watch">
           <label class="field-label">Video link
-            <input id="activity-link-input" type="text" placeholder="https://… ending in .mp4, .webm or .ogg" spellcheck="false" autocomplete="off" />
+            <input id="activity-link-input" type="text" placeholder="A YouTube link, or https://… ending in .mp4, .webm or .ogg" spellcheck="false" autocomplete="off" />
           </label>
           <div class="activity-chips" id="activity-chips"></div>
-          <div class="setting-sub">Each viewer's computer fetches the file itself, like a link preview. Only direct video files play, nothing else loads.</div>
+          <div class="setting-sub">YouTube loads for each person once they join. Video files are fetched by each viewer's computer, like a link preview.</div>
         </div>
       </div>
       <div class="modal-actions">
@@ -1601,7 +1604,7 @@
           <div class="settings-card setting-row">
             <div>
               <div class="setting-title">Text-to-speech</div>
-              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice. Never while you are deafened or Do Not Disturb, never your own, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
+              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice, only while you are connected to voice. Never while you are deafened or Do Not Disturb, never your own, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
             </div>
             <select id="tts-mode" class="compact-select">
               <option value="never">Never</option>
@@ -1610,12 +1613,25 @@
             </select>
           </div>
           <div class="settings-card">
+            <div class="setting-row tts-voice-row">
+              <div>
+                <div class="setting-title">Voice</div>
+                <div class="setting-sub">Any voice installed on this device.</div>
+              </div>
+              <select id="tts-voice" class="compact-select tts-voice-select">
+                <option value="">Computer default</option>
+              </select>
+            </div>
             <div class="slider-row">
               <div class="setting-title">Voice rate <span id="tts-rate-label">1.0x</span></div>
               <input type="range" id="tts-rate" min="5" max="20" value="10" />
             </div>
+            <div class="slider-row">
+              <div class="setting-title">Voice pitch <span id="tts-pitch-label">1.0</span></div>
+              <input type="range" id="tts-pitch" min="5" max="20" value="10" />
+            </div>
             <div class="setting-row tts-preview-row">
-              <div class="setting-sub">Hear the voice at this rate.</div>
+              <div class="setting-sub">Hear this voice at this rate and pitch.</div>
               <button class="btn-secondary btn-small" id="tts-preview">Preview</button>
             </div>
           </div>
@@ -2273,6 +2289,15 @@
             </div>
           </div>
           <input type="file" id="server-image-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
+          <h2 class="settings-subhead">Games</h2>
+          <div class="settings-card">
+            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
+            <div class="tag-editor" id="game-tag-editor">
+              <div class="tag-chips" id="game-tag-chips"></div>
+              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
+              <div class="game-search hidden" id="game-search"></div>
+            </div>
+          </div>
           <h2 class="settings-subhead">Inactivity</h2>
           <div class="settings-card setting-row">
             <div>
@@ -2357,15 +2382,6 @@
               <button class="btn-primary btn-small" id="discovery-list">List in Discover</button>
               <button class="btn-primary btn-small hidden" id="discovery-update">Update Listing</button>
               <button class="btn-link danger hidden" id="discovery-unlist">Unlist</button>
-            </div>
-          </div>
-          <h2 class="settings-subhead">Games</h2>
-          <div class="settings-card">
-            <div class="setting-sub">Tag up to 5 games this server is about. They show under the server name.</div>
-            <div class="tag-editor" id="game-tag-editor">
-              <div class="tag-chips" id="game-tag-chips"></div>
-              <input id="game-tag-input" type="text" maxlength="32" autocomplete="off" placeholder="Add a game and press Enter" />
-              <div class="game-search hidden" id="game-search"></div>
             </div>
           </div>
         </section>
