@@ -1,0 +1,187 @@
+{
+  "release": "tts-pack-1",
+  "runtime": [
+    {
+      "name": "ort-wasm-simd-threaded.wasm",
+      "size": 11246032,
+      "sha256": "207d02be4591c156b0a98f024f3d58005b5b04c92274d759fb390338c63559ea",
+      "from": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort-wasm-simd-threaded.wasm"
+    },
+    {
+      "name": "piper_phonemize.wasm",
+      "size": 635212,
+      "sha256": "b777cd107a91d2bcc6a1ea46f2c26a662a7407394fe84589198aeaa83dd7a9d6",
+      "from": "https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm"
+    },
+    {
+      "name": "piper_phonemize.data",
+      "size": 18077249,
+      "sha256": "29f1025eb23a5b5c192cd14a6efbce4509402ff265405072ee6f7d1a09b78f8c",
+      "from": "https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data"
+    }
+  ],
+  "voices": [
+    {
+      "id": "en_US-kristin-medium",
+      "name": "Kristin",
+      "lang": "en-US",
+      "credit": "Public domain (LibriVox)",
+      "model": {
+        "name": "en_US-kristin-medium.onnx",
+        "size": 63531379,
+        "sha256": "5849957f929cbf720c258f8458692d6103fff2f0e3d3b19c8259474bb06a18d4",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/kristin/medium/en_US-kristin-medium.onnx"
+      },
+      "config": {
+        "name": "en_US-kristin-medium.onnx.json",
+        "size": 4968,
+        "sha256": "5681426d4aead22195de70531eeeeddb46493cfaffc5764b2ea3db73428b651c",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/kristin/medium/en_US-kristin-medium.onnx.json"
+      }
+    },
+    {
+      "id": "en_US-ljspeech-medium",
+      "name": "LJ",
+      "lang": "en-US",
+      "credit": "Public domain (LJ Speech)",
+      "model": {
+        "name": "en_US-ljspeech-medium.onnx",
+        "size": 63531379,
+        "sha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx"
+      },
+      "config": {
+        "name": "en_US-ljspeech-medium.onnx.json",
+        "size": 4972,
+        "sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json"
+      }
+    },
+    {
+      "id": "en_US-norman-medium",
+      "name": "Norman",
+      "lang": "en-US",
+      "credit": "Public domain (LibriVox)",
+      "model": {
+        "name": "en_US-norman-medium.onnx",
+        "size": 63531379,
+        "sha256": "b9739443232a80a59c7d18810dd856899bf16a7964725f5ab81ea49b1351cb71",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/norman/medium/en_US-norman-medium.onnx"
+      },
+      "config": {
+        "name": "en_US-norman-medium.onnx.json",
+        "size": 4968,
+        "sha256": "6c2db7f558a4a8deb9fe822583c1c5105f6c4e834dd0f9de8ad17a888ee9fe1d",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/norman/medium/en_US-norman-medium.onnx.json"
+      }
+    },
+    {
+      "id": "en_US-john-medium",
+      "name": "John",
+      "lang": "en-US",
+      "credit": "Public domain (LibriVox)",
+      "model": {
+        "name": "en_US-john-medium.onnx",
+        "size": 63531379,
+        "sha256": "789c6c875726e627ddee93d51d8727859abe9c091c3d141591f4b83c2072e988",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/john/medium/en_US-john-medium.onnx"
+      },
+      "config": {
+        "name": "en_US-john-medium.onnx.json",
+        "size": 4965,
+        "sha256": "af60f177b6b550f3d7a302720c0fb89e7f94a82b5dca464775ef63b1c69ba09a",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/john/medium/en_US-john-medium.onnx.json"
+      }
+    },
+    {
+      "id": "en_GB-cori-medium",
+      "name": "Cori",
+      "lang": "en-GB",
+      "credit": "Public domain (LibriVox)",
+      "model": {
+        "name": "en_GB-cori-medium.onnx",
+        "size": 63531379,
+        "sha256": "1899f98e5fb8310154f3c2973f4b8a929ba7245e722b3d3a85680b833d95f10d",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_GB/cori/medium/en_GB-cori-medium.onnx"
+      },
+      "config": {
+        "name": "en_GB-cori-medium.onnx.json",
+        "size": 4966,
+        "sha256": "e262c16d7f192f69d4edd6b4ef8a5915379e67495fcc402f1ab15eeb33da3d36",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_GB/cori/medium/en_GB-cori-medium.onnx.json"
+      }
+    },
+    {
+      "id": "en_GB-alba-medium",
+      "name": "Alba",
+      "lang": "en-GB",
+      "credit": "CC BY 4.0, University of Edinburgh",
+      "model": {
+        "name": "en_GB-alba-medium.onnx",
+        "size": 63201294,
+        "sha256": "401369c4a81d09fdd86c32c5c864440811dbdcc66466cde2d64f7133a66ad03b",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_GB/alba/medium/en_GB-alba-medium.onnx"
+      },
+      "config": {
+        "name": "en_GB-alba-medium.onnx.json",
+        "size": 4888,
+        "sha256": "aa965a2f02ecced632c2694e1fc72bbff6d65f265fab567ca945918c73dd89f4",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_GB/alba/medium/en_GB-alba-medium.onnx.json"
+      }
+    },
+    {
+      "id": "de_DE-thorsten-medium",
+      "name": "Thorsten",
+      "lang": "de-DE",
+      "credit": "CC0, Thorsten-Voice",
+      "model": {
+        "name": "de_DE-thorsten-medium.onnx",
+        "size": 63201294,
+        "sha256": "7e64762d8e5118bb578f2eea6207e1a35a8e0c30595010b666f983fc87bb7819",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx"
+      },
+      "config": {
+        "name": "de_DE-thorsten-medium.onnx.json",
+        "size": 4819,
+        "sha256": "974adee790533adb273a1ac88f49027d2a1b8f0f2cf4905954a4791e79264e85",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json"
+      }
+    },
+    {
+      "id": "fr_FR-siwis-medium",
+      "name": "Siwis",
+      "lang": "fr-FR",
+      "credit": "CC BY 4.0, University of Edinburgh",
+      "model": {
+        "name": "fr_FR-siwis-medium.onnx",
+        "size": 63201294,
+        "sha256": "641d1ab097da2b81128c076810edb052b385decc8be3381814802a64a73baf99",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx"
+      },
+      "config": {
+        "name": "fr_FR-siwis-medium.onnx.json",
+        "size": 4875,
+        "sha256": "39479916c2db192b5ac9764daddd0c744d83e023ad890c6976c0633ae4df8959",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx.json"
+      }
+    },
+    {
+      "id": "es_ES-davefx-medium",
+      "name": "Davefx",
+      "lang": "es-ES",
+      "credit": "CC0, Open Home Foundation",
+      "model": {
+        "name": "es_ES-davefx-medium.onnx",
+        "size": 63201294,
+        "sha256": "6658b03b1a6c316ee4c265a9896abc1393353c2d9e1bca7d66c2c442e222a917",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/es/es_ES/davefx/medium/es_ES-davefx-medium.onnx"
+      },
+      "config": {
+        "name": "es_ES-davefx-medium.onnx.json",
+        "size": 4817,
+        "sha256": "0e0dda87c732f6f38771ff274a6380d9252f327dca77aa2963d5fbdf9ec54842",
+        "from": "https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/es/es_ES/davefx/medium/es_ES-davefx-medium.onnx.json"
+      }
+    }
+  ]
+}

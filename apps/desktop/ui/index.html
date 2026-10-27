@@ -1907,7 +1907,7 @@
           <div class="settings-card setting-row" data-search="tts read aloud speech">
             <div>
               <div class="setting-title">Read messages aloud</div>
-              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" through your computer's voice, only while you are connected to voice. Your own are read aloud to you too. Never while you are deafened or Do Not Disturb, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
+              <div class="setting-sub">Messages sent with /tts are read aloud as "name said: message" in the voice below, only while you are connected to voice. Your own are read aloud to you too. Never while you are deafened or Do Not Disturb, and Escape or sending a message stops it. Open any message's menu and pick Read Aloud to hear it on demand.</div>
             </div>
             <select id="tts-mode" class="compact-select">
               <option value="never">Never</option>
@@ -1919,10 +1919,10 @@
             <div class="setting-row tts-voice-row" data-search="speaker narrator">
               <div>
                 <div class="setting-title">Voice</div>
-                <div class="setting-sub">Any voice installed on this device.</div>
+                <div class="setting-sub tts-voice-status" id="tts-voice-status">Uses this device's own voices.</div>
               </div>
               <select id="tts-voice" class="compact-select tts-voice-select">
-                <option value="">Computer default</option>
+                <option value="system:">Device default</option>
               </select>
             </div>
             <div class="slider-row" data-search="speed">

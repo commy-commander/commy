@@ -8,6 +8,8 @@ const {
   TTS_PITCH_MIN, TTS_PITCH_MAX, DEFAULT_TTS_PITCH,
   parseTtsPrefix, canSendTts, clampRate, clampPitch, readTtsPrefs, shouldSpeakIncoming, spokenText, ttsCommandHint,
   ttsVoices, ttsVoiceLabel, chosenTtsVoice,
+  BUILT_IN_VOICE_PREFIX, SYSTEM_VOICE_PREFIX, DEFAULT_BUILT_IN_VOICE, SPEECH_CHUNK_CHARS,
+  defaultBuiltInVoice, resolveTtsVoice, ttsVoiceValue, ttsVoiceStatus, piperTiming, speechChunks, megabytes,
 } = require("../scripts/tts.js");
 const { COMPOSER_COMMANDS, suggestTokenAt, commandSuggestions, suggestionInsert } = require("../scripts/composer-suggest.js");
 
@@ -137,4 +139,75 @@ test("what is spoken names the author and strips markup", () => {
   const spoken = spokenText("nova", long, plain);
   assert.ok(spoken.endsWith(", and more"));
   assert.ok(spoken.length < long.length);
+});
+
+const BUILT_IN = [
+  { id: "en_US-kristin-medium", name: "Kristin", lang: "en-US", ready: false, download_bytes: 93_000_000 },
+  { id: "en_US-norman-medium", name: "Norman", lang: "en-US", ready: true, download_bytes: 0 },
+  { id: "en_GB-cori-medium", name: "Cori", lang: "en-GB", ready: false, download_bytes: 63_000_000 },
+  { id: "de_DE-thorsten-medium", name: "Thorsten", lang: "de-DE", ready: false, download_bytes: 93_000_000 },
+];
+const SYSTEM = [{ id: "zira", name: "Zira", lang: "en-US" }];
+
+test("the built-in default follows the device's language, Kristin otherwise", () => {
+  assert.equal(DEFAULT_BUILT_IN_VOICE, "en_US-kristin-medium");
+  assert.equal(defaultBuiltInVoice(BUILT_IN, "en-US"), "en_US-kristin-medium");
+  assert.equal(defaultBuiltInVoice(BUILT_IN, "en"), "en_US-kristin-medium");
+  assert.equal(defaultBuiltInVoice(BUILT_IN, "en-GB"), "en_GB-cori-medium");
+  assert.equal(defaultBuiltInVoice(BUILT_IN, "de-AT"), "de_DE-thorsten-medium");
+  assert.equal(defaultBuiltInVoice(BUILT_IN, "ja-JP"), "en_US-kristin-medium");
+  assert.equal(defaultBuiltInVoice(BUILT_IN, undefined), "en_US-kristin-medium");
+  assert.equal(defaultBuiltInVoice([], "en-US"), null);
+  assert.equal(defaultBuiltInVoice([BUILT_IN[3]], "fr-FR"), "de_DE-thorsten-medium");
+});
+
+test("a saved voice resolves to built in or device, and falls back to the built-in default", () => {
+  assert.deepEqual(resolveTtsVoice(null, BUILT_IN, SYSTEM, "en-US"), { kind: "builtin", id: "en_US-kristin-medium" });
+  assert.deepEqual(resolveTtsVoice(`${BUILT_IN_VOICE_PREFIX}en_US-norman-medium`, BUILT_IN, SYSTEM, "en-US"), { kind: "builtin", id: "en_US-norman-medium" });
+  assert.deepEqual(resolveTtsVoice(`${BUILT_IN_VOICE_PREFIX}gone`, BUILT_IN, SYSTEM, "en-US"), { kind: "builtin", id: "en_US-kristin-medium" });
+  assert.deepEqual(resolveTtsVoice(SYSTEM_VOICE_PREFIX, BUILT_IN, SYSTEM, "en-US"), { kind: "system", id: null });
+  assert.deepEqual(resolveTtsVoice(`${SYSTEM_VOICE_PREFIX}zira`, BUILT_IN, SYSTEM, "en-US"), { kind: "system", id: "zira" });
+  assert.deepEqual(resolveTtsVoice("zira", BUILT_IN, SYSTEM, "en-US"), { kind: "system", id: "zira" });
+  assert.deepEqual(resolveTtsVoice("gone", BUILT_IN, SYSTEM, "en-US"), { kind: "builtin", id: "en_US-kristin-medium" });
+  assert.deepEqual(resolveTtsVoice(null, [], SYSTEM, "en-US"), { kind: "system", id: null });
+  assert.deepEqual(resolveTtsVoice(`${BUILT_IN_VOICE_PREFIX}en_US-norman-medium`, null, null, "en-US"), { kind: "system", id: null });
+  assert.equal(ttsVoiceValue({ kind: "builtin", id: "x" }), "piper:x");
+  assert.equal(ttsVoiceValue({ kind: "system", id: "zira" }), "system:zira");
+  assert.equal(ttsVoiceValue({ kind: "system", id: null }), "system:");
+});
+
+test("the voice status line says what the voice needs", () => {
+  const kristin = BUILT_IN[0];
+  assert.equal(ttsVoiceStatus({ kind: "builtin", id: kristin.id }, kristin, null), "Downloads 93 MB the first time it speaks.");
+  assert.equal(ttsVoiceStatus({ kind: "builtin", id: kristin.id }, kristin, { loaded: 46_500_000, total: 93_000_000 }), "Downloading, 50%");
+  assert.equal(ttsVoiceStatus({ kind: "builtin", id: kristin.id }, kristin, { loaded: 93_000_000, total: 93_000_000 }), "Downloading, 99%");
+  assert.equal(ttsVoiceStatus({ kind: "builtin", id: "x" }, BUILT_IN[1], null), "Built into Commy, works offline.");
+  assert.equal(ttsVoiceStatus({ kind: "system", id: null }, null, null), "Uses this device's own voices.");
+  assert.equal(megabytes(0), "1 MB");
+  assert.equal(megabytes(63_531_379), "64 MB");
+});
+
+test("rate and pitch become Piper's length scale and the playback speed", () => {
+  const inference = { noise_scale: 0.667, length_scale: 1, noise_w: 0.333 };
+  assert.deepEqual(piperTiming(inference, 1, 1), { scales: [0.667, 1, 0.333], playbackRate: 1 });
+  assert.deepEqual(piperTiming(inference, 2, 1), { scales: [0.667, 0.5, 0.333], playbackRate: 1 });
+  const higher = piperTiming(inference, 1, 1.5);
+  assert.equal(higher.playbackRate, 1.5);
+  assert.equal(higher.scales[1], 1.5);
+  assert.equal(higher.scales[1] / higher.playbackRate, 1);
+  assert.deepEqual(piperTiming({ length_scale: 1.2 }, 9, 0), { scales: [0.667, 0.3, 0.8], playbackRate: 0.5 });
+  assert.deepEqual(piperTiming(null, 1, 1).scales, [0.667, 1, 0.8]);
+});
+
+test("long text is spoken in sentence-sized pieces", () => {
+  assert.deepEqual(speechChunks("  hello   there. "), ["hello there."]);
+  assert.deepEqual(speechChunks(""), []);
+  assert.deepEqual(speechChunks(null), []);
+  assert.deepEqual(speechChunks("One. Two! Three?", 6), ["One.", "Two!", "Three?"]);
+  const long = Array.from({ length: 120 }, (_, i) => `word${i}`).join(" ");
+  const pieces = speechChunks(long);
+  assert.ok(pieces.length > 1);
+  assert.ok(pieces.every(p => p.length <= SPEECH_CHUNK_CHARS));
+  assert.equal(pieces.join(" "), long);
+  assert.ok(speechChunks("x".repeat(900)).every(p => p.length <= SPEECH_CHUNK_CHARS));
 });

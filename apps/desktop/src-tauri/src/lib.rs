@@ -66,6 +66,7 @@ use commy_view as view;
 mod voice_filter;
 mod voice_keys;
 mod voice_message;
+mod voice_pack;
 mod voice_invite;
 mod wake;
 
@@ -8039,6 +8040,10 @@ pub fn run() {
             speech::speech_voices,
             speech::speech_speak,
             speech::speech_stop,
+            voice_pack::voice_pack_status,
+            voice_pack::voice_pack_download,
+            voice_pack::voice_pack_file,
+            voice_pack::voice_pack_remove,
             set_unread,
             set_close_to_tray,
             debug_log_status,
