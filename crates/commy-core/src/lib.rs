@@ -23,6 +23,7 @@ pub mod poll;
 pub mod server;
 pub mod server_tag;
 pub mod store;
+pub mod pet;
 pub mod template;
 pub mod tip_jar;
 pub mod user;

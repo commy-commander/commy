@@ -2467,6 +2467,25 @@
               <button class="btn-primary btn-small" id="tip-jar-save">Save</button>
             </div>
           </div>
+          <h2 class="settings-subhead">Server Pet</h2>
+          <div class="settings-card" id="pet-card">
+            <div class="setting-sub">Adopt a little astronaut that lives on your server. Everyone can feed it, pat it and play with it, and it levels up as people look after it.</div>
+            <div class="pet-editor">
+              <div class="pet-preview" id="pet-preview"></div>
+              <div class="pet-fields">
+                <label class="field-label">Name
+                  <input id="pet-name" type="text" maxlength="24" autocomplete="off" placeholder="Cosmo" />
+                </label>
+                <div class="field-label">Suit
+                  <div class="pet-suits" id="pet-suits" role="radiogroup" aria-label="Suit colour"></div>
+                </div>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="btn-link hidden" id="pet-release">Say Goodbye</button>
+              <button class="btn-primary btn-small" id="pet-save">Adopt</button>
+            </div>
+          </div>
           <h2 class="settings-subhead">Inactivity</h2>
           <div class="settings-card setting-row">
             <div>
@@ -3038,6 +3057,7 @@
   <script src="scripts/profile-look.js"></script>
   <script src="scripts/join-requests.js"></script>
   <script src="scripts/tip-jar.js"></script>
+  <script src="scripts/pet.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/voice-filters.js"></script>
   <script src="scripts/stream-audio.js"></script>

@@ -22,6 +22,7 @@ pub mod saved;
 pub mod search;
 pub mod join_requests;
 pub mod server_tags;
+pub mod pet;
 pub mod templates;
 pub mod tip_jar;
 pub mod voice_invite;
@@ -371,6 +372,7 @@ pub struct ServerView {
     pub join_requests: Vec<join_requests::JoinRequestView>,
     pub can_answer_joins: bool,
     pub tip_jar: Option<String>,
+    pub pet: Option<pet::PetView>,
     pub automod: Option<AutoMod>,
     pub onboarding: Option<commy_core::Onboarding>,
     pub commands: Vec<BotCommandsView>,
@@ -751,6 +753,7 @@ impl ServerView {
             join_requests: join_requests::queue(state, viewer),
             can_answer_joins: viewer.is_some_and(|v| join_requests::may_answer(state, v)),
             tip_jar: state.server.tip_jar.clone(),
+            pet: pet::view(state, viewer),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
             onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
                 o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))

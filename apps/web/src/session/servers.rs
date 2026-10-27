@@ -261,6 +261,19 @@ impl Session {
                 vec![client().act(server, |state, me, _, _| commy_view::join_requests::set_approval(state, me.perms, on, at))?]
             }
             "set_tip_jar" => vec![client().act(server, |state, me, _, _| commy_view::tip_jar::set_tip_jar(state, me.perms, args.url.as_deref()))?],
+            "set_pet" => {
+                let now = Utc::now().timestamp_millis();
+                let (name, color) = (args.name.as_deref(), args.color.as_deref().unwrap_or("white"));
+                vec![client().act(server, |state, me, _, _| match name {
+                    Some(name) => commy_view::pet::adopt(state, me.perms, name, color, now),
+                    None => commy_view::pet::release(state, me.perms),
+                })?]
+            }
+            "care_for_pet" => {
+                let kind: commy_core::pet::Care = serde_json::from_value(serde_json::Value::String(args.kind.clone().unwrap_or_default())).map_err(|_| "unknown kind of care".to_string())?;
+                let now = Utc::now().timestamp_millis();
+                vec![client().act(server, |state, me, _, _| commy_view::pet::care(state, me.user, kind, now))?]
+            }
             "answer_join_request" => {
                 let (user, admit) = (user()?, args.admit.unwrap_or(false));
                 vec![client().act(server, |state, me, _, _| commy_view::join_requests::answer(state, me.perms, user, admit))?]

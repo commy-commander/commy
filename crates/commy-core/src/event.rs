@@ -404,6 +404,16 @@ pub enum ServerEvent {
         server: ServerId,
         url: Option<String>,
     },
+    PetSet {
+        server: ServerId,
+        pet: Option<crate::pet::Pet>,
+    },
+    PetCare {
+        server: ServerId,
+        user: UserId,
+        care: crate::pet::Care,
+        at: i64,
+    },
 }
 
 #[cfg(test)]
@@ -491,6 +501,8 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::JoinAsk { server, profile, note: String::new(), at: 1 }), 91);
         assert_eq!(wire_tag(ServerEvent::JoinAnswer { server, user, admit: true }), 92);
         assert_eq!(wire_tag(ServerEvent::TipJarSet { server, url: None }), 93);
+        assert_eq!(wire_tag(ServerEvent::PetSet { server, pet: None }), 94);
+        assert_eq!(wire_tag(ServerEvent::PetCare { server, user, care: crate::pet::Care::Feed, at: 1 }), 95);
     }
 
     #[test]
