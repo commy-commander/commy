@@ -158,7 +158,7 @@ mod tests {
         let stranger = keyed_profile("stranger");
         assert_eq!(answer(&state, owner, &knock(&state, &stranger)), KnockReply::Open);
         state.server.rules = Some("Be kind".into());
-        state.apply(ServerEvent::JoinApprovalSet { server: sid, on: true }).unwrap();
+        state.apply(ServerEvent::JoinApprovalSet { server: sid, on: true, at: 1 }).unwrap();
         let KnockReply::Waiting(lobby) = answer(&state, friend, &knock(&state, &stranger)) else { panic!("expected to wait") };
         assert_eq!((lobby.name.as_str(), lobby.rules.as_deref(), lobby.members), ("test", Some("Be kind"), 2));
         assert_eq!(answer(&state, stranger.id, &knock(&state, &stranger)), KnockReply::Unknown, "only members answer");

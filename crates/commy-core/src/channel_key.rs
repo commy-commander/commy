@@ -462,7 +462,8 @@ pub fn community_key_task(state: &ServerState, me: UserId, ring: &Keyring) -> Op
     let held: Vec<KeyId> = heads.iter().copied().filter(|k| ring.holds(*k)).collect();
     let exposed = keys.grants.iter().any(|(user, g)| heads.contains(&g.key) && server.banned.contains(user));
     let forked = heads.len() > 1 && held.len() == heads.len();
-    if rotates && (exposed || forked) && !held.is_empty() {
+    let shared_before_approval = server.join_approval && keys.newest().is_some_and(|k| k.at < server.join_approval_since);
+    if rotates && (exposed || forked || shared_before_approval) && !held.is_empty() {
         return Some(KeyTask::Rotate { links: held });
     }
     let newest = keys.newest()?.id;
@@ -946,6 +947,23 @@ mod tests {
         assert!(joiner.holds(newest) && joiner.holds(first));
         let held: Vec<KeyId> = joiner.held_records(&state, KeyScope::Community).iter().map(|(r, _)| r.id).collect();
         assert_eq!(held, vec![newest, first], "newest first");
+    }
+
+    #[test]
+    fn asking_new_people_to_wait_rotates_a_key_that_old_invite_links_carried() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let member = join(&mut state, "member");
+        settle_community_at(&mut state, owner, 10);
+        let shared = state.community_keys().newest().unwrap().id;
+        state.apply(ServerEvent::JoinApprovalSet { server, on: true, at: 20 }).unwrap();
+        assert!(matches!(tend_community_at(&mut state, member, 30), None | Some(KeyTask::Grant { .. })), "plain members never rotate");
+        assert!(matches!(tend_community_at(&mut state, owner, 30), Some(KeyTask::Rotate { .. })));
+        settle_community_at(&mut state, owner, 30);
+        let fresh = state.community_keys().newest().unwrap().id;
+        assert_ne!(fresh, shared);
+        assert_eq!(community_secret(&state, member), Some(fresh), "members get the new key and keep the old history");
+        assert!(tend_community_at(&mut state, owner, 40).is_none());
     }
 
     #[test]

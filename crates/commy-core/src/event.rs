@@ -387,6 +387,7 @@ pub enum ServerEvent {
     JoinApprovalSet {
         server: ServerId,
         on: bool,
+        at: i64,
     },
     JoinAsk {
         server: ServerId,
@@ -481,7 +482,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::JoinSoundSet { server, user, sound: None }), 87);
         assert_eq!(wire_tag(ServerEvent::JoinSoundsAllowed { server, allowed: false }), 88);
         assert_eq!(wire_tag(ServerEvent::ServerTagSet { server, tag: None }), 89);
-        assert_eq!(wire_tag(ServerEvent::JoinApprovalSet { server, on: true }), 90);
+        assert_eq!(wire_tag(ServerEvent::JoinApprovalSet { server, on: true, at: 1 }), 90);
         let profile = UserProfile::new("asker");
         assert_eq!(wire_tag(ServerEvent::JoinAsk { server, profile, note: String::new(), at: 1 }), 91);
         assert_eq!(wire_tag(ServerEvent::JoinAnswer { server, user, admit: true }), 92);

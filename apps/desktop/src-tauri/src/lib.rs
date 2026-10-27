@@ -24,6 +24,7 @@ mod igdb;
 mod instance;
 mod invite_link;
 mod key_handoff;
+mod knock;
 mod link_preview;
 mod link_safety;
 mod local_key;
@@ -229,15 +230,63 @@ async fn join_server(
     app: tauri::State<'_, App>,
     handle: tauri::AppHandle,
     ticket: String,
-) -> CmdResult<ServerSummary> {
+    note: Option<String>,
+) -> CmdResult<knock::Joined> {
     account::require_account(&app)?;
     let ticket = ServerTicket::decode(&ticket).map_err(err_to_string)?;
     let id = ticket.server_id;
-    let summary = join_ticket(&app, &handle, ticket).await?;
-    entry_list::record_join(&app, id);
-    entry_list::schedule(&handle);
-    community_sync::refresh_soon(&handle);
-    Ok(summary)
+    let joined = knock::knock_then_join(&app, &handle, ticket, note.as_deref().unwrap_or("")).await?;
+    if matches!(joined, knock::Joined::Server(_)) {
+        entry_list::record_join(&app, id);
+        entry_list::schedule(&handle);
+        community_sync::refresh_soon(&handle);
+    }
+    Ok(joined)
+}
+
+#[tauri::command]
+fn list_join_waits(app: tauri::State<App>) -> Vec<knock::WaitingView> {
+    knock::list(&app)
+}
+
+#[tauri::command]
+fn cancel_join_request(app: tauri::State<App>, handle: tauri::AppHandle, server_id: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    knock::cancel(&app, &handle, sid);
+    Ok(())
+}
+
+#[tauri::command]
+async fn send_join_note(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, note: String) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    knock::send_note(&app, &handle, sid, &note).await
+}
+
+#[tauri::command]
+async fn set_join_approval(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, enabled: bool) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let at = chrono::Utc::now().timestamp_millis();
+    let event = managed(&app, sid, me.id, |state, perms| view::join_requests::set_approval(state, perms, enabled, at))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    if enabled {
+        channel_lock::tend_scope(&app, &handle, sid, commy_core::channel_key::KeyScope::Community).await;
+    }
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn answer_join_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String, admit: bool) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let user: UserId = user_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::join_requests::answer(state, perms, user, admit))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    if admit {
+        channel_lock::tend_scope(&app, &handle, sid, commy_core::channel_key::KeyScope::Community).await;
+    }
+    Ok(())
 }
 
 pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
@@ -3240,6 +3289,15 @@ async fn leave_server(
     entry_list::schedule(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(())
+}
+
+pub(crate) async fn leave_without_trace(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
+    end_voice_in(app, sid);
+    leave_server_topic(app, sid).await;
+    forget_server_locally(app, sid);
+    entry_list::record_leave(app, sid);
+    entry_list::schedule(handle);
+    let _ = handle.emit("servers-changed", ());
 }
 
 pub(crate) async fn leave_from_another_device(app: &App, sid: ServerId) {
@@ -6594,7 +6652,7 @@ fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Op
     }
 }
 
-async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
+pub(crate) async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
     let net = app.net.lock().await;
     if let Some(node) = net.as_ref() {
         if let Err(e) = node.broadcast(server, payload).await {
@@ -6838,6 +6896,7 @@ async fn run_net_loop(
             NetEvent::SyncReceived { server, payload } => {
                 if catchup::apply_snapshot(&handle, server, payload) {
                     community_sync::refresh_soon(&handle);
+                    knock::wait_outside(&app, &handle, server).await;
                 }
             }
             NetEvent::VoiceDial { .. } => {}
@@ -7261,6 +7320,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
         bell.retain_servers(|id| servers.contains_key(id));
     }
     *app.doorbell.lock().unwrap() = bell;
+    *app.knocks.lock().unwrap() = knock::Knocks::load(&dir);
     {
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
@@ -7308,6 +7368,10 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 if let Some(asks) = node.take_mirror_requests() {
                     tauri::async_runtime::spawn(mirror::run_mirror_requests(handle.clone(), asks));
                 }
+                if let Some(asks) = node.take_knock_requests() {
+                    tauri::async_runtime::spawn(knock::run_requests(handle.clone(), asks));
+                }
+                tauri::async_runtime::spawn(knock::run(handle.clone()));
 
                 let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
                 let stored_invites = app
@@ -7693,6 +7757,11 @@ pub fn run() {
             set_expression_settings,
             set_sound_sharing,
             set_join_sounds_allowed,
+            list_join_waits,
+            cancel_join_request,
+            send_join_note,
+            set_join_approval,
+            answer_join_request,
             set_join_sound,
             set_server_tag,
             wear_server_tag,

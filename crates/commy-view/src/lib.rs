@@ -20,6 +20,7 @@ pub mod roles;
 pub mod safety;
 pub mod saved;
 pub mod search;
+pub mod join_requests;
 pub mod server_tags;
 pub mod templates;
 pub mod voice_invite;
@@ -363,6 +364,9 @@ pub struct ServerView {
     pub join_sounds: std::collections::BTreeMap<String, String>,
     pub my_join_sound: Option<String>,
     pub server_tag: Option<server_tags::ServerTagView>,
+    pub join_approval: bool,
+    pub join_requests: Vec<join_requests::JoinRequestView>,
+    pub can_answer_joins: bool,
     pub automod: Option<AutoMod>,
     pub onboarding: Option<commy_core::Onboarding>,
     pub commands: Vec<BotCommandsView>,
@@ -737,6 +741,9 @@ impl ServerView {
             join_sounds: join_sound_clips(state),
             my_join_sound: viewer.and_then(|v| state.server.join_sounds.get(&v).cloned()),
             server_tag: state.server.tag.as_ref().map(|t| server_tags::tag_view(t, &state.server.name)),
+            join_approval: state.server.join_approval,
+            join_requests: join_requests::queue(state, viewer),
+            can_answer_joins: viewer.is_some_and(|v| join_requests::may_answer(state, v)),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
             onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {
                 o.tidied(|r| commy_core::onboarding::grantable(&state.server.roles, r))

@@ -399,6 +399,8 @@ pub struct Server {
     pub join_requests: Vec<crate::join_request::JoinRequest>,
     #[serde(default)]
     pub turned_away: Vec<UserId>,
+    #[serde(default)]
+    pub join_approval_since: i64,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -484,6 +486,7 @@ impl Server {
             join_approval: false,
             join_requests: vec![],
             turned_away: vec![],
+            join_approval_since: 0,
         }
     }
 

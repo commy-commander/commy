@@ -1444,10 +1444,13 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.server.tag, tag))
             }
-            ServerEvent::JoinApprovalSet { server, on } => {
+            ServerEvent::JoinApprovalSet { server, on, at } => {
                 self.same_server(server)?;
                 if !on {
                     self.server.join_requests.clear();
+                    self.server.join_approval_since = 0;
+                } else if !self.server.join_approval {
+                    self.server.join_approval_since = at;
                 }
                 Ok(replace(&mut self.server.join_approval, on))
             }
@@ -3882,7 +3885,7 @@ mod tests {
         let now = Utc::now();
         let plain = join(&mut state, "plain");
         let moderator = join(&mut state, "moderator");
-        let on = signed_event(&state, owner, now, ServerEvent::JoinApprovalSet { server: sid, on: true });
+        let on = signed_event(&state, owner, now, ServerEvent::JoinApprovalSet { server: sid, on: true, at: now.timestamp_millis() });
         assert_eq!(state.apply_signed(&on), Ok(true));
         let asker = keyed_profile("asker");
         assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: asker.clone() }), Ok(false), "a plain join is refused");
@@ -3928,7 +3931,7 @@ mod tests {
         let (mut state, _, owner) = fixture();
         let sid = state.server.id;
         let now = Utc::now();
-        state.apply(ServerEvent::JoinApprovalSet { server: sid, on: true }).unwrap();
+        state.apply(ServerEvent::JoinApprovalSet { server: sid, on: true, at: 1 }).unwrap();
         let asker = keyed_profile("asker");
         let ask = |profile: &UserProfile, at: i64| ServerEvent::JoinAsk { server: sid, profile: profile.clone(), note: String::new(), at };
         assert_eq!(state.apply(ask(&asker, 1)), Ok(true));
@@ -3944,7 +3947,7 @@ mod tests {
         let mut liar = wait.clone();
         liar.identity = Some(identity_for(UserId::new()).public());
         assert_eq!(state.apply(ask(&liar, 5)), Err(StoreError::IdentityMismatch));
-        assert_eq!(state.apply(ServerEvent::JoinApprovalSet { server: sid, on: false }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::JoinApprovalSet { server: sid, on: false, at: 2 }), Ok(true));
         assert!(state.server.join_requests.is_empty());
         assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: wait.clone() }), Ok(true));
         assert_eq!(state.apply(ask(&keyed_profile("late"), 6)), Ok(false), "nobody asks while the door is open");
