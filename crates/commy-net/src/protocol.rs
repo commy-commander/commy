@@ -212,6 +212,7 @@ pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: U
     server.events.clear();
     server.deleted_events.clear();
     server.pins.clear();
+    server.drive.clear();
     let mut messages: Vec<commy_core::Message> = Vec::new();
     for channel in &state.server.channels {
         messages.extend(state.page(channel.id, None, per_channel).iter().cloned());
@@ -806,6 +807,7 @@ mod tests {
             server.stickers.push(Sticker { name: format!("sticker{i}"), blob: format!("{}@{}", "a".repeat(64), "b".repeat(64)) });
             server.emoticons.push(Emoticon { name: format!("face{i}"), text: "(╯°□°)╯︵ ┻━┻".repeat(4) });
             server.soundboard.push(SoundboardSound { name: format!("s{i}"), blob: "a@b".into(), volume: 1.0, emoji: None });
+            server.drive.extend(commy_core::drive::DriveItem::folder(commy_core::ChannelId::new(), None, &format!("folder{i}"), owner, 1));
         }
         let state = ServerState::new(server);
         let payload = build_sync_response(&state, 50, owner);
@@ -813,5 +815,6 @@ mod tests {
         let WirePayload::SyncResponse { server, .. } = payload else { panic!("wrong payload kind") };
         assert!(server.emojis.is_empty() && server.soundboard.is_empty());
         assert!(server.stickers.is_empty() && server.emoticons.is_empty());
+        assert!(server.drive.is_empty(), "drive items travel as their own signed actions");
     }
 }

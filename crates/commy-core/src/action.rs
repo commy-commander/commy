@@ -79,7 +79,9 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::DeviceAnnounce { user, .. }
         | E::PronounsSet { user, .. }
         | E::JoinSoundSet { user, .. }
-        | E::PetCare { user, .. } => Some(*user),
+        | E::PetCare { user, .. }
+        | E::DriveHold { user, .. } => Some(*user),
+        E::DriveAdd { item, .. } => Some(item.by),
         E::MessagePin { by, .. }
         | E::MemberTimeout { by, .. }
         | E::PollClose { by, .. }
@@ -153,6 +155,10 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::TipJarSet { .. } => "tip_jar".into(),
         E::PetSet { .. } => "pet".into(),
         E::PetCare { user, care, .. } => format!("pet_care:{user}:{}", crate::pet::care_name(*care)),
+        E::DriveAdd { item, .. } => format!("drive:{}", item.id),
+        E::DriveRemove { item, .. } => format!("drive:{item}"),
+        E::DriveEdit { item, .. } => format!("drive.edit:{item}"),
+        E::DriveHold { item, user, .. } => format!("drive.hold:{item}:{user}"),
         E::JoinAsk { profile, .. } => format!("join_ask:{}", profile.id),
         E::JoinAnswer { user, .. } => format!("join_ask:{user}"),
         E::RulesAccept { user, .. } => format!("rules_accept:{user}"),
@@ -214,8 +220,8 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 16] = [
-        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "community.key:", "community.grant:", "timeout:", "vote:", "poll:",
+    const OMITTED: [&str; 19] = [
+        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "community.key:", "community.grant:", "timeout:", "vote:", "poll:", "drive:", "drive.edit:", "drive.hold:",
     ];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
@@ -351,6 +357,19 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::TipJarSet { .. }
         | E::PetSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::PetCare { .. } => member && actor(event) == Some(by) && server.pet.is_some(),
+        E::DriveAdd { item, .. } => {
+            let drive = server.channel(item.channel).is_some_and(|c| c.is_drive());
+            let fresh = crate::drive::find(&server.drive, item.id).is_none_or(|known| known.by == by);
+            drive && fresh && member && speaks && actor(event) == Some(by) && server.can_view(item.channel, by) && server.can_post_in(item.channel, by)
+                && (item.is_folder() || allows(Permissions::ATTACH_FILES))
+        }
+        E::DriveEdit { item, .. } | E::DriveRemove { item, .. } => crate::drive::find(&server.drive, *item).is_some_and(|known| {
+            member && server.can_view(known.channel, by) && (known.by == by || allows(Permissions::MANAGE_MESSAGES))
+        }),
+        E::DriveHold { item, .. } => {
+            let visible = crate::drive::find(&server.drive, *item).is_some_and(|known| server.can_view(known.channel, by));
+            member && actor(event) == Some(by) && visible
+        }
         E::JoinAsk { .. } => actor(event) == Some(by) && crate::join_request::may_ask(server, by),
         E::JoinAnswer { user, .. } => member && *user != by && allows(Permissions::KICK_MEMBERS),
         E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
@@ -1042,6 +1061,54 @@ mod tests {
         assert_eq!(state.apply_signed(&presence), Ok(true), "live state is not held to the floor");
         let restored = crate::store::ServerState::from_snapshot(state.snapshot());
         assert_eq!(restored.action_floor(), now);
+    }
+
+    #[test]
+    fn drive_items_travel_as_signed_actions_and_folders_take_their_contents() {
+        use crate::drive::{DriveFile, DriveItem};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let drive = Channel::new("files", ChannelKind::Drive, 5);
+        let cid = drive.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: drive.clone() }).unwrap();
+        let friend = join(&mut state, "friend");
+        let other = join(&mut state, "other");
+        let sign = |by, at, event| SignedEvent::sign(sid, by, at, event, &identity_for(by));
+        let folder = DriveItem::folder(cid, None, "Maps", friend, 1).unwrap();
+        let file = DriveFile { blob: "ab".repeat(32), size: 12, mime: "text/plain".into() };
+        let inside = DriveItem::file(cid, Some(folder.id), "map.txt", file, friend, &"cd".repeat(32), 2).unwrap();
+        let add_folder = sign(friend, 1_000, ServerEvent::DriveAdd { server: sid, item: folder.clone() });
+        let add_inside = sign(friend, 2_000, ServerEvent::DriveAdd { server: sid, item: inside.clone() });
+        assert_eq!(state.apply_signed(&add_folder), Ok(true));
+        assert_eq!(state.apply_signed(&add_inside), Ok(true));
+        let forged = sign(other, 2_500, ServerEvent::DriveAdd { server: sid, item: DriveItem::folder(cid, None, "x", friend, 3).unwrap() });
+        assert_eq!(state.apply_signed(&forged), Err(StoreError::NotAllowed), "nobody adds in someone else's name");
+        let rename = sign(other, 2_600, ServerEvent::DriveEdit { server: sid, item: folder.id, name: "Mine".into(), parent: None });
+        assert_eq!(state.apply_signed(&rename), Err(StoreError::NotAllowed));
+        let keep = sign(other, 2_700, ServerEvent::DriveHold { server: sid, item: inside.id, user: other, node: Some("ef".repeat(32)) });
+        assert_eq!(state.apply_signed(&keep), Ok(true));
+        assert!(snapshot_omits("drive:x") && snapshot_omits("drive.hold:x:y"));
+        assert_eq!(state.signed_actions().len(), 3);
+
+        let mut joiner = crate::store::ServerState::new(state.server.clone());
+        joiner.server.drive.clear();
+        joiner.profiles = state.profiles.clone();
+        for signed in state.signed_actions() {
+            joiner.apply_signed(signed).unwrap();
+        }
+        assert_eq!(joiner.server.drive, state.server.drive, "a newcomer rebuilds the drive from relayed actions");
+
+        let remove = sign(owner, 3_000, ServerEvent::DriveRemove { server: sid, item: folder.id });
+        assert_eq!(state.apply_signed(&remove), Ok(true));
+        assert!(state.server.drive.is_empty());
+        assert_eq!(state.signed_actions(), vec![&remove], "what was inside is no longer relayed");
+        assert_eq!(state.apply_signed(&add_inside), Ok(false));
+        assert_eq!(state.apply_signed(&add_folder), Ok(false), "the removal wins over the old add");
+
+        let again = DriveItem::folder(cid, None, "New", friend, 4).unwrap();
+        state.apply_signed(&sign(friend, 4_000, ServerEvent::DriveAdd { server: sid, item: again })).unwrap();
+        state.apply(ServerEvent::ChannelDelete { server: sid, channel: cid }).unwrap();
+        assert!(state.server.drive.is_empty() && state.signed_actions().iter().all(|s| !matches!(s.event, ServerEvent::DriveAdd { .. })));
     }
 
     fn emoji(sid: ServerId, name: &str) -> ServerEvent {

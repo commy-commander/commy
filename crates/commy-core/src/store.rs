@@ -836,6 +836,10 @@ impl ServerState {
                 server.is_member(*user) || server.banned.contains(user) || self.profiles.contains_key(user)
             }
             E::MemberTimeout { user, .. } => server.is_member(*user),
+            E::DriveAdd { item, .. } => {
+                server.channel(item.channel).is_some_and(|c| c.is_drive()) && crate::drive::parent_fits(&server.drive, item.channel, item.parent)
+            }
+            E::DriveEdit { item, .. } | E::DriveRemove { item, .. } | E::DriveHold { item, .. } => crate::drive::find(&server.drive, *item).is_some(),
             E::VoiceState { user, channel, .. } => self.voice_claim_fits(*user, *channel),
             E::EventDelete { event, .. } | E::EventRsvp { event, .. } => server.events.iter().any(|e| e.id == *event),
             E::EmojiRemove { name, .. } => server.emojis.iter().any(|e| e.name == *name),
@@ -914,6 +918,19 @@ impl ServerState {
             self.action_times.remove(&evicted);
             self.signed_actions.remove(&evicted);
         }
+    }
+
+    fn forget_drive_actions(&mut self, gone: &[crate::ids::DriveId]) {
+        if gone.is_empty() {
+            return;
+        }
+        let ids: std::collections::HashSet<String> = gone.iter().map(|id| id.to_string()).collect();
+        let about_gone = |subject: &str| {
+            let rest = subject.strip_prefix("drive:").or_else(|| subject.strip_prefix("drive.edit:")).or_else(|| subject.strip_prefix("drive.hold:"));
+            rest.is_some_and(|rest| ids.contains(rest.split(':').next().unwrap_or_default()))
+        };
+        self.action_times.retain(|subject, _| !about_gone(subject));
+        self.signed_actions.retain(|subject, _| !about_gone(subject));
     }
 
     fn keep_signed(&mut self, signed: &SignedEvent) {
@@ -1151,6 +1168,8 @@ impl ServerState {
                 if self.server.afk_channel_id == Some(channel) {
                     self.server.afk_channel_id = None;
                 }
+                let gone = crate::drive::clear_channel(&mut self.server.drive, channel);
+                self.forget_drive_actions(&gone);
                 Ok(self.server.channels.len() != before || new_tombstone)
             }
             ServerEvent::ChannelUpdate {
@@ -1454,6 +1473,31 @@ impl ServerState {
                     return Ok(false);
                 }
                 Ok(crate::pet::tend(&mut self.server.pet_care, user, care, at))
+            }
+            ServerEvent::DriveAdd { server, item } => {
+                self.same_server(server)?;
+                if !self.server.channel(item.channel).is_some_and(|c| c.is_drive()) {
+                    return Ok(false);
+                }
+                Ok(crate::drive::add(&mut self.server.drive, item))
+            }
+            ServerEvent::DriveEdit { server, item, name, parent } => {
+                self.same_server(server)?;
+                Ok(crate::drive::edit(&mut self.server.drive, item, &name, parent))
+            }
+            ServerEvent::DriveRemove { server, item } => {
+                self.same_server(server)?;
+                let gone = crate::drive::remove(&mut self.server.drive, item);
+                let inside: Vec<_> = gone.iter().copied().filter(|g| *g != item).collect();
+                self.forget_drive_actions(&inside);
+                Ok(!gone.is_empty())
+            }
+            ServerEvent::DriveHold { server, item, user, node } => {
+                self.same_server(server)?;
+                if node.is_some() && !self.server.is_current_member(user) {
+                    return Ok(false);
+                }
+                Ok(crate::drive::hold(&mut self.server.drive, item, user, node.as_deref()))
             }
             ServerEvent::TipJarSet { server, url } => {
                 self.same_server(server)?;
@@ -1787,6 +1831,7 @@ impl ServerState {
                 }
                 self.server.banned.push(user);
                 self.server.members.retain(|m| m.user != user);
+                crate::drive::forget_user(&mut self.server.drive, user);
                 self.drop_voice_presence(user);
                 self.devices.forget(user);
                 self.screen_shares.remove(&user);

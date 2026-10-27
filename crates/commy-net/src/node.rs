@@ -1465,6 +1465,21 @@ impl CommyNode {
         shelf.context("big files are not ready yet")?.share(path).await
     }
 
+    #[cfg(not(wasm_browser))]
+    pub async fn shares_file(&self, hash: &str) -> bool {
+        let shelf = self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone();
+        match shelf {
+            Some(shelf) => shelf.shared(hash).await.is_some(),
+            None => false,
+        }
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub async fn forget_file(&self, hash: &str) -> Result<u64> {
+        let shelf = self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone();
+        shelf.context("big files are not ready yet")?.forget(hash).await
+    }
+
     pub fn set_media_gate(&self, gate: MediaGate) {
         *self.media_gate.write().unwrap_or_else(|e| e.into_inner()) = Some(gate);
     }

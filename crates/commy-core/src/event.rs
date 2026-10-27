@@ -414,6 +414,26 @@ pub enum ServerEvent {
         care: crate::pet::Care,
         at: i64,
     },
+    DriveAdd {
+        server: ServerId,
+        item: crate::drive::DriveItem,
+    },
+    DriveEdit {
+        server: ServerId,
+        item: crate::ids::DriveId,
+        name: String,
+        parent: Option<crate::ids::DriveId>,
+    },
+    DriveRemove {
+        server: ServerId,
+        item: crate::ids::DriveId,
+    },
+    DriveHold {
+        server: ServerId,
+        item: crate::ids::DriveId,
+        user: UserId,
+        node: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -503,6 +523,12 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::TipJarSet { server, url: None }), 93);
         assert_eq!(wire_tag(ServerEvent::PetSet { server, pet: None }), 94);
         assert_eq!(wire_tag(ServerEvent::PetCare { server, user, care: crate::pet::Care::Feed, at: 1 }), 95);
+        let folder = crate::drive::DriveItem::folder(channel, None, "Maps", user, 1).unwrap();
+        let item = folder.id;
+        assert_eq!(wire_tag(ServerEvent::DriveAdd { server, item: folder }), 96);
+        assert_eq!(wire_tag(ServerEvent::DriveEdit { server, item, name: "m".into(), parent: None }), 97);
+        assert_eq!(wire_tag(ServerEvent::DriveRemove { server, item }), 98);
+        assert_eq!(wire_tag(ServerEvent::DriveHold { server, item, user, node: None }), 99);
     }
 
     #[test]

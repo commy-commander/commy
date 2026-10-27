@@ -528,6 +528,27 @@ function mockSeed() {
     { message: "f4", title: "Noise cancellation clips the first word", tags: ["ft2", "ft4"], author: "me" },
     { message: "f5", title: "Polls for raid nights", tags: ["ft1"], author: "m2" },
   ] };
+  const files = ch("shared-files", "drive");
+  server.channels.push(files);
+  const ago = minutes => Date.now() - minutes * 60e3;
+  const file = (id, parent, name, size, by, byName, keepers, online, keptHere, minutes) => ({
+    id, parent, name, folder: false, size, mime: "application/octet-stream", blob: id.padEnd(64, "0"), by, by_name: byName, at: ago(minutes),
+    keepers, keepers_online: online, sources: [], kept_here: keptHere, can_edit: by === "me",
+  });
+  const folder = (id, parent, name, by, byName, minutes) => ({
+    id, parent, name, folder: true, size: null, mime: null, blob: null, by, by_name: byName, at: ago(minutes),
+    keepers: 0, keepers_online: 0, sources: [], kept_here: false, can_edit: by === "me",
+  });
+  mock.drive = { [files.id]: [
+    folder("d1", null, "Raid maps", "m1", "ferris", 4000),
+    folder("d2", null, "Clips", "m2", "nova", 3000),
+    folder("d3", "d1", "Old maps", "m1", "ferris", 3900),
+    file("d4", "d1", "tower-route.png", 4_800_000, "m1", "ferris", 3, 2, false, 3800),
+    file("d5", "d2", "clutch-round-4k.mp4", 2_400_000_000, "m2", "nova", 2, 1, false, 900),
+    file("d6", null, "server-rules.pdf", 320_000, "me", mock.user ? mock.user.username : "you", 4, 3, true, 600),
+    file("d7", null, "modpack-v12.zip", 1_200_000_000, "m3", "sleepy", 1, 0, false, 200),
+    file("d8", "d3", "season-1.png", 2_100_000, "m1", "ferris", 1, 1, false, 3850),
+  ] };
 }
 
 function mockServerTagView(server) {
@@ -1423,6 +1444,45 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "set_sound_sharing": mock.servers[args.serverId].sounds_shareable = args.shareable; return null;
     case "set_join_sounds_allowed": mock.servers[args.serverId].join_sounds_off = !args.enabled; return null;
+    case "drive_view": {
+      const items = (mock.drive || {})[args.channelId] || [];
+      const used = Object.values(mock.drive || {}).reduce((n, list) => n + list.length, 0);
+      return { channel: args.channelId, items: items.map(i => ({ ...i })), can_add: true, can_upload: true, max_items: 200, used_items: used };
+    }
+    case "drive_new_folder": {
+      const items = (mock.drive[args.channelId] = mock.drive[args.channelId] || []);
+      items.push({ id: crypto.randomUUID(), parent: args.parentId || null, name: args.name, folder: true, size: null, mime: null, blob: null, by: "me", by_name: mock.user ? mock.user.username : "you", at: Date.now(), keepers: 0, keepers_online: 0, sources: [], kept_here: false, can_edit: true });
+      return null;
+    }
+    case "drive_upload": {
+      const items = (mock.drive[args.channelId] = mock.drive[args.channelId] || []);
+      items.push({ id: crypto.randomUUID(), parent: args.parentId || null, name: "mission-notes.txt", folder: false, size: 18_200, mime: "text/plain", blob: "mock".padEnd(64, "0"), by: "me", by_name: mock.user ? mock.user.username : "you", at: Date.now(), keepers: 1, keepers_online: 1, sources: [], kept_here: true, can_edit: true });
+      return true;
+    }
+    case "drive_rename":
+    case "drive_remove":
+    case "drive_download":
+    case "drive_stop_keeping": {
+      const list = Object.values(mock.drive || {}).find(items => items.some(i => i.id === args.itemId));
+      if (!list) throw "That file or folder is no longer in the drive";
+      const item = list.find(i => i.id === args.itemId);
+      if (cmd === "drive_rename") Object.assign(item, { name: args.name, parent: args.parentId || null });
+      if (cmd === "drive_remove") {
+        const gone = new Set([item.id]);
+        for (let grew = true; grew;) {
+          grew = false;
+          for (const i of list) if (i.parent && gone.has(i.parent) && !gone.has(i.id)) { gone.add(i.id); grew = true; }
+        }
+        for (let at = list.length - 1; at >= 0; at--) if (gone.has(list[at].id)) list.splice(at, 1);
+      }
+      if (cmd === "drive_download") {
+        await new Promise(done => setTimeout(done, 600));
+        if (!item.kept_here) Object.assign(item, { kept_here: true, keepers: item.keepers + 1, keepers_online: item.keepers_online + 1 });
+        return `/home/you/Downloads/${item.name}`;
+      }
+      if (cmd === "drive_stop_keeping") Object.assign(item, { kept_here: false, keepers: item.keepers - 1, keepers_online: item.keepers_online - 1 });
+      return null;
+    }
     case "set_pet": {
       const srv = mock.servers[args.serverId];
       if (!args.name) {
@@ -3579,12 +3639,18 @@ function channelMark(channel, size = 18) {
     icon.appendChild(svgIcon("forum", size));
     return icon;
   }
+  if (isDriveChannel(channel)) {
+    const icon = el("span", "channel-icon drive-icon");
+    icon.appendChild(svgIcon("folder", size));
+    return icon;
+  }
   return el("span", "hash", "#");
 }
 
 function channelHeaderMark(channel) {
   if (channel && channel.kind === "announcement") return svgIcon("megaphone", 22);
   if (isForumChannel(channel)) return svgIcon("forum", 22);
+  if (isDriveChannel(channel)) return svgIcon("folder", 22);
   return document.createTextNode("#");
 }
 
@@ -3594,6 +3660,7 @@ function channelKindMark(kind, size = 16) {
   if (kind === "category") return svgIcon("chevronDown", size);
   if (kind === "announcement") return svgIcon("megaphone", size);
   if (kind === "forum") return svgIcon("forum", size);
+  if (kind === "drive") return svgIcon("folder", size);
   return document.createTextNode("#");
 }
 
@@ -6304,7 +6371,7 @@ function setCreateChannelKind(kind) {
   }
   const stageHint = stageCreateHint(kind);
   $("create-channel-prefix").replaceChildren(channelKindMark(kind, 16));
-  $("create-channel-name").placeholder = stageHint ? stageHint.placeholder : kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : "new-channel";
+  $("create-channel-name").placeholder = stageHint ? stageHint.placeholder : kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : kind === "drive" ? "shared-files" : "new-channel";
   syncCreateChannelName();
 }
 
@@ -6333,7 +6400,7 @@ async function saveCreateChannel() {
     hideModals();
     toast(`Created ${createChannelKind === "text" ? "#" : ""}${name}`);
     await refreshCurrentServer();
-    if (kindHoldsMessages(createChannelKind)) {
+    if (kindHoldsMessages(createChannelKind) || createChannelKind === DRIVE_KIND) {
       const made = state.currentServer.channels.filter(c => c.kind === createChannelKind).pop();
       if (made) await selectChannel(made);
     }
@@ -6589,6 +6656,7 @@ function setForumMode(mode) {
 }
 
 function showForumView(on) {
+  $("drive-view").classList.add("hidden");
   $("forum-view").classList.toggle("hidden", !on);
   $("messages").classList.toggle("hidden", on);
 }
@@ -6900,6 +6968,261 @@ function wireForum() {
   });
   $("channel-forum-add").onclick = addForumTag;
   $("channel-forum-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => setForumTagEmoji(parseEmojiToken(picked) ? null : picked));
+}
+
+const driveUi = { channel: null, folder: null, view: null, dialog: null, busy: new Map() };
+
+function driveWorksHere() {
+  return !document.body.classList.contains("web-app") && !document.body.classList.contains("mobile-app");
+}
+
+function showDriveView() {
+  $("forum-view").classList.add("hidden");
+  $("messages").classList.add("hidden");
+  $("drive-view").classList.remove("hidden");
+}
+
+async function openDrive(channel, fresh) {
+  if (fresh || driveUi.channel !== channel.id) {
+    driveUi.channel = channel.id;
+    driveUi.folder = null;
+    driveUi.view = null;
+  }
+  state.renderedMessages = [];
+  showDriveView();
+  syncRulesGate();
+  const works = driveWorksHere();
+  $("drive-desktop-note").classList.toggle("hidden", works);
+  $("drive-note").classList.toggle("hidden", !works);
+  if (!works) {
+    driveUi.view = { channel: channel.id, items: [], can_add: false, can_upload: false, max_items: 0, used_items: 0 };
+    return renderDrive();
+  }
+  try {
+    const view = await invoke("drive_view", { serverId: state.currentServer.id, channelId: channel.id });
+    if (state.currentChannel !== channel && (!state.currentChannel || state.currentChannel.id !== channel.id)) return;
+    driveUi.view = view;
+  } catch (e) {
+    driveUi.view = { channel: channel.id, items: [], can_add: false, can_upload: false, max_items: 0, used_items: 0 };
+    toast(String(e));
+  }
+  renderDrive();
+}
+
+function driveRootName() {
+  return state.currentChannel ? channelPlainName(state.currentChannel) : "Drive";
+}
+
+function renderDrive() {
+  const view = driveUi.view;
+  if (!view) return;
+  const items = view.items || [];
+  driveUi.folder = driveFolderOf(items, driveUi.folder);
+  const crumbs = $("drive-crumbs");
+  crumbs.replaceChildren();
+  driveCrumbs(items, driveUi.folder, driveRootName()).forEach((crumb, i, all) => {
+    if (i) crumbs.appendChild(el("span", "drive-crumb-sep", "/"));
+    const last = i === all.length - 1;
+    const button = el("button", "drive-crumb" + (last ? " current" : ""), crumb.name);
+    button.type = "button";
+    if (last) button.setAttribute("aria-current", "location");
+    else button.onclick = () => openDriveFolder(crumb.id);
+    crumbs.appendChild(button);
+  });
+  const works = driveWorksHere();
+  const full = driveRoomLeft(view) === 0;
+  $("drive-new-folder").disabled = !works || !view.can_add || full;
+  $("drive-upload").disabled = !works || !view.can_upload || full;
+  $("drive-upload").title = full ? "This server's drives are full" : view.can_upload ? "Share a file from this computer" : "You can't upload files here";
+  const list = $("drive-list");
+  list.replaceChildren();
+  const here = driveChildren(items, driveUi.folder);
+  if (!here.length) {
+    const empty = el("div", "drive-empty");
+    empty.appendChild(svgIcon("folder", 32));
+    empty.appendChild(el("span", null, works ? (driveUi.folder ? "This folder is empty" : "Nothing here yet. Upload a file or make a folder to get started.") : "Open this channel in the desktop app to see its files."));
+    list.appendChild(empty);
+    return;
+  }
+  for (const item of here) list.appendChild(driveRow(item, items));
+}
+
+function driveRow(item, items) {
+  const row = el("div", "drive-row" + (item.folder ? " folder" : "") + (driveUnavailable(item) ? " away" : ""));
+  row.setAttribute("role", "listitem");
+  row.dataset.item = item.id;
+  if (driveUi.busy.has(item.id)) row.style.setProperty("--drive-progress", String(driveUi.busy.get(item.id)));
+  const icon = el("span", "drive-row-icon");
+  icon.appendChild(svgIcon(item.folder ? "folder" : "uploadFile", 20));
+  const main = el(item.folder ? "button" : "div", "drive-row-main");
+  if (item.folder) {
+    main.type = "button";
+    main.onclick = () => openDriveFolder(item.id);
+  }
+  main.appendChild(el("span", "drive-row-name", item.name));
+  const meta = item.folder ? driveKeptLabel(item, items) : `${driveSize(item.size)} · ${item.by_name}`;
+  main.appendChild(el("span", "drive-row-meta", meta));
+  row.append(icon, main);
+  row.appendChild(el("span", "drive-row-kept", item.folder ? "" : driveKeptLabel(item, items)));
+  const actions = el("div", "drive-row-actions");
+  const action = (name, title, run, extra = "") => {
+    const button = el("button", "icon-btn drive-action" + extra);
+    button.type = "button";
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    button.appendChild(svgIcon(name, 18));
+    button.onclick = run;
+    actions.appendChild(button);
+    return button;
+  };
+  if (!item.folder) {
+    const download = action("download", item.kept_here ? "Save a copy" : "Download", () => downloadDriveItem(item));
+    download.disabled = driveUnavailable(item) || driveUi.busy.has(item.id);
+    if (driveUi.busy.has(item.id)) download.classList.add("busy");
+    if (item.kept_here) action("close", "Stop keeping this file", () => stopKeepingDriveItem(item));
+  }
+  if (item.can_edit) {
+    action("pencil", "Rename or move", () => openDriveItemDialog("edit", item));
+    action("trash", "Remove", () => openDriveItemDialog("remove", item), " danger");
+  }
+  row.appendChild(actions);
+  return row;
+}
+
+function openDriveFolder(id) {
+  driveUi.folder = id;
+  renderDrive();
+}
+
+function openDriveItemDialog(mode, item = null) {
+  const view = driveUi.view;
+  if (!view) return;
+  driveUi.dialog = { mode, item };
+  const titles = { folder: "New folder", edit: `Change ${item ? item.name : ""}`, remove: `Remove ${item ? item.name : ""}?` };
+  $("drive-item-title").textContent = titles[mode];
+  const naming = mode !== "remove";
+  $("drive-item-name").closest("label").classList.toggle("hidden", !naming);
+  $("drive-item-text").classList.toggle("hidden", naming);
+  $("drive-item-name").value = mode === "edit" ? item.name : "";
+  const where = $("drive-item-where");
+  where.replaceChildren();
+  $("drive-item-where-row").classList.toggle("hidden", mode !== "edit");
+  if (mode === "edit") {
+    for (const target of driveMoveTargets(view.items, item, driveRootName())) {
+      const option = el("option", null, target.label);
+      option.value = target.id || "";
+      option.selected = (target.id || null) === (item.parent || null);
+      where.appendChild(option);
+    }
+  }
+  if (mode === "remove") {
+    const inside = item.folder ? " and everything in it" : "";
+    const kept = !item.folder && item.kept_here ? " Your own copy stays where you saved it, but this device stops sharing it." : "";
+    $("drive-item-text").textContent = `This removes ${item.name}${inside} from the drive for everyone.${kept}`;
+  }
+  const save = $("drive-item-save");
+  save.textContent = mode === "remove" ? "Remove" : mode === "folder" ? "Create" : "Save";
+  save.classList.toggle("btn-danger", mode === "remove");
+  save.classList.toggle("btn-primary", mode !== "remove");
+  syncDriveItemDialog();
+  showModal("modal-drive-item");
+  if (naming) $("drive-item-name").focus();
+}
+
+function syncDriveItemDialog() {
+  const dialog = driveUi.dialog;
+  if (!dialog) return;
+  if (dialog.mode === "remove") {
+    $("drive-item-save").disabled = false;
+    return;
+  }
+  const name = driveCleanName($("drive-item-name").value);
+  const where = $("drive-item-where").value || null;
+  const same = dialog.mode === "edit" && name === dialog.item.name && where === (dialog.item.parent || null);
+  $("drive-item-save").disabled = !name || same;
+}
+
+async function saveDriveItemDialog() {
+  const dialog = driveUi.dialog;
+  const server = state.currentServer;
+  if (!dialog || !server || $("drive-item-save").disabled) return;
+  try {
+    if (dialog.mode === "folder") {
+      await invoke("drive_new_folder", { serverId: server.id, channelId: driveUi.channel, parentId: driveUi.folder, name: driveCleanName($("drive-item-name").value) });
+    } else if (dialog.mode === "edit") {
+      await invoke("drive_rename", { serverId: server.id, itemId: dialog.item.id, name: driveCleanName($("drive-item-name").value), parentId: $("drive-item-where").value || null });
+    } else {
+      await invoke("drive_remove", { serverId: server.id, itemId: dialog.item.id });
+    }
+    hideModals();
+    driveUi.dialog = null;
+    await refreshDrive();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function refreshDrive() {
+  if (state.view === "server" && isDriveChannel(state.currentChannel)) await openDrive(state.currentChannel, false);
+}
+
+async function uploadToDrive() {
+  const server = state.currentServer;
+  if (!server || !driveUi.channel) return;
+  try {
+    const added = await invoke("drive_upload", { serverId: server.id, channelId: driveUi.channel, parentId: driveUi.folder });
+    if (added) toast("Shared. It stays available while this computer, or someone who downloads it, is online");
+    await refreshDrive();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function downloadDriveItem(item) {
+  const server = state.currentServer;
+  if (!server || driveUi.busy.has(item.id)) return;
+  driveUi.busy.set(item.id, 0);
+  renderDrive();
+  try {
+    const path = await invoke("drive_download", { serverId: server.id, itemId: item.id });
+    toast(path ? `Saved to ${path}. You now help keep it available` : "Download cancelled");
+  } catch (e) {
+    toast(String(e));
+  } finally {
+    driveUi.busy.delete(item.id);
+  }
+  await refreshDrive();
+}
+
+function onDriveProgress({ item, done, total }) {
+  if (!driveUi.busy.has(item)) return;
+  driveUi.busy.set(item, total ? done / total : 0);
+  const row = [...document.querySelectorAll("#drive-list .drive-row")].find(r => r.dataset.item === item);
+  if (row) row.style.setProperty("--drive-progress", String(driveUi.busy.get(item)));
+}
+
+async function stopKeepingDriveItem(item) {
+  const server = state.currentServer;
+  if (!server) return;
+  try {
+    await invoke("drive_stop_keeping", { serverId: server.id, itemId: item.id });
+    toast(`This device no longer shares ${item.name}`);
+    await refreshDrive();
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireDrive() {
+  $("drive-new-folder").onclick = () => openDriveItemDialog("folder");
+  $("drive-upload").onclick = uploadToDrive;
+  $("drive-item-name").addEventListener("input", syncDriveItemDialog);
+  $("drive-item-where").addEventListener("change", syncDriveItemDialog);
+  $("drive-item-name").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveDriveItemDialog();
+  });
+  $("drive-item-save").onclick = saveDriveItemDialog;
+  $("drive-item-cancel").onclick = hideModals;
 }
 
 function buildGroupIntro(server) {
@@ -10121,9 +10444,10 @@ function syncRulesGate() {
   const gated = state.view === "server" && Boolean(state.currentServer && state.currentServer.needs_rules);
   $("rules-gate").classList.toggle("hidden", !gated);
   const where = { view: state.view, server: state.currentServer, channel: state.currentChannel };
-  const timedOut = gated ? null : timeoutLock(where);
-  const accessLock = gated || timedOut ? null : channelAccessLock(where);
-  const lock = gated ? null : timedOut || accessLock || composerLock(where);
+  const drive = state.view === "server" && isDriveChannel(state.currentChannel);
+  const timedOut = gated || drive ? null : timeoutLock(where);
+  const accessLock = gated || drive || timedOut ? null : channelAccessLock(where);
+  const lock = gated || drive ? null : timedOut || accessLock || composerLock(where);
   const aged = state.view === "server" && ageGated(state.currentChannel);
   $("announce-gate").classList.toggle("hidden", !lock || aged);
   if (lock) {
@@ -10137,7 +10461,7 @@ function syncRulesGate() {
       text.append(left, document.createTextNode("."));
     }
   }
-  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || aged || Boolean(lock) || isForumChannel(state.currentChannel));
+  if (state.view === "server") document.querySelector(".composer").classList.toggle("hidden", gated || aged || Boolean(lock) || isForumChannel(state.currentChannel) || drive);
   if (gated && !rulesPrompted.has(state.currentServer.id)) {
     rulesPrompted.add(state.currentServer.id);
     openServerWelcome("rules");
@@ -10814,7 +11138,7 @@ function channelSections(server, canCreate) {
   const catIds = new Set(categories.map(c => c.id));
   const loose = channels.filter(c => c.kind !== "category" && !(c.parent && catIds.has(c.parent)));
   const sections = [];
-  const looseText = loose.filter(holdsMessages).sort(byPos);
+  const looseText = loose.filter(c => holdsMessages(c) || isDriveChannel(c)).sort(byPos);
   const looseVoice = loose.filter(c => isVoiceKind(c.kind)).sort(byPos);
   if (looseText.length || canCreate) sections.push({ key: `${server.id}:text`, title: "Text Channels", kind: "text", parent: null, channels: looseText });
   if (looseVoice.length || canCreate) sections.push({ key: `${server.id}:voice`, title: "Voice Channels", kind: "voice", parent: null, channels: looseVoice });
@@ -17010,6 +17334,7 @@ async function selectChannel(channel) {
   syncPinButton();
   syncSlowMode();
   renderTypingStrip();
+  if (isDriveChannel(channel)) return openDrive(channel, switched);
   if (!channel || ageGated(channel)) return renderMessages([]);
   const messages = await fetchChannelMessages(channel);
   renderChannelLog(messages);
@@ -19748,7 +20073,9 @@ function wireEvents() {
   $("create-stage-icon").appendChild(svgIcon("stage", 22));
   $("create-announcement-icon").appendChild(svgIcon("megaphone", 22));
   $("create-forum-icon").appendChild(svgIcon("forum", 22));
+  $("create-drive-icon").appendChild(svgIcon("folder", 22));
   wireForum();
+  wireDrive();
   $("create-channel-name").addEventListener("input", syncCreateChannelName);
   $("create-channel-emoji").onclick = e => pickChannelLead(e.currentTarget, "create", syncCreateChannelName);
   $("create-channel-name").addEventListener("keydown", e => {
@@ -20054,6 +20381,7 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("event-reminder", () => playSound("message"));
     window.__TAURI__.event.listen("file-progress", event => onFileProgress(event.payload));
+    window.__TAURI__.event.listen("drive-progress", event => onDriveProgress(event.payload));
     window.__TAURI__.event.listen("safety-changed", async () => {
       await loadSafety();
       afterSafetyChange();
@@ -21854,6 +22182,7 @@ async function refreshCurrentServer() {
         $("chat-hash").replaceChildren(channelHeaderMark(still));
         syncRulesGate();
       }
+      if (isDriveChannel(still)) return openDrive(still, false);
       renderChannelLog(await fetchChannelMessages(still));
       return;
     }

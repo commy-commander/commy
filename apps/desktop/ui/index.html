@@ -327,6 +327,19 @@
         </div>
         <div class="forum-posts list" id="forum-posts"></div>
       </section>
+      <section class="drive hidden" id="drive-view" aria-label="Drive">
+        <div class="drive-toolbar">
+          <nav class="drive-crumbs" id="drive-crumbs" aria-label="Folder"></nav>
+          <span class="beta-tag" title="Drives are new and still changing">Beta</span>
+          <div class="drive-tools">
+            <button class="btn-secondary btn-small" id="drive-new-folder" type="button">New folder</button>
+            <button class="btn-primary btn-small" id="drive-upload" type="button">Upload</button>
+          </div>
+        </div>
+        <div class="drive-note" id="drive-note">Files here stay on the computers of the people who shared or downloaded them, and nothing is stored on a server. Anyone who downloads a file helps keep it available.</div>
+        <div class="drive-note drive-desktop-note hidden" id="drive-desktop-note">Drives keep files on members' computers, so they work in the Commy desktop app.</div>
+        <div class="drive-list" id="drive-list" role="list"></div>
+      </section>
       <div class="emoji-picker hidden" id="emoji-picker">
         <div class="picker-tabs" id="picker-tabs" role="tablist">
           <button type="button" role="tab" data-kind="emojis" class="active">Emoji</button>
@@ -1237,6 +1250,21 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-drive-item">
+      <h2 id="drive-item-title">New folder</h2>
+      <label class="field-label">Name
+        <input id="drive-item-name" type="text" maxlength="80" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="drive-item-text hidden" id="drive-item-text"></p>
+      <label class="field-label hidden" id="drive-item-where-row">Folder
+        <select id="drive-item-where"></select>
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="drive-item-cancel">Cancel</button>
+        <button class="btn-primary" id="drive-item-save" disabled>Save</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-create-channel">
       <h2>Create Channel</h2>
       <div class="field-label">Channel Type</div>
@@ -1264,6 +1292,11 @@
         <button class="kind-option" data-kind="forum">
           <span class="kind-icon" id="create-forum-icon"></span>
           <span class="kind-text"><strong>Forum</strong><span>Posts with a title and tags; replies gather under each post</span></span>
+          <span class="kind-radio"></span>
+        </button>
+        <button class="kind-option" data-kind="drive">
+          <span class="kind-icon" id="create-drive-icon"></span>
+          <span class="kind-text"><strong>Drive <span class="beta-tag">Beta</span></strong><span>Folders of files shared straight from members' computers. Desktop app only</span></span>
           <span class="kind-radio"></span>
         </button>
         <button class="kind-option" data-kind="category">
@@ -3103,6 +3136,7 @@
   <script src="scripts/voice-status.js"></script>
   <script src="scripts/voice-signal.js"></script>
   <script src="scripts/forum.js"></script>
+  <script src="scripts/drive-view.js"></script>
   <script src="scripts/stage.js"></script>
   <script src="scripts/ink-view.js"></script>
   <script src="scripts/emoji.js"></script>

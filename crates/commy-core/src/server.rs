@@ -13,6 +13,7 @@ pub enum ChannelKind {
     Category,
     Forum,
     Stage,
+    Drive,
 }
 
 impl ChannelKind {
@@ -196,6 +197,10 @@ impl Channel {
 
     pub fn is_stage(&self) -> bool {
         self.kind == ChannelKind::Stage
+    }
+
+    pub fn is_drive(&self) -> bool {
+        self.kind == ChannelKind::Drive
     }
 
     pub fn is_private(&self) -> bool {
@@ -407,6 +412,8 @@ pub struct Server {
     pub pet: Option<crate::pet::Pet>,
     #[serde(default)]
     pub pet_care: std::collections::BTreeMap<UserId, crate::pet::CareLog>,
+    #[serde(default)]
+    pub drive: Vec<crate::drive::DriveItem>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -496,6 +503,7 @@ impl Server {
             tip_jar: None,
             pet: None,
             pet_care: std::collections::BTreeMap::new(),
+            drive: Vec::new(),
         }
     }
 

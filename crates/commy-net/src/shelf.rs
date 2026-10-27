@@ -2,12 +2,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use iroh_blobs::api::blobs::{AddPathOptions, ExportMode, ExportOptions, ImportMode};
+use iroh_blobs::store::fs::options::Options;
 use iroh_blobs::store::fs::FsStore;
+use iroh_blobs::store::GcConfig;
 use iroh_blobs::{BlobFormat, BlobsProtocol, Hash};
+use futures_lite::StreamExt;
 
 pub const FILES_ALPN: &[u8] = b"commy/files/1";
 
 const PART_SUFFIX: &str = ".part";
+const FORGET_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct Shelf {
@@ -22,7 +26,9 @@ pub struct Shared {
 impl Shelf {
     pub async fn open(dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(dir).context("could not create the shared files folder")?;
-        let store = FsStore::load(dir).await.context("could not open the shared files list")?;
+        let mut options = Options::new(dir);
+        options.gc = Some(GcConfig { interval: FORGET_AFTER, add_protected: None });
+        let store = FsStore::load_with_opts(dir.join("blobs.db"), options).await.context("could not open the shared files list")?;
         Ok(Self { store })
     }
 
@@ -44,6 +50,17 @@ impl Shelf {
             iroh_blobs::api::blobs::BlobStatus::Complete { size } => Some(Shared { size }),
             _ => None,
         }
+    }
+
+    pub async fn forget(&self, hash: &str) -> Result<u64> {
+        let hash: Hash = hash.parse().context("invalid file hash")?;
+        let tags = self.store.tags().list().await.context("could not read the shared files list")?;
+        let names: Vec<_> = tags.filter_map(|tag| tag.ok().filter(|t| t.hash == hash).map(|t| t.name)).collect().await;
+        let mut gone = 0;
+        for name in names {
+            gone += self.store.tags().delete(name).await.context("could not stop sharing that file")?;
+        }
+        Ok(gone)
     }
 
     pub async fn copy_out(&self, hash: &str, target: &Path) -> Result<u64> {
@@ -96,6 +113,9 @@ mod tests {
         assert_eq!(reopened.copy_out(&hash, &copy).await.unwrap(), bytes.len() as u64);
         assert_eq!(std::fs::read(&copy).unwrap(), bytes);
         assert_eq!(reopened.shared(&crate::node::blob_hash(b"other")).await, None);
+        assert_eq!(reopened.forget(&hash).await.unwrap(), 1);
+        assert_eq!(reopened.forget(&hash).await.unwrap(), 0);
+        assert!(file.exists(), "the original file stays where it was");
         reopened.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -47,7 +47,8 @@ pub fn channel_kind(raw: &str) -> Act<ChannelKind> {
         "announcement" => Ok(ChannelKind::Announcement),
         "forum" => Ok(ChannelKind::Forum),
         "stage" => Ok(ChannelKind::Stage),
-        _ => Err("channel kind must be text, voice, stage, announcement or forum".into()),
+        "drive" => Ok(ChannelKind::Drive),
+        _ => Err("channel kind must be text, voice, stage, announcement, forum or drive".into()),
     }
 }
 

@@ -37,6 +37,7 @@ mod persist;
 mod picker;
 mod pictures;
 mod pins;
+mod drive;
 mod profile_images;
 mod push_wake;
 mod read_state;
@@ -7989,6 +7990,13 @@ pub fn run() {
             read_state::read_state_mark_read,
             read_state::read_state_sync,
             pins::pins_load,
+            drive::drive_view,
+            drive::drive_new_folder,
+            drive::drive_rename,
+            drive::drive_remove,
+            drive::drive_stop_keeping,
+            drive::drive_upload,
+            drive::drive_download,
             pins::pin_dm,
             pins::pin_channel,
             saved::saved_list,

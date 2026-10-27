@@ -44,6 +44,7 @@ id_type!(ChannelId);
 id_type!(MessageId);
 id_type!(RoleId);
 id_type!(TagId);
+id_type!(DriveId);
 
 pub const CALL_SERVER: ServerId = ServerId(Uuid::nil());
 
