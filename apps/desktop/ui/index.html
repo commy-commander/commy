@@ -1836,7 +1836,7 @@
             <div class="setting-row">
               <div>
                 <div class="setting-title">Position</div>
-                <div class="setting-sub">Pick the corner of your screen. It moves as soon as you choose.</div>
+                <div class="setting-sub">Pick a corner to keep the voice list and chat together. It moves as soon as you choose.</div>
               </div>
               <div class="corner-picker" id="overlay-corner" role="radiogroup" aria-label="Overlay position">
                 <button class="corner-opt" data-corner="top-left" role="radio" aria-label="Top left" title="Top left"></button>
@@ -1844,6 +1844,19 @@
                 <button class="corner-opt" data-corner="bottom-left" role="radio" aria-label="Bottom left" title="Bottom left"></button>
                 <button class="corner-opt" data-corner="bottom-right" role="radio" aria-label="Bottom right" title="Bottom right"></button>
               </div>
+            </div>
+            <div class="overlay-layout">
+              <div class="setting-title">Your layout</div>
+              <div class="setting-sub">Drag the voice list and chat anywhere on your screen. They snap to the edges and the middle, and arrow keys nudge the one you picked.</div>
+              <div class="overlay-map" id="overlay-map">
+                <div class="overlay-map-box" data-part="voice" tabindex="0" role="slider" aria-label="Voice list position"><span>Voice</span></div>
+                <div class="overlay-map-box" data-part="chat" tabindex="0" role="slider" aria-label="Chat position"><span>Chat</span></div>
+              </div>
+              <div class="overlay-layout-save">
+                <input id="overlay-layout-name" type="text" maxlength="32" autocomplete="off" placeholder="Name this layout" />
+                <button class="btn-secondary btn-small" id="overlay-layout-save">Save Layout</button>
+              </div>
+              <div class="overlay-layout-list" id="overlay-layout-list"></div>
             </div>
             <div class="slider-row">
               <div class="setting-title">Opacity <span id="overlay-opacity-label">90%</span></div>
@@ -2981,6 +2994,7 @@
   <div id="toast" class="toast hidden"></div>
   <script src="scripts/markdown.js"></script>
   <script src="scripts/server-tags.js"></script>
+  <script src="scripts/overlay-view.js"></script>
   <script src="scripts/profile-look.js"></script>
   <script src="scripts/join-requests.js"></script>
   <script src="scripts/tip-jar.js"></script>

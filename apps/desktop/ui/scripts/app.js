@@ -1478,7 +1478,7 @@ async function mockInvoke(cmd, args = {}) {
       return { emojis: from("emojis_shareable", "emojis"), stickers: from("stickers_shareable", "stickers"), emoticons: from("emoticons_shareable", "emoticons") };
     }
     case "fetch_server_image": return (mock.serverImages || {})[args.image] || null;
-    case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, pictures_only: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11" });
+    case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, pictures_only: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11", layout: null, layouts: [] });
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
     case "overlay_hotkey_problems": return [];
     case "preview_overlay": return null;
@@ -8428,7 +8428,7 @@ async function loadOverlaySettings() {
 
 function emitToOverlay(event, payload) {
   if (!IS_TAURI || !overlaySettings || !overlaySettings.enabled) return;
-  window.__TAURI__.event.emitTo("overlay", event, payload).catch(() => {});
+  for (const label of ["overlay", OVERLAY_CHAT_LABEL]) window.__TAURI__.event.emitTo(label, event, payload).catch(() => {});
 }
 
 function overlayRoster() {
@@ -8478,7 +8478,7 @@ function renderOverlaySettings() {
   $("overlay-enabled").checked = s.enabled;
   $("overlay-options").classList.toggle("disabled", !s.enabled);
   for (const opt of document.querySelectorAll("#overlay-corner .corner-opt")) {
-    const on = opt.dataset.corner === s.corner;
+    const on = !s.layout && opt.dataset.corner === s.corner;
     opt.classList.toggle("selected", on);
     opt.setAttribute("aria-checked", String(on));
   }
@@ -8489,6 +8489,7 @@ function renderOverlaySettings() {
   $("overlay-opacity-label").textContent = `${$("overlay-opacity").value}%`;
   syncRangeFill($("overlay-opacity"));
   $("overlay-chat").checked = s.show_chat;
+  renderOverlayLayout();
   $("overlay-toggle-key").value = s.toggle_hotkey;
   $("overlay-chat-key").value = s.chat_hotkey;
   invoke("overlay_hotkey_problems").then(taken => {
@@ -8496,6 +8497,119 @@ function renderOverlaySettings() {
     warn.textContent = taken.length ? `${taken.join(" and ")} ${taken.length === 1 ? "is" : "are"} already used by another app. Pick a different combination.` : "";
     warn.classList.toggle("hidden", !taken.length);
   }).catch(() => {});
+}
+
+const OVERLAY_WINDOW = { width: 280, height: 420 };
+const OVERLAY_NUDGE = 0.05;
+
+function overlayScreen() {
+  const width = (typeof screen !== "undefined" && screen.availWidth) || 1920;
+  const height = (typeof screen !== "undefined" && screen.availHeight) || 1040;
+  return { width, height, w: Math.min(1, OVERLAY_WINDOW.width / width), h: Math.min(1, OVERLAY_WINDOW.height / height) };
+}
+
+function overlayShownLayout() {
+  const s = overlaySettings;
+  return (s && s.layout) || overlayStartLayout(s && s.corner);
+}
+
+function renderOverlayLayout() {
+  const s = overlaySettings;
+  const map = $("overlay-map");
+  const area = overlayScreen();
+  map.style.setProperty("--screen-ratio", `${area.width} / ${area.height}`);
+  map.classList.toggle("together", !s.layout);
+  const layout = overlayShownLayout();
+  for (const box of map.querySelectorAll(".overlay-map-box")) {
+    const spot = layout[box.dataset.part];
+    box.style.setProperty("--x", String(spot.x));
+    box.style.setProperty("--y", String(spot.y));
+    box.style.setProperty("--w", `${area.w * 100}%`);
+    box.style.setProperty("--h", `${area.h * 100}%`);
+    box.setAttribute("aria-valuetext", `${Math.round(spot.x * 100)}% across, ${Math.round(spot.y * 100)}% down`);
+  }
+  map.querySelector('[data-part="voice"] span').textContent = s.layout ? "Voice" : (s.show_chat ? "Voice + chat" : "Voice");
+  const list = $("overlay-layout-list");
+  list.replaceChildren();
+  for (const saved of s.layouts || []) {
+    const chip = el("span", "overlay-layout-chip" + (overlaySameLayout(saved, s.layout) ? " selected" : ""));
+    const use = el("button", null, saved.name);
+    use.type = "button";
+    use.title = `Use ${saved.name}`;
+    use.onclick = () => moveOverlayTo({ voice: saved.voice, chat: saved.chat });
+    const remove = el("button", "remove", "\u00d7");
+    remove.type = "button";
+    remove.title = `Forget ${saved.name}`;
+    remove.setAttribute("aria-label", `Forget ${saved.name}`);
+    remove.onclick = () => saveOverlaySettings({ layouts: s.layouts.filter(l => l !== saved) });
+    chip.append(use, remove);
+    list.appendChild(chip);
+  }
+}
+
+async function moveOverlayTo(layout) {
+  await saveOverlaySettings({ layout });
+  if (overlaySettings && overlaySettings.enabled) invoke("preview_overlay").catch(() => {});
+}
+
+function wireOverlayLayout() {
+  const map = $("overlay-map");
+  let drag = null;
+  const spotAt = e => {
+    const rect = map.getBoundingClientRect();
+    const area = overlayScreen();
+    const roomX = rect.width * (1 - area.w);
+    const roomY = rect.height * (1 - area.h);
+    return {
+      x: roomX > 0 ? (e.clientX - drag.dx - rect.left) / roomX : 0,
+      y: roomY > 0 ? (e.clientY - drag.dy - rect.top) / roomY : 0,
+    };
+  };
+  for (const box of map.querySelectorAll(".overlay-map-box")) {
+    box.addEventListener("pointerdown", e => {
+      if (!overlaySettings || !overlaySettings.enabled) return;
+      const at = box.getBoundingClientRect();
+      drag = { box, part: box.dataset.part, layout: structuredClone(overlayShownLayout()), dx: e.clientX - at.left, dy: e.clientY - at.top };
+      box.setPointerCapture(e.pointerId);
+      box.classList.add("dragging");
+    });
+    box.addEventListener("pointermove", e => {
+      if (!drag || drag.box !== box) return;
+      const spot = spotAt(e);
+      drag.layout[drag.part] = { x: overlaySnap(spot.x), y: overlaySnap(spot.y) };
+      box.style.setProperty("--x", String(drag.layout[drag.part].x));
+      box.style.setProperty("--y", String(drag.layout[drag.part].y));
+    });
+    const finish = () => {
+      if (!drag || drag.box !== box) return;
+      const layout = drag.layout;
+      drag = null;
+      box.classList.remove("dragging");
+      if (!overlaySameLayout(layout, overlaySettings.layout)) moveOverlayTo(layout);
+    };
+    box.addEventListener("pointerup", finish);
+    box.addEventListener("pointercancel", finish);
+    box.addEventListener("keydown", e => {
+      const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+      if (!step || !overlaySettings || !overlaySettings.enabled) return;
+      e.preventDefault();
+      const layout = structuredClone(overlayShownLayout());
+      const spot = layout[box.dataset.part];
+      layout[box.dataset.part] = { x: overlaySnap(spot.x + step[0] * OVERLAY_NUDGE), y: overlaySnap(spot.y + step[1] * OVERLAY_NUDGE) };
+      moveOverlayTo(layout);
+    });
+  }
+  const save = () => {
+    const name = overlayLayoutName($("overlay-layout-name").value);
+    if (!overlaySettings.layout) return toast("Drag the voice list or chat first");
+    if (!name) return toast("Give the layout a name");
+    $("overlay-layout-name").value = "";
+    saveOverlaySettings({ layouts: overlaySaveLayout(overlaySettings.layouts, name, overlaySettings.layout) }).then(() => toast(`Saved ${name}`));
+  };
+  $("overlay-layout-save").addEventListener("click", save);
+  $("overlay-layout-name").addEventListener("keydown", e => {
+    if (e.key === "Enter") save();
+  });
 }
 
 async function saveOverlaySettings(changes) {
@@ -18222,7 +18336,7 @@ function wireEvents() {
   $("overlay-enabled").addEventListener("change", e => saveOverlaySettings({ enabled: e.target.checked }));
   $("overlay-corner").addEventListener("click", e => {
     const opt = e.target.closest(".corner-opt");
-    if (opt) saveOverlaySettings({ corner: opt.dataset.corner });
+    if (opt) saveOverlaySettings({ corner: opt.dataset.corner, layout: null });
   });
   $("overlay-test").addEventListener("click", async () => {
     await saveOverlaySettings({});
@@ -18236,6 +18350,7 @@ function wireEvents() {
   });
   $("overlay-opacity").addEventListener("change", e => saveOverlaySettings({ opacity: Number(e.target.value) / 100 }));
   $("overlay-chat").addEventListener("change", e => saveOverlaySettings({ show_chat: e.target.checked }));
+  wireOverlayLayout();
   wireHotkeyInput($("overlay-toggle-key"), combo => saveOverlaySettings({ toggle_hotkey: combo }));
   wireHotkeyInput($("overlay-chat-key"), combo => saveOverlaySettings({ chat_hotkey: combo }));
   wireVoiceInputSettings();

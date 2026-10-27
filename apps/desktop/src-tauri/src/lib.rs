@@ -4182,7 +4182,7 @@ fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
         overlay::refresh(handle);
     } else if hotkey_id(&settings.chat_hotkey) == Some(id) {
         let settings = app.update_voice(|voice| voice.overlay.show_chat = !voice.overlay.show_chat).overlay;
-        let _ = handle.emit_to(overlay::LABEL, "overlay-config", &settings);
+        overlay::refresh(handle);
         let _ = handle.emit("overlay-settings-changed", &settings);
     }
 }

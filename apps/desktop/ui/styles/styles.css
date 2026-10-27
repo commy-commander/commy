@@ -4800,6 +4800,55 @@ html[data-reduced-motion] .server-tag.st-fx-shine::after { display: none; }
 .corner-opt[data-corner="bottom-left"] { bottom: 5px; left: 5px; }
 .corner-opt[data-corner="bottom-right"] { bottom: 5px; right: 5px; }
 .hotkey-warning { color: var(--yellow); margin-top: 10px; }
+.overlay-layout { margin-top: 16px; display: flex; flex-direction: column; gap: 6px; }
+.overlay-map {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: var(--screen-ratio, 16 / 9);
+  margin-top: 6px;
+  border: 2px solid var(--bg-active);
+  border-radius: 10px;
+  background: var(--bg-darkest);
+  box-sizing: border-box;
+  touch-action: none;
+}
+.overlay-map-box {
+  position: absolute;
+  left: calc(var(--x) * (100% - var(--w)));
+  top: calc(var(--y) * (100% - var(--h)));
+  width: var(--w);
+  height: var(--h);
+  min-width: 40px;
+  min-height: 28px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg-active);
+  color: var(--ink-strong);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+  user-select: none;
+  outline: none;
+}
+.overlay-map-box[data-part="voice"] { background: var(--accent); color: var(--accent-ink); }
+.overlay-map-box:focus-visible { box-shadow: 0 0 0 2px var(--ink-strong); }
+.overlay-map-box.dragging { cursor: grabbing; opacity: .85; }
+.overlay-map.together .overlay-map-box[data-part="chat"] { display: none; }
+.overlay-layout-save { display: flex; gap: 8px; margin-top: 6px; max-width: 420px; }
+.overlay-layout-save input { flex: 1; min-width: 0; }
+.overlay-layout-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.overlay-layout-chip { display: inline-flex; align-items: center; border-radius: 999px; background: var(--bg-active); overflow: hidden; }
+.overlay-layout-chip button { border: none; background: none; color: var(--text-normal); font: inherit; font-size: 13px; padding: 5px 4px 5px 12px; cursor: pointer; }
+.overlay-layout-chip button.remove { padding: 5px 10px 5px 6px; color: var(--text-muted); }
+.overlay-layout-chip button.remove:hover { color: var(--red); }
+.overlay-layout-chip.selected { background: var(--accent); }
+.overlay-layout-chip.selected button { color: var(--accent-ink); }
 .input-mode button { padding: 9px 8px; }
 .voice-filters { margin: 10px 0 8px; }
 .voice-filters button { padding: 8px 4px; }
