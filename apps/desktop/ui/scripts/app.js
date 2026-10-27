@@ -1192,6 +1192,10 @@ async function mockInvoke(cmd, args = {}) {
     case "voice_pack_status": return mock.voicePack || { available: false, voices: [] };
     case "voice_pack_download": return null;
     case "voice_pack_file": return fetch(`${mock.voicePackFiles}/${args.name}`).then(r => r.arrayBuffer());
+    case "speech_play":
+      mock.spokenSamples = (mock.spokenSamples || 0) + args.byteLength / 4;
+      return null;
+    case "speech_stop": return null;
     case "start_dm_call": {
       const dm = mock.dms[args.userId];
       if (!dm) throw "no such conversation";
@@ -4737,7 +4741,7 @@ function saveTtsPrefs(prefs) {
 }
 
 const speech = { native: false, ready: false, voices: [], loading: null, utterance: null };
-const piper = { pack: null, packLoad: null, runtime: null, voice: null, ctx: null, sources: [], token: 0, downloads: new Map(), progress: new Map() };
+const piper = { pack: null, packLoad: null, runtime: null, voice: null, token: 0, downloads: new Map(), progress: new Map() };
 const PIPER_RUNTIME_FILES = ["ort-wasm-simd-threaded.wasm", "piper_phonemize.wasm", "piper_phonemize.data"];
 
 function windowSpeech() {
@@ -4876,42 +4880,32 @@ function piperFeeds(ids, config, scales) {
   return feeds;
 }
 
+function playSpeech(samples, rate, append) {
+  return invoke("speech_play", new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength), {
+    headers: { "x-commy-rate": String(rate), "x-commy-append": append ? "1" : "0" },
+  });
+}
+
 async function speakBuiltIn(text, id, prefs) {
   stopBuiltIn();
   const token = piper.token;
   const runtime = await piperRuntime();
   const { session, config } = await piperVoice(id);
   const timing = piperTiming(config.inference, prefs.rate, prefs.pitch);
-  piper.ctx ||= new AudioContext();
-  const ctx = piper.ctx;
-  if (ctx.state === "suspended") await ctx.resume().catch(() => {});
-  let at = 0;
+  let append = false;
   for (const chunk of speechChunks(text)) {
     const ids = await piperPhonemes(runtime, chunk, config.espeak.voice);
     if (token !== piper.token) return;
     if (!ids.length) continue;
     const { output } = await session.run(piperFeeds(ids, config, timing.scales));
     if (token !== piper.token) return;
-    const buffer = ctx.createBuffer(1, output.data.length, config.audio.sample_rate);
-    buffer.copyToChannel(output.data, 0);
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.playbackRate.value = timing.playbackRate;
-    source.connect(ctx.destination);
-    source.onended = () => { piper.sources = piper.sources.filter(s => s !== source); };
-    at = Math.max(at, ctx.currentTime);
-    source.start(at);
-    at += buffer.duration / timing.playbackRate;
-    piper.sources.push(source);
+    await playSpeech(output.data, config.audio.sample_rate * timing.playbackRate, append);
+    append = true;
   }
 }
 
 function stopBuiltIn() {
   piper.token += 1;
-  for (const source of piper.sources) {
-    try { source.stop(); } catch {}
-  }
-  piper.sources = [];
 }
 
 function downloadBuiltIn(voice) {
@@ -4938,7 +4932,7 @@ function onVoicePackProgress(progress) {
 function stopSpeaking() {
   speech.utterance = null;
   stopBuiltIn();
-  if (speech.native) invoke("speech_stop").catch(() => {});
+  if (speech.native || piper.pack) invoke("speech_stop").catch(() => {});
   if (windowSpeech()) window.speechSynthesis.cancel();
 }
 

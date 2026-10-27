@@ -141,6 +141,16 @@ pub struct StreamHandle {
 pub type InputHandle = StreamHandle;
 pub type OutputHandle = StreamHandle;
 
+pub trait FrameSource: Send + 'static {
+    fn next_frame(&mut self) -> Vec<i16>;
+}
+
+impl FrameSource for Mixer {
+    fn next_frame(&mut self) -> Vec<i16> {
+        Mixer::next_frame(self)
+    }
+}
+
 impl Drop for StreamHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -473,8 +483,8 @@ fn open_input_stream(
     Ok(stream)
 }
 
-pub fn start_playback(
-    mixer: Arc<Mutex<Mixer>>,
+pub fn start_playback<S: FrameSource>(
+    mixer: Arc<Mutex<S>>,
     device_name: Option<String>,
     far_end: Option<FarEndSink>,
 ) -> Result<OutputHandle> {
