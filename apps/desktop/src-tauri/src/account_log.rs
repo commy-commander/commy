@@ -9,6 +9,7 @@ use commy_core::{IdentityKey, ServerId, UserId, UserProfile};
 use commy_net::entry_list::EntryList;
 use commy_net::sync_streams;
 use commy_sync::{AppendError, StreamId, SyncEvent};
+use commy_view::safety::Relation;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -53,6 +54,15 @@ pub enum Record {
         #[serde(default)]
         owner: Option<(UserId, IdentityKey)>,
     },
+    Relation {
+        user: UserId,
+        relation: Relation,
+        at: i64,
+        #[serde(default)]
+        note: Option<String>,
+        #[serde(default)]
+        profile: Option<UserProfile>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -88,6 +98,10 @@ pub struct SyncState {
     #[serde(default)]
     pub owners: BTreeMap<ServerId, (UserId, IdentityKey)>,
     #[serde(default)]
+    pub relations: BTreeMap<UserId, i64>,
+    #[serde(default)]
+    pub relations_seeded: bool,
+    #[serde(default)]
     pub outbox: Vec<Queued>,
     #[serde(default)]
     pub next_id: u64,
@@ -102,6 +116,7 @@ pub enum Change {
     Prefs(BTreeMap<String, PrefPiece>),
     Partner(Box<UserProfile>, bool),
     CommunityKey(ServerId),
+    Relation { user: UserId, relation: Relation, note: Option<String>, profile: Option<Box<UserProfile>> },
 }
 
 impl SyncState {
@@ -204,6 +219,14 @@ impl SyncState {
                     self.community.insert(server, (key, at));
                 }
                 if changed { Change::CommunityKey(server) } else { Change::Nothing }
+            }
+            Record::Relation { user, relation, at, note, profile } => {
+                if self.relations.get(&user).is_some_and(|seen| at <= *seen) {
+                    return Change::Nothing;
+                }
+                self.relations.insert(user, at);
+                let profile = profile.filter(|p| p.id == user).map(Box::new);
+                Change::Relation { user, relation, note, profile }
             }
             _ => Change::Nothing,
         }
@@ -434,6 +457,7 @@ async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver
                 if first {
                     seed(&handle);
                 }
+                seed_relations(&app);
                 if first || was == Some(false) {
                     schedule_servers(&handle);
                     flush_soon();
@@ -472,7 +496,79 @@ fn apply(handle: &AppHandle, change: Change) {
             crate::community_sync::adopt_owner(handle, server);
             crate::community_sync::refresh_soon(handle);
         }
+        Change::Relation { user, relation, note, profile } => adopt_relation(handle, user, relation, note, profile.map(|p| *p)),
     }
+}
+
+fn adopt_relation(handle: &AppHandle, user: UserId, relation: Relation, note: Option<String>, profile: Option<UserProfile>) {
+    let app = handle.state::<App>();
+    if app.profile.lock().unwrap().as_ref().map(|p| p.id) == Some(user) {
+        return;
+    }
+    if let Some(profile) = profile {
+        let remembered = {
+            let mut dms = app.dms.lock().unwrap();
+            !dms.contacts.contains_key(&user) && dms.remember_contact(profile)
+        };
+        if remembered {
+            app.persist_dms();
+        }
+    }
+    let (changed, block_changed) = {
+        let mut safety = app.safety.lock().unwrap();
+        let was_blocked = safety.is_blocked(user);
+        let changed = safety.set_relation(user, relation, note);
+        (changed, was_blocked != safety.is_blocked(user))
+    };
+    if !changed {
+        return;
+    }
+    app.persist_safety();
+    let _ = handle.emit("friends-changed", serde_json::json!({ "user": user.to_string() }));
+    if block_changed {
+        let _ = handle.emit("safety-changed", ());
+    }
+}
+
+fn relation_record(app: &App, user: UserId, at: i64) -> Record {
+    let (relation, note) = {
+        let safety = app.safety.lock().unwrap();
+        (safety.relation(user), safety.friend_notes.get(&user).cloned())
+    };
+    let profile = crate::dm_sync::partner_profile(app, user).map(|mut p| {
+        p.activity = None;
+        p.activity_cover = None;
+        p.activity_since = None;
+        p
+    });
+    Record::Relation { user, relation, at, note, profile }
+}
+
+fn seed_relations(app: &App) {
+    if with_state(app, |state| state.relations_seeded).unwrap_or(true) {
+        return;
+    }
+    let mine: Vec<UserId> = {
+        let safety = app.safety.lock().unwrap();
+        safety.friends.iter().chain(&safety.friend_out).chain(&safety.friend_in).chain(&safety.blocked).copied().collect()
+    };
+    let unsynced: Vec<UserId> =
+        with_state(app, |state| mine.into_iter().filter(|user| !state.relations.contains_key(user)).collect()).unwrap_or_default();
+    let now = now_ms();
+    let records: Vec<Record> = unsynced.into_iter().map(|user| relation_record(app, user, now)).collect();
+    with_state(app, |state| {
+        for record in records {
+            state.fold(record.clone());
+            state.enqueue(record, None);
+        }
+        state.relations_seeded = true;
+    });
+    persist(app);
+    flush_soon();
+}
+
+pub fn note_relation(app: &App, user: UserId) {
+    queue(app, relation_record(app, user, now_ms()));
 }
 
 fn seed(handle: &AppHandle) {
@@ -838,6 +934,23 @@ mod tests {
         let Change::Prefs(taken) = state.fold(set("notify.level", "mentions", 6)) else { panic!("newer wins") };
         assert_eq!(taken["notify.level"].value, "mentions");
         assert_eq!(state.fold(set("notify.level", "mentions", 6)), Change::Nothing);
+    }
+
+    #[test]
+    fn friends_and_blocks_follow_the_latest_change_on_any_device() {
+        let mut state = SyncState::default();
+        let user = UserId::new();
+        let set = |relation, at| Record::Relation { user, relation, at, note: None, profile: None };
+        assert!(matches!(state.fold(set(Relation::Outgoing, 5)), Change::Relation { relation: Relation::Outgoing, .. }));
+        assert_eq!(state.fold(set(Relation::None, 4)), Change::Nothing);
+        assert!(matches!(state.fold(set(Relation::Friend, 9)), Change::Relation { relation: Relation::Friend, .. }));
+        assert_eq!(state.fold(set(Relation::Friend, 9)), Change::Nothing);
+        let stranger = UserProfile::new("someone else");
+        let mismatched = Record::Relation { user, relation: Relation::Blocked, at: 10, note: None, profile: Some(stranger) };
+        let Change::Relation { profile, .. } = state.fold(mismatched) else { panic!("newer wins") };
+        assert!(profile.is_none());
+        let json = serde_json::to_string(&set(Relation::Incoming, 11)).unwrap();
+        assert!(json.contains(r#""k":"relation""#) && json.contains(r#""relation":"incoming""#));
     }
 
     #[test]

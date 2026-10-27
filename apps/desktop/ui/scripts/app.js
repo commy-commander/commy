@@ -960,6 +960,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
     case "set_echo_cancellation": mock.voice.echo_cancellation = args.enabled; return mock.voice;
     case "set_auto_level": mock.voice.auto_level = args.enabled; return mock.voice;
+    case "press_talk": setTimeout(() => setTalking(args.pressed), 0); return null;
     case "set_input_mode": Object.assign(mock.voice, { input_mode: args.mode, talk_key: args.talkKey, talk_release_ms: args.releaseMs }); return mock.voice;
     case "set_voice_hotkeys": Object.assign(mock.voice, { mute_hotkey: args.mute, deafen_hotkey: args.deafen }); return mock.voice;
     case "set_sensitivity": Object.assign(mock.voice, { auto_sensitivity: args.auto, sensitivity_db: args.thresholdDb }); return mock.voice;
@@ -1515,7 +1516,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
       return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
-        { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
+        { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, lost_packets: Math.floor((mock.sent = (mock.sent || 0) + 400) / 1000), sent_packets: mock.sent, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
     case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false, unclaimed_profile: null, needs_account_folder: /[?&]claim\b/.test(location.search), others: [{ id: "u2", name: "Nova", email: "nova@example.test", server: "https://commy.chat", server_host: "commy.chat" }], max_accounts: 5 });
@@ -1678,7 +1679,7 @@ async function mockInvoke(cmd, args = {}) {
     case "get_awaited": return (mock.servers[args.serverId] || {}).awaited || 0;
     case "set_close_to_tray": mock.voice.close_to_tray = args.enabled; return mock.voice;
     case "autostart_allowed": return true;
-    case "tray_prompt_due": return !mock.voice.tray_prompt_seen;
+    case "tray_prompt_due": return !mock.voice.tray_prompt_seen && !new URLSearchParams(location.search).has("mobile");
     case "finish_tray_prompt": mock.autostart = args.autostart; mock.voice.close_to_tray = args.closeToTray; mock.voice.tray_prompt_seen = true; return mock.voice;
     case "get_autostart": return !!mock.autostart;
     case "debug_log_status": return { verbose: !!mock.verboseLogs, saving: true };
@@ -4438,6 +4439,12 @@ function detectEmojiSupport() {
     if (renders("\u{1F600}") && !renders("\u{1F1FA}\u{1F1F8}")) document.documentElement.classList.add("emoji-flag-font");
   } catch {}
   return emojiSupport;
+}
+
+async function prepareEmojiFonts() {
+  detectEmojiSupport();
+  if (!document.documentElement.classList.contains("emoji-flag-font") || !document.fonts) return;
+  await document.fonts.load('1em "Commy Flags"', "\u{1F1EE}\u{1F1F9}").catch(() => {});
 }
 
 function usableEmojiRows() {
@@ -7929,6 +7936,7 @@ async function saveVoiceInput(command, args) {
     toast(String(e));
   }
   renderVoiceInputSettings();
+  renderTalkButton();
 }
 
 function wireVoiceInputSettings() {
@@ -7984,7 +7992,29 @@ function stopMicMeter() {
 function setTalking(talking) {
   state.talking = talking;
   $("mute-btn").classList.toggle("talking", talking && !state.voice.muted);
+  $("vp-talk").classList.toggle("on", talking);
+  $("vp-talk").textContent = talking ? "Talking" : "Hold to talk";
   renderUserPanel();
+}
+
+function renderTalkButton() {
+  const shown = document.body.classList.contains("mobile-app") && Boolean(state.voiceChannelId) && voiceInputState(state.voice).mode === "push_to_talk";
+  $("vp-talk").classList.toggle("hidden", !shown);
+}
+
+function wireTalkButton() {
+  const btn = $("vp-talk");
+  let held = false;
+  const press = down => {
+    if (held === down) return;
+    held = down;
+    invoke("press_talk", { pressed: down }).catch(e => toast(String(e)));
+  };
+  btn.addEventListener("pointerdown", e => {
+    btn.setPointerCapture(e.pointerId);
+    press(true);
+  });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) btn.addEventListener(type, () => press(false));
 }
 
 function hotkeyFromEvent(e) {
@@ -8035,12 +8065,7 @@ function wireHotkeyInput(input, onPick, { clearable = false } = {}) {
 let connTimer = null;
 let connLast = null;
 let connPick = null;
-
-function quality(rtt, loss) {
-  if (rtt > 250 || loss > 5) return "bad";
-  if (rtt > 120 || loss > 1) return "ok";
-  return "good";
-}
+const signalTracker = createSignalTracker();
 
 function formatRate(bytesPerSec) {
   const kbps = (bytesPerSec * 8) / 1000;
@@ -8055,6 +8080,7 @@ async function refreshConnPop() {
     closeConnPop();
     return;
   }
+  stats = { ...stats, links: signalTracker.read(stats.links) };
   const now = performance.now();
   const tx = stats.links.reduce((a, l) => a + l.tx_bytes, 0);
   const rx = stats.links.reduce((a, l) => a + l.rx_bytes, 0);
@@ -8076,7 +8102,7 @@ async function refreshConnPop() {
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-selected", String(link === current));
     tab.title = link.name;
-    tab.dataset.quality = quality(link.rtt_ms, link.loss_pct);
+    tab.dataset.quality = link.quality;
     tab.classList.toggle("active", link === current);
     tab.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
     tab.onclick = () => {
@@ -8090,7 +8116,7 @@ async function refreshConnPop() {
     const head = el("div", "conn-link-head");
     head.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
     head.appendChild(el("span", "conn-name", link.name));
-    const q = quality(link.rtt_ms, link.loss_pct);
+    const q = link.quality;
     head.appendChild(el("span", `conn-badge ${q}`, { good: "Good", ok: "Fair", bad: "Poor" }[q]));
     row.appendChild(head);
     const grid = el("div", "conn-grid");
@@ -8111,18 +8137,11 @@ async function refreshConnPop() {
   }
   if (!stats.links.length) list.appendChild(el("div", "conn-empty", "Nobody else is connected yet."));
   $("conn-foot").textContent = `Audio: ${stats.codec}, ${stats.bitrate_kbps} kbps per person`;
-  paintSignal(stats);
+  paintSignal(stats.links);
 }
 
-function worstQuality(links) {
-  return links.reduce((w, l) => {
-    const q = quality(l.rtt_ms, l.loss_pct);
-    return q === "bad" || (q === "ok" && w === "good") ? q : w;
-  }, "good");
-}
-
-function paintSignal(stats) {
-  $("vp-signal").dataset.quality = stats ? worstQuality(stats.links) : "good";
+function paintSignal(links) {
+  $("vp-signal").dataset.quality = links ? worstLinkQuality(links) : "good";
 }
 
 let signalTimer = null;
@@ -8130,7 +8149,7 @@ let signalTimer = null;
 async function pollSignal() {
   if (!state.voiceChannelId) return;
   try {
-    paintSignal(await invoke("voice_stats"));
+    paintSignal(signalTracker.read((await invoke("voice_stats")).links));
   } catch (e) {
     paintSignal(null);
   }
@@ -8143,6 +8162,7 @@ function syncSignalPolling(active) {
   } else if (!active && signalTimer) {
     clearInterval(signalTimer);
     signalTimer = null;
+    signalTracker.reset();
     paintSignal(null);
   }
 }
@@ -13508,6 +13528,7 @@ function renderVoicePanel() {
     gameBtn.title = `Stream ${playing} to your voice channel at 60 fps`;
   }
   $("vp-signal").replaceChildren(svgIcon("signal", 14));
+  renderTalkButton();
   setIcon($("vp-disconnect"), "hangup", 20);
 
   $("vp-camera-icon").replaceChildren(svgIcon(state.cameraOn ? "camera" : "cameraOff", 18));
@@ -14187,6 +14208,18 @@ function wirePhoneLayout() {
   $("channel-list").addEventListener("click", e => {
     const row = e.target.closest(".channel");
     if (row && rowOpensConversation([...row.classList], Boolean(e.target.closest("button")))) phoneStep("open");
+  });
+}
+
+function wireTouchMessages() {
+  document.addEventListener("click", e => {
+    if (!document.body.classList.contains("mobile-app")) return;
+    const msg = e.target.closest(".msg");
+    if (msg && e.target.closest("a, button, input, textarea, video, audio, .msg-actions")) return;
+    for (const other of document.querySelectorAll(".msg.touched")) {
+      if (other !== msg) other.classList.remove("touched");
+    }
+    if (msg) msg.classList.toggle("touched");
   });
 }
 
@@ -19424,10 +19457,13 @@ function wireActivityPing() {
 
 async function boot() {
   await markMobileApp();
+  await prepareEmojiFonts();
   wireAccessibility();
   wireEvents();
   wireSaved();
   wirePhoneLayout();
+  wireTouchMessages();
+  wireTalkButton();
   wireTimeoutModal();
   wireModerationModal();
   wireActivityPing();

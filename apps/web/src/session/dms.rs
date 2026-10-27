@@ -10,7 +10,7 @@ use commy_net::sync_streams::{self, DmEntry};
 use commy_net::DmEnvelope;
 use commy_sync::StreamId;
 use commy_view::dms;
-use commy_view::safety::{self, DmPolicy, FriendSignal};
+use commy_view::safety::{self, DmPolicy, FriendSignal, Relation};
 use commy_view::{dm_message_view, DmMessageView, DmThreadView};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -20,7 +20,7 @@ use super::{parse, to_json, Args, Session};
 use crate::account;
 use crate::client::clean_message;
 use crate::dm_book::{self, DmBook, Received, Source};
-use crate::sync_book::partner_record;
+use crate::sync_book::{partner_record, relation_record};
 
 const HOLD_WAIT: Duration = Duration::from_secs(8);
 
@@ -90,6 +90,50 @@ impl Session {
             self.save_safety_if_changed();
             self.refresh_dms();
         }
+    }
+
+    pub(super) fn adopt_relation(&self, user: UserId, relation: Relation, note: Option<String>, profile: Option<UserProfile>) {
+        if self.me_and_key().is_some_and(|(me, _)| me.id == user) {
+            return;
+        }
+        let (changed, block_changed) = {
+            let mut book = self.dms.borrow_mut();
+            if let Some(profile) = profile.filter(|_| !book.store.contacts.contains_key(&user)) {
+                book.store.remember_contact(profile);
+            }
+            let was_blocked = book.safety.is_blocked(user);
+            let changed = book.safety.set_relation(user, relation, note);
+            (changed, was_blocked != book.safety.is_blocked(user))
+        };
+        if !changed {
+            return;
+        }
+        self.save_safety();
+        self.emit("friends-changed", json!({ "user": user.to_string() }));
+        if block_changed {
+            self.emit("safety-changed", Value::Null);
+        }
+    }
+
+    fn note_relation(&self, user: UserId) {
+        let at = Utc::now().timestamp_millis();
+        let noted = self.sync.borrow_mut().as_mut().is_some_and(|live| live.book.note_relation(user, at));
+        if !noted {
+            return;
+        }
+        let (relation, note, profile) = {
+            let client = self.client.borrow();
+            let servers = client.servers.lock().unwrap();
+            let book = self.dms.borrow();
+            let profile = book.partner_profile(&servers, user).map(|mut p| {
+                p.activity = None;
+                p.activity_cover = None;
+                p.activity_since = None;
+                p
+            });
+            (book.safety.relation(user), book.safety.friend_notes.get(&user).cloned(), profile)
+        };
+        self.append_account(relation_record(user, relation, at, note.as_deref(), profile.as_ref()));
     }
 
     fn note_partner(&self, partner: UserId, accepted: bool) {
@@ -193,6 +237,9 @@ impl Session {
             }
             Received::Changed(partner) => self.emit("dm-changed", json!(partner.to_string())),
             Received::Friends { notice, reply } => {
+                if let Some(partner) = notice["user"].as_str().and_then(|id| id.parse().ok()) {
+                    self.note_relation(partner);
+                }
                 self.emit("friends-changed", notice);
                 if let Some((to, signal)) = reply {
                     let this = self.clone();
@@ -592,6 +639,7 @@ impl Session {
                 }
                 if self.dms.borrow_mut().safety.set_blocked(user, args.blocked.unwrap_or(true)) {
                     self.save_safety();
+                    self.note_relation(user);
                     self.emit("safety-changed", Value::Null);
                 }
                 Ok(Value::Null)
@@ -657,6 +705,7 @@ impl Session {
                     }
                 }
                 self.save_safety();
+                self.note_relation(user);
                 self.emit("friends-changed", json!({ "user": user.to_string() }));
                 Ok(Value::Null)
             }

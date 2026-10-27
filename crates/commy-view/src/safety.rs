@@ -272,6 +272,16 @@ pub fn apply_friend_signal(s: &mut SafetySettings, from: UserId, signal: FriendS
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Relation {
+    None,
+    Friend,
+    Outgoing,
+    Incoming,
+    Blocked,
+}
+
 impl Default for SafetySettings {
     fn default() -> Self {
         Self {
@@ -313,6 +323,43 @@ impl SafetySettings {
         self.friend_in.remove(&user);
         self.friend_out.remove(&user);
         self.friend_notes.remove(&user);
+    }
+
+    pub fn relation(&self, user: UserId) -> Relation {
+        if self.is_blocked(user) {
+            Relation::Blocked
+        } else if self.friends.contains(&user) {
+            Relation::Friend
+        } else if self.friend_out.contains(&user) {
+            Relation::Outgoing
+        } else if self.friend_in.contains(&user) {
+            Relation::Incoming
+        } else {
+            Relation::None
+        }
+    }
+
+    pub fn set_relation(&mut self, user: UserId, relation: Relation, note: Option<String>) -> bool {
+        let before = (self.relation(user), self.friend_notes.get(&user).cloned());
+        let note = note.filter(|_| relation == Relation::Incoming);
+        self.set_blocked(user, relation == Relation::Blocked);
+        self.forget_friend(user);
+        match relation {
+            Relation::Friend => {
+                self.friends.insert(user);
+            }
+            Relation::Outgoing => {
+                self.friend_out.insert(user);
+            }
+            Relation::Incoming => {
+                self.friend_in.insert(user);
+            }
+            Relation::None | Relation::Blocked => {}
+        }
+        if let Some(note) = note.as_deref().and_then(clean_friend_note) {
+            self.friend_notes.insert(user, note);
+        }
+        before != (self.relation(user), self.friend_notes.get(&user).cloned())
     }
 
     pub fn shows_details_to(&self, viewer: UserId, shares_server: bool) -> bool {
@@ -439,6 +486,24 @@ impl DmFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_relation_from_another_device_replaces_the_one_here() {
+        let mut s = SafetySettings::default();
+        let user = UserId::new();
+        assert_eq!(s.relation(user), Relation::None);
+        assert!(s.set_relation(user, Relation::Incoming, Some("hi from the raid".into())));
+        assert_eq!(s.relation(user), Relation::Incoming);
+        assert_eq!(s.friend_notes.get(&user).map(String::as_str), Some("hi from the raid"));
+        assert!(s.set_relation(user, Relation::Friend, None));
+        assert!(s.friends.contains(&user) && !s.friend_in.contains(&user) && s.friend_notes.is_empty());
+        assert!(!s.set_relation(user, Relation::Friend, None));
+        assert!(s.set_relation(user, Relation::Blocked, None));
+        assert!(s.is_blocked(user) && s.friends.is_empty());
+        assert!(s.set_relation(user, Relation::None, None));
+        assert!(!s.is_blocked(user));
+        assert_eq!(s.relation(user), Relation::None);
+    }
 
     fn stranger() -> Sender {
         Sender { blocked: false, accepted: false, shares_server: true, node: [7; 32] }

@@ -10,6 +10,7 @@ use commy_net::sync_streams::SharedKey;
 use commy_net::{ServerTicket, WirePayload};
 use commy_sync::{StreamId, StreamKeys};
 use commy_view::reads::{PrefPiece, ReadMark, ReadState};
+use commy_view::safety::Relation;
 use commy_view::saved::{SavedOp, SavedStore};
 use serde::Deserialize;
 
@@ -35,6 +36,15 @@ pub enum Record {
         #[serde(default)]
         accepted: bool,
     },
+    Relation {
+        user: UserId,
+        relation: Relation,
+        at: i64,
+        #[serde(default)]
+        note: Option<String>,
+        #[serde(default)]
+        profile: Option<Box<UserProfile>>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -55,6 +65,11 @@ pub fn prefs_record(set: &BTreeMap<String, PrefPiece>) -> Vec<u8> {
 
 pub fn partner_record(profile: &UserProfile, at: i64, accepted: bool) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({ "k": "dm_partner", "profile": profile, "at": at, "accepted": accepted })).expect("partner encode")
+}
+
+pub fn relation_record(user: UserId, relation: Relation, at: i64, note: Option<&str>, profile: Option<&UserProfile>) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "k": "relation", "user": user, "relation": relation, "at": at, "note": note, "profile": profile }))
+        .expect("relation encode")
 }
 
 pub fn joined_record(server: ServerId, entry: &Entry) -> Vec<u8> {
@@ -90,6 +105,7 @@ pub enum Change {
     Prefs(BTreeMap<String, PrefPiece>),
     Saved,
     Partner(Box<UserProfile>, i64, bool),
+    Relation { user: UserId, relation: Relation, note: Option<String>, profile: Option<Box<UserProfile>> },
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -112,6 +128,7 @@ pub struct Book {
     prefs: BTreeMap<String, PrefPiece>,
     saved: SavedStore,
     saved_at: HashMap<String, i64>,
+    relations: HashMap<UserId, i64>,
 }
 
 impl Book {
@@ -152,8 +169,22 @@ impl Book {
                 if self.note_saved(ops).is_empty() { Change::Nothing } else { Change::Saved }
             }
             Record::DmPartner { profile, at, accepted } => Change::Partner(profile, at, accepted),
+            Record::Relation { user, relation, at, note, profile } => {
+                if !self.note_relation(user, at) {
+                    return Change::Nothing;
+                }
+                Change::Relation { user, relation, note, profile: profile.filter(|p| p.id == user) }
+            }
             Record::Unknown => Change::Nothing,
         }
+    }
+
+    pub fn note_relation(&mut self, user: UserId, at: i64) -> bool {
+        if self.relations.get(&user).is_some_and(|seen| at <= *seen) {
+            return false;
+        }
+        self.relations.insert(user, at);
+        true
     }
 
     pub fn note_saved(&mut self, ops: Vec<SavedOp>) -> Vec<SavedOp> {
@@ -384,6 +415,24 @@ mod tests {
         let ours = Record::parse(&partner_record(&friend, 4, true));
         assert_eq!(ours, Record::DmPartner { profile: Box::new(friend), at: 4, accepted: true });
         assert_eq!(Record::parse(b"not json"), Record::Unknown);
+    }
+
+    #[test]
+    fn friends_and_blocks_from_any_device_land_once_and_newest_wins() {
+        let mut book = Book::default();
+        let friend = UserProfile::new("friend");
+        let user = friend.id;
+        let record = |relation, at| Record::parse(&relation_record(user, relation, at, None, Some(&friend)));
+        let Change::Relation { relation, profile, .. } = book.fold(record(Relation::Friend, 5)) else { panic!("a new relation lands") };
+        assert_eq!(relation, Relation::Friend);
+        assert_eq!(profile.map(|p| p.id), Some(user));
+        assert_eq!(book.fold(record(Relation::None, 4)), Change::Nothing);
+        assert_eq!(book.fold(record(Relation::Friend, 5)), Change::Nothing);
+        assert!(book.note_relation(user, 7), "our own change is noted");
+        assert_eq!(book.fold(record(Relation::Blocked, 7)), Change::Nothing, "and its echo stays quiet");
+        let stranger = UserProfile::new("stranger");
+        let mismatched = Record::parse(&relation_record(user, Relation::Blocked, 9, None, Some(&stranger)));
+        assert_eq!(book.fold(mismatched), Change::Relation { user, relation: Relation::Blocked, note: None, profile: None });
     }
 
     #[test]
