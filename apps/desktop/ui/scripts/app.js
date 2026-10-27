@@ -3946,20 +3946,85 @@ function saveTtsPrefs(prefs) {
   try { localStorage.setItem(TTS_KEY, JSON.stringify(prefs)); } catch {}
 }
 
-function speechAvailable() {
+const speech = { native: false, ready: false, voices: [], loading: null, utterance: null };
+
+function windowSpeech() {
   return typeof window !== "undefined" && Boolean(window.speechSynthesis) && typeof SpeechSynthesisUtterance === "function";
 }
 
+function speechAvailable() {
+  return speech.native || windowSpeech();
+}
+
+function windowVoices() {
+  if (!windowSpeech()) return [];
+  return window.speechSynthesis.getVoices().map(v => ({ id: v.voiceURI || v.name, name: v.name, lang: v.lang, default: v.default }));
+}
+
+function loadSpeechVoices() {
+  if (speech.loading) return speech.loading;
+  speech.loading = invoke("speech_voices")
+    .catch(() => null)
+    .then(found => {
+      speech.native = Boolean(found && found.native && Array.isArray(found.voices) && found.voices.length);
+      if (!speech.native && windowSpeech()) {
+        window.speechSynthesis.addEventListener("voiceschanged", () => {
+          speech.voices = ttsVoices(windowVoices(), navigator.language);
+          renderTtsSettings();
+        });
+      }
+      speech.voices = ttsVoices(speech.native ? found.voices : windowVoices(), navigator.language);
+      speech.ready = true;
+      renderTtsSettings();
+    });
+  return speech.loading;
+}
+
 function stopSpeaking() {
-  if (speechAvailable()) window.speechSynthesis.cancel();
+  speech.utterance = null;
+  if (speech.native) invoke("speech_stop").catch(() => {});
+  if (windowSpeech()) window.speechSynthesis.cancel();
+}
+
+function speakInWindow(text, prefs) {
+  const synth = window.speechSynthesis;
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = chosenTtsVoice(speech.voices, prefs.voice);
+  const match = voice && synth.getVoices().find(v => (v.voiceURI || v.name) === voice.id);
+  if (match) {
+    utterance.voice = match;
+    utterance.lang = match.lang;
+  }
+  utterance.rate = prefs.rate;
+  utterance.pitch = prefs.pitch;
+  utterance.onend = utterance.onerror = () => { if (speech.utterance === utterance) speech.utterance = null; };
+  speech.utterance = utterance;
+  synth.cancel();
+  setTimeout(() => {
+    if (speech.utterance !== utterance) return;
+    synth.resume();
+    synth.speak(utterance);
+  }, 60);
+}
+
+function speakNow(text) {
+  const prefs = ttsPrefs();
+  if (speech.native) {
+    const voice = chosenTtsVoice(speech.voices, prefs.voice);
+    invoke("speech_speak", { text, voice: voice ? voice.id : null, rate: prefs.rate, pitch: prefs.pitch }).catch(e => toast(`Could not read it aloud: ${e}`));
+  } else if (windowSpeech()) {
+    speakInWindow(text, prefs);
+  }
 }
 
 function speakText(text) {
-  if (!text || !speechAvailable()) return false;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = ttsPrefs().rate;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
+  if (!text) return false;
+  if (!speech.ready) {
+    loadSpeechVoices().then(() => (speechAvailable() ? speakNow(text) : toast("Text-to-speech is not available here")));
+    return true;
+  }
+  if (!speechAvailable()) return false;
+  speakNow(text);
   return true;
 }
 
@@ -3986,12 +4051,24 @@ function canSendTtsHere() {
 
 function renderTtsSettings() {
   const prefs = ttsPrefs();
+  const usable = speechAvailable();
   $("tts-mode").value = prefs.mode;
   $("tts-rate").value = String(Math.round(prefs.rate * 10));
   $("tts-rate-label").textContent = `${prefs.rate.toFixed(1)}x`;
-  $("tts-mode").disabled = !speechAvailable();
-  $("tts-preview").disabled = !speechAvailable();
-  $("tts-preview").title = speechAvailable() ? "" : "Text-to-speech is not available here";
+  $("tts-pitch").value = String(Math.round(prefs.pitch * 10));
+  $("tts-pitch-label").textContent = `${prefs.pitch.toFixed(1)}`;
+  const select = $("tts-voice");
+  const options = [el("option", null, "Computer default")];
+  options[0].value = "";
+  for (const voice of speech.voices) {
+    const option = el("option", null, ttsVoiceLabel(voice));
+    option.value = voice.id;
+    options.push(option);
+  }
+  select.replaceChildren(...options);
+  select.value = chosenTtsVoice(speech.voices, prefs.voice) ? prefs.voice : "";
+  for (const id of ["tts-mode", "tts-voice", "tts-rate", "tts-pitch", "tts-preview"]) $(id).disabled = !usable;
+  $("tts-preview").title = usable ? "" : "Text-to-speech is not available here";
 }
 
 function onMessagesCaughtUp(payload) {
@@ -17219,6 +17296,14 @@ function wireEvents() {
     saveTtsPrefs({ ...ttsPrefs(), rate: clampRate(Number(e.target.value) / 10) });
     renderTtsSettings();
   });
+  $("tts-pitch").addEventListener("input", e => {
+    saveTtsPrefs({ ...ttsPrefs(), pitch: clampPitch(Number(e.target.value) / 10) });
+    renderTtsSettings();
+  });
+  $("tts-voice").addEventListener("change", e => {
+    saveTtsPrefs({ ...ttsPrefs(), voice: e.target.value || null });
+    renderTtsSettings();
+  });
   $("tts-preview").onclick = () => {
     if (!speakText(spokenText(state.user ? state.user.display_name || state.user.username : "Commy", "this is how text-to-speech sounds"))) toast("Text-to-speech is not available here");
   };
@@ -19442,6 +19527,7 @@ async function boot() {
   await loadFriends();
   await loadOverlaySettings();
   loadUpdateStatus();
+  loadSpeechVoices();
   await loadIntegrations();
   await loadAccount();
   if (!account.signed_in) {
