@@ -99,3 +99,15 @@ test("a missing picture says why in plain words", () => {
   assert.equal(missingImageText(undefined).retry, "Try again");
   for (const text of Object.values(missingImageText("io: stream reset by peer"))) assert.doesNotMatch(text, /io:|stream|peer/i);
 });
+
+test("big files download straight to disk and show how far along they are", async () => {
+  const { BIG_FILE_BYTES, MAX_INLINE_VIDEO_BYTES, isBigFile, downloadProgressText } = require("../scripts/embeds.js");
+  assert.equal(BIG_FILE_BYTES, MAX_INLINE_VIDEO_BYTES);
+  assert.ok(!isBigFile(BIG_FILE_BYTES));
+  assert.ok(isBigFile(BIG_FILE_BYTES + 1));
+  assert.ok(!isBigFile(undefined));
+  assert.equal(downloadProgressText(0, 0), "Downloading");
+  assert.equal(downloadProgressText(0, 200), "Downloading 0%");
+  assert.equal(downloadProgressText(99, 200), "Downloading 49%");
+  assert.equal(downloadProgressText(200, 200), "Saving");
+});

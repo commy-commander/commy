@@ -5,6 +5,16 @@ pub struct Picked {
     pub bytes: Vec<u8>,
 }
 
+pub enum Contents {
+    Bytes(Vec<u8>),
+    OnDisk { path: std::path::PathBuf, size: u64 },
+}
+
+pub struct PickedFile {
+    pub name: String,
+    pub contents: Contents,
+}
+
 pub struct Filter<'a> {
     pub label: &'a str,
     pub extensions: &'a [&'a str],
@@ -35,6 +45,41 @@ pub async fn pick_file(
     }
     let bytes = tokio::fs::read(path).await.map_err(err_to_string)?;
     Ok(Some(Picked { name: picked.file_name(), bytes }))
+}
+
+#[cfg(desktop)]
+pub async fn pick_attachment(
+    _handle: &AppHandle,
+    title: &str,
+    filter: Option<Filter<'_>>,
+    keep_on_disk_over: u64,
+    max_bytes: u64,
+    too_large: &str,
+) -> Result<Option<PickedFile>, String> {
+    let mut dialog = rfd::AsyncFileDialog::new().set_title(title);
+    if let Some(filter) = filter {
+        dialog = dialog.add_filter(filter.label, filter.extensions);
+    }
+    let Some(picked) = dialog.pick_file().await else {
+        return Ok(None);
+    };
+    let path = picked.path().to_path_buf();
+    let size = tokio::fs::metadata(&path).await.map_err(err_to_string)?.len();
+    if size > max_bytes {
+        return Err(too_large.into());
+    }
+    let contents = if size > keep_on_disk_over {
+        Contents::OnDisk { path, size }
+    } else {
+        Contents::Bytes(tokio::fs::read(&path).await.map_err(err_to_string)?)
+    };
+    Ok(Some(PickedFile { name: picked.file_name(), contents }))
+}
+
+#[cfg(desktop)]
+pub async fn save_path(_handle: &AppHandle, name: &str) -> Option<std::path::PathBuf> {
+    let target = rfd::AsyncFileDialog::new().set_file_name(name).save_file().await?;
+    Some(target.path().to_path_buf())
 }
 
 #[cfg(desktop)]
@@ -70,6 +115,19 @@ pub async fn pick_file(
     let name = picked_name(&path);
     let bytes = read_picked(handle, path, max_bytes)?.ok_or_else(|| too_large.to_string())?;
     Ok(Some(Picked { name: named_for_contents(name, &bytes), bytes }))
+}
+
+#[cfg(mobile)]
+pub async fn pick_attachment(
+    handle: &AppHandle,
+    title: &str,
+    filter: Option<Filter<'_>>,
+    _keep_on_disk_over: u64,
+    max_bytes: u64,
+    too_large: &str,
+) -> Result<Option<PickedFile>, String> {
+    let picked = pick_file(handle, title, filter, max_bytes, too_large).await?;
+    Ok(picked.map(|p| PickedFile { name: p.name, contents: Contents::Bytes(p.bytes) }))
 }
 
 #[cfg(mobile)]

@@ -88,6 +88,18 @@ function playsInline(att) {
   return att.size_bytes > 0 && att.size_bytes <= MAX_INLINE_VIDEO_BYTES;
 }
 
+const BIG_FILE_BYTES = 100 * 1024 * 1024;
+
+function isBigFile(size) {
+  return Number(size) > BIG_FILE_BYTES;
+}
+
+function downloadProgressText(done, total) {
+  if (!total) return "Downloading";
+  const percent = Math.min(100, Math.floor((done / total) * 100));
+  return percent >= 100 ? "Saving" : `Downloading ${percent}%`;
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { MAX_IMAGE_EMBEDS, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, retriesImageNow, missingImageText, IMAGE_RETRY_AFTER_MS, playsInline };
+  module.exports = { BIG_FILE_BYTES, isBigFile, downloadProgressText, MAX_IMAGE_EMBEDS, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, retriesImageNow, missingImageText, IMAGE_RETRY_AFTER_MS, playsInline };
 }

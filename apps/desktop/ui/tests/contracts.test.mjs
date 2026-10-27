@@ -25,3 +25,13 @@ test("the sound upload limits match the backend, which refuses anything larger",
   assert.equal(limit(trim, "SOUND_STORE_MAX_BYTES"), limit(read("crates", "commy-view", "src", "pictures.rs"), "MAX_SOUND_BYTES"));
   assert.equal(limit(trim, "SOUND_SOURCE_MAX_BYTES"), limit(read("apps", "desktop", "src-tauri", "src", "expressions.rs"), "MAX_SOUND_SOURCE_BYTES"));
 });
+
+test("the app and the network agree on which files download straight to disk", () => {
+  const limit = (source, name) => {
+    const m = new RegExp(`${name}(?::\\s*u64)?\\s*=\\s*([\\d\\s*]+);`).exec(source);
+    return m[1].split("*").reduce((product, n) => product * Number(n), 1);
+  };
+  const ui = read("apps", "desktop", "ui", "scripts", "embeds.js");
+  const net = read("crates", "commy-net", "src", "node.rs");
+  assert.equal(limit(ui, "BIG_FILE_BYTES"), limit(net, "BIG_FILE_BYTES"));
+});
