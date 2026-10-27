@@ -77,6 +77,8 @@ pub const MAX_AHEAD_MS: i64 = 86_400_000;
 const STEPPED_DOWN_SKEW_MS: i64 = 600_000;
 
 pub const MAX_ACTION_TIMES: usize = 16384;
+pub const MAX_WAITING: usize = 4096;
+const MAX_WAITING_PER_MESSAGE: usize = 64;
 pub const MAX_ACTION_AHEAD_MS: i64 = 3_600_000;
 pub const MAX_ACTION_FLOOR_MS: i64 = 900_000;
 
@@ -132,6 +134,13 @@ pub struct ServerState {
     invite_background: Option<String>,
     ballots: HashMap<MessageId, Ballots>,
     closed_polls: HashSet<MessageId>,
+    waiting: HashMap<MessageId, Vec<Waiting>>,
+}
+
+#[derive(Debug, Clone)]
+enum Waiting {
+    Plain(ServerEvent),
+    Signed(SignedEvent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +233,7 @@ impl ServerState {
             invite_background: None,
             ballots: HashMap::new(),
             closed_polls: HashSet::new(),
+            waiting: HashMap::new(),
         }
     }
 
@@ -735,7 +745,13 @@ impl ServerState {
         let Action { by, at, sig } = signed.action;
         let entry = crate::audit::entry_for(self, by, at, sig, &signed.event);
         let moderators = self.moderators_before(&signed.event);
-        let applied = self.apply(signed.event.clone())?;
+        let applied = match self.apply_or_wait(signed.event.clone(), false) {
+            Err(StoreError::UnknownMessage) => {
+                self.wait_for_message(Waiting::Signed(signed.clone()));
+                return Err(StoreError::UnknownMessage);
+            }
+            other => other?,
+        };
         if applied {
             self.note_stepped_down(moderators, at);
         }
@@ -933,13 +949,62 @@ impl ServerState {
     }
 
     pub fn apply(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
+        self.apply_or_wait(event, true)
+    }
+
+    fn apply_or_wait(&mut self, event: ServerEvent, wait: bool) -> Result<bool, StoreError> {
         use ServerEvent as E;
         let grants = matches!(event, E::RoleAssign { .. } | E::RoleUpdate { .. } | E::OwnerTransfer { .. });
-        let applied = self.apply_event(event)?;
+        let created = match &event {
+            E::MessageCreate { message } => Some(message.id),
+            _ => None,
+        };
+        let kept = (wait && waits_for(&event).is_some()).then(|| event.clone());
+        let applied = match self.apply_event(event) {
+            Err(StoreError::UnknownMessage) => {
+                if let Some(event) = kept {
+                    self.wait_for_message(Waiting::Plain(event));
+                }
+                return Err(StoreError::UnknownMessage);
+            }
+            other => other?,
+        };
         if applied && grants {
             self.retry_held_proofs();
         }
+        if let Some(id) = created {
+            self.release_waiting(id);
+        }
         Ok(applied)
+    }
+
+    fn wait_for_message(&mut self, waiting: Waiting) {
+        let event = match &waiting {
+            Waiting::Plain(event) => event,
+            Waiting::Signed(signed) => &signed.event,
+        };
+        let Some(id) = waits_for(event) else { return };
+        if self.tombstones.contains_key(&id) || self.deleted_messages.contains(&id) {
+            return;
+        }
+        let total: usize = self.waiting.values().map(Vec::len).sum();
+        let list = self.waiting.entry(id).or_default();
+        if total < MAX_WAITING && list.len() < MAX_WAITING_PER_MESSAGE {
+            list.push(waiting);
+        }
+    }
+
+    fn release_waiting(&mut self, id: MessageId) {
+        let Some(list) = self.waiting.remove(&id) else { return };
+        if !self.has_message(id) {
+            return;
+        }
+        for waiting in list {
+            let _ = match waiting {
+                Waiting::Plain(event) => self.apply_or_wait(event, false),
+                Waiting::Signed(signed) => self.apply_signed(&signed),
+            };
+        }
     }
 
     fn apply_event(&mut self, event: ServerEvent) -> Result<bool, StoreError> {
@@ -2646,6 +2711,18 @@ fn push_capped<T>(list: &mut Vec<T>, value: T, cap: usize) {
     }
 }
 
+fn waits_for(event: &ServerEvent) -> Option<MessageId> {
+    use ServerEvent as E;
+    match event {
+        E::MessageEdit { message, .. }
+        | E::ReactionToggle { message, .. }
+        | E::ReactionSet { message, .. }
+        | E::PollVote { message, .. }
+        | E::PollClose { message, .. } => Some(*message),
+        _ => None,
+    }
+}
+
 fn too_far_ahead(t: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     t.timestamp_millis().saturating_sub(now.timestamp_millis()) > MAX_AHEAD_MS
 }
@@ -3818,6 +3895,45 @@ mod tests {
         assert_eq!(state.roll_off(Some(floor)), 1);
         assert_eq!(contents(&state, channel), vec!["300d", "200d", "150d", "5d"]);
         assert!(state.has_message(pinned.id));
+    }
+
+    #[test]
+    fn edits_and_reactions_heard_before_their_message_apply_once_it_arrives() {
+        let (mut state, channel, owner) = fixture();
+        let friend = join(&mut state, "friend");
+        let msg = post(&state, channel, owner, "v1");
+        let later = Utc::now() + chrono::Duration::seconds(1);
+        let edited = edit(&state, &msg, "v2", later);
+        let react = |user, emoji: &str| ServerEvent::ReactionSet { channel, message: msg.id, emoji: emoji.into(), user, active: true };
+        let signed = signed_event(&state, friend, Utc::now(), react(friend, "👍"));
+        assert_eq!(state.apply(edited), Err(StoreError::UnknownMessage));
+        assert_eq!(state.apply_signed(&signed), Err(StoreError::UnknownMessage));
+        assert_eq!(state.apply(react(owner, "🎉")), Err(StoreError::UnknownMessage));
+        assert_eq!(create(&mut state, &msg), Ok(true));
+        let shown = state.message(msg.id).unwrap();
+        assert_eq!(shown.content, "v2");
+        let mut reactions: Vec<(String, Vec<UserId>)> = shown.reactions.iter().map(|r| (r.emoji.clone(), r.users.clone())).collect();
+        reactions.sort();
+        assert_eq!(reactions, vec![("🎉".to_string(), vec![owner]), ("👍".to_string(), vec![friend])]);
+        assert_eq!(create(&mut state, &msg), Ok(false), "nothing is replayed twice");
+    }
+
+    #[test]
+    fn nothing_waits_for_a_message_that_was_deleted_and_the_wait_is_capped() {
+        let (mut state, channel, owner) = fixture();
+        let gone = post(&state, channel, owner, "gone");
+        state.apply(delete(&state, &gone, owner)).unwrap();
+        let react = |message: &Message, emoji: String| ServerEvent::ReactionSet { channel, message: message.id, emoji, user: owner, active: true };
+        assert_eq!(state.apply(react(&gone, "👍".into())), Err(StoreError::UnknownMessage));
+        assert!(state.waiting.is_empty());
+        let unseen: Vec<Message> = (0..MAX_WAITING / MAX_WAITING_PER_MESSAGE + 2).map(|i| post(&state, channel, owner, &format!("m{i}"))).collect();
+        for m in &unseen {
+            for i in 0..MAX_WAITING_PER_MESSAGE + 5 {
+                let _ = state.apply(react(m, format!(":e{i}:")));
+            }
+        }
+        assert!(state.waiting.values().all(|list| list.len() <= MAX_WAITING_PER_MESSAGE));
+        assert_eq!(state.waiting.values().map(Vec::len).sum::<usize>(), MAX_WAITING);
     }
 
     #[test]
