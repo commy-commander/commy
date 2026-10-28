@@ -18078,7 +18078,11 @@ async function toggleVoice(channel) {
   }
 }
 
+let stoppingShare = false;
+
 async function stopSharing() {
+  if (stoppingShare) return;
+  stoppingShare = true;
   try {
     await invoke("stop_screen_share", { serverId: state.voiceServer.id });
     state.sharing = false;
@@ -18088,6 +18092,8 @@ async function stopSharing() {
     renderShareButton();
   } catch (e) {
     toast(String(e));
+  } finally {
+    stoppingShare = false;
   }
 }
 
