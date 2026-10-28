@@ -3550,6 +3550,11 @@ function channelNameNode(channel, cls = null) {
   return span;
 }
 
+function channelTextName(name) {
+  const text = channelNameParts(name).filter(part => typeof part === "string").join("").replace(CHANNEL_EMOJI_RE, "").replace(/^-+|-+$/g, "").trim();
+  return text || name;
+}
+
 function channelPlainName(channel) {
   const parts = channelNameParts(channel.name);
   const lead = parts[0] && parts[0].glyph ? parts.shift() : null;
@@ -6428,6 +6433,7 @@ function renderMembers() {
 
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
   const { playing, rest } = splitPlaying(state.currentServer.members);
+  if (state.currentServer.pet) list.appendChild(petWidget(state.currentServer));
   renderPlayingGroup(list, playing);
 
   const group = (title, members, dim, color) => {
@@ -10312,6 +10318,8 @@ function upcomingEventCount(server) {
   return (server.events || []).filter(e => new Date(e.end || e.start).getTime() >= now).length;
 }
 
+const SERVER_LINKS_KEY = "links:server";
+
 function renderServerExtras(list, server) {
   if (server.game_tags && server.game_tags.length) {
     const row = el("div", "sidebar-game-tags");
@@ -10321,28 +10329,33 @@ function renderServerExtras(list, server) {
     list.appendChild(row);
   }
   const upcoming = upcomingEventCount(server);
-  const events = el("div", "channel sidebar-link");
-  events.appendChild(el("span", "channel-icon")).appendChild(svgIcon("calendar", 18));
-  events.appendChild(el("span", "channel-label", upcoming ? `${upcoming} Event${upcoming === 1 ? "" : "s"}` : "Events"));
-  events.onclick = () => openEvents();
-  list.appendChild(events);
-  if (server.rules) {
-    const rules = el("div", "channel sidebar-link");
-    rules.appendChild(el("span", "channel-icon")).appendChild(svgIcon("book", 18));
-    rules.appendChild(el("span", "channel-label", "Server Rules"));
-    if (server.needs_rules) rules.appendChild(el("span", "sidebar-link-badge", "Accept"));
-    rules.onclick = () => openRules();
-    list.appendChild(rules);
+  const linksCollapsed = collapsedSections().has(SERVER_LINKS_KEY);
+  const linksHead = sectionHeader({ key: SERVER_LINKS_KEY, title: "Community" }, linksCollapsed, false);
+  if (linksCollapsed && server.needs_rules) linksHead.appendChild(el("span", "sidebar-link-badge", "Accept"));
+  list.appendChild(linksHead);
+  if (!linksCollapsed) {
+    const events = el("div", "channel sidebar-link");
+    events.appendChild(el("span", "channel-icon")).appendChild(svgIcon("calendar", 18));
+    events.appendChild(el("span", "channel-label", upcoming ? `${upcoming} Event${upcoming === 1 ? "" : "s"}` : "Events"));
+    events.onclick = () => openEvents();
+    list.appendChild(events);
+    if (server.rules) {
+      const rules = el("div", "channel sidebar-link");
+      rules.appendChild(el("span", "channel-icon")).appendChild(svgIcon("book", 18));
+      rules.appendChild(el("span", "channel-label", "Server Rules"));
+      if (server.needs_rules) rules.appendChild(el("span", "sidebar-link-badge", "Accept"));
+      rules.onclick = () => openRules();
+      list.appendChild(rules);
+    }
+    if (selfAssignableRoles(server).length) {
+      const roles = el("div", "channel sidebar-link");
+      roles.appendChild(el("span", "channel-icon")).appendChild(svgIcon("roles", 18));
+      roles.appendChild(el("span", "channel-label", "Roles"));
+      roles.title = "Pick roles for yourself";
+      roles.onclick = () => openChooseRoles();
+      list.appendChild(roles);
+    }
   }
-  if (selfAssignableRoles(server).length) {
-    const roles = el("div", "channel sidebar-link");
-    roles.appendChild(el("span", "channel-icon")).appendChild(svgIcon("roles", 18));
-    roles.appendChild(el("span", "channel-label", "Roles"));
-    roles.title = "Pick roles for yourself";
-    roles.onclick = () => openChooseRoles();
-    list.appendChild(roles);
-  }
-  if (server.pet) list.appendChild(petWidget(server));
   if (server.tip_jar) {
     const tip = el("div", "channel sidebar-link");
     tip.appendChild(el("span", "channel-icon")).appendChild(svgIcon("coffee", 18));
@@ -15400,7 +15413,7 @@ function renderVoicePanel() {
 
   const call = vs.call ? state.call : null;
   $("vp-status-text").textContent = call && call.state !== "active" ? "Calling" : "Voice Connected";
-  $("vp-where").textContent = call ? `Call with ${vs.name}` : `${vs.channelName} / ${vs.name}`;
+  $("vp-where").textContent = call ? `Call with ${vs.name}` : `${channelTextName(vs.channelName)} / ${vs.name}`;
   renderVoiceTopic(call ? null : vs);
   $("vp-camera").classList.toggle("hidden", Boolean(call));
   renderVoiceInviteButton(Boolean(call));

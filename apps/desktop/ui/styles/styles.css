@@ -4836,7 +4836,7 @@ html[data-reduced-motion] .server-tag.st-fx-shine::after { display: none; }
 }
 .hotkey-input:focus { border-color: var(--accent); color: var(--text-muted); }
 .overlay-note { margin-top: 12px; line-height: 1.45; }
-.pet-widget { display: flex; gap: 10px; align-items: center; margin: 6px 8px 2px; padding: 8px 10px 8px 6px; border-radius: 10px; background: var(--bg-dark); border: 1px solid var(--line); }
+.pet-widget { display: flex; gap: 10px; align-items: center; margin: 6px 0 2px; min-width: 0; box-sizing: border-box; overflow: hidden; padding: 8px 10px 8px 6px; border-radius: 10px; background: var(--bg-dark); border: 1px solid var(--line); }
 .pet-figure { flex: none; width: 56px; height: 56px; }
 .pet-figure .astro, .pet-preview .astro { width: 100%; height: 100%; display: block; overflow: visible; }
 .astro-float { animation: astro-float 4s ease-in-out infinite; transform-origin: 32px 40px; }
@@ -4854,8 +4854,8 @@ html[data-reduced-motion] .server-tag.st-fx-shine::after { display: none; }
 .pet-mood { font-size: 12px; line-height: 1.3; color: var(--text-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; }
 .pet-bar { height: 4px; border-radius: 2px; background: var(--bg-active); overflow: hidden; }
 .pet-bar span { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
-.pet-actions { display: flex; gap: 4px; margin-top: 3px; }
-.pet-care { flex: 1; border: none; border-radius: 6px; padding: 3px 0; background: var(--bg-active); color: var(--text-normal); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.pet-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; min-width: 0; }
+.pet-care { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: none; border-radius: 6px; padding: 3px 0; background: var(--bg-active); color: var(--text-normal); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .pet-care:hover { background: var(--accent); color: var(--accent-ink); }
 .pet-care:disabled { opacity: .6; cursor: default; }
 .pet-editor { display: flex; gap: 16px; align-items: center; margin-top: 10px; }
@@ -8471,3 +8471,5 @@ button.drive-row-main { cursor: pointer; }
 .drive-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 48px 16px; color: var(--text-faint); text-align: center; }
 .drive-item-text { margin: 0 0 16px; color: var(--text-muted); line-height: 1.45; }
 .kind-text strong .beta-tag { margin-left: 6px; }
+.composer .icon-btn, .composer .gif-btn { align-self: center; margin: 0; flex: none; }
+.composer { gap: 2px; padding: 0 10px; }
