@@ -635,11 +635,7 @@ async fn send_message(
     if tts.unwrap_or(false) {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, profile.id, Permissions::SEND_TTS_MESSAGES, "send text-to-speech messages here")?;
-        if state.server.tts_off {
-            return Err("text-to-speech is turned off in this server".into());
-        }
-        message.mark_tts();
+        view::act::mark_tts(state, our_permissions(&app, state, profile.id), &mut message)?;
     }
     if let Some(used) = command {
         message.attachments.push(command_marker(&app, sid, used)?);

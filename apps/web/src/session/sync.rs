@@ -497,6 +497,7 @@ impl Session {
         if joined {
             self.client.borrow_mut().tickets.insert(server, ticket.clone());
             self.append_account(joined_record(server, &entry));
+            spawn_local(self.clone().load_servers(vec![ticket.clone()]));
         }
         self.append_account(community_key_record(server, &shared, now.timestamp_millis(), ticket.owner));
         self.refresh_sync();

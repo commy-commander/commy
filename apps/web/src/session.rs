@@ -232,6 +232,7 @@ struct Args {
     meta: Option<Value>,
     speaker: Option<bool>,
     raised: Option<bool>,
+    tts: Option<bool>,
     onboarding: Option<Value>,
     enabled: Option<bool>,
     megabytes: Option<u32>,
@@ -992,7 +993,7 @@ impl Session {
         }
     }
 
-    async fn load_servers(self: Rc<Self>, tickets: Vec<ServerTicket>) {
+    pub(super) async fn load_servers(self: Rc<Self>, tickets: Vec<ServerTicket>) {
         self.announce_if_loaded();
         let devices = self.other_devices().await.unwrap_or_default();
         if let Some(node) = self.node.lock().await.as_mut() {
@@ -1214,7 +1215,7 @@ impl Session {
         let server: ServerId = parse(args.server_id.as_ref(), "server")?;
         let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
         let reply_to: Option<MessageId> = args.reply_to.as_ref().map(|r| parse(Some(r), "message")).transpose()?;
-        let (message, view) = self.client.borrow().compose(server, channel, args.content.as_deref().unwrap_or(""), reply_to)?;
+        let (message, view) = self.client.borrow().compose(server, channel, args.content.as_deref().unwrap_or(""), reply_to, args.tts.unwrap_or(false))?;
         self.deliver(server, message, view).await
     }
 
