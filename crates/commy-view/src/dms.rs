@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::dm::{CallSignal, DmAction, DmMessage};
-use commy_core::{ChannelKind, DmStore, IdentityKey, MessageId, ServerId, ServerState, UserId, UserProfile};
+use commy_core::{ChannelKind, DmStore, IdentityKey, MessageId, Permissions, ServerId, ServerState, UserId, UserProfile};
 use serde::{Deserialize, Serialize};
 
 use crate::safety::{self, SafetySettings};
@@ -84,6 +84,19 @@ pub fn member_profile(servers: &HashMap<ServerId, ServerState>, user: UserId) ->
     Some(UserProfile { identity, ..profile })
 }
 
+pub fn kicked_profile(servers: &HashMap<ServerId, ServerState>, me: UserId, user: UserId) -> Option<UserProfile> {
+    servers
+        .values()
+        .filter(|s| s.server.kicked.iter().any(|k| k.user == user))
+        .filter(|s| s.server.permissions_for(me).allows(Permissions::KICK_MEMBERS))
+        .find_map(|s| s.profiles.get(&user))
+        .cloned()
+}
+
+pub fn reachable_profile(servers: &HashMap<ServerId, ServerState>, me: UserId, user: UserId) -> Option<UserProfile> {
+    member_profile(servers, user).or_else(|| kicked_profile(servers, me, user))
+}
+
 pub fn group_invite(from: UserId, to: UserId, ticket: String, key: Option<(KeyId, &ChannelSecret)>) -> DmMessage {
     let content = key
         .map(|(id, secret)| {
@@ -162,6 +175,24 @@ pub fn sort_threads(views: &mut Vec<DmThreadView>, dms: &DmStore, safety: &Safet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_moderator_can_still_reach_someone_they_kicked() {
+        let owner = UserProfile::new("owner");
+        let (me, friend) = (owner.id, UserProfile::new("friend"));
+        let other = UserId::new();
+        let mut state = ServerState::new(commy_core::Server::new("Hangout", me));
+        let sid = state.server.id;
+        state.apply(commy_core::ServerEvent::MemberJoin { server: sid, profile: friend.clone() }).unwrap();
+        let mut servers = HashMap::from([(sid, state)]);
+        assert_eq!(reachable_profile(&servers, me, friend.id).map(|p| p.id), Some(friend.id));
+        let state = servers.get_mut(&sid).unwrap();
+        state.apply(commy_core::ServerEvent::MemberLeave { server: sid, user: friend.id }).unwrap();
+        assert_eq!(reachable_profile(&servers, me, friend.id), None, "a person who left on their own is out of reach");
+        servers.get_mut(&sid).unwrap().server.kicked = vec![commy_core::removals::Kick { user: friend.id, by: me, at: 1 }];
+        assert_eq!(reachable_profile(&servers, me, friend.id).map(|p| p.id), Some(friend.id));
+        assert_eq!(reachable_profile(&servers, other, friend.id), None, "only people who can kick reach them");
+    }
 
     #[test]
     fn only_conversation_messages_go_to_the_service() {

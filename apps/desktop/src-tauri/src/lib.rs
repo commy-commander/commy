@@ -2740,7 +2740,7 @@ fn open_dm(app: tauri::State<App>, user_id: String) -> CmdResult<DmThreadView> {
     if partner == me.id {
         return Err("you cannot message yourself".into());
     }
-    let profile = outbox::member_profile(&app.servers.lock().unwrap(), partner);
+    let profile = commy_view::dms::reachable_profile(&app.servers.lock().unwrap(), me.id, partner);
     let mut dms = app.dms.lock().unwrap();
     if let Some(profile) = profile {
         dms.remember_contact(profile);
