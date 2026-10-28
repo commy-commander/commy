@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use commy_core::server::ImageRef;
 use commy_net::node::is_blob_of;
@@ -6,6 +7,7 @@ use commy_sync::picture::MAX_PICTURE_PLAIN;
 use commy_sync::PictureKey;
 use commy_view::pictures::{self, expression_mime, is_jpeg_or_png, is_profile_picture, picture_mime};
 use serde_json::Value;
+use wasm_bindgen_futures::spawn_local;
 
 use super::{Args, Session};
 use crate::files;
@@ -60,6 +62,19 @@ impl Session {
             kept.pictures.clear();
         }
         kept.pictures.insert(blob.to_string(), bytes.clone());
+        Ok(bytes)
+    }
+
+    pub(super) async fn shared_preview(self: &Rc<Self>, blob: Option<&str>, provider: Option<&str>, server: Option<&str>, max: u64) -> Result<Vec<u8>, String> {
+        let blob = blob.filter(|b| !b.is_empty()).ok_or("missing file")?;
+        if let Some(bytes) = self.shared_picture(blob, max as usize).await {
+            return Ok(bytes);
+        }
+        let bytes = self.fetch_blob(Some(blob), provider, server, max).await?;
+        let (this, blob, copy) = (self.clone(), blob.to_string(), bytes.clone());
+        spawn_local(async move {
+            this.offer_picture(&blob, &copy).await;
+        });
         Ok(bytes)
     }
 

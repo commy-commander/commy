@@ -360,12 +360,16 @@ impl Session {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
             if stream == live.account {
-                live.account_live = true;
+                let settled = std::mem::replace(&mut live.account_live, true);
                 drop(guard);
-                self.on_account_change(Change::Servers);
+                if !settled {
+                    self.on_account_change(Change::Servers);
+                }
                 return;
             }
-            live.book.caught_up(stream, seq);
+            if !live.book.caught_up(stream, seq) {
+                return;
+            }
             let Some((server, want)) = live.book.route(stream) else { return };
             (server, want.lane == Lane::State)
         };

@@ -25,7 +25,11 @@ impl Session {
                 }
                 let max = files::preview_limit(args.clicked.unwrap_or(false));
                 files::fits(args.size_bytes, max, "image too large to preview")?;
-                let bytes = self.fetch_blob(args.blob.as_deref(), args.provider.as_deref(), args.server_id.as_deref(), max).await?;
+                let (blob, provider, server) = (args.blob.as_deref(), args.provider.as_deref(), args.server_id.as_deref());
+                let bytes = match args.shared.unwrap_or(false) {
+                    true => self.shared_preview(blob, provider, server, max).await?,
+                    false => self.fetch_blob(blob, provider, server, max).await?,
+                };
                 Ok(Value::String(files::data_url(&mime, &bytes)))
             }
             "attach_bytes" => {
