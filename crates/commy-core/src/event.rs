@@ -434,6 +434,21 @@ pub enum ServerEvent {
         user: UserId,
         node: Option<String>,
     },
+    MemberBanUntil {
+        server: ServerId,
+        user: UserId,
+        at: i64,
+        until: Option<i64>,
+    },
+    UploadLimitSet {
+        server: ServerId,
+        megabytes: Option<u32>,
+        at: i64,
+    },
+    TtsAllowed {
+        server: ServerId,
+        allowed: bool,
+    },
 }
 
 #[cfg(test)]
@@ -529,6 +544,9 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::DriveEdit { server, item, name: "m".into(), parent: None }), 97);
         assert_eq!(wire_tag(ServerEvent::DriveRemove { server, item }), 98);
         assert_eq!(wire_tag(ServerEvent::DriveHold { server, item, user, node: None }), 99);
+        assert_eq!(wire_tag(ServerEvent::MemberBanUntil { server, user, at: 1, until: Some(2) }), 100);
+        assert_eq!(wire_tag(ServerEvent::UploadLimitSet { server, megabytes: Some(25), at: 1 }), 101);
+        assert_eq!(wire_tag(ServerEvent::TtsAllowed { server, allowed: false }), 102);
     }
 
     #[test]

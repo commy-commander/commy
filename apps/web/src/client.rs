@@ -220,6 +220,12 @@ impl Client {
         seal_sign_apply(state, &keys, &identity, message)
     }
 
+    pub fn upload_fits(&self, server: ServerId, size: u64) -> Result<(), String> {
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).ok_or("This server is still loading")?;
+        commy_view::moderate::upload_fits(state, size)
+    }
+
     pub fn compose_attachment(&self, server: ServerId, channel: ChannelId, attachment: Attachment, needed: Permissions, action: &str) -> Result<(Message, MessageView), String> {
         let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
         let keys = KeyHolder::new(Some((profile.id, identity.clone())));
@@ -482,7 +488,7 @@ impl Client {
         let state = servers.get(&server)?;
         let notice = if state.is_deleted() {
             "server-deleted"
-        } else if state.server.banned.contains(&me) {
+        } else if state.server.is_banned(me) {
             "banned"
         } else if state.server.is_member(me) {
             return None;
@@ -687,7 +693,7 @@ impl Client {
         remote.members = members.into_iter().map(member_of).collect();
         let member = remote.is_member(me.id);
         let before_i_joined = joined_ms.is_some_and(|joined| at < joined);
-        if remote.banned.contains(&me.id) || (!member && !before_i_joined) {
+        if remote.is_banned(me.id) || (!member && !before_i_joined) {
             return Err("You are not a member of that server yet".into());
         }
         let mut servers = self.servers.lock().unwrap();

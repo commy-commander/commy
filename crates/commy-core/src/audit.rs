@@ -83,6 +83,8 @@ pub enum AuditKind {
     ServerPet,
     JoinAdmit,
     JoinTurnAway,
+    UploadLimit,
+    TextToSpeech,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +154,14 @@ pub fn duration_words(secs: i64) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+pub fn size_words(megabytes: u32) -> String {
+    if megabytes >= 1024 && megabytes % 1024 == 0 {
+        format!("{} GB", megabytes / 1024)
+    } else {
+        format!("{megabytes} MB")
+    }
+}
+
 fn voice_detail(muted: bool, deafened: bool) -> &'static str {
     match (muted, deafened) {
         (true, true) => "muted and deafened",
@@ -197,6 +207,8 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::ServerTagSet { tag, .. } => (K::ServerTag, None, None, tag.as_ref().map(|t| t.letters.clone())),
         E::JoinApprovalSet { on, .. } => (K::JoinApproval, None, None, on_off(*on)),
         E::TipJarSet { url, .. } => (K::TipJar, None, None, url.clone()),
+        E::UploadLimitSet { megabytes, .. } => (K::UploadLimit, None, None, megabytes.map(size_words)),
+        E::TtsAllowed { allowed, .. } => (K::TextToSpeech, None, None, on_off(*allowed)),
         E::PetSet { pet, .. } => (K::ServerPet, None, None, pet.as_ref().map(|p| clip(&p.name))),
         E::JoinAnswer { user, admit, .. } => {
             let asked = crate::join_request::request_of(server, *user).map(|r| &r.profile);
@@ -273,6 +285,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::MemberBan { user, .. } => {
             let (target, label) = member(user);
             (K::MemberBan, target, label, None)
+        }
+        E::MemberBanUntil { user, at, until, .. } => {
+            let (target, label) = member(user);
+            (K::MemberBan, target, label, until.map(|until| duration_words((until - at) / 1000)))
         }
         E::MemberUnban { user, .. } => {
             let (target, label) = member(user);
@@ -428,6 +444,14 @@ mod tests {
         assert_eq!(duration_words(7 * 86_400), "1 week");
         assert_eq!(duration_words(90), "90 seconds");
         assert_eq!(duration_words(0), "1 second");
+    }
+
+    #[test]
+    fn file_limits_read_in_megabytes_or_whole_gigabytes() {
+        assert_eq!(size_words(25), "25 MB");
+        assert_eq!(size_words(1024), "1 GB");
+        assert_eq!(size_words(2048), "2 GB");
+        assert_eq!(size_words(1500), "1500 MB");
     }
 
     #[test]

@@ -70,6 +70,7 @@ impl Session {
 
     async fn send_server_file(self: &Rc<Self>, server: ServerId, channel: ChannelId, filename: String, bytes: Vec<u8>) -> Result<Value, String> {
         let size_bytes = bytes.len() as u64;
+        self.client.borrow().upload_fits(server, size_bytes)?;
         let (blob, provider) = self.store_blob(bytes).await?;
         let attachment = files::attachment(filename, size_bytes, blob, provider);
         self.post_attachment(server, channel, attachment, Permissions::ATTACH_FILES, "send files or images here").await

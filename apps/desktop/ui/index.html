@@ -1214,6 +1214,7 @@
     <div class="modal modal-moderate hidden" id="modal-moderate">
       <h2 id="moderate-title">Kick member</h2>
       <div class="mod-who" id="moderate-who"></div>
+      <div class="timeout-choices hidden" id="moderate-lengths" role="radiogroup" aria-label="How long"></div>
       <p id="moderate-text"></p>
       <div class="modal-actions">
         <button class="btn-secondary" id="moderate-cancel">Cancel</button>
@@ -2453,6 +2454,7 @@
         <button class="settings-tab" data-tab="emoticons" id="tab-emoticons">Emoticons</button>
         <button class="settings-tab" data-tab="soundboard" id="tab-soundboard">Soundboard</button>
         <div class="settings-nav-group">Moderation</div>
+        <button class="settings-tab" data-tab="removed" id="tab-removed">Bans &amp; Kicks</button>
         <button class="settings-tab" data-tab="automod" id="tab-automod">Auto Moderation</button>
         <button class="settings-tab" data-tab="reports" id="tab-reports">Reports</button>
         <button class="settings-tab" data-tab="audit" id="tab-audit">Audit Log</button>
@@ -2581,6 +2583,21 @@
               <div class="setting-sub">Lets people in a voice channel start Watch together or Tic-tac-toe for everyone in the call. Off until you turn it on.</div>
             </div>
             <input type="checkbox" id="server-activities-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead">Files and Text-to-Speech</h2>
+          <div class="settings-card setting-row" id="server-upload-limit-row">
+            <div>
+              <div class="setting-title">Largest file members can send</div>
+              <div class="setting-sub">Files over this size are refused in this server's channels and drives, yours included. Direct messages are not affected.</div>
+            </div>
+            <select id="server-upload-limit" class="compact-select" aria-label="Largest file members can send"></select>
+          </div>
+          <label class="settings-card setting-row" id="server-tts-row">
+            <div>
+              <div class="setting-title">Text-to-speech messages</div>
+              <div class="setting-sub">Off: nobody can send /tts messages here, and no one's app reads this server's messages aloud on its own. Read Aloud from a message's menu still works for each person.</div>
+            </div>
+            <input type="checkbox" id="server-tts-toggle" class="switch" />
           </label>
           <div id="server-template-section">
             <h2 class="settings-subhead">Template</h2>
@@ -2825,6 +2842,15 @@
           <div class="expr-toolbar">
             <button class="btn-primary btn-small" id="automod-save">Save</button>
           </div>
+        </section>
+
+        <section class="settings-page" data-page="removed">
+          <h1>Bans &amp; Kicks</h1>
+          <div class="setting-sub expr-intro">People removed from this server. Banned people cannot rejoin until their ban ends or you unban them. Kicked people can come back with any invite, and you can send them one from here.</div>
+          <h2 class="settings-subhead" id="removed-bans-head">Banned</h2>
+          <div id="removed-bans" class="removed-list"></div>
+          <h2 class="settings-subhead" id="removed-kicks-head">Kicked</h2>
+          <div id="removed-kicks" class="removed-list"></div>
         </section>
 
         <section class="settings-page" data-page="reports">
@@ -3180,6 +3206,7 @@
   <script src="scripts/profile-privacy.js"></script>
   <script src="scripts/timers.js"></script>
   <script src="scripts/timeouts.js"></script>
+  <script src="scripts/moderation.js"></script>
   <script src="scripts/voice-drag.js"></script>
   <script src="scripts/server-colors.js"></script>
   <script src="scripts/starfield.js"></script>

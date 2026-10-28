@@ -130,6 +130,7 @@ pub fn add_file(state: &ServerState, me: UserId, channel: ChannelId, parent: Opt
     if !file.is_valid() {
         return Err("files up to 4 GB can go in a drive".into());
     }
+    crate::moderate::upload_fits(state, file.size)?;
     let item = DriveItem::file(channel, parent, name, file, me, node, now).ok_or(BAD_NAME)?;
     allowed(state, me, ServerEvent::DriveAdd { server: state.server.id, item }, "upload files here")
 }
