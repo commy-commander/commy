@@ -1,13 +1,14 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-const LOCK_FILE: &str = "running.lock";
+use crate::data_location::RUNNING_LOCK_FILE as LOCK_FILE;
+
 const WAIT_FOR_RUNNING_COPY: Duration = Duration::from_secs(20);
 const RETRY_EVERY: Duration = Duration::from_millis(250);
 
-static HELD: OnceLock<File> = OnceLock::new();
+static HELD: Mutex<Option<File>> = Mutex::new(None);
 
 #[derive(Debug)]
 enum Outcome {
@@ -44,7 +45,7 @@ pub fn first_copy(dir: &Path, request: &str) -> bool {
     match claim(dir, || hand_off(dir, request), WAIT_FOR_RUNNING_COPY, RETRY_EVERY) {
         Outcome::First(lock) => {
             if let Some(lock) = lock {
-                let _ = HELD.set(lock);
+                *HELD.lock().unwrap() = Some(lock);
             }
             true
         }
@@ -53,6 +54,14 @@ pub fn first_copy(dir: &Path, request: &str) -> bool {
             tracing::warn!("Commy is already running for {} and did not answer; leaving it be", dir.display());
             false
         }
+    }
+}
+
+pub fn hold_instead(dir: &Path) {
+    match try_hold(dir) {
+        Lock::Held(file) => *HELD.lock().unwrap() = Some(file),
+        Lock::Busy => tracing::warn!("another copy of Commy holds {}; keeping the old lock", dir.display()),
+        Lock::Unavailable => *HELD.lock().unwrap() = None,
     }
 }
 

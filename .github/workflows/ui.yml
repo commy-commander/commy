@@ -10,6 +10,8 @@ on:
       - "crates/commy-view/src/roles.rs"
       - "crates/commy-net/src/invite.rs"
       - "crates/commy-bot/clients/**"
+      - "apps/desktop/src-tauri/installer/**"
+      - ".github/actions/release-config/**"
       - ".github/workflows/ui.yml"
   pull_request:
     paths: *ui-paths
@@ -37,3 +39,31 @@ jobs:
         run: node --test "apps/desktop/ui/tests/**/*.test.mjs"
       - name: Bot client tests
         run: node --test "crates/commy-bot/clients/node/*.test.mjs"
+
+  installer:
+    name: Installer data folder page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ">=24.22.1 <25"
+      - name: node --test
+        run: node --test apps/desktop/src-tauri/installer/*.test.mjs
+      - name: Compile the page
+        working-directory: apps/desktop/src-tauri/installer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nsis
+          makensis -WX -DOUTPUT="$RUNNER_TEMP/data-folder-check.exe" check-data-folder.nsi
+      - name: Patch the installer template the release uses
+        working-directory: apps/desktop/src-tauri
+        run: |
+          cli="$(sed -n 's/^  TAURI_CLI_VERSION: "\(.*\)"$/\1/p' ../../../.github/workflows/release.yml)"
+          bundler="$(curl -fsSL -A commy-ci "https://crates.io/api/v1/crates/tauri-cli/${cli}/dependencies" \
+            | jq -r '.dependencies[] | select(.crate_id == "tauri-bundler") | .req' | tr -d '=^~ ')"
+          upstream="tauri-bundler-${bundler}/src/bundle/windows/nsis/installer.nsi"
+          mkdir -p "$RUNNER_TEMP/nsis-upstream"
+          curl -fsSL -A commy-ci "https://crates.io/api/v1/crates/tauri-bundler/${bundler}/download" | tar -xz -C "$RUNNER_TEMP/nsis-upstream" "$upstream"
+          node installer/add-data-folder-page.mjs "$RUNNER_TEMP/nsis-upstream/$upstream" "$RUNNER_TEMP/installer.nsi"
+          grep -n 'data-folder.nsh' "$RUNNER_TEMP/installer.nsi"

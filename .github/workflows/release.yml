@@ -119,6 +119,7 @@ jobs:
             Windows)
               nsi="target/$TARGET/release/nsis/x64/installer.nsi"
               grep -qiE 'Classes[\\]+commy' "$nsi" || { echo "installer does not register commy://"; grep -n 'URL Protocol' "$nsi"; exit 1; }
+              grep -q 'data-folder.nsh' "$nsi" || { echo "installer has no data folder page"; exit 1; }
               cp "$bundle"/nsis/*-setup.exe "$out/Commy_${VERSION}_x64-setup.exe"
               7z a -tzip "$out/Commy_${VERSION}_x64-portable.zip" "./target/$TARGET/release/commy-desktop.exe"
               ;;

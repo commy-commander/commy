@@ -2,8 +2,8 @@ use crate::account_folder;
 use commy_core::at_rest;
 use std::path::{Path, PathBuf};
 
-const KEY_FILE: &str = "device-data.key";
-const SET_ASIDE_DIR: &str = "unreadable";
+pub const KEY_FILE: &str = "device-data.key";
+pub const SET_ASIDE_DIR: &str = "unreadable";
 
 const SHARED_FILES: &[&str] = &["account.json"];
 
@@ -16,6 +16,7 @@ enum KeyProblem {
 trait KeyStore {
     fn read(&self, dir: &Path) -> Result<Option<[u8; 32]>, KeyProblem>;
     fn store(&self, dir: &Path, key: &[u8; 32]) -> Result<(), String>;
+    fn forget(&self, _dir: &Path) {}
 }
 
 pub fn unlock(dir: &Path) -> Result<(), String> {
@@ -25,6 +26,31 @@ pub fn unlock(dir: &Path) -> Result<(), String> {
     at_rest::install(key);
     seal_older_files(dir, &key);
     Ok(())
+}
+
+pub fn carry(from: &Path, to: &Path) -> Result<(), String> {
+    carry_with(from, to, &os_key_store())
+}
+
+fn carry_with(from: &Path, to: &Path, keys: &impl KeyStore) -> Result<(), String> {
+    let key = match keys.read(from) {
+        Ok(Some(key)) => key,
+        Ok(None) => return Ok(()),
+        Err(KeyProblem::Lost(why) | KeyProblem::Unavailable(why)) => {
+            return Err(format!("The key for your local files could not be read ({why})."))
+        }
+    };
+    if !matches!(keys.read(to), Ok(Some(found)) if found == key) {
+        keys.store(to, &key).map_err(|why| format!("The key for your local files could not be saved for the new folder ({why})."))?;
+    }
+    match keys.read(to) {
+        Ok(Some(found)) if found == key => Ok(()),
+        _ => Err("The key for your local files did not carry over to the new folder.".into()),
+    }
+}
+
+pub fn forget(dir: &Path) {
+    os_key_store().forget(dir);
 }
 
 fn prepare(dir: &Path, keys: &impl KeyStore) -> Result<Option<[u8; 32]>, String> {
@@ -265,6 +291,10 @@ impl KeyStore for KeychainKey {
     fn store(&self, dir: &Path, key: &[u8; 32]) -> Result<(), String> {
         security_framework::passwords::set_generic_password(crate::toast::APP_ID, &keychain_account(dir), key)
             .map_err(|e| format!("the keychain refused: {e}"))
+    }
+
+    fn forget(&self, dir: &Path) {
+        let _ = security_framework::passwords::delete_generic_password(crate::toast::APP_ID, &keychain_account(dir));
     }
 }
 
@@ -548,5 +578,38 @@ mod tests {
         assert!(!protected.windows(32).any(|w| w == [5; 32]));
         assert_eq!(dpapi::unprotect(&protected).unwrap(), vec![5; 32]);
         assert!(dpapi::unprotect(b"not protected").is_none());
+    }
+
+    struct ByPath(std::cell::RefCell<std::collections::HashMap<PathBuf, [u8; 32]>>);
+
+    impl KeyStore for ByPath {
+        fn read(&self, dir: &Path) -> Result<Option<[u8; 32]>, KeyProblem> {
+            Ok(self.0.borrow().get(dir).copied())
+        }
+
+        fn store(&self, dir: &Path, key: &[u8; 32]) -> Result<(), String> {
+            self.0.borrow_mut().insert(dir.to_path_buf(), *key);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_key_kept_by_folder_path_follows_a_moved_folder() {
+        let keys = ByPath(Default::default());
+        keys.store(Path::new("/old"), &[9; 32]).unwrap();
+        carry_with(Path::new("/old"), Path::new("/new"), &keys).unwrap();
+        assert!(matches!(keys.read(Path::new("/new")), Ok(Some(key)) if key == [9; 32]));
+        carry_with(Path::new("/nothing"), Path::new("/elsewhere"), &keys).unwrap();
+        assert!(matches!(keys.read(Path::new("/elsewhere")), Ok(None)));
+    }
+
+    #[test]
+    fn a_key_file_copied_with_the_folder_needs_nothing_more() {
+        let from = temp_dir("carry-from");
+        let to = temp_dir("carry-to");
+        FileKey.store(&from, &[4; 32]).unwrap();
+        std::fs::copy(from.join(KEY_FILE), to.join(KEY_FILE)).unwrap();
+        carry_with(&from, &to, &FileKey).unwrap();
+        assert!(matches!(FileKey.read(&to), Ok(Some(key)) if key == [4; 32]));
     }
 }

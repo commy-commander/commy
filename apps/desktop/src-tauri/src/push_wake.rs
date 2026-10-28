@@ -18,7 +18,7 @@ use crate::{dm_sync, server_wake, sync_link};
 
 const RING_DELAY_MS: std::ops::Range<u64> = 1_000..4_000;
 const REGISTER_GAP_MS: std::ops::Range<u64> = 300..1_500;
-const KEPT_FILE: &str = "wake-tags.json";
+pub const KEPT_FILE: &str = "wake-tags.json";
 const SEND_RETRIES: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(10)];
 const RETRY_LATER: Duration = Duration::from_secs(60);
 

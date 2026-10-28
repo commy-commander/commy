@@ -1871,6 +1871,20 @@ async function mockInvoke(cmd, args = {}) {
     case "debug_log_status": return { verbose: !!mock.verboseLogs, saving: true };
     case "set_verbose_logging": mock.verboseLogs = args.enabled; return { verbose: !!mock.verboseLogs, saving: true };
     case "open_log_folder": return null;
+    case "open_data_folder": return null;
+    case "data_folder": return mock.dataFolder || (mock.dataFolder = { folder: "C:\\Users\\you\\AppData\\Roaming\\chat.commy.desktop", standard_folder: "C:\\Users\\you\\AppData\\Roaming\\chat.commy.desktop", kind: "default", can_move: true, scheduled: null });
+    case "storage_usage":
+      await new Promise(r => setTimeout(r, 300));
+      return { total: 1934000000, free: 214000000000, parts: [
+        { id: "messages", bytes: 412000000 }, { id: "shared_files", bytes: 820000000 }, { id: "pictures", bytes: 38000000 },
+        { id: "voices", bytes: 126000000 }, { id: "web_cache", bytes: 301000000 }, { id: "logs", bytes: 6000000 },
+        { id: "other_accounts", bytes: 211000000 }, { id: "other", bytes: 20000000 },
+      ] };
+    case "pick_data_folder": return "D:\\Games";
+    case "plan_data_folder_move": return { target: args.folder === mock.dataFolder?.standard_folder ? args.folder : `${args.folder}\\Commy`, to_default: args.folder === mock.dataFolder?.standard_folder, bytes: 1934000000, free: 900000000000 };
+    case "move_data_folder": mock.dataFolder = { ...mock.dataFolder, folder: args.target, kind: args.target === mock.dataFolder.standard_folder ? "default" : "chosen" }; hideModals(); loadDataFolder(); return null;
+    case "clear_cache": return { freed: 44000000, on_restart: 301000000 };
+    case "clear_all_data": hideModals(); return null;
     case "save_log_bundle": return "commy-logs.txt";
     case "run_connection_check":
       await new Promise(r => setTimeout(r, 600));
@@ -2128,6 +2142,7 @@ function selectSettingsTab(id, tab) {
   layer.dataset.tab = tab;
   settingsPhoneView(layer, "page");
   if (tab === "camera") prepareAvatarStage();
+  if (id === "user-settings" && tab === "storage") loadDataFolder();
 }
 
 const SETTINGS_HIT_MS = 1600;
@@ -12282,6 +12297,150 @@ async function setHistoryWindow(serverId, keep) {
   renderStorageSettings();
 }
 
+let dataFolderView = null;
+let pendingMovePlan = null;
+
+async function loadDataFolder() {
+  if (document.documentElement.classList.contains("web-app")) return;
+  try {
+    dataFolderView = await invoke("data_folder");
+  } catch {
+    dataFolderView = null;
+  }
+  renderDataFolder();
+  loadStorageUsage();
+}
+
+function renderDataFolder() {
+  if (!dataFolderView) return;
+  const folder = describeFolder(dataFolderView);
+  $("storage-path").textContent = folder.path;
+  $("storage-path").title = folder.path;
+  $("storage-path-note").textContent = folder.note;
+  $("storage-move").disabled = !folder.canMove;
+  $("storage-standard").classList.toggle("hidden", !folder.canUseStandard);
+}
+
+async function loadStorageUsage() {
+  $("storage-refresh").disabled = true;
+  try {
+    renderStorageUsage(describeUsage(await invoke("storage_usage")));
+  } catch (e) {
+    $("storage-total").textContent = "Could not measure the data folder";
+    $("storage-free").textContent = String(e);
+  }
+  $("storage-refresh").disabled = false;
+}
+
+function renderStorageUsage(usage) {
+  $("storage-total").textContent = `${usage.totalText} used`;
+  $("storage-free").textContent = usage.freeText;
+  const bar = $("storage-bar");
+  bar.replaceChildren();
+  const list = $("storage-parts");
+  list.replaceChildren();
+  for (const row of usage.rows) {
+    const slice = el("span", "storage-slice");
+    slice.style.flexGrow = String(row.share);
+    slice.style.background = `var(--${row.tone})`;
+    bar.appendChild(slice);
+    const line = el("div", "storage-part");
+    const dot = el("span", "storage-dot");
+    dot.style.background = `var(--${row.tone})`;
+    line.append(dot, el("span", "storage-part-name", row.label), el("span", "storage-part-size", row.size));
+    list.appendChild(line);
+  }
+  if (!usage.rows.length) list.appendChild(el("div", "manage-empty", "Nothing saved yet"));
+}
+
+async function chooseDataFolder() {
+  let picked = null;
+  try {
+    picked = await invoke("pick_data_folder");
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (picked) await offerDataFolderMove(picked);
+}
+
+async function offerDataFolderMove(folder) {
+  try {
+    pendingMovePlan = await invoke("plan_data_folder_move", { folder });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  const plan = describeMovePlan(pendingMovePlan, { inCall: Boolean(state.voiceChannelId) });
+  $("move-data-title").textContent = plan.title;
+  $("move-data-lines").replaceChildren(...plan.lines.map(line => el("p", null, line)));
+  showModal("modal-move-data");
+}
+
+async function confirmDataFolderMove() {
+  if (!pendingMovePlan) return;
+  $("move-data-go").disabled = true;
+  try {
+    await invoke("move_data_folder", { target: pendingMovePlan.target });
+  } catch (e) {
+    toast(String(e));
+    $("move-data-go").disabled = false;
+  }
+}
+
+async function confirmClearCache() {
+  $("clear-cache-go").disabled = true;
+  try {
+    toast(describeClearedCache(await invoke("clear_cache")));
+    hideModals();
+    loadStorageUsage();
+  } catch (e) {
+    toast(String(e));
+  }
+  $("clear-cache-go").disabled = false;
+}
+
+function openClearAll() {
+  $("clear-all-input").value = "";
+  $("clear-all-go").disabled = true;
+  showModal("modal-clear-all");
+  $("clear-all-input").focus();
+}
+
+async function confirmClearAll() {
+  const typed = $("clear-all-input").value;
+  if (!clearAllConfirmed(typed)) return;
+  $("clear-all-go").disabled = true;
+  try {
+    await invoke("clear_all_data", { confirm: typed });
+  } catch (e) {
+    toast(String(e));
+    $("clear-all-go").disabled = false;
+  }
+}
+
+function wireStorageControls() {
+  $("storage-refresh").onclick = loadStorageUsage;
+  $("storage-open").onclick = () => invoke("open_data_folder").catch(err => toast(String(err)));
+  $("storage-move").onclick = chooseDataFolder;
+  $("storage-standard").onclick = () => dataFolderView && offerDataFolderMove(dataFolderView.standard_folder);
+  $("move-data-cancel").onclick = hideModals;
+  $("move-data-go").onclick = confirmDataFolderMove;
+  $("storage-clear-cache").onclick = () => showModal("modal-clear-cache");
+  $("clear-cache-cancel").onclick = hideModals;
+  $("clear-cache-go").onclick = confirmClearCache;
+  $("storage-clear-all").onclick = openClearAll;
+  $("clear-all-cancel").onclick = hideModals;
+  $("clear-all-go").onclick = confirmClearAll;
+  $("clear-all-input").oninput = () => {
+    $("clear-all-go").disabled = !clearAllConfirmed($("clear-all-input").value);
+  };
+  $("clear-all-recovery").onclick = () => {
+    hideModals();
+    selectSettingsTab("user-settings", "commy-account");
+  };
+}
+
 function renderProfilePrivacy() {
   $("profile-policy").value = safety.profile_policy || "everyone";
 }
@@ -19904,6 +20063,7 @@ function wireEvents() {
   $("verbose-log-toggle").addEventListener("change", e => setVerboseLogging(e.target.checked));
   $("log-folder-open").onclick = () => invoke("open_log_folder").catch(err => toast(String(err)));
   $("log-bundle-save").onclick = saveLogBundle;
+  wireStorageControls();
   $("sounds-toggle").addEventListener("change", e => {
     const prefs = soundPrefs();
     prefs.enabled = e.target.checked;

@@ -908,6 +908,42 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-move-data">
+      <h2 id="move-data-title">Move your data?</h2>
+      <div class="modal-lines" id="move-data-lines"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="move-data-cancel">Cancel</button>
+        <button class="btn-primary" id="move-data-go">Move and Restart</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-clear-cache">
+      <h2>Clear the cache?</h2>
+      <p>Saved profile pictures, older logs and the web cache are removed. They come back on their own as you use Commy. Your messages, settings and keys stay.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="clear-cache-cancel">Cancel</button>
+        <button class="btn-primary" id="clear-cache-go">Clear Cache</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-clear-all">
+      <h2>Clear all data on this computer?</h2>
+      <ul class="modal-list">
+        <li>Your messages, direct messages, servers and settings kept on this computer are removed. Anything only this computer had is gone for good.</li>
+        <li>You are signed out of every account on this computer.</li>
+        <li>Files you share from this computer stop being available to others.</li>
+        <li>The keys that lock your data on this computer are removed. If signing in again doesn't bring your server list back, you'll need your recovery code or another signed-in device to allow this one.</li>
+      </ul>
+      <button class="btn-link" type="button" id="clear-all-recovery">Show my recovery code first</button>
+      <label class="field-label">Type DELETE to confirm
+        <input id="clear-all-input" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="clear-all-cancel">Cancel</button>
+        <button class="btn-danger" id="clear-all-go" disabled>Clear and Restart</button>
+      </div>
+    </div>
+
     <div class="modal modal-wide hidden" id="modal-rules">
       <h2 id="rules-title">Server Rules</h2>
       <div class="rules-body" id="rules-body"></div>
@@ -2175,9 +2211,35 @@
           </div>
         </section>
 
-        <section class="settings-page" data-page="storage" data-search="disk space history">
+        <section class="settings-page" data-page="storage" data-search="disk space history data folder move clear cache">
           <h1 data-i18n="settings.tab.storage">Storage</h1>
-          <p class="settings-intro" data-i18n="settings.intro.storage">How long messages stay on this device.</p>
+          <p class="settings-intro" data-i18n="settings.intro.storage">How much space Commy uses on this device, where it keeps it, and how long messages stay.</p>
+          <h2 class="settings-subhead native-only">Space Used</h2>
+          <div class="settings-card storage-usage native-only" data-search="disk usage size space">
+            <div class="storage-usage-head">
+              <div>
+                <div class="setting-title" id="storage-total">Working it out</div>
+                <div class="setting-sub" id="storage-free"></div>
+              </div>
+              <button class="btn-secondary btn-small" type="button" id="storage-refresh">Refresh</button>
+            </div>
+            <div class="storage-bar" id="storage-bar" aria-hidden="true"></div>
+            <div class="storage-parts" id="storage-parts" aria-live="polite"></div>
+          </div>
+          <h2 class="settings-subhead desktop-only native-only">Data Folder</h2>
+          <div class="settings-card storage-folder desktop-only native-only" data-search="data folder location move drive">
+            <div>
+              <div class="setting-title">Where Commy keeps your data</div>
+              <div class="storage-path" id="storage-path"></div>
+              <div class="setting-sub" id="storage-path-note"></div>
+            </div>
+            <div class="storage-folder-actions">
+              <button class="btn-secondary btn-small" type="button" id="storage-open">Open Folder</button>
+              <button class="btn-secondary btn-small" type="button" id="storage-move">Move Folder</button>
+              <button class="btn-secondary btn-small hidden" type="button" id="storage-standard">Use Standard Folder</button>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Message History</h2>
           <div class="settings-card setting-row" data-search="retention delete old messages">
             <div>
               <div class="setting-title">Keep server messages for</div>
@@ -2197,6 +2259,21 @@
             <div id="keep-servers" class="keep-servers"></div>
           </div>
           <div class="setting-sub">Videos and files download only when you click them, and so do images over 5 MB. Joining a server brings its recent messages, not its whole history.</div>
+          <h2 class="settings-subhead desktop-only native-only">Clear Data</h2>
+          <div class="settings-card setting-row desktop-only native-only" data-search="clear cache free space">
+            <div>
+              <div class="setting-title">Clear cache</div>
+              <div class="setting-sub">Removes saved profile pictures, older logs and the web cache. They come back on their own as you use Commy. Your messages and settings stay.</div>
+            </div>
+            <button class="btn-secondary btn-small storage-action" type="button" id="storage-clear-cache">Clear Cache</button>
+          </div>
+          <div class="settings-card setting-row desktop-only native-only" data-search="clear all data reset wipe remove everything">
+            <div>
+              <div class="setting-title">Clear all data</div>
+              <div class="setting-sub">Removes everything Commy keeps on this computer and signs you out. Your Commy account itself stays.</div>
+            </div>
+            <button class="btn-danger btn-small storage-action" type="button" id="storage-clear-all">Clear All Data</button>
+          </div>
         </section>
 
         <section class="settings-page" data-page="updates" data-search="version upgrade tray autostart">
@@ -3193,6 +3270,7 @@
   <script src="scripts/accessibility.js"></script>
   <script src="scripts/updates.js"></script>
   <script src="scripts/diagnostics.js"></script>
+  <script src="scripts/data-folder.js"></script>
   <script src="scripts/server-templates.js"></script>
   <script src="scripts/camera-fx.js"></script>
   <script src="scripts/camera-pipeline.js"></script>
