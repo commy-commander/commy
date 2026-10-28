@@ -167,8 +167,12 @@ impl Client {
         channel: ChannelId,
         content: &str,
         reply_to: Option<MessageId>,
+        tts: bool,
     ) -> Result<(Message, MessageView), String> {
         self.compose_in(server, channel, content, |state, message| {
+            if tts {
+                act::mark_tts(state, state.server.permissions_for(message.author), message)?;
+            }
             if let Some(target) = reply_to {
                 if !state.messages(channel).iter().any(|m| m.id == target) {
                     return Err("The message you replied to no longer exists".into());
@@ -1245,12 +1249,23 @@ mod tests {
     fn sending_signs_stores_and_shows_the_message() {
         let w = world();
         w.client.install_mirror(w.server, &mirror(&w)).unwrap();
-        let (message, view) = w.client.compose(w.server, w.channel, "  hi there ", None).unwrap();
+        let (message, view) = w.client.compose(w.server, w.channel, "  hi there ", None, false).unwrap();
         assert_eq!(view.content, "hi there");
         let me = w.client.profile().unwrap();
         assert!(message.verify(w.server, &me.identity.unwrap()));
         let messages = w.client.get_messages(w.server, w.channel, None).unwrap();
         assert_eq!(messages.last().unwrap().content, "hi there");
+    }
+
+    #[test]
+    fn text_to_speech_messages_carry_their_marker() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let (message, view) = w.client.compose(w.server, w.channel, "read this aloud", None, true).unwrap();
+        assert!(message.is_tts());
+        assert!(view.tts);
+        w.client.servers.lock().unwrap().get_mut(&w.server).unwrap().server.tts_off = true;
+        assert_eq!(w.client.compose(w.server, w.channel, "again", None, true).unwrap_err(), "text-to-speech is turned off in this server");
     }
 
     #[test]
@@ -1271,9 +1286,9 @@ mod tests {
     fn sending_refuses_empty_and_oversized_text() {
         let w = world();
         w.client.install_mirror(w.server, &mirror(&w)).unwrap();
-        assert!(w.client.compose(w.server, w.channel, "   ", None).is_err());
+        assert!(w.client.compose(w.server, w.channel, "   ", None, false).is_err());
         let long = "a".repeat(MAX_MESSAGE_LEN + 1);
-        assert!(w.client.compose(w.server, w.channel, &long, None).is_err());
+        assert!(w.client.compose(w.server, w.channel, &long, None, false).is_err());
     }
 
     #[test]
