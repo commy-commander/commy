@@ -21975,10 +21975,18 @@ async function unbanRemoved(server, ban) {
   openServerSettings("removed");
 }
 
+async function inviteBackLink(server) {
+  try {
+    return (await invoke("create_invite_link", { serverId: server.id, expires: "7d" })).url;
+  } catch {
+    return invoke("get_invite", { serverId: server.id });
+  }
+}
+
 async function inviteBack(server, person) {
-  const ticket = await invoke("get_invite", { serverId: server.id });
   await invoke("open_dm", { userId: person.id });
-  const sent = await invoke("send_dm", { userId: person.id, content: `Come back to ${server.name}! ${ticket}` });
+  const invite = await inviteBackLink(server);
+  const sent = await invoke("send_dm", { userId: person.id, content: `Come back to ${server.name}! ${invite}` });
   dmSentToast(sent, person.name, `Sent ${person.name} an invite back to ${server.name}`);
 }
 

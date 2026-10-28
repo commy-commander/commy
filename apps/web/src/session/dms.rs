@@ -543,7 +543,7 @@ impl Session {
                 if partner == me.id {
                     return Err("you cannot message yourself".into());
                 }
-                let profile = dms::member_profile(&self.client.borrow().servers.lock().unwrap(), partner);
+                let profile = dms::reachable_profile(&self.client.borrow().servers.lock().unwrap(), me.id, partner);
                 let mut book = self.dms.borrow_mut();
                 if let Some(profile) = profile {
                     book.store.remember_contact(profile);
