@@ -20,6 +20,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.Base64
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import app.tauri.plugin.JSObject
@@ -74,6 +75,9 @@ class ScreenShareService : Service() {
   private var display: VirtualDisplay? = null
   private var reader: ImageReader? = null
   private var worker: HandlerThread? = null
+  private val lock = Any()
+  private var shownWidth = 0
+  private var shownHeight = 0
   private var maxWidth = 1280
   private var frameGapMs = 66L
   private var lastFrameAt = 0L
@@ -129,34 +133,53 @@ class ScreenShareService : Service() {
       }
 
       override fun onCapturedContentResize(width: Int, height: Int) {
-        if (projection === captured) resize(width, height, handler)
+        resize(captured, width, height, handler)
       }
     }, handler)
-    val metrics = resources.displayMetrics
-    val (width, height) = fit(metrics.widthPixels, metrics.heightPixels)
-    val next = newReader(width, height, handler)
-    reader = next
-    display = captured.createVirtualDisplay(
-      "commy-screen",
-      width,
-      height,
-      metrics.densityDpi,
-      DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-      next.surface,
-      null,
-      handler,
-    )
+    val (screenWidth, screenHeight) = screenSize()
+    val (width, height) = fit(screenWidth, screenHeight)
+    synchronized(lock) {
+      val next = newReader(width, height, handler)
+      reader = next
+      shownWidth = width
+      shownHeight = height
+      display = captured.createVirtualDisplay(
+        "commy-screen",
+        width,
+        height,
+        resources.displayMetrics.densityDpi,
+        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+        next.surface,
+        null,
+        handler,
+      )
+    }
   }
 
-  private fun resize(contentWidth: Int, contentHeight: Int, handler: Handler) {
-    val shown = display ?: return
-    val (width, height) = fit(contentWidth, contentHeight)
-    val old = reader
-    val next = newReader(width, height, handler)
-    reader = next
-    shown.resize(width, height, resources.displayMetrics.densityDpi)
-    shown.surface = next.surface
-    old?.close()
+  private fun screenSize(): Pair<Int, Int> {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      val bounds = getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
+      return Pair(bounds.width(), bounds.height())
+    }
+    val metrics = resources.displayMetrics
+    return Pair(metrics.widthPixels, metrics.heightPixels)
+  }
+
+  private fun resize(captured: MediaProjection, contentWidth: Int, contentHeight: Int, handler: Handler) {
+    synchronized(lock) {
+      if (projection !== captured) return
+      val shown = display ?: return
+      val (width, height) = fit(contentWidth, contentHeight)
+      if (width == shownWidth && height == shownHeight) return
+      shownWidth = width
+      shownHeight = height
+      val old = reader
+      val next = newReader(width, height, handler)
+      reader = next
+      shown.resize(width, height, resources.displayMetrics.densityDpi)
+      shown.surface = next.surface
+      old?.close()
+    }
   }
 
   private fun fit(width: Int, height: Int): Pair<Int, Int> {
@@ -196,12 +219,17 @@ class ScreenShareService : Service() {
   }
 
   private fun release() {
-    display?.release()
-    display = null
-    reader?.close()
-    reader = null
-    val old = projection
-    projection = null
+    val old = synchronized(lock) {
+      val stopping = projection
+      projection = null
+      display?.release()
+      display = null
+      reader?.close()
+      reader = null
+      shownWidth = 0
+      shownHeight = 0
+      stopping
+    }
     old?.stop()
     worker?.quitSafely()
     worker = null
