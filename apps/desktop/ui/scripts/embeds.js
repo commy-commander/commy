@@ -4,6 +4,7 @@ const MEDIA_HOSTS = [
   "media.giphy.com",
   /^media[0-9]\.giphy\.com$/,
   "i.giphy.com",
+  "cdn3.emoji.gg",
 ];
 
 const IMAGE_LINK = /https:\/\/[^\s<>"'?]+\.(?:gif|png|jpe?g|webp)(?:\?[^\s<>"']*)?/gi;

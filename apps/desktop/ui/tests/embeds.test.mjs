@@ -10,10 +10,10 @@ const GIPHY = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYWJj/giphy.gif?
 const OTHER = "https://pics.example.org/cat.png";
 
 test("only the hosts the account server proxies count as media hosts", () => {
-  for (const host of ["static.klipy.com", "images.igdb.com", "media.giphy.com", "media0.giphy.com", "media4.giphy.com", "media9.giphy.com", "i.giphy.com", "I.GIPHY.COM"]) {
+  for (const host of ["static.klipy.com", "images.igdb.com", "media.giphy.com", "media0.giphy.com", "media4.giphy.com", "media9.giphy.com", "i.giphy.com", "I.GIPHY.COM", "cdn3.emoji.gg"]) {
     assert.ok(isMediaHost(host), host);
   }
-  for (const host of ["giphy.com", "api.giphy.com", "media10.giphy.com", "media0.giphy.com.evil.example", "evilmedia0.giphy.com", "static.klipy.com.evil.example", "klipy.com", "example.org", "", null]) {
+  for (const host of ["giphy.com", "api.giphy.com", "media10.giphy.com", "media0.giphy.com.evil.example", "evilmedia0.giphy.com", "static.klipy.com.evil.example", "klipy.com", "emoji.gg", "cdn3.emoji.gg.evil.example", "example.org", "", null]) {
     assert.equal(isMediaHost(host), false, String(host));
   }
 });
