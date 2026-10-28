@@ -172,6 +172,7 @@ struct Args {
     mime: Option<String>,
     size_bytes: Option<u64>,
     clicked: Option<bool>,
+    shared: Option<bool>,
     image: Option<String>,
     expires: Option<String>,
     link: Option<String>,
@@ -683,7 +684,10 @@ impl Session {
             }
         };
         let secret = self.device_secret(&account);
-        self.start_node(secret).await.ok();
+        let this = self.clone();
+        spawn_local(async move {
+            let _ = this.start_node(secret).await;
+        });
         self.link_device(secret).await?;
         let reply = self.request("GET", account::VAULT_PATH, None).await?;
         let sealed = match account::vault_data(&reply)? {
@@ -1057,7 +1061,6 @@ impl Session {
         spawn_local(async move {
             if let Ok(report) = session.await {
                 this.settle_delivered(server, &report.delivered);
-                this.emit("server-event", json!(server.to_string()));
             }
         });
     }
@@ -1111,10 +1114,7 @@ impl Session {
                         let _ = node.broadcast(server, WirePayload::SyncRequest).await;
                     }
                 }
-                NetEvent::CaughtUp { server, report, .. } => {
-                    self.settle_delivered(server, &report.delivered);
-                    self.emit("server-event", json!(server.to_string()));
-                }
+                NetEvent::CaughtUp { server, report, .. } => self.settle_delivered(server, &report.delivered),
                 _ => {}
             }
         }

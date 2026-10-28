@@ -15030,6 +15030,7 @@ function keepScrolledOnLoad(img) {
 }
 
 const loadedImageLinks = new Set();
+const failedImageLinks = new Set();
 
 function wireExternalLink(a, url) {
   a.href = "#";
@@ -15163,16 +15164,32 @@ function linkCardImage(preview, layout) {
   const frame = el("div", "link-card-image");
   frame.style.width = `${box.width}px`;
   frame.style.aspectRatio = `${box.width} / ${box.height}`;
+  const att = { blob: image.blob, provider: image.provider, mime: image.mime, size_bytes: image.size_bytes, shared: true };
+  const cached = imagePreviewCache.get(att.blob);
+  if (cached) {
+    frame.appendChild(linkCardPicture(cached, preview.url));
+    return frame;
+  }
+  const missing = () => {
+    frame.classList.add("missing");
+    frame.replaceChildren(svgIcon("link", 20));
+  };
+  if (!retriesImageNow(imagePreviewFailures.get(att.blob), Date.now())) {
+    missing();
+    return frame;
+  }
+  loadImagePreview(att, false)
+    .then(src => frame.appendChild(linkCardPicture(src, preview.url)))
+    .catch(missing);
+  return frame;
+}
+
+function linkCardPicture(src, url) {
   const img = el("img");
   img.alt = "";
-  img.onclick = () => openLightbox(img.src, preview.url, null);
-  loadImagePreview({ blob: image.blob, provider: image.provider, mime: image.mime, size_bytes: image.size_bytes, shared: true }, false)
-    .then(src => {
-      img.src = src;
-      frame.appendChild(img);
-    })
-    .catch(() => frame.classList.add("missing"));
-  return frame;
+  img.src = src;
+  img.onclick = () => openLightbox(img.src, url, null);
+  return img;
 }
 
 function renderImageEmbed(url) {
@@ -15181,11 +15198,16 @@ function renderImageEmbed(url) {
   const source = wireOutsideLink(el("a", "embed-source", host), url);
   source.title = `Open ${url}`;
   wrap.appendChild(source);
-  if (embedMode(url, mediaProxyOn()) === "auto" || loadedImageLinks.has(url)) {
+  if (failedImageLinks.has(url)) {
+    wrap.appendChild(imageGate(url, host, { failed: true }));
+  } else if (embedMode(url, mediaProxyOn()) === "auto" || loadedImageLinks.has(url)) {
     const img = embedImage(url);
     keepScrolledOnLoad(img);
     img.loading = "lazy";
-    img.onerror = () => wrap.remove();
+    img.onerror = () => {
+      failedImageLinks.add(url);
+      img.replaceWith(imageGate(url, host, { failed: true }));
+    };
     img.src = viaAccountServer(url);
     wrap.appendChild(img);
   } else {
@@ -15206,25 +15228,27 @@ function holdPlaceUntilLoaded(img) {
   img.addEventListener("load", () => img.classList.remove("waiting"), { once: true });
 }
 
-function imageGate(url, host) {
+function imageGate(url, host, { failed = false } = {}) {
   const text = imageGateText(host);
   const gate = el("div", "image-gate");
   const lines = el("div", "image-gate-text");
-  const title = el("div", "image-gate-title", text.title);
+  const title = el("div", "image-gate-title", failed ? text.failed : text.title);
   lines.appendChild(title);
   lines.appendChild(el("div", "image-gate-hint", text.hint));
-  const button = el("button", "btn-secondary btn-small image-gate-load", text.load);
+  const button = el("button", "btn-secondary btn-small image-gate-load", failed ? text.retry : text.load);
   button.type = "button";
   button.onclick = () => {
     button.disabled = true;
     button.textContent = text.loading;
     const img = embedImage(url);
     img.onload = () => {
+      failedImageLinks.delete(url);
       loadedImageLinks.add(url);
       gate.replaceWith(img);
       img.scrollIntoView({ block: "nearest" });
     };
     img.onerror = () => {
+      failedImageLinks.add(url);
       title.textContent = text.failed;
       button.textContent = text.retry;
       button.disabled = false;
@@ -20334,20 +20358,7 @@ function wireEvents() {
   });
 
   if (IS_TAURI) {
-    window.__TAURI__.event.listen("server-event", async event => {
-      const serverId = event.payload;
-      loadShareableEmojis();
-      await refreshServersIfChanged();
-      if (state.currentServer && serverId === state.currentServer.id) {
-        await refreshCurrentServer();
-      }
-      if (state.view === "dm") {
-        await refreshPeople();
-        await renderDmThreads();
-        if (state.currentDm) renderDmHeader(state.currentDm.user, state.currentDm.name);
-      }
-      await trackFriendPresence(serverId);
-    });
+    window.__TAURI__.event.listen("server-event", event => onServerEvent(event.payload));
     window.__TAURI__.event.listen("servers-changed", refreshServers);
     window.__TAURI__.event.listen("screen-share-ended", () => {
       if (state.sharing && state.voiceServer) stopSharing();
@@ -22303,6 +22314,22 @@ function wireBots() {
   $("add-bot-invite-copy").onclick = () => addBot.invite && copyText(addBot.invite, "Invite code copied");
   $("add-bot-name").addEventListener("input", paintAddBotCommands);
   $("add-bot-done").onclick = closeAddBot;
+}
+
+const onServerEvent = coalescedRuns(afterServerEvent);
+
+async function afterServerEvent(serverId) {
+  loadShareableEmojis();
+  await refreshServersIfChanged();
+  if (state.currentServer && serverId === state.currentServer.id) {
+    await refreshCurrentServer();
+  }
+  if (state.view === "dm") {
+    await refreshPeople();
+    await renderDmThreads();
+    if (state.currentDm) renderDmHeader(state.currentDm.user, state.currentDm.name);
+  }
+  await trackFriendPresence(serverId);
 }
 
 async function refreshCurrentServer() {

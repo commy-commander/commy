@@ -1106,7 +1106,7 @@ body.voice-dragging, body.voice-dragging * { cursor: grabbing !important; }
 }
 .link-card.side .link-card-image { grid-column: 2; grid-row: 1; align-self: start; }
 .link-card-image img { display: block; width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; }
-.link-card-image.missing { display: none; }
+.link-card-image.missing { display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
 
 .poll {
   width: 100%;
