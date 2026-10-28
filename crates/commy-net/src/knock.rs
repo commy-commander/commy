@@ -71,7 +71,7 @@ pub fn answer(state: &ServerState, me: UserId, request: &KnockRequest) -> KnockR
         return KnockReply::Unknown;
     }
     let Some(user) = asker(request) else { return KnockReply::Unknown };
-    if server.banned.contains(&user) || server.turned_away.contains(&user) {
+    if server.is_banned(user) || server.turned_away.contains(&user) {
         return KnockReply::TurnedAway;
     }
     if server.is_member(user) {

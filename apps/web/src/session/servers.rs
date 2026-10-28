@@ -210,7 +210,8 @@ impl Session {
             }
             "ban_member" => {
                 let user = user()?;
-                vec![client().act(server, |state, me, _, _| moderate::ban(state, me.perms, me.user, user))?]
+                let hours = args.hours;
+                vec![client().act(server, |state, me, _, _| moderate::ban(state, me.perms, me.user, user, hours, me.now))?]
             }
             "unban_member" => {
                 let user = user()?;
@@ -259,6 +260,14 @@ impl Session {
             "set_join_approval" => {
                 let (on, at) = (args.enabled.unwrap_or(false), Utc::now().timestamp_millis());
                 vec![client().act(server, |state, me, _, _| commy_view::join_requests::set_approval(state, me.perms, on, at))?]
+            }
+            "set_upload_limit" => {
+                let megabytes = args.megabytes;
+                vec![client().act(server, |state, me, _, _| moderate::upload_limit(state, me.perms, megabytes, me.now))?]
+            }
+            "set_tts_allowed" => {
+                let enabled = args.enabled.unwrap_or(true);
+                vec![client().act(server, |state, me, _, _| moderate::tts_allowed(state, me.perms, enabled))?]
             }
             "set_tip_jar" => vec![client().act(server, |state, me, _, _| commy_view::tip_jar::set_tip_jar(state, me.perms, args.url.as_deref()))?],
             "set_pet" => {

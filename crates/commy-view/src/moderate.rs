@@ -2,7 +2,9 @@ use chrono::{DateTime, Duration, Utc};
 use commy_core::server::{
     clean_game_tag_meta, clean_game_tags, clean_nickname, valid_hex_color, valid_rules, GameTagMeta, MAX_ACCESS_ROLES, MAX_GAME_TAGS,
     MAX_GAME_TAG_CHARS, MAX_NICKNAME_CHARS, MAX_SLOW_MODE, MAX_TIMEOUT_SECS, MAX_USER_LIMIT, MAX_VOICE_STATUS_CHARS, SERVER_AFK_MINUTES,
+    UPLOAD_LIMITS_MB,
 };
+use commy_core::removals;
 use commy_core::{AutoMod, ChannelId, ChannelKind, Onboarding, Permissions, RoleId, ServerEvent, ServerState, UserId};
 
 use crate::act::{can_view, voice_full, Act};
@@ -44,12 +46,21 @@ pub fn move_voice(state: &ServerState, perms: Permissions, me: UserId, user: Use
     Ok(ServerEvent::VoiceMove { server: state.server.id, user, channel })
 }
 
-pub fn ban(state: &ServerState, perms: Permissions, me: UserId, user: UserId) -> Act<ServerEvent> {
+pub fn ban(state: &ServerState, perms: Permissions, me: UserId, user: UserId, hours: Option<u32>, now: DateTime<Utc>) -> Act<ServerEvent> {
     need(perms, Permissions::BAN_MEMBERS, "ban members")?;
     if user == state.server.owner || user == me {
         return Err("you cannot ban that member".into());
     }
-    Ok(ServerEvent::MemberBan { server: state.server.id, user })
+    let at = now.timestamp_millis();
+    let until = match hours {
+        Some(hours) => Some(at + removals::term_ms(hours).ok_or("pick how long the ban lasts from the list")?),
+        None => None,
+    };
+    let banned = state.server.banned_at(user, at);
+    if until.is_none() && !(banned && state.server.ban_until(user).is_some()) {
+        return Ok(ServerEvent::MemberBan { server: state.server.id, user });
+    }
+    Ok(ServerEvent::MemberBanUntil { server: state.server.id, user, at, until })
 }
 
 pub fn unban(state: &ServerState, perms: Permissions, user: UserId) -> Act<ServerEvent> {
@@ -289,6 +300,26 @@ pub fn automod(state: &ServerState, perms: Permissions, rules: AutoMod) -> Act<S
     Ok(ServerEvent::AutoModSet { server: state.server.id, rules })
 }
 
+pub fn upload_limit(state: &ServerState, perms: Permissions, megabytes: Option<u32>, now: DateTime<Utc>) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_SERVER, "change the file size limit")?;
+    if megabytes.is_some_and(|mb| !UPLOAD_LIMITS_MB.contains(&mb)) {
+        return Err("pick a file size limit from the list".into());
+    }
+    Ok(ServerEvent::UploadLimitSet { server: state.server.id, megabytes, at: now.timestamp_millis() })
+}
+
+pub fn upload_fits(state: &ServerState, size: u64) -> Act<()> {
+    match state.server.upload_limit_mb.filter(|_| !state.server.upload_fits(size)) {
+        Some(mb) => Err(format!("this server allows files up to {}", commy_core::audit::size_words(mb))),
+        None => Ok(()),
+    }
+}
+
+pub fn tts_allowed(state: &ServerState, perms: Permissions, allowed: bool) -> Act<ServerEvent> {
+    need(perms, Permissions::MANAGE_SERVER, "turn text-to-speech on or off")?;
+    Ok(ServerEvent::TtsAllowed { server: state.server.id, allowed })
+}
+
 pub fn activities(state: &ServerState, perms: Permissions, enabled: bool) -> Act<ServerEvent> {
     need(perms, Permissions::MANAGE_SERVER, "turn Activities on or off")?;
     Ok(ServerEvent::ActivitiesSet { server: state.server.id, enabled })
@@ -309,6 +340,39 @@ mod tests {
     }
 
     #[test]
+    fn bans_last_a_listed_time_or_until_lifted() {
+        let (mut state, owner, member) = hangout();
+        let mine = state.server.permissions_for(owner);
+        let now = Utc::now();
+        let at = now.timestamp_millis();
+        let day = ban(&state, mine, owner, member, Some(24), now).unwrap();
+        assert_eq!(day, ServerEvent::MemberBanUntil { server: state.server.id, user: member, at, until: Some(at + 86_400_000) });
+        assert!(ban(&state, mine, owner, member, Some(2), now).is_err());
+        state.apply(day).unwrap();
+        assert!(state.server.is_banned(member));
+        let forever = ban(&state, mine, owner, member, None, now).unwrap();
+        assert_eq!(forever, ServerEvent::MemberBanUntil { server: state.server.id, user: member, at, until: None }, "turning a timed ban into an open one");
+        state.apply(forever).unwrap();
+        assert!(matches!(ban(&state, mine, owner, member, None, now), Ok(ServerEvent::MemberBan { .. })));
+    }
+
+    #[test]
+    fn managers_cap_file_sizes_and_switch_text_to_speech() {
+        let (mut state, owner, member) = hangout();
+        let (mine, theirs) = (state.server.permissions_for(owner), state.server.permissions_for(member));
+        assert!(upload_limit(&state, theirs, Some(25), Utc::now()).is_err());
+        assert!(upload_limit(&state, mine, Some(30), Utc::now()).is_err());
+        state.apply(upload_limit(&state, mine, Some(25), Utc::now()).unwrap()).unwrap();
+        assert!(upload_fits(&state, 25 * 1024 * 1024).is_ok());
+        assert_eq!(upload_fits(&state, 25 * 1024 * 1024 + 1).unwrap_err(), "this server allows files up to 25 MB");
+        assert!(tts_allowed(&state, theirs, false).is_err());
+        assert!(state.server.speaks_aloud(state.server.permissions_for(member)));
+        state.apply(tts_allowed(&state, mine, false).unwrap()).unwrap();
+        assert!(!state.server.speaks_aloud(state.server.permissions_for(member)));
+        assert!(!state.server.speaks_aloud(state.server.permissions_for(owner)));
+    }
+
+    #[test]
     fn nobody_removes_the_owner_or_themselves() {
         let (state, owner, member) = hangout();
         let mine = state.server.permissions_for(owner);
@@ -316,9 +380,9 @@ mod tests {
         assert_eq!(kick(&state, mine, owner).unwrap_err(), "the owner cannot be kicked");
         assert!(matches!(kick(&state, mine, member), Ok(ServerEvent::MemberLeave { user, .. }) if user == member));
         assert!(kick(&state, theirs, owner).is_err());
-        assert!(ban(&state, mine, owner, owner).is_err());
-        assert!(ban(&state, theirs, member, owner).is_err());
-        assert!(matches!(ban(&state, mine, owner, member), Ok(ServerEvent::MemberBan { .. })));
+        assert!(ban(&state, mine, owner, owner, None, Utc::now()).is_err());
+        assert!(ban(&state, theirs, member, owner, None, Utc::now()).is_err());
+        assert!(matches!(ban(&state, mine, owner, member, None, Utc::now()), Ok(ServerEvent::MemberBan { .. })));
         assert!(unban(&state, theirs, member).is_err());
     }
 

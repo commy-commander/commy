@@ -24,6 +24,7 @@ pub mod search;
 pub mod join_requests;
 pub mod server_tags;
 pub mod pet;
+pub mod removals;
 pub mod templates;
 pub mod tip_jar;
 pub mod voice_invite;
@@ -324,7 +325,10 @@ pub struct ServerView {
     pub can_manage_events: bool,
     pub server_muted: Vec<String>,
     pub server_deafened: Vec<String>,
-    pub banned: Vec<(String, String)>,
+    pub banned: Vec<removals::BanView>,
+    pub kicked: Vec<removals::KickView>,
+    pub upload_limit_mb: Option<u32>,
+    pub tts_allowed: bool,
     pub afk_timeout_minutes: Option<u32>,
     pub can_mute: bool,
     pub can_move: bool,
@@ -670,11 +674,10 @@ impl ServerView {
             can_manage_events: perms.allows(Permissions::MANAGE_EVENTS),
             server_muted: state.server.server_muted.iter().map(|u| u.to_string()).collect(),
             server_deafened: state.server.server_deafened.iter().map(|u| u.to_string()).collect(),
-            banned: if perms.allows(Permissions::BAN_MEMBERS) {
-                state.server.banned.iter().map(|u| (u.to_string(), display_name(state, *u))).collect()
-            } else {
-                Vec::new()
-            },
+            banned: if perms.allows(Permissions::BAN_MEMBERS) { removals::bans(state, now.timestamp_millis()) } else { Vec::new() },
+            kicked: if perms.allows(Permissions::KICK_MEMBERS) { removals::kicked(state) } else { Vec::new() },
+            upload_limit_mb: state.server.upload_limit_mb,
+            tts_allowed: !state.server.tts_off,
             afk_timeout_minutes: state.server.afk_timeout_minutes,
             can_mute: perms.allows(Permissions::MUTE_MEMBERS),
             can_move: perms.allows(Permissions::MOVE_MEMBERS),
@@ -727,7 +730,7 @@ impl ServerView {
             uploads_restricted: everyone_lacks(state, Permissions::ATTACH_FILES),
             can_attach_files: perms.allows(Permissions::ATTACH_FILES),
             can_send_voice_messages: perms.allows(Permissions::SEND_VOICE_MESSAGES),
-            can_send_tts_messages: perms.can_send_tts(),
+            can_send_tts_messages: state.server.speaks_aloud(perms),
             can_embed_links: perms.can_embed_links(),
             can_read_history: perms.can_read_history(),
             can_create_threads: is_member && perms.can_create_threads(),
@@ -1190,7 +1193,7 @@ impl MessageView {
                 .collect(),
             previews: message.previews_for(author_permissions).take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
             poll: (!sealed).then(|| PollView::build(message, state, keys.user())).flatten(),
-            tts: !sealed && message.speaks_for(author_permissions),
+            tts: !sealed && !state.server.tts_off && message.speaks_for(author_permissions),
             command: (!sealed).then(|| CommandUseView::build(message, state)).flatten(),
             embeds: message.embeds_for(author_permissions),
             pending: false,

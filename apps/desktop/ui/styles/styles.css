@@ -5664,6 +5664,13 @@ html[data-reduced-motion] .server-tag.st-fx-shine::after { display: none; }
 }
 .timeout-choice:hover { color: var(--text-normal); background: var(--bg-hover); }
 .timeout-choice.active { color: var(--ink-strong); background: var(--bg-active); border-color: var(--bg-active); }
+.modal-moderate .timeout-choices { margin: 0 0 4px; }
+.removed-list { display: flex; flex-direction: column; gap: 6px; }
+.removed-list .manage-row-label { flex: 1; }
+.removed-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.removed-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.removed-meta { color: var(--text-muted); font-size: 12px; font-weight: 400; }
+.removed-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 .update-card .update-state { min-height: calc(2 * 1.4em); }
 .update-card .update-action { flex: 0 0 152px; width: 152px; white-space: nowrap; }

@@ -783,12 +783,12 @@ async function mockInvoke(cmd, args = {}) {
         tip_jar: s.tip_jar || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
-        can_send_tts_messages: !s.tts_restricted || !mock.plainMember,
+        can_send_tts_messages: !s.tts_off && (!s.tts_restricted || !mock.plainMember), tts_allowed: !s.tts_off, upload_limit_mb: s.upload_limit_mb || null,
         stickers: s.stickers || [], emoticons: s.emoticons || [], stickers_shareable: !!s.stickers_shareable, emoticons_shareable: !!s.emoticons_shareable,
         add_restricted: { emojis: false, stickers: false, emoticons: false, ...(s.add_restricted || {}) },
         can_add_emojis: !mock.plainMember || !(s.add_restricted || {}).emojis, can_add_stickers: !mock.plainMember || !(s.add_restricted || {}).stickers,
         can_add_emoticons: !mock.plainMember || !(s.add_restricted || {}).emoticons, can_use_external: s.can_use_external !== false,
-        can_mute: !mock.plainMember, can_move: !mock.plainMember, can_manage_stage: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: s.banned || [],
+        can_mute: !mock.plainMember, can_move: !mock.plainMember, can_manage_stage: !mock.plainMember, can_ban: !mock.plainMember, can_time_out: !mock.plainMember, my_timeout_until: s.my_timeout_until || null, can_manage_nicknames: !mock.plainMember, can_change_nickname: true, can_invite: !mock.plainMember, can_pin: !mock.plainMember, can_post_announcements: !mock.plainMember, can_view_audit_log: !mock.plainMember, server_muted: s.server_muted || [], server_deafened: s.server_deafened || [], banned: mock.plainMember ? [] : s.banned || [], kicked: mock.plainMember ? [] : s.kicked || [],
         automod: mock.plainMember ? null : s.automod || { blocked_terms: [], block_links: false, max_mentions: null, burst: null, exempt_roles: [] },
       };
     }
@@ -1765,10 +1765,17 @@ async function mockInvoke(cmd, args = {}) {
       const s = mock.servers[args.serverId];
       const m = s.members.find(x => x.id === args.userId);
       s.members = s.members.filter(x => x.id !== args.userId);
-      s.banned = [...(s.banned || []), [args.userId, m ? m.name : "Someone"]];
+      const at = Date.now();
+      const until = args.hours ? at + args.hours * 3600e3 : null;
+      const known = (s.banned || []).find(b => b.id === args.userId);
+      const name = known ? known.name : m ? m.name : ((s.kicked || []).find(k => k.id === args.userId) || {}).name || "Someone";
+      s.banned = [{ id: args.userId, name, by: "me", by_name: "You", at, until }, ...(s.banned || []).filter(b => b.id !== args.userId)];
+      s.kicked = (s.kicked || []).filter(k => k.id !== args.userId);
       return null;
     }
-    case "unban_member": { const s = mock.servers[args.serverId]; s.banned = (s.banned || []).filter(b => b[0] !== args.userId); return null; }
+    case "unban_member": { const s = mock.servers[args.serverId]; s.banned = (s.banned || []).filter(b => b.id !== args.userId); return null; }
+    case "set_upload_limit": mock.servers[args.serverId].upload_limit_mb = args.megabytes || null; return null;
+    case "set_tts_allowed": mock.servers[args.serverId].tts_off = !args.enabled; return null;
     case "time_out_member": {
       const m = mock.servers[args.serverId].members.find(x => x.id === args.userId);
       if (m) m.timeout_until = Date.now() + args.seconds * 1000;
@@ -1931,9 +1938,15 @@ async function mockInvoke(cmd, args = {}) {
       roles.push({ id, name: args.name.trim(), color: args.color, position: roles.length + 2, permissions: args.permissions, self_assignable: Boolean(args.selfAssignable), hoist: Boolean(args.hoist), tag: args.tag || null, mentionable: Boolean(args.mentionable) });
       return id;
     }
+    case "kick_member": {
+      const s = mock.servers[args.serverId];
+      const m = s.members.find(x => x.id === args.userId);
+      s.members = s.members.filter(x => x.id !== args.userId);
+      if (m) s.kicked = [{ id: m.id, name: m.name, by: "me", by_name: "You", at: Date.now() }, ...(s.kicked || []).filter(k => k.id !== m.id)];
+      return null;
+    }
     case "delete_role":
     case "set_member_role":
-    case "kick_member":
       return null;
     case "open_url":
       window.open(args.url, "_blank");
@@ -12515,14 +12528,34 @@ function modWho(target, member) {
   target.replaceChildren(makeAvatar(member.id, member.name, "avatar avatar-sm"), el("span", null, member.name));
 }
 
-function askModeration({ title, member, text, label, run }) {
+function askModeration({ title, member, text, label, run, lengths = null }) {
   closeFloating();
   $("moderate-title").textContent = title;
   modWho($("moderate-who"), member);
   $("moderate-text").textContent = text;
   $("moderate-go").textContent = label;
+  $("moderate-lengths").classList.toggle("hidden", !lengths);
+  if (lengths) lengths();
   moderateRun = run;
   showModal("modal-moderate");
+}
+
+function renderBanLengths(member, server, ban) {
+  const grid = $("moderate-lengths");
+  grid.replaceChildren();
+  for (const length of BAN_LENGTHS) {
+    const picked = ban.hours === length.hours;
+    const btn = el("button", "timeout-choice" + (picked ? " active" : ""), length.label);
+    btn.type = "button";
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", String(picked));
+    btn.onclick = () => {
+      ban.hours = length.hours;
+      renderBanLengths(member, server, ban);
+    };
+    grid.appendChild(btn);
+  }
+  $("moderate-text").textContent = banChoiceText(member.name, server.name, ban.hours);
 }
 
 function confirmKick(member) {
@@ -12544,15 +12577,18 @@ function confirmKick(member) {
 function confirmBan(member) {
   const server = state.currentServer;
   if (!server) return;
+  const ban = { hours: null };
   askModeration({
     title: `Ban ${member.name}`,
     member,
-    text: `They are removed from ${server.name} and cannot rejoin until you unban them.`,
+    text: banChoiceText(member.name, server.name, null),
     label: "Ban",
+    lengths: () => renderBanLengths(member, server, ban),
     run: async () => {
-      await invoke("ban_member", { serverId: server.id, userId: member.id });
+      await invoke("ban_member", { serverId: server.id, userId: member.id, hours: ban.hours });
       await refreshCurrentServer();
-      toast(`Banned ${member.name}`);
+      const length = BAN_LENGTHS.find(b => b.hours === ban.hours);
+      toast(ban.hours ? `Banned ${member.name} for ${length.label}` : `Banned ${member.name}`);
     },
   });
 }
@@ -18637,6 +18673,11 @@ async function uploadFileObject(file) {
     toast("File is too large (512 MB max)");
     return;
   }
+  const refusal = dm ? null : uploadRefusal(state.currentServer, file.size);
+  if (refusal) {
+    toast(refusal);
+    return;
+  }
   const buffer = await file.arrayBuffer();
   let binary = "";
   const bytes = new Uint8Array(buffer);
@@ -19034,6 +19075,30 @@ function wireEvents() {
     } catch (err) {
       e.target.checked = !e.target.checked;
       toast(String(err));
+    }
+  });
+  $("server-upload-limit").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    const megabytes = e.target.value ? Number(e.target.value) : null;
+    try {
+      await invoke("set_upload_limit", { serverId: server.id, megabytes });
+      server.upload_limit_mb = megabytes;
+      toast(megabytes ? `Files here are now limited to ${uploadLimitLabel(megabytes)}` : "Files here can be up to 4 GB again");
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
+    }
+  });
+  $("server-tts-toggle").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server) return;
+    try {
+      await invoke("set_tts_allowed", { serverId: server.id, enabled: e.target.checked });
+      await refreshCurrentServer();
+    } catch (err) {
+      toast(String(err));
+      openServerSettings();
     }
   });
   $("server-activities-toggle").addEventListener("change", async e => {
@@ -21347,6 +21412,7 @@ function openServerSettings(tab) {
   $("server-activities-toggle").checked = Boolean(server.activities_enabled);
   $("server-activities-toggle").disabled = !server.can_manage_server;
   $("server-activities-row").classList.toggle("readonly", !server.can_manage_server);
+  renderFileAndSpeechSettings(server);
   discoveryState.dirty = false;
   paintDiscoverySettings(server);
   $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
@@ -21373,6 +21439,9 @@ function openServerSettings(tab) {
   if (server.can_manage_server) renderOnboardingSettings(server);
   $("tab-automod").classList.toggle("hidden", !server.can_manage_server);
   if (server.can_manage_server) renderAutomodSettings(server);
+  const canRemoved = canSeeRemoved(server);
+  $("tab-removed").classList.toggle("hidden", !canRemoved);
+  if (canRemoved) renderRemovedSettings(server);
   renderGameTagEditor(server);
   renderServerTagEditor(server);
   renderTipJarEditor(server);
@@ -21408,6 +21477,7 @@ function openServerSettings(tab) {
     rules: server.can_manage_server,
     onboarding: server.can_manage_server,
     automod: server.can_manage_server,
+    removed: canRemoved,
     members: canMembers,
     joins: canJoins,
     audit: server.can_view_audit_log,
@@ -21852,32 +21922,98 @@ function renderRoleSettings(server) {
   if (!server.roles.length) list.appendChild(el("div", "manage-empty", "No roles yet"));
 }
 
+function removedRow(person, meta, buttons) {
+  const row = el("div", "manage-row");
+  const label = el("span", "manage-row-label");
+  label.appendChild(makeAvatar(person.id, person.name, "avatar avatar-sm"));
+  const who = el("span", "removed-who");
+  who.append(el("span", "removed-name", person.name), el("span", "removed-meta", meta));
+  label.appendChild(who);
+  const actions = el("span", "removed-actions");
+  actions.append(...buttons);
+  row.append(label, actions);
+  return row;
+}
+
+function removedButton(label, primary, run, done = null) {
+  const btn = el("button", primary ? "btn-primary btn-small" : "btn-secondary btn-small", label);
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      await run();
+      if (done) btn.textContent = done;
+    } catch (e) {
+      btn.disabled = false;
+      toast(String(e));
+    }
+  };
+  return btn;
+}
+
+async function unbanRemoved(server, ban) {
+  await invoke("unban_member", { serverId: server.id, userId: ban.id });
+  await refreshCurrentServer();
+  toast(`Unbanned ${ban.name}. They can rejoin with an invite.`);
+  openServerSettings("removed");
+}
+
+async function inviteBack(server, person) {
+  const ticket = await invoke("get_invite", { serverId: server.id });
+  await invoke("open_dm", { userId: person.id });
+  const sent = await invoke("send_dm", { userId: person.id, content: `Come back to ${server.name}! ${ticket}` });
+  dmSentToast(sent, person.name, `Sent ${person.name} an invite back to ${server.name}`);
+}
+
+function renderRemovedSettings(server) {
+  const now = Date.now();
+  const bans = server.can_ban ? server.banned || [] : [];
+  const kicks = server.can_kick ? server.kicked || [] : [];
+  $("tab-removed").textContent = bans.length || kicks.length ? `Bans & Kicks (${bans.length + kicks.length})` : "Bans & Kicks";
+  $("removed-bans-head").classList.toggle("hidden", !server.can_ban);
+  $("removed-bans").classList.toggle("hidden", !server.can_ban);
+  $("removed-kicks-head").classList.toggle("hidden", !server.can_kick);
+  $("removed-kicks").classList.toggle("hidden", !server.can_kick);
+  $("removed-bans-head").textContent = bans.length ? `Banned - ${bans.length}` : "Banned";
+  $("removed-kicks-head").textContent = kicks.length ? `Kicked - ${kicks.length}` : "Kicked";
+  const banList = $("removed-bans");
+  banList.replaceChildren();
+  for (const ban of bans) {
+    banList.appendChild(removedRow(ban, banLine(ban, now), [removedButton("Unban", false, () => unbanRemoved(server, ban))]));
+  }
+  if (!bans.length) banList.appendChild(el("div", "manage-empty", "Nobody is banned."));
+  const kickList = $("removed-kicks");
+  kickList.replaceChildren();
+  for (const kick of kicks) {
+    const buttons = [];
+    if (server.can_invite) buttons.push(removedButton("Invite Back", true, () => inviteBack(server, kick), "Sent"));
+    if (server.can_ban) {
+      const ban = el("button", "btn-secondary btn-small", "Ban");
+      ban.onclick = () => confirmBan(kick);
+      buttons.push(ban);
+    }
+    kickList.appendChild(removedRow(kick, kickLine(kick, now), buttons));
+  }
+  if (!kicks.length) kickList.appendChild(el("div", "manage-empty", "Nobody has been kicked."));
+}
+
+function renderFileAndSpeechSettings(server) {
+  const select = $("server-upload-limit");
+  select.replaceChildren(...[null, ...UPLOAD_LIMITS_MB].map(mb => {
+    const option = el("option", null, mb ? uploadLimitLabel(mb) : "Up to 4 GB (no limit)");
+    option.value = mb ? String(mb) : "";
+    return option;
+  }));
+  select.value = server.upload_limit_mb ? String(server.upload_limit_mb) : "";
+  select.disabled = !server.can_manage_server;
+  $("server-upload-limit-row").classList.toggle("readonly", !server.can_manage_server);
+  $("server-tts-toggle").checked = server.tts_allowed !== false;
+  $("server-tts-toggle").disabled = !server.can_manage_server;
+  $("server-tts-row").classList.toggle("readonly", !server.can_manage_server);
+}
+
 function renderMemberSettings(server) {
   const list = $("manage-member-list");
   list.innerHTML = "";
-  if ((server.banned || []).length) {
-    list.appendChild(el("div", "settings-subhead", `Bans - ${server.banned.length}`));
-    for (const [id, name] of server.banned) {
-      const row = el("div", "manage-row");
-      const who = el("span", "manage-row-label");
-      who.appendChild(makeAvatar(id, name, "avatar avatar-sm"));
-      who.appendChild(el("span", null, name));
-      row.appendChild(who);
-      const unban = el("button", "btn-secondary btn-small", "Unban");
-      unban.onclick = async () => {
-        try {
-          await invoke("unban_member", { serverId: server.id, userId: id });
-          await refreshCurrentServer();
-          openServerSettings();
-        } catch (e) {
-          toast(String(e));
-        }
-      };
-      row.appendChild(unban);
-      list.appendChild(row);
-    }
-    list.appendChild(el("div", "settings-subhead", "Members"));
-  }
   for (const member of server.members) {
     const row = el("div", "manage-row manage-member-row");
     const top = el("div", "row-top");

@@ -279,7 +279,7 @@ pub fn apply_live(
 }
 
 pub fn check_peer(state: &ServerState, user: UserId, key: &IdentityKey) -> PeerCheck {
-    if state.server.banned.contains(&user) {
+    if state.server.is_banned(user) {
         return PeerCheck::Denied;
     }
     if !state.server.is_member(user) {

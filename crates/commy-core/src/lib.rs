@@ -21,6 +21,7 @@ pub mod message;
 pub mod onboarding;
 pub mod permissions;
 pub mod poll;
+pub mod removals;
 pub mod server;
 pub mod server_tag;
 pub mod store;

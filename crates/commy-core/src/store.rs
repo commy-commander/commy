@@ -65,6 +65,8 @@ pub enum StoreError {
     TimedOut,
     #[error("that thread is locked")]
     ThreadLocked,
+    #[error("that file is larger than this server allows")]
+    FileTooLarge,
 }
 
 const MAX_THREAD_DEPTH: usize = 64;
@@ -758,6 +760,7 @@ impl ServerState {
         };
         if applied {
             self.note_stepped_down(moderators, at);
+            self.note_removal(by, at, &signed.event);
         }
         if let Some(entry) = entry.filter(|_| applied) {
             crate::audit::record(&mut self.audit, entry);
@@ -770,6 +773,45 @@ impl ServerState {
             self.readmit_if_joined_since(*user, at);
         }
         Ok(applied)
+    }
+
+    fn ban(&mut self, user: UserId, record: crate::removals::BanRecord) -> Result<bool, StoreError> {
+        if self.server.banned.len() >= MAX_BANS {
+            return Err(StoreError::Limit);
+        }
+        self.server.banned.push(user);
+        self.server.bans.insert(user, record);
+        crate::removals::forget_kick(&mut self.server, user);
+        self.server.members.retain(|m| m.user != user);
+        crate::drive::forget_user(&mut self.server.drive, user);
+        self.drop_voice_presence(user);
+        self.devices.forget(user);
+        self.screen_shares.remove(&user);
+        self.bots.remove(&user);
+        self.bot_commands.remove(&user);
+        Ok(true)
+    }
+
+    fn lift_ended_ban(&mut self, user: UserId) {
+        if self.server.bans.get(&user).is_some_and(|b| b.ended(Utc::now().timestamp_millis())) {
+            self.server.banned.retain(|u| *u != user);
+            self.server.bans.remove(&user);
+        }
+    }
+
+    fn note_removal(&mut self, by: UserId, at: i64, event: &ServerEvent) {
+        match event {
+            ServerEvent::MemberLeave { user, .. } if *user != by => {
+                crate::removals::record_kick(&mut self.server, crate::removals::Kick { user: *user, by, at });
+            }
+            ServerEvent::MemberBan { user, .. } | ServerEvent::MemberBanUntil { user, .. } => {
+                if let Some(record) = self.server.bans.get_mut(user) {
+                    record.by = Some(by);
+                    record.at = at;
+                }
+            }
+            _ => {}
+        }
     }
 
     fn last_join(&self, user: UserId) -> Option<i64> {
@@ -791,7 +833,13 @@ impl ServerState {
         use ServerEvent as E;
         let reshapes = matches!(
             event,
-            E::RoleDelete { .. } | E::RoleUnassign { .. } | E::RoleUpdate { .. } | E::MemberLeave { .. } | E::MemberBan { .. } | E::OwnerTransfer { .. }
+            E::RoleDelete { .. }
+                | E::RoleUnassign { .. }
+                | E::RoleUpdate { .. }
+                | E::MemberLeave { .. }
+                | E::MemberBan { .. }
+                | E::MemberBanUntil { .. }
+                | E::OwnerTransfer { .. }
         );
         if !reshapes {
             return Vec::new();
@@ -832,7 +880,7 @@ impl ServerState {
             E::RoleDelete { role, .. } | E::RoleAssign { role, .. } | E::RoleUnassign { role, .. } => {
                 server.roles.iter().any(|r| r.id == *role)
             }
-            E::MemberBan { user, .. } | E::MemberUnban { user, .. } | E::MemberLeave { user, .. } => {
+            E::MemberBan { user, .. } | E::MemberBanUntil { user, .. } | E::MemberUnban { user, .. } | E::MemberLeave { user, .. } => {
                 server.is_member(*user) || server.banned.contains(user) || self.profiles.contains_key(user)
             }
             E::MemberTimeout { user, .. } => server.is_member(*user),
@@ -1088,6 +1136,7 @@ impl ServerState {
             }
             ServerEvent::MemberJoin { server, mut profile } => {
                 self.same_server(server)?;
+                self.lift_ended_ban(profile.id);
                 if self.server.banned.contains(&profile.id) || crate::join_request::may_ask(&self.server, profile.id) {
                     return Ok(false);
                 }
@@ -1102,6 +1151,7 @@ impl ServerState {
                     return Err(StoreError::Limit);
                 }
                 self.make_profile_room(profile.id)?;
+                crate::removals::forget_kick(&mut self.server, profile.id);
                 self.server.members.push(Member {
                     user: profile.id,
                     nickname: None,
@@ -1479,6 +1529,9 @@ impl ServerState {
                 if !self.server.channel(item.channel).is_some_and(|c| c.is_drive()) {
                     return Ok(false);
                 }
+                if item.file.as_ref().is_some_and(|f| !self.server.upload_fits_at(f.size, item.at)) {
+                    return Err(StoreError::FileTooLarge);
+                }
                 Ok(crate::drive::add(&mut self.server.drive, item))
             }
             ServerEvent::DriveEdit { server, item, name, parent } => {
@@ -1498,6 +1551,21 @@ impl ServerState {
                     return Ok(false);
                 }
                 Ok(crate::drive::hold(&mut self.server.drive, item, user, node.as_deref()))
+            }
+            ServerEvent::UploadLimitSet { server, megabytes, at } => {
+                self.same_server(server)?;
+                if megabytes.is_some_and(|mb| !crate::server::UPLOAD_LIMITS_MB.contains(&mb)) {
+                    return Ok(false);
+                }
+                let changed = replace(&mut self.server.upload_limit_mb, megabytes);
+                if changed {
+                    self.server.upload_limit_since = if megabytes.is_some() { at } else { 0 };
+                }
+                Ok(changed)
+            }
+            ServerEvent::TtsAllowed { server, allowed } => {
+                self.same_server(server)?;
+                Ok(replace(&mut self.server.tts_off, !allowed))
             }
             ServerEvent::TipJarSet { server, url } => {
                 self.same_server(server)?;
@@ -1531,6 +1599,7 @@ impl ServerState {
             }
             ServerEvent::JoinAnswer { server, user, admit } => {
                 self.same_server(server)?;
+                self.lift_ended_ban(user);
                 if !admit {
                     return Ok(crate::join_request::turn_away(&mut self.server, user));
                 }
@@ -1546,6 +1615,7 @@ impl ServerState {
                     return Err(StoreError::Limit);
                 }
                 self.make_profile_room(user)?;
+                crate::removals::forget_kick(&mut self.server, user);
                 self.server.members.push(Member { user, nickname: None, roles: vec![], joined_at: Utc::now(), timeout: None });
                 if let Some(profile) = asked.filter(|_| !self.profiles.contains_key(&user)) {
                     self.profiles.insert(user, profile);
@@ -1823,21 +1893,23 @@ impl ServerState {
             }
             ServerEvent::MemberBan { server, user } => {
                 self.same_server(server)?;
+                self.lift_ended_ban(user);
                 if user == self.server.owner || self.server.banned.contains(&user) {
                     return Ok(false);
                 }
-                if self.server.banned.len() >= MAX_BANS {
-                    return Err(StoreError::Limit);
+                self.ban(user, crate::removals::BanRecord::default())
+            }
+            ServerEvent::MemberBanUntil { server, user, at, until } => {
+                self.same_server(server)?;
+                self.lift_ended_ban(user);
+                if user == self.server.owner || !crate::removals::valid_term(at, until) {
+                    return Ok(false);
                 }
-                self.server.banned.push(user);
-                self.server.members.retain(|m| m.user != user);
-                crate::drive::forget_user(&mut self.server.drive, user);
-                self.drop_voice_presence(user);
-                self.devices.forget(user);
-                self.screen_shares.remove(&user);
-                self.bots.remove(&user);
-                self.bot_commands.remove(&user);
-                Ok(true)
+                if self.server.banned.contains(&user) {
+                    let record = self.server.bans.entry(user).or_default();
+                    return Ok(replace(&mut record.until, until));
+                }
+                self.ban(user, crate::removals::BanRecord { by: None, at, until })
             }
             ServerEvent::AfkTimeoutSet { server, minutes } => {
                 self.same_server(server)?;
@@ -1851,6 +1923,7 @@ impl ServerState {
                 self.same_server(server)?;
                 let before = self.server.banned.len();
                 self.server.banned.retain(|u| *u != user);
+                self.server.bans.remove(&user);
                 Ok(self.server.banned.len() != before)
             }
             ServerEvent::RoleUpdate { server, role } => {
@@ -2213,6 +2286,9 @@ impl ServerState {
             && !self.server.permissions_for(message.author).allows(crate::permissions::Permissions::ATTACH_FILES)
         {
             return Err(StoreError::NoUploads);
+        }
+        if !held && message.attachments.iter().any(|a| a.is_plain_file() && !self.server.upload_fits_at(a.size_bytes, message.created_at.timestamp_millis())) {
+            return Err(StoreError::FileTooLarge);
         }
         if !held
             && message.attachments.iter().any(Attachment::is_voice_message)
@@ -3908,6 +3984,108 @@ mod tests {
         });
         let file = crate::test_support::signed(&state, file);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
+    }
+
+    #[test]
+    fn kicks_are_kept_until_the_person_comes_back_or_is_banned() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let profile = state.profiles[&friend].clone();
+        let now = Utc::now().timestamp_millis();
+        let kick = SignedEvent::sign(sid, owner, now, ServerEvent::MemberLeave { server: sid, user: friend }, &identity_for(owner));
+        assert_eq!(state.apply_signed(&kick), Ok(true));
+        assert_eq!(state.server.kicked, vec![crate::removals::Kick { user: friend, by: owner, at: now }]);
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        assert_eq!(ServerState::from_snapshot(serde_json::from_str(&json).unwrap()).server.kicked.len(), 1);
+        assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile }), Ok(true));
+        assert!(state.server.kicked.is_empty(), "back in, so off the list");
+        let leaves = SignedEvent::sign(sid, friend, now + 10, ServerEvent::MemberLeave { server: sid, user: friend }, &identity_for(friend));
+        assert_eq!(state.apply_signed(&leaves), Ok(true));
+        assert!(state.server.kicked.is_empty(), "leaving on your own is not a kick");
+    }
+
+    #[test]
+    fn a_timed_ban_ends_on_its_own_and_lets_the_person_rejoin() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let profile = state.profiles[&friend].clone();
+        let now = Utc::now().timestamp_millis();
+        let ban = |at, until| SignedEvent::sign(sid, owner, at, ServerEvent::MemberBanUntil { server: sid, user: friend, at, until }, &identity_for(owner));
+        assert!(!crate::action::authorized(&state.server, friend, &ban(now, Some(now + 1)).event));
+        assert_eq!(state.apply_signed(&ban(now - 60_000, Some(now + 3_600_000))), Ok(true));
+        assert!(state.server.is_banned(friend) && !state.server.is_member(friend));
+        assert_eq!(state.server.bans[&friend], crate::removals::BanRecord { by: Some(owner), at: now - 60_000, until: Some(now + 3_600_000) });
+        assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: profile.clone() }), Ok(false));
+        assert!(!state.server.banned_at(friend, now + 3_600_000));
+        state.server.bans.get_mut(&friend).unwrap().until = Some(now - 1);
+        assert!(!state.server.is_banned(friend));
+        assert!(crate::join_request::may_ask(&{ let mut s = state.server.clone(); s.join_approval = true; s }, friend));
+        assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile }), Ok(true));
+        assert!(state.server.banned.is_empty() && state.server.bans.is_empty());
+    }
+
+    #[test]
+    fn a_ban_can_be_lengthened_or_made_open_and_an_unban_clears_it() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let now = Utc::now().timestamp_millis();
+        let sign = |at, event| SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        let until = |at, until| ServerEvent::MemberBanUntil { server: sid, user: friend, at, until };
+        assert_eq!(state.apply_signed(&sign(now, until(now, Some(now + 1_000)))), Ok(true));
+        assert_eq!(state.apply_signed(&sign(now + 1, until(now + 1, Some(now + 1)))), Ok(false), "a ban must end after it starts");
+        assert_eq!(state.apply_signed(&sign(now + 2, until(now + 2, None))), Ok(true));
+        assert_eq!(state.server.ban_until(friend), None);
+        assert_eq!(state.apply_signed(&sign(now + 3, ServerEvent::MemberUnban { server: sid, user: friend })), Ok(true));
+        assert!(state.server.banned.is_empty() && state.server.bans.is_empty());
+        assert_eq!(state.apply_signed(&sign(now + 1, until(now + 1, Some(now + 9_000)))), Ok(false), "an older ban cannot undo the unban");
+        assert_eq!(state.apply(ServerEvent::MemberBan { server: sid, user: owner }), Ok(false));
+        assert_eq!(state.apply(until(now - 2_000, Some(now - 1_000))), Ok(true));
+        assert!(!state.server.is_banned(friend));
+        assert_eq!(state.apply(ServerEvent::MemberBan { server: sid, user: friend }), Ok(true), "an ended ban gives way to a new one");
+        assert_eq!(state.server.ban_until(friend), None);
+    }
+
+    #[test]
+    fn files_over_the_server_limit_are_refused_from_when_it_was_set() {
+        let (mut state, channel, _) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let file = |state: &ServerState, size, at| {
+            let mut m = Message::new(channel, friend, "");
+            m.created_at = at;
+            m.attachments.push(crate::message::Attachment { blob: "abc".into(), filename: "big.zip".into(), size_bytes: size, mime_type: "application/zip".into(), provider: None });
+            crate::test_support::signed(state, m)
+        };
+        let now = Utc::now();
+        let mb = crate::server::BYTES_PER_MB;
+        assert_eq!(state.apply(ServerEvent::UploadLimitSet { server: sid, megabytes: Some(30), at: 1 }), Ok(false), "only listed sizes");
+        assert_eq!(state.apply(ServerEvent::UploadLimitSet { server: sid, megabytes: Some(25), at: now.timestamp_millis() }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: file(&state, 26 * mb, now) }), Err(StoreError::FileTooLarge));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: file(&state, 25 * mb, now) }), Ok(true));
+        let earlier = now - chrono::Duration::minutes(5);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: file(&state, 26 * mb, earlier) }), Ok(true), "sent before the limit");
+        assert_eq!(state.apply(ServerEvent::UploadLimitSet { server: sid, megabytes: None, at: now.timestamp_millis() }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: file(&state, 900 * mb, now) }), Ok(true));
+    }
+
+    #[test]
+    fn turning_off_text_to_speech_takes_it_from_everyone_and_silences_old_messages() {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let mut spoken = Message::new(channel, friend, "hello");
+        spoken.mark_tts();
+        let speaks = |state: &ServerState, user| spoken.speaks_for(state.server.permissions_for(user)) && state.server.speaks_aloud(state.server.permissions_for(user));
+        assert!(speaks(&state, friend));
+        assert!(!crate::action::authorized(&state.server, friend, &ServerEvent::TtsAllowed { server: sid, allowed: false }));
+        assert_eq!(state.apply(ServerEvent::TtsAllowed { server: sid, allowed: false }), Ok(true));
+        assert!(!speaks(&state, friend));
+        assert!(!state.server.speaks_aloud(state.server.permissions_for(owner)));
+        assert_eq!(state.apply(ServerEvent::TtsAllowed { server: sid, allowed: true }), Ok(true));
+        assert!(speaks(&state, friend));
     }
 
     #[test]
