@@ -10174,7 +10174,8 @@ function streamDeckRow(deck) {
 
 async function setStreamDeckEnabled(enabled) {
   try {
-    streamDeck = await invoke("set_stream_deck_enabled", { enabled });
+    await invoke("set_stream_deck_enabled", { enabled });
+    streamDeck = await invoke("get_stream_deck");
   } catch (e) {
     toast(String(e));
   }
