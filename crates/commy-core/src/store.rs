@@ -2623,6 +2623,19 @@ impl ServerState {
         self.devices.of(user)
     }
 
+    pub fn member_nodes(&self) -> Vec<String> {
+        let mut nodes: Vec<String> = Vec::new();
+        for profile in self.profiles.values().filter(|p| self.server.is_current_member(p.id)) {
+            let devices = self.devices.of(profile.id).iter().rev().map(|d| d.node.as_str());
+            for node in profile.node.as_deref().into_iter().chain(devices).filter_map(devices::node_key) {
+                if !nodes.contains(&node) {
+                    nodes.push(node);
+                }
+            }
+        }
+        nodes
+    }
+
     pub fn voice_join_stamp(&self, user: UserId, now_ms: i64) -> i64 {
         self.devices.join_stamp(user, now_ms)
     }
@@ -6444,6 +6457,25 @@ mod tests {
 
         state.apply(ServerEvent::MemberLeave { server: sid, user: member }).unwrap();
         assert!(state.devices_of(member).is_empty());
+    }
+
+    #[test]
+    fn every_device_of_a_current_member_can_be_asked_for_a_file() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let member = join(&mut state, "friend");
+        let leaver = join(&mut state, "leaver");
+        let (desktop, tablet, gone) = ("ab".repeat(32), "cd".repeat(32), "ef".repeat(32));
+        state.profiles.get_mut(&member).unwrap().node = Some(desktop.to_uppercase());
+        state.profiles.get_mut(&leaver).unwrap().node = Some(gone.clone());
+        let announce = |user, node: &str| ServerEvent::DeviceAnnounce { server: sid, user, node: node.into(), voice: None, since: None };
+        state.apply(announce(member, &tablet)).unwrap();
+        state.apply(announce(member, &desktop)).unwrap();
+        state.apply(ServerEvent::MemberLeave { server: sid, user: leaver }).unwrap();
+        let nodes = state.member_nodes();
+        assert!(nodes.contains(&desktop) && nodes.contains(&tablet));
+        assert_eq!(nodes.iter().filter(|n| **n == desktop).count(), 1, "a device announced twice is asked once");
+        assert!(!nodes.contains(&gone), "people who left are not asked");
     }
 
     fn two_rooms(state: &mut ServerState) -> (ChannelId, ChannelId) {

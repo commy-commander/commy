@@ -7397,7 +7397,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
     body.appendChild(sealed);
   }
   if (inlineMark) body.prepend(pendingMark());
-  for (const att of (message.attachments || []).map(attachmentHere)) {
+  for (const att of (message.attachments || []).map(a => ({ ...attachmentHere(a), from: message.author_name }))) {
     body.appendChild(renderAttachment(att));
     if (att.is_image) body.appendChild(renderInlineImage(att));
     else if (playsInline(att)) body.appendChild(renderInlineVideo(att));
@@ -15423,8 +15423,62 @@ function videoPlayer(url) {
   return video;
 }
 
+const videoWaits = new Map();
+
+async function fetchVideoUrl(att) {
+  const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: att.server ?? null });
+  const url = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
+  videoUrls.set(att.blob, url);
+  videoWaits.delete(att.blob);
+  return url;
+}
+
+function videoBoxesOf(blob) {
+  return [...document.querySelectorAll(".chat-video")].filter(box => box.dataset.blob === blob);
+}
+
+function showVideoWait(blob, text) {
+  for (const box of videoBoxesOf(blob)) {
+    const label = box.querySelector(".chat-video-label");
+    if (label) label.textContent = text.label;
+    box.title = text.title;
+  }
+}
+
+function videoFailed(att, error) {
+  const text = missingVideoText(error, att.from);
+  const wait = videoWaits.get(att.blob);
+  if (!text.waiting) {
+    videoWaits.delete(att.blob);
+    if (wait) clearTimeout(wait.timer);
+    return text;
+  }
+  const left = wait ? wait.left : VIDEO_RETRIES;
+  if (wait) clearTimeout(wait.timer);
+  const timer = left > 0 ? setTimeout(() => retryVideo(att), IMAGE_RETRY_AFTER_MS) : null;
+  videoWaits.set(att.blob, { text, left: left - 1, timer });
+  return text;
+}
+
+async function retryVideo(att) {
+  if (videoUrls.has(att.blob) || !videoBoxesOf(att.blob).length) {
+    videoWaits.delete(att.blob);
+    return;
+  }
+  try {
+    const url = await fetchVideoUrl(att);
+    for (const box of videoBoxesOf(att.blob)) {
+      box.title = "";
+      box.replaceChildren(videoPlayer(url));
+    }
+  } catch (e) {
+    showVideoWait(att.blob, videoFailed(att, e));
+  }
+}
+
 function renderInlineVideo(att) {
   const box = el("div", "chat-video");
+  box.dataset.blob = att.blob;
   const cached = videoUrls.get(att.blob);
   if (cached) {
     box.appendChild(videoPlayer(cached));
@@ -15434,23 +15488,28 @@ function renderInlineVideo(att) {
   play.type = "button";
   play.title = "Play Video";
   play.appendChild(svgIcon("play", 30));
-  const label = el("span", "chat-video-label", `Video, ${formatSize(att.size_bytes)}`);
+  const wait = videoWaits.get(att.blob);
+  const label = el("span", "chat-video-label", wait ? wait.text.label : `Video, ${formatSize(att.size_bytes)}`);
+  if (wait) box.title = wait.text.title;
   box.append(play, label);
   play.onclick = async () => {
     play.disabled = true;
     box.classList.add("loading");
     label.textContent = "Loading video";
+    const earlier = videoWaits.get(att.blob);
+    if (earlier) earlier.left = VIDEO_RETRIES;
     try {
-      const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: att.server ?? null });
-      const url = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
-      videoUrls.set(att.blob, url);
+      const url = await fetchVideoUrl(att);
       const player = videoPlayer(url);
+      box.title = "";
       box.replaceChildren(player);
       player.play().catch(() => {});
     } catch (e) {
       play.disabled = false;
       box.classList.remove("loading");
-      label.textContent = `Could not load the video: ${e}`;
+      const text = videoFailed(att, e);
+      label.textContent = text.label;
+      box.title = text.title;
     }
   };
   return box;

@@ -217,6 +217,7 @@ pub async fn drive_download(app: tauri::State<'_, App>, handle: tauri::AppHandle
     let Some(target) = crate::picker::save_path(&handle, &crate::safe_file_name(&name)).await else {
         return Ok(None);
     };
+    let members = crate::member_nodes(&app, sid);
     let (fetcher, sources, node) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
@@ -231,7 +232,7 @@ pub async fn drive_download(app: tauri::State<'_, App>, handle: tauri::AppHandle
     let report = |done, total| {
         let _ = handle.emit("drive-progress", DriveProgress { item: &item_id, done, total });
     };
-    fetcher.download_to(&blob, sources.iter().map(String::as_str), MAX_DRIVE_FILE_BYTES, &target, report).await.map_err(err_to_string)?;
+    fetcher.download_among(&blob, sources.iter().map(String::as_str), &members, MAX_DRIVE_FILE_BYTES, &target, report).await.map_err(err_to_string)?;
     let shared = {
         let net = app.net.lock().await;
         match net.as_ref() {
