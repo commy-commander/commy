@@ -111,3 +111,15 @@ test("big files download straight to disk and show how far along they are", asyn
   assert.equal(downloadProgressText(99, 200), "Downloading 49%");
   assert.equal(downloadProgressText(200, 200), "Saving");
 });
+
+test("a video nobody online has says whose app to wait for and keeps trying", () => {
+  const { missingVideoText } = require("../scripts/embeds.js");
+  const waiting = missingVideoText("nobody who has this file is online right now", "nova");
+  assert.equal(waiting.waiting, true);
+  assert.equal(waiting.label, "Nobody who has this video is online");
+  assert.match(waiting.title, /^Try again when nova or someone who played it is online\./);
+  assert.match(missingVideoText("nobody who has this file is online right now").title, /when someone who played it is online/);
+  const other = missingVideoText("video too large to play here", "nova");
+  assert.equal(other.waiting, false);
+  assert.equal(other.label, "Could not load the video: video too large to play here");
+});

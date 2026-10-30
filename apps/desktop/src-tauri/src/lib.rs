@@ -1286,6 +1286,7 @@ async fn download_to_disk(
         return Ok(None);
     };
     let server = server.and_then(|s| s.parse::<ServerId>().ok());
+    let members = server.map(|s| member_nodes(app, s)).unwrap_or_default();
     let (fetcher, sources) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
@@ -1296,7 +1297,7 @@ async fn download_to_disk(
         let _ = handle.emit("file-progress", FileProgress { blob, done, total });
     };
     fetcher
-        .download_to(blob, sources.iter().map(String::as_str), MAX_PICKED_ATTACHMENT_BYTES, &target, report)
+        .download_among(blob, sources.iter().map(String::as_str), &members, MAX_PICKED_ATTACHMENT_BYTES, &target, report)
         .await
         .map_err(err_to_string)?;
     Ok(Some(target.display().to_string()))
@@ -1757,13 +1758,18 @@ fn neighbor_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<WirePaylo
 
 async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let server = server.and_then(|s| s.parse::<ServerId>().ok());
+    let members = server.map(|s| member_nodes(app, s)).unwrap_or_default();
     let (fetcher, sources) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
         let neighbors = server.map(|s| node.neighbors(s)).unwrap_or_default();
         (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors))
     };
-    fetcher.fetch_from(blob, sources.iter().map(String::as_str), max).await.map_err(err_to_string)
+    fetcher.fetch_among(blob, sources.iter().map(String::as_str), &members, max).await.map_err(err_to_string)
+}
+
+pub(crate) fn member_nodes(app: &App, server: ServerId) -> Vec<String> {
+    app.servers.lock().unwrap().get(&server).map(ServerState::member_nodes).unwrap_or_default()
 }
 
 #[cfg(desktop)]

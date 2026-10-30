@@ -143,13 +143,14 @@ impl Session {
     pub(super) async fn fetch_blob(&self, blob: Option<&str>, provider: Option<&str>, server: Option<&str>, max: u64) -> Result<Vec<u8>, String> {
         let blob = blob.filter(|b| !b.is_empty()).ok_or("missing file")?;
         let server = server.and_then(|s| s.parse::<ServerId>().ok());
+        let members = server.and_then(|s| self.client.borrow().servers.lock().unwrap().get(&s).map(|state| state.member_nodes())).unwrap_or_default();
         let (fetcher, sources): (BlobFetcher, Vec<String>) = {
             let node = self.node.lock().await;
             let node = node.as_ref().ok_or("Your servers are not unlocked yet")?;
             let neighbors = server.map(|s| node.neighbors(s)).unwrap_or_default();
             (node.blob_fetcher(), commy_net::node::blob_sources(provider.unwrap_or_default(), neighbors))
         };
-        fetcher.fetch_from(blob, sources.iter().map(String::as_str), max).await.map_err(|e| format!("{e:#}"))
+        fetcher.fetch_among(blob, sources.iter().map(String::as_str), &members, max).await.map_err(|e| format!("{e:#}"))
     }
 }
 
