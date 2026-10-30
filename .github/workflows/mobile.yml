@@ -212,36 +212,29 @@ jobs:
 
       - name: Build the signed app
         if: env.IOS_MODE != 'simulator'
-        working-directory: apps/desktop/src-tauri
         env:
           APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
-          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          ASC_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER }}
+          ASC_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
+          if [ -n "$ASC_KEY" ]; then
+            mkdir -p ~/.appstoreconnect/private_keys
+            key_path=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+            printf '%s' "$ASC_KEY" > "$key_path"
+          fi
           if [ -z "$IOS_CERTIFICATE" ]; then
             unset IOS_CERTIFICATE IOS_CERTIFICATE_PASSWORD IOS_MOBILE_PROVISION
-            key_path="$RUNNER_TEMP/AuthKey_${API_KEY_ID}.p8"
-            printf '%s' "$API_KEY" > "$key_path"
-            export APPLE_API_KEY="$API_KEY_ID" APPLE_API_ISSUER="$API_ISSUER" APPLE_API_KEY_PATH="$key_path"
+            export APPLE_API_KEY="$ASC_KEY_ID" APPLE_API_ISSUER="$ASC_ISSUER_ID" APPLE_API_KEY_PATH="$key_path"
           else
             [ -n "$IOS_MOBILE_PROVISION" ] || unset IOS_MOBILE_PROVISION
           fi
-          export COMMY_VERSION="$APP_VERSION_INPUT"
-          if [[ "$APP_VERSION_INPUT" == *-* ]]; then
-            export COMMY_TEST_BUILD=1
-            export COMMY_DEFAULT_ACCOUNT_SERVER=https://staging.commy.chat
-            export COMMY_DEFAULT_RELAY=https://relay-staging.commy.chat:8443
-            export COMMY_RELAY_QAD_PORT=7843
-          fi
-          echo "Version: $COMMY_VERSION, build $GITHUB_RUN_NUMBER"
-          echo "Account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"
-          config="$(jq -cn --arg version "${APP_VERSION_INPUT%%-*}" --arg build "$GITHUB_RUN_NUMBER" \
-            '{version: $version, bundle: {iOS: {bundleVersion: $build}}}')"
-          npx tauri ios build --ci --target aarch64 --export-method app-store-connect --config "$config"
+          upload=()
+          [ "$IOS_MODE" != testflight ] || upload=(--testflight)
+          apps/desktop/mobile/ios-build.sh "$APP_VERSION_INPUT" "${upload[@]}"
 
       - name: Collect the apps
         run: |
@@ -255,23 +248,9 @@ jobs:
             [ -n "$ipa" ] || { echo "no device app was built"; exit 1; }
             echo "Device build compiled: $ipa"
           else
-            ipa="$(find "$build" -name '*.ipa' | head -n 1)"
-            [ -n "$ipa" ] || { echo "no signed IPA was built"; exit 1; }
-            cp "$ipa" "dist/Commy-${APP_VERSION_INPUT}-${GITHUB_RUN_NUMBER}.ipa"
+            cp "$build"/Commy-*.ipa dist/
           fi
           ls -la dist
-
-      - name: Send to TestFlight
-        if: env.IOS_MODE == 'testflight'
-        env:
-          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          API_KEY: ${{ secrets.APPLE_API_KEY }}
-        run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          printf '%s' "$API_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8
-          xcrun altool --upload-app --type ios --file dist/*.ipa \
-            --apiKey "$API_KEY_ID" --apiIssuer "$API_ISSUER"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

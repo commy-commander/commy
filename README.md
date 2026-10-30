@@ -260,13 +260,17 @@ npx tauri ios dev
 `npx tauri ios dev` lists the simulators and any plugged-in iPhone or iPad. A
 real device needs your Apple team ID in `APPLE_DEVELOPMENT_TEAM` (or picked in
 Xcode under Signing & Capabilities after `npx tauri ios dev --open`).
+`apps/desktop/mobile/ios-build.sh 0.1.16` builds an App Store signed IPA with
+the Apple account signed in to Xcode, and `--testflight` also uploads it, using
+the App Store Connect API key named by `ASC_KEY_ID` and `ASC_ISSUER_ID` with its
+`.p8` in `~/.appstoreconnect/private_keys`. An `-rc` version builds against the
+staging servers.
 
 The "Mobile builds" workflow builds a debug APK on every change to native or
 phone files; iOS builds only when the workflow is run by hand. Its `ios` input
 picks `simulator` (an Apple silicon simulator app plus an unsigned device build),
-`signed` (an App Store signed IPA) or `testflight` (the same IPA sent to
-TestFlight), and signed builds take a `version` input: a final version uses the
-production servers and an `-rc` version the staging ones. Signing needs
+`signed` or `testflight`, which run `ios-build.sh` with the `version` input.
+Signing on CI needs
 `APPLE_DEVELOPMENT_TEAM` plus either an App Store Connect API key
 (`APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, and the `.p8` contents in
 `APPLE_API_KEY`) or a distribution certificate and profile (`IOS_CERTIFICATE`
