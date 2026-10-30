@@ -20,6 +20,16 @@ on:
       - "Cargo.lock"
       - ".github/workflows/mobile.yml"
   workflow_dispatch:
+    inputs:
+      ios:
+        description: "iOS build: simulator app, signed IPA, or signed IPA sent to TestFlight"
+        type: choice
+        options: [simulator, signed, testflight]
+        default: simulator
+      version:
+        description: "App version for signed iOS builds, e.g. 0.1.16 (prod servers) or 0.1.16-rc.1 (staging servers)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -122,25 +132,64 @@ jobs:
           retention-days: 14
 
   ios:
-    name: iOS simulator build
+    name: iOS ${{ inputs.ios || 'simulator' }} build
     if: github.event_name == 'workflow_dispatch'
-    timeout-minutes: 60
-    continue-on-error: true
-    runs-on: macos-15-intel
+    timeout-minutes: 90
+    continue-on-error: ${{ inputs.ios == 'simulator' }}
+    runs-on: macos-26
     defaults:
       run:
         shell: bash
+    env:
+      IOS_MODE: ${{ inputs.ios || 'simulator' }}
+      APP_VERSION_INPUT: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the signing secrets
+        if: env.IOS_MODE != 'simulator'
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          missing=()
+          need() { [ -n "${!1}" ] || missing+=("$1"); }
+          need APPLE_DEVELOPMENT_TEAM
+          if [ -n "$IOS_CERTIFICATE" ]; then
+            need IOS_CERTIFICATE_PASSWORD
+            need IOS_MOBILE_PROVISION
+            echo "Signing with the certificate and profile from IOS_CERTIFICATE and IOS_MOBILE_PROVISION"
+          else
+            need APPLE_API_KEY_ID
+            need APPLE_API_ISSUER
+            need APPLE_API_KEY
+            echo "Signing automatically with the App Store Connect API key"
+          fi
+          if [ "$IOS_MODE" = testflight ]; then
+            need APPLE_API_KEY_ID
+            need APPLE_API_ISSUER
+            need APPLE_API_KEY
+          fi
+          [[ "$APP_VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+            || { echo "::error::Set the version input, e.g. 0.1.16 or 0.1.16-rc.1"; exit 1; }
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::Missing repository secret %s\n' "${missing[@]}"
+            exit 1
+          fi
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-          targets: aarch64-apple-ios-sim,x86_64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: ios
+          key: ios-arm64
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -155,23 +204,78 @@ jobs:
           npx tauri icon ../mobile/app-icon.png
           grep -q "SystemConfiguration.framework" gen/apple/project.yml
 
-      - name: Build for the simulator
+      - name: Build the simulator app and an unsigned device app
+        if: env.IOS_MODE == 'simulator'
         working-directory: apps/desktop/src-tauri
         run: |
-          npx tauri ios build --ci --debug --target aarch64-sim \
-            || echo "::notice::Archiving needs a signing team; the next step checks that the simulator app built"
+          npx tauri ios build --ci --debug --no-sign --target aarch64-sim --target aarch64
 
-      - name: Collect the app
+      - name: Build the signed app
+        if: env.IOS_MODE != 'simulator'
+        working-directory: apps/desktop/src-tauri
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
-          app="$(find ~/Library/Developer/Xcode/DerivedData -path '*/Build/Products/debug-iphonesimulator/*.app' -prune -type d | head -n 1)"
-          [ -n "$app" ] || { echo "no simulator app was built"; exit 1; }
+          if [ -z "$IOS_CERTIFICATE" ]; then
+            unset IOS_CERTIFICATE IOS_CERTIFICATE_PASSWORD IOS_MOBILE_PROVISION
+            key_path="$RUNNER_TEMP/AuthKey_${API_KEY_ID}.p8"
+            printf '%s' "$API_KEY" > "$key_path"
+            export APPLE_API_KEY="$API_KEY_ID" APPLE_API_ISSUER="$API_ISSUER" APPLE_API_KEY_PATH="$key_path"
+          else
+            [ -n "$IOS_MOBILE_PROVISION" ] || unset IOS_MOBILE_PROVISION
+          fi
+          export COMMY_VERSION="$APP_VERSION_INPUT"
+          if [[ "$APP_VERSION_INPUT" == *-* ]]; then
+            export COMMY_TEST_BUILD=1
+            export COMMY_DEFAULT_ACCOUNT_SERVER=https://staging.commy.chat
+            export COMMY_DEFAULT_RELAY=https://relay-staging.commy.chat:8443
+            export COMMY_RELAY_QAD_PORT=7843
+          fi
+          echo "Version: $COMMY_VERSION, build $GITHUB_RUN_NUMBER"
+          echo "Account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"
+          config="$(jq -cn --arg version "${APP_VERSION_INPUT%%-*}" --arg build "$GITHUB_RUN_NUMBER" \
+            '{version: $version, bundle: {iOS: {bundleVersion: $build}}}')"
+          npx tauri ios build --ci --target aarch64 --export-method app-store-connect --config "$config"
+
+      - name: Collect the apps
+        run: |
+          build=apps/desktop/src-tauri/gen/apple/build
           mkdir -p dist
-          ditto -c -k --keepParent "$app" dist/Commy-simulator.zip
+          if [ "$IOS_MODE" = simulator ]; then
+            app="$(find "$build" -path '*sim*' -name '*.app' -prune -type d | head -n 1)"
+            [ -n "$app" ] || { echo "no simulator app was built"; exit 1; }
+            ditto -c -k --keepParent "$app" dist/Commy-simulator.zip
+            ipa="$(find "$build" -name '*.ipa' | head -n 1)"
+            [ -n "$ipa" ] || { echo "no device app was built"; exit 1; }
+            echo "Device build compiled: $ipa"
+          else
+            ipa="$(find "$build" -name '*.ipa' | head -n 1)"
+            [ -n "$ipa" ] || { echo "no signed IPA was built"; exit 1; }
+            cp "$ipa" "dist/Commy-${APP_VERSION_INPUT}-${GITHUB_RUN_NUMBER}.ipa"
+          fi
           ls -la dist
+
+      - name: Send to TestFlight
+        if: env.IOS_MODE == 'testflight'
+        env:
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s' "$API_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8
+          xcrun altool --upload-app --type ios --file dist/*.ipa \
+            --apiKey "$API_KEY_ID" --apiIssuer "$API_ISSUER"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: commy-ios-simulator
-          path: dist/Commy-simulator.zip
+          name: commy-ios-${{ env.IOS_MODE }}
+          path: dist/*
           if-no-files-found: error
           retention-days: 14

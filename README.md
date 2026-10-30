@@ -250,15 +250,28 @@ npx tauri icon ../mobile/app-icon.png
 node ../mobile/android-project.mjs
 npx tauri android dev
 
-# iOS (macOS with Xcode)
+# iOS (a Mac with Xcode)
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 npx tauri ios init
 npx tauri icon ../mobile/app-icon.png
 npx tauri ios dev
 ```
 
+`npx tauri ios dev` lists the simulators and any plugged-in iPhone or iPad. A
+real device needs your Apple team ID in `APPLE_DEVELOPMENT_TEAM` (or picked in
+Xcode under Signing & Capabilities after `npx tauri ios dev --open`).
+
 The "Mobile builds" workflow builds a debug APK on every change to native or
-phone files; the iOS simulator app builds only when the workflow is run by
-hand. To let the sync service wake the Android app with an empty push, set
+phone files; iOS builds only when the workflow is run by hand. Its `ios` input
+picks `simulator` (an Apple silicon simulator app plus an unsigned device build),
+`signed` (an App Store signed IPA) or `testflight` (the same IPA sent to
+TestFlight), and signed builds take a `version` input: a final version uses the
+production servers and an `-rc` version the staging ones. Signing needs
+`APPLE_DEVELOPMENT_TEAM` plus either an App Store Connect API key
+(`APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, and the `.p8` contents in
+`APPLE_API_KEY`) or a distribution certificate and profile (`IOS_CERTIFICATE`
+and `IOS_MOBILE_PROVISION` as base64, `IOS_CERTIFICATE_PASSWORD`); TestFlight
+always needs the API key. To let the sync service wake the Android app with an empty push, set
 `GOOGLE_SERVICES_JSON` to your Firebase project's `google-services.json` (its
 contents, its base64 or a path) before running `android-project.mjs`; the workflow reads it
 from the secret of the same name. Without it the app builds without push
