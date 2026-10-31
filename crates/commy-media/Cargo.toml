@@ -12,7 +12,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
-cpal = "0.15"
+cpal = "0.18"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 rayon = "1"
 
