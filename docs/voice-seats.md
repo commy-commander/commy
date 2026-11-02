@@ -77,10 +77,16 @@ the others holding a dead audio link to it for a while. A link must never
 stop a fresh call from forming:
 
 - when the device a link goes to says it is not in our room, the link ends;
-- when it announces a new join (a different `since`) and the link is older
-  than a few seconds, the link belonged to its last session and ends, so the
-  dialer calls the new one;
+- each link remembers the join (`since`) its device had when the link was
+  made, read from the device registry, so it is known even when we joined
+  voice after them;
+- when that device announces a different join and the link is more than two
+  seconds old, the link belonged to its last session and ends, so the dialer
+  calls the new one;
 - every few seconds, links to members no longer seated in our room end.
+
+The app log says when a voice link comes up, ends, is dropped for a new
+join, or is refused at the door, so a bench run can show which side failed.
 
 ## Late joiners
 

@@ -43,7 +43,7 @@ pub struct VoiceSession {
     links: HashMap<UserId, (commy_net::node::Connection, Arc<Mutex<JitterMeter>>)>,
     dialing: HashSet<UserId>,
     linked_at: HashMap<UserId, std::time::Instant>,
-    joins: HashMap<UserId, i64>,
+    link_joins: HashMap<UserId, i64>,
     devices: StreamGuards,
     on_speaking: SpeakingSink,
     mic_tx: mpsc::UnboundedSender<Vec<i16>>,
@@ -192,7 +192,7 @@ impl VoiceSession {
             links: HashMap::new(),
             dialing: HashSet::new(),
             linked_at: HashMap::new(),
-            joins: HashMap::new(),
+            link_joins: HashMap::new(),
             devices,
             on_speaking,
             mic_tx,
@@ -270,18 +270,24 @@ impl VoiceSession {
 
     pub fn link_outlived(&mut self, user: UserId, node: &str, voice: Option<ChannelId>, since: Option<i64>) -> bool {
         let here = voice == Some(self.channel);
-        let joined_before = self.joins.get(&user).copied();
-        if let (true, Some(since)) = (here, since) {
-            self.joins.insert(user, since);
-        }
         let linked = self.peer_node(user).zip(self.linked_at.get(&user).map(|at| at.elapsed()));
         let link = linked.as_ref().map(|(node, age)| (node.as_str(), *age));
-        crate::devices::link_outlived(link, here, node, joined_before, since)
+        let outlived = crate::devices::link_outlived(link, here, node, self.link_joins.get(&user).copied(), since);
+        let adopt = !outlived && here && crate::devices::same_link(link, node);
+        if let Some(since) = since.filter(|_| adopt) {
+            self.link_joins.insert(user, since);
+        }
+        outlived
     }
 
-    pub fn attach_peer(&mut self, user: UserId, media: MediaChannel) {
+    pub fn attach_peer(&mut self, user: UserId, media: MediaChannel, joined: Option<i64>) {
         let meter = Arc::new(Mutex::new(JitterMeter::default()));
+        tracing::info!("voice link up with {user}");
         self.linked_at.insert(user, std::time::Instant::now());
+        match joined {
+            Some(since) => self.link_joins.insert(user, since),
+            None => self.link_joins.remove(&user),
+        };
         self.links.insert(user, (media.connection.clone(), meter.clone()));
         let MediaChannel { incoming, outgoing, .. } = media;
         self.pump_peer(user, incoming, outgoing, meter);
@@ -372,6 +378,7 @@ impl VoiceSession {
                     },
                 }
             }
+            tracing::info!("voice link with {user} ended");
             mixer.lock().unwrap().remove_peer(key);
             if detector.reset() {
                 mixer.lock().unwrap().set_speaking(key, false);
@@ -408,6 +415,7 @@ impl VoiceSession {
     pub fn detach_peer(&mut self, user: UserId) {
         self.links.remove(&user);
         self.linked_at.remove(&user);
+        self.link_joins.remove(&user);
         self.peer_silence.remove(&user);
         if let Some(task) = self.peers.remove(&user) {
             task.abort();

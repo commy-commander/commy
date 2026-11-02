@@ -277,7 +277,7 @@ impl MediaAcceptor {
             .map_err(|e| anyhow::anyhow!("bad media hello: {e}"))?
             .context("peer closed before hello")?;
         if !self.admitted(*peer.as_bytes(), &hello).await {
-            tracing::debug!("refused a media stream from a node that is not a member here");
+            tracing::info!("refused a media stream from {peer}: not a member here");
             connection.close(1u32.into(), b"not a member here");
             return Ok(());
         }

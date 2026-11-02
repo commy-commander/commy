@@ -1611,7 +1611,7 @@ fn dial_voice_members(
     };
     for (user, their_hex) in targets {
         if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, channel, user) {
-            dial_voice_peer(handle, user, their_hex, channel, me.id);
+            dial_voice_peer(handle, sid, user, their_hex, channel, me.id);
         }
     }
 }
@@ -1656,6 +1656,7 @@ async fn run_voice_redialer(handle: tauri::AppHandle) {
 
 fn dial_voice_peer(
     handle: &tauri::AppHandle,
+    server: ServerId,
     user: UserId,
     their_hex: String,
     channel: ChannelId,
@@ -1669,16 +1670,21 @@ fn dial_voice_peer(
             channel,
         };
         let dialed = dial_media(&app, &their_hex, hello).await;
+        let joined = voice_join_of(&app, server, user);
         let mut session = app.voice_session.lock().unwrap();
         let Some(session) = session.as_mut().filter(|s| s.channel == channel) else { return };
         match dialed {
-            Ok(media) => session.attach_peer(user, media),
+            Ok(media) => session.attach_peer(user, media, joined),
             Err(e) => {
                 tracing::warn!("voice dial failed, retrying shortly: {e}");
                 session.dial_failed(user);
             }
         }
     });
+}
+
+fn voice_join_of(app: &App, server: ServerId, user: UserId) -> Option<i64> {
+    app.servers.lock().unwrap().get(&server).and_then(|state| state.voice_device_since(user))
 }
 
 fn servers_using_image(app: &App, image: &str) -> Vec<ServerId> {
@@ -7203,7 +7209,7 @@ fn react_to_voice_change(
             let their_hex = app.servers.lock().unwrap().get(&server).and_then(|s| s.voice_node(user));
             let Some(their_hex) = their_hex else { return };
             if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, our_channel, user) {
-                dial_voice_peer(handle, user, their_hex, our_channel, me.id);
+                dial_voice_peer(handle, server, user, their_hex, our_channel, me.id);
             }
         }
         _ => {
@@ -7452,9 +7458,11 @@ async fn run_media_loop(
         let app = handle.state::<App>();
         match media.hello.clone() {
             MediaHello::Voice { user, channel } => {
+                let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+                let joined = server.and_then(|server| voice_join_of(&app, server, user));
                 let mut session = app.voice_session.lock().unwrap();
                 match session.as_mut() {
-                    Some(s) if s.channel == channel => s.attach_peer(user, media),
+                    Some(s) if s.channel == channel => s.attach_peer(user, media, joined),
                     _ => tracing::debug!("voice call for a channel we are not in"),
                 }
             }
