@@ -55,6 +55,7 @@ mod settle;
 mod speech;
 #[cfg(desktop)]
 mod single_instance;
+mod startup;
 mod state;
 mod storage;
 mod stream_deck;
@@ -7531,6 +7532,17 @@ fn set_auto_update(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bo
 }
 
 #[tauri::command]
+async fn startup_status(handle: tauri::AppHandle) -> CmdResult<startup::StartupView> {
+    Ok(startup::current(&handle).await)
+}
+
+#[tauri::command]
+async fn startup_continue(handle: tauri::AppHandle) -> CmdResult<startup::StartupView> {
+    startup::hand_off();
+    Ok(startup::current(&handle).await)
+}
+
+#[tauri::command]
 fn get_update_status(handle: tauri::AppHandle) -> updater::UpdateStatus {
     updater::status(&handle)
 }
@@ -8029,6 +8041,7 @@ pub fn run() {
                     open_account(&handle, folder);
                 }
             }
+            startup::start(&handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -8282,6 +8295,8 @@ pub fn run() {
             get_autostart,
             set_autostart,
             set_auto_update,
+            startup_status,
+            startup_continue,
             get_update_status,
             check_for_updates,
             restart_to_update,

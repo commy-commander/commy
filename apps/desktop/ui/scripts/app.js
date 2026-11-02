@@ -1022,6 +1022,9 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "get_voice_settings": return mock.voice;
     case "set_auto_update": mock.voice.auto_update = args.enabled; return mock.voice;
+    case "startup_status":
+    case "startup_continue":
+      return startupPreview(new URLSearchParams(location.search).get("startup"), Date.now() - (mock.startupAt || (mock.startupAt = Date.now())));
     case "get_update_status": return mock.update || (mock.update = { current: "0.1.0", can_install: true, reason: null, phase: "idle", version: null, progress: null, checked_at: null, error: null, page: null });
     case "check_for_updates": mock.update = { ...mock.update, phase: "up_to_date", checked_at: Math.floor(Date.now() / 1000) }; return mock.update;
     case "restart_to_update": return null;
@@ -9389,7 +9392,7 @@ function renderVoiceInputSettings() {
     button.classList.toggle("active", on);
     button.setAttribute("aria-checked", String(on));
   }
-  $("input-mode-note").textContent = inputModeCopy(v.mode).text;
+  $("input-mode-note").textContent = inputModeCopy(v.mode, document.body.classList.contains("mobile-app")).text;
   $("talk-key").value = v.talkKey;
   const release = $("talk-release");
   if (!release.options.length) {
@@ -22762,6 +22765,73 @@ function wireActivityPing() {
   }
 }
 
+const STARTUP_POLL_MS = 300;
+const STARTUP_FADE_MS = 180;
+const STARTUP_OFFLINE_LINGER_MS = 1500;
+
+function paintStartup(view) {
+  $("startup-title").textContent = startupTitle(view);
+  for (const key of STARTUP_STEPS) {
+    const row = $(`startup-${key}`);
+    row.dataset.state = view[key].state;
+    row.querySelector(".startup-detail").textContent = view[key].detail;
+  }
+  const progress = view.update.progress;
+  const bar = $("startup-update").querySelector(".startup-bar");
+  bar.classList.toggle("shown", progress != null);
+  bar.firstElementChild.style.transform = `scaleX(${(progress || 0) / 100})`;
+  $("startup-skip").classList.toggle("shown", view.canSkip);
+}
+
+function paintOfflineChip(view) {
+  $("offline-chip").classList.toggle("hidden", !(view && view.offline));
+}
+
+function closeStartupLoader() {
+  const loader = $("startup");
+  loader.classList.add("leaving");
+  setTimeout(() => loader.classList.add("hidden"), STARTUP_FADE_MS);
+}
+
+function runStartupLoader() {
+  return new Promise(resolve => {
+    let open = true;
+    let last = null;
+    const finish = () => {
+      if (!open) return;
+      open = false;
+      paintOfflineChip(last);
+      closeStartupLoader();
+      invoke("startup_continue").catch(() => {});
+      resolve();
+    };
+    const apply = raw => {
+      const view = readStartup(raw);
+      if (!open) return paintOfflineChip(view);
+      if (!view) return finish();
+      last = view;
+      paintStartup(view);
+      if (view.ready) setTimeout(finish, view.offline ? STARTUP_OFFLINE_LINGER_MS : 0);
+    };
+    $("startup-skip").addEventListener("click", finish);
+    if (IS_TAURI) window.__TAURI__.event.listen("startup-status", event => apply(event.payload));
+    const poll = () => invoke("startup_status").then(raw => {
+      apply(raw);
+      if (open && !IS_TAURI) setTimeout(poll, STARTUP_POLL_MS);
+    }, finish);
+    poll();
+  });
+}
+
+async function startApp() {
+  const startup = runStartupLoader();
+  try {
+    await boot();
+  } finally {
+    await startup;
+  }
+}
+
 async function boot() {
   await markMobileApp();
   await prepareEmojiFonts();
@@ -23156,7 +23226,7 @@ function renderAccountSettings() {
   if (typeof refreshEntryStatus === "function") refreshEntryStatus();
 }
 
-boot().catch(e => toast(String(e)));
+startApp().catch(e => toast(String(e)));
 
 function closeDiscover() {
   if (!discoverState.open) return;

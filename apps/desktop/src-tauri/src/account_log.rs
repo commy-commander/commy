@@ -473,7 +473,7 @@ pub fn is_live(app: &App) -> bool {
     LIVE.lock().unwrap().as_ref().is_some_and(|l| Some(&l.dir) == dir)
 }
 
-fn caught_up() -> bool {
+pub(crate) fn caught_up() -> bool {
     LIVE.lock().unwrap().as_ref().is_some_and(|l| l.caught_up)
 }
 
