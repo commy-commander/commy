@@ -4,6 +4,7 @@ const MEDIA_HOSTS = [
   "media.giphy.com",
   /^media[0-9]\.giphy\.com$/,
   "i.giphy.com",
+  "cdn3.emoji.gg",
 ];
 
 const IMAGE_LINK = /https:\/\/[^\s<>"'?]+\.(?:gif|png|jpe?g|webp)(?:\?[^\s<>"']*)?/gi;
@@ -12,6 +13,7 @@ const INLINE_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"
 const MAX_INLINE_VIDEO_BYTES = 100 * 1024 * 1024;
 const MAX_AUTO_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_RETRY_AFTER_MS = 30 * 1000;
+const VIDEO_RETRIES = 10;
 
 function isMediaHost(hostname) {
   const host = String(hostname || "").toLowerCase();
@@ -83,6 +85,13 @@ function missingImageText(error) {
   return { title: "Image unavailable", hint, retry: "Try again", loading: "Loading..." };
 }
 
+function missingVideoText(error, from) {
+  const reason = String(error || "");
+  if (!reason.toLowerCase().includes("nobody who has")) return { label: `Could not load the video: ${reason}`, title: "", waiting: false };
+  const who = from ? `${from} or someone who played it` : "someone who played it";
+  return { label: "Nobody who has this video is online", title: `Try again when ${who} is online. Commy also tries again on its own for a few minutes.`, waiting: true };
+}
+
 function playsInline(att) {
   if (!att || !INLINE_VIDEO_TYPES.has(String(att.mime || "").toLowerCase())) return false;
   return att.size_bytes > 0 && att.size_bytes <= MAX_INLINE_VIDEO_BYTES;
@@ -101,5 +110,5 @@ function downloadProgressText(done, total) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { BIG_FILE_BYTES, isBigFile, downloadProgressText, MAX_IMAGE_EMBEDS, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, retriesImageNow, missingImageText, IMAGE_RETRY_AFTER_MS, playsInline };
+  module.exports = { BIG_FILE_BYTES, isBigFile, downloadProgressText, MAX_IMAGE_EMBEDS, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, retriesImageNow, missingImageText, missingVideoText, IMAGE_RETRY_AFTER_MS, VIDEO_RETRIES, playsInline };
 }

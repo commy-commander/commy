@@ -113,7 +113,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
     let s = match event {
         E::MemberJoin { profile, .. } => format!("member:{}", profile.id),
         E::MemberLeave { user, .. } => format!("member:{user}"),
-        E::MemberBan { user, .. } | E::MemberUnban { user, .. } => format!("ban:{user}"),
+        E::MemberBan { user, .. } | E::MemberUnban { user, .. } | E::MemberBanUntil { user, .. } => format!("ban:{user}"),
         E::ProfileUpdate { profile } => format!("profile:{}", profile.id),
         E::ChannelCreate { channel, .. } => format!("channel:{}", channel.id),
         E::ChannelDelete { channel, .. } => format!("channel:{channel}"),
@@ -153,6 +153,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::ServerTagSet { .. } => "server_tag".into(),
         E::JoinApprovalSet { .. } => "join_approval".into(),
         E::TipJarSet { .. } => "tip_jar".into(),
+        E::UploadLimitSet { .. } => "upload_limit".into(),
+        E::TtsAllowed { .. } => "tts".into(),
         E::PetSet { .. } => "pet".into(),
         E::PetCare { user, care, .. } => format!("pet_care:{user}:{}", crate::pet::care_name(*care)),
         E::DriveAdd { item, .. } => format!("drive:{}", item.id),
@@ -326,7 +328,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
         }
         E::CommunityKeyAdd { .. } => crate::channel_key::may_rotate_community(server, by),
-        E::CommunityKeyGrant { user, .. } => server.is_current_member(by) && !server.banned.contains(user),
+        E::CommunityKeyGrant { user, .. } => server.is_current_member(by) && !server.is_banned(*user),
         E::ChannelCreate { .. }
         | E::ChannelDelete { .. }
         | E::ChannelUpdate { .. }
@@ -355,6 +357,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::ServerTagSet { .. }
         | E::JoinApprovalSet { .. }
         | E::TipJarSet { .. }
+        | E::UploadLimitSet { .. }
+        | E::TtsAllowed { .. }
         | E::PetSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::PetCare { .. } => member && actor(event) == Some(by) && server.pet.is_some(),
         E::DriveAdd { item, .. } => {
@@ -412,6 +416,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         }
         E::VoiceMove { user, .. } => allows(Permissions::MOVE_MEMBERS) && *user != by && sees(event),
         E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
+        E::MemberBanUntil { user, .. } => *user != by && allows(Permissions::BAN_MEMBERS),
         E::MemberTimeout { user, .. } => *user != by && actor(event) == Some(by) && allows(Permissions::TIME_OUT_MEMBERS),
         E::ServerDelete { .. } => by == server.owner,
         E::OwnerTransfer { user, .. } => by == server.owner && *user != by && server.is_member(*user),

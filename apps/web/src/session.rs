@@ -172,6 +172,7 @@ struct Args {
     mime: Option<String>,
     size_bytes: Option<u64>,
     clicked: Option<bool>,
+    shared: Option<bool>,
     image: Option<String>,
     expires: Option<String>,
     link: Option<String>,
@@ -231,8 +232,10 @@ struct Args {
     meta: Option<Value>,
     speaker: Option<bool>,
     raised: Option<bool>,
+    tts: Option<bool>,
     onboarding: Option<Value>,
     enabled: Option<bool>,
+    megabytes: Option<u32>,
     reason: Option<String>,
     report_id: Option<String>,
     due: Option<i64>,
@@ -481,6 +484,7 @@ impl Session {
             "kick_member" => self.server_command(cmd, args).await,
             "set_join_approval" | "answer_join_request" => self.server_command(cmd, args).await,
             "set_tip_jar" | "set_pet" | "care_for_pet" => self.server_command(cmd, args).await,
+            "set_upload_limit" | "set_tts_allowed" => self.server_command(cmd, args).await,
             "move_voice_member" => self.server_command(cmd, args).await,
             "ban_member" => self.server_command(cmd, args).await,
             "unban_member" => self.server_command(cmd, args).await,
@@ -681,7 +685,10 @@ impl Session {
             }
         };
         let secret = self.device_secret(&account);
-        self.start_node(secret).await.ok();
+        let this = self.clone();
+        spawn_local(async move {
+            let _ = this.start_node(secret).await;
+        });
         self.link_device(secret).await?;
         let reply = self.request("GET", account::VAULT_PATH, None).await?;
         let sealed = match account::vault_data(&reply)? {
@@ -986,7 +993,7 @@ impl Session {
         }
     }
 
-    async fn load_servers(self: Rc<Self>, tickets: Vec<ServerTicket>) {
+    pub(super) async fn load_servers(self: Rc<Self>, tickets: Vec<ServerTicket>) {
         self.announce_if_loaded();
         let devices = self.other_devices().await.unwrap_or_default();
         if let Some(node) = self.node.lock().await.as_mut() {
@@ -1055,7 +1062,6 @@ impl Session {
         spawn_local(async move {
             if let Ok(report) = session.await {
                 this.settle_delivered(server, &report.delivered);
-                this.emit("server-event", json!(server.to_string()));
             }
         });
     }
@@ -1109,10 +1115,7 @@ impl Session {
                         let _ = node.broadcast(server, WirePayload::SyncRequest).await;
                     }
                 }
-                NetEvent::CaughtUp { server, report, .. } => {
-                    self.settle_delivered(server, &report.delivered);
-                    self.emit("server-event", json!(server.to_string()));
-                }
+                NetEvent::CaughtUp { server, report, .. } => self.settle_delivered(server, &report.delivered),
                 _ => {}
             }
         }
@@ -1212,7 +1215,7 @@ impl Session {
         let server: ServerId = parse(args.server_id.as_ref(), "server")?;
         let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
         let reply_to: Option<MessageId> = args.reply_to.as_ref().map(|r| parse(Some(r), "message")).transpose()?;
-        let (message, view) = self.client.borrow().compose(server, channel, args.content.as_deref().unwrap_or(""), reply_to)?;
+        let (message, view) = self.client.borrow().compose(server, channel, args.content.as_deref().unwrap_or(""), reply_to, args.tts.unwrap_or(false))?;
         self.deliver(server, message, view).await
     }
 

@@ -22,7 +22,7 @@ pub fn clean_note(raw: &str) -> Option<String> {
 }
 
 pub fn may_ask(server: &Server, user: UserId) -> bool {
-    server.join_approval && !server.is_member(user) && !server.banned.contains(&user) && user != server.owner
+    server.join_approval && !server.is_member(user) && !server.is_banned(user) && user != server.owner
 }
 
 pub fn request_of(server: &Server, user: UserId) -> Option<&JoinRequest> {

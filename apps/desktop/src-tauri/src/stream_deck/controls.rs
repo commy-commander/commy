@@ -172,11 +172,11 @@ pub async fn run(handle: &AppHandle, control: Control) -> CmdResult<()> {
             ask_app(handle, serde_json::json!({ "action": "toggle_stream" }));
         }
         Control::JoinVoice { server, channel } => {
-            find_channel(&app, &server, &channel, &[ChannelKind::Voice, ChannelKind::Stage])?;
+            find_channel(&app, &server, &channel, &[ChannelKind::Voice, ChannelKind::Stage], "voice")?;
             ask_app(handle, serde_json::json!({ "action": "join_voice", "server": server, "channel": channel }));
         }
         Control::OpenChannel { server, channel } => {
-            find_channel(&app, &server, &channel, &[ChannelKind::Text, ChannelKind::Announcement, ChannelKind::Forum])?;
+            find_channel(&app, &server, &channel, &[ChannelKind::Text, ChannelKind::Announcement, ChannelKind::Forum], "text")?;
             crate::tray::show_main_window(handle);
             ask_app(handle, serde_json::json!({ "action": "open_channel", "server": server, "channel": channel }));
         }
@@ -201,19 +201,22 @@ fn in_voice(app: &App) -> CmdResult<()> {
     app.voice_session.lock().unwrap().as_ref().map(|_| ()).ok_or_else(|| "join a voice channel first".to_string())
 }
 
-fn find_channel(app: &App, server: &str, channel: &str, kinds: &[ChannelKind]) -> CmdResult<()> {
+fn find_channel(app: &App, server: &str, channel: &str, kinds: &[ChannelKind], noun: &str) -> CmdResult<()> {
     let sid: ServerId = server.parse().map_err(|_| "unknown server".to_string())?;
     let cid: ChannelId = channel.parse().map_err(|_| "unknown channel".to_string())?;
     let me = crate::current_profile(app)?.id;
     let servers = app.servers.lock().unwrap();
     let state = servers.get(&sid).ok_or("unknown server")?;
-    state
-        .server
-        .channels
-        .iter()
-        .find(|c| c.id == cid && kinds.contains(&c.kind) && state.server.can_view(cid, me))
-        .map(|_| ())
-        .ok_or_else(|| "that channel is gone".to_string())
+    channel_fits(state, cid, me, kinds, noun)
+}
+
+fn channel_fits(state: &ServerState, cid: ChannelId, me: UserId, kinds: &[ChannelKind], noun: &str) -> CmdResult<()> {
+    let found = state.server.channels.iter().find(|c| c.id == cid && state.server.can_view(cid, me));
+    match found {
+        None => Err("that channel is gone".into()),
+        Some(c) if !kinds.contains(&c.kind) => Err(format!("that is not a {noun} channel")),
+        Some(_) => Ok(()),
+    }
 }
 
 async fn hold_mute(handle: &AppHandle, down: bool) -> CmdResult<()> {
@@ -287,6 +290,16 @@ mod tests {
         assert_eq!(names(&listed.text), ["general", "news"]);
         assert_eq!(names(&listed.voice), ["General", "AFK", "Stage"]);
         assert!(directory_server(&state, None).text.is_empty());
+    }
+
+    #[test]
+    fn a_channel_of_the_wrong_kind_says_so() {
+        let (state, owner, _) = friends();
+        let text = state.server.channels.iter().find(|c| c.kind == ChannelKind::Text).unwrap().id;
+        let voice = [ChannelKind::Voice, ChannelKind::Stage];
+        assert_eq!(channel_fits(&state, text, owner.id, &voice, "voice").unwrap_err(), "that is not a voice channel");
+        assert_eq!(channel_fits(&state, ChannelId::new(), owner.id, &voice, "voice").unwrap_err(), "that channel is gone");
+        assert!(channel_fits(&state, text, owner.id, &[ChannelKind::Text], "text").is_ok());
     }
 
     #[test]

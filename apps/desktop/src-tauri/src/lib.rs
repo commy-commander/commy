@@ -292,6 +292,23 @@ async fn set_tip_jar(app: tauri::State<'_, App>, handle: tauri::AppHandle, serve
 }
 
 #[tauri::command]
+async fn set_upload_limit(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, megabytes: Option<u32>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let now = chrono::Utc::now();
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::upload_limit(state, perms, megabytes, now))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
+async fn set_tts_allowed(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, enabled: bool) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::tts_allowed(state, perms, enabled))?;
+    apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
 async fn set_pet(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, name: Option<String>, color: Option<String>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
@@ -619,8 +636,7 @@ async fn send_message(
     if tts.unwrap_or(false) {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        require_permission(&app, state, profile.id, Permissions::SEND_TTS_MESSAGES, "send text-to-speech messages here")?;
-        message.mark_tts();
+        view::act::mark_tts(state, our_permissions(&app, state, profile.id), &mut message)?;
     }
     if let Some(used) = command {
         message.attachments.push(command_marker(&app, sid, used)?);
@@ -952,6 +968,7 @@ async fn send_attachment(
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(app, state, profile.id, Permissions::ATTACH_FILES, "send files or images here")?;
+        view::moderate::upload_fits(state, contents.size())?;
     }
     let (blob, provider, size_bytes) = store_file(app, contents).await?;
 
@@ -1270,6 +1287,7 @@ async fn download_to_disk(
         return Ok(None);
     };
     let server = server.and_then(|s| s.parse::<ServerId>().ok());
+    let members = server.map(|s| member_nodes(app, s)).unwrap_or_default();
     let (fetcher, sources) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
@@ -1280,7 +1298,7 @@ async fn download_to_disk(
         let _ = handle.emit("file-progress", FileProgress { blob, done, total });
     };
     fetcher
-        .download_to(blob, sources.iter().map(String::as_str), MAX_PICKED_ATTACHMENT_BYTES, &target, report)
+        .download_among(blob, sources.iter().map(String::as_str), &members, MAX_PICKED_ATTACHMENT_BYTES, &target, report)
         .await
         .map_err(err_to_string)?;
     Ok(Some(target.display().to_string()))
@@ -1741,13 +1759,18 @@ fn neighbor_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<WirePaylo
 
 async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let server = server.and_then(|s| s.parse::<ServerId>().ok());
+    let members = server.map(|s| member_nodes(app, s)).unwrap_or_default();
     let (fetcher, sources) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
         let neighbors = server.map(|s| node.neighbors(s)).unwrap_or_default();
         (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors))
     };
-    fetcher.fetch_from(blob, sources.iter().map(String::as_str), max).await.map_err(err_to_string)
+    fetcher.fetch_among(blob, sources.iter().map(String::as_str), &members, max).await.map_err(err_to_string)
+}
+
+pub(crate) fn member_nodes(app: &App, server: ServerId) -> Vec<String> {
+    app.servers.lock().unwrap().get(&server).map(ServerState::member_nodes).unwrap_or_default()
 }
 
 pub const SHARED_FILES_DIR: &str = "shared-files";
@@ -2719,7 +2742,7 @@ fn open_dm(app: tauri::State<App>, user_id: String) -> CmdResult<DmThreadView> {
     if partner == me.id {
         return Err("you cannot message yourself".into());
     }
-    let profile = outbox::member_profile(&app.servers.lock().unwrap(), partner);
+    let profile = commy_view::dms::reachable_profile(&app.servers.lock().unwrap(), me.id, partner);
     let mut dms = app.dms.lock().unwrap();
     if let Some(profile) = profile {
         dms.remember_contact(profile);
@@ -3198,7 +3221,10 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if perms.allows(Permissions::BAN_MEMBERS) {
         for user in &state.server.banned {
-            events.push(ServerEvent::MemberBan { server: sid, user: *user });
+            events.push(match state.server.bans.get(user).filter(|b| b.until.is_some()) {
+                Some(record) => ServerEvent::MemberBanUntil { server: sid, user: *user, at: record.at, until: record.until },
+                None => ServerEvent::MemberBan { server: sid, user: *user },
+            });
         }
     }
     if perms.allows(Permissions::MANAGE_ROLES) {
@@ -3222,6 +3248,12 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
     }
     if state.server.join_sounds_off && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::JoinSoundsAllowed { server: sid, allowed: false });
+    }
+    if state.server.tts_off && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::TtsAllowed { server: sid, allowed: false });
+    }
+    if state.server.upload_limit_mb.is_some() && perms.allows(Permissions::MANAGE_SERVER) {
+        events.push(ServerEvent::UploadLimitSet { server: sid, megabytes: state.server.upload_limit_mb, at: state.server.upload_limit_since });
     }
     if state.server.tag.is_some() && perms.allows(Permissions::MANAGE_SERVER) {
         events.push(ServerEvent::ServerTagSet { server: sid, tag: state.server.tag.clone() });
@@ -5155,11 +5187,12 @@ async fn move_voice_member(
 }
 
 #[tauri::command]
-async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String) -> CmdResult<()> {
+async fn ban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_id: String, hours: Option<u32>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let event = managed(&app, sid, me.id, |state, perms| view::moderate::ban(state, perms, me.id, user))?;
+    let now = chrono::Utc::now();
+    let event = managed(&app, sid, me.id, |state, perms| view::moderate::ban(state, perms, me.id, user, hours, now))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     channel_lock::tend_server(&app, &handle, sid).await;
     Ok(())
@@ -5209,7 +5242,7 @@ fn end_voice_in(app: &App, sid: ServerId) {
 fn removal_of_me(event: &ServerEvent, action: Option<&commy_core::Action>, me: Option<UserId>) -> Option<&'static str> {
     let me = me?;
     match event {
-        ServerEvent::MemberBan { user, .. } if *user == me => Some("banned"),
+        ServerEvent::MemberBan { user, .. } | ServerEvent::MemberBanUntil { user, .. } if *user == me => Some("banned"),
         ServerEvent::MemberLeave { user, .. } if *user == me && action.is_some_and(|a| a.by != me) => Some("kicked"),
         _ => None,
     }
@@ -7950,6 +7983,8 @@ pub fn run() {
             set_join_sound,
             set_server_tag,
             set_tip_jar,
+            set_upload_limit,
+            set_tts_allowed,
             set_pet,
             care_for_pet,
             wear_server_tag,

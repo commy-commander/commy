@@ -25,7 +25,11 @@ impl Session {
                 }
                 let max = files::preview_limit(args.clicked.unwrap_or(false));
                 files::fits(args.size_bytes, max, "image too large to preview")?;
-                let bytes = self.fetch_blob(args.blob.as_deref(), args.provider.as_deref(), args.server_id.as_deref(), max).await?;
+                let (blob, provider, server) = (args.blob.as_deref(), args.provider.as_deref(), args.server_id.as_deref());
+                let bytes = match args.shared.unwrap_or(false) {
+                    true => self.shared_preview(blob, provider, server, max).await?,
+                    false => self.fetch_blob(blob, provider, server, max).await?,
+                };
                 Ok(Value::String(files::data_url(&mime, &bytes)))
             }
             "attach_bytes" => {
@@ -70,6 +74,7 @@ impl Session {
 
     async fn send_server_file(self: &Rc<Self>, server: ServerId, channel: ChannelId, filename: String, bytes: Vec<u8>) -> Result<Value, String> {
         let size_bytes = bytes.len() as u64;
+        self.client.borrow().upload_fits(server, size_bytes)?;
         let (blob, provider) = self.store_blob(bytes).await?;
         let attachment = files::attachment(filename, size_bytes, blob, provider);
         self.post_attachment(server, channel, attachment, Permissions::ATTACH_FILES, "send files or images here").await
@@ -138,13 +143,14 @@ impl Session {
     pub(super) async fn fetch_blob(&self, blob: Option<&str>, provider: Option<&str>, server: Option<&str>, max: u64) -> Result<Vec<u8>, String> {
         let blob = blob.filter(|b| !b.is_empty()).ok_or("missing file")?;
         let server = server.and_then(|s| s.parse::<ServerId>().ok());
+        let members = server.and_then(|s| self.client.borrow().servers.lock().unwrap().get(&s).map(|state| state.member_nodes())).unwrap_or_default();
         let (fetcher, sources): (BlobFetcher, Vec<String>) = {
             let node = self.node.lock().await;
             let node = node.as_ref().ok_or("Your servers are not unlocked yet")?;
             let neighbors = server.map(|s| node.neighbors(s)).unwrap_or_default();
             (node.blob_fetcher(), commy_net::node::blob_sources(provider.unwrap_or_default(), neighbors))
         };
-        fetcher.fetch_from(blob, sources.iter().map(String::as_str), max).await.map_err(|e| format!("{e:#}"))
+        fetcher.fetch_among(blob, sources.iter().map(String::as_str), &members, max).await.map_err(|e| format!("{e:#}"))
     }
 }
 

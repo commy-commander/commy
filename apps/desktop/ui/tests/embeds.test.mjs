@@ -10,10 +10,10 @@ const GIPHY = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYWJj/giphy.gif?
 const OTHER = "https://pics.example.org/cat.png";
 
 test("only the hosts the account server proxies count as media hosts", () => {
-  for (const host of ["static.klipy.com", "images.igdb.com", "media.giphy.com", "media0.giphy.com", "media4.giphy.com", "media9.giphy.com", "i.giphy.com", "I.GIPHY.COM"]) {
+  for (const host of ["static.klipy.com", "images.igdb.com", "media.giphy.com", "media0.giphy.com", "media4.giphy.com", "media9.giphy.com", "i.giphy.com", "I.GIPHY.COM", "cdn3.emoji.gg"]) {
     assert.ok(isMediaHost(host), host);
   }
-  for (const host of ["giphy.com", "api.giphy.com", "media10.giphy.com", "media0.giphy.com.evil.example", "evilmedia0.giphy.com", "static.klipy.com.evil.example", "klipy.com", "example.org", "", null]) {
+  for (const host of ["giphy.com", "api.giphy.com", "media10.giphy.com", "media0.giphy.com.evil.example", "evilmedia0.giphy.com", "static.klipy.com.evil.example", "klipy.com", "emoji.gg", "cdn3.emoji.gg.evil.example", "example.org", "", null]) {
     assert.equal(isMediaHost(host), false, String(host));
   }
 });
@@ -110,4 +110,16 @@ test("big files download straight to disk and show how far along they are", asyn
   assert.equal(downloadProgressText(0, 200), "Downloading 0%");
   assert.equal(downloadProgressText(99, 200), "Downloading 49%");
   assert.equal(downloadProgressText(200, 200), "Saving");
+});
+
+test("a video nobody online has says whose app to wait for and keeps trying", () => {
+  const { missingVideoText } = require("../scripts/embeds.js");
+  const waiting = missingVideoText("nobody who has this file is online right now", "nova");
+  assert.equal(waiting.waiting, true);
+  assert.equal(waiting.label, "Nobody who has this video is online");
+  assert.match(waiting.title, /^Try again when nova or someone who played it is online\./);
+  assert.match(missingVideoText("nobody who has this file is online right now").title, /when someone who played it is online/);
+  const other = missingVideoText("video too large to play here", "nova");
+  assert.equal(other.waiting, false);
+  assert.equal(other.label, "Could not load the video: video too large to play here");
 });

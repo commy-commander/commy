@@ -327,11 +327,9 @@ impl Book {
         *slot = (*slot).max(seq);
     }
 
-    pub fn caught_up(&mut self, stream: StreamId, seq: u64) {
+    pub fn caught_up(&mut self, stream: StreamId, seq: u64) -> bool {
         self.advance(stream, seq);
-        if self.routes.contains_key(&stream) {
-            self.live.insert(stream);
-        }
+        self.routes.contains_key(&stream) && self.live.insert(stream)
     }
 
     pub fn is_live(&self, stream: StreamId) -> bool {
@@ -558,15 +556,16 @@ mod tests {
         let mut book = Book::new(EntryList::default());
         let plan = book.replan([(server, vec![state.clone(), text.clone()])].into());
         assert_eq!(plan.follow.len(), 2);
-        book.caught_up(text.keys.id, 9);
+        assert!(book.caught_up(text.keys.id, 9), "the first catch-up turns a stream live");
         assert!(book.is_live(text.keys.id));
+        assert!(!book.caught_up(text.keys.id, 10), "each live entry after it is not news");
         assert_eq!(book.writers(server, Lane::Channel(channel)), vec![text.keys.id]);
         let plan = book.replan([(server, vec![state.clone()])].into());
         assert!(plan.follow.is_empty());
         assert_eq!(plan.unfollow, vec![text.keys.id]);
         assert!(!book.is_live(text.keys.id));
         let plan = book.replan([(server, vec![state, text.clone()])].into());
-        assert_eq!(plan.follow[0].2, 9, "a stream picks up where it left off");
+        assert_eq!(plan.follow[0].2, 10, "a stream picks up where it left off");
     }
 
     #[test]

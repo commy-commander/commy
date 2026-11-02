@@ -170,6 +170,15 @@ pub fn poll(perms: Permissions, question: String, options: Vec<String>, multi: b
     })
 }
 
+pub fn mark_tts(state: &ServerState, perms: Permissions, message: &mut Message) -> Act<()> {
+    crate::manage::need(perms, Permissions::SEND_TTS_MESSAGES, "send text-to-speech messages here")?;
+    if state.server.tts_off {
+        return Err("text-to-speech is turned off in this server".into());
+    }
+    message.mark_tts();
+    Ok(())
+}
+
 pub fn poll_target(state: &ServerState, message: MessageId, user: UserId) -> Act<(ChannelId, Message, Poll)> {
     let found = state.message(message).ok_or("that message no longer exists")?;
     can_view(state, user, found.channel)?;
@@ -335,5 +344,22 @@ mod tests {
         assert!(typing(&w.state, w.member, ChannelId::new(), Utc::now()).is_err());
         assert!(matches!(typing(&w.state, w.member, w.channel, Utc::now()), Ok(Some(ServerEvent::TypingStart { .. }))));
         assert_ne!(w.owner, w.member);
+    }
+
+    #[test]
+    fn text_to_speech_needs_the_permission_and_the_server_switch() {
+        let owner = UserId::new();
+        let mut state = ServerState::new(Server::new("Hangout", owner));
+        let channel = state.server.channels[0].id;
+        let mut message = Message::new(channel, owner, "hello");
+        let mine = state.server.permissions_for(owner);
+        assert!(mark_tts(&state, mine, &mut message).is_ok());
+        assert!(message.is_tts());
+        let mut plain = Message::new(channel, owner, "hi");
+        let without = Permissions(Permissions::default_member().0 & !Permissions::SEND_TTS_MESSAGES.0);
+        assert_eq!(mark_tts(&state, without, &mut plain).unwrap_err(), "you do not have permission to send text-to-speech messages here");
+        state.server.tts_off = true;
+        assert_eq!(mark_tts(&state, mine, &mut plain).unwrap_err(), "text-to-speech is turned off in this server");
+        assert!(!plain.is_tts());
     }
 }

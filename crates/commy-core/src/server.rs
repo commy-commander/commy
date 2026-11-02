@@ -414,6 +414,16 @@ pub struct Server {
     pub pet_care: std::collections::BTreeMap<UserId, crate::pet::CareLog>,
     #[serde(default)]
     pub drive: Vec<crate::drive::DriveItem>,
+    #[serde(default)]
+    pub bans: std::collections::BTreeMap<UserId, crate::removals::BanRecord>,
+    #[serde(default)]
+    pub kicked: Vec<crate::removals::Kick>,
+    #[serde(default)]
+    pub upload_limit_mb: Option<u32>,
+    #[serde(default)]
+    pub upload_limit_since: i64,
+    #[serde(default)]
+    pub tts_off: bool,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -504,6 +514,11 @@ impl Server {
             pet: None,
             pet_care: std::collections::BTreeMap::new(),
             drive: Vec::new(),
+            bans: std::collections::BTreeMap::new(),
+            kicked: Vec::new(),
+            upload_limit_mb: None,
+            upload_limit_since: 0,
+            tts_off: false,
         }
     }
 
@@ -531,6 +546,30 @@ impl Server {
         self.is_member(user) && !self.banned.contains(&user)
     }
 
+    pub fn is_banned(&self, user: UserId) -> bool {
+        self.banned_at(user, Utc::now().timestamp_millis())
+    }
+
+    pub fn banned_at(&self, user: UserId, now_ms: i64) -> bool {
+        self.banned.contains(&user) && !self.bans.get(&user).is_some_and(|b| b.ended(now_ms))
+    }
+
+    pub fn ban_until(&self, user: UserId) -> Option<i64> {
+        self.bans.get(&user).and_then(|b| b.until)
+    }
+
+    pub fn upload_limit_bytes(&self) -> Option<u64> {
+        self.upload_limit_mb.map(|mb| u64::from(mb) * BYTES_PER_MB)
+    }
+
+    pub fn upload_fits(&self, size: u64) -> bool {
+        self.upload_limit_bytes().is_none_or(|max| size <= max)
+    }
+
+    pub fn upload_fits_at(&self, size: u64, at_ms: i64) -> bool {
+        at_ms < self.upload_limit_since || self.upload_fits(size)
+    }
+
     pub fn timeout_of(&self, user: UserId, now: DateTime<Utc>) -> Option<Timeout> {
         self.member(user)?.timeout.filter(|t| t.active_at(now))
     }
@@ -548,6 +587,10 @@ impl Server {
             .iter()
             .filter_map(|m| m.timeout.filter(|t| t.active_at(now)).map(|t| (m.user, t)))
             .collect()
+    }
+
+    pub fn speaks_aloud(&self, perms: Permissions) -> bool {
+        !self.tts_off && perms.can_send_tts()
     }
 
     pub fn permissions_for(&self, user: UserId) -> Permissions {
@@ -1194,6 +1237,8 @@ pub struct ScheduledEvent {
 }
 
 pub const SERVER_AFK_MINUTES: &[u32] = &[1, 5, 15, 30, 60];
+pub const BYTES_PER_MB: u64 = 1024 * 1024;
+pub const UPLOAD_LIMITS_MB: &[u32] = &[8, 25, 50, 100, 250, 500, 1024, 2048];
 
 pub const MAX_GAME_TAGS: usize = 5;
 pub const MAX_GAME_TAG_CHARS: usize = 32;

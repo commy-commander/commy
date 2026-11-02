@@ -28,6 +28,8 @@ const AUDIT_GROUP_OF = {
   server_tag: "server",
   tip_jar: "server",
   server_pet: "server",
+  upload_limit: "server",
+  text_to_speech: "server",
   join_approval: "members",
   join_admit: "members",
   join_turn_away: "members",
@@ -134,6 +136,8 @@ function describeAudit(entry) {
     case "join_sounds": return [detail === "on" ? "turned on join sounds in voice channels" : "turned off join sounds in voice channels"];
     case "server_tag": return detail ? ["set the server tag to ", auditStrong(detail)] : ["removed the server tag"];
     case "server_pet": return detail ? ["named the server astronaut ", auditStrong(detail)] : ["said goodbye to the server astronaut"];
+    case "upload_limit": return detail ? ["limited files to ", auditStrong(detail)] : ["removed the file size limit"];
+    case "text_to_speech": return [detail === "on" ? "turned on text-to-speech messages" : "turned off text-to-speech messages"];
     case "tip_jar": return detail ? ["set the tip jar to ", auditStrong(tipJarText(detail))] : ["removed the tip jar"];
     case "join_approval": return [detail === "on" ? "asked new people to wait until a moderator lets them in" : "let new people join straight away"];
     case "join_admit": return ["let ", member, " in"];
@@ -160,7 +164,7 @@ function describeAudit(entry) {
     case "role_assign": return ["gave ", member, " the ", auditStrong(detail || "a"), " role"];
     case "role_unassign": return ["took the ", auditStrong(detail || "a"), " role from ", member];
     case "member_kick": return ["kicked ", member];
-    case "member_ban": return ["banned ", member];
+    case "member_ban": return detail ? ["banned ", member, ` for ${detail}`] : ["banned ", member];
     case "member_unban": return ["unbanned ", member];
     case "voice_move": return ["moved ", member, " to ", auditStrong(detail || "another voice channel")];
     case "voice_disconnect": return ["disconnected ", member, " from voice"];

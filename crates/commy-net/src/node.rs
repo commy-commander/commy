@@ -662,6 +662,18 @@ impl BlobFetcher {
         sources: impl IntoIterator<Item = &'a str>,
         max: u64,
         target: &std::path::Path,
+        progress: impl FnMut(u64, u64),
+    ) -> Result<u64> {
+        self.download_among(hash, sources, &[], max, target, progress).await
+    }
+
+    pub async fn download_among<'a>(
+        &self,
+        hash: &str,
+        sources: impl IntoIterator<Item = &'a str>,
+        members: &[String],
+        max: u64,
+        target: &std::path::Path,
         mut progress: impl FnMut(u64, u64),
     ) -> Result<u64> {
         let shelf = self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone();
@@ -679,25 +691,20 @@ impl BlobFetcher {
                 return Ok(size);
             }
         }
+        let mut tried = Vec::new();
         for source in sources {
-            let Ok(node_id) = parse_node_hex(source) else { continue };
-            if node_id == self.endpoint.id() {
-                continue;
-            }
-            hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
+            let Some(node_id) = self.dialable(source) else { continue };
+            tried.push(node_id);
             for alpn in [crate::shelf::FILES_ALPN, iroh_blobs::ALPN] {
-                match stream_to_file(&self.endpoint, node_id, alpn, hash, max, target, &mut progress).await {
-                    Ok(size) => {
-                        if let Some(shelf) = &shelf {
-                            if let Err(e) = shelf.share(target).await {
-                                tracing::info!("downloaded file is not shared on: {e:#}");
-                            }
-                        }
-                        return Ok(size);
-                    }
+                let streamed = match dial_for_blob(&self.endpoint, node_id, alpn).await {
+                    Ok(connection) => stream_to_file(connection, hash, max, target, &mut progress).await,
+                    Err(e) => Err(e),
+                };
+                match streamed {
+                    Ok(size) => return self.shared_on(shelf.as_ref(), target, size).await,
                     Err(e) if e.is::<BlobTooLarge>() => return Err(e),
                     Err(e) => {
-                        tracing::info!("file {} not streamed from {}: {e:#}", hash.fmt_short(), &source[..source.len().min(10)]);
+                        tracing::info!("file {} not streamed from {}: {e:#}", hash.fmt_short(), node_id.fmt_short());
                         if e.is::<Unreachable>() {
                             break;
                         }
@@ -705,30 +712,61 @@ impl BlobFetcher {
                 }
             }
         }
+        let mut reached = self.dial_all(self.untried(members, &tried), crate::shelf::FILES_ALPN);
+        while let Some((node_id, dialed)) = reached.next().await {
+            let mut streamed = match dialed {
+                Ok(connection) => stream_to_file(connection, hash, max, target, &mut progress).await,
+                Err(e) => Err(e),
+            };
+            if streamed.as_ref().is_err_and(|e| !e.is::<BlobTooLarge>() && !e.is::<Unreachable>()) {
+                streamed = match dial_for_blob(&self.endpoint, node_id, iroh_blobs::ALPN).await {
+                    Ok(connection) => stream_to_file(connection, hash, max, target, &mut progress).await,
+                    Err(e) => Err(e),
+                };
+            }
+            match streamed {
+                Ok(size) => return self.shared_on(shelf.as_ref(), target, size).await,
+                Err(e) if e.is::<BlobTooLarge>() => return Err(e),
+                Err(e) => tracing::info!("file {} not streamed from member {}: {e:#}", hash.fmt_short(), node_id.fmt_short()),
+            }
+        }
         anyhow::bail!(BLOB_UNAVAILABLE)
+    }
+
+    async fn shared_on(&self, shelf: Option<&crate::shelf::Shelf>, target: &std::path::Path, size: u64) -> Result<u64> {
+        if let Some(shelf) = shelf {
+            if let Err(e) = shelf.share(target).await {
+                tracing::info!("downloaded file is not shared on: {e:#}");
+            }
+        }
+        Ok(size)
     }
 }
 
 #[cfg(not(wasm_browser))]
 const PROGRESS_STEPS: u64 = 200;
 
-#[cfg(not(wasm_browser))]
 #[derive(Debug, thiserror::Error)]
 #[error("that member could not be reached")]
 struct Unreachable;
 
+async fn dial_for_blob(endpoint: &Endpoint, node_id: EndpointId, alpn: &[u8]) -> Result<Connection> {
+    n0_future::time::timeout(BLOB_DIAL_TIMEOUT, endpoint.connect(node_id, alpn))
+        .await
+        .map_err(|_| Unreachable)?
+        .context("file download failed")
+}
+
 #[cfg(not(wasm_browser))]
 async fn stream_to_file(
-    endpoint: &Endpoint,
-    node_id: EndpointId,
-    alpn: &[u8],
+    connection: Connection,
     hash: iroh_blobs::Hash,
     max: u64,
     target: &std::path::Path,
     progress: &mut impl FnMut(u64, u64),
 ) -> Result<u64> {
     let part = crate::shelf::part_path(target);
-    let streamed = stream_into(endpoint, node_id, alpn, hash, max, &part, progress).await;
+    let streamed = stream_into(connection, hash, max, &part, progress).await;
     let finished = match streamed {
         Ok(size) => replace_file(&part, target).await.map(|_| size),
         Err(e) => Err(e),
@@ -749,9 +787,7 @@ async fn replace_file(from: &std::path::Path, to: &std::path::Path) -> Result<()
 
 #[cfg(not(wasm_browser))]
 async fn stream_into(
-    endpoint: &Endpoint,
-    node_id: EndpointId,
-    alpn: &[u8],
+    connection: Connection,
     hash: iroh_blobs::Hash,
     max: u64,
     part: &std::path::Path,
@@ -760,10 +796,6 @@ async fn stream_into(
     use bao_tree::io::fsm::BaoContentItem;
     use iroh_blobs::get::fsm::{self, BlobContentNext, ConnectedNext, EndBlobNext};
     use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-    let connection = n0_future::time::timeout(BLOB_DIAL_TIMEOUT, endpoint.connect(node_id, alpn))
-        .await
-        .map_err(|_| Unreachable)?
-        .context("file download failed")?;
     let request = iroh_blobs::protocol::GetRequest::blob(hash);
     let connected = fsm::start(connection, request, Default::default()).next().await?;
     let ConnectedNext::StartRoot(start) = connected.next().await? else {
@@ -809,6 +841,16 @@ impl BlobFetcher {
     }
 
     pub async fn fetch_from<'a>(&self, hash: &str, sources: impl IntoIterator<Item = &'a str>, max: u64) -> Result<Vec<u8>> {
+        self.fetch_among(hash, sources, &[], max).await
+    }
+
+    pub async fn fetch_among<'a>(
+        &self,
+        hash: &str,
+        sources: impl IntoIterator<Item = &'a str>,
+        members: &[String],
+        max: u64,
+    ) -> Result<Vec<u8>> {
         let hash: iroh_blobs::Hash = hash.parse().context("invalid blob hash")?;
         if let Ok(iroh_blobs::api::blobs::BlobStatus::Complete { size }) = self.blobs.status(hash).await {
             check_blob_size(size, max)?;
@@ -816,33 +858,72 @@ impl BlobFetcher {
                 return Ok(bytes.to_vec());
             }
         }
+        let mut tried = Vec::new();
         for source in sources {
-            let Ok(node_id) = parse_node_hex(source) else { continue };
-            if node_id == self.endpoint.id() {
-                continue;
-            }
-            hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
-            match fetch_capped(&self.endpoint, node_id, hash, max).await {
-                Ok(bytes) => {
-                    if let Err(e) = self.blobs.add_bytes(bytes.clone()).await {
-                        tracing::debug!("fetched blob was not kept locally: {e}");
-                    }
-                    return Ok(bytes);
-                }
+            let Some(node_id) = self.dialable(source) else { continue };
+            tried.push(node_id);
+            let fetched = match dial_for_blob(&self.endpoint, node_id, iroh_blobs::ALPN).await {
+                Ok(connection) => fetch_over(connection, hash, max).await,
+                Err(e) => Err(e),
+            };
+            match fetched {
+                Ok(bytes) => return Ok(self.kept(bytes).await),
                 Err(e) if e.is::<BlobTooLarge>() => return Err(e),
-                Err(e) => tracing::info!("file {} not fetched from {}: {e:#}", hash.fmt_short(), &source[..source.len().min(10)]),
+                Err(e) => tracing::info!("file {} not fetched from {}: {e:#}", hash.fmt_short(), node_id.fmt_short()),
+            }
+        }
+        let mut reached = self.dial_all(self.untried(members, &tried), iroh_blobs::ALPN);
+        while let Some((node_id, dialed)) = reached.next().await {
+            let Ok(connection) = dialed else { continue };
+            match fetch_over(connection, hash, max).await {
+                Ok(bytes) => return Ok(self.kept(bytes).await),
+                Err(e) if e.is::<BlobTooLarge>() => return Err(e),
+                Err(e) => tracing::info!("file {} not fetched from member {}: {e:#}", hash.fmt_short(), node_id.fmt_short()),
             }
         }
         anyhow::bail!(BLOB_UNAVAILABLE)
     }
+
+    async fn kept(&self, bytes: Vec<u8>) -> Vec<u8> {
+        if let Err(e) = self.blobs.add_bytes(bytes.clone()).await {
+            tracing::debug!("fetched blob was not kept locally: {e}");
+        }
+        bytes
+    }
+
+    fn dialable(&self, source: &str) -> Option<EndpointId> {
+        let node_id = parse_node_hex(source).ok().filter(|id| *id != self.endpoint.id())?;
+        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
+        Some(node_id)
+    }
+
+    fn untried(&self, members: &[String], tried: &[EndpointId]) -> Vec<EndpointId> {
+        let mut fresh: Vec<EndpointId> = Vec::new();
+        for node_id in members.iter().filter_map(|m| self.dialable(m)) {
+            if !tried.contains(&node_id) && !fresh.contains(&node_id) {
+                fresh.push(node_id);
+            }
+        }
+        fresh.truncate(MAX_MEMBER_DIALS);
+        fresh
+    }
+
+    fn dial_all(&self, nodes: Vec<EndpointId>, alpn: &'static [u8]) -> n0_future::FuturesUnordered<n0_future::boxed::BoxFuture<(EndpointId, Result<Connection>)>> {
+        nodes
+            .into_iter()
+            .map(|node_id| {
+                let endpoint = self.endpoint.clone();
+                let dial: n0_future::boxed::BoxFuture<_> = Box::pin(async move { (node_id, dial_for_blob(&endpoint, node_id, alpn).await) });
+                dial
+            })
+            .collect()
+    }
 }
 
-async fn fetch_capped(endpoint: &Endpoint, node_id: EndpointId, hash: iroh_blobs::Hash, max: u64) -> Result<Vec<u8>> {
+const MAX_MEMBER_DIALS: usize = 32;
+
+async fn fetch_over(connection: Connection, hash: iroh_blobs::Hash, max: u64) -> Result<Vec<u8>> {
     use iroh_blobs::get::fsm::{self, ConnectedNext, EndBlobNext};
-    let connection = n0_future::time::timeout(BLOB_DIAL_TIMEOUT, endpoint.connect(node_id, iroh_blobs::ALPN))
-        .await
-        .map_err(|_| anyhow::anyhow!("blob download timed out"))?
-        .context("blob download failed")?;
     let request = iroh_blobs::protocol::GetRequest::blob(hash);
     let connected = fsm::start(connection, request, Default::default()).next().await?;
     let ConnectedNext::StartRoot(start) = connected.next().await? else {
@@ -2152,6 +2233,52 @@ mod tests {
         for node in [host, friend, guest, restarted] {
             node.shutdown().await.ok();
         }
+    }
+
+    #[tokio::test]
+    async fn a_member_who_came_online_later_is_asked_even_when_not_a_neighbour() {
+        let (host, friend) = local_pair().await;
+        let guest = local_node().await;
+        guest.learn(friend.endpoint().addr());
+        let bytes = picture();
+        let blob = host.add_blob(bytes.clone()).await.unwrap();
+        friend.blob_fetcher().fetch(&blob, Some(&host.node_id_hex()), MAX_BLOB_BYTES).await.unwrap();
+        let away = local_node().await;
+        guest.learn(away.endpoint().addr());
+        let away_hex = away.node_id_hex();
+        away.shutdown().await.ok();
+        let uploader = [host.node_id_hex()];
+        host.shutdown().await.ok();
+        let members = [away_hex, friend.node_id_hex(), guest.node_id_hex()];
+        let fetcher = guest.blob_fetcher();
+        let fetch = fetcher.fetch_among(&blob, uploader.iter().map(String::as_str), &members, MAX_BLOB_BYTES);
+        let fetched = tokio::time::timeout(Duration::from_secs(8), fetch).await.expect("an offline member does not hold up the others").unwrap();
+        assert_eq!(fetched, bytes);
+        let none = fetcher.fetch_among(&blob_hash(b"nobody has this"), std::iter::empty(), &members[1..], MAX_BLOB_BYTES).await;
+        assert_eq!(none.unwrap_err().to_string(), BLOB_UNAVAILABLE);
+        friend.shutdown().await.ok();
+        guest.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn a_big_file_comes_from_any_member_who_shares_it() {
+        let dir = std::env::temp_dir().join(format!("commy-big-member-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("clip.bin");
+        let bytes: Vec<u8> = (0..400_000u32).map(|i| (i % 241) as u8).collect();
+        std::fs::write(&original, &bytes).unwrap();
+        let (friend, guest) = local_pair().await;
+        friend.set_shelf(crate::shelf::Shelf::open(&dir.join("friend")).await.unwrap());
+        guest.set_shelf(crate::shelf::Shelf::open(&dir.join("guest")).await.unwrap());
+        let (hash, _) = friend.share_file(&original).await.unwrap();
+        let target = dir.join("saved.bin");
+        let members = [friend.node_id_hex()];
+        let got = guest.blob_fetcher().download_among(&hash, std::iter::empty(), &members, u64::MAX, &target, |_, _| {}).await.unwrap();
+        assert_eq!(got, bytes.len() as u64);
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        friend.shutdown().await.ok();
+        guest.shutdown().await.ok();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

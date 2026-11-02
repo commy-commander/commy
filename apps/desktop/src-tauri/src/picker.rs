@@ -10,6 +10,15 @@ pub enum Contents {
     OnDisk { path: std::path::PathBuf, size: u64 },
 }
 
+impl Contents {
+    pub fn size(&self) -> u64 {
+        match self {
+            Contents::Bytes(bytes) => bytes.len() as u64,
+            Contents::OnDisk { size, .. } => *size,
+        }
+    }
+}
+
 pub struct PickedFile {
     pub name: String,
     pub contents: Contents,

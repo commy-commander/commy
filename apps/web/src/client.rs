@@ -167,8 +167,12 @@ impl Client {
         channel: ChannelId,
         content: &str,
         reply_to: Option<MessageId>,
+        tts: bool,
     ) -> Result<(Message, MessageView), String> {
         self.compose_in(server, channel, content, |state, message| {
+            if tts {
+                act::mark_tts(state, state.server.permissions_for(message.author), message)?;
+            }
             if let Some(target) = reply_to {
                 if !state.messages(channel).iter().any(|m| m.id == target) {
                     return Err("The message you replied to no longer exists".into());
@@ -218,6 +222,12 @@ impl Client {
         let mut message = Message::new(channel, profile.id, "");
         message.attachments.push(poll.into_attachment());
         seal_sign_apply(state, &keys, &identity, message)
+    }
+
+    pub fn upload_fits(&self, server: ServerId, size: u64) -> Result<(), String> {
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).ok_or("This server is still loading")?;
+        commy_view::moderate::upload_fits(state, size)
     }
 
     pub fn compose_attachment(&self, server: ServerId, channel: ChannelId, attachment: Attachment, needed: Permissions, action: &str) -> Result<(Message, MessageView), String> {
@@ -482,7 +492,7 @@ impl Client {
         let state = servers.get(&server)?;
         let notice = if state.is_deleted() {
             "server-deleted"
-        } else if state.server.banned.contains(&me) {
+        } else if state.server.is_banned(me) {
             "banned"
         } else if state.server.is_member(me) {
             return None;
@@ -687,7 +697,7 @@ impl Client {
         remote.members = members.into_iter().map(member_of).collect();
         let member = remote.is_member(me.id);
         let before_i_joined = joined_ms.is_some_and(|joined| at < joined);
-        if remote.banned.contains(&me.id) || (!member && !before_i_joined) {
+        if remote.is_banned(me.id) || (!member && !before_i_joined) {
             return Err("You are not a member of that server yet".into());
         }
         let mut servers = self.servers.lock().unwrap();
@@ -1239,12 +1249,23 @@ mod tests {
     fn sending_signs_stores_and_shows_the_message() {
         let w = world();
         w.client.install_mirror(w.server, &mirror(&w)).unwrap();
-        let (message, view) = w.client.compose(w.server, w.channel, "  hi there ", None).unwrap();
+        let (message, view) = w.client.compose(w.server, w.channel, "  hi there ", None, false).unwrap();
         assert_eq!(view.content, "hi there");
         let me = w.client.profile().unwrap();
         assert!(message.verify(w.server, &me.identity.unwrap()));
         let messages = w.client.get_messages(w.server, w.channel, None).unwrap();
         assert_eq!(messages.last().unwrap().content, "hi there");
+    }
+
+    #[test]
+    fn text_to_speech_messages_carry_their_marker() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let (message, view) = w.client.compose(w.server, w.channel, "read this aloud", None, true).unwrap();
+        assert!(message.is_tts());
+        assert!(view.tts);
+        w.client.servers.lock().unwrap().get_mut(&w.server).unwrap().server.tts_off = true;
+        assert_eq!(w.client.compose(w.server, w.channel, "again", None, true).unwrap_err(), "text-to-speech is turned off in this server");
     }
 
     #[test]
@@ -1265,9 +1286,9 @@ mod tests {
     fn sending_refuses_empty_and_oversized_text() {
         let w = world();
         w.client.install_mirror(w.server, &mirror(&w)).unwrap();
-        assert!(w.client.compose(w.server, w.channel, "   ", None).is_err());
+        assert!(w.client.compose(w.server, w.channel, "   ", None, false).is_err());
         let long = "a".repeat(MAX_MESSAGE_LEN + 1);
-        assert!(w.client.compose(w.server, w.channel, &long, None).is_err());
+        assert!(w.client.compose(w.server, w.channel, &long, None, false).is_err());
     }
 
     #[test]
