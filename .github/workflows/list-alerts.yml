@@ -12,8 +12,20 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/code-scanning/alerts?state=open&per_page=100" --paginate --jq '.[] | [.number, .rule.id, (.rule.security_severity_level // .rule.severity), .most_recent_instance.location.path, .most_recent_instance.location.start_line, .most_recent_instance.location.end_line, .created_at, .most_recent_instance.message.text] | @tsv'
-          echo ---DISMISSED-COUNT---
-          gh api "repos/$GITHUB_REPOSITORY/code-scanning/alerts?state=dismissed&per_page=100" --paginate --jq '.[] | .number' | wc -l
-          echo ---DEPENDABOT---
-          gh api "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" --jq '.[] | [.number, .security_advisory.severity, .dependency.package.ecosystem, .dependency.package.name, .dependency.manifest_path, .security_vulnerability.first_patched_version.identifier, .security_advisory.ghsa_id, .security_advisory.summary] | @tsv' || true
+          id=$(gh api "repos/$GITHUB_REPOSITORY/code-scanning/analyses?ref=refs/heads/main&per_page=20" --jq '[.[] | select(.category=="/language:rust")][0].id')
+          gh api "repos/$GITHUB_REPOSITORY/code-scanning/analyses?ref=refs/heads/main&per_page=20" --jq '[.[] | select(.category=="/language:rust")][0] | [.id, .commit_sha, .created_at, .tool.version] | @tsv'
+          gh api -H "Accept: application/sarif+json" "repos/$GITHUB_REPOSITORY/code-scanning/analyses/$id" > rust.sarif
+          python3 - <<'PY'
+          import json
+          d=json.load(open('rust.sarif'))
+          for r in d['runs'][0]['results']:
+              u=r['locations'][0]['physicalLocation']['artifactLocation']['uri']
+              if 'picture' not in u: continue
+              print('==', u, r['locations'][0]['physicalLocation']['region']['startLine'], r['message']['text'])
+              for cf in r.get('codeFlows', []):
+                  for tf in cf['threadFlows']:
+                      for loc in tf['locations']:
+                          pl=loc['location']['physicalLocation']
+                          print('   ', pl['artifactLocation']['uri'], pl['region']['startLine'], loc['location'].get('message', {}).get('text', ''))
+                  print('   --')
+          PY
