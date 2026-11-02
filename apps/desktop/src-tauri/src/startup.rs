@@ -260,7 +260,8 @@ fn sync_signals(app: &App, offline: bool) -> SyncSignals {
 
 async fn view(handle: &AppHandle) -> StartupView {
     let app = handle.state::<App>();
-    let signals = ConnectionSignals { account_server: *PROBE.lock().unwrap(), relay: relay(&app).await };
+    let account_server = *PROBE.lock().unwrap();
+    let signals = ConnectionSignals { account_server, relay: relay(&app).await };
     let (connection, offline) = connection_step(&signals);
     let restarting = RESTARTING.load(Ordering::SeqCst);
     let status = updater::status(handle);
