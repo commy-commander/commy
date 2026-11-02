@@ -10,6 +10,9 @@ use thiserror::Error;
 const PREFIX: &str = "commy";
 const TICKET_VERSION: u8 = 2;
 const FIRST_TICKET_VERSION: u8 = 1;
+pub const MAX_BOOTSTRAP: usize = 6;
+pub const MAX_INVITE_NEIGHBORS: usize = 4;
+const MAX_DIRECT_ADDRESSES: usize = 4;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum TicketError {
@@ -36,6 +39,15 @@ pub struct AddrInfo {
 impl NodeAddr {
     pub fn new(node: EndpointId) -> Self {
         Self { node_id: *node.as_bytes(), info: AddrInfo::default() }
+    }
+
+    pub fn via_relay(node_id: [u8; 32], relay_url: Option<String>) -> Self {
+        Self { node_id, info: AddrInfo { relay_url, direct_addresses: BTreeSet::new() } }
+    }
+
+    fn trimmed(mut self) -> Self {
+        self.info.direct_addresses = std::mem::take(&mut self.info.direct_addresses).into_iter().take(MAX_DIRECT_ADDRESSES).collect();
+        self
     }
 
     pub fn node(&self) -> Option<EndpointId> {
@@ -103,6 +115,21 @@ impl ServerTicket {
             bootstrap,
             owner: None,
         }
+    }
+
+    pub fn reaching(&self, inviter: Option<NodeAddr>, neighbors: impl IntoIterator<Item = NodeAddr>) -> Self {
+        let known = |addr: NodeAddr| self.bootstrap.iter().find(|held| held.node_id == addr.node_id && addr.info.direct_addresses.is_empty()).cloned().unwrap_or(addr);
+        let neighbors = neighbors.into_iter().take(MAX_INVITE_NEIGHBORS).map(known);
+        let mut bootstrap: Vec<NodeAddr> = Vec::with_capacity(MAX_BOOTSTRAP);
+        for addr in inviter.into_iter().chain(neighbors).chain(self.bootstrap.iter().cloned()) {
+            if bootstrap.len() == MAX_BOOTSTRAP {
+                break;
+            }
+            if !bootstrap.iter().any(|held| held.node_id == addr.node_id) {
+                bootstrap.push(addr.trimmed());
+            }
+        }
+        Self { bootstrap, ..self.clone() }
     }
 
     pub fn encode(&self) -> String {
@@ -249,5 +276,52 @@ mod tests {
             ServerTicket::decode(&encoded),
             Err(TicketError::BadVersion(99))
         );
+    }
+
+    fn node_at(byte: u8, ips: usize) -> NodeAddr {
+        let direct_addresses = (0..ips).map(|i| SocketAddr::from(([192, 0, 2, byte], 7000 + i as u16))).collect();
+        NodeAddr { node_id: [byte; 32], info: AddrInfo { relay_url: Some("https://relay.commy.chat./".into()), direct_addresses } }
+    }
+
+    #[test]
+    fn a_member_invite_leads_with_the_inviter_and_live_neighbors_then_keeps_the_owner() {
+        let owner = node_at(1, 2);
+        let mut ticket = sample();
+        ticket.bootstrap = vec![owner.clone()];
+        let (member, friend) = (node_at(2, 1), node_at(3, 1));
+        let shared = ticket.reaching(Some(member.clone()), [friend.clone()]);
+        assert_eq!(shared.bootstrap, vec![member, friend, owner]);
+        assert_eq!((shared.server_id, shared.topic, shared.owner), (ticket.server_id, ticket.topic, ticket.owner));
+        assert_eq!(ServerTicket::decode(&shared.encode()).unwrap(), shared);
+    }
+
+    #[test]
+    fn a_neighbor_known_only_by_id_keeps_the_addresses_the_invite_already_had() {
+        let owner = node_at(1, 2);
+        let mut ticket = sample();
+        ticket.bootstrap = vec![owner.clone()];
+        let shared = ticket.reaching(Some(node_at(2, 1)), [NodeAddr::via_relay(owner.node_id, None)]);
+        assert_eq!(shared.bootstrap, vec![node_at(2, 1), owner]);
+    }
+
+    #[test]
+    fn the_owner_inviting_is_listed_once_with_fresh_addresses() {
+        let mut ticket = sample();
+        ticket.bootstrap = vec![node_at(1, 1)];
+        let fresh = node_at(1, 3);
+        assert_eq!(ticket.reaching(Some(fresh.clone()), []).bootstrap, vec![fresh]);
+    }
+
+    #[test]
+    fn invites_stay_small_however_many_devices_are_around() {
+        let mut ticket = sample();
+        ticket.bootstrap = (10..20).map(|b| node_at(b, 9)).collect();
+        let shared = ticket.reaching(Some(node_at(1, 9)), (2..10).map(|b| node_at(b, 9)));
+        assert_eq!(shared.bootstrap.len(), MAX_BOOTSTRAP);
+        assert_eq!(shared.bootstrap[0].node_id, [1; 32]);
+        assert_eq!(shared.bootstrap.iter().filter(|a| (2..10).contains(&a.node_id[0])).count(), MAX_INVITE_NEIGHBORS);
+        assert_eq!(shared.bootstrap[MAX_BOOTSTRAP - 1].node_id, [10; 32], "the invite this one grew from still counts");
+        assert!(shared.bootstrap.iter().all(|a| a.info.direct_addresses.len() <= MAX_DIRECT_ADDRESSES));
+        assert!(shared.encode().len() < 2400, "{} characters", shared.encode().len());
     }
 }
