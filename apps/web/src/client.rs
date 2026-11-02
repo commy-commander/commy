@@ -412,6 +412,10 @@ impl Client {
             .collect()
     }
 
+    pub fn voice_join(&self, server: ServerId, user: UserId) -> Option<i64> {
+        self.servers.lock().unwrap().get(&server).and_then(|state| state.voice_device_since(user))
+    }
+
     pub fn voice_peer_ok(&self, server: ServerId, user: UserId, node: &str, channel: ChannelId) -> bool {
         let servers = self.servers.lock().unwrap();
         servers.get(&server).is_some_and(|state| state.media_peer_ok(user, node, channel, true))

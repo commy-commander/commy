@@ -13,6 +13,7 @@ use commy_net::{DmEnvelope, MediaHello, MediaPacket, WirePayload};
 use commy_view::afk::{self, IdleVoice};
 use commy_view::calls::{self, CallBook, CallStep, DmCall, DmCallView, VoiceGates};
 use commy_view::liveness::BEAT;
+use commy_view::voice_links;
 use iroh::endpoint::Connection;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -70,6 +71,8 @@ struct Peer {
     out: Option<mpsc::UnboundedSender<MediaPacket>>,
     connection: Option<Connection>,
     dialing: bool,
+    linked_at: Option<web_time::Instant>,
+    join: Option<i64>,
     theirs: SpeakingDetector,
     heard_ms: i64,
     frames_in: u64,
@@ -85,6 +88,8 @@ impl Peer {
             out: None,
             connection: None,
             dialing: false,
+            linked_at: None,
+            join: None,
             theirs: SpeakingDetector::default(),
             heard_ms: 0,
             frames_in: 0,
@@ -94,9 +99,25 @@ impl Peer {
 
     fn close(&mut self, why: &[u8]) {
         self.out = None;
+        self.linked_at = None;
+        self.join = None;
         if let Some(connection) = self.connection.take() {
             connection.close(0u32.into(), why);
         }
+    }
+}
+
+impl Peer {
+    fn follow_join(&mut self, since: Option<i64>) -> bool {
+        let link = self.linked_at.filter(|_| self.out.is_some()).map(|at| (self.node.as_str(), at.elapsed()));
+        if voice_links::link_outlived(link, true, &self.node, self.join, since) {
+            self.close(b"joined again");
+            return true;
+        }
+        if link.is_some() && since.is_some() {
+            self.join = since;
+        }
+        false
     }
 }
 
@@ -611,8 +632,13 @@ impl Session {
                     keep
                 });
             }
+            let room = link.server;
             for (user, node) in wanted {
+                let since = room.and_then(|server| self.client.borrow().voice_join(server, user));
                 let peer = link.peer(user, &node);
+                if room.is_some() && peer.follow_join(since) && peer.theirs.reset() {
+                    gone.push(user);
+                }
                 if peer.out.is_none() && !peer.dialing && calls::should_dial(&ours, &node) {
                     peer.dialing = true;
                     dial.push((user, node));
@@ -718,6 +744,8 @@ impl Session {
 
     fn attach(self: &Rc<Self>, channel: ChannelId, user: UserId, node: String, media: MediaChannel) {
         let MediaChannel { mut incoming, outgoing, connection, .. } = media;
+        let room = self.voice.borrow().link.as_ref().filter(|link| link.channel == channel).and_then(|link| link.server);
+        let joined = room.and_then(|server| self.client.borrow().voice_join(server, user));
         let generation = {
             let mut voice = self.voice.borrow_mut();
             let Some(link) = voice.link.as_mut().filter(|link| link.channel == channel) else {
@@ -732,6 +760,8 @@ impl Session {
             }
             peer.generation = generation;
             peer.out = Some(outgoing);
+            peer.linked_at = Some(web_time::Instant::now());
+            peer.join = joined;
             peer.decoder = VoiceDecoder::new();
             generation
         };

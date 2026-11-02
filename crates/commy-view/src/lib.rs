@@ -28,6 +28,7 @@ pub mod removals;
 pub mod templates;
 pub mod tip_jar;
 pub mod voice_invite;
+pub mod voice_links;
 
 use crate::keys::KeyHolder;
 use commy_core::server::Rsvp;
