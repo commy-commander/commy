@@ -473,7 +473,7 @@ impl Session {
         });
     }
 
-    pub(super) fn join_group(self: &Rc<Self>, raw: &str, key: Option<(KeyId, ChannelSecret)>) {
+    pub(super) fn join_group(self: &Rc<Self>, raw: &str, key: Option<(KeyId, ChannelSecret)>, asked: bool) {
         let Ok(ticket) = ServerTicket::decode(raw) else { return };
         let Some((id, secret)) = key else { return };
         let server = ticket.server_id;
@@ -487,11 +487,16 @@ impl Session {
         let (joined, keyed) = match self.sync.borrow_mut().as_mut() {
             Some(live) => {
                 let joined = !listed && live.book.join(server, entry.clone(), shared.clone(), now.timestamp_millis());
-                (joined, live.book.offer_key(server, shared.clone(), now.timestamp_millis()))
+                let keyed = if asked {
+                    live.book.take_key(server, shared.clone(), now.timestamp_millis())
+                } else {
+                    live.book.offer_key(server, shared.clone(), now.timestamp_millis())
+                };
+                (joined, keyed)
             }
             None => return,
         };
-        if !joined && !keyed {
+        if !joined && !keyed && !asked {
             return;
         }
         if joined {

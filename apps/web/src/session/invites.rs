@@ -172,7 +172,7 @@ impl Session {
         if ticket.owner.is_none() {
             return Err("That invite is damaged".into());
         }
-        self.join_group(raw.trim(), Some(key));
+        self.join_group(raw.trim(), Some(key), true);
         let deadline = web_time::Instant::now() + JOIN_WAIT;
         while web_time::Instant::now() < deadline {
             if let Some(summary) = self.client.borrow().summary(server) {
