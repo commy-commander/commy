@@ -12,6 +12,10 @@ pub fn link_outlived(link: Option<(&str, Duration)>, here: bool, node: &str, lin
     !here || (rejoined && age > LINK_GRACE)
 }
 
+pub fn new_join(answered: Option<i64>, here: bool, since: Option<i64>) -> bool {
+    here && since.is_some() && answered != since
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -33,5 +37,14 @@ mod tests {
         assert!(same_link(old, &desktop.to_uppercase()));
         assert!(!same_link(old, &phone), "a link to another of their devices");
         assert!(!same_link(None, &desktop));
+    }
+
+    #[test]
+    fn a_join_into_our_room_is_answered_once() {
+        assert!(new_join(None, true, Some(1_000)), "the first join we hear of");
+        assert!(!new_join(Some(1_000), true, Some(1_000)), "their seat repeated");
+        assert!(new_join(Some(1_000), true, Some(9_000)), "they restarted and joined again");
+        assert!(!new_join(None, false, Some(1_000)), "they joined another room");
+        assert!(!new_join(None, true, None), "an announce without a join");
     }
 }
