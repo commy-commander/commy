@@ -15259,29 +15259,29 @@ function wireOutsideLink(a, url, { labelled = false } = {}) {
   return a;
 }
 
-function trustedLinkDomains() {
+function allowedLinkDomains() {
   try {
-    return readTrustedDomains(localStorage.getItem(TRUSTED_LINKS_KEY));
+    return readAllowedDomains(localStorage.getItem(ALLOWED_LINKS_KEY));
   } catch {
     return [];
   }
 }
 
-function saveTrustedLinkDomains(domains) {
-  try { localStorage.setItem(TRUSTED_LINKS_KEY, writeTrustedDomains(domains)); } catch {}
-  renderTrustedLinkSettings();
+function saveAllowedLinkDomains(domains) {
+  try { localStorage.setItem(ALLOWED_LINKS_KEY, writeAllowedDomains(domains)); } catch {}
+  renderAllowedLinkSettings();
 }
 
-function renderTrustedLinkSettings() {
-  const domains = trustedLinkDomains();
-  $("trusted-links-summary").textContent = trustedLinksSummary(domains);
+function renderAllowedLinkSettings() {
+  const domains = allowedLinkDomains();
+  $("trusted-links-summary").textContent = allowedLinksSummary(domains);
   $("trusted-links-forget").disabled = domains.length === 0;
 }
 
 async function openOutsideLink(url, label = null) {
   let check;
   try {
-    check = await invoke("check_link", { url, label, trusted: trustedLinkDomains() });
+    check = await invoke("check_link", { url, label, trusted: allowedLinkDomains() });
   } catch (err) {
     toast(String(err));
     return;
@@ -15337,7 +15337,7 @@ function closeLeavingPrompt() {
 function confirmLeaving() {
   const check = leaving.check;
   if (!check) return;
-  if (check.can_trust && $("leaving-trust").checked) saveTrustedLinkDomains(withTrustedDomain(trustedLinkDomains(), check.trust_key));
+  if (check.can_trust && $("leaving-trust").checked) saveAllowedLinkDomains(withAllowedDomain(allowedLinkDomains(), check.trust_key));
   closeLeavingPrompt();
   openCheckedLink(check.url);
 }
@@ -20523,7 +20523,7 @@ function wireEvents() {
     }
   };
   $("sensitive-reset").onclick = resetSensitiveConfirmations;
-  $("trusted-links-forget").onclick = () => saveTrustedLinkDomains([]);
+  $("trusted-links-forget").onclick = () => saveAllowedLinkDomains([]);
   $("leaving-cancel").onclick = closeLeavingPrompt;
   $("leaving-go").onclick = confirmLeaving;
   $("pins-btn").onclick = togglePinsPanel;
@@ -20678,7 +20678,7 @@ function wireEvents() {
   setIcon($("lightbox-save"), "download", 16);
   $("lightbox-save").append("Save");
   renderLinkPreviewSettings();
-  renderTrustedLinkSettings();
+  renderAllowedLinkSettings();
   $("link-preview-send-toggle").addEventListener("change", onLinkPreviewSettingsChange);
   $("link-preview-show-toggle").addEventListener("change", onLinkPreviewSettingsChange);
 

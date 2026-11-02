@@ -178,9 +178,9 @@ mod tests {
         let frames = [
             ClientFrame::open(&keys, 41),
             ClientFrame::open_tail(&keys, 0, Some(50)),
-            ClientFrame::append(&keys, [5; APPEND_NONCE_BYTES], vec![1, 2, 3]),
-            ClientFrame::signal(&keys, [6; APPEND_NONCE_BYTES], vec![4, 5]),
-            ClientFrame::will(&keys, [7; APPEND_NONCE_BYTES], vec![6]),
+            ClientFrame::append(&keys, rand::random(), vec![1, 2, 3]),
+            ClientFrame::signal(&keys, rand::random(), vec![4, 5]),
+            ClientFrame::will(&keys, rand::random(), vec![6]),
             ClientFrame::Close { stream: keys.id },
             ClientFrame::Ping,
         ];
@@ -200,16 +200,16 @@ mod tests {
     #[test]
     fn an_append_frame_carries_a_signature_the_service_can_check() {
         let keys = StreamSecret::random().keys();
-        let ClientFrame::Append { stream, nonce, body, sig } = ClientFrame::append(&keys, [9; APPEND_NONCE_BYTES], b"x".to_vec()) else {
+        let ClientFrame::Append { stream, nonce, body, sig } = ClientFrame::append(&keys, rand::random(), b"x".to_vec()) else {
             unreachable!()
         };
         assert!(verify_append(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0));
-        let ClientFrame::Signal { stream, nonce, body, sig } = ClientFrame::signal(&keys, [9; APPEND_NONCE_BYTES], b"x".to_vec()) else {
+        let ClientFrame::Signal { stream, nonce, body, sig } = ClientFrame::signal(&keys, rand::random(), b"x".to_vec()) else {
             unreachable!()
         };
         assert!(verify_signal(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0));
         assert!(!verify_append(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0), "a signal cannot be stored as an entry");
-        let ClientFrame::Will { stream, nonce, body, sig } = ClientFrame::will(&keys, [9; APPEND_NONCE_BYTES], b"x".to_vec()) else {
+        let ClientFrame::Will { stream, nonce, body, sig } = ClientFrame::will(&keys, rand::random(), b"x".to_vec()) else {
             unreachable!()
         };
         assert!(verify_signal(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0), "a last word is a signal held for later");

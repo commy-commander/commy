@@ -1,5 +1,5 @@
-const TRUSTED_LINKS_KEY = "commy.trustedLinkDomains";
-const MAX_TRUSTED_LINK_DOMAINS = 500;
+const ALLOWED_LINKS_KEY = "commy.trustedLinkDomains";
+const MAX_ALLOWED_LINK_DOMAINS = 500;
 
 const LINK_SIGN_TEXT = {
   known_bad: "It is on a list of sites known for phishing or harmful downloads.",
@@ -36,7 +36,7 @@ function cleanDomain(value) {
   return typeof value === "string" ? value.trim().toLowerCase().replace(/\.+$/, "") : "";
 }
 
-function readTrustedDomains(raw) {
+function readAllowedDomains(raw) {
   let parsed;
   try {
     parsed = JSON.parse(raw || "[]");
@@ -45,17 +45,17 @@ function readTrustedDomains(raw) {
   }
   if (!Array.isArray(parsed)) return [];
   const domains = [...new Set(parsed.map(cleanDomain).filter(Boolean))];
-  return domains.slice(-MAX_TRUSTED_LINK_DOMAINS);
+  return domains.slice(-MAX_ALLOWED_LINK_DOMAINS);
 }
 
-function withTrustedDomain(domains, domain) {
+function withAllowedDomain(domains, domain) {
   const key = cleanDomain(domain);
   const rest = (domains || []).filter(d => d !== key);
   if (!key) return rest;
-  return [...rest, key].slice(-MAX_TRUSTED_LINK_DOMAINS);
+  return [...rest, key].slice(-MAX_ALLOWED_LINK_DOMAINS);
 }
 
-function writeTrustedDomains(domains) {
+function writeAllowedDomains(domains) {
   return JSON.stringify(domains || []);
 }
 
@@ -95,12 +95,12 @@ function openLinkInNewTab(win, url) {
   return null;
 }
 
-function trustedLinksSummary(domains) {
+function allowedLinksSummary(domains) {
   const count = (domains || []).length;
   if (count === 0) return "Every site outside Commy asks before it opens.";
   return `${count} ${count === 1 ? "site opens" : "sites open"} without asking on this device.`;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { TRUSTED_LINKS_KEY, MAX_TRUSTED_LINK_DOMAINS, LINK_SIGN_TEXT, readTrustedDomains, withTrustedDomain, writeTrustedDomains, shownHostParts, leavingPrompt, trustedLinksSummary, openLinkInNewTab, LINK_REFUSED };
+  module.exports = { ALLOWED_LINKS_KEY, MAX_ALLOWED_LINK_DOMAINS, LINK_SIGN_TEXT, readAllowedDomains, withAllowedDomain, writeAllowedDomains, shownHostParts, leavingPrompt, allowedLinksSummary, openLinkInNewTab, LINK_REFUSED };
 }
