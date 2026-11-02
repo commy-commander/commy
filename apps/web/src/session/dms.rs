@@ -251,7 +251,7 @@ impl Session {
                     });
                 }
             }
-            Received::Invited { ticket, key, .. } => self.join_group(&ticket, key),
+            Received::Invited { ticket, key, .. } => self.join_group(&ticket, key, false),
             Received::Call { from, node, call, signal } => self.on_call_signal(from, node, call, signal),
             Received::Report(notice) => self.emit("report-received", notice),
             Received::Dropped => {}
