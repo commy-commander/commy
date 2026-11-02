@@ -4,7 +4,7 @@ const CLEAR_ALL_WORD = "DELETE";
 
 const USAGE_PARTS = [
   { id: "messages", label: "Messages and servers", tone: "tx-red", cache: false },
-  { id: "shared_files", label: "Files you share", tone: "tx-orange", cache: false },
+  { id: "shared_files", label: "Shared files", tone: "tx-orange", cache: false },
   { id: "voices", label: "Text-to-speech voices", tone: "tx-yellow", cache: false },
   { id: "pictures", label: "Saved profile pictures", tone: "tx-green", cache: true },
   { id: "web_cache", label: "Web cache", tone: "tx-teal", cache: true },

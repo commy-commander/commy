@@ -66,11 +66,11 @@ pub(crate) async fn keep_again(shelf: &Shelf, path: &Path, blob: &str) -> anyhow
 
 pub(crate) async fn sweep(shelf: Shelf) {
     loop {
-        match shelf.drop_sent_before(keep_from(now_secs())).await {
+        match shelf.drop_kept_before(keep_from(now_secs())).await {
             Ok(0) => {}
-            Ok(dropped) => tracing::info!("stopped keeping {dropped} files sent over 30 days ago"),
+            Ok(dropped) => tracing::info!("stopped keeping {dropped} files kept for over 30 days"),
             Err(e) => {
-                tracing::debug!("sent files are no longer swept: {e:#}");
+                tracing::debug!("kept files are no longer swept: {e:#}");
                 return;
             }
         }

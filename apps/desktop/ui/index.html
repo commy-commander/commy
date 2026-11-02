@@ -959,7 +959,7 @@
       <ul class="modal-list">
         <li>Your messages, direct messages, servers and settings kept on this computer are removed. Anything only this computer had is gone for good.</li>
         <li>You are signed out of every account on this computer.</li>
-        <li>Files you share from this computer stop being available to others.</li>
+        <li>Files you share or keep for others on this computer stop being available to them.</li>
         <li>The keys that lock your data on this computer are removed. If signing in again doesn't bring your server list back, you'll need your recovery code or another signed-in device to allow this one.</li>
       </ul>
       <button class="btn-link" type="button" id="clear-all-recovery">Show my recovery code first</button>
@@ -2302,7 +2302,24 @@
             <div class="setting-sub">Keep a busy server for less time, or a small one forever.</div>
             <div id="keep-servers" class="keep-servers"></div>
           </div>
-          <div class="setting-sub">Videos and files download only when you click them, and so do images over 5 MB. Joining a server brings its recent messages, not its whole history.</div>
+          <div class="setting-sub">Videos and files open only when you click them, and so do images over 5 MB. Joining a server brings its recent messages, not its whole history.</div>
+          <h2 class="settings-subhead">Files for Others</h2>
+          <div class="settings-card mobile-only" data-search="files share mesh offline cache">
+            <div class="setting-title">Rolling file cache</div>
+            <div class="setting-sub">Files you send, open or download stay on this device in a cache of up to 500 MB and are passed on to members while Commy is open, so they still load when the sender is offline. The oldest go first, and none stay longer than 30 days.</div>
+          </div>
+          <div class="settings-card setting-row desktop-only" data-search="files share mesh offline keep copies members">
+            <div>
+              <div class="setting-title">Keep files members post</div>
+              <div class="setting-sub">While Commy is open, files up to this size that members post are kept on this computer, so they still load for everyone when the sender is offline. Files you open or download are always passed on this way. Commy removes them after 30 days, and keeps no more than 2 GB of other people's files.</div>
+            </div>
+            <select id="store-for-others" class="compact-select" aria-label="Keep files members post up to">
+              <option value="0">Off</option>
+              <option value="10">Up to 10 MB</option>
+              <option value="25">Up to 25 MB</option>
+              <option value="100">Up to 100 MB</option>
+            </select>
+          </div>
           <h2 class="settings-subhead desktop-only native-only">Clear Data</h2>
           <div class="settings-card setting-row desktop-only native-only" data-search="clear cache free space">
             <div>

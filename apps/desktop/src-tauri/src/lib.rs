@@ -45,6 +45,7 @@ mod read_state;
 mod relaunch;
 mod safety;
 mod saved;
+mod kept_files;
 mod sent_files;
 #[cfg(any(target_os = "android", test))]
 mod screen_service;
@@ -1014,6 +1015,7 @@ async fn store_blob(app: &App, bytes: Vec<u8>, picked_from: Option<&std::path::P
     let (stored, provider, shelf) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
+        let picked_from = picked_from.filter(|_| !kept_files::ROLLING);
         let kept = picked_from.is_none().then(|| bytes.clone());
         let hash = node.add_blob(bytes).await.map_err(err_to_string)?;
         (kept, (hash, Some(node.node_id_hex())), node.shelf())
@@ -1329,7 +1331,7 @@ async fn download_to_disk(
         let _ = handle.emit("file-progress", FileProgress { blob, done, total });
     };
     fetcher
-        .download_among(blob, sources.iter().map(String::as_str), &members, MAX_PICKED_ATTACHMENT_BYTES, &target, report)
+        .download_among(blob, sources.iter().map(String::as_str), &members, MAX_PICKED_ATTACHMENT_BYTES, &target, commy_net::node::ShareOn::OpenedAt(kept_files::now_secs()), report)
         .await
         .map_err(err_to_string)?;
     Ok(Some(target.display().to_string()))
@@ -1803,13 +1805,15 @@ fn neighbor_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<WirePaylo
 async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let server = server.and_then(|s| s.parse::<ServerId>().ok());
     let members = server.map(|s| member_nodes(app, s)).unwrap_or_default();
-    let (fetcher, sources) = {
+    let (fetcher, sources, shelf) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
         let neighbors = server.map(|s| node.neighbors(s)).unwrap_or_default();
-        (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors))
+        (node.blob_fetcher(), blob_sources(provider.unwrap_or_default(), neighbors), node.shelf())
     };
-    fetcher.fetch_among(blob, sources.iter().map(String::as_str), &members, max).await.map_err(err_to_string)
+    let bytes = fetcher.fetch_among(blob, sources.iter().map(String::as_str), &members, max).await.map_err(err_to_string)?;
+    kept_files::keep_opened(shelf, blob, &bytes);
+    Ok(bytes)
 }
 
 struct SentName<'a> {
@@ -1886,12 +1890,14 @@ pub(crate) fn member_nodes(app: &App, server: ServerId) -> Vec<String> {
 
 pub const SHARED_FILES_DIR: &str = "shared-files";
 
-#[cfg(desktop)]
 async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
     let Some(dir) = app.data_dir().map(|d| d.join(SHARED_FILES_DIR)) else { return };
     match commy_net::shelf::Shelf::open(&dir).await {
         Ok(shelf) => {
             tauri::async_runtime::spawn(sent_files::sweep(shelf.clone()));
+            if kept_files::ROLLING {
+                tauri::async_runtime::spawn(kept_files::roll(shelf.clone()));
+            }
             node.set_shelf(shelf);
         }
         Err(e) => tracing::warn!("big files cannot be shared from this device: {e:#}"),
@@ -3513,6 +3519,17 @@ fn set_history_window(
     };
     app.persist_storage();
     trim_history(&handle);
+    Ok(settings)
+}
+
+#[tauri::command]
+fn set_store_for_others(app: tauri::State<'_, App>, mb: u32) -> CmdResult<storage::StorageSettings> {
+    let settings = {
+        let mut storage = app.storage.lock().unwrap();
+        storage.set_store_for_others(mb)?;
+        storage.clone()
+    };
+    app.persist_storage();
     Ok(settings)
 }
 
@@ -7219,6 +7236,7 @@ async fn run_net_loop(
                         if let Some(message) = new_message {
                             doorbell::arrived(&handle, server, message.id);
                             notify_new_message(&app, &handle, server, &message);
+                            kept_files::store_new(&handle, server, &message);
                         }
                         let _ = handle.emit("server-event", &server.to_string());
                     }
@@ -7843,7 +7861,6 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 }
                 node.set_catchup_store(catchup::store(&handle));
                 node.set_media_gate(media_gate(&handle));
-                #[cfg(desktop)]
                 open_shelf(&app, &node).await;
                 *app.net.lock().await = Some(node);
                 tracing::info!("iroh node online");
@@ -8341,6 +8358,7 @@ pub fn run() {
             get_profile_image,
             get_storage_settings,
             set_history_window,
+            set_store_for_others,
             get_attachment_video,
             start_voice_recording,
             cancel_voice_recording,

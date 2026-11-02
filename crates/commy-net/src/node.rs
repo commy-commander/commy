@@ -677,7 +677,7 @@ impl BlobFetcher {
         target: &std::path::Path,
         progress: impl FnMut(u64, u64),
     ) -> Result<u64> {
-        self.download_among(hash, sources, &[], max, target, progress).await
+        self.download_among(hash, sources, &[], max, target, ShareOn::UntilForgotten, progress).await
     }
 
     pub async fn download_among<'a>(
@@ -687,6 +687,7 @@ impl BlobFetcher {
         members: &[String],
         max: u64,
         target: &std::path::Path,
+        share_on: ShareOn,
         mut progress: impl FnMut(u64, u64),
     ) -> Result<u64> {
         let shelf = self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone();
@@ -714,7 +715,7 @@ impl BlobFetcher {
                     Err(e) => Err(e),
                 };
                 match streamed {
-                    Ok(size) => return self.shared_on(shelf.as_ref(), target, size).await,
+                    Ok(size) => return self.shared_on(shelf.as_ref(), target, size, share_on).await,
                     Err(e) if e.is::<BlobTooLarge>() => return Err(e),
                     Err(e) => {
                         tracing::info!("file {} not streamed from {}: {e:#}", hash.fmt_short(), node_id.fmt_short());
@@ -738,7 +739,7 @@ impl BlobFetcher {
                 };
             }
             match streamed {
-                Ok(size) => return self.shared_on(shelf.as_ref(), target, size).await,
+                Ok(size) => return self.shared_on(shelf.as_ref(), target, size, share_on).await,
                 Err(e) if e.is::<BlobTooLarge>() => return Err(e),
                 Err(e) => tracing::info!("file {} not streamed from member {}: {e:#}", hash.fmt_short(), node_id.fmt_short()),
             }
@@ -746,14 +747,87 @@ impl BlobFetcher {
         anyhow::bail!(BLOB_UNAVAILABLE)
     }
 
-    async fn shared_on(&self, shelf: Option<&crate::shelf::Shelf>, target: &std::path::Path, size: u64) -> Result<u64> {
+    async fn shared_on(&self, shelf: Option<&crate::shelf::Shelf>, target: &std::path::Path, size: u64, share_on: ShareOn) -> Result<u64> {
         if let Some(shelf) = shelf {
-            if let Err(e) = shelf.share(target).await {
+            let shared = match share_on {
+                ShareOn::UntilForgotten => shelf.share(target).await.map(|_| ()),
+                ShareOn::OpenedAt(at_secs) => shelf.keep_opened_file(target, at_secs).await.map(|_| ()),
+            };
+            if let Err(e) = shared {
                 tracing::info!("downloaded file is not shared on: {e:#}");
             }
         }
         Ok(size)
     }
+
+    pub async fn store_among<'a>(
+        &self,
+        hash: &str,
+        sources: impl IntoIterator<Item = &'a str>,
+        members: &[String],
+        max: u64,
+        at_secs: u64,
+    ) -> Result<u64> {
+        let shelf = self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let shelf = shelf.context("files cannot be kept on this device")?;
+        if let Some(shared) = shelf.shared(hash).await {
+            return Ok(shared.size);
+        }
+        let mut tried = Vec::new();
+        for source in sources {
+            let Some(node_id) = self.dialable(source) else { continue };
+            tried.push(node_id);
+            match self.store_from(&shelf, node_id, hash, max, at_secs).await {
+                Ok(size) => return Ok(size),
+                Err(e) if e.is::<BlobTooLarge>() => return Err(e),
+                Err(e) => tracing::debug!("file {} not stored from {}: {e:#}", short_hash(hash), node_id.fmt_short()),
+            }
+        }
+        let mut reached = self.dial_all(self.untried(members, &tried), iroh_blobs::ALPN);
+        while let Some((node_id, dialed)) = reached.next().await {
+            let Ok(connection) = dialed else { continue };
+            match self.store_over(&shelf, node_id, connection, hash, max, at_secs).await {
+                Ok(size) => return Ok(size),
+                Err(e) if e.is::<BlobTooLarge>() => return Err(e),
+                Err(e) => tracing::debug!("file {} not stored from member {}: {e:#}", short_hash(hash), node_id.fmt_short()),
+            }
+        }
+        anyhow::bail!(BLOB_UNAVAILABLE)
+    }
+
+    async fn store_from(&self, shelf: &crate::shelf::Shelf, node_id: EndpointId, hash: &str, max: u64, at_secs: u64) -> Result<u64> {
+        let connection = dial_for_blob(&self.endpoint, node_id, iroh_blobs::ALPN).await?;
+        self.store_over(shelf, node_id, connection, hash, max, at_secs).await
+    }
+
+    async fn store_over(
+        &self,
+        shelf: &crate::shelf::Shelf,
+        node_id: EndpointId,
+        connection: Connection,
+        hash: &str,
+        max: u64,
+        at_secs: u64,
+    ) -> Result<u64> {
+        match shelf.store_for_others(connection, hash, max, at_secs).await {
+            Err(e) if !e.is::<BlobTooLarge>() => {
+                let connection = dial_for_blob(&self.endpoint, node_id, FILES_ALPN).await?;
+                shelf.store_for_others(connection, hash, max, at_secs).await
+            }
+            stored => stored,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareOn {
+    UntilForgotten,
+    OpenedAt(u64),
+}
+
+#[cfg(not(wasm_browser))]
+fn short_hash(hash: &str) -> &str {
+    hash.get(..10).unwrap_or(hash)
 }
 
 #[cfg(not(wasm_browser))]
@@ -2358,10 +2432,87 @@ mod tests {
         let (hash, _) = friend.share_file(&original).await.unwrap();
         let target = dir.join("saved.bin");
         let members = [friend.node_id_hex()];
-        let got = guest.blob_fetcher().download_among(&hash, std::iter::empty(), &members, u64::MAX, &target, |_, _| {}).await.unwrap();
+        let got = guest.blob_fetcher().download_among(&hash, std::iter::empty(), &members, u64::MAX, &target, ShareOn::UntilForgotten, |_, _| {}).await.unwrap();
         assert_eq!(got, bytes.len() as u64);
         assert_eq!(std::fs::read(&target).unwrap(), bytes);
         friend.shutdown().await.ok();
+        guest.shutdown().await.ok();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_member_who_kept_a_file_for_others_serves_it_after_the_sender_leaves_and_they_restart() {
+        let dir = std::env::temp_dir().join(format!("commy-kept-{}", rand::random::<u64>()));
+        let keeper_secret = CommyNode::generate_secret();
+        let spawn_keeper = || CommyNode::spawn_with(Some(keeper_secret), Some(iroh::RelayMap::empty()));
+        let sender = local_node().await;
+        let keeper = spawn_keeper().await.unwrap().0;
+        keeper.learn(sender.endpoint().addr());
+        keeper.set_shelf(crate::shelf::Shelf::open(&dir.join("keeper")).await.unwrap());
+        let bytes: Vec<u8> = (0..300_000u32).map(|i| (i % 227) as u8).collect();
+        let blob = sender.add_blob(bytes.clone()).await.unwrap();
+        let sources = [sender.node_id_hex()];
+        let stored = keeper.blob_fetcher().store_among(&blob, sources.iter().map(String::as_str), &[], 1024 * 1024, 5_000).await.unwrap();
+        assert_eq!(stored, bytes.len() as u64);
+        let again = keeper.blob_fetcher().store_among(&blob, std::iter::empty(), &[], 1024 * 1024, 6_000).await.unwrap();
+        assert_eq!(again, stored, "a file already kept is not fetched again");
+        assert_eq!(keeper.shelf().unwrap().stored_for_others_bytes().await.unwrap(), stored);
+        sender.shutdown().await.ok();
+        keeper.shelf().unwrap().shutdown().await;
+        keeper.shutdown().await.ok();
+        let restarted = spawn_keeper().await.unwrap().0;
+        restarted.set_shelf(crate::shelf::Shelf::open(&dir.join("keeper")).await.unwrap());
+        let guest = local_node().await;
+        guest.learn(restarted.endpoint().addr());
+        let members = [restarted.node_id_hex()];
+        let fetched = guest.blob_fetcher().fetch_among(&blob, std::iter::empty(), &members, MAX_BLOB_BYTES).await.unwrap();
+        assert_eq!(fetched, bytes);
+        assert_eq!(restarted.shelf().unwrap().drop_kept_before(5_001).await.unwrap(), 1);
+        restarted.shelf().unwrap().shutdown().await;
+        restarted.shutdown().await.ok();
+        guest.shutdown().await.ok();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_file_bigger_than_the_keep_size_is_not_kept_for_others() {
+        let dir = std::env::temp_dir().join(format!("commy-kept-big-{}", rand::random::<u64>()));
+        let (sender, keeper) = local_pair().await;
+        keeper.set_shelf(crate::shelf::Shelf::open(&dir.join("keeper")).await.unwrap());
+        let bytes: Vec<u8> = (0..300_000u32).map(|i| (i % 211) as u8).collect();
+        let blob = sender.add_blob(bytes).await.unwrap();
+        let sources = [sender.node_id_hex()];
+        let refused = keeper.blob_fetcher().store_among(&blob, sources.iter().map(String::as_str), &[], 100_000, 5_000).await.unwrap_err();
+        assert!(refused.is::<BlobTooLarge>(), "{refused:#}");
+        assert_eq!(keeper.shelf().unwrap().stored_for_others_bytes().await.unwrap(), 0);
+        let nobody = keeper.blob_fetcher().store_among(&blob_hash(b"nobody has this"), sources.iter().map(String::as_str), &[], 100_000, 5_000).await;
+        assert_eq!(nobody.unwrap_err().to_string(), BLOB_UNAVAILABLE);
+        sender.shutdown().await.ok();
+        keeper.shutdown().await.ok();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_downloaded_attachment_is_passed_on_for_thirty_days_and_a_drive_file_until_forgotten() {
+        let dir = std::env::temp_dir().join(format!("commy-opened-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (sender, guest) = local_pair().await;
+        guest.set_shelf(crate::shelf::Shelf::open(&dir.join("guest")).await.unwrap());
+        let clip: Vec<u8> = (0..250_000u32).map(|i| (i % 199) as u8).collect();
+        let drive: Vec<u8> = (0..250_000u32).map(|i| (i % 197) as u8).collect();
+        let clip_blob = sender.add_blob(clip.clone()).await.unwrap();
+        let drive_blob = sender.add_blob(drive.clone()).await.unwrap();
+        let sources = [sender.node_id_hex()];
+        let fetcher = guest.blob_fetcher();
+        let opened = ShareOn::OpenedAt(5_000);
+        fetcher.download_among(&clip_blob, sources.iter().map(String::as_str), &[], u64::MAX, &dir.join("clip.bin"), opened, |_, _| {}).await.unwrap();
+        fetcher.download_among(&drive_blob, sources.iter().map(String::as_str), &[], u64::MAX, &dir.join("drive.bin"), ShareOn::UntilForgotten, |_, _| {}).await.unwrap();
+        let shelf = guest.shelf().unwrap();
+        assert!(shelf.shared(&clip_blob).await.is_some());
+        assert_eq!(shelf.drop_kept_before(9_000).await.unwrap(), 1);
+        assert!(guest.shares_file(&drive_blob).await, "a drive file stays shared");
+        assert!(dir.join("clip.bin").exists(), "the saved copy is never touched");
+        sender.shutdown().await.ok();
         guest.shutdown().await.ok();
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 pub const KEEP_DAY_CHOICES: [u32; 4] = [30, 90, 180, 365];
 pub const DEFAULT_KEEP: KeepWindow = KeepWindow::Days(90);
 
+pub const STORE_FOR_OTHERS_MB_CHOICES: [u32; 4] = [0, 10, 25, 100];
+pub const DEFAULT_STORE_FOR_OTHERS_MB: u32 = 25;
+
+const MB: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum KeepWindow {
@@ -52,15 +57,32 @@ impl TryFrom<String> for KeepWindow {
 pub struct StorageSettings {
     pub keep: KeepWindow,
     pub servers: HashMap<ServerId, KeepWindow>,
+    pub store_for_others_mb: u32,
 }
 
 impl Default for StorageSettings {
     fn default() -> Self {
-        Self { keep: DEFAULT_KEEP, servers: HashMap::new() }
+        Self { keep: DEFAULT_KEEP, servers: HashMap::new(), store_for_others_mb: DEFAULT_STORE_FOR_OTHERS_MB }
     }
 }
 
 impl StorageSettings {
+    pub fn store_for_others_bytes(&self) -> u64 {
+        let mb = match STORE_FOR_OTHERS_MB_CHOICES.contains(&self.store_for_others_mb) {
+            true => self.store_for_others_mb,
+            false => DEFAULT_STORE_FOR_OTHERS_MB,
+        };
+        u64::from(mb) * MB
+    }
+
+    pub fn set_store_for_others(&mut self, mb: u32) -> Result<(), &'static str> {
+        if !STORE_FOR_OTHERS_MB_CHOICES.contains(&mb) {
+            return Err("pick one of the offered file sizes");
+        }
+        self.store_for_others_mb = mb;
+        Ok(())
+    }
+
     pub fn window(&self, server: ServerId) -> KeepWindow {
         self.servers.get(&server).copied().unwrap_or(self.keep)
     }
@@ -127,6 +149,22 @@ mod tests {
         assert!(settings.forget(friends));
         assert!(!settings.forget(friends));
         assert!(settings.set(None, None).is_err());
+    }
+
+    #[test]
+    fn small_files_are_kept_for_others_up_to_25_mb_unless_changed() {
+        let mut settings = StorageSettings::default();
+        assert_eq!(settings.store_for_others_bytes(), 25 * 1024 * 1024);
+        settings.set_store_for_others(0).unwrap();
+        assert_eq!(settings.store_for_others_bytes(), 0, "off keeps nothing for others");
+        settings.set_store_for_others(100).unwrap();
+        assert_eq!(settings.store_for_others_bytes(), 100 * 1024 * 1024);
+        assert!(settings.set_store_for_others(7).is_err());
+        assert_eq!(settings.store_for_others_mb, 100, "a refused size changes nothing");
+        let older: StorageSettings = serde_json::from_str(r#"{"keep":"30","servers":{}}"#).unwrap();
+        assert_eq!(older.store_for_others_mb, 25, "settings saved before this option get the default");
+        let edited: StorageSettings = serde_json::from_str(r#"{"store_for_others_mb":4096}"#).unwrap();
+        assert_eq!(edited.store_for_others_bytes(), 25 * 1024 * 1024, "a hand-edited size falls back to the default");
     }
 
     #[test]
