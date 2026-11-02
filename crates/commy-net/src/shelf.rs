@@ -8,7 +8,9 @@ use iroh_blobs::store::GcConfig;
 use iroh_blobs::{BlobFormat, BlobsProtocol, Hash};
 use futures_lite::StreamExt;
 
-pub const FILES_ALPN: &[u8] = b"commy/files/1";
+pub use crate::node::FILES_ALPN;
+
+const SENT_TAG_PREFIX: &str = "sent/";
 
 const PART_SUFFIX: &str = ".part";
 const FORGET_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
@@ -44,6 +46,41 @@ impl Shelf {
         Ok((hash.to_hex().to_string(), size))
     }
 
+    pub async fn keep_sent_bytes(&self, bytes: Vec<u8>, at_secs: u64) -> Result<String> {
+        let held = self.store.add_bytes(bytes).temp_tag().await.context("could not keep the sent file")?;
+        self.mark_sent(held.hash(), at_secs).await
+    }
+
+    pub async fn keep_sent_file(&self, path: &Path, at_secs: u64) -> Result<String> {
+        let path = std::path::absolute(path).context("could not find that file")?;
+        let options = AddPathOptions { path, format: BlobFormat::Raw, mode: ImportMode::TryReference };
+        let held = self.store.add_path_with_opts(options).temp_tag().await.context("could not keep the sent file")?;
+        self.mark_sent(held.hash(), at_secs).await
+    }
+
+    async fn mark_sent(&self, hash: Hash, at_secs: u64) -> Result<String> {
+        self.store.tags().set(sent_tag(at_secs, &hash), hash).await.context("could not keep the sent file")?;
+        Ok(hash.to_hex().to_string())
+    }
+
+    pub async fn drop_sent_before(&self, cutoff_secs: u64) -> Result<u64> {
+        let tags = self.store.tags().list_prefix(SENT_TAG_PREFIX).await.context("could not read the shared files list")?;
+        let stale: Vec<_> = tags
+            .filter_map(|tag| tag.ok().map(|t| t.name).filter(|name| sent_at(name.as_ref()).is_some_and(|at| at < cutoff_secs)))
+            .collect()
+            .await;
+        let mut gone = 0;
+        for name in stale {
+            gone += self.store.tags().delete(name).await.context("could not drop an old sent file")?;
+        }
+        Ok(gone)
+    }
+
+    pub async fn bytes(&self, hash: &str) -> Option<Vec<u8>> {
+        let hash: Hash = hash.parse().ok()?;
+        self.store.get_bytes(hash).await.ok().map(|bytes| bytes.to_vec())
+    }
+
     pub async fn shared(&self, hash: &str) -> Option<Shared> {
         let hash: Hash = hash.parse().ok()?;
         match self.store.status(hash).await.ok()? {
@@ -73,6 +110,15 @@ impl Shelf {
     pub async fn shutdown(&self) {
         let _ = self.store.shutdown().await;
     }
+}
+
+fn sent_tag(at_secs: u64, hash: &Hash) -> String {
+    format!("{SENT_TAG_PREFIX}{at_secs:020}/{}", hash.to_hex())
+}
+
+fn sent_at(name: &[u8]) -> Option<u64> {
+    let name = std::str::from_utf8(name).ok()?.strip_prefix(SENT_TAG_PREFIX)?;
+    name.split('/').next()?.parse().ok()
 }
 
 pub fn part_path(target: &Path) -> PathBuf {
@@ -118,6 +164,39 @@ mod tests {
         assert!(file.exists(), "the original file stays where it was");
         reopened.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_sent_file_is_kept_across_a_restart_until_it_is_old_enough_to_drop() {
+        let dir = tempdir();
+        let picked = dir.join("clip.mp4");
+        let pasted: Vec<u8> = (0..150_000u32).map(|i| (i % 239) as u8).collect();
+        let video: Vec<u8> = (0..180_000u32).map(|i| (i % 233) as u8).collect();
+        std::fs::write(&picked, &video).unwrap();
+        let shelf = Shelf::open(&dir.join("shelf")).await.unwrap();
+        let old = shelf.keep_sent_bytes(pasted.clone(), 1_000).await.unwrap();
+        let fresh = shelf.keep_sent_file(&picked, 5_000).await.unwrap();
+        assert_eq!(old, crate::node::blob_hash(&pasted));
+        assert_eq!(fresh, crate::node::blob_hash(&video));
+        shelf.shutdown().await;
+        let reopened = Shelf::open(&dir.join("shelf")).await.unwrap();
+        assert_eq!(reopened.bytes(&old).await, Some(pasted));
+        assert_eq!(reopened.bytes(&fresh).await, Some(video.clone()));
+        assert_eq!(reopened.drop_sent_before(2_000).await.unwrap(), 1);
+        assert_eq!(reopened.drop_sent_before(2_000).await.unwrap(), 0);
+        assert!(reopened.shared(&fresh).await.is_some(), "newer sends stay");
+        assert_eq!(reopened.drop_sent_before(9_000).await.unwrap(), 1);
+        assert!(picked.exists(), "dropping a sent file never touches the original");
+        reopened.shutdown().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sent_tags_sort_by_when_they_were_sent() {
+        let hash = Hash::new(b"x");
+        assert!(sent_tag(999, &hash) < sent_tag(1_000, &hash));
+        assert_eq!(sent_at(sent_tag(1_000, &hash).as_bytes()), Some(1_000));
+        assert_eq!(sent_at(b"auto-123"), None);
     }
 
     fn tempdir() -> PathBuf {
