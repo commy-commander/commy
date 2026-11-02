@@ -24,11 +24,16 @@ function uploadRefusal(server, sizeBytes) {
   return `This server allows files up to ${uploadLimitLabel(mb)}`;
 }
 
-function spanWords(ms) {
-  const minutes = Math.max(1, Math.round(Number(ms) / 60000));
+function spanWords(ms, up = false) {
+  const minutes = Math.max(1, (up ? Math.ceil : Math.round)(Number(ms) / 60000));
   const units = [["week", 7 * 1440], ["day", 1440], ["hour", 60], ["minute", 1]];
-  const [name, size] = units.find(([, size]) => minutes >= size);
-  const n = Math.floor(minutes / size);
+  let at = units.findIndex(([, size]) => minutes >= size);
+  let n = (up ? Math.ceil : Math.floor)(minutes / units[at][1]);
+  if (up && at > 0 && n * units[at][1] >= units[at - 1][1]) {
+    at -= 1;
+    n = Math.ceil(minutes / units[at][1]);
+  }
+  const name = units[at][0];
   return `${n} ${name}${n === 1 ? "" : "s"}`;
 }
 
@@ -41,7 +46,7 @@ function sinceWords(at, now) {
 function banLine(ban, now = Date.now()) {
   const who = ban.by_name ? `Banned by ${ban.by_name}` : "Banned";
   const when = sinceWords(ban.at, now);
-  const end = ban.until ? `ends in ${spanWords(Math.max(0, ban.until - now))}` : "until unbanned";
+  const end = ban.until ? `ends in ${spanWords(Math.max(0, ban.until - now), true)}` : "until unbanned";
   return `${who}${when ? ` ${when}` : ""}, ${end}`;
 }
 

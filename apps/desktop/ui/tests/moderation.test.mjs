@@ -42,6 +42,10 @@ test("lengths read in the largest whole unit", () => {
   assert.equal(spanWords(5 * 3600_000), "5 hours");
   assert.equal(spanWords(36 * 3600_000), "1 day");
   assert.equal(spanWords(15 * 86400_000), "2 weeks");
+  assert.equal(spanWords(24 * 3600_000 - 2 * 60_000, true), "1 day");
+  assert.equal(spanWords(5 * 3600_000 - 60_000, true), "5 hours");
+  assert.equal(spanWords(7 * 86400_000 - 3600_000, true), "1 week");
+  assert.equal(spanWords(90 * 60_000, true), "2 hours");
   assert.equal(sinceWords(0, 10), null);
   assert.equal(sinceWords(1_000, 20_000), "just now");
   assert.equal(sinceWords(1_000, 1_000 + 2 * 3600_000), "2 hours ago");
@@ -52,6 +56,7 @@ test("removed people show who removed them, when, and when a ban ends", () => {
   const hour = 3600_000;
   assert.equal(banLine({ by_name: "Mia", at: now - 2 * hour, until: now + 5 * hour }, now), "Banned by Mia 2 hours ago, ends in 5 hours");
   assert.equal(banLine({ by_name: null, at: 0, until: null }, now), "Banned, until unbanned");
+  assert.equal(banLine({ by_name: "Mia", at: now - 120_000, until: now - 120_000 + 24 * hour }, now), "Banned by Mia 2 minutes ago, ends in 1 day");
   assert.equal(kickLine({ by_name: "Theo", at: now - 3 * 86400_000 }, now), "Kicked by Theo 3 days ago");
 });
 
