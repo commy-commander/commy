@@ -258,6 +258,7 @@ async fn create_server(
     app.persist_invites();
     entry_list::record_join(&app, server_id);
     entry_list::schedule(&handle);
+    community_sync::refresh_soon(&handle);
     let _ = handle.emit("servers-changed", ());
     Ok(view)
 }
