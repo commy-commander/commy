@@ -299,7 +299,7 @@ pub fn target_for(picked: &Path, home: &Path) -> PathBuf {
     if same_path(picked, home) {
         return home.to_path_buf();
     }
-    let dedicated = picked.parent().is_some() && (!picked.exists() || is_empty_dir(picked));
+    let dedicated = picked.parent().is_some() && (!picked.is_dir() || is_empty_dir(picked));
     if dedicated {
         picked.to_path_buf()
     } else {
@@ -355,7 +355,7 @@ pub struct MovePlan {
 }
 
 pub fn plan_move(from: &Location, picked: &Path) -> Result<MovePlan, String> {
-    let to = target_for(picked, &from.home);
+    let to = target_for(&whole_drive(picked), &from.home);
     check_target(from, &to)?;
     let bytes = bytes_to_carry(from);
     let free = free_space(&to);
@@ -366,14 +366,30 @@ pub fn plan_move(from: &Location, picked: &Path) -> Result<MovePlan, String> {
     Ok(MovePlan { target: to.to_string_lossy().into_owned(), to_default: same_path(&to, &from.home), bytes, free })
 }
 
+fn whole_drive(picked: &Path) -> PathBuf {
+    let mut parts = picked.components();
+    match (parts.next(), parts.next()) {
+        (Some(Component::Prefix(_)), None) => picked.join(std::path::MAIN_SEPARATOR_STR),
+        _ => picked.to_path_buf(),
+    }
+}
+
+fn missing_folders(to: &Path) -> Vec<PathBuf> {
+    to.ancestors().take_while(|dir| !dir.as_os_str().is_empty() && !dir.exists()).map(Path::to_path_buf).collect()
+}
+
+fn remove_created(missing: &[PathBuf]) {
+    for dir in missing {
+        let _ = std::fs::remove_dir(dir);
+    }
+}
+
 fn check_writable(to: &Path) -> Result<(), String> {
-    let created = !to.exists();
+    let missing = missing_folders(to);
     let probe = to.join(PROBE_FILE);
     let written = std::fs::create_dir_all(to).and_then(|_| std::fs::write(&probe, b"commy"));
     let _ = std::fs::remove_file(&probe);
-    if created {
-        let _ = std::fs::remove_dir(to);
-    }
+    remove_created(&missing);
     written.map_err(|e| format!("Commy cannot save files there ({e})."))
 }
 
@@ -398,10 +414,11 @@ pub fn move_folder(from: &Location, to: &Path, switch: impl FnOnce(&Location, &L
     if let Some(free) = free_space(to).filter(|free| needed > *free) {
         return Err(format!("The drive has {} free, and your data needs {}.", human_size(free), human_size(needed)));
     }
-    let created = !to.exists();
+    let missing = missing_folders(to);
     let copied = copy_everything(from, to, &carried, web.as_ref());
     if let Err(why) = copied {
-        discard_copy(to, created, &carried, web.as_ref());
+        discard_copy(to, !missing.is_empty(), &carried, web.as_ref());
+        remove_created(&missing);
         return Err(why);
     }
     switch(&target, from);
@@ -498,7 +515,9 @@ fn remove_old_copy(from: &Location, carried: &[std::ffi::OsString], web: Option<
     if let Some((source, _)) = web {
         remove_entry(source);
     }
-    if !from.at_home() {
+    if from.at_home() {
+        let _ = std::fs::remove_dir(from.folder.join(crate::instance::WEBVIEW_DIR));
+    } else {
         remove_entry(&from.folder.join(crate::instance::WEBVIEW_DIR));
         remove_entry(&from.folder.join(RUNNING_LOCK_FILE));
         let _ = std::fs::remove_dir(&from.folder);
@@ -1028,6 +1047,30 @@ mod tests {
         assert_eq!(target_for(&busy, &home), busy.join(NEW_FOLDER_NAME));
         assert_eq!(target_for(&home, &home), home);
         assert_eq!(target_for(Path::new("/"), &home), Path::new("/").join(NEW_FOLDER_NAME));
+    }
+
+    #[test]
+    fn planning_explains_a_file_and_leaves_no_folders_behind() {
+        let root = temp("plan");
+        let home = root.join("home");
+        fill_home(&home);
+        let from = home_location(&home);
+        let file = root.join("notes.txt");
+        write(&file, b"mine");
+        assert_eq!(target_for(&file, &home), file);
+        assert_eq!(plan_move(&from, &file).unwrap_err(), "That is a file, not a folder.");
+        let deep = root.join("drive").join("games").join("Commy");
+        let plan = plan_move(&from, &deep).unwrap();
+        assert_eq!(PathBuf::from(plan.target), deep);
+        assert!(!root.join("drive").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_bare_drive_letter_means_the_whole_drive() {
+        assert_eq!(whole_drive(Path::new("C:")), PathBuf::from("C:\\"));
+        assert_eq!(whole_drive(Path::new("C:\\Games")), PathBuf::from("C:\\Games"));
     }
 
     #[test]
