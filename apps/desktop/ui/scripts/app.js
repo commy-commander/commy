@@ -5458,6 +5458,7 @@ function closeFloating(except) {
   if (except !== "pins-pop") closePinsPanel();
   if (except !== "threads-pop") closeThreadsPanel();
   if (except !== "search-pop") closeSearchPop();
+  if ($("gif-picker").classList.contains("gif-picker-float")) closeGifPicker();
 }
 
 const EMOJI_TONE_KEY = "commy.emoji.tone";
@@ -11792,8 +11793,8 @@ async function openFullProfile(member) {
   showModal("modal-profile");
 }
 
-function openProfileMenu(person, x, y) {
-  closeFloating();
+function openProfileMenu(person, x, y, keepOpen) {
+  closeFloating(keepOpen);
   const menu = $("fp-menu");
   menu.replaceChildren(el("div", "ctx-title", person.name));
   const item = (label, icon, onClick, cls = "") => {
@@ -11895,7 +11896,7 @@ function openMemberCard(member, anchor) {
   more.onclick = e => {
     e.stopPropagation();
     const r = more.getBoundingClientRect();
-    openProfileMenu(member, r.right - 220, r.bottom + 6);
+    openProfileMenu(member, r.right - 220, r.bottom + 6, "member-card");
   };
   const action = (icon, label, onClick, cls = "") => {
     const btn = el("button", "mc-action " + cls);
@@ -17786,11 +17787,15 @@ async function renderGifResults(query, view = composerGifs) {
 
 let gifSearchTimer = null;
 
-function openGifPicker(query = "", target = null) {
+function openGifPicker(query = "", target = null, beside = null) {
   gifTarget = target;
   if (!target && !(state.view === "dm" && state.currentDm) && !(state.view === "server" && state.currentChannel)) return;
   $("emoji-picker").classList.add("hidden");
-  $("gif-picker").classList.remove("hidden");
+  const picker = $("gif-picker");
+  picker.classList.toggle("gif-picker-float", Boolean(beside));
+  picker.style.left = picker.style.top = "";
+  picker.classList.remove("hidden");
+  if (beside) placeBesideCard(picker, beside);
   $("gif-search").value = query;
   $("gif-search").focus();
   renderGifResults(query);
@@ -18085,6 +18090,16 @@ async function attachFromMenu(kind) {
 
 function closeGifPicker() {
   $("gif-picker").classList.add("hidden");
+}
+
+function placeBesideCard(popup, anchor) {
+  const gap = 8;
+  const card = (anchor.closest(".member-card") || anchor).getBoundingClientRect();
+  const a = anchor.getBoundingClientRect();
+  const p = popup.getBoundingClientRect();
+  const left = card.left - p.width - gap >= gap ? card.left - p.width - gap : card.right + gap;
+  popup.style.left = `${Math.max(gap, Math.min(left, window.innerWidth - p.width - gap))}px`;
+  popup.style.top = `${Math.max(gap, Math.min(a.bottom - p.height, window.innerHeight - p.height - gap))}px`;
 }
 
 async function sendGif(url) {
@@ -19563,7 +19578,8 @@ function wireEvents() {
   };
   $("mc-gif").onclick = () => {
     const input = $("mc-input");
-    openGifPicker("", { user: input.dataset.user, name: input.dataset.name });
+    if ($("gif-picker").classList.contains("hidden")) openGifPicker("", { user: input.dataset.user, name: input.dataset.name }, $("mc-composer"));
+    else closeGifPicker();
   };
   $("account-pronouns").addEventListener("change", async e => {
     try {
@@ -19742,7 +19758,7 @@ function wireEvents() {
     popGifs.timer = setTimeout(() => renderGifResults(e.target.value, popGifs), 300);
   });
   document.addEventListener("mousedown", e => {
-    if (!$("gif-picker").classList.contains("hidden") && !$("gif-picker").contains(e.target) && !$("gif-btn").contains(e.target)) {
+    if (!$("gif-picker").classList.contains("hidden") && !$("gif-picker").contains(e.target) && !e.target.closest("#gif-btn, #mc-gif")) {
       closeGifPicker();
     }
   });
