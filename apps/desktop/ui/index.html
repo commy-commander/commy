@@ -117,15 +117,15 @@
             <button class="icon-btn" id="deafen-btn" title="Deafen"></button>
             <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
           </div>
-          <button class="icon-btn" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
+          <button class="icon-btn native-only" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
         </div>
         <button class="vp-talk hidden" id="vp-talk" type="button">Hold to talk</button>
         <div class="vp-actions" id="vp-actions">
           <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
-          <button class="vp-activities vp-share screen-share-only" id="share-btn" title="Share Your Screen"></button>
+          <button class="vp-activities vp-share screen-share-only native-only" id="share-btn" title="Share Your Screen"></button>
           <button class="vp-activities vp-sound" id="vp-soundboard" title="Soundboard"></button>
         </div>
-        <button class="vp-game-share hidden" id="vp-game-share"></button>
+        <button class="vp-game-share native-only hidden" id="vp-game-share"></button>
       </section>
 
     </aside>
@@ -1403,7 +1403,7 @@
         <button class="settings-tab" data-tab="privacy" data-i18n="settings.tab.privacy">Privacy &amp; Safety</button>
         <div class="settings-nav-group" data-i18n="settings.group.voice">Voice &amp; Video</div>
         <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">Voice</button>
-        <button class="settings-tab" data-tab="camera" data-i18n="settings.tab.camera">Camera</button>
+        <button class="settings-tab native-only" data-tab="camera" data-i18n="settings.tab.camera">Camera</button>
         <button class="settings-tab desktop-only native-only" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
         <div class="settings-nav-group" data-i18n="settings.group.alerts">Alerts &amp; Sounds</div>
         <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
@@ -1415,7 +1415,7 @@
         <button class="settings-tab desktop-only" data-tab="keybinds" data-i18n="settings.tab.keybinds">Keybinds</button>
         <button class="settings-tab" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
         <div class="settings-nav-group" data-i18n="settings.group.advanced">Advanced</div>
-        <button class="settings-tab" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
+        <button class="settings-tab native-only" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
         <button class="settings-tab desktop-only native-only" data-tab="updates" data-i18n="settings.tab.startupUpdates">Startup &amp; Updates</button>
         <button class="settings-tab" data-tab="diagnostics" data-i18n="settings.tab.diagnostics">Diagnostics</button>
       </div>
@@ -1507,10 +1507,10 @@
                 <div class="setting-title" id="entry-state"></div>
                 <div class="setting-sub" id="entry-detail"></div>
               </div>
-              <button class="btn-secondary btn-small" id="entry-sync">Sync now</button>
+              <button class="btn-secondary btn-small native-only" id="entry-sync">Sync now</button>
             </div>
             <div class="setting-sub">Your devices share your server list and identity, locked with a key that only your devices have. Your account server keeps a copy it cannot read, so it never learns which servers you are in.</div>
-            <div class="entry-recovery">
+            <div class="entry-recovery native-only">
               <button class="btn-link" id="entry-show-code">Show recovery code</button>
               <input id="entry-code" type="text" readonly class="hidden" spellcheck="false" />
               <div class="setting-sub hidden" id="entry-code-note">Keep this somewhere safe. If you lose every device, it is the only way to get your server list back.</div>
@@ -1563,8 +1563,8 @@
               </select>
             </div>
           </div>
-          <h2 class="settings-subhead">Activity</h2>
-          <label class="settings-card setting-row" data-search="game status playing activity">
+          <h2 class="settings-subhead native-only">Activity</h2>
+          <label class="settings-card setting-row native-only" data-search="game status playing activity">
             <div>
               <div class="setting-title">Share what I'm playing or using</div>
               <div class="setting-sub">Shows the game or app in front on your screen as "Playing ..." or "Using ..." under your name, for everyone in your servers. Turn it off and it clears right away.</div>
@@ -1640,8 +1640,8 @@
             </div>
             <button class="btn-primary btn-small" id="mic-test-btn">Start Test</button>
           </div>
-          <h2 class="settings-subhead" data-search="push to talk ptt voice activity open mic">Input Mode</h2>
-          <div class="settings-card">
+          <h2 class="settings-subhead native-only" data-search="push to talk ptt voice activity open mic">Input Mode</h2>
+          <div class="settings-card native-only">
             <div class="segmented input-mode" id="input-mode" role="radiogroup" aria-label="Input mode">
               <button data-mode="voice_activity" role="radio"><strong>Voice Activity</strong><span>Opens when you speak</span></button>
               <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span class="desktop-only">Hold a key to talk</span><span class="mobile-only">Hold the talk button</span></button>
@@ -2032,13 +2032,13 @@
             </div>
             <input type="checkbox" id="text-styles-toggle" class="switch" checked />
           </label>
-          <h2 class="settings-subhead desktop-only" data-i18n="appearance.appIcon">App Icon</h2>
-          <div class="settings-card icon-card desktop-only">
+          <h2 class="settings-subhead desktop-only native-only" data-i18n="appearance.appIcon">App Icon</h2>
+          <div class="settings-card icon-card desktop-only native-only">
             <div class="setting-sub" data-i18n="appearance.appIcon.sub">Shown in your taskbar or dock while Commy is running.</div>
             <div class="icon-grid" id="app-icon-grid" role="radiogroup" aria-label="App icon"></div>
           </div>
-          <h2 class="settings-subhead desktop-only" data-i18n="appearance.trayIcon">Tray Icon</h2>
-          <div class="settings-card icon-card desktop-only">
+          <h2 class="settings-subhead desktop-only native-only" data-i18n="appearance.trayIcon">Tray Icon</h2>
+          <div class="settings-card icon-card desktop-only native-only">
             <div class="setting-sub" data-i18n="appearance.trayIcon.sub">Shown in the system tray, with your unread count on it.</div>
             <div class="icon-grid" id="tray-icon-grid" role="radiogroup" aria-label="Tray icon"></div>
           </div>
@@ -2136,7 +2136,7 @@
               <button class="btn-primary btn-small" id="gif-key-save">Save</button>
             </div>
           </div>
-          <div class="settings-card integration-card desktop-only" data-search="elgato keys buttons" id="stream-deck-card">
+          <div class="settings-card integration-card desktop-only native-only" data-search="elgato keys buttons" id="stream-deck-card">
             <div class="integration-head">
               <div class="integration-logo integration-logo-deck">
                 <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="3"/><rect x="5.5" y="7" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="7" width="3.5" height="3.5" rx=".8"/><rect x="15" y="7" width="3.5" height="3.5" rx=".8"/><rect x="5.5" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="15" y="13.5" width="3.5" height="3.5" rx=".8"/></svg>
@@ -2155,7 +2155,7 @@
             <div class="setting-sub stream-deck-note" id="stream-deck-note"></div>
             <div class="stream-deck-decks" id="stream-deck-decks"></div>
           </div>
-          <div class="settings-card integration-card" data-search="games twitch cover art">
+          <div class="settings-card integration-card native-only" data-search="games twitch cover art">
             <div class="integration-head">
               <div class="integration-logo">IGDB</div>
               <div>

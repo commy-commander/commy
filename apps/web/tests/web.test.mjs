@@ -378,3 +378,32 @@ test("link checks are answered by the backend in the browser too", () => {
   assert.ok(rustCommands.has("check_link"));
   assert.equal(webDefault("check_link").known, false);
 });
+
+test("controls for things only the desktop app does are hidden in the browser", () => {
+  const index = read("apps", "desktop", "ui", "index.html");
+  const opener = attr => {
+    const found = new RegExp(`<[a-z0-9]+ [^>]*${attr}[^>]*>`).exec(index);
+    assert.ok(found, `index.html has ${attr}`);
+    return found[0];
+  };
+  for (const attr of ['id="share-btn"', 'id="vp-camera"', 'id="vp-game-share"', 'id="entry-sync"', 'id="stream-deck-card"', 'data-search="games twitch cover art"', 'data-search="game status playing activity"', 'data-tab="camera"', 'data-tab="storage"', 'data-tab="overlay"', 'data-tab="updates"', 'data-i18n="appearance.appIcon"', 'data-i18n="appearance.trayIcon"', 'data-search="push to talk ptt voice activity open mic"']) {
+    assert.match(opener(attr), /class="[^"]*\bnative-only\b/, attr);
+  }
+  assert.ok(index.includes('<div class="settings-card native-only">\n            <div class="segmented input-mode"'));
+  assert.ok(index.includes('<div class="entry-recovery native-only">\n              <button class="btn-link" id="entry-show-code">'));
+  assert.match(read("apps", "web", "ui", "web.css"), /\.web-app \.native-only \{ display: none !important; \}/);
+});
+
+test("the app looks for the browser on the html element, where the bridge marks it", () => {
+  assert.ok(read("apps", "web", "ui", "web-bridge.js").includes('document.documentElement.classList.add("web-app")'));
+  for (const file of ["app.js", "updates.js"]) {
+    assert.doesNotMatch(read("apps", "desktop", "ui", "scripts", file), /body\.classList\.contains\("web-app"\)/, file);
+  }
+});
+
+test("watching streams and cameras explains itself in the browser instead of failing", () => {
+  const app = read("apps", "desktop", "ui", "scripts", "app.js");
+  const watch = /async function watchScreen\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
+  assert.ok(watch.indexOf("inBrowserApp()") < watch.indexOf('invoke("watch_screen"'));
+  assert.match(app, /!cam\.watching\.has\(user\.id\) && !inBrowserApp\(\)/);
+});
