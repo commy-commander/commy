@@ -61,6 +61,8 @@ pub struct OverlaySettings {
     pub show_everyone: bool,
     #[serde(default)]
     pub pictures_only: bool,
+    #[serde(default)]
+    pub stack_vertical: bool,
     #[serde(default = "default_toggle_hotkey")]
     pub toggle_hotkey: String,
     #[serde(default = "default_chat_hotkey")]
@@ -93,6 +95,7 @@ impl Default for OverlaySettings {
             show_chat: true,
             show_everyone: false,
             pictures_only: false,
+            stack_vertical: false,
             toggle_hotkey: default_toggle_hotkey(),
             chat_hotkey: default_chat_hotkey(),
             layout: None,
@@ -452,7 +455,15 @@ mod tests {
     #[test]
     fn older_settings_files_keep_the_talking_only_view() {
         let s: OverlaySettings = serde_json::from_str(r#"{"enabled":true,"corner":"bottom-right","opacity":0.8}"#).unwrap();
-        assert!(!s.show_everyone && !s.pictures_only && s.show_chat);
+        assert!(!s.show_everyone && !s.pictures_only && !s.stack_vertical && s.show_chat);
         assert_eq!(s.corner, "bottom-right");
+    }
+
+    #[test]
+    fn vertical_stack_is_kept() {
+        let s: OverlaySettings = serde_json::from_str(r#"{"pictures_only":true,"stack_vertical":true}"#).unwrap();
+        let s = s.sanitized();
+        assert!(s.pictures_only && s.stack_vertical);
+        assert!(serde_json::to_string(&s).unwrap().contains(r#""stack_vertical":true"#));
     }
 }

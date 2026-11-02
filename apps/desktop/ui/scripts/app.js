@@ -1571,7 +1571,7 @@ async function mockInvoke(cmd, args = {}) {
       return { emojis: from("emojis_shareable", "emojis"), stickers: from("stickers_shareable", "stickers"), emoticons: from("emoticons_shareable", "emoticons") };
     }
     case "fetch_server_image": return (mock.serverImages || {})[args.image] || null;
-    case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, pictures_only: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11", layout: null, layouts: [] });
+    case "get_overlay_settings": return mock.overlay || (mock.overlay = { enabled: false, corner: "top-left", opacity: 0.9, show_chat: true, show_everyone: false, pictures_only: false, stack_vertical: false, toggle_hotkey: "Ctrl+Shift+F10", chat_hotkey: "Ctrl+Shift+F11", layout: null, layouts: [] });
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
     case "overlay_hotkey_problems": return [];
     case "preview_overlay": return null;
@@ -9210,6 +9210,8 @@ function renderOverlaySettings() {
   $("overlay-everyone").checked = Boolean(s.show_everyone || s.pictures_only);
   $("overlay-everyone").disabled = Boolean(s.pictures_only);
   $("overlay-pictures").checked = Boolean(s.pictures_only);
+  $("overlay-vertical").checked = Boolean(s.stack_vertical);
+  $("overlay-vertical").disabled = !s.pictures_only;
   $("overlay-opacity").value = Math.round(s.opacity * 100);
   $("overlay-opacity-label").textContent = `${$("overlay-opacity").value}%`;
   syncRangeFill($("overlay-opacity"));
@@ -19593,6 +19595,7 @@ function wireEvents() {
   });
   $("overlay-everyone").addEventListener("change", e => saveOverlaySettings({ show_everyone: e.target.checked }));
   $("overlay-pictures").addEventListener("change", e => saveOverlaySettings({ pictures_only: e.target.checked }));
+  $("overlay-vertical").addEventListener("change", e => saveOverlaySettings({ stack_vertical: e.target.checked }));
   $("overlay-opacity").addEventListener("input", e => {
     $("overlay-opacity-label").textContent = `${e.target.value}%`;
   });
