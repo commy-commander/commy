@@ -645,8 +645,9 @@ fn refresh(handle: &AppHandle) {
     for sid in promoted {
         announce_me(handle, sid);
     }
+    let opening = fresh_communities.len();
     for (sid, group) in fresh_communities {
-        let spread = Duration::from_millis(std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), sid) % FIRST_OPEN_SPREAD_MS);
+        let spread = first_open_delay(sid, opening);
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(spread).await;
             if let Some(community) = LIVE.lock().unwrap().as_mut().and_then(|l| l.communities.get_mut(&sid)) {
@@ -656,6 +657,13 @@ fn refresh(handle: &AppHandle) {
         });
     }
     crate::push_wake::register(handle);
+}
+
+fn first_open_delay(sid: ServerId, opening: usize) -> Duration {
+    if opening <= 1 {
+        return Duration::ZERO;
+    }
+    Duration::from_millis(std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), sid) % FIRST_OPEN_SPREAD_MS)
 }
 
 fn follow_group(pool: &mut Pool, group: Vec<(Lane, commy_sync::StreamKeys, u64)>) {
@@ -1242,6 +1250,15 @@ async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
 mod tests {
     use super::*;
     use commy_core::{Identity, Message, Server, ServerState};
+
+    #[test]
+    fn one_new_server_opens_at_once_and_many_spread_out() {
+        let sid = ServerId::new();
+        assert_eq!(first_open_delay(sid, 1), Duration::ZERO, "a server made or joined just now is not held back");
+        let spread: Vec<Duration> = (0..20).map(|_| first_open_delay(ServerId::new(), 20)).collect();
+        assert!(spread.iter().all(|d| *d < Duration::from_millis(FIRST_OPEN_SPREAD_MS)));
+        assert!(spread.iter().any(|d| *d > Duration::ZERO));
+    }
 
     #[test]
     fn changes_the_service_missed_wait_once_each_and_not_forever() {
