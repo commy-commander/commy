@@ -25,10 +25,11 @@ pub(crate) async fn keep(shelf: &Shelf, bytes: Option<Vec<u8>>, picked_from: Opt
 pub(crate) fn usual_folders(handle: &tauri::AppHandle) -> Vec<PathBuf> {
     use tauri::Manager;
     let paths = handle.path();
-    [paths.download_dir(), paths.video_dir(), paths.picture_dir(), paths.desktop_dir(), paths.document_dir()]
-        .into_iter()
-        .filter_map(Result::ok)
-        .collect()
+    let mut folders = vec![paths.download_dir(), paths.video_dir(), paths.picture_dir()];
+    #[cfg(desktop)]
+    folders.push(paths.desktop_dir());
+    folders.push(paths.document_dir());
+    folders.into_iter().filter_map(Result::ok).collect()
 }
 
 pub(crate) fn places_to_look(folders: &[PathBuf], name: &str) -> Vec<PathBuf> {
