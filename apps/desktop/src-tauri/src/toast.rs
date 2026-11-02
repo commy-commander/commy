@@ -93,7 +93,7 @@ fn write_shortcut(icon: Option<&std::path::Path>) -> windows::core::Result<()> {
         link.SetIconLocation(&HSTRING::from(icon.unwrap_or(&exe).as_os_str()), 0)?;
         link.SetDescription(&HSTRING::from("Commy"))?;
         let store: IPropertyStore = link.cast()?;
-        store.SetValue(&PKEY_AppUserModel_ID, &windows::core::PROPVARIANT::from(APP_ID))?;
+        store.SetValue(&PKEY_AppUserModel_ID, &windows::Win32::System::Com::StructuredStorage::PROPVARIANT::from(APP_ID))?;
         store.Commit()?;
         let file: IPersistFile = link.cast()?;
         file.Save(&HSTRING::from(lnk.as_os_str()), true)?;

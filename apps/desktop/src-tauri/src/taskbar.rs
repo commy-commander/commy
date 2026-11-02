@@ -54,7 +54,7 @@ fn set_big_icon(hwnd: windows_sys::Win32::Foundation::HWND, file: Option<&Path>)
 }
 
 fn set_relaunch_icon(hwnd: windows_sys::Win32::Foundation::HWND, file: Option<&Path>) -> windows::core::Result<()> {
-    use windows::core::PROPVARIANT;
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Storage::EnhancedStorage::{
         PKEY_AppUserModel_ID, PKEY_AppUserModel_RelaunchCommand, PKEY_AppUserModel_RelaunchDisplayNameResource,
