@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::state::App;
 
 const PACK_JSON: &str = include_str!("../voice-pack.json");
-const VOICES_DIR: &str = "voices";
+pub const VOICES_DIR: &str = "voices";
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
 #[derive(Deserialize, Clone, Debug)]

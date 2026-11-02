@@ -25,7 +25,7 @@ pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUN
     Some(server) => server,
     None => "https://commy.chat",
 };
-const PORT_FILE: &str = "link.port";
+pub const PORT_FILE: &str = "link.port";
 const HANDOFF_PREFIX: &str = "commy-link-v1 ";
 const HANDOFF_LIMIT: u64 = (MAX_LINK_LEN + HANDOFF_PREFIX.len() + 2) as u64;
 const SHOW_REQUEST: &str = "commy-show-v1";

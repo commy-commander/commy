@@ -1049,6 +1049,7 @@ dependencies = [
  "data-encoding",
  "ed25519-dalek",
  "image 0.25.10",
+ "libc",
  "mime_guess",
  "open",
  "rand 0.8.8",

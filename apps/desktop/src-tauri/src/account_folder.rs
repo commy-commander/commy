@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 pub const ACCOUNTS_DIR: &str = "accounts";
 const UNCLAIMED_DIR: &str = "unclaimed";
-const SHOW_WINDOW_FILE: &str = "show-window-on-start";
+pub const SHOW_WINDOW_FILE: &str = "show-window-on-start";
 
 pub const SEALED_FILES: &[&str] = &[
     "avatar.img",
@@ -38,7 +38,7 @@ pub const SEALED_DIRS: &[&str] = &["servers", crate::profile_images::PROFILE_IMA
 
 const PLAIN_FILES: &[&str] = &["node.port", crate::state::UNSETTLED_FILE];
 
-fn account_entries() -> Vec<String> {
+pub fn account_entries() -> Vec<String> {
     let icons = crate::app_icon::TARGETS.iter().map(|target| format!("custom-{target}-icon.png"));
     SEALED_FILES
         .iter()

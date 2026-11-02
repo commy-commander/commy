@@ -33,6 +33,16 @@ runs:
       shell: bash
       run: |
         npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" icon icons/icon.png --output icons
+        nsis='{ "installMode": "currentUser" }'
+        if [ "$RUNNER_OS" = Windows ]; then
+          bundler="$(curl -fsSL -A commy-release "https://crates.io/api/v1/crates/tauri-cli/${TAURI_CLI_VERSION}/dependencies" \
+            | jq -r '.dependencies[] | select(.crate_id == "tauri-bundler") | .req' | tr -d '=^~ ')"
+          upstream="tauri-bundler-${bundler}/src/bundle/windows/nsis/installer.nsi"
+          mkdir -p nsis-upstream
+          curl -fsSL -A commy-release "https://crates.io/api/v1/crates/tauri-bundler/${bundler}/download" | tar -xz -C nsis-upstream "$upstream"
+          node installer/add-data-folder-page.mjs "nsis-upstream/$upstream" installer/installer.nsi
+          nsis="{ \"installMode\": \"currentUser\", \"template\": \"$(cygpath -m "$PWD/installer/installer.nsi")\" }"
+        fi
         cat > tauri.release.conf.json <<EOF
         {
           "version": "${{ steps.version.outputs.app }}",
@@ -43,7 +53,7 @@ runs:
             "category": "SocialNetworking",
             "shortDescription": "Peer to peer voice, video and chat",
             "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-            "windows": { "nsis": { "installMode": "currentUser" } },
+            "windows": { "nsis": $nsis },
             "macOS": { "minimumSystemVersion": "11.0", "signingIdentity": "-" }
           },
           "plugins": { "deep-link": { "desktop": { "schemes": ["commy"] } } }

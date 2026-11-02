@@ -61,7 +61,7 @@ pub fn autostart_allowed_here() -> bool {
     autostart_allowed(
         TEST_BUILD,
         std::env::var("COMMY_INSTANCE_LABEL").ok().as_deref(),
-        std::env::var("COMMY_DATA_DIR").ok().as_deref(),
+        crate::data_location::folder_from_environment().as_deref(),
     )
 }
 

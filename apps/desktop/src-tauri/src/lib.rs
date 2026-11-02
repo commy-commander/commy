@@ -11,6 +11,7 @@ mod entry_list;
 mod catchup;
 mod channel_lock;
 mod community_sync;
+mod data_location;
 mod debug_log;
 mod deleted;
 mod devices;
@@ -1810,8 +1811,7 @@ pub(crate) fn member_nodes(app: &App, server: ServerId) -> Vec<String> {
     app.servers.lock().unwrap().get(&server).map(ServerState::member_nodes).unwrap_or_default()
 }
 
-#[cfg(desktop)]
-const SHARED_FILES_DIR: &str = "shared-files";
+pub const SHARED_FILES_DIR: &str = "shared-files";
 
 #[cfg(desktop)]
 async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
@@ -7806,6 +7806,8 @@ fn on_resumed(handle: &tauri::AppHandle) {
 pub fn run() {
     debug_log::init();
 
+    #[cfg(desktop)]
+    data_location::resolve_before_start();
     instance::apply_test_build_data_dir();
 
     let launch_link = invite_link::link_from_args();
@@ -7817,6 +7819,8 @@ pub fn run() {
             return;
         }
     }
+    #[cfg(desktop)]
+    data_location::finish_scheduled_before_start();
 
     instance::apply_webview_data_dir_before_any_window();
 
@@ -7918,7 +7922,7 @@ pub fn run() {
             }
             let toast_icon = tauri_app.path().app_data_dir().ok().and_then(|dir| {
                 std::fs::create_dir_all(&dir).ok()?;
-                let path = dir.join("notification-icon.png");
+                let path = dir.join(data_location::NOTIFICATION_ICON_FILE);
                 std::fs::write(&path, tray::ICON_PNG).ok()?;
                 Some(path)
             });
@@ -8176,6 +8180,14 @@ pub fn run() {
             speech::speech_play,
             speech::speech_stop,
             voice_pack::voice_pack_status,
+            data_location::data_folder,
+            data_location::storage_usage,
+            data_location::open_data_folder,
+            data_location::pick_data_folder,
+            data_location::plan_data_folder_move,
+            data_location::move_data_folder,
+            data_location::clear_cache,
+            data_location::clear_all_data,
             voice_pack::voice_pack_download,
             voice_pack::voice_pack_file,
             voice_pack::voice_pack_remove,
