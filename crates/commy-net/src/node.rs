@@ -559,6 +559,17 @@ fn hint_relays(lookup: &MemoryLookup, endpoint: &Endpoint, node: EndpointId, rel
     }
 }
 
+async fn neighbor_addr(endpoint: &Endpoint, id: [u8; 32], relay_url: Option<String>) -> crate::ticket::NodeAddr {
+    let Ok(node) = EndpointId::from_bytes(&id) else { return crate::ticket::NodeAddr::via_relay(id, relay_url) };
+    let Some(info) = endpoint.remote_info(node).await else { return crate::ticket::NodeAddr::via_relay(id, relay_url) };
+    let addrs: Vec<_> = info.into_addrs().collect();
+    let in_use: Vec<iroh::TransportAddr> = addrs.iter().filter(|a| matches!(a.usage(), iroh::endpoint::TransportAddrUsage::Active)).map(|a| a.addr().clone()).collect();
+    let chosen = if in_use.is_empty() { addrs.into_iter().map(|a| a.into_addr()).collect() } else { in_use };
+    let mut addr = crate::ticket::NodeAddr::from(&EndpointAddr::from_parts(node, chosen));
+    addr.info.relay_url = addr.info.relay_url.or(relay_url);
+    addr
+}
+
 pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
@@ -1374,12 +1385,28 @@ impl CommyNode {
     }
 
     pub async fn rejoin_server(&mut self, ticket: &ServerTicket) -> Result<()> {
-        let addrs: Vec<EndpointAddr> = ticket.bootstrap.iter().filter_map(|a| a.endpoint_addr()).collect();
+        let own = self.router.endpoint().id();
+        let addrs: Vec<EndpointAddr> = ticket.bootstrap.iter().filter_map(|a| a.endpoint_addr()).filter(|a| a.id != own).collect();
         let bootstrap: Vec<EndpointId> = addrs.iter().map(|a| a.id).collect();
         for addr in addrs {
             self.learn(addr);
         }
         self.join_topic(ticket.server_id, ticket.topic, bootstrap).await
+    }
+
+    pub fn invite_ticket(&self, ticket: &ServerTicket) -> impl Future<Output = ServerTicket> + Send + 'static {
+        let endpoint = self.endpoint();
+        let neighbors = self.neighbors(ticket.server_id);
+        let ticket = ticket.clone();
+        async move {
+            let _ = n0_future::time::timeout(ADDRESS_WAIT, endpoint.online()).await;
+            let inviter = crate::ticket::NodeAddr::from(&endpoint.addr());
+            let mut reached = Vec::new();
+            for id in neighbors.into_iter().take(crate::ticket::MAX_INVITE_NEIGHBORS) {
+                reached.push(neighbor_addr(&endpoint, id, inviter.info.relay_url.clone()).await);
+            }
+            ticket.reaching(Some(inviter), reached)
+        }
     }
 
     pub async fn wait_for_peers(
@@ -2204,6 +2231,26 @@ mod tests {
         let (host, guest) = (local_node().await, local_node().await);
         guest.learn(host.endpoint().addr());
         (host, guest)
+    }
+
+    const MEET_WITHIN: Duration = Duration::from_secs(20);
+
+    #[tokio::test]
+    async fn a_member_invite_still_reaches_the_server_while_its_owner_is_away() {
+        let (mut owner, mut member, mut newcomer) = (local_node().await, local_node().await, local_node().await);
+        let server = ServerId::new();
+        let hosted = owner.host_server(server, "s", None).await.unwrap();
+        member.rejoin_server(&hosted).await.unwrap();
+        assert!(member.wait_for_peers(server, MEET_WITHIN).await, "the member meets the owner");
+        let invite = member.invite_ticket(&hosted).await;
+        let named: Vec<[u8; 32]> = invite.bootstrap.iter().map(|a| a.node_id).collect();
+        assert_eq!(named, vec![member.node_id_bytes(), owner.node_id_bytes()]);
+        owner.shutdown().await.ok();
+        newcomer.rejoin_server(&invite).await.unwrap();
+        assert!(newcomer.wait_for_peers(server, MEET_WITHIN).await, "the newcomer meets the member");
+        assert_eq!(newcomer.neighbors(server), vec![member.node_id_bytes()]);
+        member.shutdown().await.ok();
+        newcomer.shutdown().await.ok();
     }
 
     fn picture() -> Vec<u8> {

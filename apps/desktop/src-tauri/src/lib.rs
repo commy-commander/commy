@@ -375,6 +375,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     drop(signing);
 
     app.persist_server(ticket.server_id);
+    community_sync::keep_invite_key(app, ticket.server_id, ticket.owner);
     doorbell::record_join(app, ticket.server_id);
     handle.emit("servers-changed", serde_json::Value::Null);
     Ok(summary)
@@ -427,14 +428,27 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
 }
 
 #[tauri::command]
-fn get_invite(app: tauri::State<App>, server_id: String) -> CmdResult<String> {
+async fn get_invite(app: tauri::State<'_, App>, server_id: String) -> CmdResult<String> {
     let id = server_id.parse().map_err(err_to_string)?;
     require_invite_permission(&app, id)?;
-    let ticket = app.vouched_ticket(id).ok_or("no invite available; you may be offline")?;
+    let ticket = owner_vouched_ticket(&app, id)?;
+    Ok(reachable_ticket(&app, ticket).await.encode())
+}
+
+pub(crate) fn owner_vouched_ticket(app: &App, server: ServerId) -> CmdResult<ServerTicket> {
+    let ticket = app.vouched_ticket(server).ok_or("no invite available; you may be offline")?;
     if ticket.owner.is_none() {
         return Err("your account key is still being confirmed; try again in a moment".into());
     }
-    Ok(ticket.encode())
+    Ok(ticket)
+}
+
+pub(crate) async fn reachable_ticket(app: &App, ticket: ServerTicket) -> ServerTicket {
+    let widening = app.net.lock().await.as_ref().map(|node| node.invite_ticket(&ticket));
+    match widening {
+        Some(widening) => widening.await,
+        None => ticket,
+    }
 }
 
 #[tauri::command]
@@ -2327,7 +2341,8 @@ async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: 
 }
 
 async fn invite_to_group(app: &App, handle: &tauri::AppHandle, me: &UserProfile, sid: ServerId, user_ids: Vec<String>) -> CmdResult<()> {
-    let ticket = app.vouched_ticket(sid).ok_or("no invite available; you may be offline")?.encode();
+    let ticket = app.vouched_ticket(sid).ok_or("no invite available; you may be offline")?;
+    let ticket = reachable_ticket(app, ticket).await.encode();
     let key = community_sync::invite_key(app, sid);
     for raw in user_ids {
         let (_, user) = dm_partner(app, &raw)?;

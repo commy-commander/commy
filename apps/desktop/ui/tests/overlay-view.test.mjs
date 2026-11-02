@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_LINES, overlayCorner, overlayUniqueMembers, overlayVisibleMembers, overlayPushLine } = require("../scripts/overlay-view.js");
+const { overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_LINES, overlayCorner, overlayUniqueMembers, overlayVisibleMembers, overlayTileKey, overlayPushLine } = require("../scripts/overlay-view.js");
 
 const members = [{ id: "a" }, { id: "b" }, { id: "c" }];
 
@@ -48,4 +48,13 @@ test("the note names the corner in words, and unknown corners read as top left",
   assert.equal(overlayCornerLabel("bottom-right"), "Bottom right");
   assert.equal(overlayCornerLabel("top-left"), "Top left");
   assert.equal(overlayCornerLabel("nowhere"), "Top left");
+});
+
+test("a tile is redrawn only when its look changes, not when someone talks", () => {
+  const nova = { id: "nova", name: "nova" };
+  assert.equal(overlayTileKey(nova, true), overlayTileKey({ ...nova }, true));
+  assert.notEqual(overlayTileKey(nova, true), overlayTileKey({ ...nova, image: "data:image/png;base64,AA" }, true));
+  assert.notEqual(overlayTileKey(nova, true), overlayTileKey({ ...nova, emoji: "🦀" }, true));
+  assert.notEqual(overlayTileKey(nova, true), overlayTileKey({ ...nova, name: "Nova" }, true));
+  assert.notEqual(overlayTileKey(nova, true), overlayTileKey(nova, false));
 });

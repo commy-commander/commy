@@ -5244,6 +5244,7 @@ html[data-reduced-motion] .server-tag.st-fx-shine::after { display: none; }
 .fp-about { font-size: 14px; line-height: 1.45; color: var(--text-normal); white-space: pre-wrap; }
 .fp-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .fp-friend { font-size: 14px; color: var(--text-normal); }
+.gif-picker.gif-picker-float { position: fixed; right: auto; bottom: auto; z-index: 135; max-height: calc(100vh - 16px); }
 .member-card .mc-composer { margin: 12px 0 0; padding: 0 6px 0 12px; background: var(--bg-dark); }
 .vp-game-share { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 30px; margin-bottom: 8px; border: none; border-radius: 6px; background: var(--green); color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; overflow: hidden; white-space: nowrap; }
 .vp-game-share span { overflow: hidden; text-overflow: ellipsis; }
