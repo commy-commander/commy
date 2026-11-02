@@ -48,10 +48,6 @@ async function start() {
   window.addEventListener("resize", schedule);
   if (!tauri) return;
   await tauri.event.listen("stream-ink", e => receive(e.payload));
-  await tauri.event.listen("stream-ink-reset", () => {
-    store = inkStore();
-    schedule();
-  });
 }
 
 start();
