@@ -1806,9 +1806,14 @@ async function mockInvoke(cmd, args = {}) {
       if (args.held) s.myRoles.push(args.roleId);
       return null;
     }
-    case "get_storage_settings": return mock.storage || (mock.storage = { keep: "90", servers: {} });
+    case "get_storage_settings": return mock.storage || (mock.storage = { keep: "90", servers: {}, store_for_others_mb: 25 });
+    case "set_store_for_others": {
+      const s = mock.storage || (mock.storage = { keep: "90", servers: {}, store_for_others_mb: 25 });
+      s.store_for_others_mb = args.mb;
+      return s;
+    }
     case "set_history_window": {
-      const s = mock.storage || (mock.storage = { keep: "90", servers: {} });
+      const s = mock.storage || (mock.storage = { keep: "90", servers: {}, store_for_others_mb: 25 });
       if (!args.serverId) s.keep = args.keep;
       else if (args.keep) s.servers[args.serverId] = args.keep;
       else delete s.servers[args.serverId];
@@ -12267,7 +12272,7 @@ function isBlocked(userId) {
 }
 
 const KEEP_LABELS = { 30: "30 days", 90: "90 days", 180: "6 months", 365: "1 year", forever: "Forever" };
-let storageSettings = { keep: "90", servers: {} };
+let storageSettings = { keep: "90", servers: {}, store_for_others_mb: 25 };
 
 async function loadStorageSettings() {
   try {
@@ -12288,6 +12293,7 @@ function keepSelect(value, defaultLabel) {
 
 function renderStorageSettings() {
   $("keep-default").value = storageSettings.keep;
+  $("store-for-others").value = String(storageSettings.store_for_others_mb ?? 25);
   const list = $("keep-servers");
   list.replaceChildren();
   for (const server of railServers()) {
@@ -12305,6 +12311,15 @@ function renderStorageSettings() {
 async function setHistoryWindow(serverId, keep) {
   try {
     storageSettings = await invoke("set_history_window", { serverId, keep });
+  } catch (e) {
+    toast(String(e));
+  }
+  renderStorageSettings();
+}
+
+async function setStoreForOthers(mb) {
+  try {
+    storageSettings = await invoke("set_store_for_others", { mb });
   } catch (e) {
     toast(String(e));
   }
@@ -19609,6 +19624,7 @@ function wireEvents() {
   $("dm-policy").addEventListener("change", saveDmSettings);
   wireProfilePrivacy();
   $("keep-default").addEventListener("change", e => setHistoryWindow(null, e.target.value));
+  $("store-for-others").addEventListener("change", e => setStoreForOthers(Number(e.target.value)));
   $("spam-filter-toggle").addEventListener("change", saveDmSettings);
   $("block-cancel").onclick = hideModals;
   $("block-go").onclick = async () => {

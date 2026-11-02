@@ -2204,7 +2204,20 @@
             <div class="setting-sub">Keep a busy server for less time, or a small one forever.</div>
             <div id="keep-servers" class="keep-servers"></div>
           </div>
-          <div class="setting-sub">Videos and files download only when you click them, and so do images over 5 MB. Joining a server brings its recent messages, not its whole history.</div>
+          <div class="setting-sub">Videos and files open only when you click them, and so do images over 5 MB. Joining a server brings its recent messages, not its whole history.</div>
+          <h2 class="settings-subhead desktop-only">Files for Others</h2>
+          <div class="settings-card setting-row desktop-only" data-search="files share mesh offline keep copies members">
+            <div>
+              <div class="setting-title">Keep files members post</div>
+              <div class="setting-sub">While Commy is open, files up to this size that members post are kept on this computer, so they still load for everyone when the sender is offline. Files you open or download are always passed on this way. Commy removes them after 30 days, and keeps no more than 2 GB of other people's files.</div>
+            </div>
+            <select id="store-for-others" class="compact-select" aria-label="Keep files members post up to">
+              <option value="0">Off</option>
+              <option value="10">Up to 10 MB</option>
+              <option value="25">Up to 25 MB</option>
+              <option value="100">Up to 100 MB</option>
+            </select>
+          </div>
         </section>
 
         <section class="settings-page" data-page="updates" data-search="version upgrade tray autostart">

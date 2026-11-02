@@ -5,12 +5,19 @@ use iroh_blobs::api::blobs::{AddPathOptions, ExportMode, ExportOptions, ImportMo
 use iroh_blobs::store::fs::options::Options;
 use iroh_blobs::store::fs::FsStore;
 use iroh_blobs::store::GcConfig;
-use iroh_blobs::{BlobFormat, BlobsProtocol, Hash};
+use iroh_blobs::api::remote::GetProgressItem;
+use iroh_blobs::{BlobFormat, BlobsProtocol, Hash, HashAndFormat};
 use futures_lite::StreamExt;
 
 pub use crate::node::FILES_ALPN;
 
 const SENT_TAG_PREFIX: &str = "sent/";
+
+const OPENED_TAG_PREFIX: &str = "opened/";
+
+const STORED_TAG_PREFIX: &str = "stored/";
+
+const KEPT_TAG_PREFIXES: [&str; 3] = [SENT_TAG_PREFIX, OPENED_TAG_PREFIX, STORED_TAG_PREFIX];
 
 const PART_SUFFIX: &str = ".part";
 const FORGET_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
@@ -59,19 +66,64 @@ impl Shelf {
     }
 
     async fn mark_sent(&self, hash: Hash, at_secs: u64) -> Result<String> {
-        self.store.tags().set(sent_tag(at_secs, &hash), hash).await.context("could not keep the sent file")?;
+        self.mark(SENT_TAG_PREFIX, hash, at_secs).await
+    }
+
+    pub async fn keep_opened_bytes(&self, bytes: Vec<u8>, at_secs: u64) -> Result<String> {
+        let held = self.store.add_bytes(bytes).temp_tag().await.context("could not keep the opened file")?;
+        self.mark(OPENED_TAG_PREFIX, held.hash(), at_secs).await
+    }
+
+    pub async fn keep_opened_file(&self, path: &Path, at_secs: u64) -> Result<String> {
+        let path = std::path::absolute(path).context("could not find that file")?;
+        let options = AddPathOptions { path, format: BlobFormat::Raw, mode: ImportMode::TryReference };
+        let held = self.store.add_path_with_opts(options).temp_tag().await.context("could not keep the downloaded file")?;
+        self.mark(OPENED_TAG_PREFIX, held.hash(), at_secs).await
+    }
+
+    pub async fn store_for_others(&self, connection: iroh::endpoint::Connection, hash: &str, max: u64, at_secs: u64) -> Result<u64> {
+        let hash: Hash = hash.parse().context("invalid file hash")?;
+        let _held = self.store.tags().temp_tag(HashAndFormat::raw(hash)).await.context("could not keep the file")?;
+        let mut progress = std::pin::pin!(self.store.remote().fetch(connection, HashAndFormat::raw(hash)).stream());
+        while let Some(item) = progress.next().await {
+            match item {
+                GetProgressItem::Progress(read) => crate::node::check_blob_size(read, max)?,
+                GetProgressItem::Done(_) => break,
+                GetProgressItem::Error(e) => return Err(anyhow::Error::new(e).context("file download failed")),
+            }
+        }
+        let shared = self.shared(&hash.to_hex()).await.context("file download failed: incomplete")?;
+        crate::node::check_blob_size(shared.size, max)?;
+        self.mark(STORED_TAG_PREFIX, hash, at_secs).await?;
+        Ok(shared.size)
+    }
+
+    pub async fn stored_for_others_bytes(&self) -> Result<u64> {
+        let tags = self.store.tags().list_prefix(STORED_TAG_PREFIX).await.context("could not read the shared files list")?;
+        let hashes: std::collections::BTreeSet<Hash> = tags.filter_map(|tag| tag.ok().map(|t| t.hash)).collect().await;
+        let mut total = 0;
+        for hash in hashes {
+            total += self.shared(&hash.to_hex()).await.map_or(0, |s| s.size);
+        }
+        Ok(total)
+    }
+
+    async fn mark(&self, prefix: &str, hash: Hash, at_secs: u64) -> Result<String> {
+        self.store.tags().set(kept_tag(prefix, at_secs, &hash), hash).await.context("could not keep the file")?;
         Ok(hash.to_hex().to_string())
     }
 
-    pub async fn drop_sent_before(&self, cutoff_secs: u64) -> Result<u64> {
-        let tags = self.store.tags().list_prefix(SENT_TAG_PREFIX).await.context("could not read the shared files list")?;
-        let stale: Vec<_> = tags
-            .filter_map(|tag| tag.ok().map(|t| t.name).filter(|name| sent_at(name.as_ref()).is_some_and(|at| at < cutoff_secs)))
-            .collect()
-            .await;
+    pub async fn drop_kept_before(&self, cutoff_secs: u64) -> Result<u64> {
         let mut gone = 0;
-        for name in stale {
-            gone += self.store.tags().delete(name).await.context("could not drop an old sent file")?;
+        for prefix in KEPT_TAG_PREFIXES {
+            let tags = self.store.tags().list_prefix(prefix).await.context("could not read the shared files list")?;
+            let stale: Vec<_> = tags
+                .filter_map(|tag| tag.ok().map(|t| t.name).filter(|name| kept_at(prefix, name.as_ref()).is_some_and(|at| at < cutoff_secs)))
+                .collect()
+                .await;
+            for name in stale {
+                gone += self.store.tags().delete(name).await.context("could not drop an old kept file")?;
+            }
         }
         Ok(gone)
     }
@@ -112,12 +164,12 @@ impl Shelf {
     }
 }
 
-fn sent_tag(at_secs: u64, hash: &Hash) -> String {
-    format!("{SENT_TAG_PREFIX}{at_secs:020}/{}", hash.to_hex())
+fn kept_tag(prefix: &str, at_secs: u64, hash: &Hash) -> String {
+    format!("{prefix}{at_secs:020}/{}", hash.to_hex())
 }
 
-fn sent_at(name: &[u8]) -> Option<u64> {
-    let name = std::str::from_utf8(name).ok()?.strip_prefix(SENT_TAG_PREFIX)?;
+fn kept_at(prefix: &str, name: &[u8]) -> Option<u64> {
+    let name = std::str::from_utf8(name).ok()?.strip_prefix(prefix)?;
     name.split('/').next()?.parse().ok()
 }
 
@@ -182,10 +234,10 @@ mod tests {
         let reopened = Shelf::open(&dir.join("shelf")).await.unwrap();
         assert_eq!(reopened.bytes(&old).await, Some(pasted));
         assert_eq!(reopened.bytes(&fresh).await, Some(video.clone()));
-        assert_eq!(reopened.drop_sent_before(2_000).await.unwrap(), 1);
-        assert_eq!(reopened.drop_sent_before(2_000).await.unwrap(), 0);
+        assert_eq!(reopened.drop_kept_before(2_000).await.unwrap(), 1);
+        assert_eq!(reopened.drop_kept_before(2_000).await.unwrap(), 0);
         assert!(reopened.shared(&fresh).await.is_some(), "newer sends stay");
-        assert_eq!(reopened.drop_sent_before(9_000).await.unwrap(), 1);
+        assert_eq!(reopened.drop_kept_before(9_000).await.unwrap(), 1);
         assert!(picked.exists(), "dropping a sent file never touches the original");
         reopened.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
@@ -194,9 +246,10 @@ mod tests {
     #[test]
     fn sent_tags_sort_by_when_they_were_sent() {
         let hash = Hash::new(b"x");
-        assert!(sent_tag(999, &hash) < sent_tag(1_000, &hash));
-        assert_eq!(sent_at(sent_tag(1_000, &hash).as_bytes()), Some(1_000));
-        assert_eq!(sent_at(b"auto-123"), None);
+        assert!(kept_tag(SENT_TAG_PREFIX, 999, &hash) < kept_tag(SENT_TAG_PREFIX, 1_000, &hash));
+        assert_eq!(kept_at(SENT_TAG_PREFIX, kept_tag(SENT_TAG_PREFIX, 1_000, &hash).as_bytes()), Some(1_000));
+        assert_eq!(kept_at(SENT_TAG_PREFIX, b"auto-123"), None);
+        assert_eq!(kept_at(OPENED_TAG_PREFIX, kept_tag(SENT_TAG_PREFIX, 1_000, &hash).as_bytes()), None);
     }
 
     fn tempdir() -> PathBuf {
