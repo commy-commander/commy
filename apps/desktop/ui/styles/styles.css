@@ -4109,6 +4109,11 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .chat-video-play:hover { background: var(--accent-hover); }
 .chat-video-play:disabled { background: var(--bg-active); cursor: progress; }
 .chat-video-play svg { margin-left: 3px; }
+.chat-video-find {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
 .chat-video-label {
   position: absolute;
   left: 12px;

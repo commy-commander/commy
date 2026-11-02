@@ -112,6 +112,22 @@ test("big files download straight to disk and show how far along they are", asyn
   assert.equal(downloadProgressText(200, 200), "Saving");
 });
 
+test("a file whose sender no longer has it on this device offers to choose it again", () => {
+  const { sentFileGone, missingVideoText, missingImageText } = require("../scripts/embeds.js");
+  const gone = "your copy of this file is no longer on this device";
+  assert.equal(sentFileGone(gone), true);
+  assert.equal(sentFileGone("nobody who has this file is online right now"), false);
+  const video = missingVideoText(gone, "nova");
+  assert.equal(video.findAgain, true);
+  assert.equal(video.waiting, false, "nothing to wait for when the copy was ours");
+  assert.equal(video.label, "Your copy of this video is no longer on this device");
+  const image = missingImageText(gone);
+  assert.equal(image.findAgain, true);
+  assert.equal(image.retry, "Choose File");
+  assert.equal(missingImageText("nobody who has this file is online right now").findAgain, undefined);
+  assert.equal(missingVideoText("nobody who has this file is online right now").findAgain, undefined);
+});
+
 test("a video nobody online has says whose app to wait for and keeps trying", () => {
   const { missingVideoText } = require("../scripts/embeds.js");
   const waiting = missingVideoText("nobody who has this file is online right now", "nova");

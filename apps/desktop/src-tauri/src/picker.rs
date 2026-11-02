@@ -87,6 +87,17 @@ pub async fn pick_attachment(
 }
 
 #[cfg(desktop)]
+pub async fn pick_path(_handle: &AppHandle, title: &str) -> Option<std::path::PathBuf> {
+    let picked = rfd::AsyncFileDialog::new().set_title(title).pick_file().await?;
+    Some(picked.path().to_path_buf())
+}
+
+#[cfg(mobile)]
+pub async fn pick_path(_handle: &AppHandle, _title: &str) -> Option<std::path::PathBuf> {
+    None
+}
+
+#[cfg(desktop)]
 pub async fn save_path(_handle: &AppHandle, name: &str) -> Option<std::path::PathBuf> {
     let target = rfd::AsyncFileDialog::new().set_file_name(name).save_file().await?;
     Some(target.path().to_path_buf())
