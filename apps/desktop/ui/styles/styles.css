@@ -8100,8 +8100,9 @@ body.mobile-app .vp-actions > * { flex: 1 1 0; }
   body.mobile-app .app { grid-template-rows: 52px minmax(0, 1fr); gap: 8px; }
   body.mobile-app .sidebar-header.has-banner { height: 56px; }
   body.mobile-app .voice-panel { gap: 6px; padding: 6px; }
-  body.mobile-app .vp-preview { aspect-ratio: auto; height: 56px; }
-  body.mobile-app .vp-live-source { display: none; }
+  body.mobile-app :is(.vp-preview, .vp-live-source) { display: none; }
+  body.mobile-app .sidebar { overflow-y: auto; }
+  body.mobile-app .sidebar > .channel-scroll { flex-shrink: 0; min-height: 168px; }
 }
 
 .narrow-servers, .narrow-column, .narrow-menu, .narrow-dock, .voice-rings { display: none; }

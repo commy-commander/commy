@@ -4317,7 +4317,7 @@ fn set_input_mode(
 ) -> CmdResult<VoiceSettings> {
     let mode = voice_keys::InputMode::parse(&mode).ok_or("unknown input mode")?;
     let talk_key = talk_key.trim().to_string();
-    if !overlay::valid_hotkey(&talk_key) {
+    if cfg!(desktop) && !overlay::valid_hotkey(&talk_key) {
         return Err(format!("{talk_key} is not a key Commy can use for push to talk"));
     }
     let snapshot = app.update_voice(|voice| {
