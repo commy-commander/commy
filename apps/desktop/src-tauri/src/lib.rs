@@ -1144,16 +1144,19 @@ const MAX_INLINE_VIDEO_BYTES: usize = 100 * 1024 * 1024;
 #[tauri::command]
 async fn get_attachment_video(
     app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
     blob: String,
     provider: Option<String>,
     size_bytes: Option<u64>,
     server_id: Option<String>,
+    name: Option<String>,
 ) -> CmdResult<tauri::ipc::Response> {
     let max = MAX_INLINE_VIDEO_BYTES as u64;
     if size_bytes.is_some_and(|size| size > max) {
         return Err("video too large to play here".into());
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), max).await?;
+    let named = sent_name(name.as_deref(), size_bytes);
+    let bytes = fetch_attachment(&app, &handle, &blob, provider.as_deref(), server_id.as_deref(), max, named).await?;
     if bytes.len() > MAX_INLINE_VIDEO_BYTES {
         return Err("video too large to play here".into());
     }
@@ -1291,7 +1294,8 @@ async fn download_attachment(
     if let Some(size) = size_bytes {
         commy_net::node::check_blob_size(size, MAX_ATTACHMENT_BYTES).map_err(err_to_string)?;
     }
-    let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), MAX_ATTACHMENT_BYTES).await?;
+    let named = sent_name(Some(&filename), size_bytes);
+    let bytes = fetch_attachment(&app, &handle, &blob, provider.as_deref(), server_id.as_deref(), MAX_ATTACHMENT_BYTES, named).await?;
     picker::save_file(&handle, &safe_file_name(&filename), bytes).await
 }
 
@@ -1809,6 +1813,74 @@ async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Optio
     let bytes = fetcher.fetch_among(blob, sources.iter().map(String::as_str), &members, max).await.map_err(err_to_string)?;
     kept_files::keep_opened(shelf, blob, &bytes);
     Ok(bytes)
+}
+
+struct SentName<'a> {
+    name: &'a str,
+    size: u64,
+}
+
+fn sent_name(name: Option<&str>, size: Option<u64>) -> Option<SentName<'_>> {
+    Some(SentName { name: name.filter(|n| !n.trim().is_empty())?, size: size.filter(|s| *s > 0)? })
+}
+
+async fn fetch_attachment(
+    app: &App,
+    handle: &tauri::AppHandle,
+    blob: &str,
+    provider: Option<&str>,
+    server: Option<&str>,
+    max: u64,
+    named: Option<SentName<'_>>,
+) -> CmdResult<Vec<u8>> {
+    let error = match fetch_blob(app, blob, provider, server, max).await {
+        Ok(bytes) => return Ok(bytes),
+        Err(e) => e,
+    };
+    if !error.contains(commy_net::node::BLOB_UNAVAILABLE) {
+        return Err(error);
+    }
+    let Some(shelf) = shelf_if_sent_here(app, provider).await else { return Err(error) };
+    let found = match named {
+        Some(sent) => {
+            let places = sent_files::places_to_look(&sent_files::usual_folders(handle), &safe_file_name(sent.name));
+            sent_files::find_again(&shelf, blob, sent.size, places).await
+        }
+        None => false,
+    };
+    if !found {
+        return Err(sent_files::SENT_FILE_GONE.into());
+    }
+    fetch_blob(app, blob, provider, server, max).await
+}
+
+async fn shelf_if_sent_here(app: &App, provider: Option<&str>) -> Option<commy_net::shelf::Shelf> {
+    let net = app.net.lock().await;
+    let node = net.as_ref()?;
+    if provider != Some(node.node_id_hex().as_str()) {
+        return None;
+    }
+    node.shelf()
+}
+
+#[tauri::command]
+async fn find_sent_file(app: tauri::State<'_, App>, handle: tauri::AppHandle, blob: String, size_bytes: Option<u64>) -> CmdResult<bool> {
+    let shelf = {
+        let net = app.net.lock().await;
+        net.as_ref().ok_or("network is not ready yet")?.shelf()
+    };
+    let shelf = shelf.ok_or("only the desktop app keeps the files you send")?;
+    let Some(path) = picker::pick_path(&handle, "Find the file you sent").await else {
+        return Ok(false);
+    };
+    let size = tokio::fs::metadata(&path).await.map_err(err_to_string)?.len();
+    if size_bytes.is_some_and(|sent| sent != size) {
+        return Err(sent_files::NOT_THE_SENT_FILE.into());
+    }
+    match sent_files::keep_again(&shelf, &path, &blob).await.map_err(err_to_string)? {
+        true => Ok(true),
+        false => Err(sent_files::NOT_THE_SENT_FILE.into()),
+    }
 }
 
 pub(crate) fn member_nodes(app: &App, server: ServerId) -> Vec<String> {
@@ -6654,6 +6726,7 @@ fn preview_limit(clicked: bool) -> u64 {
 #[tauri::command]
 async fn get_attachment_preview(
     app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
     blob: String,
     provider: Option<String>,
     mime: String,
@@ -6661,6 +6734,7 @@ async fn get_attachment_preview(
     clicked: Option<bool>,
     shared: Option<bool>,
     server_id: Option<String>,
+    name: Option<String>,
 ) -> CmdResult<String> {
     if !is_data_url_safe_image_mime(&mime) {
         return Err("not an image".into());
@@ -6677,7 +6751,8 @@ async fn get_attachment_preview(
     let bytes = match held {
         Some(bytes) => bytes,
         None => {
-            let bytes = fetch_blob(&app, &blob, provider.as_deref(), server_id.as_deref(), max).await?;
+            let named = sent_name(name.as_deref(), size_bytes);
+            let bytes = fetch_attachment(&app, &handle, &blob, provider.as_deref(), server_id.as_deref(), max, named).await?;
             if shared {
                 pictures::offer(&app.http, &blob, &bytes);
             }
@@ -8158,6 +8233,7 @@ pub fn run() {
             open_url,
             note_user_activity,
             download_attachment,
+            find_sent_file,
             set_voice_channel,
             list_share_sources,
             set_afk_timeout,
