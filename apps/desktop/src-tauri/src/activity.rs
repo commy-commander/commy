@@ -13,6 +13,19 @@ const IGNORED_EXES: &[&str] = &[
     "msedgewebview2.exe",
     "rundll32.exe",
     "consent.exe",
+    "pickerhost.exe",
+    "openwith.exe",
+    "dllhost.exe",
+    "credentialuibroker.exe",
+    "runtimebroker.exe",
+    "sihost.exe",
+    "shellhost.exe",
+    "ctfmon.exe",
+    "logonui.exe",
+    "smartscreen.exe",
+    "werfault.exe",
+    "screenclippinghost.exe",
+    "searchui.exe",
 ];
 
 const GAME_PATH_MARKERS: &[&str] = &[
@@ -212,6 +225,21 @@ mod tests {
         assert!(is_own_exe(&own.to_ascii_uppercase()));
         assert_eq!(describe(&own, Some("Some Name")), None);
         assert_eq!(describe("C:\\Windows\\SystemApps\\SearchHost.exe", None), None);
+    }
+
+    #[test]
+    fn system_dialogs_and_shell_helpers_are_ignored() {
+        assert_eq!(describe("C:\\Windows\\System32\\PickerHost.exe", Some("File Picker UI Host")), None);
+        assert_eq!(describe("C:\\Windows\\System32\\OpenWith.exe", Some("Pick an app")), None);
+        assert_eq!(describe("C:\\Windows\\System32\\DllHost.exe", Some("COM Surrogate")), None);
+        assert_eq!(
+            describe("C:\\Windows\\System32\\CredentialUIBroker.exe", Some("Credential Manager UI Host")),
+            None
+        );
+        assert_eq!(
+            describe("C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe", None),
+            None
+        );
     }
 
     #[test]
