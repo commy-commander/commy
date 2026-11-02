@@ -392,7 +392,7 @@ async fn a_live_signal_reaches_the_other_followers_and_is_never_stored() {
     open_raw(&mut sender, &keys).await;
     open_raw(&mut listener, &keys).await;
     let body = keys.seal(b"typing").unwrap();
-    send(&mut sender, &ClientFrame::signal(&keys, [3; APPEND_NONCE_BYTES], body.clone())).await;
+    send(&mut sender, &ClientFrame::signal(&keys, rand::random(), body.clone())).await;
     assert_eq!(receive(&mut listener).await, ServerFrame::Signal { stream: keys.id, body: Blob(body.clone()) });
     send(&mut sender, &ClientFrame::Ping).await;
     assert_eq!(receive(&mut sender).await, ServerFrame::Pong, "the sender does not hear its own signal");
@@ -401,7 +401,7 @@ async fn a_live_signal_reaches_the_other_followers_and_is_never_stored() {
     send(&mut sender, &forged).await;
     assert!(matches!(receive(&mut sender).await, ServerFrame::Error { code: ErrorCode::BadSignature, nonce: Some(_), .. }));
     let big = keys.seal(&[0u8; 10_000]).unwrap();
-    send(&mut sender, &ClientFrame::signal(&keys, [4; APPEND_NONCE_BYTES], big)).await;
+    send(&mut sender, &ClientFrame::signal(&keys, rand::random(), big)).await;
     assert!(
         matches!(receive(&mut sender).await, ServerFrame::Error { code: ErrorCode::TooLarge, nonce: Some(_), .. }),
         "signals stay small, and a refusal never closes the stream"
@@ -419,7 +419,7 @@ async fn a_live_signal_reaches_the_other_followers_and_is_never_stored() {
             break;
         }
     }
-    send(&mut sender, &ClientFrame::signal(&keys, [5; APPEND_NONCE_BYTES], keys.seal(b"online").unwrap())).await;
+    send(&mut sender, &ClientFrame::signal(&keys, rand::random(), keys.seal(b"online").unwrap())).await;
     loop {
         if let SyncEvent::Signal { stream, plain } = tokio::time::timeout(WAIT, events.recv()).await.unwrap().unwrap() {
             assert_eq!((stream, plain), (keys.id, b"online".to_vec()));
@@ -446,7 +446,7 @@ async fn a_last_word_is_heard_when_a_connection_drops_but_not_after_a_close() {
 
     let mut leaving = raw(&url).await;
     open_raw(&mut leaving, &keys).await;
-    send(&mut leaving, &ClientFrame::will(&keys, [1; APPEND_NONCE_BYTES], keys.seal(b"gone").unwrap())).await;
+    send(&mut leaving, &ClientFrame::will(&keys, rand::random(), keys.seal(b"gone").unwrap())).await;
     let forged = ClientFrame::Will { stream: keys.id, nonce: Bytes([2; APPEND_NONCE_BYTES]), body: Blob(keys.seal(b"x").unwrap()), sig: Bytes([7; 64]) };
     send(&mut leaving, &forged).await;
     assert!(matches!(receive(&mut leaving).await, ServerFrame::Error { code: ErrorCode::BadSignature, .. }));
@@ -455,7 +455,7 @@ async fn a_last_word_is_heard_when_a_connection_drops_but_not_after_a_close() {
 
     let mut closing = raw(&url).await;
     open_raw(&mut closing, &keys).await;
-    send(&mut closing, &ClientFrame::will(&keys, [3; APPEND_NONCE_BYTES], keys.seal(b"closed").unwrap())).await;
+    send(&mut closing, &ClientFrame::will(&keys, rand::random(), keys.seal(b"closed").unwrap())).await;
     send(&mut closing, &ClientFrame::Close { stream: keys.id }).await;
     send(&mut closing, &ClientFrame::Ping).await;
     assert_eq!(receive(&mut closing).await, ServerFrame::Pong);

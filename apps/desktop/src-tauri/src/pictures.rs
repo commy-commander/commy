@@ -16,11 +16,9 @@ static OFFERED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 pub use commy_view::pictures::pictures_url;
 
-fn picture_url(blob: &str) -> Option<(PictureKey, String)> {
+fn picture_url(key: &PictureKey) -> Option<String> {
     let base = sync_link::url().as_deref().and_then(pictures_url)?;
-    let key = PictureKey::for_blob(blob);
-    let url = format!("{base}/{}", key.id_hex());
-    Some((key, url))
+    Some(format!("{base}/{}", key.id_hex()))
 }
 
 pub fn opened(key: &PictureKey, blob: &str, body: &[u8], max: u64) -> Option<Vec<u8>> {
@@ -29,7 +27,8 @@ pub fn opened(key: &PictureKey, blob: &str, body: &[u8], max: u64) -> Option<Vec
 }
 
 pub async fn fetch(http: &reqwest::Client, blob: &str, max: u64) -> Option<Vec<u8>> {
-    let (key, url) = picture_url(blob)?;
+    let key = PictureKey::for_blob(blob);
+    let url = picture_url(&key)?;
     let fetched = tokio::time::timeout(FETCH_WAIT, async {
         let response = http.get(url).send().await.ok()?;
         if !response.status().is_success() {
@@ -66,7 +65,8 @@ pub fn offer(http: &reqwest::Client, blob: &str, bytes: &[u8]) {
     if bytes.len() > MAX_PICTURE_PLAIN || !is_blob_of(blob, bytes) {
         return;
     }
-    let Some((key, url)) = picture_url(blob) else { return };
+    let key = PictureKey::for_blob(blob);
+    let Some(url) = picture_url(&key) else { return };
     if !first_offer(blob) {
         return;
     }

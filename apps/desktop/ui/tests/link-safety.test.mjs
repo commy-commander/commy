@@ -4,25 +4,25 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const {
-  MAX_TRUSTED_LINK_DOMAINS, LINK_SIGN_TEXT, readTrustedDomains, withTrustedDomain, writeTrustedDomains, shownHostParts, leavingPrompt, trustedLinksSummary, openLinkInNewTab, LINK_REFUSED,
+  MAX_ALLOWED_LINK_DOMAINS, LINK_SIGN_TEXT, readAllowedDomains, withAllowedDomain, writeAllowedDomains, shownHostParts, leavingPrompt, allowedLinksSummary, openLinkInNewTab, LINK_REFUSED,
 } = require("../scripts/link-safety.js");
 
 const check = over => ({ url: "https://www.example.org/", host: "www.example.org", shown_host: "www.example.org", site: "example.org", trust_key: "example.org", level: "ask", signs: [], can_trust: true, ...over });
 
 test("trusted domains survive a round trip and ignore junk", () => {
-  assert.deepEqual(readTrustedDomains(null), []);
-  assert.deepEqual(readTrustedDomains("not json"), []);
-  assert.deepEqual(readTrustedDomains('{"a":1}'), []);
-  assert.deepEqual(readTrustedDomains('[" Example.org. ", 3, null, "example.org", "b.example"]'), ["example.org", "b.example"]);
-  assert.deepEqual(readTrustedDomains(writeTrustedDomains(["a.example", "b.example"])), ["a.example", "b.example"]);
+  assert.deepEqual(readAllowedDomains(null), []);
+  assert.deepEqual(readAllowedDomains("not json"), []);
+  assert.deepEqual(readAllowedDomains('{"a":1}'), []);
+  assert.deepEqual(readAllowedDomains('[" Example.org. ", 3, null, "example.org", "b.example"]'), ["example.org", "b.example"]);
+  assert.deepEqual(readAllowedDomains(writeAllowedDomains(["a.example", "b.example"])), ["a.example", "b.example"]);
 });
 
 test("trusting a domain again moves it to the end, and the list keeps the newest", () => {
-  assert.deepEqual(withTrustedDomain(["a.example", "b.example"], "A.example"), ["b.example", "a.example"]);
-  assert.deepEqual(withTrustedDomain(["a.example"], ""), ["a.example"]);
-  const many = Array.from({ length: MAX_TRUSTED_LINK_DOMAINS }, (_, i) => `site${i}.example`);
-  const next = withTrustedDomain(many, "new.example");
-  assert.equal(next.length, MAX_TRUSTED_LINK_DOMAINS);
+  assert.deepEqual(withAllowedDomain(["a.example", "b.example"], "A.example"), ["b.example", "a.example"]);
+  assert.deepEqual(withAllowedDomain(["a.example"], ""), ["a.example"]);
+  const many = Array.from({ length: MAX_ALLOWED_LINK_DOMAINS }, (_, i) => `site${i}.example`);
+  const next = withAllowedDomain(many, "new.example");
+  assert.equal(next.length, MAX_ALLOWED_LINK_DOMAINS);
   assert.equal(next[0], "site1.example");
   assert.equal(next.at(-1), "new.example");
 });
@@ -71,9 +71,9 @@ test("no prompt text names a product, a protocol or a host", () => {
 });
 
 test("the settings summary counts trusted sites", () => {
-  assert.equal(trustedLinksSummary([]), "Every site outside Commy asks before it opens.");
-  assert.equal(trustedLinksSummary(["a.example"]), "1 site opens without asking on this device.");
-  assert.equal(trustedLinksSummary(["a.example", "b.example"]), "2 sites open without asking on this device.");
+  assert.equal(allowedLinksSummary([]), "Every site outside Commy asks before it opens.");
+  assert.equal(allowedLinksSummary(["a.example"]), "1 site opens without asking on this device.");
+  assert.equal(allowedLinksSummary(["a.example", "b.example"]), "2 sites open without asking on this device.");
 });
 
 test("the browser opens outside links in a new tab that cannot reach back into the app", () => {
