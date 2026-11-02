@@ -510,11 +510,63 @@ struct TopicHandle {
     sender: GossipSender,
     neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
     reader: n0_future::task::AbortHandle,
+    greeter: n0_future::task::AbortHandle,
 }
 
 impl Drop for TopicHandle {
     fn drop(&mut self) {
         self.reader.abort();
+        self.greeter.abort();
+    }
+}
+
+const RETURNING_CAP: usize = 64;
+
+const REJOIN_AFTER: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone)]
+struct GossipDoor {
+    gossip: Gossip,
+    returning: tokio::sync::broadcast::Sender<[u8; 32]>,
+}
+
+impl ProtocolHandler for GossipDoor {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        let peer = *connection.remote_id().as_bytes();
+        ProtocolHandler::accept(&self.gossip, connection).await?;
+        let _ = self.returning.send(peer);
+        Ok(())
+    }
+
+    async fn shutdown(&self) {
+        ProtocolHandler::shutdown(&self.gossip).await;
+    }
+}
+
+fn came_back(neighbors: &BTreeSet<[u8; 32]>, peer: &[u8; 32]) -> bool {
+    neighbors.contains(peer)
+}
+
+async fn greet_returning(
+    sender: GossipSender,
+    neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
+    mut returning: tokio::sync::broadcast::Receiver<[u8; 32]>,
+) {
+    loop {
+        let peer = match returning.recv().await {
+            Ok(peer) => peer,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+        };
+        if !came_back(&neighbors.borrow(), &peer) {
+            continue;
+        }
+        let Ok(id) = EndpointId::from_bytes(&peer) else { continue };
+        n0_future::time::sleep(REJOIN_AFTER).await;
+        tracing::info!("neighbor {} connected again, renewing it", id.fmt_short());
+        if sender.join_peers(vec![id]).await.is_err() {
+            return;
+        }
     }
 }
 
@@ -1063,6 +1115,7 @@ pub struct CommyNode {
     relays: Vec<RelayUrl>,
     can_discover_address: bool,
     topics: HashMap<ServerId, TopicHandle>,
+    returning: tokio::sync::broadcast::Sender<[u8; 32]>,
     events_tx: mpsc::UnboundedSender<NetEvent>,
     entry_key_requests: Option<mpsc::UnboundedReceiver<crate::entry_key::EntryKeyAsk>>,
     mirror_requests: Option<mpsc::UnboundedReceiver<crate::mirror::MirrorAsk>>,
@@ -1191,7 +1244,9 @@ impl CommyNode {
             inbound: Inbound::new(MAX_CATCHUP_SESSIONS, HANDSHAKE_TIMEOUT),
         };
         let gossip = Gossip::builder().spawn(endpoint.clone());
-        let router = Router::builder(endpoint).accept(iroh_gossip::ALPN, gossip.clone());
+        let (returning, _) = tokio::sync::broadcast::channel(RETURNING_CAP);
+        let door = GossipDoor { gossip: gossip.clone(), returning: returning.clone() };
+        let router = Router::builder(endpoint).accept(iroh_gossip::ALPN, door);
         let blobs = MemStore::new();
         let router = router.accept(iroh_blobs::ALPN, iroh_blobs::BlobsProtocol::new(&blobs, None));
         #[cfg(not(wasm_browser))]
@@ -1220,6 +1275,7 @@ impl CommyNode {
                 relays,
                 can_discover_address,
                 topics: HashMap::new(),
+                returning,
                 events_tx,
                 entry_key_requests: Some(entry_key_rx),
                 mirror_requests: Some(mirror_rx),
@@ -1597,12 +1653,14 @@ impl CommyNode {
             neighbors_tx.send_modify(|set| set.clear());
         });
 
+        let greeter = n0_future::task::spawn(greet_returning(sender.clone(), neighbors_rx.clone(), self.returning.subscribe()));
         self.topics.insert(
             server_id,
             TopicHandle {
                 sender,
                 neighbors: neighbors_rx,
                 reader: reader.abort_handle(),
+                greeter: greeter.abort_handle(),
             },
         );
         Ok(())
@@ -2299,6 +2357,15 @@ mod tests {
         assert_eq!(refused.to_string(), "that file is larger than 20 MB");
         assert!(check_blob_size(u64::MAX, MAX_BLOB_BYTES).is_err());
         assert!(check_blob_size(512 * 1024 * 1024, 512 * 1024 * 1024).is_ok());
+    }
+
+    #[test]
+    fn only_a_neighbor_we_already_have_counts_as_coming_back() {
+        let (known, stranger) = ([1u8; 32], [2u8; 32]);
+        let neighbors: BTreeSet<[u8; 32]> = [known].into_iter().collect();
+        assert!(came_back(&neighbors, &known));
+        assert!(!came_back(&neighbors, &stranger));
+        assert!(!came_back(&BTreeSet::new(), &known));
     }
 
     async fn local_node() -> CommyNode {

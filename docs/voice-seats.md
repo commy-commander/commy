@@ -123,6 +123,12 @@ join, or is refused at the door, so a bench run can show which side failed.
 
 - Every device's greeting (`here`) carries its `DeviceAnnounce` and, when in
   voice, its `VoiceState`. Members answer a newcomer with their greeting.
+- A peer that restarted without a goodbye dials in again under the same node
+  id while the others still hold its dead gossip connection and count it as
+  a neighbor, so they ignore its join. When a node we already count as a
+  neighbor connects again, we ask it to join us (`GossipDoor` in
+  commy-net), which makes it see us as a neighbor again within a second or
+  so instead of after the old connection times out.
 - An app that restarted without a goodbye is no newcomer to the others, so
   nobody greets it. Members in voice therefore answer each new join into
   their room (a `since` they have not answered yet) with their own seat
