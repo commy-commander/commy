@@ -524,6 +524,8 @@ const RETURNING_CAP: usize = 64;
 
 const REJOIN_AFTER: Duration = Duration::from_secs(1);
 
+const GREET_AFTER: Duration = Duration::from_secs(2);
+
 #[derive(Debug, Clone)]
 struct GossipDoor {
     gossip: Gossip,
@@ -548,9 +550,11 @@ fn came_back(neighbors: &BTreeSet<[u8; 32]>, peer: &[u8; 32]) -> bool {
 }
 
 async fn greet_returning(
+    server: ServerId,
     sender: GossipSender,
     neighbors: tokio::sync::watch::Receiver<BTreeSet<[u8; 32]>>,
     mut returning: tokio::sync::broadcast::Receiver<[u8; 32]>,
+    events: mpsc::UnboundedSender<NetEvent>,
 ) {
     loop {
         let peer = match returning.recv().await {
@@ -565,6 +569,10 @@ async fn greet_returning(
         n0_future::time::sleep(REJOIN_AFTER).await;
         tracing::info!("neighbor {} connected again, renewing it", id.fmt_short());
         if sender.join_peers(vec![id]).await.is_err() {
+            return;
+        }
+        n0_future::time::sleep(GREET_AFTER).await;
+        if came_back(&neighbors.borrow(), &peer) && events.send(NetEvent::NeighborUp { server, peer }).is_err() {
             return;
         }
     }
@@ -1653,7 +1661,13 @@ impl CommyNode {
             neighbors_tx.send_modify(|set| set.clear());
         });
 
-        let greeter = n0_future::task::spawn(greet_returning(sender.clone(), neighbors_rx.clone(), self.returning.subscribe()));
+        let greeter = n0_future::task::spawn(greet_returning(
+            server_id,
+            sender.clone(),
+            neighbors_rx.clone(),
+            self.returning.subscribe(),
+            self.events_tx.clone(),
+        ));
         self.topics.insert(
             server_id,
             TopicHandle {

@@ -128,7 +128,9 @@ join, or is refused at the door, so a bench run can show which side failed.
   a neighbor, so they ignore its join. When a node we already count as a
   neighbor connects again, we ask it to join us (`GossipDoor` in
   commy-net), which makes it see us as a neighbor again within a second or
-  so instead of after the old connection times out.
+  so instead of after the old connection times out. Two seconds after that
+  renewal we greet it as if it were a new neighbor (devices, seat, catch-up),
+  because anything we sent it before the renewal never reached it.
 - An app that restarted without a goodbye is no newcomer to the others, so
   nobody greets it. Members in voice therefore answer each new join into
   their room (a `since` they have not answered yet) with their own seat
