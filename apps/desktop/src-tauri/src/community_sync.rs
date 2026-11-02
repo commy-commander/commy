@@ -684,6 +684,12 @@ pub fn publish(server: ServerId, payload: &WirePayload) {
         return;
     }
     publish_held(Unsent { server, payload: payload.clone(), at: now_ms() });
+    if streams::event_of(payload).is_some_and(|(event, _)| streams::changes_lanes(event)) {
+        let handle = LIVE.lock().unwrap().as_ref().map(|live| live.handle.clone());
+        if let Some(handle) = handle {
+            refresh_soon(&handle);
+        }
+    }
 }
 
 fn publish_held(held: Unsent) {
@@ -975,7 +981,7 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
         return;
     }
     let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
-    let key_event = streams::is_key_event(&event);
+    let lanes_changed = streams::changes_lanes(&event);
     match event {
         ServerEvent::MessageCreate { message } if !rings(live_now, message.created_at, Utc::now()) => {
             crate::catchup::AppStore(handle.clone()).apply(server, vec![message], Vec::new());
@@ -984,7 +990,7 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
             let _ = net.send(NetEvent::Event { server, sender: streams::SERVICE_SENDER, event, action });
         }
     }
-    if key_event {
+    if lanes_changed {
         refresh_soon(handle);
     }
 }

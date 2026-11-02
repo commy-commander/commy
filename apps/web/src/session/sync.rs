@@ -337,10 +337,10 @@ impl Session {
             return;
         }
         let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
-        let key_event = streams::is_key_event(&event);
+        let lanes_changed = streams::changes_lanes(&event);
         let rings = matches!(&event, ServerEvent::MessageCreate { message } if streams::rings(now_live, message.created_at, Utc::now()));
         let applied = self.apply_stored(server, event, action, rings, now_live);
-        if key_event && now_live && applied != Applied::Nothing {
+        if lanes_changed && now_live && applied != Applied::Nothing {
             self.refresh_sync();
         }
     }
@@ -641,10 +641,19 @@ impl Session {
         live.book.writers(server, lane).into_iter().filter_map(|stream| Some((stream, live.pool.client_for(stream)?))).collect()
     }
 
+    fn store_writers(&self, server: ServerId, lane: Lane) -> Vec<(StreamId, SyncClient)> {
+        let found = self.writers(server, lane);
+        if !found.is_empty() {
+            return found;
+        }
+        self.refresh_sync();
+        self.writers(server, lane)
+    }
+
     pub(super) async fn publish_stored(&self, server: ServerId, payload: &WirePayload) {
         let Some(lane) = streams::lane_of_payload(payload) else { return self.publish(server, payload) };
         let Some(plain) = streams::encode_entry(payload) else { return };
-        for (stream, client) in self.writers(server, lane) {
+        for (stream, client) in self.store_writers(server, lane) {
             let _ = n0_future::time::timeout(STORE_WAIT, client.append(stream, plain.clone())).await;
         }
     }
@@ -652,11 +661,14 @@ impl Session {
     pub(super) fn publish(&self, server: ServerId, payload: &WirePayload) {
         if let Some(lane) = streams::lane_of_payload(payload) {
             let Some(plain) = streams::encode_entry(payload) else { return };
-            for (stream, client) in self.writers(server, lane) {
+            for (stream, client) in self.store_writers(server, lane) {
                 let plain = plain.clone();
                 spawn_local(async move {
                     let _ = client.append(stream, plain).await;
                 });
+            }
+            if streams::event_of(payload).is_some_and(|(event, _)| streams::changes_lanes(event)) {
+                self.refresh_sync();
             }
             return;
         }
@@ -671,7 +683,7 @@ impl Session {
     pub(super) fn send_to_service(self: &Rc<Self>, server: ServerId, message: &Message) {
         let payload = WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() });
         let Some(plain) = streams::encode_entry(&payload) else { return };
-        let writers = self.writers(server, Lane::Channel(message.channel));
+        let writers = self.store_writers(server, Lane::Channel(message.channel));
         if writers.is_empty() {
             return;
         }
