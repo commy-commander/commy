@@ -66,6 +66,7 @@ const server = http.createServer(
     pool,
     redis,
     linkBlocklist,
+    trustedProxies: config.trustedProxies,
   }),
 );
 

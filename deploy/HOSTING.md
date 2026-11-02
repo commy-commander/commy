@@ -510,7 +510,8 @@ emails, links or tokens.
 
 - Rate limits per IP: sign-up 5 per 10 minutes, sign-in 10 per minute, magic
   links and password resets 5 per 10 minutes, device codes 10 per minute,
-  doorbell rings 300 and takes 600 per minute. Counted in Redis when the
+  device code lookups 30 per 10 minutes, doorbell rings 300 and takes 600 per
+  minute. Counted in Redis when the
   stack has one, so they hold across restarts and auth instances.
 - Sync service, per IP: 256 open connections, 5 new entries a second (bursts
   of 60) and 64 MB of entries a day (`SYNC_CONNECTIONS_PER_ADDRESS`,
@@ -520,6 +521,11 @@ emails, links or tokens.
   tags per ring.
 - Optional Turnstile bot check and `ALLOW_SIGNUP=false` (see above).
 - Device codes expire after 10 minutes and must be approved by a signed-in user.
+- The auth server counts a visitor by the address in `X-Forwarded-For` only
+  when the connection comes from a trusted proxy (`TRUSTED_PROXIES`, by
+  default private and loopback networks, which covers the bundled Caddy), and
+  by the connection's own address otherwise. If your proxy reaches the auth
+  server from a public address, list it in `TRUSTED_PROXIES`.
 - Behind another proxy or CDN (for example Cloudflare), rate limits only see
   the real client IP if that proxy's address forwarding reaches Caddy.
 
