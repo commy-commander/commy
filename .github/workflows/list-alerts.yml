@@ -15,3 +15,5 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/code-scanning/alerts?state=open&per_page=100" --paginate --jq '.[] | [.number, .rule.id, (.rule.security_severity_level // .rule.severity), .most_recent_instance.location.path, .most_recent_instance.location.start_line, .most_recent_instance.location.end_line, .created_at, .most_recent_instance.message.text] | @tsv'
           echo ---DISMISSED-COUNT---
           gh api "repos/$GITHUB_REPOSITORY/code-scanning/alerts?state=dismissed&per_page=100" --paginate --jq '.[] | .number' | wc -l
+          echo ---DEPENDABOT---
+          gh api "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" --jq '.[] | [.number, .security_advisory.severity, .dependency.package.ecosystem, .dependency.package.name, .dependency.manifest_path, .security_vulnerability.first_patched_version.identifier, .security_advisory.ghsa_id, .security_advisory.summary] | @tsv' || true
