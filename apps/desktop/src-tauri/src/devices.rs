@@ -61,9 +61,14 @@ pub(crate) async fn on_announce(handle: &tauri::AppHandle, server: ServerId, eve
             return;
         }
     }
-    if *user != me {
-        follow_device(&app, handle, server, *user, node, *voice, since_of(event));
+    if *user != me && follow_device(&app, handle, server, *user, node, *voice, since_of(event)) {
+        tracing::info!("answering {user}'s voice join with our seat");
+        crate::liveness::keep_seat(&app).await;
     }
+}
+
+pub(crate) fn new_join(answered: Option<i64>, here: bool, since: Option<i64>) -> bool {
+    here && since.is_some() && answered != since
 }
 
 fn since_of(event: &ServerEvent) -> Option<i64> {
@@ -83,21 +88,23 @@ fn follow_device(
     node: &str,
     voice: Option<ChannelId>,
     since: Option<i64>,
-) {
-    let here = {
+) -> bool {
+    let (here, answer) = {
         let mut session = app.voice_session.lock().unwrap();
-        let Some(session) = session.as_mut().filter(|s| s.server == server) else { return };
+        let Some(session) = session.as_mut().filter(|s| s.server == server) else { return false };
         let here = Some(session.channel) == voice;
+        let answer = session.owes_answer(user, voice, since);
         let other_device = here && session.peer_node(user).is_some_and(|linked| !linked.eq_ignore_ascii_case(node));
         if session.link_outlived(user, node, voice, since) || other_device {
             tracing::info!("dropping the voice link to {user}: the device it went to left or joined again");
             session.detach_peer(user);
         }
-        here
+        (here, answer)
     };
     if here {
         crate::react_to_voice_change(app, handle, server, user, voice);
     }
+    answer
 }
 
 async fn hand_over(app: &App, handle: &tauri::AppHandle) {
@@ -165,6 +172,15 @@ mod tests {
         assert!(same_link(old, &desktop.to_uppercase()));
         assert!(!same_link(old, &phone), "a link to another of their devices");
         assert!(!same_link(None, &desktop));
+    }
+
+    #[test]
+    fn a_join_into_our_room_is_answered_once() {
+        assert!(new_join(None, true, Some(1_000)), "the first join we hear of");
+        assert!(!new_join(Some(1_000), true, Some(1_000)), "their seat repeated");
+        assert!(new_join(Some(1_000), true, Some(9_000)), "they restarted and joined again");
+        assert!(!new_join(None, false, Some(1_000)), "they joined another room");
+        assert!(!new_join(None, true, None), "an announce without a join");
     }
 
     fn announce_from_server(server: ServerId, user: UserId, node: &str, voice: Option<ChannelId>) -> ServerEvent {

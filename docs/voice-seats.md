@@ -116,6 +116,12 @@ join, or is refused at the door, so a bench run can show which side failed.
 
 - Every device's greeting (`here`) carries its `DeviceAnnounce` and, when in
   voice, its `VoiceState`. Members answer a newcomer with their greeting.
+- An app that restarted without a goodbye is no newcomer to the others, so
+  nobody greets it. Members in voice therefore answer each new join into
+  their room (a `since` they have not answered yet) with their own seat
+  (`DeviceAnnounce` and `VoiceState`). Otherwise the restarted device would
+  refuse their calls until their next beat, because it would not yet know
+  their device or seat.
 - A server snapshot's voice list is the sender's hearsay. It only fills seats
   the receiver does not already know. Seats nobody then hears from end
   through the liveness rules above.

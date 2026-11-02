@@ -103,7 +103,7 @@ fn me(app: &App) -> Option<UserId> {
     app.profile.lock().unwrap().as_ref().map(|p| p.id)
 }
 
-async fn keep_seat(app: &App) {
+pub(crate) async fn keep_seat(app: &App) {
     let (Some(me), Some(server)) = (me(app), voice_server(app)) else { return };
     let news = crate::devices::announcement(app, server).into_iter().chain(own_seat(app, me, server));
     for event in news.collect::<Vec<_>>() {
