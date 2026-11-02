@@ -44,6 +44,7 @@ mod read_state;
 mod relaunch;
 mod safety;
 mod saved;
+mod sent_files;
 #[cfg(any(target_os = "android", test))]
 mod screen_service;
 use commy_view::catalog;
@@ -924,14 +925,8 @@ async fn pick_attachment(handle: &tauri::AppHandle, title: &str, filter: Option<
 
 async fn store_file(app: &App, contents: picker::Contents) -> CmdResult<(String, Option<String>, u64)> {
     match contents {
-        picker::Contents::Bytes(bytes) => {
-            if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-                return Err(ATTACHMENT_TOO_LARGE.into());
-            }
-            let size = bytes.len() as u64;
-            let (blob, provider) = store_blob(app, bytes).await?;
-            Ok((blob, provider, size))
-        }
+        picker::Contents::Bytes(bytes) => store_sent(app, bytes, None).await,
+        picker::Contents::Picked { bytes, path } => store_sent(app, bytes, Some(&path)).await,
         picker::Contents::OnDisk { path, size } => {
             if size > MAX_PICKED_ATTACHMENT_BYTES {
                 return Err(PICKED_ATTACHMENT_TOO_LARGE.into());
@@ -989,11 +984,27 @@ async fn send_attachment(
     commit_message(app, handle, sid, message).await
 }
 
-async fn store_blob(app: &App, bytes: Vec<u8>) -> CmdResult<(String, Option<String>)> {
-    let net = app.net.lock().await;
-    let node = net.as_ref().ok_or("network is not ready yet")?;
-    let hash = node.add_blob(bytes).await.map_err(err_to_string)?;
-    Ok((hash, Some(node.node_id_hex())))
+async fn store_sent(app: &App, bytes: Vec<u8>, picked_from: Option<&std::path::Path>) -> CmdResult<(String, Option<String>, u64)> {
+    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err(ATTACHMENT_TOO_LARGE.into());
+    }
+    let size = bytes.len() as u64;
+    let (blob, provider) = store_blob(app, bytes, picked_from).await?;
+    Ok((blob, provider, size))
+}
+
+async fn store_blob(app: &App, bytes: Vec<u8>, picked_from: Option<&std::path::Path>) -> CmdResult<(String, Option<String>)> {
+    let (stored, provider, shelf) = {
+        let net = app.net.lock().await;
+        let node = net.as_ref().ok_or("network is not ready yet")?;
+        let kept = picked_from.is_none().then(|| bytes.clone());
+        let hash = node.add_blob(bytes).await.map_err(err_to_string)?;
+        (kept, (hash, Some(node.node_id_hex())), node.shelf())
+    };
+    if let Some(shelf) = shelf {
+        sent_files::keep(&shelf, stored, picked_from).await;
+    }
+    Ok(provider)
 }
 
 #[tauri::command]
@@ -1046,7 +1057,7 @@ async fn send_voice_message(
         require_permission(&app, state, profile.id, Permissions::SEND_VOICE_MESSAGES, "send voice messages here")?;
     }
     let size_bytes = clip.bytes.len() as u64;
-    let (blob, provider) = store_blob(&app, clip.bytes).await?;
+    let (blob, provider) = store_blob(&app, clip.bytes, None).await?;
     let mut message = Message::new(cid, profile.id, String::new());
     message.attachments.push(Attachment::voice_message(blob, size_bytes, provider));
     let _signing = app.signing.read().await;
@@ -1063,7 +1074,7 @@ async fn send_dm_voice_message(
     let (me, partner) = dm_recipient(&app, &user_id)?;
     let clip = take_recording(&app).await?;
     let size_bytes = clip.bytes.len() as u64;
-    let (blob, provider) = store_blob(&app, clip.bytes).await?;
+    let (blob, provider) = store_blob(&app, clip.bytes, None).await?;
     let mut message = DmMessage::new(me.id, partner, String::new());
     message.attachments.push(Attachment::voice_message(blob, size_bytes, provider));
     let view = post_dm(&app, &handle, &me, partner, message).await?;
@@ -1779,7 +1790,10 @@ const SHARED_FILES_DIR: &str = "shared-files";
 async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
     let Some(dir) = app.data_dir().map(|d| d.join(SHARED_FILES_DIR)) else { return };
     match commy_net::shelf::Shelf::open(&dir).await {
-        Ok(shelf) => node.set_shelf(shelf),
+        Ok(shelf) => {
+            tauri::async_runtime::spawn(sent_files::sweep(shelf.clone()));
+            node.set_shelf(shelf);
+        }
         Err(e) => tracing::warn!("big files cannot be shared from this device: {e:#}"),
     }
 }

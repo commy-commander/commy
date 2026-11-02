@@ -6,6 +6,7 @@ const OVERLAY_LABEL = windowLabel();
 
 const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, picturesOnly: false, config: null, lines: [], testing: false };
 const TEST_MEMBERS = [{ id: "overlay-test", name: "You, talking" }];
+const tiles = new Map();
 let noticeTimer = null;
 
 function el(tag, className, text) {
@@ -37,6 +38,7 @@ function applyConfig(config) {
   overlay.showEveryone = Boolean(config.show_everyone);
   overlay.picturesOnly = Boolean(config.pictures_only);
   document.body.classList.toggle("pictures", overlay.picturesOnly);
+  document.body.classList.toggle("vertical", Boolean(config.stack_vertical));
   const notice = overlayMovedNotice(overlay.config, config);
   overlay.config = config;
   if (notice && place.part !== "chat") showNotice(notice);
@@ -71,31 +73,57 @@ function runTest() {
   }, OVERLAY_TEST_MS);
 }
 
+function fillTile(row, member) {
+  const avatar = el("div", "avatar");
+  avatar.style.setProperty("--tint", personTint(member.id));
+  if (member.image) {
+    const img = el("img");
+    img.src = member.image;
+    img.alt = "";
+    avatar.appendChild(img);
+  } else if (member.emoji) {
+    avatar.classList.add("emoji");
+    avatar.textContent = member.emoji;
+  } else {
+    avatar.textContent = initials(member.name);
+  }
+  row.replaceChildren(avatar);
+  if (!overlay.picturesOnly) row.appendChild(el("div", "name", member.name));
+}
+
+function memberTile(member) {
+  const key = overlayTileKey(member, overlay.picturesOnly);
+  let row = tiles.get(member.id);
+  if (!row) {
+    row = el("div", "member");
+    row.dataset.user = member.id;
+    tiles.set(member.id, row);
+  }
+  if (row.dataset.key !== key) {
+    row.dataset.key = key;
+    fillTile(row, member);
+  }
+  return row;
+}
+
 function renderMembers() {
   const list = $("members");
-  list.replaceChildren();
   const lingering = new Set(overlay.lingering.keys());
   const speaking = overlay.testing ? new Set([...overlay.speaking, "overlay-test"]) : overlay.speaking;
   const members = overlay.testing ? [...TEST_MEMBERS, ...overlay.members] : overlay.members;
-  for (const member of overlayVisibleMembers({ members, speaking, lingering, showEveryone: overlay.showEveryone, picturesOnly: overlay.picturesOnly })) {
-    const row = el("div", "member" + (speaking.has(member.id) ? " speaking" : ""));
-    row.dataset.user = member.id;
-    const avatar = el("div", "avatar");
-    avatar.style.setProperty("--tint", personTint(member.id));
-    if (member.image) {
-      const img = el("img");
-      img.src = member.image;
-      img.alt = "";
-      avatar.appendChild(img);
-    } else if (member.emoji) {
-      avatar.classList.add("emoji");
-      avatar.textContent = member.emoji;
-    } else {
-      avatar.textContent = initials(member.name);
-    }
-    row.appendChild(avatar);
-    if (!overlay.picturesOnly) row.appendChild(el("div", "name", member.name));
-    list.appendChild(row);
+  const shown = overlayVisibleMembers({ members, speaking, lingering, showEveryone: overlay.showEveryone, picturesOnly: overlay.picturesOnly });
+  const ids = new Set(shown.map(m => m.id));
+  for (const [id, row] of tiles) {
+    if (ids.has(id)) continue;
+    row.remove();
+    tiles.delete(id);
+  }
+  let cursor = list.firstElementChild;
+  for (const member of shown) {
+    const row = memberTile(member);
+    row.classList.toggle("speaking", speaking.has(member.id));
+    if (row === cursor) cursor = cursor.nextElementSibling;
+    else list.insertBefore(row, cursor);
   }
 }
 
@@ -185,7 +213,7 @@ async function start() {
 
 if (!tauri && typeof location !== "undefined" && location.hash.startsWith("#preview")) {
   const opts = location.hash.slice(9).replace(/^=/, "").split(",");
-  applyConfig({ corner: opts[0] || "top-left", show_everyone: opts.includes("everyone"), pictures_only: opts.includes("pictures"), show_chat: true, opacity: 0.92 });
+  applyConfig({ corner: opts[0] || "top-left", show_everyone: opts.includes("everyone"), pictures_only: opts.includes("pictures"), stack_vertical: opts.includes("vertical"), show_chat: true, opacity: 0.92 });
   renderRoster({ members: [
     { id: "ferris", name: "ferris", emoji: "🦀" },
     { id: "nova", name: "nova" },

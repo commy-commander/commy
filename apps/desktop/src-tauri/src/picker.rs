@@ -7,13 +7,14 @@ pub struct Picked {
 
 pub enum Contents {
     Bytes(Vec<u8>),
+    Picked { bytes: Vec<u8>, path: std::path::PathBuf },
     OnDisk { path: std::path::PathBuf, size: u64 },
 }
 
 impl Contents {
     pub fn size(&self) -> u64 {
         match self {
-            Contents::Bytes(bytes) => bytes.len() as u64,
+            Contents::Bytes(bytes) | Contents::Picked { bytes, .. } => bytes.len() as u64,
             Contents::OnDisk { size, .. } => *size,
         }
     }
@@ -80,7 +81,7 @@ pub async fn pick_attachment(
     let contents = if size > keep_on_disk_over {
         Contents::OnDisk { path, size }
     } else {
-        Contents::Bytes(tokio::fs::read(&path).await.map_err(err_to_string)?)
+        Contents::Picked { bytes: tokio::fs::read(&path).await.map_err(err_to_string)?, path }
     };
     Ok(Some(PickedFile { name: picked.file_name(), contents }))
 }
