@@ -255,7 +255,7 @@ impl Book {
             return false;
         }
         self.list.servers.insert(server, entry);
-        self.offer_key(server, key, at);
+        self.keys.insert(server, (key, at));
         true
     }
 
@@ -500,6 +500,18 @@ mod tests {
         assert_eq!(book.fold(Record::parse(&community_key_record(server, &key, 5, None))), Change::Nothing);
         let mut left = Book::new(EntryList { left: [(server, Utc::now() + Duration::days(1))].into(), ..Default::default() });
         assert!(!left.join(server, joined, key, 5), "a server we left after this invite stays left");
+    }
+
+    #[test]
+    fn rejoining_a_server_we_were_removed_from_takes_the_invites_key() {
+        let server = ServerId::new();
+        let (old, new) = (KeyId::random(), KeyId::random());
+        let mut book = Book::new(EntryList::default());
+        let key = |id| SharedKey::of(id, &ChannelSecret::random());
+        assert!(book.join(server, entry(server, Utc::now() - Duration::hours(2)), key(old), 5));
+        book.leave(server, Utc::now() - Duration::hours(1));
+        assert!(book.join(server, entry(server, Utc::now()), key(new), 10));
+        assert_eq!(book.given()[&server].0, new, "the old key would follow streams the server no longer reads");
     }
 
     #[test]
