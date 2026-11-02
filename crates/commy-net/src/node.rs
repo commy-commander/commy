@@ -606,6 +606,8 @@ pub fn is_blob_of(blob: &str, bytes: &[u8]) -> bool {
     blob.parse::<iroh_blobs::Hash>().is_ok_and(|hash| hash == iroh_blobs::Hash::new(bytes))
 }
 
+pub const FILES_ALPN: &[u8] = b"commy/files/1";
+
 pub const BLOB_UNAVAILABLE: &str = "nobody who has this file is online right now";
 
 const BLOB_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -695,7 +697,7 @@ impl BlobFetcher {
         for source in sources {
             let Some(node_id) = self.dialable(source) else { continue };
             tried.push(node_id);
-            for alpn in [crate::shelf::FILES_ALPN, iroh_blobs::ALPN] {
+            for alpn in [FILES_ALPN, iroh_blobs::ALPN] {
                 let streamed = match dial_for_blob(&self.endpoint, node_id, alpn).await {
                     Ok(connection) => stream_to_file(connection, hash, max, target, &mut progress).await,
                     Err(e) => Err(e),
@@ -712,7 +714,7 @@ impl BlobFetcher {
                 }
             }
         }
-        let mut reached = self.dial_all(self.untried(members, &tried), crate::shelf::FILES_ALPN);
+        let mut reached = self.dial_all(self.untried(members, &tried), FILES_ALPN);
         while let Some((node_id, dialed)) = reached.next().await {
             let mut streamed = match dialed {
                 Ok(connection) => stream_to_file(connection, hash, max, target, &mut progress).await,
@@ -858,15 +860,16 @@ impl BlobFetcher {
                 return Ok(bytes.to_vec());
             }
         }
+        #[cfg(not(wasm_browser))]
+        if let Some(bytes) = self.kept_on_shelf(hash, max).await? {
+            return Ok(bytes);
+        }
         let mut tried = Vec::new();
         for source in sources {
             let Some(node_id) = self.dialable(source) else { continue };
             tried.push(node_id);
-            let fetched = match dial_for_blob(&self.endpoint, node_id, iroh_blobs::ALPN).await {
-                Ok(connection) => fetch_over(connection, hash, max).await,
-                Err(e) => Err(e),
-            };
-            match fetched {
+            let dialed = dial_for_blob(&self.endpoint, node_id, iroh_blobs::ALPN).await;
+            match self.fetch_or_from_shelf(node_id, dialed, hash, max).await {
                 Ok(bytes) => return Ok(self.kept(bytes).await),
                 Err(e) if e.is::<BlobTooLarge>() => return Err(e),
                 Err(e) => tracing::info!("file {} not fetched from {}: {e:#}", hash.fmt_short(), node_id.fmt_short()),
@@ -874,14 +877,40 @@ impl BlobFetcher {
         }
         let mut reached = self.dial_all(self.untried(members, &tried), iroh_blobs::ALPN);
         while let Some((node_id, dialed)) = reached.next().await {
-            let Ok(connection) = dialed else { continue };
-            match fetch_over(connection, hash, max).await {
+            if dialed.is_err() {
+                continue;
+            }
+            match self.fetch_or_from_shelf(node_id, dialed, hash, max).await {
                 Ok(bytes) => return Ok(self.kept(bytes).await),
                 Err(e) if e.is::<BlobTooLarge>() => return Err(e),
                 Err(e) => tracing::info!("file {} not fetched from member {}: {e:#}", hash.fmt_short(), node_id.fmt_short()),
             }
         }
         anyhow::bail!(BLOB_UNAVAILABLE)
+    }
+
+    async fn fetch_or_from_shelf(&self, node_id: EndpointId, dialed: Result<Connection>, hash: iroh_blobs::Hash, max: u64) -> Result<Vec<u8>> {
+        let fetched = match dialed {
+            Ok(connection) => fetch_over(connection, hash, max).await,
+            Err(e) => Err(e),
+        };
+        match fetched {
+            Err(e) if !e.is::<BlobTooLarge>() && !e.is::<Unreachable>() => {
+                let connection = dial_for_blob(&self.endpoint, node_id, FILES_ALPN).await?;
+                fetch_over(connection, hash, max).await
+            }
+            fetched => fetched,
+        }
+    }
+
+    #[cfg(not(wasm_browser))]
+    async fn kept_on_shelf(&self, hash: iroh_blobs::Hash, max: u64) -> Result<Option<Vec<u8>>> {
+        let shelf = self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let Some(shelf) = shelf else { return Ok(None) };
+        let hex = hash.to_hex();
+        let Some(shared) = shelf.shared(&hex).await else { return Ok(None) };
+        check_blob_size(shared.size, max)?;
+        Ok(shelf.bytes(&hex).await)
     }
 
     async fn kept(&self, bytes: Vec<u8>) -> Vec<u8> {
@@ -1083,7 +1112,7 @@ impl CommyNode {
         #[cfg(not(wasm_browser))]
         let shelf = ShelfSlot::default();
         #[cfg(not(wasm_browser))]
-        let router = router.accept(crate::shelf::FILES_ALPN, FilesAcceptor { shelf: shelf.clone() });
+        let router = router.accept(FILES_ALPN, FilesAcceptor { shelf: shelf.clone() });
         let router = router
             .accept(MEDIA_ALPN, MediaAcceptor { tx: media_tx, gate: media_gate.clone() })
             .accept(DM_ALPN, DmAcceptor { tx: dm_tx.clone(), legacy: false })
@@ -1538,6 +1567,11 @@ impl CommyNode {
     #[cfg(not(wasm_browser))]
     pub fn set_shelf(&self, shelf: crate::shelf::Shelf) {
         *self.shelf.write().unwrap_or_else(|e| e.into_inner()) = Some(shelf);
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub fn shelf(&self) -> Option<crate::shelf::Shelf> {
+        self.shelf.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     #[cfg(not(wasm_browser))]
@@ -2278,6 +2312,34 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), bytes);
         friend.shutdown().await.ok();
         guest.shutdown().await.ok();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_sent_file_still_comes_from_its_sender_after_a_restart() {
+        let dir = std::env::temp_dir().join(format!("commy-sent-{}", rand::random::<u64>()));
+        let secret = CommyNode::generate_secret();
+        let spawn = || CommyNode::spawn_with(Some(secret), Some(iroh::RelayMap::empty()));
+        let sender = spawn().await.unwrap().0;
+        let shelf = crate::shelf::Shelf::open(&dir).await.unwrap();
+        sender.set_shelf(shelf.clone());
+        let bytes = picture();
+        shelf.keep_sent_bytes(bytes.clone(), 1_000).await.unwrap();
+        let blob = sender.add_blob(bytes.clone()).await.unwrap();
+        sender.shutdown().await.ok();
+        shelf.shutdown().await;
+
+        let restarted = spawn().await.unwrap().0;
+        let shelf = crate::shelf::Shelf::open(&dir).await.unwrap();
+        restarted.set_shelf(shelf.clone());
+        assert_eq!(restarted.blob_fetcher().fetch(&blob, None, MAX_BLOB_BYTES).await.unwrap(), bytes, "the sender still sees it");
+        let friend = local_node().await;
+        friend.learn(restarted.endpoint().addr());
+        let fetched = friend.blob_fetcher().fetch(&blob, Some(&restarted.node_id_hex()), MAX_BLOB_BYTES).await.unwrap();
+        assert_eq!(fetched, bytes);
+        restarted.shutdown().await.ok();
+        friend.shutdown().await.ok();
+        shelf.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     }
 
