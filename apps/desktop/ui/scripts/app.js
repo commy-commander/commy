@@ -15314,6 +15314,7 @@ function loadImagePreview(att, clicked) {
       clicked,
       shared: att.shared ?? false,
       serverId: att.server ?? null,
+      name: att.filename ?? null,
     })
       .then(dataUrl => {
         imagePreviewCache.set(att.blob, dataUrl);
@@ -15354,9 +15355,14 @@ function renderInlineImage(att) {
   return img;
 }
 
+function findSentFile(att) {
+  return invoke("find_sent_file", { blob: att.blob, sizeBytes: att.size_bytes ?? null });
+}
+
 function missingImage(att) {
   const failure = imagePreviewFailures.get(att.blob);
   const text = missingImageText(failure && failure.error);
+  let shown = text;
   const tile = el("div", "image-missing");
   tile.title = att.filename;
   const title = el("div", "image-missing-title", text.title);
@@ -15369,15 +15375,28 @@ function missingImage(att) {
     loadImagePreview(att, !loadsImageOnItsOwn(att))
       .then(dataUrl => tile.replaceWith(chatImage(att, dataUrl)))
       .catch(e => {
-        const again = missingImageText(String(e));
-        hint.textContent = again.hint;
-        button.textContent = again.retry;
+        shown = missingImageText(String(e));
+        hint.textContent = shown.hint;
+        button.textContent = shown.retry;
         button.disabled = false;
+      });
+  };
+  const chooseAgain = () => {
+    button.disabled = true;
+    findSentFile(att)
+      .then(found => {
+        button.disabled = false;
+        if (found) retry();
+      })
+      .catch(e => {
+        button.disabled = false;
+        toast(String(e));
       });
   };
   button.onclick = e => {
     e.stopPropagation();
-    retry();
+    if (shown.findAgain) chooseAgain();
+    else retry();
   };
   tile.append(svgIcon("warning", 22), title, hint, button);
   if (imagePreviewLoads.has(att.blob) || retriesImageNow(failure, Date.now())) retry();
@@ -15428,7 +15447,7 @@ function videoPlayer(url) {
 const videoWaits = new Map();
 
 async function fetchVideoUrl(att) {
-  const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: att.server ?? null });
+  const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: att.server ?? null, name: att.filename ?? null });
   const url = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
   videoUrls.set(att.blob, url);
   videoWaits.delete(att.blob);
@@ -15512,9 +15531,31 @@ function renderInlineVideo(att) {
       const text = videoFailed(att, e);
       label.textContent = text.label;
       box.title = text.title;
+      if (text.findAgain) offerFindAgain(box, att, play);
     }
   };
   return box;
+}
+
+function offerFindAgain(box, att, play) {
+  if (box.querySelector(".chat-video-find")) return;
+  const find = el("button", "btn-secondary btn-small chat-video-find", "Choose File");
+  find.type = "button";
+  find.title = "Choose the file you sent";
+  find.onclick = async () => {
+    find.disabled = true;
+    try {
+      if (await findSentFile(att)) {
+        find.remove();
+        play.click();
+        return;
+      }
+    } catch (e) {
+      toast(String(e));
+    }
+    find.disabled = false;
+  };
+  box.appendChild(find);
 }
 
 function renderShareButton() {

@@ -58,6 +58,18 @@ impl Shelf {
         self.mark_sent(held.hash(), at_secs).await
     }
 
+    pub async fn keep_sent_file_if(&self, path: &Path, expected: &str, at_secs: u64) -> Result<bool> {
+        let expected: Hash = expected.parse().context("invalid file hash")?;
+        let path = std::path::absolute(path).context("could not find that file")?;
+        let options = AddPathOptions { path, format: BlobFormat::Raw, mode: ImportMode::TryReference };
+        let held = self.store.add_path_with_opts(options).temp_tag().await.context("could not read that file")?;
+        if held.hash() != expected {
+            return Ok(false);
+        }
+        self.mark_sent(expected, at_secs).await?;
+        Ok(true)
+    }
+
     async fn mark_sent(&self, hash: Hash, at_secs: u64) -> Result<String> {
         self.store.tags().set(sent_tag(at_secs, &hash), hash).await.context("could not keep the sent file")?;
         Ok(hash.to_hex().to_string())
@@ -187,6 +199,27 @@ mod tests {
         assert!(reopened.shared(&fresh).await.is_some(), "newer sends stay");
         assert_eq!(reopened.drop_sent_before(9_000).await.unwrap(), 1);
         assert!(picked.exists(), "dropping a sent file never touches the original");
+        reopened.shutdown().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_file_sent_before_it_was_kept_is_kept_again_only_if_it_is_the_same_file() {
+        let dir = tempdir();
+        let found = dir.join("clip.mp4");
+        let other = dir.join("other.mp4");
+        let video: Vec<u8> = (0..160_000u32).map(|i| (i % 229) as u8).collect();
+        std::fs::write(&found, &video).unwrap();
+        std::fs::write(&other, vec![7u8; video.len()]).unwrap();
+        let sent = crate::node::blob_hash(&video);
+        let shelf = Shelf::open(&dir.join("shelf")).await.unwrap();
+        assert!(!shelf.keep_sent_file_if(&other, &sent, 1_000).await.unwrap(), "a different file of the same size is refused");
+        assert_eq!(shelf.shared(&sent).await, None);
+        assert!(shelf.keep_sent_file_if(&found, &sent, 1_000).await.unwrap());
+        shelf.shutdown().await;
+        let reopened = Shelf::open(&dir.join("shelf")).await.unwrap();
+        assert_eq!(reopened.bytes(&sent).await, Some(video));
+        assert_eq!(reopened.drop_sent_before(2_000).await.unwrap(), 1, "it is swept like any other sent file");
         reopened.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     }

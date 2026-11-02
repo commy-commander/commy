@@ -76,8 +76,15 @@ function retriesImageNow(failure, now) {
   return !failure || now - failure.at >= IMAGE_RETRY_AFTER_MS;
 }
 
+const SENT_FILE_GONE = "no longer on this device";
+
+function sentFileGone(error) {
+  return String(error || "").toLowerCase().includes(SENT_FILE_GONE);
+}
+
 function missingImageText(error) {
   const reason = String(error || "").toLowerCase();
+  if (sentFileGone(reason)) return { title: "Image unavailable", hint: "Your copy is no longer on this device.", retry: "Choose File", loading: "Loading...", findAgain: true };
   let hint = "Nobody who has it is online right now.";
   if (reason.includes("not ready")) hint = "Commy is still connecting.";
   else if (reason.includes("too large") || reason.includes("larger than")) hint = "It is too large to show here.";
@@ -87,6 +94,7 @@ function missingImageText(error) {
 
 function missingVideoText(error, from) {
   const reason = String(error || "");
+  if (sentFileGone(reason)) return { label: "Your copy of this video is no longer on this device", title: "Choose the file again so it plays here and for everyone else.", waiting: false, findAgain: true };
   if (!reason.toLowerCase().includes("nobody who has")) return { label: `Could not load the video: ${reason}`, title: "", waiting: false };
   const who = from ? `${from} or someone who played it` : "someone who played it";
   return { label: "Nobody who has this video is online", title: `Try again when ${who} is online. Commy also tries again on its own for a few minutes.`, waiting: true };
@@ -110,5 +118,5 @@ function downloadProgressText(done, total) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { BIG_FILE_BYTES, isBigFile, downloadProgressText, MAX_IMAGE_EMBEDS, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, retriesImageNow, missingImageText, missingVideoText, IMAGE_RETRY_AFTER_MS, VIDEO_RETRIES, playsInline };
+  module.exports = { BIG_FILE_BYTES, isBigFile, downloadProgressText, MAX_IMAGE_EMBEDS, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, retriesImageNow, sentFileGone, missingImageText, missingVideoText, IMAGE_RETRY_AFTER_MS, VIDEO_RETRIES, playsInline };
 }
