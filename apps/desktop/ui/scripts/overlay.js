@@ -198,11 +198,12 @@ async function start() {
     if (e.key === ACCESSIBILITY_KEY) applyOverlayAccessibility();
   });
   if (!tauri) return;
-  await tauri.event.listen("overlay-config", e => applyConfig(e.payload));
-  await tauri.event.listen("overlay-roster", e => renderRoster(e.payload));
-  await tauri.event.listen("overlay-chat", e => addChatLine(e.payload));
-  await tauri.event.listen("overlay-test", () => runTest());
-  await tauri.event.listen("overlay-reset", () => resetOverlay());
+  const own = { target: { kind: "WebviewWindow", label: OVERLAY_LABEL } };
+  await tauri.event.listen("overlay-config", e => applyConfig(e.payload), own);
+  await tauri.event.listen("overlay-roster", e => renderRoster(e.payload), own);
+  await tauri.event.listen("overlay-chat", e => addChatLine(e.payload), own);
+  await tauri.event.listen("overlay-test", () => runTest(), own);
+  await tauri.event.listen("overlay-reset", () => resetOverlay(), own);
   await tauri.event.listen("voice-speaking", e => setSpeaking(e.payload.user, e.payload.speaking));
   try {
     applyConfig(await tauri.core.invoke("get_overlay_settings"));

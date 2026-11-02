@@ -92,6 +92,8 @@ pub struct VoiceSettings {
     pub sensitivity_db: f32,
     #[serde(default = "default_voice_filter")]
     pub voice_filter: String,
+    #[serde(default = "default_true")]
+    pub wait_for_connection: bool,
 }
 
 impl VoiceSettings {
@@ -179,6 +181,7 @@ impl Default for VoiceSettings {
             auto_sensitivity: true,
             sensitivity_db: crate::voice_keys::default_sensitivity_db(),
             voice_filter: default_voice_filter(),
+            wait_for_connection: true,
         }
     }
 }

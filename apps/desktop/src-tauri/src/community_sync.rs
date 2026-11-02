@@ -122,6 +122,9 @@ struct Live {
     net: mpsc::UnboundedSender<NetEvent>,
     communities: HashMap<ServerId, Community>,
     caught_up: HashSet<StreamId>,
+    current: HashSet<StreamId>,
+    lost: HashSet<StreamId>,
+    refused: HashSet<StreamId>,
     seen: HashMap<StreamId, HashSet<MessageId>>,
     backfilling: HashSet<StreamId>,
     snapshots: HashMap<ServerId, WirePayload>,
@@ -184,6 +187,13 @@ pub fn remember_invite_key(server: ServerId, key: KeyId, secret: ChannelSecret) 
 
 fn invited_key(server: ServerId) -> Option<(KeyId, ChannelSecret)> {
     INVITED.lock().unwrap().iter().find(|(s, _, _)| *s == server).map(|(_, key, secret)| (*key, secret.clone()))
+}
+
+pub fn keep_invite_key(app: &App, server: ServerId, owner: Option<(UserId, commy_core::IdentityKey)>) {
+    let Some((key, secret)) = invited_key(server) else { return };
+    if crate::account_log::shared_community_key(app, server) != Some(key) {
+        crate::account_log::share_community_key(app, server, key, &secret, owner);
+    }
 }
 
 pub fn invite_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
@@ -330,6 +340,9 @@ async fn tend(handle: &AppHandle) {
             net,
             communities: HashMap::new(),
             caught_up: HashSet::new(),
+            current: HashSet::new(),
+            lost: HashSet::new(),
+            refused: HashSet::new(),
             seen: HashMap::new(),
             backfilling: HashSet::new(),
             snapshots: HashMap::new(),
@@ -575,6 +588,9 @@ fn refresh(handle: &AppHandle) {
         if let Some(community) = live.communities.remove(&sid) {
             for stream in community.wants.keys() {
                 live.caught_up.remove(stream);
+                live.current.remove(stream);
+                live.lost.remove(stream);
+                live.refused.remove(stream);
                 live.seen.remove(stream);
             }
         }
@@ -592,6 +608,9 @@ fn refresh(handle: &AppHandle) {
             community.wants.remove(&stream);
             community.pool.unfollow(stream);
             live.caught_up.remove(&stream);
+            live.current.remove(&stream);
+            live.lost.remove(&stream);
+            live.refused.remove(&stream);
             live.seen.remove(&stream);
         }
         let mut group = Vec::new();
@@ -908,14 +927,28 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
         }
         SyncEvent::CaughtUp { stream, seq } => on_caught_up(handle, stream, seq),
         SyncEvent::Signal { stream, plain } => on_signal(handle, stream, &plain),
-        SyncEvent::Refused { stream, code } => tracing::debug!("the sync service refused a server stream {stream}: {code:?}"),
+        SyncEvent::Refused { stream, code } => {
+            tracing::debug!("the sync service refused a server stream {stream}: {code:?}");
+            if let Some(live) = LIVE.lock().unwrap().as_mut() {
+                live.current.remove(&stream);
+                live.refused.insert(stream);
+            }
+        }
         SyncEvent::Connected => {
             if let Some(live) = LIVE.lock().unwrap().as_mut() {
                 let servers: Vec<ServerId> = live.communities.keys().copied().collect();
                 live.say_again.extend(servers);
             }
         }
-        SyncEvent::Disconnected => {}
+        SyncEvent::Disconnected { streams } => {
+            if let Some(live) = LIVE.lock().unwrap().as_mut() {
+                let ours: Vec<StreamId> = streams.into_iter().filter(|stream| live.route(*stream).is_some()).collect();
+                for stream in ours {
+                    live.current.remove(&stream);
+                    live.lost.insert(stream);
+                }
+            }
+        }
     }
 }
 
@@ -1100,6 +1133,8 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         let Some((server, want)) = live.route(stream) else { return };
         live.cursors.advance(stream, seq);
         let first = live.caught_up.insert(stream);
+        live.current.insert(stream);
+        live.lost.remove(&stream);
         let held = live.snapshots.contains_key(&server);
         let due = want.writes && !live.cursors.backfilled.contains(&stream.to_hex()) && !live.backfilling.contains(&stream);
         let again = want.lane == Lane::State && want.writes && live.say_again.remove(&server);
@@ -1152,6 +1187,35 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     });
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateLink {
+    NotUsed,
+    Behind,
+    Lost,
+    Current,
+}
+
+pub fn state_link(server: ServerId) -> Option<StateLink> {
+    let guard = LIVE.lock().unwrap();
+    let live = guard.as_ref()?;
+    let Some(community) = live.communities.get(&server) else { return Some(StateLink::NotUsed) };
+    let streams: Vec<StreamId> = community.wants.iter().filter(|(_, want)| want.lane == Lane::State).map(|(stream, _)| *stream).collect();
+    let usable: Vec<StreamId> = streams.into_iter().filter(|stream| !live.refused.contains(stream)).collect();
+    Some(link_of(&usable, &live.current, &live.lost))
+}
+
+fn link_of(streams: &[StreamId], current: &HashSet<StreamId>, lost: &HashSet<StreamId>) -> StateLink {
+    if streams.is_empty() {
+        StateLink::NotUsed
+    } else if streams.iter().any(|stream| current.contains(stream)) {
+        StateLink::Current
+    } else if streams.iter().any(|stream| lost.contains(stream)) {
+        StateLink::Lost
+    } else {
+        StateLink::Behind
+    }
+}
+
 pub fn backfill_for(state: &commy_core::ServerState, lane: Lane, seen: &HashSet<MessageId>) -> Vec<WirePayload> {
     let payloads: Vec<WirePayload> = match lane {
         Lane::Channel(channel) => streams::backfill_messages(state, channel, seen, now_ms()),
@@ -1202,6 +1266,17 @@ async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
 mod tests {
     use super::*;
     use commy_core::{Identity, Message, Server, ServerState};
+
+    #[test]
+    fn a_server_is_current_only_while_its_state_stream_is_caught_up_on_a_live_link() {
+        let (state, other) = (StreamId([1; 32]), StreamId([2; 32]));
+        let none = HashSet::new();
+        assert_eq!(link_of(&[], &none, &none), StateLink::NotUsed);
+        assert_eq!(link_of(&[state], &none, &none), StateLink::Behind);
+        assert_eq!(link_of(&[state], &HashSet::from([state]), &none), StateLink::Current);
+        assert_eq!(link_of(&[state], &none, &HashSet::from([state])), StateLink::Lost);
+        assert_eq!(link_of(&[state], &HashSet::from([other]), &HashSet::from([other])), StateLink::Behind);
+    }
 
     #[test]
     fn changes_the_service_missed_wait_once_each_and_not_forever() {

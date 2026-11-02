@@ -25,7 +25,7 @@ pub const DEFAULT_ACCOUNT_SERVER: &str = match option_env!("COMMY_DEFAULT_ACCOUN
     Some(server) => server,
     None => "https://commy.chat",
 };
-const PORT_FILE: &str = "link.port";
+pub const PORT_FILE: &str = "link.port";
 const HANDOFF_PREFIX: &str = "commy-link-v1 ";
 const HANDOFF_LIMIT: u64 = (MAX_LINK_LEN + HANDOFF_PREFIX.len() + 2) as u64;
 const SHOW_REQUEST: &str = "commy-show-v1";
@@ -155,13 +155,9 @@ pub(crate) async fn create(
     if expiry == Expiry::Never && !app.servers.lock().unwrap().get(&id).is_some_and(|s| s.server.public) {
         return Err("Only links to a public server can last forever".into());
     }
-    let ticket = app.vouched_ticket(id).ok_or("no invite available; you may be offline")?;
-    if ticket.owner.is_none() {
-        return Err("your account key is still being confirmed; try again in a moment".into());
-    }
-    let raw = ticket.encode();
+    let ticket = crate::owner_vouched_ticket(app, id)?;
     let origin = crate::account::effective_server();
-    let cache_key = format!("{origin} {} {raw}", expiry.as_str());
+    let cache_key = format!("{origin} {} {}", expiry.as_str(), ticket.encode());
     let cached = if name.is_some() { None } else { CREATED.lock().unwrap().get(&cache_key).cloned() };
     let cached = cached.filter(|(created, _)| {
         let servers = app.servers.lock().unwrap();
@@ -177,6 +173,7 @@ pub(crate) async fn create(
             return Ok(created);
         }
     }
+    let raw = crate::reachable_ticket(app, ticket.clone()).await.encode();
     let revoke_key = commy_net::invite::new_revoke_key();
     let (key, key_text) = commy_net::invite::link_key(&revoke_key, name.is_some());
     let background = sealed_background(app, id, &key).await;

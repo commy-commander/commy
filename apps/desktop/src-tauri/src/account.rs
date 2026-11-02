@@ -11,8 +11,9 @@ use crate::account_folder;
 use crate::invite_link::{normalize_origin, DEFAULT_ACCOUNT_SERVER};
 use crate::state::App;
 
-const FILE: &str = "account.json";
-const PENDING_SIGN_IN_FILE: &str = "sign-in-pending.json";
+const SIGN_OUT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+pub const FILE: &str = "account.json";
+pub const PENDING_SIGN_IN_FILE: &str = "sign-in-pending.json";
 pub const MAX_ACCOUNTS: usize = 5;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1006,6 +1007,19 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
     }
     let _ = handle.emit("account-changed", ());
     Ok(view(&app))
+}
+
+pub async fn sign_out_everyone_here(app: &App) {
+    let sessions: Vec<SavedAccount> = {
+        let state = app.account.lock().unwrap();
+        state.current().into_iter().chain(state.others.iter().cloned()).collect()
+    };
+    for saved in sessions {
+        if let Ok(doc) = discover(&app.http, &saved.server).await {
+            let request = app.http.post(&doc.endpoints.sign_out).bearer_auth(saved.token).timeout(SIGN_OUT_WAIT);
+            let _ = request.send().await;
+        }
+    }
 }
 
 #[tauri::command]

@@ -2644,6 +2644,11 @@ impl ServerState {
         self.voice_states.get(&user).and_then(|room| self.devices.in_voice(user, *room))
     }
 
+    pub fn voice_device_since(&self, user: UserId) -> Option<i64> {
+        let room = self.voice_states.get(&user)?;
+        self.devices.voice_holder(user).filter(|d| d.voice == Some(*room)).and_then(|d| d.since)
+    }
+
     pub fn voice_node(&self, user: UserId) -> Option<String> {
         self.voice_device(user).map(str::to_string).or_else(|| self.profiles.get(&user).and_then(|p| p.node.clone()))
     }
@@ -6585,6 +6590,7 @@ mod tests {
         assert_eq!(fresh.voice_since(member), old.voice_since(member));
         assert_eq!(fresh.screen_shares.get(&member), Some(&general));
         assert_eq!(fresh.voice_device(member), Some("ab".repeat(32).as_str()));
+        assert_eq!(fresh.voice_device_since(member), Some(1_000));
         assert_eq!(fresh.apply(sits(member, None)), Ok(false), "the device in voice still decides");
     }
 

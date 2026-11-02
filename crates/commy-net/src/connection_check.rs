@@ -107,10 +107,29 @@ impl Observed {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayLink {
+    Connected,
+    Unreachable,
+    NotUsed,
+}
+
+impl RelayLink {
+    pub fn of(uses_relays: bool, connected: bool) -> Self {
+        match (uses_relays, connected) {
+            (_, true) => RelayLink::Connected,
+            (true, false) => RelayLink::Unreachable,
+            (false, false) => RelayLink::NotUsed,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ConnectionChecker {
     pub(crate) endpoint: Endpoint,
     pub(crate) can_discover_address: bool,
+    pub(crate) uses_relays: bool,
 }
 
 impl ConnectionChecker {
@@ -120,10 +139,23 @@ impl ConnectionChecker {
             Some(report) => Some(report),
             None => n0_future::time::timeout(REPORT_WAIT, reports.initialized()).await.ok(),
         };
+        self.observe(report.as_ref()).check()
+    }
+
+    pub fn now(&self) -> ConnectionCheck {
+        self.observe(self.endpoint.net_report().get().as_ref()).check()
+    }
+
+    pub fn relay(&self) -> RelayLink {
+        let connected = self.endpoint.home_relay_status().get().iter().any(|status| status.is_connected());
+        RelayLink::of(self.uses_relays, connected)
+    }
+
+    fn observe(&self, report: Option<&NetReport>) -> Observed {
         let relays = self.endpoint.home_relay_status().get();
         let connected = relays.iter().find(|status| status.is_connected());
         let home = connected.or(relays.first()).map(|status| status.url().clone());
-        Observed::from_report(report.as_ref(), home.as_ref(), connected.is_some(), self.can_discover_address).check()
+        Observed::from_report(report, home.as_ref(), connected.is_some(), self.can_discover_address)
     }
 }
 
@@ -220,9 +252,19 @@ mod tests {
         let (node, _, _, _) = crate::CommyNode::spawn_with(None, Some(iroh::RelayMap::empty())).await.unwrap();
         let checker = node.connection_checker();
         assert!(!checker.can_discover_address);
-        let check = tokio::time::timeout(REPORT_WAIT * 2, checker.run()).await.unwrap();
+        let check = tokio::time::timeout(REPORT_WAIT * 2, checker.clone().run()).await.unwrap();
         assert_eq!(check.quality, Quality::Offline);
         assert!(!check.relay_reachable);
+        assert_eq!(checker.relay(), RelayLink::NotUsed);
+        assert_eq!(checker.now().quality, Quality::Offline);
         node.shutdown().await.ok();
+    }
+
+    #[test]
+    fn a_relay_counts_only_when_one_is_set_up() {
+        assert_eq!(RelayLink::of(true, true), RelayLink::Connected);
+        assert_eq!(RelayLink::of(true, false), RelayLink::Unreachable);
+        assert_eq!(RelayLink::of(false, false), RelayLink::NotUsed);
+        assert_eq!(RelayLink::of(false, true), RelayLink::Connected);
     }
 }

@@ -67,6 +67,12 @@
         </span>
       </header>
       <div class="channel-scroll" id="channel-list"></div>
+      <div class="voice-gate-anchor">
+        <div class="voice-gate-pill hidden" id="voice-gate-pill" role="status" aria-live="polite">
+          <span class="voice-gate-spin" aria-hidden="true"></span>
+          <span class="voice-gate-text"><span class="voice-gate-title">Voice waits</span><span class="voice-gate-reason" id="voice-gate-reason"></span></span>
+        </div>
+      </div>
 
       <section class="voice-panel hidden" id="voice-panel">
         <div class="vp-live hidden" id="vp-live">
@@ -117,15 +123,15 @@
             <button class="icon-btn" id="deafen-btn" title="Deafen"></button>
             <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
           </div>
-          <button class="icon-btn" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
+          <button class="icon-btn native-only" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
         </div>
         <button class="vp-talk hidden" id="vp-talk" type="button">Hold to talk</button>
         <div class="vp-actions" id="vp-actions">
           <button class="vp-activities" id="vp-activities" title="Start something together with everyone in the channel"></button>
-          <button class="vp-activities vp-share screen-share-only" id="share-btn" title="Share Your Screen"></button>
+          <button class="vp-activities vp-share screen-share-only native-only" id="share-btn" title="Share Your Screen"></button>
           <button class="vp-activities vp-sound" id="vp-soundboard" title="Soundboard"></button>
         </div>
-        <button class="vp-game-share hidden" id="vp-game-share"></button>
+        <button class="vp-game-share native-only hidden" id="vp-game-share"></button>
       </section>
 
     </aside>
@@ -908,6 +914,42 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-move-data">
+      <h2 id="move-data-title">Move your data?</h2>
+      <div class="modal-lines" id="move-data-lines"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="move-data-cancel">Cancel</button>
+        <button class="btn-primary" id="move-data-go">Move and Restart</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-clear-cache">
+      <h2>Clear the cache?</h2>
+      <p>Saved profile pictures, older logs and the web cache are removed. They come back on their own as you use Commy. Your messages, settings and keys stay.</p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="clear-cache-cancel">Cancel</button>
+        <button class="btn-primary" id="clear-cache-go">Clear Cache</button>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal-clear-all">
+      <h2>Clear all data on this computer?</h2>
+      <ul class="modal-list">
+        <li>Your messages, direct messages, servers and settings kept on this computer are removed. Anything only this computer had is gone for good.</li>
+        <li>You are signed out of every account on this computer.</li>
+        <li>Files you share or keep for others on this computer stop being available to them.</li>
+        <li>The keys that lock your data on this computer are removed. If signing in again doesn't bring your server list back, you'll need your recovery code or another signed-in device to allow this one.</li>
+      </ul>
+      <button class="btn-link" type="button" id="clear-all-recovery">Show my recovery code first</button>
+      <label class="field-label">Type DELETE to confirm
+        <input id="clear-all-input" type="text" maxlength="20" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="clear-all-cancel">Cancel</button>
+        <button class="btn-danger" id="clear-all-go" disabled>Clear and Restart</button>
+      </div>
+    </div>
+
     <div class="modal modal-wide hidden" id="modal-rules">
       <h2 id="rules-title">Server Rules</h2>
       <div class="rules-body" id="rules-body"></div>
@@ -1403,7 +1445,7 @@
         <button class="settings-tab" data-tab="privacy" data-i18n="settings.tab.privacy">Privacy &amp; Safety</button>
         <div class="settings-nav-group" data-i18n="settings.group.voice">Voice &amp; Video</div>
         <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">Voice</button>
-        <button class="settings-tab" data-tab="camera" data-i18n="settings.tab.camera">Camera</button>
+        <button class="settings-tab native-only" data-tab="camera" data-i18n="settings.tab.camera">Camera</button>
         <button class="settings-tab desktop-only native-only" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
         <div class="settings-nav-group" data-i18n="settings.group.alerts">Alerts &amp; Sounds</div>
         <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
@@ -1415,7 +1457,7 @@
         <button class="settings-tab desktop-only" data-tab="keybinds" data-i18n="settings.tab.keybinds">Keybinds</button>
         <button class="settings-tab" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
         <div class="settings-nav-group" data-i18n="settings.group.advanced">Advanced</div>
-        <button class="settings-tab" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
+        <button class="settings-tab native-only" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
         <button class="settings-tab desktop-only native-only" data-tab="updates" data-i18n="settings.tab.startupUpdates">Startup &amp; Updates</button>
         <button class="settings-tab" data-tab="diagnostics" data-i18n="settings.tab.diagnostics">Diagnostics</button>
       </div>
@@ -1507,10 +1549,10 @@
                 <div class="setting-title" id="entry-state"></div>
                 <div class="setting-sub" id="entry-detail"></div>
               </div>
-              <button class="btn-secondary btn-small" id="entry-sync">Sync now</button>
+              <button class="btn-secondary btn-small native-only" id="entry-sync">Sync now</button>
             </div>
             <div class="setting-sub">Your devices share your server list and identity, locked with a key that only your devices have. Your account server keeps a copy it cannot read, so it never learns which servers you are in.</div>
-            <div class="entry-recovery">
+            <div class="entry-recovery native-only">
               <button class="btn-link" id="entry-show-code">Show recovery code</button>
               <input id="entry-code" type="text" readonly class="hidden" spellcheck="false" />
               <div class="setting-sub hidden" id="entry-code-note">Keep this somewhere safe. If you lose every device, it is the only way to get your server list back.</div>
@@ -1563,8 +1605,8 @@
               </select>
             </div>
           </div>
-          <h2 class="settings-subhead">Activity</h2>
-          <label class="settings-card setting-row" data-search="game status playing activity">
+          <h2 class="settings-subhead native-only">Activity</h2>
+          <label class="settings-card setting-row native-only" data-search="game status playing activity">
             <div>
               <div class="setting-title">Share what I'm playing or using</div>
               <div class="setting-sub">Shows the game or app in front on your screen as "Playing ..." or "Using ..." under your name, for everyone in your servers. Turn it off and it clears right away.</div>
@@ -1640,8 +1682,8 @@
             </div>
             <button class="btn-primary btn-small" id="mic-test-btn">Start Test</button>
           </div>
-          <h2 class="settings-subhead" data-search="push to talk ptt voice activity open mic">Input Mode</h2>
-          <div class="settings-card">
+          <h2 class="settings-subhead native-only" data-search="push to talk ptt voice activity open mic">Input Mode</h2>
+          <div class="settings-card native-only">
             <div class="segmented input-mode" id="input-mode" role="radiogroup" aria-label="Input mode">
               <button data-mode="voice_activity" role="radio"><strong>Voice Activity</strong><span>Opens when you speak</span></button>
               <button data-mode="push_to_talk" role="radio"><strong>Push to Talk</strong><span class="desktop-only">Hold a key to talk</span><span class="mobile-only">Hold the talk button</span></button>
@@ -1704,6 +1746,14 @@
               <div class="setting-sub">Evens out your voice so everyone hears you at a steady, comfortable volume, even with a quiet mic. Turn it off if your mic software already levels your voice.</div>
             </div>
             <input type="checkbox" id="agc-toggle" class="switch" />
+          </label>
+          <h2 class="settings-subhead native-only">Connection</h2>
+          <label class="settings-card setting-row native-only" data-search="connection offline sync relay join wait steady">
+            <div>
+              <div class="setting-title">Wait for a steady connection before joining voice</div>
+              <div class="setting-sub">Voice channels stay closed while Commy is still connecting or catching up with a server, so you never join a channel that is out of date. The channel list says what it is waiting for. Turn it off to join right away.</div>
+            </div>
+            <input type="checkbox" id="wait-connection-toggle" class="switch" />
           </label>
           <h2 class="settings-subhead">Idle</h2>
           <div class="settings-card setting-row" data-search="idle away inactive afk">
@@ -2032,13 +2082,13 @@
             </div>
             <input type="checkbox" id="text-styles-toggle" class="switch" checked />
           </label>
-          <h2 class="settings-subhead desktop-only" data-i18n="appearance.appIcon">App Icon</h2>
-          <div class="settings-card icon-card desktop-only">
+          <h2 class="settings-subhead desktop-only native-only" data-i18n="appearance.appIcon">App Icon</h2>
+          <div class="settings-card icon-card desktop-only native-only">
             <div class="setting-sub" data-i18n="appearance.appIcon.sub">Shown in your taskbar or dock while Commy is running.</div>
             <div class="icon-grid" id="app-icon-grid" role="radiogroup" aria-label="App icon"></div>
           </div>
-          <h2 class="settings-subhead desktop-only" data-i18n="appearance.trayIcon">Tray Icon</h2>
-          <div class="settings-card icon-card desktop-only">
+          <h2 class="settings-subhead desktop-only native-only" data-i18n="appearance.trayIcon">Tray Icon</h2>
+          <div class="settings-card icon-card desktop-only native-only">
             <div class="setting-sub" data-i18n="appearance.trayIcon.sub">Shown in the system tray, with your unread count on it.</div>
             <div class="icon-grid" id="tray-icon-grid" role="radiogroup" aria-label="Tray icon"></div>
           </div>
@@ -2136,7 +2186,7 @@
               <button class="btn-primary btn-small" id="gif-key-save">Save</button>
             </div>
           </div>
-          <div class="settings-card integration-card desktop-only" data-search="elgato keys buttons" id="stream-deck-card">
+          <div class="settings-card integration-card desktop-only native-only" data-search="elgato keys buttons" id="stream-deck-card">
             <div class="integration-head">
               <div class="integration-logo integration-logo-deck">
                 <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="3"/><rect x="5.5" y="7" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="7" width="3.5" height="3.5" rx=".8"/><rect x="15" y="7" width="3.5" height="3.5" rx=".8"/><rect x="5.5" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="10.25" y="13.5" width="3.5" height="3.5" rx=".8"/><rect x="15" y="13.5" width="3.5" height="3.5" rx=".8"/></svg>
@@ -2155,7 +2205,7 @@
             <div class="setting-sub stream-deck-note" id="stream-deck-note"></div>
             <div class="stream-deck-decks" id="stream-deck-decks"></div>
           </div>
-          <div class="settings-card integration-card" data-search="games twitch cover art">
+          <div class="settings-card integration-card native-only" data-search="games twitch cover art">
             <div class="integration-head">
               <div class="integration-logo">IGDB</div>
               <div>
@@ -2183,9 +2233,35 @@
           </div>
         </section>
 
-        <section class="settings-page" data-page="storage" data-search="disk space history">
+        <section class="settings-page" data-page="storage" data-search="disk space history data folder move clear cache">
           <h1 data-i18n="settings.tab.storage">Storage</h1>
-          <p class="settings-intro" data-i18n="settings.intro.storage">How long messages stay on this device.</p>
+          <p class="settings-intro" data-i18n="settings.intro.storage">How much space Commy uses on this device, where it keeps it, and how long messages stay.</p>
+          <h2 class="settings-subhead native-only">Space Used</h2>
+          <div class="settings-card storage-usage native-only" data-search="disk usage size space">
+            <div class="storage-usage-head">
+              <div>
+                <div class="setting-title" id="storage-total">Working it out</div>
+                <div class="setting-sub" id="storage-free"></div>
+              </div>
+              <button class="btn-secondary btn-small" type="button" id="storage-refresh">Refresh</button>
+            </div>
+            <div class="storage-bar" id="storage-bar" aria-hidden="true"></div>
+            <div class="storage-parts" id="storage-parts" aria-live="polite"></div>
+          </div>
+          <h2 class="settings-subhead desktop-only native-only">Data Folder</h2>
+          <div class="settings-card storage-folder desktop-only native-only" data-search="data folder location move drive">
+            <div>
+              <div class="setting-title">Where Commy keeps your data</div>
+              <div class="storage-path" id="storage-path"></div>
+              <div class="setting-sub" id="storage-path-note"></div>
+            </div>
+            <div class="storage-folder-actions">
+              <button class="btn-secondary btn-small" type="button" id="storage-open">Open Folder</button>
+              <button class="btn-secondary btn-small" type="button" id="storage-move">Move Folder</button>
+              <button class="btn-secondary btn-small hidden" type="button" id="storage-standard">Use Standard Folder</button>
+            </div>
+          </div>
+          <h2 class="settings-subhead">Message History</h2>
           <div class="settings-card setting-row" data-search="retention delete old messages">
             <div>
               <div class="setting-title">Keep server messages for</div>
@@ -2217,6 +2293,21 @@
               <option value="25">Up to 25 MB</option>
               <option value="100">Up to 100 MB</option>
             </select>
+          </div>
+          <h2 class="settings-subhead desktop-only native-only">Clear Data</h2>
+          <div class="settings-card setting-row desktop-only native-only" data-search="clear cache free space">
+            <div>
+              <div class="setting-title">Clear cache</div>
+              <div class="setting-sub">Removes saved profile pictures, older logs and the web cache. They come back on their own as you use Commy. Your messages and settings stay.</div>
+            </div>
+            <button class="btn-secondary btn-small storage-action" type="button" id="storage-clear-cache">Clear Cache</button>
+          </div>
+          <div class="settings-card setting-row desktop-only native-only" data-search="clear all data reset wipe remove everything">
+            <div>
+              <div class="setting-title">Clear all data</div>
+              <div class="setting-sub">Removes everything Commy keeps on this computer and signs you out. Your Commy account itself stays.</div>
+            </div>
+            <button class="btn-danger btn-small storage-action" type="button" id="storage-clear-all">Clear All Data</button>
           </div>
         </section>
 
@@ -3181,6 +3272,7 @@
   <script src="scripts/threads.js"></script>
   <script src="scripts/voice-status.js"></script>
   <script src="scripts/voice-signal.js"></script>
+  <script src="scripts/voice-gate.js"></script>
   <script src="scripts/forum.js"></script>
   <script src="scripts/drive-view.js"></script>
   <script src="scripts/stage.js"></script>
@@ -3241,6 +3333,7 @@
   <script src="scripts/accessibility.js"></script>
   <script src="scripts/updates.js"></script>
   <script src="scripts/diagnostics.js"></script>
+  <script src="scripts/data-folder.js"></script>
   <script src="scripts/server-templates.js"></script>
   <script src="scripts/camera-fx.js"></script>
   <script src="scripts/camera-pipeline.js"></script>

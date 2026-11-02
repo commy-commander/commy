@@ -44,6 +44,27 @@ Change them only together with the tests named at the end.
   member's voice device follows and re-announces. AFK works the same way: only
   the voice device moves itself (`commy_view::afk::idle_voice_step`).
 
+## Joining waits for a current server
+
+By default (the voice setting "Wait for a steady connection before joining
+voice", `VoiceSettings::wait_for_connection`) a device does not join voice in
+a server until it can see that server as it is now. `voice_gate` checks, once
+a second and again on every join:
+
+- the network has started and, when relays are set up, one is connected;
+- the server is not waiting for its first snapshot;
+- the server's state stream on the sync service is caught up on a link that
+  is still connected (`community_sync::state_link`). A link that drops makes
+  the server wait again until the service has caught it up;
+- for a server that does not use the sync service, someone else in it
+  answered (a gossip neighbor), or 20 seconds passed with nobody around.
+
+The app shows why voice is waiting in a pill at the bottom of the channel list and in the
+channel row's tooltip; a click explains it too. Moving between channels of
+the server a device is already talking in never waits, and leaving never
+waits. The gate only decides when a join may start: a join still follows the
+rules above, `DeviceAnnounce` with the room first.
+
 ## How a seat ends without a goodbye
 
 A seat must never outlive the device holding it. `commy_view::liveness` ends
@@ -77,10 +98,16 @@ the others holding a dead audio link to it for a while. A link must never
 stop a fresh call from forming:
 
 - when the device a link goes to says it is not in our room, the link ends;
-- when it announces a new join (a different `since`) and the link is older
-  than a few seconds, the link belonged to its last session and ends, so the
-  dialer calls the new one;
+- each link remembers the join (`since`) its device had when the link was
+  made, read from the device registry, so it is known even when we joined
+  voice after them;
+- when that device announces a different join and the link is more than two
+  seconds old, the link belonged to its last session and ends, so the dialer
+  calls the new one;
 - every few seconds, links to members no longer seated in our room end.
+
+The app log says when a voice link comes up, ends, is dropped for a new
+join, or is refused at the door, so a bench run can show which side failed.
 
 ## Late joiners
 

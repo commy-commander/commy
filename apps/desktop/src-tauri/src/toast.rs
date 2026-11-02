@@ -1,6 +1,5 @@
 use tauri::AppHandle;
 
-#[cfg(desktop)]
 pub const APP_ID: &str = "chat.commy.desktop";
 
 pub fn valid_target(target: &str) -> bool {

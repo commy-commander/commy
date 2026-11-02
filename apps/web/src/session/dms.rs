@@ -466,7 +466,7 @@ impl Session {
     async fn invite_to_group(&self, server: ServerId, user_ids: Vec<String>) -> Result<(), String> {
         let given = self.sync.borrow().as_ref().and_then(|live| live.book.given().remove(&server));
         let (ticket, key) = self.client.borrow().group_invite_from(server, given)?;
-        let raw = ticket.encode();
+        let raw = self.reachable(ticket).await.encode();
         for user in user_ids {
             let (me, partner) = self.recipient(Some(&user))?;
             let already = self.client.borrow().servers.lock().unwrap().get(&server).is_some_and(|s| s.server.is_current_member(partner));

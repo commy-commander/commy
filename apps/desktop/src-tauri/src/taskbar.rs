@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use image::RgbaImage;
@@ -14,8 +14,8 @@ pub fn show(handle: &AppHandle, chosen: Option<&RgbaImage>) {
     let main = handle.clone();
     let _ = handle.run_on_main_thread(move || {
         crate::toast::ensure_start_menu_shortcut(file.as_deref());
-        if let Err(e) = repoint_pinned_shortcuts(file.as_deref()) {
-            tracing::warn!("could not update the pinned taskbar shortcut: {e}");
+        if let Err(e) = repoint_shortcuts(file.as_deref()) {
+            tracing::warn!("could not update Commy's shortcuts: {e}");
         }
         let Some(window) = main.get_webview_window("main") else { return };
         let Ok(hwnd) = window.hwnd() else { return };
@@ -76,7 +76,34 @@ fn set_relaunch_icon(hwnd: windows_sys::Win32::Foundation::HWND, file: Option<&P
     Ok(())
 }
 
-fn repoint_pinned_shortcuts(file: Option<&Path>) -> windows::core::Result<()> {
+fn shortcut_folders() -> Vec<PathBuf> {
+    use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Programs};
+    let mut folders: Vec<PathBuf> = std::env::var_os("APPDATA")
+        .map(|appdata| PathBuf::from(appdata).join("Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar"))
+        .into_iter()
+        .collect();
+    folders.extend(known_folder(&FOLDERID_Desktop));
+    if let Some(programs) = known_folder(&FOLDERID_Programs) {
+        let subfolders = std::fs::read_dir(&programs).into_iter().flatten().flatten().map(|entry| entry.path()).filter(|path| path.is_dir());
+        folders.extend(subfolders.collect::<Vec<_>>());
+        folders.push(programs);
+    }
+    folders
+}
+
+fn known_folder(id: &windows::core::GUID) -> Option<PathBuf> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+    unsafe {
+        let path = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;
+        let text = path.to_string().ok();
+        CoTaskMemFree(Some(path.0 as *const core::ffi::c_void));
+        text.map(PathBuf::from)
+    }
+}
+
+fn repoint_shortcuts(file: Option<&Path>) -> windows::core::Result<()> {
     use windows::core::{Interface, HSTRING};
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, IPersistFile, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, STGM_READWRITE,
@@ -84,28 +111,46 @@ fn repoint_pinned_shortcuts(file: Option<&Path>) -> windows::core::Result<()> {
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
     let Ok(exe) = std::env::current_exe() else { return Ok(()) };
-    let Some(appdata) = std::env::var_os("APPDATA") else { return Ok(()) };
-    let pinned = std::path::PathBuf::from(appdata).join("Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar");
-    let Ok(entries) = std::fs::read_dir(&pinned) else { return Ok(()) };
     let icon = file.unwrap_or(&exe);
+    let links: Vec<PathBuf> = shortcut_folders()
+        .iter()
+        .filter_map(|folder| std::fs::read_dir(folder).ok())
+        .flat_map(|entries| entries.flatten().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lnk")))
+        .collect();
     let mut changed = false;
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        for lnk in entries.flatten().map(|entry| entry.path()).filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lnk"))) {
+        for lnk in links {
             let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
             let persist: IPersistFile = link.cast()?;
             if persist.Load(&HSTRING::from(lnk.as_os_str()), STGM_READWRITE).is_err() || !launches_commy(&link, &exe) {
                 continue;
             }
-            link.SetIconLocation(&HSTRING::from(icon.as_os_str()), 0)?;
-            persist.Save(windows::core::PCWSTR::null(), true)?;
-            changed = true;
+            if shows_icon(&link, icon, &exe) {
+                continue;
+            }
+            if link.SetIconLocation(&HSTRING::from(icon.as_os_str()), 0).is_ok() && persist.Save(windows::core::PCWSTR::null(), true).is_ok() {
+                changed = true;
+            }
         }
     }
     if changed {
         refresh_shell_icons();
     }
     Ok(())
+}
+
+fn shows_icon(link: &windows::Win32::UI::Shell::IShellLinkW, icon: &Path, exe: &Path) -> bool {
+    let mut location = [0u16; 1024];
+    let mut index = 0i32;
+    if unsafe { link.GetIconLocation(&mut location, &mut index) }.is_err() {
+        return false;
+    }
+    let len = location.iter().position(|&c| c == 0).unwrap_or(location.len());
+    let current = String::from_utf16_lossy(&location[..len]);
+    let current = if current.is_empty() { exe.to_string_lossy().into_owned() } else { current };
+    index == 0 && current.eq_ignore_ascii_case(&icon.to_string_lossy())
 }
 
 fn launches_commy(link: &windows::Win32::UI::Shell::IShellLinkW, exe: &Path) -> bool {

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::AppHandle;
 #[cfg(desktop)]
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const LABEL: &str = "stream-ink";
 const FOLLOW_EVERY: std::time::Duration = std::time::Duration::from_millis(750);
@@ -39,7 +39,7 @@ pub fn show(app: &AppHandle, source: Option<(SourceKind, u32)>) {
                 first = false;
                 last = rect;
                 let app = app.clone();
-                let _ = tauri::async_runtime::spawn_blocking(move || place(&app, rect)).await;
+                let _ = tauri::async_runtime::spawn_blocking(move || place(&app, rect, generation)).await;
             }
             tokio::time::sleep(FOLLOW_EVERY).await;
         }
@@ -51,8 +51,9 @@ pub fn hide(app: &AppHandle) {
     GENERATION.fetch_add(1, Ordering::SeqCst);
     #[cfg(desktop)]
     if let Some(window) = app.get_webview_window(LABEL) {
-        let _ = app.emit_to(LABEL, "stream-ink-reset", ());
-        let _ = window.hide();
+        if let Err(e) = window.destroy() {
+            tracing::warn!("could not close the drawing window: {e}");
+        }
     }
     #[cfg(mobile)]
     let _ = app;
@@ -79,10 +80,13 @@ fn ensure_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
 }
 
 #[cfg(desktop)]
-fn place(app: &AppHandle, rect: Option<SourceRect>) {
+fn place(app: &AppHandle, rect: Option<SourceRect>, generation: u64) {
+    if GENERATION.load(Ordering::SeqCst) != generation {
+        return;
+    }
     let Some(rect) = rect else {
         if let Some(window) = app.get_webview_window(LABEL) {
-            let _ = window.hide();
+            hide_window(app, &window);
         }
         return;
     };
@@ -126,6 +130,23 @@ fn show_without_focus(app: &AppHandle, window: &tauri::WebviewWindow) {
             SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
     });
+}
+
+#[cfg(windows)]
+fn hide_window(app: &AppHandle, window: &tauri::WebviewWindow) {
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as isize;
+    let _ = app.run_on_main_thread(move || {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+        unsafe {
+            ShowWindow(hwnd as windows_sys::Win32::Foundation::HWND, SW_HIDE);
+        }
+    });
+}
+
+#[cfg(all(desktop, not(windows)))]
+fn hide_window(_app: &AppHandle, window: &tauri::WebviewWindow) {
+    let _ = window.hide();
 }
 
 #[cfg(all(desktop, not(windows)))]

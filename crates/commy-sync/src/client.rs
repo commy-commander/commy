@@ -23,7 +23,7 @@ const RETRY_AFTER_DEFAULT_MS: u64 = 2_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncEvent {
     Connected,
-    Disconnected,
+    Disconnected { streams: Vec<StreamId> },
     Entry { stream: StreamId, seq: u64, at: i64, plain: Vec<u8> },
     Unreadable { stream: StreamId, seq: u64 },
     CaughtUp { stream: StreamId, seq: u64 },
@@ -161,7 +161,7 @@ impl Link {
                     failures = 0;
                     let _ = self.events.send(SyncEvent::Connected);
                     let ended = self.serve(socket, &mut inbox).await;
-                    let _ = self.events.send(SyncEvent::Disconnected);
+                    let _ = self.events.send(SyncEvent::Disconnected { streams: self.streams.keys().copied().collect() });
                     if matches!(ended, Ended::Stopped) {
                         return;
                     }

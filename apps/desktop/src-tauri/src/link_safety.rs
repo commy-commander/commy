@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::state::App;
 
-const LIST_FILE: &str = "link-blocklist.txt";
+pub const LIST_FILE: &str = "link-blocklist.txt";
 const LIST_PATH: &str = "/api/auth/commy/link-blocklist";
 const FIRST_REFRESH_DELAY: Duration = Duration::from_secs(20);
 const REFRESH_EVERY: Duration = Duration::from_secs(12 * 60 * 60);

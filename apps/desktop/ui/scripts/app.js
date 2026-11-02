@@ -20,6 +20,7 @@ const state = {
   voice: { noise_cancellation: true, echo_cancellation: true, auto_level: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
   voiceChannelId: null,
   voiceServer: null,
+  voiceGate: VOICE_GATE_OPEN,
   shareSource: null,
   watchingName: null,
   sharing: false,
@@ -43,6 +44,12 @@ const mock = {
   dms: {},
   voice: { noise_cancellation: true, echo_cancellation: true, auto_level: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
 };
+
+function mockVoiceGateWaits() {
+  if (!/[?&]voicewait\b/.test(location.search)) return {};
+  const wait = { kind: "catching_up", reason: "Getting the latest from the server" };
+  return Object.fromEntries(Object.keys(mock.servers).map(id => [id, wait]));
+}
 
 function mockSearchMatcher({ terms, from, mentions }, named) {
   return (authorId, content) => {
@@ -1321,6 +1328,8 @@ async function mockInvoke(cmd, args = {}) {
     case "stop_mic_test": mock.micTesting = false; return null;
     case "set_afk_timeout": mock.voice.afk_timeout_minutes = args.minutes; return mock.voice;
     case "set_share_activity": mock.voice.share_activity = args.enabled; return mock.voice;
+    case "set_wait_for_connection": mock.voice.wait_for_connection = args.enabled; return mock.voice;
+    case "voice_gate": return { enabled: mock.voice.wait_for_connection !== false, waits: mockVoiceGateWaits() };
     case "list_audio_devices": return { inputs: ["Microphone (Realtek Audio)", "Headset Mic (HyperX Cloud)"], outputs: ["Speakers (Realtek Audio)", "Headphones (HyperX Cloud)"] };
     case "start_camera": mock.cameraOn = true; return null;
     case "notify": console.info("notify", args.title, args.body); return null;
@@ -1701,7 +1710,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_pronouns": mock.voice.pronouns = (args.pronouns || "").trim() || null; return mock.voice;
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
-      return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
+      return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, me: { user: mock.user ? mock.user.id : "me", name: mock.user ? mock.user.display_name || mock.user.username : "you", quality: "good", direct: "open", relay_reachable: true, relay_rtt_ms: 38, ipv6: false }, links: [
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, lost_packets: Math.floor((mock.sent = (mock.sent || 0) + 400) / 1000), sent_packets: mock.sent, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
@@ -1883,6 +1892,20 @@ async function mockInvoke(cmd, args = {}) {
     case "debug_log_status": return { verbose: !!mock.verboseLogs, saving: true };
     case "set_verbose_logging": mock.verboseLogs = args.enabled; return { verbose: !!mock.verboseLogs, saving: true };
     case "open_log_folder": return null;
+    case "open_data_folder": return null;
+    case "data_folder": return mock.dataFolder || (mock.dataFolder = { folder: "C:\\Users\\you\\AppData\\Roaming\\chat.commy.desktop", standard_folder: "C:\\Users\\you\\AppData\\Roaming\\chat.commy.desktop", kind: "default", can_move: true, scheduled: null });
+    case "storage_usage":
+      await new Promise(r => setTimeout(r, 300));
+      return { total: 1934000000, free: 214000000000, parts: [
+        { id: "messages", bytes: 412000000 }, { id: "shared_files", bytes: 820000000 }, { id: "pictures", bytes: 38000000 },
+        { id: "voices", bytes: 126000000 }, { id: "web_cache", bytes: 301000000 }, { id: "logs", bytes: 6000000 },
+        { id: "other_accounts", bytes: 211000000 }, { id: "other", bytes: 20000000 },
+      ] };
+    case "pick_data_folder": return "D:\\Games";
+    case "plan_data_folder_move": return { target: args.folder === mock.dataFolder?.standard_folder ? args.folder : `${args.folder}\\Commy`, to_default: args.folder === mock.dataFolder?.standard_folder, bytes: 1934000000, free: 900000000000 };
+    case "move_data_folder": mock.dataFolder = { ...mock.dataFolder, folder: args.target, kind: args.target === mock.dataFolder.standard_folder ? "default" : "chosen" }; hideModals(); loadDataFolder(); return null;
+    case "clear_cache": return { freed: 44000000, on_restart: 301000000 };
+    case "clear_all_data": hideModals(); return null;
     case "save_log_bundle": return "commy-logs.txt";
     case "run_connection_check":
       await new Promise(r => setTimeout(r, 600));
@@ -2146,6 +2169,7 @@ function selectSettingsTab(id, tab) {
   layer.dataset.tab = tab;
   settingsPhoneView(layer, "page");
   if (tab === "camera") prepareAvatarStage();
+  if (id === "user-settings" && tab === "storage") loadDataFolder();
 }
 
 const SETTINGS_HIT_MS = 1600;
@@ -3583,6 +3607,7 @@ function channelPlainName(channel) {
 function renderChannels() {
   const list = $("channel-list");
   list.innerHTML = "";
+  paintVoiceGate();
   if (!state.currentServer) return;
   const server = state.currentServer;
   checkVoiceRoster();
@@ -3620,6 +3645,7 @@ function renderChannels() {
   }
   scheduleMuteExpiry(server);
   pushOverlayRoster();
+  paintVoiceGate();
 }
 
 function pinnedFirst(sections, server, canCreate) {
@@ -5259,7 +5285,7 @@ function renderCamGrid() {
       tile.dataset.user = user.id;
       if (!isMe) {
         tile.appendChild(el("img"));
-        tile.appendChild(el("div", "cam-wait", "Connecting"));
+        tile.appendChild(el("div", "cam-wait", inBrowserApp() ? WEB_CAMERA_NOTE : "Connecting"));
       }
       tile.appendChild(el("div", "cam-name", isMe ? `${user.name} (you)` : user.name));
       grid.appendChild(tile);
@@ -5267,7 +5293,7 @@ function renderCamGrid() {
     tile.classList.toggle("speaking", state.speaking.has(user.id));
     if (isMe) {
       if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
-    } else if (!cam.watching.has(user.id)) {
+    } else if (!cam.watching.has(user.id) && !inBrowserApp()) {
       cam.watching.add(user.id);
       invoke("watch_camera", { serverId: state.currentServer.id, userId: user.id }).catch(e => {
         cam.watching.delete(user.id);
@@ -5463,6 +5489,7 @@ function closeFloating(except) {
   if (except !== "pins-pop") closePinsPanel();
   if (except !== "threads-pop") closeThreadsPanel();
   if (except !== "search-pop") closeSearchPop();
+  if ($("gif-picker").classList.contains("gif-picker-float")) closeGifPicker();
 }
 
 const EMOJI_TONE_KEY = "commy.emoji.tone";
@@ -6991,7 +7018,7 @@ function wireForum() {
 const driveUi = { channel: null, folder: null, view: null, dialog: null, busy: new Map() };
 
 function driveWorksHere() {
-  return !document.body.classList.contains("web-app") && !document.body.classList.contains("mobile-app");
+  return !inBrowserApp() && !document.body.classList.contains("mobile-app");
 }
 
 function showDriveView() {
@@ -9626,53 +9653,70 @@ async function refreshConnPop() {
   connLast = { at: now, tx, rx };
   const list = $("conn-links");
   list.replaceChildren();
-  const current = pickConnLink(stats.links, connPick);
+  const entries = connEntries(stats.me, stats.links);
+  const current = pickConnLink(entries, connPick);
   connPick = current ? current.user : null;
   const tabs = $("conn-tabs");
   tabs.replaceChildren();
-  tabs.classList.toggle("hidden", stats.links.length < 2);
-  for (const link of stats.links) {
-    const tab = el("button", "conn-tab");
-    tab.type = "button";
-    tab.setAttribute("role", "tab");
-    tab.setAttribute("aria-selected", String(link === current));
-    tab.title = link.name;
-    tab.dataset.quality = link.quality;
-    tab.classList.toggle("active", link === current);
-    tab.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
-    tab.onclick = () => {
-      connPick = link.user;
-      refreshConnPop();
-    };
-    tabs.appendChild(tab);
-  }
-  for (const link of current ? [current] : []) {
-    const row = el("div", "conn-link");
-    const head = el("div", "conn-link-head");
-    head.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
-    head.appendChild(el("span", "conn-name", link.name));
-    const q = link.quality;
-    head.appendChild(el("span", `conn-badge ${q}`, { good: "Good", ok: "Fair", bad: "Poor" }[q]));
-    row.appendChild(head);
-    const grid = el("div", "conn-grid");
-    const stat = (label, value) => {
-      grid.appendChild(el("span", "conn-label", label));
-      grid.appendChild(el("span", "conn-value", value));
-    };
-    stat("Ping", `${Math.round(link.rtt_ms)} ms`);
-    stat("Packet loss", `${link.loss_pct.toFixed(link.loss_pct < 1 ? 2 : 1)}%`);
-    stat("Jitter", `${link.jitter_ms.toFixed(1)} ms`);
-    const path = link.path === "direct" ? "Connected directly"
-      : link.path === "relay" ? "Connected through a relay"
-      : link.path === "mixed" ? "Connected directly and through a relay"
-      : "Connecting";
-    stat("Connection", path);
-    row.appendChild(grid);
-    list.appendChild(row);
-  }
+  tabs.classList.toggle("hidden", entries.length < 2);
+  for (const entry of entries) tabs.appendChild(connTab(entry, entry === current));
+  if (current) list.appendChild(current.self ? ownConnCard(current) : linkConnCard(current));
   if (!stats.links.length) list.appendChild(el("div", "conn-empty", "Nobody else is connected yet."));
   $("conn-foot").textContent = `Audio: ${stats.codec}, ${stats.bitrate_kbps} kbps per person`;
   paintSignal(stats.links);
+}
+
+function connTab(entry, active) {
+  const tab = el("button", "conn-tab");
+  tab.type = "button";
+  tab.setAttribute("role", "tab");
+  tab.setAttribute("aria-selected", String(active));
+  tab.title = `${entry.self ? "You" : entry.name}: ${entry.chip.label}`;
+  tab.dataset.quality = entry.quality;
+  tab.classList.toggle("active", active);
+  tab.appendChild(makeAvatar(entry.user, entry.name, "avatar avatar-xs"));
+  tab.appendChild(el("span", "conn-tab-name", entry.self ? "You" : entry.name));
+  tab.appendChild(el("span", `conn-path ${entry.chip.kind}`, entry.chip.label));
+  tab.appendChild(el("span", "conn-dot"));
+  tab.onclick = () => {
+    connPick = entry.user;
+    refreshConnPop();
+  };
+  return tab;
+}
+
+function connCard(entry, badge, rows) {
+  const row = el("div", "conn-link");
+  const head = el("div", "conn-link-head");
+  head.appendChild(makeAvatar(entry.user, entry.name, "avatar avatar-xs"));
+  head.appendChild(el("span", "conn-name", entry.self ? `${entry.name} (you)` : entry.name));
+  head.appendChild(el("span", `conn-badge ${badge.cls}`, badge.label));
+  row.appendChild(head);
+  const grid = el("div", "conn-grid");
+  for (const [label, value] of rows) {
+    grid.appendChild(el("span", "conn-label", label));
+    grid.appendChild(el("span", "conn-value", value));
+  }
+  row.appendChild(grid);
+  return row;
+}
+
+function linkConnCard(link) {
+  const badge = { cls: link.quality, label: { good: "Good", ok: "Fair", bad: "Poor" }[link.quality] };
+  return connCard(link, badge, [
+    ["Ping", `${Math.round(link.rtt_ms)} ms`],
+    ["Packet loss", `${link.loss_pct.toFixed(link.loss_pct < 1 ? 2 : 1)}%`],
+    ["Jitter", `${link.jitter_ms.toFixed(1)} ms`],
+    ["Connection", linkPathText(link.path)],
+  ]);
+}
+
+function ownConnCard(me) {
+  return connCard(me, ownBadge(me.quality), [
+    ["Ping to relay", ownRelayText(me)],
+    ["Your network", ownNetworkText(me.direct)],
+    ["Your calls", me.path_text],
+  ]);
 }
 
 function paintSignal(links) {
@@ -11797,8 +11841,8 @@ async function openFullProfile(member) {
   showModal("modal-profile");
 }
 
-function openProfileMenu(person, x, y) {
-  closeFloating();
+function openProfileMenu(person, x, y, keepOpen) {
+  closeFloating(keepOpen);
   const menu = $("fp-menu");
   menu.replaceChildren(el("div", "ctx-title", person.name));
   const item = (label, icon, onClick, cls = "") => {
@@ -11900,7 +11944,7 @@ function openMemberCard(member, anchor) {
   more.onclick = e => {
     e.stopPropagation();
     const r = more.getBoundingClientRect();
-    openProfileMenu(member, r.right - 220, r.bottom + 6);
+    openProfileMenu(member, r.right - 220, r.bottom + 6, "member-card");
   };
   const action = (icon, label, onClick, cls = "") => {
     const btn = el("button", "mc-action " + cls);
@@ -12324,6 +12368,150 @@ async function setStoreForOthers(mb) {
     toast(String(e));
   }
   renderStorageSettings();
+}
+
+let dataFolderView = null;
+let pendingMovePlan = null;
+
+async function loadDataFolder() {
+  if (document.documentElement.classList.contains("web-app")) return;
+  try {
+    dataFolderView = await invoke("data_folder");
+  } catch {
+    dataFolderView = null;
+  }
+  renderDataFolder();
+  loadStorageUsage();
+}
+
+function renderDataFolder() {
+  if (!dataFolderView) return;
+  const folder = describeFolder(dataFolderView);
+  $("storage-path").textContent = folder.path;
+  $("storage-path").title = folder.path;
+  $("storage-path-note").textContent = folder.note;
+  $("storage-move").disabled = !folder.canMove;
+  $("storage-standard").classList.toggle("hidden", !folder.canUseStandard);
+}
+
+async function loadStorageUsage() {
+  $("storage-refresh").disabled = true;
+  try {
+    renderStorageUsage(describeUsage(await invoke("storage_usage")));
+  } catch (e) {
+    $("storage-total").textContent = "Could not measure the data folder";
+    $("storage-free").textContent = String(e);
+  }
+  $("storage-refresh").disabled = false;
+}
+
+function renderStorageUsage(usage) {
+  $("storage-total").textContent = `${usage.totalText} used`;
+  $("storage-free").textContent = usage.freeText;
+  const bar = $("storage-bar");
+  bar.replaceChildren();
+  const list = $("storage-parts");
+  list.replaceChildren();
+  for (const row of usage.rows) {
+    const slice = el("span", "storage-slice");
+    slice.style.flexGrow = String(row.share);
+    slice.style.background = `var(--${row.tone})`;
+    bar.appendChild(slice);
+    const line = el("div", "storage-part");
+    const dot = el("span", "storage-dot");
+    dot.style.background = `var(--${row.tone})`;
+    line.append(dot, el("span", "storage-part-name", row.label), el("span", "storage-part-size", row.size));
+    list.appendChild(line);
+  }
+  if (!usage.rows.length) list.appendChild(el("div", "manage-empty", "Nothing saved yet"));
+}
+
+async function chooseDataFolder() {
+  let picked = null;
+  try {
+    picked = await invoke("pick_data_folder");
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (picked) await offerDataFolderMove(picked);
+}
+
+async function offerDataFolderMove(folder) {
+  try {
+    pendingMovePlan = await invoke("plan_data_folder_move", { folder });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  const plan = describeMovePlan(pendingMovePlan, { inCall: Boolean(state.voiceChannelId) });
+  $("move-data-title").textContent = plan.title;
+  $("move-data-lines").replaceChildren(...plan.lines.map(line => el("p", null, line)));
+  showModal("modal-move-data");
+}
+
+async function confirmDataFolderMove() {
+  if (!pendingMovePlan) return;
+  $("move-data-go").disabled = true;
+  try {
+    await invoke("move_data_folder", { target: pendingMovePlan.target });
+  } catch (e) {
+    toast(String(e));
+    $("move-data-go").disabled = false;
+  }
+}
+
+async function confirmClearCache() {
+  $("clear-cache-go").disabled = true;
+  try {
+    toast(describeClearedCache(await invoke("clear_cache")));
+    hideModals();
+    loadStorageUsage();
+  } catch (e) {
+    toast(String(e));
+  }
+  $("clear-cache-go").disabled = false;
+}
+
+function openClearAll() {
+  $("clear-all-input").value = "";
+  $("clear-all-go").disabled = true;
+  showModal("modal-clear-all");
+  $("clear-all-input").focus();
+}
+
+async function confirmClearAll() {
+  const typed = $("clear-all-input").value;
+  if (!clearAllConfirmed(typed)) return;
+  $("clear-all-go").disabled = true;
+  try {
+    await invoke("clear_all_data", { confirm: typed });
+  } catch (e) {
+    toast(String(e));
+    $("clear-all-go").disabled = false;
+  }
+}
+
+function wireStorageControls() {
+  $("storage-refresh").onclick = loadStorageUsage;
+  $("storage-open").onclick = () => invoke("open_data_folder").catch(err => toast(String(err)));
+  $("storage-move").onclick = chooseDataFolder;
+  $("storage-standard").onclick = () => dataFolderView && offerDataFolderMove(dataFolderView.standard_folder);
+  $("move-data-cancel").onclick = hideModals;
+  $("move-data-go").onclick = confirmDataFolderMove;
+  $("storage-clear-cache").onclick = () => showModal("modal-clear-cache");
+  $("clear-cache-cancel").onclick = hideModals;
+  $("clear-cache-go").onclick = confirmClearCache;
+  $("storage-clear-all").onclick = openClearAll;
+  $("clear-all-cancel").onclick = hideModals;
+  $("clear-all-go").onclick = confirmClearAll;
+  $("clear-all-input").oninput = () => {
+    $("clear-all-go").disabled = !clearAllConfirmed($("clear-all-input").value);
+  };
+  $("clear-all-recovery").onclick = () => {
+    hideModals();
+    selectSettingsTab("user-settings", "commy-account");
+  };
 }
 
 function renderProfilePrivacy() {
@@ -15625,6 +15813,8 @@ const YOUTUBE_GREET_MS = 250;
 const YOUTUBE_GREET_TRIES = 40;
 const YOUTUBE_NOTICE = "This video plays from YouTube. Loading it connects you to YouTube, which can see your IP address and may store data under Google's privacy policy.";
 const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
+const WEB_WATCH_NOTE = "Streams play in the Commy desktop app.";
+const WEB_CAMERA_NOTE = "Camera shows in the desktop app";
 
 const activityUi = {
   run: null,
@@ -16376,6 +16566,7 @@ function paintNarrowRail() {
   const server = narrowViewServer();
   paintNarrowServers(server);
   $("narrow-column").replaceChildren(narrowChannelTile(server), ...(server ? narrowVoiceTiles(server) : []));
+  paintVoiceGate();
 }
 
 function paintNarrowServers(server) {
@@ -17801,11 +17992,15 @@ async function renderGifResults(query, view = composerGifs) {
 
 let gifSearchTimer = null;
 
-function openGifPicker(query = "", target = null) {
+function openGifPicker(query = "", target = null, beside = null) {
   gifTarget = target;
   if (!target && !(state.view === "dm" && state.currentDm) && !(state.view === "server" && state.currentChannel)) return;
   $("emoji-picker").classList.add("hidden");
-  $("gif-picker").classList.remove("hidden");
+  const picker = $("gif-picker");
+  picker.classList.toggle("gif-picker-float", Boolean(beside));
+  picker.style.left = picker.style.top = "";
+  picker.classList.remove("hidden");
+  if (beside) placeBesideCard(picker, beside);
   $("gif-search").value = query;
   $("gif-search").focus();
   renderGifResults(query);
@@ -18102,6 +18297,16 @@ function closeGifPicker() {
   $("gif-picker").classList.add("hidden");
 }
 
+function placeBesideCard(popup, anchor) {
+  const gap = 8;
+  const card = (anchor.closest(".member-card") || anchor).getBoundingClientRect();
+  const a = anchor.getBoundingClientRect();
+  const p = popup.getBoundingClientRect();
+  const left = card.left - p.width - gap >= gap ? card.left - p.width - gap : card.right + gap;
+  popup.style.left = `${Math.max(gap, Math.min(left, window.innerWidth - p.width - gap))}px`;
+  popup.style.top = `${Math.max(gap, Math.min(a.bottom - p.height, window.innerHeight - p.height - gap))}px`;
+}
+
 async function sendGif(url) {
   closeGifPicker();
   const dmTarget = gifTarget || (state.view === "dm" && state.currentDm ? { user: state.currentDm.user, name: state.currentDm.name } : null);
@@ -18147,9 +18352,47 @@ async function askForMicrophoneOnPhones() {
   }
 }
 
+async function loadVoiceGate() {
+  try {
+    applyVoiceGate(await invoke("voice_gate"));
+  } catch {
+    applyVoiceGate(null);
+  }
+}
+
+function applyVoiceGate(view) {
+  const next = readVoiceGate(view);
+  if (sameVoiceGate(next, state.voiceGate)) return;
+  state.voiceGate = next;
+  paintVoiceGate();
+}
+
+function currentVoiceWait() {
+  if (!state.currentServer) return null;
+  return voiceGateWait(state.voiceGate, state.currentServer.id, state.voiceServer && state.voiceServer.id);
+}
+
+function paintVoiceGate() {
+  const wait = currentVoiceWait();
+  $("voice-gate-pill").classList.toggle("hidden", !wait);
+  $("voice-gate-reason").textContent = wait ? wait.reason : "";
+  $("voice-gate-pill").title = wait ? voiceGateRefusal(wait) : "";
+  for (const row of document.querySelectorAll(".voice-channel[data-room], .narrow-voice-tile[data-room]")) {
+    const blocked = Boolean(wait) && row.dataset.room !== state.voiceChannelId;
+    if (row.dataset.joinTitle === undefined) row.dataset.joinTitle = row.title;
+    row.classList.toggle("voice-wait", blocked);
+    row.title = blocked ? voiceGateRefusal(wait) : row.dataset.joinTitle;
+  }
+}
+
 async function toggleVoice(channel) {
   if (!state.currentServer) return;
   const leaving = state.voiceChannelId === channel.id;
+  const wait = leaving ? null : currentVoiceWait();
+  if (wait) {
+    toast(voiceGateRefusal(wait));
+    return;
+  }
   if (!leaving) await askForMicrophoneOnPhones();
   try {
     await invoke("set_voice_channel", {
@@ -18816,6 +19059,7 @@ async function uploadFileObject(file) {
 async function watchScreen(userId, name) {
   const serverId = state.currentServer ? state.currentServer.id : state.voiceServer && state.voiceServer.id;
   if (!serverId) return;
+  if (inBrowserApp()) return toast(WEB_WATCH_NOTE);
   try {
     if (state.watchingUser && state.watchingUser !== userId) await stopWatching();
     openStage("watch", `${name}'s screen`);
@@ -19486,6 +19730,17 @@ function wireEvents() {
     }
   });
 
+  $("wait-connection-toggle").addEventListener("change", async e => {
+    try {
+      state.voice = await invoke("set_wait_for_connection", { enabled: e.target.checked });
+      await loadVoiceGate();
+      toast(e.target.checked ? "Voice waits for a steady connection" : "Voice joins right away");
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  });
+
   $("share-activity-toggle").addEventListener("change", async e => {
     try {
       state.voice = await invoke("set_share_activity", { enabled: e.target.checked });
@@ -19578,7 +19833,8 @@ function wireEvents() {
   };
   $("mc-gif").onclick = () => {
     const input = $("mc-input");
-    openGifPicker("", { user: input.dataset.user, name: input.dataset.name });
+    if ($("gif-picker").classList.contains("hidden")) openGifPicker("", { user: input.dataset.user, name: input.dataset.name }, $("mc-composer"));
+    else closeGifPicker();
   };
   $("account-pronouns").addEventListener("change", async e => {
     try {
@@ -19758,7 +20014,7 @@ function wireEvents() {
     popGifs.timer = setTimeout(() => renderGifResults(e.target.value, popGifs), 300);
   });
   document.addEventListener("mousedown", e => {
-    if (!$("gif-picker").classList.contains("hidden") && !$("gif-picker").contains(e.target) && !$("gif-btn").contains(e.target)) {
+    if (!$("gif-picker").classList.contains("hidden") && !$("gif-picker").contains(e.target) && !e.target.closest("#gif-btn, #mc-gif")) {
       closeGifPicker();
     }
   });
@@ -20091,6 +20347,7 @@ function wireEvents() {
   $("verbose-log-toggle").addEventListener("change", e => setVerboseLogging(e.target.checked));
   $("log-folder-open").onclick = () => invoke("open_log_folder").catch(err => toast(String(err)));
   $("log-bundle-save").onclick = saveLogBundle;
+  wireStorageControls();
   $("sounds-toggle").addEventListener("change", e => {
     const prefs = soundPrefs();
     prefs.enabled = e.target.checked;
@@ -20548,6 +20805,7 @@ function wireEvents() {
       }
     });
     window.__TAURI__.event.listen("event-reminder", () => playSound("message"));
+    window.__TAURI__.event.listen("voice-gate", event => applyVoiceGate(event.payload));
     window.__TAURI__.event.listen("file-progress", event => onFileProgress(event.payload));
     window.__TAURI__.event.listen("drive-progress", event => onDriveProgress(event.payload));
     window.__TAURI__.event.listen("safety-changed", async () => {
@@ -21260,6 +21518,7 @@ function openUserSettings(tab) {
   $("stream-ink-screen-toggle").checked = streamInkScreen();
   $("afk-timeout").value = String(state.voice.afk_timeout_minutes ?? 10);
   $("share-activity-toggle").checked = state.voice.share_activity !== false;
+  $("wait-connection-toggle").checked = state.voice.wait_for_connection !== false;
   loadAudioDevices();
   loadCameraDevices();
   renderSoundSettings();
@@ -22500,6 +22759,7 @@ async function boot() {
   }
   await loadAlertSounds();
   state.voice = await invoke("get_voice_settings");
+  await loadVoiceGate();
   await loadSafety();
   await loadFriends();
   await loadOverlaySettings();

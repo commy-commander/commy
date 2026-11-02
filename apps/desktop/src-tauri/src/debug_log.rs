@@ -130,7 +130,11 @@ fn sink() -> std::sync::MutexGuard<'static, Sink> {
 
 fn apply_filter(verbose: bool) {
     if let Some(handle) = FILTER.get() {
-        let _ = handle.reload(EnvFilter::new(if verbose { VERBOSE_FILTER } else { QUIET_FILTER }));
+        let filter = match verbose {
+            true => EnvFilter::new(VERBOSE_FILTER),
+            false => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(QUIET_FILTER)),
+        };
+        let _ = handle.reload(filter);
     }
 }
 

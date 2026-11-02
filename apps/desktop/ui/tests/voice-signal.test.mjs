@@ -70,3 +70,44 @@ test("people who leave are forgotten", () => {
   const [back] = tracker.read([link(40, 1400)]);
   assert.equal(back.quality, "good");
 });
+
+const paths = require("../scripts/voice-signal.js");
+
+test("every link says whether it is direct or relayed", () => {
+  assert.deepEqual(paths.linkPathChip("direct"), { kind: "direct", label: "Direct" });
+  assert.deepEqual(paths.linkPathChip("mixed"), { kind: "direct", label: "Direct" });
+  assert.deepEqual(paths.linkPathChip("relay"), { kind: "relay", label: "Relayed" });
+  assert.deepEqual(paths.linkPathChip("none"), { kind: "none", label: "Connecting" });
+});
+
+test("your own path sums up how you reach everyone else", () => {
+  assert.equal(paths.ownPath([]).kind, "none");
+  assert.deepEqual(paths.ownPath([{ path: "direct" }, { path: "mixed" }]), { kind: "direct", label: "Direct", text: "All 2 direct" });
+  assert.deepEqual(paths.ownPath([{ path: "relay" }]), { kind: "relay", label: "Relayed", text: "Relayed" });
+  assert.deepEqual(paths.ownPath([{ path: "direct" }, { path: "relay" }, { path: "relay" }]), { kind: "mixed", label: "Some relayed", text: "1 direct, 2 relayed" });
+  assert.equal(paths.ownPath([{ path: "none" }]).kind, "none");
+});
+
+test("you are listed first, with your own quality and path", () => {
+  const me = { user: "me", name: "Commy", quality: "fair", direct: "blocked", relay_reachable: true, relay_rtt_ms: 80 };
+  const [you, other] = paths.connEntries(me, [{ user: "a", name: "ferris", path: "relay", quality: "good" }]);
+  assert.equal(you.self, true);
+  assert.equal(you.quality, "ok");
+  assert.deepEqual(you.chip, { kind: "relay", label: "Relayed" });
+  assert.equal(other.self, false);
+  assert.deepEqual(other.chip, { kind: "relay", label: "Relayed" });
+  assert.equal(paths.connEntries(null, [{ user: "a", path: "direct" }]).length, 1);
+});
+
+test("your own connection reads in plain words", () => {
+  assert.deepEqual(paths.ownBadge("good"), { cls: "good", label: "Good" });
+  assert.deepEqual(paths.ownBadge("poor"), { cls: "bad", label: "Poor" });
+  assert.deepEqual(paths.ownBadge("offline"), { cls: "bad", label: "Offline" });
+  assert.deepEqual(paths.ownBadge(undefined), { cls: "bad", label: "Offline" });
+  assert.equal(paths.ownNetworkText("open"), "Direct connections work");
+  assert.equal(paths.ownNetworkText("blocked"), "Relay only");
+  assert.equal(paths.ownNetworkText("unchecked"), "Not checked yet");
+  assert.equal(paths.ownRelayText({ relay_reachable: true, relay_rtt_ms: 37.6 }), "38 ms");
+  assert.equal(paths.ownRelayText({ relay_reachable: true, relay_rtt_ms: null }), "Measuring");
+  assert.equal(paths.ownRelayText({ relay_reachable: false, relay_rtt_ms: 20 }), "Not reachable");
+});

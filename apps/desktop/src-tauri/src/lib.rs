@@ -11,6 +11,7 @@ mod entry_list;
 mod catchup;
 mod channel_lock;
 mod community_sync;
+mod data_location;
 mod debug_log;
 mod deleted;
 mod devices;
@@ -67,6 +68,7 @@ mod tray;
 mod updater;
 use commy_view as view;
 mod voice_filter;
+mod voice_gate;
 mod voice_keys;
 mod voice_message;
 mod voice_pack;
@@ -376,6 +378,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     drop(signing);
 
     app.persist_server(ticket.server_id);
+    community_sync::keep_invite_key(app, ticket.server_id, ticket.owner);
     doorbell::record_join(app, ticket.server_id);
     handle.emit("servers-changed", serde_json::Value::Null);
     Ok(summary)
@@ -428,14 +431,27 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
 }
 
 #[tauri::command]
-fn get_invite(app: tauri::State<App>, server_id: String) -> CmdResult<String> {
+async fn get_invite(app: tauri::State<'_, App>, server_id: String) -> CmdResult<String> {
     let id = server_id.parse().map_err(err_to_string)?;
     require_invite_permission(&app, id)?;
-    let ticket = app.vouched_ticket(id).ok_or("no invite available; you may be offline")?;
+    let ticket = owner_vouched_ticket(&app, id)?;
+    Ok(reachable_ticket(&app, ticket).await.encode())
+}
+
+pub(crate) fn owner_vouched_ticket(app: &App, server: ServerId) -> CmdResult<ServerTicket> {
+    let ticket = app.vouched_ticket(server).ok_or("no invite available; you may be offline")?;
     if ticket.owner.is_none() {
         return Err("your account key is still being confirmed; try again in a moment".into());
     }
-    Ok(ticket.encode())
+    Ok(ticket)
+}
+
+pub(crate) async fn reachable_ticket(app: &App, ticket: ServerTicket) -> ServerTicket {
+    let widening = app.net.lock().await.as_ref().map(|node| node.invite_ticket(&ticket));
+    match widening {
+        Some(widening) => widening.await,
+        None => ticket,
+    }
 }
 
 #[tauri::command]
@@ -1334,6 +1350,12 @@ async fn set_voice_channel(
                 let state = servers.get(&sid).ok_or("unknown server")?;
                 view::act::join_voice(state, our_permissions(&app, state, profile.id), profile.id, channel)?;
             }
+            let joining_this_server = app.voice_session.lock().unwrap().as_ref().is_none_or(|s| s.server != sid);
+            if joining_this_server {
+                if let Some(wait) = voice_gate::check(&app, sid).await {
+                    return Err(wait.refusal());
+                }
+            }
             calls::end(&app, &handle, true, "hung_up").await;
             let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
             if let Some(previous) = previous {
@@ -1612,7 +1634,7 @@ fn dial_voice_members(
     };
     for (user, their_hex) in targets {
         if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, channel, user) {
-            dial_voice_peer(handle, user, their_hex, channel, me.id);
+            dial_voice_peer(handle, sid, user, their_hex, channel, me.id);
         }
     }
 }
@@ -1657,6 +1679,7 @@ async fn run_voice_redialer(handle: tauri::AppHandle) {
 
 fn dial_voice_peer(
     handle: &tauri::AppHandle,
+    server: ServerId,
     user: UserId,
     their_hex: String,
     channel: ChannelId,
@@ -1670,16 +1693,21 @@ fn dial_voice_peer(
             channel,
         };
         let dialed = dial_media(&app, &their_hex, hello).await;
+        let joined = voice_join_of(&app, server, user);
         let mut session = app.voice_session.lock().unwrap();
         let Some(session) = session.as_mut().filter(|s| s.channel == channel) else { return };
         match dialed {
-            Ok(media) => session.attach_peer(user, media),
+            Ok(media) => session.attach_peer(user, media, joined),
             Err(e) => {
                 tracing::warn!("voice dial failed, retrying shortly: {e}");
                 session.dial_failed(user);
             }
         }
     });
+}
+
+fn voice_join_of(app: &App, server: ServerId, user: UserId) -> Option<i64> {
+    app.servers.lock().unwrap().get(&server).and_then(|state| state.voice_device_since(user))
 }
 
 fn servers_using_image(app: &App, image: &str) -> Vec<ServerId> {
@@ -1786,8 +1814,7 @@ pub(crate) fn member_nodes(app: &App, server: ServerId) -> Vec<String> {
     app.servers.lock().unwrap().get(&server).map(ServerState::member_nodes).unwrap_or_default()
 }
 
-#[cfg(desktop)]
-const SHARED_FILES_DIR: &str = "shared-files";
+pub const SHARED_FILES_DIR: &str = "shared-files";
 
 #[cfg(desktop)]
 async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
@@ -2324,7 +2351,8 @@ async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: 
 }
 
 async fn invite_to_group(app: &App, handle: &tauri::AppHandle, me: &UserProfile, sid: ServerId, user_ids: Vec<String>) -> CmdResult<()> {
-    let ticket = app.vouched_ticket(sid).ok_or("no invite available; you may be offline")?.encode();
+    let ticket = app.vouched_ticket(sid).ok_or("no invite available; you may be offline")?;
+    let ticket = reachable_ticket(app, ticket).await.encode();
     let key = community_sync::invite_key(app, sid);
     for raw in user_ids {
         let (_, user) = dm_partner(app, &raw)?;
@@ -4316,7 +4344,7 @@ fn set_input_mode(
 ) -> CmdResult<VoiceSettings> {
     let mode = voice_keys::InputMode::parse(&mode).ok_or("unknown input mode")?;
     let talk_key = talk_key.trim().to_string();
-    if !overlay::valid_hotkey(&talk_key) {
+    if cfg!(desktop) && !overlay::valid_hotkey(&talk_key) {
         return Err(format!("{talk_key} is not a key Commy can use for push to talk"));
     }
     let snapshot = app.update_voice(|voice| {
@@ -5081,7 +5109,16 @@ struct LinkView {
 }
 
 #[derive(serde::Serialize)]
+struct OwnLinkView {
+    user: String,
+    name: String,
+    #[serde(flatten)]
+    check: commy_net::ConnectionCheck,
+}
+
+#[derive(serde::Serialize)]
 struct VoiceStatsView {
+    me: Option<OwnLinkView>,
     links: Vec<LinkView>,
     codec: String,
     bitrate_kbps: u32,
@@ -5094,6 +5131,15 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         let session = session.as_ref().ok_or("not in voice")?;
         (session.link_stats(), session.server)
     };
+    let checker = app.net.lock().await.as_ref().map(CommyNode::connection_checker);
+    let me = current_profile(&app).ok().zip(checker).map(|(profile, checker)| {
+        let name = app.servers.lock().unwrap().get(&sid).map(|st| view::display_name(st, profile.id));
+        OwnLinkView {
+            user: profile.id.to_string(),
+            name: name.unwrap_or_else(|| profile.visible_name().to_string()),
+            check: checker.now(),
+        }
+    });
     let server_names: Vec<Option<String>> = {
         let servers = app.servers.lock().unwrap();
         stats.iter().map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user))).collect()
@@ -5124,6 +5170,7 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         })
         .collect();
     Ok(VoiceStatsView {
+        me,
         links,
         codec: "Opus, 48 kHz mono, 10 ms frames".into(),
         bitrate_kbps: (commy_audio::codec::VOICE_BITRATE / 1000) as u32,
@@ -7218,7 +7265,7 @@ fn react_to_voice_change(
             let their_hex = app.servers.lock().unwrap().get(&server).and_then(|s| s.voice_node(user));
             let Some(their_hex) = their_hex else { return };
             if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, our_channel, user) {
-                dial_voice_peer(handle, user, their_hex, our_channel, me.id);
+                dial_voice_peer(handle, server, user, their_hex, our_channel, me.id);
             }
         }
         _ => {
@@ -7331,6 +7378,16 @@ async fn run_connection_check(app: tauri::State<'_, App>) -> CmdResult<commy_net
         check.ipv6
     );
     Ok(check)
+}
+
+#[tauri::command]
+async fn voice_gate(app: tauri::State<'_, App>) -> CmdResult<voice_gate::GateView> {
+    Ok(voice_gate::current(&app).await)
+}
+
+#[tauri::command]
+fn set_wait_for_connection(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
+    app.update_voice(|voice| voice.wait_for_connection = enabled)
 }
 
 #[tauri::command]
@@ -7467,9 +7524,11 @@ async fn run_media_loop(
         let app = handle.state::<App>();
         match media.hello.clone() {
             MediaHello::Voice { user, channel } => {
+                let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+                let joined = server.and_then(|server| voice_join_of(&app, server, user));
                 let mut session = app.voice_session.lock().unwrap();
                 match session.as_mut() {
-                    Some(s) if s.channel == channel => s.attach_peer(user, media),
+                    Some(s) if s.channel == channel => s.attach_peer(user, media, joined),
                     _ => tracing::debug!("voice call for a channel we are not in"),
                 }
             }
@@ -7738,6 +7797,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
                 tauri::async_runtime::spawn(channel_lock::run(handle.clone()));
                 tauri::async_runtime::spawn(community_sync::run(handle.clone()));
+                tauri::async_runtime::spawn(voice_gate::run(handle.clone()));
                 tauri::async_runtime::spawn(wake::run_watchdog(handle.clone()));
                 tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
                 tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
@@ -7761,6 +7821,8 @@ fn on_resumed(handle: &tauri::AppHandle) {
 pub fn run() {
     debug_log::init();
 
+    #[cfg(desktop)]
+    data_location::resolve_before_start();
     instance::apply_test_build_data_dir();
 
     let launch_link = invite_link::link_from_args();
@@ -7772,6 +7834,8 @@ pub fn run() {
             return;
         }
     }
+    #[cfg(desktop)]
+    data_location::finish_scheduled_before_start();
 
     instance::apply_webview_data_dir_before_any_window();
 
@@ -7873,7 +7937,7 @@ pub fn run() {
             }
             let toast_icon = tauri_app.path().app_data_dir().ok().and_then(|dir| {
                 std::fs::create_dir_all(&dir).ok()?;
-                let path = dir.join("notification-icon.png");
+                let path = dir.join(data_location::NOTIFICATION_ICON_FILE);
                 std::fs::write(&path, tray::ICON_PNG).ok()?;
                 Some(path)
             });
@@ -8131,11 +8195,21 @@ pub fn run() {
             speech::speech_play,
             speech::speech_stop,
             voice_pack::voice_pack_status,
+            data_location::data_folder,
+            data_location::storage_usage,
+            data_location::open_data_folder,
+            data_location::pick_data_folder,
+            data_location::plan_data_folder_move,
+            data_location::move_data_folder,
+            data_location::clear_cache,
+            data_location::clear_all_data,
             voice_pack::voice_pack_download,
             voice_pack::voice_pack_file,
             voice_pack::voice_pack_remove,
             set_unread,
             set_close_to_tray,
+            voice_gate,
+            set_wait_for_connection,
             debug_log_status,
             set_verbose_logging,
             open_log_folder,

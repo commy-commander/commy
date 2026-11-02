@@ -95,7 +95,7 @@ pub fn dial_partner(app: &App, handle: &tauri::AppHandle, me: &UserProfile) {
     let Some(call) = app.dm_call.lock().unwrap().clone().filter(|c| c.active) else { return };
     let (Some(ours), Some(theirs)) = (me.node.clone(), node_hex_for_user(app, call.partner)) else { return };
     if should_dial(&ours, &theirs) && crate::claim_voice_dial(app, call.channel, call.partner) {
-        crate::dial_voice_peer(handle, call.partner, theirs, call.channel, me.id);
+        crate::dial_voice_peer(handle, commy_core::ids::CALL_SERVER, call.partner, theirs, call.channel, me.id);
     }
 }
 
