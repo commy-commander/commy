@@ -38,7 +38,7 @@ struct Live {
     pool: Pool,
     partners: HashMap<UserId, Partner>,
     owners: HashMap<StreamId, UserId>,
-    inboxes: HashMap<StreamId, (ServerId, StreamKeys)>,
+    inboxes: HashMap<StreamId, (Option<ServerId>, StreamKeys)>,
     caught_up: HashSet<StreamId>,
     task: tauri::async_runtime::JoinHandle<()>,
 }
@@ -191,7 +191,11 @@ fn refresh(handle: &AppHandle) {
     push_wake::register(handle);
 }
 
-fn own_inboxes(app: &App, me: UserId) -> Vec<(ServerId, StreamKeys)> {
+fn own_inboxes(app: &App, me: UserId) -> Vec<(Option<ServerId>, StreamKeys)> {
+    let personal = app.identity().map(|identity| {
+        let epochs = sync_streams::recent_dm_epochs(Utc::now(), EPOCHS);
+        inbox::personal_inboxes(me, &identity.public(), &epochs)
+    });
     let holder = crate::channel_lock::holder_of(app);
     let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
     let settled: Vec<ServerId> = sids.into_iter().filter(|sid| !app.awaits_snapshot(*sid)).collect();
@@ -202,9 +206,10 @@ fn own_inboxes(app: &App, me: UserId) -> Vec<(ServerId, StreamKeys)> {
         .filter_map(|sid| {
             let state = servers.get(&sid)?;
             let ring = holder.community_ring(state, None)?;
-            Some(inbox::inboxes(state, me, &ring, now).into_iter().map(move |keys| (sid, keys)))
+            Some(inbox::inboxes(state, me, &ring, now).into_iter().map(move |keys| (Some(sid), keys)))
         })
         .flatten()
+        .chain(personal.into_iter().flatten().map(|keys| (None, keys)))
         .collect()
 }
 
@@ -298,10 +303,11 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
         return call && account_log::is_live(app) && append_pairwise(app, to, envelope).await;
     }
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return false };
-    let (Some(key), Some(keys)) = (partner_key(app, to), inbox_to(app, me, to)) else {
-        tracing::info!("no first-message inbox to leave a message for {to} in");
+    let Some(key) = partner_key(app, to) else {
+        tracing::info!("no key to seal a first message for {to} with");
         return false;
     };
+    let keys = inbox_to(app, me, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
     let Some(plain) = inbox::seal(&key, envelope) else { return false };
     let stream = keys.id;
     let wake = rings(&envelope.message).then(|| keys.wake_tag(&to.to_string(), push_wake::today()));
@@ -340,7 +346,15 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     }
 }
 
-fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], at: i64, live_now: bool) {
+fn known_sender(app: &App, server: Option<ServerId>, envelope: &DmEnvelope) -> bool {
+    let Some(server) = server else { return true };
+    let from = envelope.message.from;
+    app.servers.lock().unwrap().get(&server).is_some_and(|state| {
+        state.server.is_current_member(from) && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
+    })
+}
+
+fn on_inbox(handle: &AppHandle, server: Option<ServerId>, plain: &[u8], at: i64, live_now: bool) {
     let app = handle.state::<App>();
     let Some(identity) = app.identity() else { return };
     let Some(envelope) = inbox::open(&identity, plain) else {
@@ -348,10 +362,7 @@ fn on_inbox(handle: &AppHandle, server: ServerId, plain: &[u8], at: i64, live_no
         return;
     };
     let from = envelope.message.from;
-    let member = app.servers.lock().unwrap().get(&server).is_some_and(|state| {
-        state.server.is_current_member(from) && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
-    });
-    if !member {
+    if !known_sender(&app, server, &envelope) {
         tracing::info!("dropped a first message from {from}, who is not a member we know with that key");
         return;
     }

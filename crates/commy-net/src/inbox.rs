@@ -6,9 +6,10 @@ use commy_sync::{StreamKeys, StreamSecret};
 
 use crate::community_streams;
 use crate::dm::DmEnvelope;
-use crate::sync_streams::encode_dm;
+use crate::sync_streams::{dm_epoch, encode_dm};
 
 const INBOX: &str = "commy-community-inbox/v1";
+const PERSONAL_INBOX: &str = "commy-personal-inbox/v1";
 const INBOX_SEAL: &str = "commy-inbox-seal/v1";
 const NONCE: [u8; 12] = [0; 12];
 
@@ -39,6 +40,19 @@ pub fn writable(state: &ServerState, me: UserId, to: UserId, ring: &Keyring) -> 
     }
     let theirs = state.community_keys().grant_for(to)?.key;
     ring.secret(theirs).map(|secret| inbox_for(secret, state.server.id, to))
+}
+
+pub fn personal_inbox(user: UserId, key: &IdentityKey, epoch: &str) -> StreamKeys {
+    let place = postcard::to_stdvec(&(user, epoch)).expect("ids always encode");
+    StreamSecret::derive(&key.0, PERSONAL_INBOX, &place).keys()
+}
+
+pub fn personal_inboxes(user: UserId, key: &IdentityKey, epochs: &[String]) -> Vec<StreamKeys> {
+    epochs.iter().map(|epoch| personal_inbox(user, key, epoch)).collect()
+}
+
+pub fn personal_inbox_now(user: UserId, key: &IdentityKey, now: chrono::DateTime<chrono::Utc>) -> StreamKeys {
+    personal_inbox(user, key, &dm_epoch(now))
 }
 
 fn cipher(secret: [u8; 32]) -> Aes256Gcm {
@@ -99,6 +113,24 @@ mod tests {
         let mut forged = envelope;
         forged.message.content = "changed".into();
         assert_eq!(open(&bob_id, &seal(&bob.identity.unwrap(), &forged).unwrap()), None, "the sender's signature must hold");
+    }
+
+    #[test]
+    fn anyone_who_knows_a_person_can_leave_a_first_message_where_only_they_read_it() {
+        let alice = person("alice");
+        let (bob, bob_id) = person("bob");
+        let bob_key = bob.identity.unwrap();
+        let now = chrono::Utc::now();
+        let epochs = crate::sync_streams::recent_dm_epochs(now, 3);
+        let written = personal_inbox_now(bob.id, &bob_key, now);
+        let read = personal_inboxes(bob.id, &bob_id.public(), &epochs);
+        assert_eq!(read.first().map(|keys| keys.id), Some(written.id), "the sender writes this month's inbox, which bob reads");
+        assert_eq!(read.len(), 3);
+        assert_ne!(personal_inbox(bob.id, &bob_key, &epochs[1]).id, written.id, "each month has its own inbox");
+        assert_ne!(personal_inbox(alice.0.id, &alice.1.public(), &epochs[0]).id, written.id);
+        assert_ne!(personal_inbox(bob.id, &alice.1.public(), &epochs[0]).id, written.id, "a different key names a different inbox");
+        let envelope = signed(&alice, &bob, "come back to the raid");
+        assert_eq!(open(&bob_id, &seal(&bob_key, &envelope).unwrap()), Some(envelope));
     }
 
     #[test]
