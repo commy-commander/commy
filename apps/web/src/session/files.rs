@@ -80,7 +80,7 @@ impl Session {
         self.post_attachment(server, channel, attachment, Permissions::ATTACH_FILES, "send files or images here").await
     }
 
-    async fn post_attachment(self: &Rc<Self>, server: ServerId, channel: ChannelId, attachment: Attachment, needed: Permissions, action: &str) -> Result<Value, String> {
+    pub(super) async fn post_attachment(self: &Rc<Self>, server: ServerId, channel: ChannelId, attachment: Attachment, needed: Permissions, action: &str) -> Result<Value, String> {
         let (message, view) = self.client.borrow().compose_attachment(server, channel, attachment, needed, action)?;
         self.deliver(server, message, view).await
     }

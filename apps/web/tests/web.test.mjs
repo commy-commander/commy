@@ -97,9 +97,9 @@ test("shared emojis, stickers and sounds come from the servers rather than empty
 });
 
 test("defaults are fresh copies, so the app cannot change them for the next caller", () => {
-  const first = webDefault("list_audio_devices").value;
-  first.inputs.push({ id: "x" });
-  assert.deepEqual(webDefault("list_audio_devices").value.inputs, []);
+  const first = webDefault("get_stream_deck").value;
+  first.decks.push({ id: "x" });
+  assert.deepEqual(webDefault("get_stream_deck").value.decks, []);
   assert.equal(webDefault("create_server").known, false);
 });
 

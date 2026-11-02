@@ -73,6 +73,8 @@
   };
 
   const voice = webVoice(window);
+  let voicePrefs = webVoicePrefs(host.load(WEB_VOICE_PREFS_KEY));
+  voice.configure(voicePrefs);
   let started = null;
   host.startVoice = () => voice.start(frame => started && started.voice_frame(frame));
   host.stopVoice = () => voice.stop();
@@ -254,6 +256,18 @@
     Notice.requestPermission().catch(() => {});
   }
 
+  async function setVoice(cmd, args) {
+    voicePrefs = webVoiceApply(voicePrefs, cmd, args);
+    host.save(WEB_VOICE_PREFS_KEY, JSON.stringify(voicePrefs));
+    await voice.configure(voicePrefs);
+    return backend("get_voice_settings");
+  }
+
+  async function startMicTest() {
+    if (!(await voice.startTest())) throw WEB_MIC_REFUSED;
+    return null;
+  }
+
   async function invoke(cmd, args) {
     const fallback = webDefault(cmd);
     if (fallback.known) return fallback.value;
@@ -273,6 +287,11 @@
     if (cmd === "pick_image") return pickImage();
     if (cmd === "pick_sound") return pickSound();
     if (cmd === "fetch_catalog_image") return fetchCatalogImage(args);
+    if (WEB_VOICE_COMMANDS.includes(cmd)) return setVoice(cmd, args);
+    if (cmd === "list_audio_devices") return voice.devices();
+    if (cmd === "start_mic_test") return startMicTest();
+    if (cmd === "stop_mic_test") return voice.stopTest();
+    if (cmd === "mic_level") return voice.level();
     if (cmd === "get_user") {
       await untilUnlocked();
       if (typeof hideModals === "function") hideModals();
@@ -313,4 +332,7 @@
   }
   setWebText(document.getElementById("signin-go"), `Sign in on ${window.location.host}`);
   setWebText(document.querySelector("#signin-start .signin-note"), "Sign in or create your account, then come back to the web app.");
+  const settingNote = id => document.getElementById(id)?.closest(".setting-row")?.querySelector(".setting-sub");
+  setWebText(settingNote("nc-toggle"), "Removes keyboards, fans and other background noise using your browser's noise suppression.");
+  setWebText(settingNote("mic-test-btn"), "Plays your mic back to you, with the noise and echo handling you chose.");
 })();
