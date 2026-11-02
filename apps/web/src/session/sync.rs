@@ -496,7 +496,11 @@ impl Session {
         let listed = self.client.borrow().tickets.contains_key(&server);
         let (joined, keyed) = match self.sync.borrow_mut().as_mut() {
             Some(live) => {
-                let joined = !listed && live.book.join(server, entry.clone(), shared.clone(), now.timestamp_millis());
+                let joined = if asked {
+                    live.book.rejoin(server, entry.clone(), shared.clone(), now.timestamp_millis())
+                } else {
+                    !listed && live.book.join(server, entry.clone(), shared.clone(), now.timestamp_millis())
+                };
                 let keyed = if asked {
                     live.book.take_key(server, shared.clone(), now.timestamp_millis())
                 } else {

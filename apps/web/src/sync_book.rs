@@ -263,6 +263,18 @@ impl Book {
         true
     }
 
+    pub fn rejoin(&mut self, server: ServerId, entry: Entry, key: SharedKey, at: i64) -> bool {
+        if self.join(server, entry.clone(), key.clone(), at) {
+            return true;
+        }
+        let Some(current) = self.list.servers.get_mut(&server) else { return false };
+        if entry.since > current.since {
+            *current = entry;
+        }
+        self.take_key(server, key, at);
+        true
+    }
+
     pub fn note_profile(&mut self, profile: UserProfile, at: DateTime<Utc>) {
         self.list.profile = Some(profile);
         self.list.profile_at = Some(at);
@@ -555,6 +567,27 @@ mod tests {
         let newer = KeyId::random();
         assert!(book.take_key(server, key(newer), 11));
         assert_eq!(book.given()[&server].0, newer);
+    }
+
+    #[test]
+    fn rejoining_from_an_invite_while_still_listed_moves_the_join_time_up() {
+        let server = ServerId::new();
+        let key = |id| SharedKey::of(id, &ChannelSecret::random());
+        let mut book = Book::new(EntryList::default());
+        let first = Utc::now() - Duration::hours(2);
+        assert!(book.join(server, entry(server, first), key(KeyId::random()), 5));
+        let now = Utc::now();
+        let new = KeyId::random();
+        assert!(!book.join(server, entry(server, now), key(new), 10), "a plain join leaves a listed server alone");
+        assert!(book.rejoin(server, entry(server, now), key(new), 10));
+        assert_eq!(book.joined_ms(server), Some(now.timestamp_millis()), "snapshots from before the rejoin no longer put us out");
+        assert_eq!(book.given()[&server].0, new);
+        assert!(book.rejoin(server, entry(server, first), key(new), 11));
+        assert_eq!(book.joined_ms(server), Some(now.timestamp_millis()), "an older invite never moves it back");
+
+        let gone = ServerId::new();
+        book.leave(gone, now);
+        assert!(!book.rejoin(gone, entry(gone, first), key(KeyId::random()), 12), "a server we left after this invite stays left");
     }
 
     #[test]
