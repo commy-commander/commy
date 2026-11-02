@@ -1,7 +1,6 @@
 use crate::state::App;
 use commy_core::ids::CALL_SERVER;
 use commy_core::{ChannelId, ServerEvent, ServerId, ServerState, UserId, UserProfile};
-use std::time::Duration;
 use tauri::{Emitter, Manager};
 
 pub(crate) fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
@@ -74,17 +73,7 @@ fn since_of(event: &ServerEvent) -> Option<i64> {
     }
 }
 
-const LINK_GRACE: Duration = Duration::from_secs(2);
-
-pub(crate) fn same_link(link: Option<(&str, Duration)>, node: &str) -> bool {
-    link.is_some_and(|(linked, _)| linked.eq_ignore_ascii_case(node))
-}
-
-pub(crate) fn link_outlived(link: Option<(&str, Duration)>, here: bool, node: &str, link_join: Option<i64>, since: Option<i64>) -> bool {
-    let Some((_, age)) = link.filter(|_| same_link(link, node)) else { return false };
-    let rejoined = matches!((link_join, since), (Some(before), Some(now)) if before != now);
-    !here || (rejoined && age > LINK_GRACE)
-}
+pub(crate) use crate::view::voice_links::{link_outlived, same_link};
 
 fn follow_device(
     app: &tauri::State<'_, App>,
@@ -123,6 +112,7 @@ async fn hand_over(app: &App, handle: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn announce_from(user: UserId, node: &str, voice: Option<ChannelId>, since: Option<i64>) -> ServerEvent {
         ServerEvent::DeviceAnnounce { server: ServerId::new(), user, node: node.into(), voice, since }
