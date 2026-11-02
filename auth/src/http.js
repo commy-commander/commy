@@ -1,3 +1,4 @@
+import { nameTheClient, PRIVATE_NETWORKS, trustedProxyList } from "./client-ip.js";
 import { LINK_BLOCKLIST_PATH } from "./link-blocklist.js";
 
 function sendJson(res, status, body) {
@@ -15,7 +16,7 @@ function endOnlyThisRequest(req, res, err) {
   else sendJson(res, 500, '{"error":"internal_error"}');
 }
 
-export function createRequestHandler({ authHandler, basePath, discovery, pool, redis, linkBlocklist = null }) {
+export function createRequestHandler({ authHandler, basePath, discovery, pool, redis, linkBlocklist = null, trustedProxies = trustedProxyList(PRIVATE_NETWORKS) }) {
   async function route(req, res) {
     const path = (req.url ?? "/").split("?")[0];
 
@@ -35,6 +36,7 @@ export function createRequestHandler({ authHandler, basePath, discovery, pool, r
       return linkBlocklist.respond(req, res);
     }
     if (path.startsWith(basePath)) {
+      nameTheClient(req, trustedProxies);
       return authHandler(req, res);
     }
     sendJson(res, 404, '{"error":"not_found"}');

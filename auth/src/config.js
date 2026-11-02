@@ -1,4 +1,5 @@
 import { normalizeAccessCode } from "./access.js";
+import { PRIVATE_NETWORKS, trustedProxyList } from "./client-ip.js";
 import { LINK_BLOCKLIST_PATH, linkBlocklistSources } from "./link-blocklist.js";
 
 const DEFAULT_PORT = 3001;
@@ -67,6 +68,17 @@ function smtpConfig(env, errors) {
   return { transport, from: env.EMAIL_FROM || fallbackFrom, replyTo };
 }
 
+function trustedProxiesConfig(env, errors) {
+  const value = (env.TRUSTED_PROXIES ?? "").trim();
+  const ranges = value === "" ? PRIVATE_NETWORKS : value === "none" ? [] : list(value);
+  try {
+    return trustedProxyList(ranges);
+  } catch (err) {
+    errors.push(`TRUSTED_PROXIES must be "none" or comma-separated IP addresses or CIDR ranges: ${err.message}`);
+    return null;
+  }
+}
+
 export function loadConfig(env = process.env) {
   const errors = [];
 
@@ -93,6 +105,7 @@ export function loadConfig(env = process.env) {
   }
 
   const smtp = smtpConfig(env, errors);
+  const trustedProxies = trustedProxiesConfig(env, errors);
 
   if (errors.length > 0) {
     throw new Error(`Invalid auth server configuration:\n- ${errors.join("\n- ")}`);
@@ -131,6 +144,7 @@ export function loadConfig(env = process.env) {
     syncUrl,
     linkBlocklistSources: linkBlocklistSources(env.LINK_BLOCKLIST_URLS),
     redisUrl: (env.REDIS_URL ?? "").trim() || null,
+    trustedProxies,
     google,
     twitch,
     smtp,

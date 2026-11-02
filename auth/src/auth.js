@@ -206,6 +206,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/passkey/verify-authentication": { window: 60, max: 10 },
         "/sign-in/social": { window: 60, max: 20 },
         "/device/code": { window: 60, max: 10 },
+        "/device": { window: 600, max: 30 },
         "/device/approve": { window: 60, max: 10 },
         "/commy/devices/challenge": { window: 60, max: 20 },
         "/commy/invites/create": { window: 3600, max: 30 },

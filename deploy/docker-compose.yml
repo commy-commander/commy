@@ -94,6 +94,7 @@ services:
       SYNC_URL: ${SYNC_URL:-}
       LINK_BLOCKLIST_URLS: ${LINK_BLOCKLIST_URLS:-}
       REDIS_URL: ${REDIS_URL-redis://redis:6379}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     depends_on:
       postgres:
         condition: service_healthy
