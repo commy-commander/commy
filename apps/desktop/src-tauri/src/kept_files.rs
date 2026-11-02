@@ -7,6 +7,12 @@ use crate::App;
 
 pub(crate) const STORED_FOR_OTHERS_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
 
+pub(crate) const ROLLING: bool = cfg!(mobile);
+
+pub(crate) const ROLLING_CACHE_BYTES: u64 = 500 * 1024 * 1024;
+
+const ROLL_EVERY: Duration = Duration::from_secs(60 * 60);
+
 const SPREAD_SECS: std::ops::RangeInclusive<u64> = 2..=45;
 
 static ONE_AT_A_TIME: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
@@ -118,8 +124,27 @@ pub(crate) fn keep_opened(shelf: Option<commy_net::shelf::Shelf>, blob: &str, by
         }
         if let Err(e) = shelf.keep_opened_bytes(bytes, now_secs()).await {
             tracing::info!("an opened file is passed on only until Commy closes: {e:#}");
+            return;
+        }
+        if ROLLING {
+            trim(&shelf).await;
         }
     });
+}
+
+pub(crate) async fn roll(shelf: commy_net::shelf::Shelf) {
+    loop {
+        trim(&shelf).await;
+        tokio::time::sleep(ROLL_EVERY).await;
+    }
+}
+
+async fn trim(shelf: &commy_net::shelf::Shelf) {
+    match shelf.trim_to(ROLLING_CACHE_BYTES).await {
+        Ok(0) => {}
+        Ok(dropped) => tracing::info!("let go of {dropped} older kept files to stay under 500 MB"),
+        Err(e) => tracing::debug!("kept files were not trimmed: {e:#}"),
+    }
 }
 
 pub(crate) fn now_secs() -> u64 {

@@ -1014,6 +1014,7 @@ async fn store_blob(app: &App, bytes: Vec<u8>, picked_from: Option<&std::path::P
     let (stored, provider, shelf) = {
         let net = app.net.lock().await;
         let node = net.as_ref().ok_or("network is not ready yet")?;
+        let picked_from = picked_from.filter(|_| !kept_files::ROLLING);
         let kept = picked_from.is_none().then(|| bytes.clone());
         let hash = node.add_blob(bytes).await.map_err(err_to_string)?;
         (kept, (hash, Some(node.node_id_hex())), node.shelf())
@@ -1816,12 +1817,14 @@ pub(crate) fn member_nodes(app: &App, server: ServerId) -> Vec<String> {
 
 pub const SHARED_FILES_DIR: &str = "shared-files";
 
-#[cfg(desktop)]
 async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
     let Some(dir) = app.data_dir().map(|d| d.join(SHARED_FILES_DIR)) else { return };
     match commy_net::shelf::Shelf::open(&dir).await {
         Ok(shelf) => {
             tauri::async_runtime::spawn(sent_files::sweep(shelf.clone()));
+            if kept_files::ROLLING {
+                tauri::async_runtime::spawn(kept_files::roll(shelf.clone()));
+            }
             node.set_shelf(shelf);
         }
         Err(e) => tracing::warn!("big files cannot be shared from this device: {e:#}"),
@@ -7771,7 +7774,6 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 }
                 node.set_catchup_store(catchup::store(&handle));
                 node.set_media_gate(media_gate(&handle));
-                #[cfg(desktop)]
                 open_shelf(&app, &node).await;
                 *app.net.lock().await = Some(node);
                 tracing::info!("iroh node online");

@@ -128,6 +128,42 @@ impl Shelf {
         Ok(gone)
     }
 
+    pub async fn trim_to(&self, max_bytes: u64) -> Result<u64> {
+        let mut kept = Vec::new();
+        for prefix in KEPT_TAG_PREFIXES {
+            let tags = self.store.tags().list_prefix(prefix).await.context("could not read the shared files list")?;
+            let found: Vec<_> = tags
+                .filter_map(|tag| tag.ok().and_then(|t| kept_at(prefix, t.name.as_ref()).map(|at| (at, t.name, t.hash))))
+                .collect()
+                .await;
+            kept.extend(found);
+        }
+        kept.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut fits = std::collections::HashSet::new();
+        let mut total = 0u64;
+        let mut full = false;
+        for (_, _, hash) in &kept {
+            if full || fits.contains(hash) {
+                continue;
+            }
+            let size = self.shared(&hash.to_hex()).await.map_or(0, |s| s.size);
+            match total.checked_add(size).filter(|sum| *sum <= max_bytes) {
+                Some(sum) => {
+                    total = sum;
+                    fits.insert(*hash);
+                }
+                None => full = true,
+            }
+        }
+        let mut gone = 0;
+        for (_, name, hash) in kept {
+            if !fits.contains(&hash) {
+                gone += self.store.tags().delete(name).await.context("could not drop an old kept file")?;
+            }
+        }
+        Ok(gone)
+    }
+
     pub async fn bytes(&self, hash: &str) -> Option<Vec<u8>> {
         let hash: Hash = hash.parse().ok()?;
         self.store.get_bytes(hash).await.ok().map(|bytes| bytes.to_vec())
@@ -240,6 +276,26 @@ mod tests {
         assert_eq!(reopened.drop_kept_before(9_000).await.unwrap(), 1);
         assert!(picked.exists(), "dropping a sent file never touches the original");
         reopened.shutdown().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_full_cache_lets_go_of_the_oldest_files_first() {
+        let dir = tempdir();
+        let shelf = Shelf::open(&dir.join("shelf")).await.unwrap();
+        let file = |seed: u32| -> Vec<u8> { (0..100_000u32).map(|i| ((i + seed) % 241) as u8).collect() };
+        let oldest = shelf.keep_sent_bytes(file(1), 1_000).await.unwrap();
+        let older = shelf.keep_opened_bytes(file(2), 2_000).await.unwrap();
+        let newer = shelf.keep_opened_bytes(file(3), 3_000).await.unwrap();
+        let opened_again = shelf.keep_opened_bytes(file(1), 4_000).await.unwrap();
+        assert_eq!(opened_again, oldest);
+        assert_eq!(shelf.trim_to(250_000).await.unwrap(), 1, "only the file whose newest use is oldest goes");
+        let tags: Vec<_> = shelf.store.tags().list().await.unwrap().filter_map(|t| t.ok().map(|t| t.hash.to_hex().to_string())).collect().await;
+        assert!(tags.contains(&oldest) && tags.contains(&newer));
+        assert!(!tags.contains(&older));
+        assert_eq!(shelf.trim_to(250_000).await.unwrap(), 0);
+        assert_eq!(shelf.trim_to(0).await.unwrap(), 3);
+        shelf.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     }
 
