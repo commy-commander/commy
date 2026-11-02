@@ -32,6 +32,10 @@ function overlayVisibleMembers({ members, speaking, lingering, showEveryone, pic
   return list.filter(m => (speaking && speaking.has(m.id)) || (lingering && lingering.has(m.id)));
 }
 
+function overlayTileKey(member, picturesOnly) {
+  return JSON.stringify([member.name || "", member.image || "", member.emoji || "", Boolean(picturesOnly)]);
+}
+
 function overlayPushLine(lines, line, max = OVERLAY_CHAT_LINES) {
   return [...(lines || []), line].slice(-max);
 }
@@ -99,5 +103,5 @@ function overlaySaveLayout(layouts, name, layout) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { OVERLAY_MAX_LAYOUTS, OVERLAY_MAX_LAYOUT_NAME, OVERLAY_SNAP, OVERLAY_CHAT_LABEL, overlaySnap, overlayPart, overlayPlaceKey, overlayMovedNotice, overlayStartLayout, overlaySameLayout, overlayLayoutName, overlaySaveLayout, OVERLAY_NOTICE_MS, OVERLAY_TEST_MS, overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_MS, OVERLAY_CHAT_LINES, OVERLAY_LINGER_MS, overlayCorner, overlayUniqueMembers, overlayVisibleMembers, overlayPushLine };
+  module.exports = { OVERLAY_MAX_LAYOUTS, OVERLAY_MAX_LAYOUT_NAME, OVERLAY_SNAP, OVERLAY_CHAT_LABEL, overlaySnap, overlayPart, overlayPlaceKey, overlayMovedNotice, overlayStartLayout, overlaySameLayout, overlayLayoutName, overlaySaveLayout, OVERLAY_NOTICE_MS, OVERLAY_TEST_MS, overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_MS, OVERLAY_CHAT_LINES, OVERLAY_LINGER_MS, overlayCorner, overlayUniqueMembers, overlayVisibleMembers, overlayTileKey, overlayPushLine };
 }
