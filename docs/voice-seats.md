@@ -112,6 +112,9 @@ stop a fresh call from forming:
   calls the new one;
 - every few seconds, links to members no longer seated in our room end.
 
+These link rules live in `commy_view::voice_links`, so the desktop, phone and
+browser drop a dead link the same way.
+
 The app log says when a voice link comes up, ends, is dropped for a new
 join, or is refused at the door, so a bench run can show which side failed.
 
