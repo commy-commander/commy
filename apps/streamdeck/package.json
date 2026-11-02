@@ -18,7 +18,7 @@
     "@elgato/streamdeck": "3.0.3"
   },
   "devDependencies": {
-    "@elgato/cli": "1.10.3",
+    "@elgato/cli": "1.10.4",
     "@rollup/plugin-commonjs": "29.0.3",
     "@rollup/plugin-node-resolve": "16.0.3",
     "@rollup/plugin-typescript": "12.3.1",
@@ -29,6 +29,7 @@
     "typescript": "5.9.3"
   },
   "overrides": {
+    "ejs": "7.0.2",
     "zod": "4.6.7"
   }
 }
