@@ -230,10 +230,10 @@ mod platform {
         let options = synth.Options()?;
         options.SetSpeakingRate(rate)?;
         options.SetAudioPitch(pitch)?;
-        let stream = synth.SynthesizeTextToStreamAsync(&HSTRING::from(text))?.get()?;
+        let stream = synth.SynthesizeTextToStreamAsync(&HSTRING::from(text))?.join()?;
         let size = u32::try_from(stream.Size()?).unwrap_or(u32::MAX);
         let reader = DataReader::CreateDataReader(&stream.GetInputStreamAt(0)?)?;
-        let loaded = reader.LoadAsync(size)?.get()?;
+        let loaded = reader.LoadAsync(size)?.join()?;
         let mut bytes = vec![0u8; loaded as usize];
         reader.ReadBytes(&mut bytes)?;
         Ok(commy_media::decode_wav(&bytes))
