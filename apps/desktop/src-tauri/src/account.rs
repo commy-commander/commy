@@ -12,6 +12,10 @@ use crate::invite_link::{normalize_origin, DEFAULT_ACCOUNT_SERVER};
 use crate::state::App;
 
 const SIGN_OUT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const SESSION_RECHECK_FIRST: Duration = Duration::from_secs(5);
+const SESSION_RECHECK_MOST: Duration = Duration::from_secs(30);
+static SESSION_RECHECK: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
+static RECHECKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub const FILE: &str = "account.json";
 pub const PENDING_SIGN_IN_FILE: &str = "sign-in-pending.json";
 pub const MAX_ACCOUNTS: usize = 5;
@@ -1213,10 +1217,45 @@ fn drop_rejected_session(app: &App, handle: &AppHandle) {
     let _ = handle.emit("account-changed", ());
 }
 
-pub async fn verify_saved_session(handle: AppHandle) {
+pub fn session_recheck_delay(tries: u32) -> Duration {
+    SESSION_RECHECK_FIRST.saturating_mul(1 << tries.min(8)).min(SESSION_RECHECK_MOST)
+}
+
+pub fn recheck_session_now() {
+    SESSION_RECHECK.notify_one();
+}
+
+pub async fn keep_checking_session(handle: AppHandle) {
+    use std::sync::atomic::Ordering;
+    if RECHECKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let mut tries = 0;
+    loop {
+        let wait = session_recheck_delay(tries);
+        tracing::info!("account server did not answer; checking the sign-in again in {}s", wait.as_secs());
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = SESSION_RECHECK.notified() => {}
+        }
+        tries += 1;
+        if !is_signed_in(&handle.state::<App>().account.lock().unwrap()) {
+            break;
+        }
+        if verify_saved_session(handle.clone()).await {
+            tracing::info!("account server answered after {tries} more tries");
+            crate::entry_list::schedule(&handle);
+            break;
+        }
+    }
+    RECHECKING.store(false, Ordering::SeqCst);
+}
+
+pub async fn verify_saved_session(handle: AppHandle) -> bool {
     let app = handle.state::<App>();
     let server = app.account.lock().unwrap().signed_in_server.clone();
     let check = check_saved_session(&app).await;
+    let answered = !matches!(check, SessionCheck::Unknown);
     if let SessionCheck::Valid(doc) = &check {
         if let Some(server) = server.as_deref() {
             use_sync_service(&handle, server, doc);
@@ -1241,6 +1280,7 @@ pub async fn verify_saved_session(handle: AppHandle) {
         SessionCheck::Rejected => drop_rejected_session(&app, &handle),
         SessionCheck::Unknown => {}
     }
+    answered
 }
 
 fn startup_service(check: &SessionCheck) -> crate::startup::Service {
@@ -1266,6 +1306,15 @@ mod tests {
             interval: 5,
             expires_at,
         }
+    }
+
+    #[test]
+    fn an_unanswered_sign_in_check_is_tried_again_soon_and_then_every_half_minute() {
+        assert_eq!(session_recheck_delay(0), Duration::from_secs(5));
+        assert_eq!(session_recheck_delay(1), Duration::from_secs(10));
+        assert_eq!(session_recheck_delay(2), Duration::from_secs(20));
+        assert_eq!(session_recheck_delay(3), Duration::from_secs(30));
+        assert_eq!(session_recheck_delay(400), Duration::from_secs(30));
     }
 
     #[test]

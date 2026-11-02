@@ -7857,8 +7857,11 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 {
                     let handle = handle.clone();
                     tauri::async_runtime::spawn(async move {
-                        account::verify_saved_session(handle.clone()).await;
+                        let answered = account::verify_saved_session(handle.clone()).await;
                         entry_list::schedule(&handle);
+                        if !answered {
+                            account::keep_checking_session(handle).await;
+                        }
                     });
                 }
                 tauri::async_runtime::spawn(read_state::run(handle.clone()));

@@ -333,6 +333,10 @@ async fn run(handle: AppHandle) {
             }
             tokio::time::sleep(OFFLINE_RECHECK).await;
             let reach = probe(&handle.state::<App>()).await;
+            if reach == Reach::Reachable {
+                crate::account::recheck_session_now();
+                crate::community_sync::nudge();
+            }
             *PROBE.lock().unwrap() = reach;
             continue;
         }
