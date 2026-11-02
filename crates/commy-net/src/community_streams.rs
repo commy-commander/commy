@@ -135,6 +135,17 @@ pub fn is_key_event(event: &ServerEvent) -> bool {
     )
 }
 
+pub fn changes_lanes(event: &ServerEvent) -> bool {
+    is_key_event(event)
+        || matches!(
+            event,
+            ServerEvent::ChannelCreate { .. }
+                | ServerEvent::ChannelDelete { .. }
+                | ServerEvent::ChannelKindSet { .. }
+                | ServerEvent::ChannelAccessSet { .. }
+        )
+}
+
 #[derive(Serialize, Deserialize)]
 struct Entry {
     version: u16,
@@ -321,6 +332,27 @@ mod tests {
         settle(&mut other, other_owner);
         let elsewhere = wanted(&other, other_owner, &Keyring::unlock_community(&other, other_owner, &identity_for(other_owner)), none, now());
         assert!(elsewhere.iter().all(|w| !ours.iter().any(|o| o.keys.id == w.keys.id)));
+    }
+
+    #[test]
+    fn a_new_channel_changes_the_lanes_to_follow() {
+        let (mut state, channel, owner) = fixture();
+        let server = state.server.id;
+        settle(&mut state, owner);
+        let lanes = |state: &ServerState| {
+            let ring = Keyring::unlock_community(state, owner, &identity_for(owner));
+            wanted(state, owner, &ring, |_| Keyring::default(), now()).into_iter().map(|w| w.lane).collect::<Vec<_>>()
+        };
+        let forum = commy_core::Channel::new("ideas", commy_core::ChannelKind::Forum, 9);
+        let made = ServerEvent::ChannelCreate { server, channel: forum.clone() };
+        assert!(changes_lanes(&made));
+        assert!(!lanes(&state).contains(&Lane::Channel(forum.id)));
+        state.apply(made).unwrap();
+        assert!(lanes(&state).contains(&Lane::Channel(forum.id)));
+        assert!(changes_lanes(&ServerEvent::ChannelDelete { server, channel: forum.id }));
+        let message = post(&state, channel, owner, "hi");
+        assert!(!changes_lanes(&ServerEvent::MessageCreate { message }));
+        assert!(!changes_lanes(&ServerEvent::ServerRename { server, name: "x".into() }));
     }
 
     #[test]

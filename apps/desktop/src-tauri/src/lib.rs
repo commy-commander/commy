@@ -7159,7 +7159,7 @@ async fn run_net_loop(
                 };
                 let device_news = matches!(event, ServerEvent::DeviceAnnounce { .. }).then(|| event.clone());
                 let seat_news = liveness::seat_news(&event);
-                let key_event = commy_net::community_streams::is_key_event(&event);
+                let lanes_changed = commy_net::community_streams::changes_lanes(&event);
                 let speaker = liveness::speaker(&event, action.as_ref()).filter(|_| !replayed);
                 let (applied, was_online, new_message, pinned) = {
                     let mut servers = app.servers.lock().unwrap();
@@ -7237,7 +7237,7 @@ async fn run_net_loop(
                                 profile_images::prefetch(&handle, &profile);
                             }
                         }
-                        if key_event {
+                        if lanes_changed {
                             community_sync::refresh_soon(&handle);
                         }
                         if moderation {

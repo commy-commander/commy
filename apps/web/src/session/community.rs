@@ -69,10 +69,18 @@ impl Session {
             }
             _ => return Err(format!("{cmd} is not available in the web app yet")),
         };
-        self.publish(server, &payload);
+        self.spread(server, &payload).await;
         self.refresh_gates();
         self.emit("server-event", json!(server.to_string()));
         Ok(Value::Null)
+    }
+
+    async fn spread(&self, server: ServerId, payload: &commy_net::WirePayload) {
+        self.publish(server, payload);
+        let node = self.node.lock().await;
+        if let Some(node) = node.as_ref().filter(|node| node.neighbor_count(server) > 0) {
+            let _ = node.broadcast(server, payload.clone()).await;
+        }
     }
 
     async fn post_forum(self: &Rc<Self>, server: ServerId, args: Args) -> Result<Value, String> {
@@ -83,7 +91,7 @@ impl Session {
         let root = message.id;
         let posted = self.deliver(server, message, view).await?;
         let payload = self.client.borrow().act(server, |state, me, _, _| Ok(forum::post(state, channel, root, title, tags, me.user)))?;
-        self.publish(server, &payload);
+        self.spread(server, &payload).await;
         self.emit("server-event", json!(server.to_string()));
         Ok(posted)
     }
