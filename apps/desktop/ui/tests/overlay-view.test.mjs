@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { overlayCornerLabel, OVERLAY_CORNERS, OVERLAY_CHAT_LINES, overlayCorner, overlayUniqueMembers, overlayVisibleMembers, overlayTileKey, overlayPushLine } = require("../scripts/overlay-view.js");
@@ -48,6 +50,18 @@ test("the note names the corner in words, and unknown corners read as top left",
   assert.equal(overlayCornerLabel("bottom-right"), "Bottom right");
   assert.equal(overlayCornerLabel("top-left"), "Top left");
   assert.equal(overlayCornerLabel("nowhere"), "Top left");
+});
+
+test("each overlay window hears only what was sent to it, so chat lines show once", () => {
+  const ui = join(import.meta.dirname, "..");
+  const app = readFileSync(join(ui, "scripts", "app.js"), "utf8");
+  const page = readFileSync(join(ui, "scripts", "overlay.js"), "utf8");
+  const sent = new Set([...app.matchAll(/emitToOverlay\("([\w-]+)"/g)].map(m => m[1]));
+  assert.ok(sent.has("overlay-chat"));
+  for (const name of [...sent, "overlay-config", "overlay-reset"]) {
+    assert.match(page, new RegExp(`listen\\("${name}", [^\\n]*, own\\);`), name);
+  }
+  assert.match(page, /const own = \{ target: \{ kind: "WebviewWindow", label: OVERLAY_LABEL \} \};/);
 });
 
 test("a tile is redrawn only when its look changes, not when someone talks", () => {
