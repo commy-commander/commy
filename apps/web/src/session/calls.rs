@@ -44,6 +44,8 @@ pub(super) struct Voice {
     link: Option<Link>,
     recorder: Option<Recorder>,
     input_ms: i64,
+    pub(super) online_since: Option<web_time::Instant>,
+    pub(super) gate_tending: bool,
 }
 
 struct Link {
@@ -242,7 +244,15 @@ impl Session {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let channel: Option<ChannelId> = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
                 match channel {
-                    Some(channel) => self.join_room(server, channel).await?,
+                    Some(channel) => {
+                        let joining_this_server = self.voice.borrow().link.as_ref().and_then(|link| link.server) != Some(server);
+                        if joining_this_server {
+                            if let Some(wait) = self.voice_wait(server).await {
+                                return Err(wait.refusal());
+                            }
+                        }
+                        self.join_room(server, channel).await?
+                    }
                     None => {
                         if self.voice_here(server).is_some() {
                             self.leave_room().await;

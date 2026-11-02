@@ -7441,7 +7441,7 @@ async fn run_connection_check(app: tauri::State<'_, App>) -> CmdResult<commy_net
 }
 
 #[tauri::command]
-async fn voice_gate(app: tauri::State<'_, App>) -> CmdResult<voice_gate::GateView> {
+async fn voice_gate(app: tauri::State<'_, App>) -> CmdResult<commy_net::voice_gate::GateView> {
     Ok(voice_gate::current(&app).await)
 }
 

@@ -65,6 +65,12 @@ the server a device is already talking in never waits, and leaving never
 waits. The gate only decides when a join may start: a join still follows the
 rules above, `DeviceAnnounce` with the room first.
 
+The rules live in `commy_net::voice_gate` (`wait_for`, `link_of`), so the
+desktop, phone and browser wait for the same things. The browser always
+waits (its settings page has no switch) and tracks its state streams in
+`sync_book::Book::state_link`, from the sync service's catch-up, disconnect
+and refusal events.
+
 ## How a seat ends without a goodbye
 
 A seat must never outlive the device holding it. `commy_view::liveness` ends

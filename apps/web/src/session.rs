@@ -43,6 +43,7 @@ mod pictures;
 mod profile;
 mod servers;
 mod sync;
+mod voice_gate;
 
 const DEVICE_NAME: &str = "Web browser";
 const MAX_PREF_KEY: usize = 200;
@@ -486,6 +487,7 @@ impl Session {
             "set_tip_jar" | "set_pet" | "care_for_pet" => self.server_command(cmd, args).await,
             "set_upload_limit" | "set_tts_allowed" => self.server_command(cmd, args).await,
             "move_voice_member" => self.server_command(cmd, args).await,
+            "voice_gate" => to_json(&self.voice_gate_view().await),
             "ban_member" => self.server_command(cmd, args).await,
             "unban_member" => self.server_command(cmd, args).await,
             "time_out_member" => self.server_command(cmd, args).await,
@@ -864,6 +866,7 @@ impl Session {
         spawn_local(self.clone().run_changes(changed_rx));
         spawn_local(self.clone().run_dms(incoming));
         spawn_local(self.clone().run_media(media));
+        self.start_voice_gate();
         Ok(())
     }
 
