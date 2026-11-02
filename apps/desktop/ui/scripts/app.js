@@ -5254,7 +5254,7 @@ function renderCamGrid() {
       tile.dataset.user = user.id;
       if (!isMe) {
         tile.appendChild(el("img"));
-        tile.appendChild(el("div", "cam-wait", "Connecting"));
+        tile.appendChild(el("div", "cam-wait", inBrowserApp() ? WEB_CAMERA_NOTE : "Connecting"));
       }
       tile.appendChild(el("div", "cam-name", isMe ? `${user.name} (you)` : user.name));
       grid.appendChild(tile);
@@ -5262,7 +5262,7 @@ function renderCamGrid() {
     tile.classList.toggle("speaking", state.speaking.has(user.id));
     if (isMe) {
       if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
-    } else if (!cam.watching.has(user.id)) {
+    } else if (!cam.watching.has(user.id) && !inBrowserApp()) {
       cam.watching.add(user.id);
       invoke("watch_camera", { serverId: state.currentServer.id, userId: user.id }).catch(e => {
         cam.watching.delete(user.id);
@@ -6986,7 +6986,7 @@ function wireForum() {
 const driveUi = { channel: null, folder: null, view: null, dialog: null, busy: new Map() };
 
 function driveWorksHere() {
-  return !document.body.classList.contains("web-app") && !document.body.classList.contains("mobile-app");
+  return !inBrowserApp() && !document.body.classList.contains("mobile-app");
 }
 
 function showDriveView() {
@@ -15610,6 +15610,8 @@ const YOUTUBE_GREET_MS = 250;
 const YOUTUBE_GREET_TRIES = 40;
 const YOUTUBE_NOTICE = "This video plays from YouTube. Loading it connects you to YouTube, which can see your IP address and may store data under Google's privacy policy.";
 const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
+const WEB_WATCH_NOTE = "Streams play in the Commy desktop app.";
+const WEB_CAMERA_NOTE = "Camera shows in the desktop app";
 
 const activityUi = {
   run: null,
@@ -18801,6 +18803,7 @@ async function uploadFileObject(file) {
 async function watchScreen(userId, name) {
   const serverId = state.currentServer ? state.currentServer.id : state.voiceServer && state.voiceServer.id;
   if (!serverId) return;
+  if (inBrowserApp()) return toast(WEB_WATCH_NOTE);
   try {
     if (state.watchingUser && state.watchingUser !== userId) await stopWatching();
     openStage("watch", `${name}'s screen`);
