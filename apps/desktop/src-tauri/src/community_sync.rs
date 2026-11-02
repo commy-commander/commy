@@ -10,6 +10,7 @@ use commy_core::{MessageId, Presence, ServerEvent, ServerId, SignedEvent, UserId
 use commy_net::catchup::CatchupStore;
 use commy_net::community_streams::{self as streams, rings, Lane, Want};
 pub use commy_net::sync_streams::SharedKey;
+use commy_net::voice_gate::{link_of, StateLink};
 use commy_net::{NetEvent, WirePayload};
 use commy_sync::{AppendError, StreamId, SyncClient, SyncEvent};
 use serde::{Deserialize, Serialize};
@@ -1187,14 +1188,6 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     });
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StateLink {
-    NotUsed,
-    Behind,
-    Lost,
-    Current,
-}
-
 pub fn state_link(server: ServerId) -> Option<StateLink> {
     let guard = LIVE.lock().unwrap();
     let live = guard.as_ref()?;
@@ -1202,18 +1195,6 @@ pub fn state_link(server: ServerId) -> Option<StateLink> {
     let streams: Vec<StreamId> = community.wants.iter().filter(|(_, want)| want.lane == Lane::State).map(|(stream, _)| *stream).collect();
     let usable: Vec<StreamId> = streams.into_iter().filter(|stream| !live.refused.contains(stream)).collect();
     Some(link_of(&usable, &live.current, &live.lost))
-}
-
-fn link_of(streams: &[StreamId], current: &HashSet<StreamId>, lost: &HashSet<StreamId>) -> StateLink {
-    if streams.is_empty() {
-        StateLink::NotUsed
-    } else if streams.iter().any(|stream| current.contains(stream)) {
-        StateLink::Current
-    } else if streams.iter().any(|stream| lost.contains(stream)) {
-        StateLink::Lost
-    } else {
-        StateLink::Behind
-    }
 }
 
 pub fn backfill_for(state: &commy_core::ServerState, lane: Lane, seen: &HashSet<MessageId>) -> Vec<WirePayload> {
@@ -1266,17 +1247,6 @@ async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
 mod tests {
     use super::*;
     use commy_core::{Identity, Message, Server, ServerState};
-
-    #[test]
-    fn a_server_is_current_only_while_its_state_stream_is_caught_up_on_a_live_link() {
-        let (state, other) = (StreamId([1; 32]), StreamId([2; 32]));
-        let none = HashSet::new();
-        assert_eq!(link_of(&[], &none, &none), StateLink::NotUsed);
-        assert_eq!(link_of(&[state], &none, &none), StateLink::Behind);
-        assert_eq!(link_of(&[state], &HashSet::from([state]), &none), StateLink::Current);
-        assert_eq!(link_of(&[state], &none, &HashSet::from([state])), StateLink::Lost);
-        assert_eq!(link_of(&[state], &HashSet::from([other]), &HashSet::from([other])), StateLink::Behind);
-    }
 
     #[test]
     fn changes_the_service_missed_wait_once_each_and_not_forever() {

@@ -407,3 +407,12 @@ test("watching streams and cameras explains itself in the browser instead of fai
   assert.ok(watch.indexOf("inBrowserApp()") < watch.indexOf('invoke("watch_screen"'));
   assert.match(app, /!cam\.watching\.has\(user\.id\) && !inBrowserApp\(\)/);
 });
+
+test("the browser waits for a current server before joining voice, like the desktop", () => {
+  assert.equal(webDefault("voice_gate").known, false);
+  assert.ok(rustCommands.has("voice_gate"));
+  const calls = read("apps", "web", "src", "session", "calls.rs");
+  const join = calls.indexOf('"set_voice_channel" =>');
+  assert.ok(join > 0 && calls.indexOf("self.voice_wait(server)", join) > join);
+  assert.match(read("apps", "web", "src", "session", "voice_gate.rs"), /use commy_net::voice_gate::\{wait_for/);
+});

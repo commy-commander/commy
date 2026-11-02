@@ -7,6 +7,7 @@ use commy_core::{IdentityKey, ServerId, UserId, UserProfile};
 use commy_net::community_streams::{Lane, Want};
 use commy_net::entry_list::{Entry, EntryList};
 use commy_net::sync_streams::SharedKey;
+use commy_net::voice_gate::{link_of, StateLink};
 use commy_net::{ServerTicket, WirePayload};
 use commy_sync::{StreamId, StreamKeys};
 use commy_view::reads::{PrefPiece, ReadMark, ReadState};
@@ -113,6 +114,9 @@ pub struct Book {
     after: HashMap<StreamId, u64>,
     routes: HashMap<StreamId, (ServerId, Want)>,
     live: HashSet<StreamId>,
+    current: HashSet<StreamId>,
+    lost: HashSet<StreamId>,
+    refused: HashSet<StreamId>,
     snapshots: HashMap<ServerId, (i64, WirePayload)>,
     parked: HashMap<ServerId, VecDeque<WirePayload>>,
     reads: ReadState,
@@ -302,6 +306,9 @@ impl Book {
         for stream in gone {
             self.routes.remove(&stream);
             self.live.remove(&stream);
+            self.current.remove(&stream);
+            self.lost.remove(&stream);
+            self.refused.remove(&stream);
             plan.unfollow.push(stream);
         }
         self.snapshots.retain(|server, _| wanted.contains_key(server));
@@ -335,7 +342,34 @@ impl Book {
 
     pub fn caught_up(&mut self, stream: StreamId, seq: u64) -> bool {
         self.advance(stream, seq);
-        self.routes.contains_key(&stream) && self.live.insert(stream)
+        if !self.routes.contains_key(&stream) {
+            return false;
+        }
+        self.lost.remove(&stream);
+        self.current.insert(stream);
+        self.live.insert(stream)
+    }
+
+    pub fn note_lost(&mut self, streams: &[StreamId]) {
+        for stream in streams.iter().filter(|stream| self.routes.contains_key(stream)) {
+            self.current.remove(stream);
+            self.lost.insert(*stream);
+        }
+    }
+
+    pub fn note_refused(&mut self, stream: StreamId) {
+        self.current.remove(&stream);
+        self.refused.insert(stream);
+    }
+
+    pub fn state_link(&self, server: ServerId) -> StateLink {
+        let usable: Vec<StreamId> = self
+            .routes
+            .iter()
+            .filter(|(stream, (sid, want))| *sid == server && want.lane == Lane::State && !self.refused.contains(stream))
+            .map(|(stream, _)| *stream)
+            .collect();
+        link_of(&usable, &self.current, &self.lost)
     }
 
     pub fn is_live(&self, stream: StreamId) -> bool {
@@ -587,6 +621,29 @@ mod tests {
         assert!(!book.is_live(text.keys.id));
         let plan = book.replan([(server, vec![state, text.clone()])].into());
         assert_eq!(plan.follow[0].2, 10, "a stream picks up where it left off");
+    }
+
+    #[test]
+    fn a_server_is_current_while_its_state_stream_is_caught_up_and_its_link_holds() {
+        let server = ServerId::new();
+        let channel = commy_core::ChannelId::new();
+        let (state, text) = (want(server, Lane::State, false), want(server, Lane::Channel(channel), true));
+        let mut book = Book::new(EntryList::default());
+        assert_eq!(book.state_link(server), StateLink::NotUsed);
+        book.replan([(server, vec![state.clone(), text.clone()])].into());
+        assert_eq!(book.state_link(server), StateLink::Behind);
+        book.caught_up(text.keys.id, 3);
+        assert_eq!(book.state_link(server), StateLink::Behind, "a text channel alone is not the server's state");
+        book.caught_up(state.keys.id, 4);
+        assert_eq!(book.state_link(server), StateLink::Current);
+        book.note_lost(&[state.keys.id]);
+        assert_eq!(book.state_link(server), StateLink::Lost);
+        book.caught_up(state.keys.id, 5);
+        assert_eq!(book.state_link(server), StateLink::Current, "catching up again after a reconnect makes it current");
+        book.note_refused(state.keys.id);
+        assert_eq!(book.state_link(server), StateLink::NotUsed, "a refused stream does not hold voice back");
+        book.replan(HashMap::new());
+        assert_eq!(book.state_link(server), StateLink::NotUsed);
     }
 
     #[test]

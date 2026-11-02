@@ -43,6 +43,7 @@ mod pictures;
 mod profile;
 mod servers;
 mod sync;
+mod voice_gate;
 mod voice_invites;
 
 const DEVICE_NAME: &str = "Web browser";
@@ -489,6 +490,7 @@ impl Session {
             "set_tip_jar" | "set_pet" | "care_for_pet" => self.server_command(cmd, args).await,
             "set_upload_limit" | "set_tts_allowed" => self.server_command(cmd, args).await,
             "move_voice_member" => self.server_command(cmd, args).await,
+            "voice_gate" => to_json(&self.voice_gate_view().await),
             "send_voice_invite" | "send_dm_voice_invite" | "voice_channel_presence" => self.voice_invite_command(cmd, args).await,
             "ban_member" => self.server_command(cmd, args).await,
             "unban_member" => self.server_command(cmd, args).await,
@@ -868,6 +870,7 @@ impl Session {
         spawn_local(self.clone().run_changes(changed_rx));
         spawn_local(self.clone().run_dms(incoming));
         spawn_local(self.clone().run_media(media));
+        self.start_voice_gate();
         Ok(())
     }
 

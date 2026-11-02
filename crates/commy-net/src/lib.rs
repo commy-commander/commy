@@ -21,6 +21,7 @@ pub mod server_address;
 pub mod shelf;
 pub mod sync_streams;
 pub mod ticket;
+pub mod voice_gate;
 pub mod wake;
 
 #[cfg(test)]

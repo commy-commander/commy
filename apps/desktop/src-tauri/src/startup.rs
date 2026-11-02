@@ -1,4 +1,4 @@
-use crate::community_sync::StateLink;
+use commy_net::voice_gate::StateLink;
 use crate::state::App;
 use crate::updater::{self, Phase, UpdateStatus};
 use commy_core::ServerId;

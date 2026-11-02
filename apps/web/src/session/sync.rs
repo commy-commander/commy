@@ -98,7 +98,17 @@ impl Session {
                 }
                 SyncEvent::CaughtUp { stream, seq } => self.on_sync_caught_up(stream, seq),
                 SyncEvent::Signal { stream, plain } => self.on_sync_signal(stream, &plain),
-                SyncEvent::Refused { .. } | SyncEvent::Connected | SyncEvent::Disconnected { .. } => {}
+                SyncEvent::Refused { stream, .. } => {
+                    if let Some(live) = self.sync.borrow_mut().as_mut() {
+                        live.book.note_refused(stream);
+                    }
+                }
+                SyncEvent::Disconnected { streams } => {
+                    if let Some(live) = self.sync.borrow_mut().as_mut() {
+                        live.book.note_lost(&streams);
+                    }
+                }
+                SyncEvent::Connected => {}
             }
         }
     }
