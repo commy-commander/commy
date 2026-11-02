@@ -134,6 +134,34 @@ fn init_user(app: tauri::State<App>, handle: tauri::AppHandle, username: String)
     Ok(profile)
 }
 
+async fn host_unhosted(app: &App) {
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let invited: std::collections::HashSet<ServerId> = app.invites.lock().unwrap().keys().copied().collect();
+    let missing: Vec<(ServerId, String)> = app
+        .servers
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|s| Some(s.server.owner) == me && !invited.contains(&s.server.id))
+        .map(|s| (s.server.id, s.server.name.clone()))
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    let mut net = app.net.lock().await;
+    let Some(node) = net.as_mut() else { return };
+    for (id, name) in missing {
+        match node.host_server(id, &name, app.own_key_for_tickets()).await {
+            Ok(ticket) => {
+                app.invites.lock().unwrap().entry(id).or_insert_with(|| ticket.encode());
+            }
+            Err(e) => tracing::warn!("hosting {name} failed: {e}"),
+        }
+    }
+    drop(net);
+    app.persist_invites();
+}
+
 #[tauri::command]
 fn get_user(app: tauri::State<App>) -> Option<UserProfile> {
     app.profile.lock().unwrap().clone()
@@ -7863,6 +7891,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 node.set_media_gate(media_gate(&handle));
                 open_shelf(&app, &node).await;
                 *app.net.lock().await = Some(node);
+                host_unhosted(&app).await;
                 tracing::info!("iroh node online");
 
                 tauri::async_runtime::spawn(run_media_loop(handle.clone(), media));
