@@ -92,11 +92,10 @@ fn shortcut_folders() -> Vec<PathBuf> {
 }
 
 fn known_folder(id: &windows::core::GUID) -> Option<PathBuf> {
-    use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
     unsafe {
-        let path = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;
+        let path = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
         let text = path.to_string().ok();
         CoTaskMemFree(Some(path.0 as *const core::ffi::c_void));
         text.map(PathBuf::from)
