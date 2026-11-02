@@ -3,7 +3,10 @@
 The web client runs the desktop UI (`apps/desktop/ui`) on a WebAssembly build
 of the same Rust code the desktop app uses. It is a preview: sign in, open
 your servers, chat in text channels, send files and voice messages, use direct
-messages and group DMs, call people, join voice channels, create servers,
+messages and group DMs, call people, join voice channels and invite people
+to them, pick your mic and speakers (speakers where the browser lets a page
+choose them), set your own volumes and each person's, test your mic, turn the
+browser's noise, echo and mic level handling on or off, create servers,
 arrange their channels, make and open invite links, manage roles, moderate
 members, set the rules, tag the games a server features, delete or hand over
 a server, and edit your profile (name, status, About Me, avatar, banner,

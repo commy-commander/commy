@@ -2,30 +2,173 @@
 
 const WEB_VOICE_WORKLET = "scripts/web-voice-worklet.js";
 const MIC_RETRY_MS = 1000;
+const WEB_VOICE_PREFS_KEY = "commy.web.voice";
+const WEB_MAX_GAIN = 2;
+const WEB_MAX_DEVICE_NAME = 200;
+const WEB_MAX_TUNED_PEOPLE = 500;
+const WEB_SILENCE_DB = -100;
+const WEB_PSEUDO_DEVICES = ["default", "communications"];
+const WEB_VOICE_COMMANDS = ["set_noise_cancellation", "set_echo_cancellation", "set_auto_level", "set_volumes", "set_audio_devices", "set_user_voice"];
+const WEB_MIC_REFUSED = "Commy could not open your microphone. Allow it for this site in your browser and try again.";
 
-function webMicConstraints() {
-  return { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } };
+function webVoiceDefaults() {
+  return { noise_cancellation: true, echo_cancellation: true, auto_level: true, input_gain: 1, output_volume: 1, input_device: null, output_device: null, user_volumes: {}, muted_users: [] };
+}
+
+function webGain(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(WEB_MAX_GAIN, Math.max(0, n)) : fallback;
+}
+
+function webDeviceName(name) {
+  return typeof name === "string" && name.trim() ? name.slice(0, WEB_MAX_DEVICE_NAME) : null;
+}
+
+function webPersonId(id) {
+  return typeof id === "string" && /^[0-9a-fA-F-]{1,64}$/.test(id);
+}
+
+function webVoicePrefs(raw) {
+  const prefs = webVoiceDefaults();
+  let saved = null;
+  try {
+    saved = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    saved = null;
+  }
+  if (!saved || typeof saved !== "object") return prefs;
+  for (const key of ["noise_cancellation", "echo_cancellation", "auto_level"]) {
+    if (typeof saved[key] === "boolean") prefs[key] = saved[key];
+  }
+  prefs.input_gain = webGain(saved.input_gain, 1);
+  prefs.output_volume = webGain(saved.output_volume, 1);
+  prefs.input_device = webDeviceName(saved.input_device);
+  prefs.output_device = webDeviceName(saved.output_device);
+  const volumes = saved.user_volumes && typeof saved.user_volumes === "object" ? Object.entries(saved.user_volumes) : [];
+  for (const [id, volume] of volumes.filter(([id]) => webPersonId(id)).slice(0, WEB_MAX_TUNED_PEOPLE)) prefs.user_volumes[id] = webGain(volume, 1);
+  prefs.muted_users = Array.isArray(saved.muted_users) ? [...new Set(saved.muted_users.filter(webPersonId))].slice(0, WEB_MAX_TUNED_PEOPLE) : [];
+  return prefs;
+}
+
+function webVoiceApply(prefs, cmd, args) {
+  const next = webVoicePrefs(prefs);
+  const given = args || {};
+  if (cmd === "set_noise_cancellation") next.noise_cancellation = Boolean(given.enabled);
+  if (cmd === "set_echo_cancellation") next.echo_cancellation = Boolean(given.enabled);
+  if (cmd === "set_auto_level") next.auto_level = Boolean(given.enabled);
+  if (cmd === "set_volumes") {
+    next.output_volume = webGain(given.outputVolume, next.output_volume);
+    next.input_gain = webGain(given.inputGain, next.input_gain);
+  }
+  if (cmd === "set_audio_devices") {
+    next.input_device = webDeviceName(given.input);
+    next.output_device = webDeviceName(given.output);
+  }
+  if (cmd === "set_user_voice") {
+    if (!webPersonId(given.userId)) throw "unknown member";
+    const id = given.userId;
+    if (given.volume !== null && given.volume !== undefined) next.user_volumes[id] = webGain(given.volume, 1);
+    if (given.muted === true && !next.muted_users.includes(id)) next.muted_users.push(id);
+    if (given.muted === false) next.muted_users = next.muted_users.filter(user => user !== id);
+  }
+  return webVoicePrefs(next);
+}
+
+function webPeerGain(prefs, peer) {
+  return prefs.muted_users.includes(peer) ? 0 : prefs.user_volumes[peer] ?? 1;
+}
+
+function webMicConstraints(prefs = webVoiceDefaults(), deviceId = null) {
+  const audio = { echoCancellation: prefs.echo_cancellation, noiseSuppression: prefs.noise_cancellation, autoGainControl: prefs.auto_level, channelCount: 1 };
+  if (deviceId) audio.deviceId = { exact: deviceId };
+  return { audio };
+}
+
+function webMicShape(prefs) {
+  return [prefs.echo_cancellation, prefs.noise_cancellation, prefs.auto_level, prefs.input_device].join("|");
+}
+
+function webDeviceNames(devices, kind) {
+  const names = devices
+    .filter(d => d.kind === kind && !WEB_PSEUDO_DEVICES.includes(d.deviceId))
+    .map(d => webDeviceName(d.label))
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
+function webDeviceId(devices, kind, name) {
+  if (!name) return null;
+  const found = devices.find(d => d.kind === kind && !WEB_PSEUDO_DEVICES.includes(d.deviceId) && webDeviceName(d.label) === name);
+  return found ? found.deviceId : null;
+}
+
+function webLevelDb(samples) {
+  if (!samples.length) return WEB_SILENCE_DB;
+  let sum = 0;
+  for (const s of samples) sum += s * s;
+  const rms = Math.sqrt(sum / samples.length);
+  return rms > 0 ? Math.max(WEB_SILENCE_DB, 20 * Math.log10(rms)) : WEB_SILENCE_DB;
 }
 
 function webVoice(win) {
   let context = null;
+  let master = null;
   let parts = null;
   let generation = 0;
+  let sendFrame = null;
+  let testing = false;
+  let prefs = webVoiceDefaults();
   const speakers = new Map();
+
+  const mediaDevices = () => win.navigator.mediaDevices;
+  const canPickOutput = () => typeof win.AudioContext === "function" && typeof win.AudioContext.prototype.setSinkId === "function";
+
+  async function listDevices() {
+    try {
+      return (await mediaDevices().enumerateDevices()) || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function applyOutput() {
+    if (!context || typeof context.setSinkId !== "function") return;
+    const id = webDeviceId(await listDevices(), "audiooutput", prefs.output_device);
+    await context.setSinkId(id || "").catch(() => {});
+  }
 
   async function ready() {
     if (!context) {
       context = new win.AudioContext({ latencyHint: "interactive" });
       await context.audioWorklet.addModule(WEB_VOICE_WORKLET);
+      master = context.createGain();
+      master.gain.value = prefs.output_volume;
+      master.connect(context.destination);
+      await applyOutput();
     }
     if (context.state === "suspended") await context.resume().catch(() => {});
     return context;
   }
 
+  function monitorOn() {
+    if (!parts || parts.monitor) return;
+    parts.monitor = context.createGain();
+    parts.gain.connect(parts.monitor).connect(master);
+  }
+
+  function monitorOff() {
+    if (!parts || !parts.monitor) return;
+    parts.gain.disconnect(parts.monitor);
+    parts.monitor.disconnect();
+    parts.monitor = null;
+  }
+
   function release() {
     if (!parts) return;
+    monitorOff();
     parts.mic.port.onmessage = null;
     parts.source.disconnect();
+    parts.gain.disconnect();
     parts.mic.disconnect();
     parts.hush.disconnect();
     for (const track of parts.stream.getTracks()) {
@@ -35,18 +178,21 @@ function webVoice(win) {
     parts = null;
   }
 
-  function stop() {
-    generation += 1;
-    release();
-    for (const node of speakers.values()) node.disconnect();
-    speakers.clear();
+  async function askForMic() {
+    const id = webDeviceId(await listDevices(), "audioinput", prefs.input_device);
+    try {
+      return await mediaDevices().getUserMedia(webMicConstraints(prefs, id));
+    } catch (e) {
+      if (!id) throw e;
+      return mediaDevices().getUserMedia(webMicConstraints(prefs));
+    }
   }
 
-  async function openMic(onFrame, mine) {
+  async function openMic(mine) {
     const ctx = await ready();
     let stream;
     try {
-      stream = await win.navigator.mediaDevices.getUserMedia(webMicConstraints());
+      stream = await askForMic();
     } catch {
       return false;
     }
@@ -55,43 +201,117 @@ function webVoice(win) {
       return false;
     }
     const source = ctx.createMediaStreamSource(stream);
+    const gain = ctx.createGain();
+    gain.gain.value = prefs.input_gain;
+    const analyser = ctx.createAnalyser ? ctx.createAnalyser() : null;
     const mic = new win.AudioWorkletNode(ctx, "commy-mic", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: "explicit" });
     const hush = ctx.createGain();
     hush.gain.value = 0;
-    mic.port.onmessage = e => onFrame(e.data);
-    source.connect(mic).connect(hush).connect(ctx.destination);
-    parts = { stream, source, mic, hush };
-    for (const track of stream.getAudioTracks()) track.onended = () => reopenMic(onFrame, mine);
+    mic.port.onmessage = e => sendFrame && sendFrame(e.data);
+    source.connect(gain);
+    if (analyser) gain.connect(analyser);
+    gain.connect(mic).connect(hush).connect(ctx.destination);
+    parts = { stream, source, gain, analyser, mic, hush, monitor: null, shape: webMicShape(prefs) };
+    if (testing) monitorOn();
+    for (const track of stream.getAudioTracks()) track.onended = () => reopenMic(mine);
     return true;
   }
 
-  function reopenMic(onFrame, mine) {
+  function reopenMic(mine) {
     if (mine !== generation) return;
     release();
     win.setTimeout(async () => {
-      if (mine === generation && !(await openMic(onFrame, mine))) reopenMic(onFrame, mine);
+      if (mine === generation && !(await openMic(mine))) reopenMic(mine);
     }, MIC_RETRY_MS);
+  }
+
+  function restartMic() {
+    generation += 1;
+    release();
+    return openMic(generation);
+  }
+
+  function stopSpeakers() {
+    for (const speaker of speakers.values()) {
+      speaker.node.disconnect();
+      speaker.gain.disconnect();
+    }
+    speakers.clear();
+  }
+
+  function stop() {
+    sendFrame = null;
+    stopSpeakers();
+    if (testing) return;
+    generation += 1;
+    release();
   }
 
   async function start(onFrame) {
     stop();
-    return openMic(onFrame, generation);
+    sendFrame = onFrame;
+    if (parts) return true;
+    return restartMic();
+  }
+
+  async function startTest() {
+    testing = true;
+    if (parts) {
+      monitorOn();
+      return true;
+    }
+    const opened = await restartMic();
+    if (!opened) testing = false;
+    return opened;
+  }
+
+  function stopTest() {
+    testing = false;
+    monitorOff();
+    if (sendFrame) return;
+    generation += 1;
+    release();
+  }
+
+  function level() {
+    if (!parts || !parts.analyser) return WEB_SILENCE_DB;
+    const samples = new Float32Array(parts.analyser.fftSize);
+    parts.analyser.getFloatTimeDomainData(samples);
+    return webLevelDb(samples);
+  }
+
+  async function configure(next) {
+    const before = prefs;
+    prefs = webVoicePrefs(next);
+    if (master) master.gain.value = prefs.output_volume;
+    if (parts) parts.gain.gain.value = prefs.input_gain;
+    for (const [peer, speaker] of speakers) speaker.gain.gain.value = webPeerGain(prefs, peer);
+    if (before.output_device !== prefs.output_device) await applyOutput();
+    if (parts && parts.shape !== webMicShape(prefs)) await restartMic();
+  }
+
+  async function devices() {
+    const found = await listDevices();
+    return { inputs: webDeviceNames(found, "audioinput"), outputs: canPickOutput() ? webDeviceNames(found, "audiooutput") : [] };
   }
 
   function play(peer, pcm) {
     if (!context) return;
-    let node = speakers.get(peer);
-    if (!node) {
-      node = new win.AudioWorkletNode(context, "commy-speaker", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
-      node.connect(context.destination);
-      speakers.set(peer, node);
+    let speaker = speakers.get(peer);
+    if (!speaker) {
+      const node = new win.AudioWorkletNode(context, "commy-speaker", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+      const gain = context.createGain();
+      gain.gain.value = webPeerGain(prefs, peer);
+      node.connect(gain).connect(master);
+      speaker = { node, gain };
+      speakers.set(peer, speaker);
     }
-    node.port.postMessage(pcm, [pcm.buffer]);
+    speaker.node.port.postMessage(pcm, [pcm.buffer]);
   }
 
-  return { start, stop, play };
+  return { start, stop, play, startTest, stopTest, level, configure, devices };
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_VOICE_WORKLET, webMicConstraints, webVoice };
+  module.exports = { WEB_VOICE_WORKLET, WEB_VOICE_PREFS_KEY, WEB_VOICE_COMMANDS, WEB_MIC_REFUSED, WEB_SILENCE_DB, webVoiceDefaults, webVoicePrefs, webVoiceApply, webPeerGain, webMicConstraints, webDeviceNames, webDeviceId, webLevelDb, webVoice };
 }

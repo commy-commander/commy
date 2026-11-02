@@ -22,6 +22,7 @@ use super::{parse, to_json, Args, Session};
 use crate::client::Seat;
 use crate::dm_book;
 use crate::recording::Recorder;
+use crate::voice_prefs;
 
 const RING_FOR: Duration = Duration::from_millis(calls::RING_FOR_MS as u64);
 const TEND_EVERY: Duration = Duration::from_secs(1);
@@ -150,8 +151,9 @@ impl Session {
     pub(super) fn voice_settings(&self) -> Value {
         let personal = self.personal();
         let voice = self.voice.borrow();
-        json!({
+        let mut settings = json!({
             "noise_cancellation": true,
+            "echo_cancellation": true,
             "auto_level": true,
             "muted": voice.muted,
             "deafened": voice.deafened,
@@ -160,8 +162,15 @@ impl Session {
             "status_until": personal.status_until,
             "output_volume": 1,
             "input_gain": 1,
+            "input_device": null,
+            "output_device": null,
+            "user_volumes": {},
+            "muted_users": [],
             "afk_timeout_minutes": personal.afk_timeout_minutes.unwrap_or(afk::DEFAULT_TIMEOUT_MINUTES),
-        })
+        });
+        let local = self.host.load(voice_prefs::LOCAL_VOICE_KEY).and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+        voice_prefs::overlay_local_voice(&mut settings, local);
+        settings
     }
 
     pub(super) fn voice_link_open(&self) -> bool {
@@ -912,3 +921,4 @@ impl Session {
         }
     }
 }
+

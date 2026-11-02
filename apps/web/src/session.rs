@@ -44,6 +44,7 @@ mod profile;
 mod servers;
 mod sync;
 mod voice_gate;
+mod voice_invites;
 
 const DEVICE_NAME: &str = "Web browser";
 const MAX_PREF_KEY: usize = 200;
@@ -124,6 +125,8 @@ struct Args {
     trusted: Option<Vec<String>>,
     entry: Option<commy_view::saved::Entry>,
     user_id: Option<String>,
+    to_server_id: Option<String>,
+    to_channel_id: Option<String>,
     saved: Option<bool>,
     channel_id: Option<String>,
     content: Option<String>,
@@ -488,6 +491,7 @@ impl Session {
             "set_upload_limit" | "set_tts_allowed" => self.server_command(cmd, args).await,
             "move_voice_member" => self.server_command(cmd, args).await,
             "voice_gate" => to_json(&self.voice_gate_view().await),
+            "send_voice_invite" | "send_dm_voice_invite" | "voice_channel_presence" => self.voice_invite_command(cmd, args).await,
             "ban_member" => self.server_command(cmd, args).await,
             "unban_member" => self.server_command(cmd, args).await,
             "time_out_member" => self.server_command(cmd, args).await,
