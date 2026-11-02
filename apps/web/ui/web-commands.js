@@ -9,6 +9,7 @@ const WEB_DEFAULTS = {
   get_overlay_settings: { enabled: false, corner: "top-left", opacity: 0.9, show_chat: false, show_everyone: false, pictures_only: false, stack_vertical: false, toggle_hotkey: "", chat_hotkey: "" },
   overlay_hotkey_problems: [],
   voice_hotkey_problems: [],
+  voice_gate: { enabled: false, waits: {} },
   get_update_status: WEB_UPDATE_STATUS,
   check_for_updates: WEB_UPDATE_STATUS,
   get_integrations: { igdb_client_id: "", igdb_configured: false },

@@ -262,7 +262,10 @@ impl Session {
                 self.voice.borrow_mut().input_ms = now_ms();
                 Ok(Value::Null)
             }
-            "voice_stats" => self.voice_stats(),
+            "voice_stats" => {
+                let checker = self.node.lock().await.as_ref().map(commy_net::CommyNode::connection_checker);
+                self.voice_stats(checker)
+            }
             "set_muted" => {
                 self.voice.borrow_mut().muted = args.muted.unwrap_or(false);
                 self.quiet_down(true);
@@ -825,7 +828,7 @@ impl Session {
         (me == Some(*user)).then(|| until.map(|t| t.timestamp_millis()))
     }
 
-    fn voice_stats(&self) -> Result<Value, String> {
+    fn voice_stats(&self, checker: Option<commy_net::ConnectionChecker>) -> Result<Value, String> {
         let voice = self.voice.borrow();
         let link = voice.link.as_ref().ok_or("not in voice")?;
         let client = self.client.borrow();
@@ -861,7 +864,15 @@ impl Session {
                 })
             })
             .collect();
+        let me = client.profile().zip(checker).map(|(profile, checker)| {
+            let mut own = serde_json::to_value(checker.now()).unwrap_or_default();
+            own["user"] = json!(profile.id.to_string());
+            let name = name_of(profile.id);
+            own["name"] = json!(if name.is_empty() { profile.visible_name().to_string() } else { name });
+            own
+        });
         Ok(json!({
+            "me": me,
             "links": links,
             "codec": "Opus, 48 kHz mono, 10 ms frames",
             "bitrate_kbps": commy_audio::codec::VOICE_BITRATE / 1000,

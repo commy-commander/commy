@@ -67,6 +67,12 @@
         </span>
       </header>
       <div class="channel-scroll" id="channel-list"></div>
+      <div class="voice-gate-anchor">
+        <div class="voice-gate-pill hidden" id="voice-gate-pill" role="status" aria-live="polite">
+          <span class="voice-gate-spin" aria-hidden="true"></span>
+          <span class="voice-gate-text"><span class="voice-gate-title">Voice waits</span><span class="voice-gate-reason" id="voice-gate-reason"></span></span>
+        </div>
+      </div>
 
       <section class="voice-panel hidden" id="voice-panel">
         <div class="vp-live hidden" id="vp-live">
@@ -1705,6 +1711,14 @@
             </div>
             <input type="checkbox" id="agc-toggle" class="switch" />
           </label>
+          <h2 class="settings-subhead native-only">Connection</h2>
+          <label class="settings-card setting-row native-only" data-search="connection offline sync relay join wait steady">
+            <div>
+              <div class="setting-title">Wait for a steady connection before joining voice</div>
+              <div class="setting-sub">Voice channels stay closed while Commy is still connecting or catching up with a server, so you never join a channel that is out of date. The channel list says what it is waiting for. Turn it off to join right away.</div>
+            </div>
+            <input type="checkbox" id="wait-connection-toggle" class="switch" />
+          </label>
           <h2 class="settings-subhead">Idle</h2>
           <div class="settings-card setting-row" data-search="idle away inactive afk">
             <div>
@@ -3168,6 +3182,7 @@
   <script src="scripts/threads.js"></script>
   <script src="scripts/voice-status.js"></script>
   <script src="scripts/voice-signal.js"></script>
+  <script src="scripts/voice-gate.js"></script>
   <script src="scripts/forum.js"></script>
   <script src="scripts/drive-view.js"></script>
   <script src="scripts/stage.js"></script>
