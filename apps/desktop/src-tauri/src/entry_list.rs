@@ -621,8 +621,19 @@ fn schedule_later(handle: &AppHandle, delay: std::time::Duration) {
     });
 }
 
+fn keep_held_servers(step: IdentityStep, shared: &EntryList) -> IdentityStep {
+    match step {
+        IdentityStep::Adopt | IdentityStep::WaitForKey if shared.is_empty_list() => IdentityStep::TakeOver,
+        IdentityStep::Adopt | IdentityStep::WaitForKey => IdentityStep::OwnIdentity,
+        step => step,
+    }
+}
+
 async fn identity_part(app: &App, dir: &Path, local: &EntryList, shared: &EntryList, wait: &KeyWait) -> (AfterStep, bool) {
-    let after = take_identity_step(app, dir, identity_step(local, shared), shared).await;
+    let step = identity_step(local, shared);
+    let holds = !app.servers.lock().unwrap().is_empty();
+    let step = if holds { keep_held_servers(step, shared) } else { step };
+    let after = take_identity_step(app, dir, step, shared).await;
     let retry = after == AfterStep::Wait && wait.start();
     (after, retry)
 }
@@ -1238,6 +1249,28 @@ mod tests {
         assert_eq!(identity_part(&app, &dir, &local, &shared, &wait).await, (AfterStep::Wait, false));
         wait.done();
         assert_eq!(identity_part(&app, &dir, &local, &shared, &wait).await, (AfterStep::Wait, true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_server_made_before_its_invite_keeps_the_device_from_adopting_the_browser_list() {
+        let device = UserProfile::new("desktop");
+        let (app, dir, _) = new_device("held", &device);
+        let server = commy_core::Server::new("made offline", device.id);
+        let sid = server.id;
+        app.servers.lock().unwrap().insert(sid, commy_core::ServerState::new(server));
+        let local = local_list(&app, &dir);
+        assert!(local.servers.is_empty(), "no invite yet, so it is not listed");
+        let browser = EntryList::fresh("from the browser", &Identity::generate());
+        assert_eq!(identity_step(&local, &browser), IdentityStep::Adopt);
+        let wait = KeyWait(std::sync::atomic::AtomicBool::new(false));
+        assert_eq!(identity_part(&app, &dir, &local, &browser, &wait).await, (AfterStep::TakeOver, false));
+        let elsewhere = EntryList {
+            servers: BTreeMap::from([(ServerId::new(), entry("theirs", Utc::now()))]),
+            ..browser.clone()
+        };
+        assert_eq!(identity_part(&app, &dir, &local, &elsewhere, &wait).await, (AfterStep::StayOut, false));
+        assert_eq!(app.profile.lock().unwrap().as_ref().map(|p| p.id), Some(device.id));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
