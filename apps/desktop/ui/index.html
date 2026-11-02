@@ -8,6 +8,28 @@
   <link rel="stylesheet" href="styles/styles.css" />
 </head>
 <body>
+  <div class="startup" id="startup" role="status" aria-live="polite">
+    <div class="startup-card">
+      <img class="startup-logo" src="images/commy_v3_noback.png" alt="" width="64" height="64" draggable="false" />
+      <h1 class="startup-title" id="startup-title">Starting Commy</h1>
+      <ol class="startup-steps">
+        <li class="startup-step" id="startup-connection" data-state="working">
+          <span class="startup-mark" aria-hidden="true"><svg class="startup-icon startup-icon-done" viewBox="0 0 24 24" width="14" height="14"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="startup-icon startup-icon-skipped" viewBox="0 0 24 24" width="14" height="14"><path d="M7 12h10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><svg class="startup-icon startup-icon-failed" viewBox="0 0 24 24" width="14" height="14"><path d="M12 6.5v7M12 17.5v.01" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></span>
+          <span class="startup-text"><span class="startup-name">Connection</span><span class="startup-detail">Checking your connection</span></span>
+        </li>
+        <li class="startup-step" id="startup-update" data-state="waiting">
+          <span class="startup-mark" aria-hidden="true"><svg class="startup-icon startup-icon-done" viewBox="0 0 24 24" width="14" height="14"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="startup-icon startup-icon-skipped" viewBox="0 0 24 24" width="14" height="14"><path d="M7 12h10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><svg class="startup-icon startup-icon-failed" viewBox="0 0 24 24" width="14" height="14"><path d="M12 6.5v7M12 17.5v.01" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></span>
+          <span class="startup-text"><span class="startup-name">Updates</span><span class="startup-detail">Waiting for the connection</span><span class="startup-bar" aria-hidden="true"><span class="startup-fill"></span></span></span>
+        </li>
+        <li class="startup-step" id="startup-sync" data-state="waiting">
+          <span class="startup-mark" aria-hidden="true"><svg class="startup-icon startup-icon-done" viewBox="0 0 24 24" width="14" height="14"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="startup-icon startup-icon-skipped" viewBox="0 0 24 24" width="14" height="14"><path d="M7 12h10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><svg class="startup-icon startup-icon-failed" viewBox="0 0 24 24" width="14" height="14"><path d="M12 6.5v7M12 17.5v.01" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></span>
+          <span class="startup-text"><span class="startup-name">Sync</span><span class="startup-detail">Waiting for the connection</span></span>
+        </li>
+      </ol>
+      <button class="btn-link startup-skip" id="startup-skip" type="button">Open Commy now</button>
+    </div>
+  </div>
+  <div class="offline-chip hidden" id="offline-chip" role="status"><span class="offline-dot" aria-hidden="true"></span><span>Offline. Showing what is saved on this device.</span></div>
   <div id="titlebar" class="titlebar hidden">
     <div class="titlebar-drag" id="titlebar-drag">
       <span class="titlebar-icon server-icon" id="titlebar-icon"></span>
@@ -2312,7 +2334,7 @@
           <label class="settings-card setting-row">
             <div>
               <div class="setting-title">Update automatically</div>
-              <div class="setting-sub">Commy looks for a new version when it starts and every few hours, downloads it in the background and lets you know when a restart will finish it. Turn this off to update only when you click Check for Updates.</div>
+              <div class="setting-sub">Commy looks for a new version while it starts, installs it and restarts before opening, and checks again every few hours in the background. Turn this off to update only when you click Check for Updates.</div>
             </div>
             <input type="checkbox" id="auto-update-toggle" class="switch" />
           </label>
@@ -3319,6 +3341,7 @@
   <script src="scripts/locales/es.js"></script>
   <script src="scripts/accessibility.js"></script>
   <script src="scripts/updates.js"></script>
+  <script src="scripts/startup.js"></script>
   <script src="scripts/diagnostics.js"></script>
   <script src="scripts/data-folder.js"></script>
   <script src="scripts/server-templates.js"></script>
