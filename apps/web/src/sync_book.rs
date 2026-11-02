@@ -284,6 +284,13 @@ impl Book {
         self.list.profile.as_ref()
     }
 
+    pub fn forget_cursors(&mut self, server: ServerId) {
+        let streams: Vec<StreamId> = self.routes.iter().filter(|(_, (sid, _))| *sid == server).map(|(stream, _)| *stream).collect();
+        for stream in streams {
+            self.after.remove(&stream);
+        }
+    }
+
     pub fn leave(&mut self, server: ServerId, at: DateTime<Utc>) {
         self.list.servers.remove(&server);
         self.list.left.insert(server, at);
@@ -658,6 +665,19 @@ mod tests {
         assert!(!book.is_live(text.keys.id));
         let plan = book.replan([(server, vec![state, text.clone()])].into());
         assert_eq!(plan.follow[0].2, 10, "a stream picks up where it left off");
+    }
+
+    #[test]
+    fn a_server_left_and_joined_again_is_read_from_the_start() {
+        let server = ServerId::new();
+        let state = want(server, Lane::State, true);
+        let mut book = Book::new(EntryList::default());
+        book.replan([(server, vec![state.clone()])].into());
+        book.caught_up(state.keys.id, 12);
+        book.forget_cursors(server);
+        book.replan(HashMap::new());
+        let plan = book.replan([(server, vec![state])].into());
+        assert_eq!(plan.follow[0].2, 0, "the server's state comes again after a fresh join");
     }
 
     #[test]

@@ -436,6 +436,9 @@ impl Session {
 
     async fn forget_left(self: &Rc<Self>, server: ServerId, group: bool) {
         self.client.borrow_mut().forget(server);
+        if let Some(live) = self.sync.borrow_mut().as_mut() {
+            live.book.forget_cursors(server);
+        }
         if let Some(node) = self.node.lock().await.as_mut() {
             node.leave_server(server);
         }
