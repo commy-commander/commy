@@ -19,7 +19,7 @@ type Servers = HashMap<ServerId, ServerState>;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Source {
     Pair(UserId, IdentityKey),
-    Inbox(ServerId),
+    Inbox(Option<ServerId>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -124,7 +124,7 @@ impl DmBook {
             || servers.values().any(|s| s.profiles.contains_key(&user) || s.server.is_current_member(user))
     }
 
-    pub fn plan(&mut self, identity: &Identity, servers: &Servers, inboxes: Vec<(ServerId, StreamKeys)>, now: DateTime<Utc>) -> Plan {
+    pub fn plan(&mut self, identity: &Identity, servers: &Servers, inboxes: Vec<(Option<ServerId>, StreamKeys)>, now: DateTime<Utc>) -> Plan {
         let now_ms = now.timestamp_millis();
         let local: Vec<(UserId, i64)> = self
             .store
@@ -446,6 +446,17 @@ mod tests {
         let expected = sync_streams::dm_stream(&friend.1, &me.1.public(), &sync_streams::dm_epoch(now)).unwrap().id;
         assert!(plan.follow.iter().any(|(keys, _)| keys.id == expected), "both sides land on the same stream");
         assert_eq!(book.plan(&me.1, &HashMap::new(), Vec::new(), now), Plan::default());
+    }
+
+    #[test]
+    fn a_personal_inbox_is_read_without_sharing_a_server() {
+        let me = person("me");
+        let mut book = DmBook::default();
+        let now = Utc::now();
+        let mine = commy_net::inbox::personal_inbox_now(me.0.id, &me.1.public(), now);
+        let plan = book.plan(&me.1, &HashMap::new(), vec![(None, mine.clone())], now);
+        assert_eq!(plan.follow.len(), 1);
+        assert_eq!(book.source(mine.id), Some(Source::Inbox(None)));
     }
 
     #[test]

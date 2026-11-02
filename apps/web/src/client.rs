@@ -765,7 +765,7 @@ impl Client {
             .collect()
     }
 
-    pub fn own_inboxes(&self, given: &HashMap<ServerId, (KeyId, ChannelSecret)>, now_ms: i64) -> Vec<(ServerId, StreamKeys)> {
+    pub fn own_inboxes(&self, given: &HashMap<ServerId, (KeyId, ChannelSecret)>, now_ms: i64) -> Vec<(Option<ServerId>, StreamKeys)> {
         let Some(me) = self.me_id() else { return Vec::new() };
         let holder = self.keys();
         let servers = self.servers.lock().unwrap();
@@ -773,7 +773,7 @@ impl Client {
             .iter()
             .filter_map(|(sid, state)| {
                 let ring = holder.community_ring(state, given.get(sid).cloned())?;
-                Some(inbox::inboxes(state, me, &ring, now_ms).into_iter().map(|keys| (*sid, keys)).collect::<Vec<_>>())
+                Some(inbox::inboxes(state, me, &ring, now_ms).into_iter().map(|keys| (Some(*sid), keys)).collect::<Vec<_>>())
             })
             .flatten()
             .collect()

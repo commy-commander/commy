@@ -66,11 +66,13 @@ impl Session {
     }
 
     pub(super) fn refresh_dms(&self) {
-        let Some((_, identity)) = self.me_and_key() else { return };
+        let Some((me, identity)) = self.me_and_key() else { return };
         let Some(given) = self.sync.borrow().as_ref().map(|live| live.book.given()) else { return };
         let now = Utc::now();
         let client = self.client.borrow();
-        let inboxes = client.own_inboxes(&given, now.timestamp_millis());
+        let mut inboxes = client.own_inboxes(&given, now.timestamp_millis());
+        let epochs = sync_streams::recent_dm_epochs(now, dms::EPOCHS);
+        inboxes.extend(inbox::personal_inboxes(me.id, &identity.public(), &epochs).into_iter().map(|keys| (None, keys)));
         let plan = {
             let servers = client.servers.lock().unwrap();
             self.dms.borrow_mut().plan(&identity, &servers, inboxes, now)
@@ -171,9 +173,11 @@ impl Session {
             Source::Inbox(server) => {
                 let Some(envelope) = inbox::open(&identity, plain) else { return };
                 let from = envelope.message.from;
-                let member = self.client.borrow().servers.lock().unwrap().get(&server).is_some_and(|state| {
-                    state.server.is_current_member(from)
-                        && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
+                let member = server.is_none_or(|server| {
+                    self.client.borrow().servers.lock().unwrap().get(&server).is_some_and(|state| {
+                        state.server.is_current_member(from)
+                            && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
+                    })
                 });
                 if !member || (dms::is_call(&envelope.message) && !dms::call_fresh(at, Utc::now().timestamp_millis())) {
                     return;
@@ -330,7 +334,8 @@ impl Session {
             let servers = client.servers.lock().unwrap();
             self.dms.borrow().partner_key(&servers, to)
         };
-        let (Some(key), Some(keys)) = (key, self.client.borrow().inbox_to(&given, to)) else { return false };
+        let Some(key) = key else { return false };
+        let keys = self.client.borrow().inbox_to(&given, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
         let Some(sealed) = inbox::seal(&key, envelope) else { return false };
         let stream = keys.id;
         let (client, borrowed) = {
