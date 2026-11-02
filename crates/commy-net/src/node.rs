@@ -1517,7 +1517,11 @@ impl CommyNode {
     }
 
     pub fn connection_checker(&self) -> crate::connection_check::ConnectionChecker {
-        crate::connection_check::ConnectionChecker { endpoint: self.endpoint(), can_discover_address: self.can_discover_address }
+        crate::connection_check::ConnectionChecker {
+            endpoint: self.endpoint(),
+            can_discover_address: self.can_discover_address,
+            uses_relays: !self.relays.is_empty(),
+        }
     }
 
     pub async fn add_blob(&self, bytes: Vec<u8>) -> Result<String> {

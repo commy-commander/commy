@@ -65,6 +65,7 @@ mod tray;
 mod updater;
 use commy_view as view;
 mod voice_filter;
+mod voice_gate;
 mod voice_keys;
 mod voice_message;
 mod voice_pack;
@@ -1321,6 +1322,12 @@ async fn set_voice_channel(
                 let servers = app.servers.lock().unwrap();
                 let state = servers.get(&sid).ok_or("unknown server")?;
                 view::act::join_voice(state, our_permissions(&app, state, profile.id), profile.id, channel)?;
+            }
+            let joining_this_server = app.voice_session.lock().unwrap().as_ref().is_none_or(|s| s.server != sid);
+            if joining_this_server {
+                if let Some(wait) = voice_gate::check(&app, sid).await {
+                    return Err(wait.refusal());
+                }
             }
             calls::end(&app, &handle, true, "hung_up").await;
             let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
@@ -5053,7 +5060,16 @@ struct LinkView {
 }
 
 #[derive(serde::Serialize)]
+struct OwnLinkView {
+    user: String,
+    name: String,
+    #[serde(flatten)]
+    check: commy_net::ConnectionCheck,
+}
+
+#[derive(serde::Serialize)]
 struct VoiceStatsView {
+    me: Option<OwnLinkView>,
     links: Vec<LinkView>,
     codec: String,
     bitrate_kbps: u32,
@@ -5066,6 +5082,15 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         let session = session.as_ref().ok_or("not in voice")?;
         (session.link_stats(), session.server)
     };
+    let checker = app.net.lock().await.as_ref().map(CommyNode::connection_checker);
+    let me = current_profile(&app).ok().zip(checker).map(|(profile, checker)| {
+        let name = app.servers.lock().unwrap().get(&sid).map(|st| view::display_name(st, profile.id));
+        OwnLinkView {
+            user: profile.id.to_string(),
+            name: name.unwrap_or_else(|| profile.visible_name().to_string()),
+            check: checker.now(),
+        }
+    });
     let server_names: Vec<Option<String>> = {
         let servers = app.servers.lock().unwrap();
         stats.iter().map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user))).collect()
@@ -5096,6 +5121,7 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         })
         .collect();
     Ok(VoiceStatsView {
+        me,
         links,
         codec: "Opus, 48 kHz mono, 10 ms frames".into(),
         bitrate_kbps: (commy_audio::codec::VOICE_BITRATE / 1000) as u32,
@@ -7305,6 +7331,16 @@ async fn run_connection_check(app: tauri::State<'_, App>) -> CmdResult<commy_net
 }
 
 #[tauri::command]
+async fn voice_gate(app: tauri::State<'_, App>) -> CmdResult<voice_gate::GateView> {
+    Ok(voice_gate::current(&app).await)
+}
+
+#[tauri::command]
+fn set_wait_for_connection(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
+    app.update_voice(|voice| voice.wait_for_connection = enabled)
+}
+
+#[tauri::command]
 fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| voice.close_to_tray = enabled)
 }
@@ -7709,6 +7745,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
                 tauri::async_runtime::spawn(channel_lock::run(handle.clone()));
                 tauri::async_runtime::spawn(community_sync::run(handle.clone()));
+                tauri::async_runtime::spawn(voice_gate::run(handle.clone()));
                 tauri::async_runtime::spawn(wake::run_watchdog(handle.clone()));
                 tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
                 tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
@@ -8107,6 +8144,8 @@ pub fn run() {
             voice_pack::voice_pack_remove,
             set_unread,
             set_close_to_tray,
+            voice_gate,
+            set_wait_for_connection,
             debug_log_status,
             set_verbose_logging,
             open_log_folder,

@@ -20,6 +20,7 @@ const state = {
   voice: { noise_cancellation: true, echo_cancellation: true, auto_level: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
   voiceChannelId: null,
   voiceServer: null,
+  voiceGate: VOICE_GATE_OPEN,
   shareSource: null,
   watchingName: null,
   sharing: false,
@@ -43,6 +44,12 @@ const mock = {
   dms: {},
   voice: { noise_cancellation: true, echo_cancellation: true, auto_level: true, muted: false, deafened: false, output_volume: 1, input_gain: 1, stream_volume: 1, afk_timeout_minutes: 10 },
 };
+
+function mockVoiceGateWaits() {
+  if (!/[?&]voicewait\b/.test(location.search)) return {};
+  const wait = { kind: "catching_up", reason: "Getting the latest from the server" };
+  return Object.fromEntries(Object.keys(mock.servers).map(id => [id, wait]));
+}
 
 function mockSearchMatcher({ terms, from, mentions }, named) {
   return (authorId, content) => {
@@ -1321,6 +1328,8 @@ async function mockInvoke(cmd, args = {}) {
     case "stop_mic_test": mock.micTesting = false; return null;
     case "set_afk_timeout": mock.voice.afk_timeout_minutes = args.minutes; return mock.voice;
     case "set_share_activity": mock.voice.share_activity = args.enabled; return mock.voice;
+    case "set_wait_for_connection": mock.voice.wait_for_connection = args.enabled; return mock.voice;
+    case "voice_gate": return { enabled: mock.voice.wait_for_connection !== false, waits: mockVoiceGateWaits() };
     case "list_audio_devices": return { inputs: ["Microphone (Realtek Audio)", "Headset Mic (HyperX Cloud)"], outputs: ["Speakers (Realtek Audio)", "Headphones (HyperX Cloud)"] };
     case "start_camera": mock.cameraOn = true; return null;
     case "notify": console.info("notify", args.title, args.body); return null;
@@ -1701,7 +1710,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_pronouns": mock.voice.pronouns = (args.pronouns || "").trim() || null; return mock.voice;
     case "set_server_afk_timeout": mock.servers[args.serverId].afk_timeout_minutes = args.minutes; return null;
     case "voice_stats":
-      return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, links: [
+      return { codec: "Opus, 48 kHz mono, 10 ms frames", bitrate_kbps: 32, me: { user: mock.user ? mock.user.id : "me", name: mock.user ? mock.user.display_name || mock.user.username : "you", quality: "good", direct: "open", relay_reachable: true, relay_rtt_ms: 38, ipv6: false }, links: [
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, lost_packets: Math.floor((mock.sent = (mock.sent || 0) + 400) / 1000), sent_packets: mock.sent, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
@@ -3578,6 +3587,7 @@ function channelPlainName(channel) {
 function renderChannels() {
   const list = $("channel-list");
   list.innerHTML = "";
+  paintVoiceGate();
   if (!state.currentServer) return;
   const server = state.currentServer;
   checkVoiceRoster();
@@ -3615,6 +3625,7 @@ function renderChannels() {
   }
   scheduleMuteExpiry(server);
   pushOverlayRoster();
+  paintVoiceGate();
 }
 
 function pinnedFirst(sections, server, canCreate) {
@@ -9619,53 +9630,70 @@ async function refreshConnPop() {
   connLast = { at: now, tx, rx };
   const list = $("conn-links");
   list.replaceChildren();
-  const current = pickConnLink(stats.links, connPick);
+  const entries = connEntries(stats.me, stats.links);
+  const current = pickConnLink(entries, connPick);
   connPick = current ? current.user : null;
   const tabs = $("conn-tabs");
   tabs.replaceChildren();
-  tabs.classList.toggle("hidden", stats.links.length < 2);
-  for (const link of stats.links) {
-    const tab = el("button", "conn-tab");
-    tab.type = "button";
-    tab.setAttribute("role", "tab");
-    tab.setAttribute("aria-selected", String(link === current));
-    tab.title = link.name;
-    tab.dataset.quality = link.quality;
-    tab.classList.toggle("active", link === current);
-    tab.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
-    tab.onclick = () => {
-      connPick = link.user;
-      refreshConnPop();
-    };
-    tabs.appendChild(tab);
-  }
-  for (const link of current ? [current] : []) {
-    const row = el("div", "conn-link");
-    const head = el("div", "conn-link-head");
-    head.appendChild(makeAvatar(link.user, link.name, "avatar avatar-xs"));
-    head.appendChild(el("span", "conn-name", link.name));
-    const q = link.quality;
-    head.appendChild(el("span", `conn-badge ${q}`, { good: "Good", ok: "Fair", bad: "Poor" }[q]));
-    row.appendChild(head);
-    const grid = el("div", "conn-grid");
-    const stat = (label, value) => {
-      grid.appendChild(el("span", "conn-label", label));
-      grid.appendChild(el("span", "conn-value", value));
-    };
-    stat("Ping", `${Math.round(link.rtt_ms)} ms`);
-    stat("Packet loss", `${link.loss_pct.toFixed(link.loss_pct < 1 ? 2 : 1)}%`);
-    stat("Jitter", `${link.jitter_ms.toFixed(1)} ms`);
-    const path = link.path === "direct" ? "Connected directly"
-      : link.path === "relay" ? "Connected through a relay"
-      : link.path === "mixed" ? "Connected directly and through a relay"
-      : "Connecting";
-    stat("Connection", path);
-    row.appendChild(grid);
-    list.appendChild(row);
-  }
+  tabs.classList.toggle("hidden", entries.length < 2);
+  for (const entry of entries) tabs.appendChild(connTab(entry, entry === current));
+  if (current) list.appendChild(current.self ? ownConnCard(current) : linkConnCard(current));
   if (!stats.links.length) list.appendChild(el("div", "conn-empty", "Nobody else is connected yet."));
   $("conn-foot").textContent = `Audio: ${stats.codec}, ${stats.bitrate_kbps} kbps per person`;
   paintSignal(stats.links);
+}
+
+function connTab(entry, active) {
+  const tab = el("button", "conn-tab");
+  tab.type = "button";
+  tab.setAttribute("role", "tab");
+  tab.setAttribute("aria-selected", String(active));
+  tab.title = `${entry.self ? "You" : entry.name}: ${entry.chip.label}`;
+  tab.dataset.quality = entry.quality;
+  tab.classList.toggle("active", active);
+  tab.appendChild(makeAvatar(entry.user, entry.name, "avatar avatar-xs"));
+  tab.appendChild(el("span", "conn-tab-name", entry.self ? "You" : entry.name));
+  tab.appendChild(el("span", `conn-path ${entry.chip.kind}`, entry.chip.label));
+  tab.appendChild(el("span", "conn-dot"));
+  tab.onclick = () => {
+    connPick = entry.user;
+    refreshConnPop();
+  };
+  return tab;
+}
+
+function connCard(entry, badge, rows) {
+  const row = el("div", "conn-link");
+  const head = el("div", "conn-link-head");
+  head.appendChild(makeAvatar(entry.user, entry.name, "avatar avatar-xs"));
+  head.appendChild(el("span", "conn-name", entry.self ? `${entry.name} (you)` : entry.name));
+  head.appendChild(el("span", `conn-badge ${badge.cls}`, badge.label));
+  row.appendChild(head);
+  const grid = el("div", "conn-grid");
+  for (const [label, value] of rows) {
+    grid.appendChild(el("span", "conn-label", label));
+    grid.appendChild(el("span", "conn-value", value));
+  }
+  row.appendChild(grid);
+  return row;
+}
+
+function linkConnCard(link) {
+  const badge = { cls: link.quality, label: { good: "Good", ok: "Fair", bad: "Poor" }[link.quality] };
+  return connCard(link, badge, [
+    ["Ping", `${Math.round(link.rtt_ms)} ms`],
+    ["Packet loss", `${link.loss_pct.toFixed(link.loss_pct < 1 ? 2 : 1)}%`],
+    ["Jitter", `${link.jitter_ms.toFixed(1)} ms`],
+    ["Connection", linkPathText(link.path)],
+  ]);
+}
+
+function ownConnCard(me) {
+  return connCard(me, ownBadge(me.quality), [
+    ["Ping to relay", ownRelayText(me)],
+    ["Your network", ownNetworkText(me.direct)],
+    ["Your calls", me.path_text],
+  ]);
 }
 
 function paintSignal(links) {
@@ -16359,6 +16387,7 @@ function paintNarrowRail() {
   const server = narrowViewServer();
   paintNarrowServers(server);
   $("narrow-column").replaceChildren(narrowChannelTile(server), ...(server ? narrowVoiceTiles(server) : []));
+  paintVoiceGate();
 }
 
 function paintNarrowServers(server) {
@@ -18130,9 +18159,47 @@ async function askForMicrophoneOnPhones() {
   }
 }
 
+async function loadVoiceGate() {
+  try {
+    applyVoiceGate(await invoke("voice_gate"));
+  } catch {
+    applyVoiceGate(null);
+  }
+}
+
+function applyVoiceGate(view) {
+  const next = readVoiceGate(view);
+  if (sameVoiceGate(next, state.voiceGate)) return;
+  state.voiceGate = next;
+  paintVoiceGate();
+}
+
+function currentVoiceWait() {
+  if (!state.currentServer) return null;
+  return voiceGateWait(state.voiceGate, state.currentServer.id, state.voiceServer && state.voiceServer.id);
+}
+
+function paintVoiceGate() {
+  const wait = currentVoiceWait();
+  $("voice-gate-pill").classList.toggle("hidden", !wait);
+  $("voice-gate-reason").textContent = wait ? wait.reason : "";
+  $("voice-gate-pill").title = wait ? voiceGateRefusal(wait) : "";
+  for (const row of document.querySelectorAll(".voice-channel[data-room], .narrow-voice-tile[data-room]")) {
+    const blocked = Boolean(wait) && row.dataset.room !== state.voiceChannelId;
+    if (row.dataset.joinTitle === undefined) row.dataset.joinTitle = row.title;
+    row.classList.toggle("voice-wait", blocked);
+    row.title = blocked ? voiceGateRefusal(wait) : row.dataset.joinTitle;
+  }
+}
+
 async function toggleVoice(channel) {
   if (!state.currentServer) return;
   const leaving = state.voiceChannelId === channel.id;
+  const wait = leaving ? null : currentVoiceWait();
+  if (wait) {
+    toast(voiceGateRefusal(wait));
+    return;
+  }
   if (!leaving) await askForMicrophoneOnPhones();
   try {
     await invoke("set_voice_channel", {
@@ -19469,6 +19536,17 @@ function wireEvents() {
     }
   });
 
+  $("wait-connection-toggle").addEventListener("change", async e => {
+    try {
+      state.voice = await invoke("set_wait_for_connection", { enabled: e.target.checked });
+      await loadVoiceGate();
+      toast(e.target.checked ? "Voice waits for a steady connection" : "Voice joins right away");
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  });
+
   $("share-activity-toggle").addEventListener("change", async e => {
     try {
       state.voice = await invoke("set_share_activity", { enabled: e.target.checked });
@@ -20529,6 +20607,7 @@ function wireEvents() {
       }
     });
     window.__TAURI__.event.listen("event-reminder", () => playSound("message"));
+    window.__TAURI__.event.listen("voice-gate", event => applyVoiceGate(event.payload));
     window.__TAURI__.event.listen("file-progress", event => onFileProgress(event.payload));
     window.__TAURI__.event.listen("drive-progress", event => onDriveProgress(event.payload));
     window.__TAURI__.event.listen("safety-changed", async () => {
@@ -21241,6 +21320,7 @@ function openUserSettings(tab) {
   $("stream-ink-screen-toggle").checked = streamInkScreen();
   $("afk-timeout").value = String(state.voice.afk_timeout_minutes ?? 10);
   $("share-activity-toggle").checked = state.voice.share_activity !== false;
+  $("wait-connection-toggle").checked = state.voice.wait_for_connection !== false;
   loadAudioDevices();
   loadCameraDevices();
   renderSoundSettings();
@@ -22481,6 +22561,7 @@ async function boot() {
   }
   await loadAlertSounds();
   state.voice = await invoke("get_voice_settings");
+  await loadVoiceGate();
   await loadSafety();
   await loadFriends();
   await loadOverlaySettings();

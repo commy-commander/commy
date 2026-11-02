@@ -29,7 +29,7 @@ mod test_support;
 pub use catchup::{
     ApplyReport, CatchupError, CatchupFrame, CatchupStore, PeerCheck, Refusal, SessionReport, CATCHUP_ALPN,
 };
-pub use connection_check::{ConnectionCheck, ConnectionChecker};
+pub use connection_check::{ConnectionCheck, ConnectionChecker, RelayLink};
 pub use dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
 pub use entry_key::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ENTRY_KEY_ALPN};
 pub use knock::{KnockAsk, KnockReply, KnockRequest, Lobby, KNOCK_ALPN};
