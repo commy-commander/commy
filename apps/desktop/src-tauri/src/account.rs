@@ -1216,11 +1216,15 @@ fn drop_rejected_session(app: &App, handle: &AppHandle) {
 pub async fn verify_saved_session(handle: AppHandle) {
     let app = handle.state::<App>();
     let server = app.account.lock().unwrap().signed_in_server.clone();
-    match check_saved_session(&app).await {
+    let check = check_saved_session(&app).await;
+    if let SessionCheck::Valid(doc) = &check {
+        if let Some(server) = server.as_deref() {
+            use_sync_service(&handle, server, doc);
+        }
+    }
+    crate::startup::note_session(startup_service(&check));
+    match check {
         SessionCheck::Valid(doc) => {
-            if let Some(server) = server {
-                use_sync_service(&handle, &server, &doc);
-            }
             let changed = {
                 let mut state = app.account.lock().unwrap();
                 let changed = state.features != doc.features;
@@ -1236,6 +1240,15 @@ pub async fn verify_saved_session(handle: AppHandle) {
         }
         SessionCheck::Rejected => drop_rejected_session(&app, &handle),
         SessionCheck::Unknown => {}
+    }
+}
+
+fn startup_service(check: &SessionCheck) -> crate::startup::Service {
+    use crate::startup::Service;
+    match check {
+        SessionCheck::Valid(_) if crate::sync_link::url().is_some() => Service::Used,
+        SessionCheck::Valid(_) | SessionCheck::Rejected => Service::NotUsed,
+        SessionCheck::Unknown => Service::Unreachable,
     }
 }
 

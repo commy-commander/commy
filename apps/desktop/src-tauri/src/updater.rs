@@ -149,12 +149,22 @@ pub fn start(handle: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_CHECK).await;
         loop {
-            if handle.state::<crate::App>().voice.lock().unwrap().auto_update {
+            let auto = handle.state::<crate::App>().voice.lock().unwrap().auto_update;
+            if auto && check_due(&status(&handle), chrono::Utc::now().timestamp()) {
                 check(&handle).await;
             }
             tokio::time::sleep(CHECK_EVERY).await;
         }
     });
+}
+
+pub fn check_due(status: &UpdateStatus, now: i64) -> bool {
+    let fresh_for = (CHECK_EVERY - FIRST_CHECK).as_secs() as i64;
+    match status.phase {
+        Phase::Checking | Phase::Downloading | Phase::Ready => false,
+        Phase::Failed => true,
+        _ => status.checked_at.is_none_or(|at| now - at >= fresh_for),
+    }
 }
 
 pub async fn check(handle: &AppHandle) -> UpdateStatus {
@@ -323,6 +333,18 @@ mod tests {
                 vec![]
             },
         }
+    }
+
+    #[test]
+    fn a_check_at_launch_stands_in_for_the_first_timed_check() {
+        let now = 1_000_000;
+        let checked = |phase, ago: i64| UpdateStatus { phase, checked_at: Some(now - ago), ..UpdateStatus::default() };
+        assert!(check_due(&UpdateStatus::default(), now));
+        assert!(!check_due(&checked(Phase::UpToDate, FIRST_CHECK.as_secs() as i64), now));
+        assert!(check_due(&checked(Phase::UpToDate, CHECK_EVERY.as_secs() as i64), now));
+        assert!(check_due(&checked(Phase::Failed, 1), now));
+        assert!(!check_due(&checked(Phase::Ready, CHECK_EVERY.as_secs() as i64), now));
+        assert!(!check_due(&UpdateStatus { phase: Phase::Downloading, ..UpdateStatus::default() }, now));
     }
 
     #[test]

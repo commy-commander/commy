@@ -8519,3 +8519,41 @@ body.mobile-app .storage-parts { grid-template-columns: 1fr; }
 .storage-action { flex: 0 0 auto; align-self: center; white-space: nowrap; }
 .composer .icon-btn, .composer .gif-btn { align-self: center; margin: 0; flex: none; }
 .composer { gap: 2px; padding: 0 10px; }
+
+.startup { position: fixed; inset: 0; z-index: 990; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--bg-darkest); color: var(--text-normal); font-family: var(--font); transition: opacity 180ms var(--ease-out); }
+.startup.leaving { opacity: 0; pointer-events: none; }
+.startup-card { width: min(400px, 100%); display: flex; flex-direction: column; align-items: center; gap: 0; }
+.startup-logo { width: 64px; height: 64px; flex: none; }
+.startup-title { margin: 14px 0 22px; height: 30px; font-family: var(--font-display); font-size: 22px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; color: var(--header-primary); white-space: nowrap; }
+.startup-steps { list-style: none; margin: 0; padding: 6px 0; width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 16px 40px rgba(0, 0, 0, .35); }
+.startup-step { display: flex; align-items: flex-start; gap: 14px; padding: 12px 18px; height: 70px; box-sizing: border-box; }
+.startup-step + .startup-step { border-top: 1px solid var(--line); }
+.startup-mark { position: relative; flex: none; width: 22px; height: 22px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--bg-active); box-sizing: border-box; display: grid; place-items: center; color: var(--bg-darkest); }
+.startup-icon { display: none; grid-area: 1 / 1; }
+.startup-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.startup-name { font-family: var(--font-display); font-size: 15px; line-height: 20px; font-weight: 600; color: var(--header-primary); }
+.startup-detail { margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.startup-bar { display: block; margin-top: 6px; height: 3px; border-radius: var(--radius-pill); background: var(--bg-active); overflow: hidden; visibility: hidden; }
+.startup-bar.shown { visibility: visible; }
+.startup-fill { display: block; height: 100%; background: var(--accent); transform-origin: left center; transform: scaleX(0); transition: transform 200ms linear; }
+.startup-step[data-state="waiting"] .startup-name { color: var(--text-faint); }
+.startup-step[data-state="working"] .startup-mark { border-color: var(--bg-active); border-top-color: var(--accent); animation: startup-turn 900ms linear infinite; }
+.startup-step[data-state="done"] .startup-mark { border-color: var(--header-primary); background: var(--header-primary); }
+.startup-step[data-state="done"] .startup-icon-done { display: block; }
+.startup-step[data-state="skipped"] .startup-mark { border-color: var(--bg-active); color: var(--text-muted); }
+.startup-step[data-state="skipped"] .startup-icon-skipped { display: block; }
+.startup-step[data-state="failed"] .startup-mark { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.startup-step[data-state="failed"] .startup-icon-failed { display: block; }
+.startup-step[data-state="failed"] .startup-detail { color: var(--text-normal); }
+@keyframes startup-turn { to { transform: rotate(360deg); } }
+.startup-skip { margin-top: 16px; height: 32px; padding: 0 12px; font-size: 13px; color: var(--text-muted); visibility: hidden; }
+.startup-skip.shown { visibility: visible; }
+.startup-skip:hover { color: var(--header-primary); }
+.offline-chip { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 185; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--radius-pill); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); font-size: 12px; line-height: 16px; color: var(--header-primary); white-space: nowrap; pointer-events: none; }
+body.has-titlebar .offline-chip { top: 42px; }
+.offline-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .startup { transition: none; }
+  .startup-step[data-state="working"] .startup-mark { animation: none; }
+  .startup-fill { transition: none; }
+}

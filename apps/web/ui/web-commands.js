@@ -10,6 +10,8 @@ const WEB_DEFAULTS = {
   overlay_hotkey_problems: [],
   voice_hotkey_problems: [],
   voice_gate: { enabled: false, waits: {} },
+  startup_status: null,
+  startup_continue: null,
   get_update_status: WEB_UPDATE_STATUS,
   check_for_updates: WEB_UPDATE_STATUS,
   get_integrations: { igdb_client_id: "", igdb_configured: false },

@@ -109,7 +109,7 @@ fn online_for(up: bool) -> Duration {
     since.get_or_insert_with(Instant::now).elapsed()
 }
 
-fn state_link(app: &App, server: ServerId) -> StateLink {
+pub(crate) fn state_link(app: &App, server: ServerId) -> StateLink {
     match crate::community_sync::state_link(server) {
         Some(link) => link,
         None if crate::sync_link::url().is_some() && app.key_settled() && app.identity().is_some() => StateLink::Behind,
