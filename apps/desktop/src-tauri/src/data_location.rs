@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub const DATA_DIR_VAR: &str = "COMMY_DATA_DIR";
 pub const RUNNING_LOCK_FILE: &str = "running.lock";
@@ -16,6 +17,10 @@ const PENDING_FILE: &str = "data-folder-pending.json";
 pub const NOTIFICATION_ICON_FILE: &str = "notification-icon.png";
 pub const NEW_FOLDER_NAME: &str = "Commy";
 const WEBVIEW_ENGINE_DIR: &str = "EBWebView";
+const WEB_ENGINE_LOCK_FILE: &str = "lockfile";
+const WEB_ENGINE_CLOSE_WAIT: Duration = Duration::from_secs(15);
+const WEB_ENGINE_RETRY_PAUSE: Duration = Duration::from_millis(500);
+const WEB_ENGINE_COPY_TRIES: u32 = 3;
 const SPARE_BYTES: u64 = 256 * 1024 * 1024;
 const COMPARE_CHUNK: usize = 256 * 1024;
 const PROBE_FILE: &str = ".commy-write-check";
@@ -221,6 +226,9 @@ fn take_scheduled(folder: &Path) -> Option<Pending> {
 pub fn finish_scheduled_before_start() {
     let Some(location) = current() else { return };
     let Some(pending) = take_scheduled(&location.folder) else { return };
+    if let Some(engine) = location.webview_engine_dir() {
+        wait_for_web_engine_to_close(&engine);
+    }
     match pending {
         Pending::Move { to } => match move_folder(&location, &to, switch_to) {
             Ok(moved) => tracing::info!("moved Commy's data to {}", moved.folder.display()),
@@ -413,14 +421,37 @@ fn copy_everything(
         copy_and_verify(&source, &target, &|_| false)?;
     }
     if let Some((source, target)) = web {
-        if target.exists() {
-            std::fs::remove_dir_all(target).map_err(|e| format!("Could not replace {} ({e}).", target.display()))?;
-        }
-        copy_and_verify(source, target, &is_cache_dir)?;
+        copy_web_engine(source, target)?;
     }
     crate::local_key::carry(&from.folder, to)?;
     let chosen = (!same_path(to, &from.home)).then_some(to);
     write_pointer(&from.home, chosen).map_err(|e| format!("Could not remember the new folder ({e})."))
+}
+
+fn wait_for_web_engine_to_close(engine: &Path) {
+    let lock = engine.join(WEB_ENGINE_LOCK_FILE);
+    let deadline = Instant::now() + WEB_ENGINE_CLOSE_WAIT;
+    while lock.exists() && Instant::now() < deadline {
+        std::thread::sleep(WEB_ENGINE_RETRY_PAUSE);
+    }
+}
+
+fn copy_web_engine(source: &Path, target: &Path) -> Result<(), String> {
+    let mut tries = 0;
+    loop {
+        if target.exists() {
+            std::fs::remove_dir_all(target).map_err(|e| format!("Could not replace {} ({e}).", target.display()))?;
+        }
+        tries += 1;
+        match copy_and_verify(source, target, &is_cache_dir) {
+            Err(why) if tries < WEB_ENGINE_COPY_TRIES => {
+                tracing::warn!("copying web storage failed, trying again: {why}");
+                std::thread::sleep(WEB_ENGINE_RETRY_PAUSE);
+                wait_for_web_engine_to_close(source);
+            }
+            done => return done,
+        }
+    }
 }
 
 fn copy_and_verify(source: &Path, target: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
@@ -897,6 +928,32 @@ mod tests {
         write(&home.join("localstorage/web.sqlite"), b"webkit");
         write(&home.join("running.lock"), b"");
         write(&home.join(NOTIFICATION_ICON_FILE), b"png");
+    }
+
+    #[test]
+    fn web_storage_is_copied_once_the_old_browser_lets_go() {
+        let dir = temp("web-engine");
+        let source = dir.join("old/EBWebView");
+        let target = dir.join("new/EBWebView");
+        write(&source.join("Local Storage/leveldb/000003.log"), b"settings");
+        write(&source.join("Cache/data_0"), b"cache");
+        write(&source.join(WEB_ENGINE_LOCK_FILE), b"");
+        write(&target.join("stale.txt"), b"stale");
+        let lock = source.join(WEB_ENGINE_LOCK_FILE);
+        let letting_go = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::remove_file(lock).unwrap();
+        });
+        let started = Instant::now();
+        wait_for_web_engine_to_close(&source);
+        assert!(!source.join(WEB_ENGINE_LOCK_FILE).exists());
+        assert!(started.elapsed() < WEB_ENGINE_CLOSE_WAIT);
+        letting_go.join().unwrap();
+        copy_web_engine(&source, &target).unwrap();
+        assert_eq!(std::fs::read(target.join("Local Storage/leveldb/000003.log")).unwrap(), b"settings");
+        assert!(!target.join("Cache").exists());
+        assert!(!target.join("stale.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
