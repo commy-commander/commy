@@ -44,6 +44,7 @@ pub struct VoiceSession {
     dialing: HashSet<UserId>,
     linked_at: HashMap<UserId, std::time::Instant>,
     link_joins: HashMap<UserId, i64>,
+    answered: HashMap<UserId, i64>,
     devices: StreamGuards,
     on_speaking: SpeakingSink,
     mic_tx: mpsc::UnboundedSender<Vec<i16>>,
@@ -193,6 +194,7 @@ impl VoiceSession {
             dialing: HashSet::new(),
             linked_at: HashMap::new(),
             link_joins: HashMap::new(),
+            answered: HashMap::new(),
             devices,
             on_speaking,
             mic_tx,
@@ -278,6 +280,15 @@ impl VoiceSession {
             self.link_joins.insert(user, since);
         }
         outlived
+    }
+
+    pub fn owes_answer(&mut self, user: UserId, voice: Option<ChannelId>, since: Option<i64>) -> bool {
+        let here = voice == Some(self.channel);
+        let owed = crate::devices::new_join(self.answered.get(&user).copied(), here, since);
+        if let Some(since) = since.filter(|_| owed) {
+            self.answered.insert(user, since);
+        }
+        owed
     }
 
     pub fn attach_peer(&mut self, user: UserId, media: MediaChannel, joined: Option<i64>) {
