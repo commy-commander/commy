@@ -40,7 +40,7 @@ impl Session {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 self.need_permission(server, Permissions::CREATE_INVITES, "invite people")?;
                 let (ticket, _) = self.client.borrow().invite_ticket(server, None)?;
-                Ok(Value::String(ticket.encode()))
+                Ok(Value::String(self.reachable(ticket).await.encode()))
             }
             "create_invite_link" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
@@ -88,7 +88,7 @@ impl Session {
         }
         let given = self.sync.borrow().as_ref().and_then(|live| live.book.given().remove(&server));
         let (ticket, community) = self.client.borrow().invite_ticket(server, given)?;
-        let raw = ticket.encode();
+        let raw = self.reachable(ticket.clone()).await.encode();
         let revoke_key = invite::new_revoke_key();
         let (key, key_text) = invite::link_key(&revoke_key, name.is_some());
         let request = CreateRequest {
@@ -182,6 +182,14 @@ impl Session {
         }
         self.emit("servers-changed", Value::Null);
         Ok(ServerSummary { id: server.to_string(), name: ticket.server_name, member_count: 0, icon: None, can_invite: false, group: false, tag: None })
+    }
+
+    pub(super) async fn reachable(&self, ticket: ServerTicket) -> ServerTicket {
+        let widening = self.node.lock().await.as_ref().map(|node| node.invite_ticket(&ticket));
+        match widening {
+            Some(widening) => widening.await,
+            None => ticket,
+        }
     }
 
     async fn knock(&self, ticket: &ServerTicket) -> Option<KnockReply> {

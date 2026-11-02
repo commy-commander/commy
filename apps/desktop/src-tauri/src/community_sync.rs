@@ -186,6 +186,13 @@ fn invited_key(server: ServerId) -> Option<(KeyId, ChannelSecret)> {
     INVITED.lock().unwrap().iter().find(|(s, _, _)| *s == server).map(|(_, key, secret)| (*key, secret.clone()))
 }
 
+pub fn keep_invite_key(app: &App, server: ServerId, owner: Option<(UserId, commy_core::IdentityKey)>) {
+    let Some((key, secret)) = invited_key(server) else { return };
+    if crate::account_log::shared_community_key(app, server) != Some(key) {
+        crate::account_log::share_community_key(app, server, key, &secret, owner);
+    }
+}
+
 pub fn invite_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
     let holder = crate::channel_lock::holder_of(app);
     let servers = app.servers.lock().unwrap();
