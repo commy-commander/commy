@@ -19,8 +19,8 @@ pub const NEW_FOLDER_NAME: &str = "Commy";
 const WEBVIEW_ENGINE_DIR: &str = "EBWebView";
 const WEB_ENGINE_LOCK_FILE: &str = "lockfile";
 const WEB_ENGINE_CLOSE_WAIT: Duration = Duration::from_secs(15);
-const WEB_ENGINE_RETRY_PAUSE: Duration = Duration::from_millis(500);
-const WEB_ENGINE_COPY_TRIES: u32 = 3;
+const WEB_ENGINE_RETRY_PAUSE: Duration = Duration::from_secs(1);
+const WEB_ENGINE_COPY_TRIES: u32 = 5;
 const SPARE_BYTES: u64 = 256 * 1024 * 1024;
 const COMPARE_CHUNK: usize = 256 * 1024;
 const PROBE_FILE: &str = ".commy-write-check";
@@ -455,7 +455,7 @@ fn copy_web_engine(source: &Path, target: &Path) -> Result<(), String> {
 }
 
 fn copy_and_verify(source: &Path, target: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
-    copy_tree(source, target, skip).map_err(|e| format!("Could not copy {} ({e}).", source.display()))?;
+    copy_tree(source, target, skip)?;
     match verify_tree(source, target, skip) {
         Ok(None) => Ok(()),
         Ok(Some(different)) => Err(format!("{} did not copy correctly.", different.display())),
@@ -567,12 +567,20 @@ fn is_cache_dir(path: &Path) -> bool {
     path.file_name().and_then(OsStr::to_str).is_some_and(|name| WEBVIEW_CACHE_DIRS.contains(&name)) && path.is_dir()
 }
 
-fn copy_tree(source: &Path, target: &Path, skip: &dyn Fn(&Path) -> bool) -> io::Result<()> {
-    let meta = std::fs::symlink_metadata(source)?;
+fn copy_tree(source: &Path, target: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+    let read_failed = |e: io::Error| format!("Could not read {} ({e}).", source.display());
+    let meta = match std::fs::symlink_metadata(source) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        meta => meta.map_err(read_failed)?,
+    };
     if meta.is_dir() {
-        std::fs::create_dir_all(target)?;
-        for entry in std::fs::read_dir(source)? {
-            let path = entry?.path();
+        std::fs::create_dir_all(target).map_err(|e| format!("Could not create {} ({e}).", target.display()))?;
+        let entries = match std::fs::read_dir(source) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            entries => entries.map_err(read_failed)?,
+        };
+        for entry in entries {
+            let path = entry.map_err(read_failed)?.path();
             if skip(&path) {
                 continue;
             }
@@ -582,15 +590,22 @@ fn copy_tree(source: &Path, target: &Path, skip: &dyn Fn(&Path) -> bool) -> io::
         }
     } else if meta.is_file() {
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("Could not create {} ({e}).", parent.display()))?;
         }
-        std::fs::copy(source, target)?;
+        match std::fs::copy(source, target) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound && !source.exists() => {}
+            Err(e) => return Err(format!("Could not copy {} to {} ({e}).", source.display(), target.display())),
+            Ok(_) => {}
+        }
     }
     Ok(())
 }
 
 fn verify_tree(source: &Path, target: &Path, skip: &dyn Fn(&Path) -> bool) -> io::Result<Option<PathBuf>> {
-    let meta = std::fs::symlink_metadata(source)?;
+    let meta = match std::fs::symlink_metadata(source) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        meta => meta?,
+    };
     if meta.is_dir() {
         for entry in std::fs::read_dir(source)? {
             let path = entry?.path();
