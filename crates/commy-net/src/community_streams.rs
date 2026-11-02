@@ -221,6 +221,17 @@ pub fn rings(live_now: bool, created_at: chrono::DateTime<chrono::Utc>, now: chr
     live_now && (now - created_at).num_seconds() < RINGS_FOR_SECS
 }
 
+pub fn wake_point(want: &Want) -> Option<Option<ChannelId>> {
+    if !want.writes {
+        return None;
+    }
+    match (want.scope, want.lane) {
+        (KeyScope::Community, Lane::State) => Some(None),
+        (KeyScope::Channel(channel), _) => Some(Some(channel)),
+        _ => None,
+    }
+}
+
 pub fn bootstrap(server: ServerId, key: KeyId, secret: &ChannelSecret) -> Want {
     let scope = KeyScope::Community;
     Want { lane: Lane::State, scope, key, keys: stream_for(secret, server, scope, Lane::State), writes: false }

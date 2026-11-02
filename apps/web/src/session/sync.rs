@@ -9,6 +9,7 @@ use commy_net::community_streams::{self as streams, Lane};
 use commy_net::entry_list::{self, EntryList};
 use commy_net::sync_streams::SharedKey;
 use commy_net::sealed::SealKey;
+use commy_net::server_wake::AllRings;
 use commy_net::{sync_streams, ServerTicket, WirePayload};
 use commy_sync::{Pool, StreamId, SyncClient, SyncEvent};
 use commy_view::liveness::{SERVICE_BEAT, SWEEP_EVERY};
@@ -53,6 +54,8 @@ pub(super) struct Live {
     published: HashMap<ServerId, i64>,
     key_work: HashSet<(ServerId, KeyScope)>,
     pub(super) pictures: Option<String>,
+    pub(super) wake: Option<String>,
+    pub(super) all_rings: AllRings,
 }
 
 impl Session {
@@ -68,7 +71,21 @@ impl Session {
         let account = stream.id;
         pool.follow(stream, 0);
         let pictures = commy_view::pictures::pictures_url(&url);
-        *self.sync.borrow_mut() = Some(Live { pool, account, account_live: false, book: Book::new(list), node, greeted: HashSet::new(), gone: false, published: HashMap::new(), key_work: HashSet::new(), pictures });
+        let wake = commy_net::server_wake::ring_url(&url);
+        *self.sync.borrow_mut() = Some(Live {
+            pool,
+            account,
+            account_live: false,
+            book: Book::new(list),
+            node,
+            greeted: HashSet::new(),
+            gone: false,
+            published: HashMap::new(),
+            key_work: HashSet::new(),
+            pictures,
+            wake,
+            all_rings: AllRings::default(),
+        });
         spawn_local(self.clone().run_sync(events));
         spawn_local(self.clone().tend_sync());
         spawn_local(self.clone().tend_presence());
@@ -650,13 +667,21 @@ impl Session {
     pub(super) fn send_to_service(self: &Rc<Self>, server: ServerId, message: &Message) {
         let payload = WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() });
         let Some(plain) = streams::encode_entry(&payload) else { return };
-        for (stream, client) in self.writers(server, Lane::Channel(message.channel)) {
-            let (this, plain, id) = (self.clone(), plain.clone(), message.id);
-            spawn_local(async move {
-                if client.append(stream, plain).await.is_ok() {
-                    this.settle_delivered(server, &[id]);
-                }
-            });
+        let writers = self.writers(server, Lane::Channel(message.channel));
+        if writers.is_empty() {
+            return;
         }
+        let tags = self.server_wake_tags(server, message);
+        let (this, id) = (self.clone(), message.id);
+        spawn_local(async move {
+            let mut stored = false;
+            for (stream, client) in writers {
+                stored |= client.append(stream, plain.clone()).await.is_ok();
+            }
+            if stored {
+                this.settle_delivered(server, &[id]);
+                this.ring_wake(tags);
+            }
+        });
     }
 }

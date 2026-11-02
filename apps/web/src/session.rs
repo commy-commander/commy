@@ -45,6 +45,7 @@ mod servers;
 mod sync;
 mod voice_gate;
 mod voice_invites;
+mod wake;
 
 const DEVICE_NAME: &str = "Web browser";
 const MAX_PREF_KEY: usize = 200;
