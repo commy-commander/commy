@@ -17,6 +17,7 @@ pub mod protocol;
 pub mod relays;
 pub mod sealed;
 pub mod server_address;
+pub mod server_wake;
 #[cfg(not(wasm_browser))]
 pub mod shelf;
 pub mod sync_streams;

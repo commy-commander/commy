@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use chrono::{DateTime, Utc};
 
 use commy_core::channel_key::{ChannelSecret, KeyId};
-use commy_core::{IdentityKey, ServerId, UserId, UserProfile};
-use commy_net::community_streams::{Lane, Want};
+use commy_core::{ChannelId, IdentityKey, ServerId, UserId, UserProfile};
+use commy_net::community_streams::{wake_point, Lane, Want};
 use commy_net::entry_list::{Entry, EntryList};
 use commy_net::sync_streams::SharedKey;
 use commy_net::voice_gate::{link_of, StateLink};
@@ -400,6 +400,10 @@ impl Book {
             .collect()
     }
 
+    pub fn wake_keys(&self, server: ServerId, private: Option<ChannelId>) -> Option<StreamKeys> {
+        self.routes.values().find(|(sid, want)| *sid == server && wake_point(want) == Some(private)).map(|(_, want)| want.keys.clone())
+    }
+
     pub fn park(&mut self, server: ServerId, payload: WirePayload) {
         if let WirePayload::SyncResponse { at, .. } = &payload {
             if self.snapshots.get(&server).is_none_or(|(held, _)| at > held) {
@@ -654,6 +658,23 @@ mod tests {
         assert!(!book.is_live(text.keys.id));
         let plan = book.replan([(server, vec![state, text.clone()])].into());
         assert_eq!(plan.follow[0].2, 10, "a stream picks up where it left off");
+    }
+
+    #[test]
+    fn wake_ups_use_the_keys_desktop_phones_listen_on() {
+        let server = ServerId::new();
+        let locked = commy_core::ChannelId::new();
+        let state = want(server, Lane::State, true);
+        let mut secret = want(server, Lane::Channel(locked), true);
+        secret.scope = commy_core::channel_key::KeyScope::Channel(locked);
+        let mut book = Book::new(EntryList::default());
+        book.replan([(server, vec![state.clone(), secret.clone()])].into());
+        assert_eq!(book.wake_keys(server, None).map(|k| k.id), Some(state.keys.id));
+        assert_eq!(book.wake_keys(server, Some(locked)).map(|k| k.id), Some(secret.keys.id));
+        assert!(book.wake_keys(ServerId::new(), None).is_none());
+        let mut reader = Book::new(EntryList::default());
+        reader.replan([(server, vec![want(server, Lane::State, false)])].into());
+        assert!(reader.wake_keys(server, None).is_none(), "a stream we may not write to rings nobody");
     }
 
     #[test]

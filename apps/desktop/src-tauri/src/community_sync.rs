@@ -8,7 +8,7 @@ use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{MessageId, Presence, ServerEvent, ServerId, SignedEvent, UserId, UserProfile};
 use commy_net::catchup::CatchupStore;
-use commy_net::community_streams::{self as streams, rings, Lane, Want};
+use commy_net::community_streams::{self as streams, rings, wake_point, Lane, Want};
 pub use commy_net::sync_streams::SharedKey;
 use commy_net::voice_gate::{link_of, StateLink};
 use commy_net::{NetEvent, WirePayload};
@@ -808,17 +808,6 @@ pub async fn publish_now(server: ServerId, payload: &WirePayload) -> bool {
         stored &= matches!(sent, Ok(Ok(_)));
     }
     stored
-}
-
-fn wake_point(want: &Want) -> Option<Option<commy_core::ChannelId>> {
-    if !want.writes {
-        return None;
-    }
-    match (want.scope, want.lane) {
-        (KeyScope::Community, Lane::State) => Some(None),
-        (KeyScope::Channel(channel), _) => Some(Some(channel)),
-        _ => None,
-    }
 }
 
 pub fn wake_keys(server: ServerId, private: Option<commy_core::ChannelId>) -> Option<commy_sync::StreamKeys> {

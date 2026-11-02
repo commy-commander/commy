@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
+use super::wake::dm_wake_tag;
 use super::{parse, to_json, Args, Session};
 use crate::account;
 use crate::client::clean_message;
@@ -321,7 +322,11 @@ impl Session {
         };
         let Some(client) = self.sync.borrow().as_ref().and_then(|live| live.pool.client_for(keys.id)) else { return false };
         let plain = sync_streams::encode_dm(envelope);
-        matches!(n0_future::time::timeout(HOLD_WAIT, client.append(keys.id, plain)).await, Ok(Ok(_)))
+        let stored = matches!(n0_future::time::timeout(HOLD_WAIT, client.append(keys.id, plain)).await, Ok(Ok(_)));
+        if stored && dms::rings(&envelope.message) {
+            self.ring_wake(vec![dm_wake_tag(&keys, partner)]);
+        }
+        stored
     }
 
     async fn post_inbox(&self, to: UserId, envelope: &DmEnvelope) -> bool {
@@ -338,6 +343,7 @@ impl Session {
         let keys = self.client.borrow().inbox_to(&given, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
         let Some(sealed) = inbox::seal(&key, envelope) else { return false };
         let stream = keys.id;
+        let wake = dms::rings(&envelope.message).then(|| dm_wake_tag(&keys, to));
         let (client, borrowed) = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return false };
@@ -355,6 +361,9 @@ impl Session {
             if let Some(live) = self.sync.borrow_mut().as_mut() {
                 live.pool.unfollow(stream);
             }
+        }
+        if let Some(tag) = wake.filter(|_| sent) {
+            self.ring_wake(vec![tag]);
         }
         sent
     }

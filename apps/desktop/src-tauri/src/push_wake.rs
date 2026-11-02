@@ -56,13 +56,7 @@ static AGAIN: AtomicBool = AtomicBool::new(false);
 static RETRY_SOON: AtomicBool = AtomicBool::new(false);
 static HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
-pub fn wake_url(sync_url: &str) -> Option<String> {
-    let (scheme, rest) = match sync_url.strip_prefix("wss://") {
-        Some(rest) => ("https", rest),
-        None => ("http", sync_url.strip_prefix("ws://")?),
-    };
-    Some(format!("{scheme}://{}/wake", rest.trim_end_matches('/')))
-}
+pub use commy_net::server_wake::wake_url;
 
 pub fn today() -> i64 {
     wake_day(Utc::now().timestamp_millis())

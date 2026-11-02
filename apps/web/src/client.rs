@@ -9,6 +9,7 @@ use commy_core::{
 };
 use commy_net::community_streams::{self as streams, Lane, Want};
 use commy_net::inbox;
+use commy_net::server_wake;
 use commy_net::protocol::{build_sync_response_within, gossip_size, sign_sync_response, verify_sync_response, SyncMember, MAX_GOSSIP_BYTES};
 use commy_net::{ServerTicket, WirePayload};
 use commy_sync::StreamKeys;
@@ -793,21 +794,45 @@ impl Client {
     }
 
     pub fn message_created_payload(&self, server: ServerId, message: &Message) -> Option<serde_json::Value> {
+        let me = self.profile();
         let servers = self.servers.lock().unwrap();
         let state = servers.get(&server)?;
         let channel = state.server.channel(message.channel);
+        let mentions = me.map(|me| mentions_of_me(state, &me, message)).unwrap_or_default();
         Some(serde_json::json!({
             "server": server.to_string(),
             "server_name": state.server.name,
             "channel": message.channel.to_string(),
             "channel_name": channel.map(|c| c.name.clone()).unwrap_or_default(),
             "announcement": channel.is_some_and(|c| c.kind == ChannelKind::Announcement),
+            "sensitive": channel.is_some_and(|c| c.sensitive),
             "author": message.author.to_string(),
             "author_name": state.profiles.get(&message.author).map(|p| p.visible_name().to_string()).unwrap_or_else(|| "Someone".into()),
+            "mentioned": mentions.any(),
+            "mentions": mentions.kinds(),
             "content": message.content,
             "has_attachments": message.files().next().is_some(),
+            "voice_message": commy_core::message::only_a_voice_message(&message.content, message.attachments.iter()),
+            "tts": message.speaks_for(state.server.permissions_for(message.author)),
         }))
     }
+
+    pub fn wake_whos(&self, server: ServerId, message: &Message, all_due: impl FnOnce() -> bool) -> Option<(bool, Vec<String>)> {
+        let keys = self.keys();
+        let me = keys.user().filter(|me| *me == message.author)?;
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server)?;
+        let private = state.server.channel(message.channel).is_some_and(|c| c.is_private());
+        let opened = keys.open(state, message)?;
+        Some((private, server_wake::ring_whos(state, me, &opened.content, all_due())))
+    }
+}
+
+fn mentions_of_me(state: &ServerState, me: &UserProfile, message: &Message) -> commy_core::mention::Mentions {
+    let nickname = state.server.member(me.id).and_then(|m| m.nickname.clone());
+    let names: Vec<String> = [Some(me.username.clone()), me.display_name.clone(), nickname].into_iter().flatten().collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    state.server.mentions_of(message.author, &message.content, me.id, &names)
 }
 
 fn sign_own(state: &mut ServerState, server: ServerId, me: &act::Me, identity: &Identity, event: ServerEvent) -> Result<WirePayload, String> {
@@ -1307,6 +1332,42 @@ mod tests {
         assert_eq!(w.client.apply_live(w.server, event, None), Applied::Nothing);
         let payload = w.client.message_created_payload(w.server, &message).unwrap();
         assert_eq!(payload["author_name"], "owner");
+    }
+
+    #[test]
+    fn a_live_message_tells_the_page_how_it_mentions_us_like_the_desktop_does() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let (owner, identity) = &w.owner;
+        let payload = |content: &str| {
+            let mut message = Message::new(w.channel, owner.id, content);
+            message.sign(w.server, identity);
+            w.client.message_created_payload(w.server, &message).unwrap()
+        };
+        let named = payload("hey @me");
+        assert_eq!(named["mentioned"], true);
+        assert_eq!(named["mentions"], serde_json::json!(["name"]));
+        assert_eq!(named["sensitive"], false);
+        assert_eq!(payload("@everyone lunch")["mentions"], serde_json::json!(["everyone"]), "the owner may wake everyone");
+        let plain = payload("hello all");
+        assert_eq!(plain["mentioned"], false);
+        assert_eq!(plain["mentions"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn a_message_sent_from_the_browser_rings_the_members_it_names() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let (sent, _) = w.client.compose(w.server, w.channel, "hi @owner", None, false).unwrap();
+        let (private, whos) = w.client.wake_whos(w.server, &sent, || false).unwrap();
+        assert!(!private);
+        assert_eq!(whos, vec![w.owner.0.id.to_string()]);
+        let (_, busy) = w.client.wake_whos(w.server, &sent, || true).unwrap();
+        assert_eq!(busy.len(), 2, "the once a minute ring for everyone listening rides along");
+        let (owner, identity) = &w.owner;
+        let mut theirs = Message::new(w.channel, owner.id, "hi @me");
+        theirs.sign(w.server, identity);
+        assert!(w.client.wake_whos(w.server, &theirs, || true).is_none(), "only the author rings");
     }
 
     #[test]
