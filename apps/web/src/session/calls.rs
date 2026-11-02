@@ -62,6 +62,7 @@ struct Link {
     active_ms: i64,
     leaving_idle: bool,
     peers: HashMap<UserId, Peer>,
+    answered: HashMap<UserId, i64>,
     generation: u64,
     gates: VoiceGates,
 }
@@ -137,6 +138,7 @@ impl Link {
             active_ms: 0,
             leaving_idle: false,
             peers: HashMap::new(),
+            answered: HashMap::new(),
             generation: 0,
             gates: VoiceGates::default(),
         }
@@ -626,6 +628,7 @@ impl Session {
         let Some(targets) = self.targets(channel) else { return };
         let mut gone = Vec::new();
         let mut dial = Vec::new();
+        let mut answer = false;
         {
             let mut voice = self.voice.borrow_mut();
             let Some(link) = voice.link.as_mut() else { return };
@@ -645,6 +648,11 @@ impl Session {
             let room = link.server;
             for (user, node) in wanted {
                 let since = room.and_then(|server| self.client.borrow().voice_join(server, user));
+                let after_us = since.is_some_and(|since| since > link.since_ms);
+                if after_us && voice_links::new_join(link.answered.get(&user).copied(), true, since) {
+                    link.answered.extend(since.map(|since| (user, since)));
+                    answer = true;
+                }
                 let peer = link.peer(user, &node);
                 if room.is_some() && peer.follow_join(since) && peer.theirs.reset() {
                     gone.push(user);
@@ -654,6 +662,9 @@ impl Session {
                     dial.push((user, node));
                 }
             }
+        }
+        if answer {
+            self.keep_seat();
         }
         for user in gone {
             self.speaking(user, false);

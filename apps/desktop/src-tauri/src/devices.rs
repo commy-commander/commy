@@ -67,10 +67,6 @@ pub(crate) async fn on_announce(handle: &tauri::AppHandle, server: ServerId, eve
     }
 }
 
-pub(crate) fn new_join(answered: Option<i64>, here: bool, since: Option<i64>) -> bool {
-    here && since.is_some() && answered != since
-}
-
 fn since_of(event: &ServerEvent) -> Option<i64> {
     match event {
         ServerEvent::DeviceAnnounce { since, .. } => *since,
@@ -78,7 +74,7 @@ fn since_of(event: &ServerEvent) -> Option<i64> {
     }
 }
 
-pub(crate) use crate::view::voice_links::{link_outlived, same_link};
+pub(crate) use crate::view::voice_links::{link_outlived, new_join, same_link};
 
 fn follow_device(
     app: &tauri::State<'_, App>,
