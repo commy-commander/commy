@@ -37,6 +37,8 @@ test("settings read with defaults for older saves", () => {
 test("copy follows the mode and the talk key", () => {
   assert.equal(inputModeCopy("push_to_talk").title, "Push to Talk");
   assert.equal(inputModeCopy("voice_activity").title, "Voice Activity");
+  assert.match(inputModeCopy("push_to_talk").text, /talk key/);
+  assert.match(inputModeCopy("push_to_talk", true).text, /Hold to talk button/);
   assert.equal(talkKeyTitle("push_to_talk", "Alt+Q", false), "Hold Alt+Q to talk");
   assert.equal(talkKeyTitle("push_to_talk", "Alt+Q", true), "Talking (Alt+Q)");
   assert.equal(talkKeyTitle("voice_activity", "Alt+Q", true), "");

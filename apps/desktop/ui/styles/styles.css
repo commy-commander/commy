@@ -8115,7 +8115,7 @@ body.mobile-app .vp-actions > * { flex: 1 1 0; }
   body.mobile-app .app { --sidebar-w: 248px; }
 }
 
-@media (min-width: 701px) and (max-height: 600px) {
+@media (min-width: 701px) and (max-height: 640px) {
   body.mobile-app .app { grid-template-rows: 52px minmax(0, 1fr); gap: 8px; }
   body.mobile-app .sidebar-header.has-banner { height: 56px; }
   body.mobile-app .voice-panel { gap: 6px; padding: 6px; }
