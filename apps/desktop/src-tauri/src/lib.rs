@@ -8081,6 +8081,7 @@ pub fn run() {
                     std::process::exit(1);
                 }
                 let _ = app.base_dir.set(dir.clone());
+                account_folder::remove_doomed_folders(&dir);
                 link_safety::start(&handle, &dir);
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
@@ -8105,6 +8106,8 @@ pub fn run() {
             account::account_begin_sign_in,
             account::account_cancel_sign_in,
             account::account_sign_out,
+            account::account_delete_start,
+            account::account_delete_finish,
             account::account_switch,
             account::account_sign_out_other,
             account::account_claim_profile,

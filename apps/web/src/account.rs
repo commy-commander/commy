@@ -12,6 +12,8 @@ pub const VAULT_PUT_PATH: &str = "/api/auth/commy/vault/put";
 pub const FOLDER_KEY_PATH: &str = "/api/auth/commy/folder-key";
 pub const CONFLICT: u16 = 409;
 pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
+pub const DELETE_START_PATH: &str = "/api/auth/commy/account/delete/start";
+pub const DELETE_FINISH_PATH: &str = "/api/auth/commy/account/delete/finish";
 
 pub const DEVICE_SECRET_KEY: &str = "commy.device";
 pub const ENTRY_KEY_KEY: &str = "commy.entry-key";
@@ -283,6 +285,45 @@ pub fn device_secret_key(account: &str) -> String {
     format!("{DEVICE_SECRET_KEY}.{account}")
 }
 
+pub fn kept_for_account(account: &str) -> Vec<String> {
+    vec![
+        pins_key(account),
+        listings_key(account),
+        reminders_key(account),
+        safety_key(account),
+        personal_key(account),
+        device_secret_key(account),
+    ]
+}
+
+pub fn deletion_proof(code: Option<&str>, password: Option<&str>) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    if let Some(code) = code.map(str::trim).filter(|c| !c.is_empty()) {
+        body.insert("code".into(), code.into());
+    }
+    if let Some(password) = password.filter(|p| !p.is_empty()) {
+        body.insert("password".into(), password.into());
+    }
+    serde_json::Value::Object(body)
+}
+
+pub fn deletion_problem(reply: &Reply) -> String {
+    #[derive(Deserialize)]
+    struct Problem {
+        message: Option<String>,
+    }
+    match reply.status {
+        401 => "You were signed out. Sign in again, then delete the account.".into(),
+        429 => "Too many tries. Wait a few minutes, then try again.".into(),
+        404 => "This account server does not offer account deletion from the app yet. Delete the account on its website instead.".into(),
+        status => serde_json::from_str::<Problem>(&reply.body)
+            .ok()
+            .and_then(|p| p.message)
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| format!("The account server could not delete the account ({status}). Try again in a moment.")),
+    }
+}
+
 pub fn shared_secret_belongs_to(entry_key_record: Option<&str>, account: &str) -> bool {
     entry_key_record
         .and_then(|raw| serde_json::from_str::<StoredKey>(raw).ok())
@@ -387,6 +428,31 @@ mod tests {
         assert_eq!(stored_entry_key(Some(&record), "u1").map(|k| k.to_text()), Some(key.to_text()));
         assert!(stored_entry_key(Some(&record), "u2").is_none());
         assert!(stored_entry_key(None, "u1").is_none());
+    }
+
+    #[test]
+    fn deleting_forgets_everything_this_browser_kept_for_the_account() {
+        let kept = kept_for_account("u1");
+        assert!(kept.contains(&pins_key("u1")));
+        assert!(kept.contains(&device_secret_key("u1")));
+        assert!(kept.contains(&safety_key("u1")));
+        assert!(!kept.iter().any(|key| key.ends_with(".u2")));
+    }
+
+    #[test]
+    fn deletion_sends_only_the_proof_that_was_given() {
+        assert_eq!(deletion_proof(Some(" 123456 "), None), serde_json::json!({ "code": "123456" }));
+        assert_eq!(deletion_proof(None, Some("pw")), serde_json::json!({ "password": "pw" }));
+        assert_eq!(deletion_proof(Some(""), Some("")), serde_json::json!({}));
+    }
+
+    #[test]
+    fn deletion_problems_read_like_sentences() {
+        let wrong = Reply { status: 400, body: r#"{"code":"INVALID_CODE","message":"That code is not right or has expired. Ask for a new one."}"#.into() };
+        assert_eq!(deletion_problem(&wrong), "That code is not right or has expired. Ask for a new one.");
+        assert!(deletion_problem(&Reply { status: 401, body: String::new() }).contains("Sign in again"));
+        assert!(deletion_problem(&Reply { status: 404, body: String::new() }).contains("website"));
+        assert!(deletion_problem(&Reply { status: 502, body: "<html>".into() }).contains("502"));
     }
 
     #[test]

@@ -1723,6 +1723,10 @@ async function mockInvoke(cmd, args = {}) {
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
+    case "account_delete_start": return { confirm: "email", password: true, email: mock.account.user ? mock.account.user.email : null };
+    case "account_delete_finish":
+      if (args.code && args.code !== "123456") throw "That code is not right or has expired. Ask for a new one.";
+      mock.account.signed_in = false; mock.account.user = null; return mock.account;
     case "account_switch": {
       const next = mock.account.others.find(o => o.id === args.id);
       mock.account.others = [{ ...mock.account.user, server: mock.account.server, server_host: mock.account.server_host }, ...mock.account.others.filter(o => o !== next)];
@@ -19177,6 +19181,16 @@ function wireEvents() {
   $("claim-fresh").onclick = () => answerClaim(false);
   $("claim-retry").onclick = () => openAccountFolder();
   $("acct-sign-out").onclick = signOutOfCurrent;
+  $("acct-delete").onclick = openDeleteAccount;
+  $("delete-account-cancel").onclick = hideModals;
+  $("delete-account-go").onclick = advanceDeleteAccount;
+  $("delete-account-use-password").onclick = () => showDeleteAccountMode("password");
+  for (const id of ["delete-account-code", "delete-account-password"]) {
+    $(id).addEventListener("input", syncDeleteAccountGo);
+    $(id).addEventListener("keydown", e => {
+      if (e.key === "Enter" && !$("delete-account-go").disabled) advanceDeleteAccount();
+    });
+  }
   $("pp-switch-account").onclick = openAccounts;
   $("account-add").onclick = () => {
     addingAccount = true;
@@ -23214,6 +23228,93 @@ async function signOutOfCurrent() {
     account = await invoke("account_sign_out");
   } catch (e) {
     toast(String(e));
+  }
+}
+
+const deleteAccount = { step: "ask", mode: "code", busy: false };
+
+function showDeleteAccountNote(text, isError) {
+  const note = $("delete-account-note");
+  note.textContent = text || "";
+  note.classList.toggle("error", Boolean(isError));
+}
+
+function showDeleteAccountMode(mode) {
+  deleteAccount.mode = mode;
+  $("delete-account-code-row").classList.toggle("hidden", mode !== "code");
+  $("delete-account-password-row").classList.toggle("hidden", mode !== "password");
+  $("delete-account-use-password").classList.toggle("hidden", mode !== "code" || !deleteAccount.canUsePassword);
+  if (mode === "password") $("delete-account-sent").textContent = "Enter your password to confirm.";
+  syncDeleteAccountGo();
+  const field = mode === "code" ? $("delete-account-code") : mode === "password" ? $("delete-account-password") : null;
+  if (field) field.focus();
+}
+
+function syncDeleteAccountGo() {
+  const go = $("delete-account-go");
+  if (deleteAccount.step === "ask") {
+    go.textContent = "Send Code";
+    go.disabled = deleteAccount.busy;
+    return;
+  }
+  go.textContent = "Delete Account";
+  go.disabled = deleteAccount.busy || !deleteProof(deleteAccount.mode, $("delete-account-code").value, $("delete-account-password").value);
+}
+
+function setDeleteAccountBusy(busy) {
+  deleteAccount.busy = busy;
+  $("delete-account-cancel").disabled = busy;
+  syncDeleteAccountGo();
+}
+
+function openDeleteAccount() {
+  Object.assign(deleteAccount, { step: "ask", mode: "code", busy: false, canUsePassword: false });
+  $("delete-account-ask").classList.remove("hidden");
+  $("delete-account-confirm").classList.add("hidden");
+  $("delete-account-code").value = "";
+  $("delete-account-password").value = "";
+  showDeleteAccountNote("");
+  setDeleteAccountBusy(false);
+  showModal("modal-delete-account");
+}
+
+async function advanceDeleteAccount() {
+  if (deleteAccount.busy) return;
+  if (deleteAccount.step === "ask") await startDeleteAccount();
+  else await finishDeleteAccount();
+}
+
+async function startDeleteAccount() {
+  setDeleteAccountBusy(true);
+  showDeleteAccountNote("");
+  try {
+    const view = deleteConfirmView(await invoke("account_delete_start"));
+    deleteAccount.step = "confirm";
+    deleteAccount.canUsePassword = view.canUsePassword;
+    $("delete-account-ask").classList.add("hidden");
+    $("delete-account-confirm").classList.remove("hidden");
+    $("delete-account-sent").textContent = view.sentLine;
+    setDeleteAccountBusy(false);
+    showDeleteAccountMode(view.mode);
+  } catch (e) {
+    setDeleteAccountBusy(false);
+    showDeleteAccountNote(String(e), true);
+  }
+}
+
+async function finishDeleteAccount() {
+  const proof = deleteProof(deleteAccount.mode, $("delete-account-code").value, $("delete-account-password").value);
+  if (!proof) return;
+  setDeleteAccountBusy(true);
+  showDeleteAccountNote("Deleting your account...");
+  try {
+    account = await invoke("account_delete_finish", proof);
+    $("delete-account-password").value = "";
+    hideModals();
+    toast("Your account was deleted.");
+  } catch (e) {
+    setDeleteAccountBusy(false);
+    showDeleteAccountNote(String(e), true);
   }
 }
 

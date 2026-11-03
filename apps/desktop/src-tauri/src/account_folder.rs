@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 pub const ACCOUNTS_DIR: &str = "accounts";
 const UNCLAIMED_DIR: &str = "unclaimed";
 pub const SHOW_WINDOW_FILE: &str = "show-window-on-start";
+pub const REMOVE_ON_START_FILE: &str = "remove-on-start.json";
 
 pub const SEALED_FILES: &[&str] = &[
     "avatar.img",
@@ -259,6 +260,53 @@ pub fn forget_key(dir: &Path) {
     }
 }
 
+fn is_folder_name(name: &str) -> bool {
+    name.len() == 32 && name.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn doomed(base: &Path) -> Vec<String> {
+    std::fs::read(base.join(REMOVE_ON_START_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub fn remove_on_next_start(base: &Path, server: &str, account: &str) -> std::io::Result<()> {
+    let mut names = doomed(base);
+    let name = folder_name(server, account);
+    if !names.contains(&name) {
+        names.push(name);
+    }
+    std::fs::write(base.join(REMOVE_ON_START_FILE), serde_json::to_vec(&names)?)
+}
+
+pub fn remove_doomed_folders(base: &Path) -> usize {
+    let names = doomed(base);
+    let mut removed = 0;
+    let mut left = Vec::new();
+    for name in names.into_iter().filter(|name| is_folder_name(name)) {
+        let dir = base.join(ACCOUNTS_DIR).join(&name);
+        match std::fs::remove_dir_all(&dir) {
+            Ok(()) => removed += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                tracing::warn!("could not remove a deleted account's folder yet: {e}");
+                left.push(name);
+            }
+        }
+    }
+    let file = base.join(REMOVE_ON_START_FILE);
+    let kept = if left.is_empty() {
+        std::fs::remove_file(&file).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
+    } else {
+        serde_json::to_vec(&left).map_err(std::io::Error::other).and_then(|bytes| std::fs::write(&file, bytes))
+    };
+    if let Err(e) = kept {
+        tracing::warn!("could not update the list of folders to remove: {e}");
+    }
+    removed
+}
+
 pub fn show_window_on_next_start(base: &Path) {
     if let Err(e) = std::fs::write(base.join(SHOW_WINDOW_FILE), b"") {
         tracing::warn!("could not ask the next start to show the window: {e}");
@@ -425,6 +473,38 @@ mod tests {
         assert_eq!(finish_resealing(&dir, &folder_key).unwrap(), 1);
         assert!(!resealing_path(&dir).exists());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_deleted_accounts_folder_goes_on_the_next_start_and_others_stay() {
+        let base = base("doomed");
+        let gone = folder(&base, SERVER, "user-gone");
+        let kept = folder(&base, SERVER, "user-kept");
+        for dir in [&gone, &kept] {
+            std::fs::create_dir_all(dir.join("servers")).unwrap();
+            std::fs::write(dir.join("dms.json"), b"sealed").unwrap();
+        }
+        assert_eq!(remove_doomed_folders(&base), 0, "nothing is removed unless asked");
+        remove_on_next_start(&base, SERVER, "user-gone").unwrap();
+        remove_on_next_start(&base, SERVER, "user-gone").unwrap();
+        assert_eq!(doomed(&base).len(), 1, "asking twice lists the folder once");
+        assert!(gone.exists(), "the folder stays while the app still runs");
+        assert_eq!(remove_doomed_folders(&base), 1);
+        assert!(!gone.exists());
+        assert!(kept.join("dms.json").exists());
+        assert!(!base.join(REMOVE_ON_START_FILE).exists());
+        assert_eq!(remove_doomed_folders(&base), 0);
+    }
+
+    #[test]
+    fn only_account_folder_names_are_ever_removed() {
+        let base = base("doomed-names");
+        let outside = base.join("keep-me");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(base.join(REMOVE_ON_START_FILE), br#"["../keep-me", "..", "", "ABCDEF"]"#).unwrap();
+        assert_eq!(remove_doomed_folders(&base), 0);
+        assert!(outside.exists());
+        assert!(base.exists());
     }
 
     #[test]

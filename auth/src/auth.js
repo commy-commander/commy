@@ -5,6 +5,7 @@ import { APIError } from "better-auth/api";
 import { kyselyAdapter } from "@better-auth/kysely-adapter";
 import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
+import { commyAccountDeletion } from "./account-deletion.js";
 import { hasAccess } from "./access.js";
 import { sealedAtRest } from "./at-rest.js";
 import { commyDeviceRequests } from "./device-requests.js";
@@ -63,6 +64,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     passkey({ rpID: new URL(config.baseURL).hostname, rpName: config.instanceName, origin: config.baseURL }),
     commyPasswords(),
     commySecurityNotices({ baseURL: config.baseURL, send }),
+    commyAccountDeletion({ instanceName: config.instanceName, send, emailCodes: Boolean(config.smtp) }),
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
@@ -203,6 +205,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/change-email": { window: 600, max: 5 },
         "/change-password": { window: 600, max: 10 },
         "/commy/password/set": { window: 600, max: 10 },
+        "/commy/account/delete/start": { window: 600, max: 5 },
+        "/commy/account/delete/finish": { window: 600, max: 10 },
         "/passkey/verify-authentication": { window: 60, max: 10 },
         "/sign-in/social": { window: 60, max: 20 },
         "/device/code": { window: 60, max: 10 },
