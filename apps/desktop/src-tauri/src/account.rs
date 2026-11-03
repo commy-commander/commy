@@ -386,6 +386,10 @@ struct Endpoints {
     register_device: String,
     #[serde(default)]
     sync: Option<String>,
+    #[serde(default, rename = "accountDeleteStart")]
+    account_delete_start: Option<String>,
+    #[serde(default, rename = "accountDeleteFinish")]
+    account_delete_finish: Option<String>,
 }
 
 impl Discovery {
@@ -402,6 +406,7 @@ impl Discovery {
             ]
             .iter()
             .all(|u| ok(u))
+            && [&self.endpoints.account_delete_start, &self.endpoints.account_delete_finish].into_iter().flatten().all(|u| ok(u))
     }
 }
 
@@ -1026,6 +1031,117 @@ pub async fn sign_out_everyone_here(app: &App) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeleteStart {
+    pub confirm: String,
+    #[serde(default)]
+    pub password: bool,
+    #[serde(default)]
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ServerProblem {
+    #[serde(default)]
+    message: Option<String>,
+}
+
+const DELETION_NOT_OFFERED: &str = "This account server does not offer account deletion from the app yet. Delete the account on its website instead.";
+
+fn deletion_problem(status: reqwest::StatusCode, body: &str) -> String {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return "You were signed out. Sign in again, then delete the account.".into();
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return "Too many tries. Wait a few minutes, then try again.".into();
+    }
+    serde_json::from_str::<ServerProblem>(body)
+        .ok()
+        .and_then(|p| p.message)
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| format!("The account server could not delete the account ({status}). Try again in a moment."))
+}
+
+async fn deletion_post(app: &App, pick: fn(&Endpoints) -> Option<String>, body: serde_json::Value) -> Result<String, String> {
+    let (token, server) = {
+        let state = app.account.lock().unwrap();
+        if !is_signed_in(&state) {
+            return Err("Sign in first".into());
+        }
+        (state.token.clone().unwrap_or_default(), state.signed_in_server.clone().unwrap_or_default())
+    };
+    let doc = discover(&app.http, &server).await?;
+    let url = pick(&doc.endpoints).ok_or(DELETION_NOT_OFFERED)?;
+    let res = app
+        .http
+        .post(url)
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Could not reach your account server. Check your connection and try again. ({e})"))?;
+    let status = res.status();
+    let text = res.text().await.unwrap_or_default();
+    if status.is_success() {
+        Ok(text)
+    } else {
+        Err(deletion_problem(status, &text))
+    }
+}
+
+fn deletion_proof(code: Option<String>, password: Option<String>) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    if let Some(code) = code.map(|c| c.trim().to_string()).filter(|c| !c.is_empty()) {
+        body.insert("code".into(), code.into());
+    }
+    if let Some(password) = password.filter(|p| !p.is_empty()) {
+        body.insert("password".into(), password.into());
+    }
+    serde_json::Value::Object(body)
+}
+
+#[tauri::command]
+pub async fn account_delete_start(app: tauri::State<'_, App>) -> Result<DeleteStart, String> {
+    let text = deletion_post(&app, |e| e.account_delete_start.clone(), serde_json::json!({})).await?;
+    serde_json::from_str(&text).map_err(|_| "The account server sent an answer this app does not understand.".into())
+}
+
+#[tauri::command]
+pub async fn account_delete_finish(
+    app: tauri::State<'_, App>,
+    handle: AppHandle,
+    code: Option<String>,
+    password: Option<String>,
+) -> Result<AccountView, String> {
+    deletion_post(&app, |e| e.account_delete_finish.clone(), deletion_proof(code, password)).await?;
+    forget_deleted_account(&app, &handle).await
+}
+
+async fn forget_deleted_account(app: &App, handle: &AppHandle) -> Result<AccountView, String> {
+    crate::push_wake::forget_everything(app).await;
+    crate::account_log::stop();
+    if let Some((base, server, account)) = signed_in_folder(app) {
+        if let Err(e) = account_folder::remove_on_next_start(&base, &server, &account) {
+            tracing::warn!("could not mark the deleted account's folder for removal: {e}");
+        }
+    }
+    let switched = {
+        let mut state = app.account.lock().unwrap();
+        let switched = state.sign_out_current();
+        store(app, &state);
+        *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+        switched
+    };
+    if let Some(dir) = app.data_dir() {
+        account_folder::forget_key(dir);
+    }
+    if switched || app.data_dir().is_some() {
+        restart_signed_in_as_someone_else(handle);
+    }
+    let _ = handle.emit("account-changed", ());
+    Ok(view(app))
+}
+
 #[tauri::command]
 pub async fn account_switch(app: tauri::State<'_, App>, handle: AppHandle, server: String, id: String) -> Result<AccountView, String> {
     let saved = app.account.lock().unwrap().others.iter().find(|o| o.is(&server, &id)).cloned();
@@ -1380,6 +1496,8 @@ mod tests {
                 link_challenge: format!("{api}/commy/devices/challenge"),
                 register_device: format!("{api}/commy/devices/register"),
                 sync: None,
+                account_delete_start: Some(format!("{api}/commy/account/delete/start")),
+                account_delete_finish: Some(format!("{api}/commy/account/delete/finish")),
             },
             features: None,
         }
@@ -1392,6 +1510,35 @@ mod tests {
         let mut sneaky = doc("https://commy.chat");
         sneaky.device.token = "https://commy.chat.evil.example/token".into();
         assert!(!sneaky.same_origin("https://commy.chat"));
+        let mut deleting_elsewhere = doc("https://commy.chat");
+        deleting_elsewhere.endpoints.account_delete_finish = Some("https://evil.example/api/auth/commy/account/delete/finish".into());
+        assert!(!deleting_elsewhere.same_origin("https://commy.chat"));
+        let mut older_server = doc("https://commy.chat");
+        older_server.endpoints.account_delete_start = None;
+        older_server.endpoints.account_delete_finish = None;
+        assert!(older_server.same_origin("https://commy.chat"), "a server without deletion still signs in");
+    }
+
+    #[test]
+    fn deletion_sends_only_the_proof_that_was_given() {
+        assert_eq!(deletion_proof(Some(" 123456 ".into()), None), serde_json::json!({ "code": "123456" }));
+        assert_eq!(deletion_proof(None, Some("pw".into())), serde_json::json!({ "password": "pw" }));
+        assert_eq!(deletion_proof(Some("".into()), Some("".into())), serde_json::json!({}));
+    }
+
+    #[test]
+    fn deletion_problems_read_like_sentences() {
+        let wrong = deletion_problem(reqwest::StatusCode::BAD_REQUEST, r#"{"code":"INVALID_CODE","message":"That code is not right or has expired. Ask for a new one."}"#);
+        assert_eq!(wrong, "That code is not right or has expired. Ask for a new one.");
+        assert!(deletion_problem(reqwest::StatusCode::UNAUTHORIZED, "").contains("Sign in again"));
+        assert!(deletion_problem(reqwest::StatusCode::TOO_MANY_REQUESTS, "").contains("Wait a few minutes"));
+        assert!(deletion_problem(reqwest::StatusCode::BAD_GATEWAY, "<html>").contains("502"));
+    }
+
+    #[test]
+    fn the_deletion_start_answer_is_read() {
+        let start: DeleteStart = serde_json::from_str(r#"{"confirm":"email","password":false,"email":"a@example.test"}"#).unwrap();
+        assert_eq!(start, DeleteStart { confirm: "email".into(), password: false, email: Some("a@example.test".into()) });
     }
 
     #[test]

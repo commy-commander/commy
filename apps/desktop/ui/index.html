@@ -754,6 +754,30 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-delete-account" role="dialog" aria-labelledby="delete-account-title">
+      <h2 id="delete-account-title">Delete your account?</h2>
+      <div class="delete-account-step" id="delete-account-ask">
+        <p>Your account server deletes your account for good: your sign-ins, passkeys, two-step sign-in, linked devices, the locked copy of your server list, the invite links you made and your Discover listings. Every device signed in to it is signed out.</p>
+        <p>This device also removes its copy of your servers, chats and settings for this account the next time Commy starts.</p>
+        <p>Messages you already sent stay with the people and servers that received them, and servers you own keep running for their members. Encrypted copies on the sync service, which nobody else can read, expire within 90 days.</p>
+      </div>
+      <div class="delete-account-step hidden" id="delete-account-confirm">
+        <p id="delete-account-sent"></p>
+        <label class="field-label" id="delete-account-code-row">Code from the email
+          <input id="delete-account-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="9" spellcheck="false" />
+        </label>
+        <label class="field-label hidden" id="delete-account-password-row">Your password
+          <input id="delete-account-password" type="password" autocomplete="current-password" maxlength="128" />
+        </label>
+        <button class="btn-link hidden" id="delete-account-use-password">Use my password instead</button>
+      </div>
+      <p class="delete-account-note" id="delete-account-note" role="status"></p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="delete-account-cancel">Cancel</button>
+        <button class="btn-danger" id="delete-account-go">Send Code</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-stream-deck">
       <h2>Allow Stream Deck?</h2>
       <p id="stream-deck-pair-body"></p>
@@ -1585,6 +1609,17 @@
             </div>
             <div class="entry-recovery hidden" id="entry-start-over-row">
               <button class="btn-link" id="entry-start-over">Start a new server list from this device</button>
+            </div>
+          </div>
+
+          <h2 class="settings-subhead">Delete Account</h2>
+          <div class="settings-card account-delete-card" data-search="delete account remove close erase my data">
+            <div class="account-line">
+              <div>
+                <div class="setting-title">Delete your Commy account</div>
+                <div class="setting-sub">Removes your account and everything your account server keeps for it. You confirm with a code we email you.</div>
+              </div>
+              <button class="btn-danger btn-small" id="acct-delete">Delete Account</button>
             </div>
           </div>
         </section>
@@ -3367,6 +3402,7 @@
   <script src="scripts/avatar-rig.js"></script>
   <script src="scripts/camera-avatar.js"></script>
   <script src="scripts/account-ui.js"></script>
+  <script src="scripts/account-delete.js"></script>
   <script src="scripts/avatar-picture.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>

@@ -307,7 +307,7 @@ async function liveInvite(adapter, value) {
   return row;
 }
 
-async function removeInvite(adapter, code) {
+export async function removeInvite(adapter, code) {
   await adapter.deleteMany({ model: MODEL, where: [{ field: "code", value: code }] });
   await adapter.deleteMany({ model: BACKGROUND_MODEL, where: [{ field: "code", value: code }] });
 }

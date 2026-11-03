@@ -276,7 +276,7 @@
       window.location.assign(webSignInUrl(window.location.origin, window.location.pathname));
       return new Promise(() => {});
     }
-    if (cmd === "account_sign_out") {
+    if (cmd === "account_sign_out" || cmd === "account_delete_finish") {
       await backend(cmd, args);
       window.location.reload();
       return new Promise(() => {});

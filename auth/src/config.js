@@ -203,6 +203,8 @@ export function discoveryDocument(config) {
       linkChallenge: `${api}/commy/devices/challenge`,
       registerDevice: `${api}/commy/devices/register`,
       removeDevice: `${api}/commy/devices/remove`,
+      accountDeleteStart: `${api}/commy/account/delete/start`,
+      accountDeleteFinish: `${api}/commy/account/delete/finish`,
       createInvite: `${api}/commy/invites/create`,
       resolveInvite: `${api}/commy/invites/resolve`,
       directoryList: `${api}/commy/directory/list`,

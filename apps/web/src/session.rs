@@ -134,6 +134,7 @@ struct Args {
     reply_to: Option<String>,
     around: Option<String>,
     code: Option<String>,
+    password: Option<String>,
     message_id: Option<String>,
     root_id: Option<String>,
     emoji: Option<String>,
@@ -294,6 +295,8 @@ impl Session {
             "check_link" => self.check_link(args),
             "account_status" => self.account_status().await,
             "account_sign_out" => self.sign_out().await,
+            "account_delete_start" => self.delete_account_start().await,
+            "account_delete_finish" => self.delete_account_finish(args.code.as_deref(), args.password.as_deref()).await,
             "web_unlock" => self.unlock().await,
             "web_try_again" => self.unlock().await,
             "entry_list_use_recovery_code" => self.use_recovery_code(args.code.as_deref().unwrap_or("")).await,
@@ -606,6 +609,30 @@ impl Session {
         self.stop_sync();
         *self.dms.borrow_mut() = DmBook::default();
         let _ = self.request("POST", account::SIGN_OUT_PATH, Some(json!({}))).await;
+        self.host.remove(account::ENTRY_KEY_KEY);
+        self.account_status().await
+    }
+
+    async fn delete_account_start(&self) -> Result<Value, String> {
+        self.account()?;
+        let reply = self.request("POST", account::DELETE_START_PATH, Some(json!({}))).await?;
+        if !reply.ok() {
+            return Err(account::deletion_problem(&reply));
+        }
+        serde_json::from_str(&reply.body).map_err(|_| "Unexpected reply from your account server".into())
+    }
+
+    async fn delete_account_finish(&self, code: Option<&str>, password: Option<&str>) -> Result<Value, String> {
+        let account = self.account()?;
+        let reply = self.request("POST", account::DELETE_FINISH_PATH, Some(account::deletion_proof(code, password))).await?;
+        if !reply.ok() {
+            return Err(account::deletion_problem(&reply));
+        }
+        self.stop_sync();
+        *self.dms.borrow_mut() = DmBook::default();
+        for key in account::kept_for_account(&account.id) {
+            self.host.remove(&key);
+        }
         self.host.remove(account::ENTRY_KEY_KEY);
         self.account_status().await
     }

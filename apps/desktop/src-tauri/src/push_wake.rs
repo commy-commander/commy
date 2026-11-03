@@ -21,6 +21,7 @@ const REGISTER_GAP_MS: std::ops::Range<u64> = 300..1_500;
 pub const KEPT_FILE: &str = "wake-tags.json";
 const SEND_RETRIES: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(10)];
 const RETRY_LATER: Duration = Duration::from_secs(60);
+const FORGET_EVERYTHING_WAIT: Duration = Duration::from_secs(15);
 
 type Tag = ([u8; 32], i64);
 type Tagged = Vec<(Tag, Source)>;
@@ -132,6 +133,24 @@ pub fn register(handle: &AppHandle) {
             }
         }
     });
+}
+
+pub async fn forget_everything(app: &App) {
+    let Some((push, base)) = target() else { return };
+    let today = today();
+    let held: Vec<Tag> = {
+        let guard = REGISTERED.lock().unwrap();
+        let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return };
+        let all: HashSet<Tag> = registered.tags.keys().chain(registered.earlier.keys()).filter(|tag| tag.1 >= today).copied().collect();
+        all.into_iter().collect()
+    };
+    if held.is_empty() {
+        return;
+    }
+    let http = app.http.clone();
+    if tokio::time::timeout(FORGET_EVERYTHING_WAIT, forget(app, &http, &push, &base, today, held)).await.is_err() {
+        tracing::info!("some wake-up tags were left to expire on their own");
+    }
 }
 
 fn days_from(today: i64) -> Vec<i64> {
