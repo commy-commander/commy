@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withCommyNeeds, withCommyDependencies, withDebugSigning, DEBUG_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, MAX_SDK } from "./android-project.mjs";
+import { withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -159,6 +159,11 @@ const tauriGradle = `android {
         getByName("debug") {
             isDebuggable = true
         }
+        getByName("release") {
+            optimization {
+               enable = true
+            }
+        }
     }
 }
 `;
@@ -185,4 +190,28 @@ test("a key path is written as a Kotlin string that cannot break out", () => {
 
 test("a build file without build types is refused when a key is given", () => {
   assert.throws(() => withDebugSigning("android {\n}\n", "/k"));
+});
+
+test("release builds sign with the upload key and read its password from the environment", () => {
+  const out = withSigning(tauriGradle, { releaseStore: "/runner/upload.jks" });
+  assert.ok(out.includes('create("release") {\n            storeFile = file("/runner/upload.jks")'));
+  assert.ok(out.includes(`storePassword = System.getenv("${UPLOAD_KEY.passwordEnv}")`));
+  assert.ok(out.includes(`keyPassword = System.getenv("${UPLOAD_KEY.passwordEnv}")`));
+  assert.ok(out.includes(`keyAlias = "${UPLOAD_KEY.alias}"`));
+  assert.match(out, /getByName\("release"\) \{\n            signingConfig = signingConfigs\.getByName\("release"\)\n            optimization/);
+  assert.ok(!out.includes('getByName("debug") {\n            storeFile'));
+});
+
+test("debug and release keys share one signing block, once", () => {
+  const keys = { debugStore: "/d.keystore", releaseStore: "/u.jks" };
+  const out = withSigning(withSigning(tauriGradle, keys), keys);
+  assert.equal(out.split("signingConfigs {").length - 1, 1);
+  assert.equal(out.split("signingConfig = ").length - 1, 1);
+  assert.ok(out.indexOf('getByName("debug") {\n            storeFile') < out.indexOf('create("release")'));
+});
+
+test("a build file without a release build type is refused when an upload key is given", () => {
+  const debugOnly = tauriGradle.replace(/        getByName\("release"\)[\s\S]*?\n        \}\n/, "");
+  assert.ok(!debugOnly.includes("release"));
+  assert.throws(() => withSigning(debugOnly, { releaseStore: "/u.jks" }), /release build type/);
 });

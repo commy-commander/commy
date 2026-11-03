@@ -90,25 +90,41 @@ export const DEBUG_KEY = { storePassword: "android", keyAlias: "androiddebugkey"
 
 const kotlinString = text => `"${String(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$")}"`;
 
-export function withDebugSigning(gradle, storeFile) {
-  if (!storeFile) return gradle;
+export const UPLOAD_KEY = { alias: "commy-upload", passwordEnv: "ANDROID_UPLOAD_PASSWORD" };
+
+const signingBlock = (name, storeFile, password, alias) => [
+  `${name} {`,
+  `    storeFile = file(${kotlinString(storeFile)})`,
+  `    storePassword = ${password}`,
+  `    keyAlias = ${kotlinString(alias)}`,
+  `    keyPassword = ${password}`,
+  `}`,
+];
+
+function signingConfigs({ debugStore, releaseStore }) {
+  const debug = debugStore ? signingBlock(`getByName("debug")`, debugStore, kotlinString(DEBUG_KEY.storePassword), DEBUG_KEY.keyAlias) : [];
+  const release = releaseStore ? signingBlock(`create("release")`, releaseStore, `System.getenv(${kotlinString(UPLOAD_KEY.passwordEnv)})`, UPLOAD_KEY.alias) : [];
+  return ["signingConfigs {", ...[...debug, ...release].map(line => `    ${line}`), "}"];
+}
+
+export function withSigning(gradle, { debugStore, releaseStore } = {}) {
+  if (!debugStore && !releaseStore) return gradle;
   if (gradle.includes("signingConfigs {")) return gradle;
   const block = gradle.match(/^([ \t]*)buildTypes \{/m);
   if (!block) throw new Error("app/build.gradle.kts has no buildTypes block");
   const indent = block[1];
-  const inner = `${indent}    `;
-  const lines = [
-    `${indent}signingConfigs {`,
-    `${inner}getByName("debug") {`,
-    `${inner}    storeFile = file(${kotlinString(storeFile)})`,
-    `${inner}    storePassword = ${kotlinString(DEBUG_KEY.storePassword)}`,
-    `${inner}    keyAlias = ${kotlinString(DEBUG_KEY.keyAlias)}`,
-    `${inner}    keyPassword = ${kotlinString(DEBUG_KEY.keyPassword)}`,
-    `${inner}}`,
-    `${indent}}`,
-  ].join("\n");
-  return `${gradle.slice(0, block.index)}${lines}\n${gradle.slice(block.index)}`;
+  const lines = signingConfigs({ debugStore, releaseStore }).map(line => `${indent}${line}`).join("\n");
+  let out = `${gradle.slice(0, block.index)}${lines}\n${gradle.slice(block.index)}`;
+  if (releaseStore) {
+    const release = out.match(/^([ \t]*)getByName\("release"\) \{\n/m);
+    if (!release) throw new Error("app/build.gradle.kts has no release build type");
+    const at = release.index + release[0].length;
+    out = `${out.slice(0, at)}${release[1]}    signingConfig = signingConfigs.getByName("release")\n${out.slice(at)}`;
+  }
+  return out;
 }
+
+export const withDebugSigning = (gradle, storeFile) => withSigning(gradle, { debugStore: storeFile });
 
 export function applicationId(gradle) {
   return gradle.match(/applicationId\s*=\s*"([^"]+)"/)?.[1] ?? null;
@@ -155,6 +171,8 @@ const sourcesFrom = here("./android/");
 const sourcesTo = here("../src-tauri/gen/android/app/src/main/java/chat/commy/mobile/");
 const gradlePath = here("../src-tauri/gen/android/app/build.gradle.kts");
 const firebasePath = here("../src-tauri/gen/android/app/src/main/res/values/firebase.xml");
+const keepRulesFrom = here("./android/commy-rules.pro");
+const keepRulesTo = here("../src-tauri/gen/android/app/commy-rules.pro");
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const before = readFileSync(manifestPath, "utf8");
@@ -163,10 +181,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   mkdirSync(sourcesTo, { recursive: true });
   const sources = readdirSync(sourcesFrom).filter(name => name.endsWith(".kt"));
   for (const name of sources) copyFileSync(`${sourcesFrom}${name}`, `${sourcesTo}${name}`);
+  copyFileSync(keepRulesFrom, keepRulesTo);
   const gradle = readFileSync(gradlePath, "utf8");
-  const withDependencies = withDebugSigning(withCommyDependencies(gradle), process.env.ANDROID_DEBUG_KEYSTORE_FILE);
+  const debugStore = process.env.ANDROID_DEBUG_KEYSTORE_FILE;
+  const releaseStore = process.env.ANDROID_UPLOAD_KEYSTORE_FILE;
+  const withDependencies = withSigning(withCommyDependencies(gradle), { debugStore, releaseStore });
   if (withDependencies !== gradle) writeFileSync(gradlePath, withDependencies);
-  console.log(process.env.ANDROID_DEBUG_KEYSTORE_FILE ? "Debug builds sign with the kept debug key" : "ANDROID_DEBUG_KEYSTORE_FILE is not set, so debug builds sign with a new key");
+  console.log(debugStore ? "Debug builds sign with the kept debug key" : "ANDROID_DEBUG_KEYSTORE_FILE is not set, so debug builds sign with a new key");
+  console.log(releaseStore ? `Release builds sign with the upload key, password from ${UPLOAD_KEY.passwordEnv}` : "ANDROID_UPLOAD_KEYSTORE_FILE is not set, so release builds are unsigned");
   console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call and screen share services, relaunching and invite links");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);

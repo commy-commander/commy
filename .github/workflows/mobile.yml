@@ -21,13 +21,18 @@ on:
       - ".github/workflows/mobile.yml"
   workflow_dispatch:
     inputs:
+      android:
+        description: "Android build: debug APK, or a Play Store bundle signed with the upload key"
+        type: choice
+        options: [debug, play]
+        default: debug
       ios:
         description: "iOS build: simulator app, signed IPA, or signed IPA sent to TestFlight"
         type: choice
         options: [simulator, signed, testflight]
         default: simulator
       version:
-        description: "App version for signed iOS builds, e.g. 0.1.16 (prod servers) or 0.1.16-rc.1 (staging servers)"
+        description: "App version for Play and signed iOS builds, e.g. 0.1.16 (prod servers) or 0.1.16-rc.1 (staging servers)"
         type: string
         default: ""
 
@@ -45,11 +50,14 @@ env:
 
 jobs:
   android:
-    name: Android debug APK
+    name: Android ${{ inputs.android == 'play' && 'Play bundle' || 'debug APK' }}
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
+    env:
+      ANDROID_MODE: ${{ inputs.android || 'debug' }}
+      APP_VERSION_INPUT: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -90,6 +98,7 @@ jobs:
           fi
 
       - name: Generate the Android project
+        if: env.ANDROID_MODE == 'debug'
         working-directory: apps/desktop/src-tauri
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
@@ -100,12 +109,14 @@ jobs:
           node ../mobile/android-project.mjs
 
       - name: Build
+        if: env.ANDROID_MODE == 'debug'
         working-directory: apps/desktop/src-tauri
         run: |
           npx tauri android build \
             --ci --debug --apk --target aarch64 --target x86_64
 
       - name: Collect the APK
+        if: env.ANDROID_MODE == 'debug'
         run: |
           mkdir -p dist
           apk="$(find apps/desktop/src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -n 1)"
@@ -114,7 +125,7 @@ jobs:
           ls -la dist
 
       - name: Check the APK is signed with the kept key
-        if: env.ANDROID_DEBUG_KEYSTORE_FILE != ''
+        if: env.ANDROID_MODE == 'debug' && env.ANDROID_DEBUG_KEYSTORE_FILE != ''
         run: |
           want="$(keytool -list -v -keystore "$ANDROID_DEBUG_KEYSTORE_FILE" -storepass android -alias androiddebugkey | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')"
           certs="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs dist/Commy-debug.apk)"
@@ -125,11 +136,48 @@ jobs:
           [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::The APK is not signed with the key from ANDROID_DEBUG_KEYSTORE"; exit 1; }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.ANDROID_MODE == 'debug'
         with:
           name: commy-android-debug
           path: dist/Commy-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Build the Play bundle
+        if: env.ANDROID_MODE == 'play'
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          ANDROID_UPLOAD_KEYSTORE: ${{ secrets.ANDROID_UPLOAD_KEYSTORE }}
+          ANDROID_UPLOAD_PASSWORD: ${{ secrets.ANDROID_UPLOAD_PASSWORD }}
+        run: |
+          export ANDROID_UPLOAD_KEYSTORE_FILE="$RUNNER_TEMP/upload.jks"
+          if [ -n "$ANDROID_UPLOAD_KEYSTORE" ] && [ -n "$ANDROID_UPLOAD_PASSWORD" ]; then
+            printf '%s' "$ANDROID_UPLOAD_KEYSTORE" | base64 -d > "$ANDROID_UPLOAD_KEYSTORE_FILE"
+            echo "Signing with the upload key from ANDROID_UPLOAD_KEYSTORE"
+          else
+            ANDROID_UPLOAD_PASSWORD="$(openssl rand -hex 16)"
+            echo "::add-mask::$ANDROID_UPLOAD_PASSWORD"
+            keytool -genkeypair -keystore "$ANDROID_UPLOAD_KEYSTORE_FILE" -storetype PKCS12 \
+              -alias commy-upload -keyalg RSA -keysize 4096 -validity 10000 \
+              -storepass "$ANDROID_UPLOAD_PASSWORD" -keypass "$ANDROID_UPLOAD_PASSWORD" \
+              -dname "CN=Commy test key" > /dev/null
+            echo "::warning::ANDROID_UPLOAD_KEYSTORE and ANDROID_UPLOAD_PASSWORD are not set, so this bundle is signed with a throwaway key and Google Play will not accept it"
+          fi
+          export ANDROID_UPLOAD_PASSWORD
+          (cd apps/desktop/src-tauri && npm ci)
+          apps/desktop/mobile/android-build.sh "$APP_VERSION_INPUT"
+          mkdir -p dist
+          cp apps/desktop/src-tauri/gen/android/Commy-*.aab apps/desktop/src-tauri/gen/android/Commy-*.apk dist/
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs dist/*.apk | grep 'SHA-256'
+          ls -la dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.ANDROID_MODE == 'play'
+        with:
+          name: commy-android-play
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
 
   ios:
     name: iOS ${{ inputs.ios || 'simulator' }} build
