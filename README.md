@@ -282,7 +282,12 @@ from the secret of the same name. Without it the app builds without push
 wake-ups. CI signs each debug APK with a fresh key, so installing a newer one
 means uninstalling the old one first; to keep one key, store a debug keystore
 (password and key password `android`, alias `androiddebugkey`) as base64 in the
-`ANDROID_DEBUG_KEYSTORE` secret. Screen sharing, the overlay, hotkeys, the
+`ANDROID_DEBUG_KEYSTORE` secret. Running the workflow with `android: play` and a
+`version` runs `apps/desktop/mobile/android-build.sh`, which builds a release
+bundle for Google Play and a release APK, signed with the upload key from the
+`ANDROID_UPLOAD_KEYSTORE` (base64 PKCS12, alias `commy-upload`) and
+`ANDROID_UPLOAD_PASSWORD` secrets; without them it signs with a throwaway key
+that Google Play rejects. Screen sharing, the overlay, hotkeys, the
 tray and Stream Deck are desktop only.
 
 ## Self-hosting

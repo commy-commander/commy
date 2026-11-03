@@ -1,0 +1,1 @@
+-keep class chat.commy.mobile.** { *; }
