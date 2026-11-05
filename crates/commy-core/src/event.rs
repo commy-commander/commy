@@ -449,6 +449,10 @@ pub enum ServerEvent {
         server: ServerId,
         allowed: bool,
     },
+    FileStoreSet {
+        server: ServerId,
+        url: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -547,6 +551,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::MemberBanUntil { server, user, at: 1, until: Some(2) }), 100);
         assert_eq!(wire_tag(ServerEvent::UploadLimitSet { server, megabytes: Some(25), at: 1 }), 101);
         assert_eq!(wire_tag(ServerEvent::TtsAllowed { server, allowed: false }), 102);
+        assert_eq!(wire_tag(ServerEvent::FileStoreSet { server, url: None }), 103);
     }
 
     #[test]

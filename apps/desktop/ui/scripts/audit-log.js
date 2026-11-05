@@ -27,6 +27,7 @@ const AUDIT_GROUP_OF = {
   join_sounds: "expressions",
   server_tag: "server",
   tip_jar: "server",
+  file_store: "server",
   server_pet: "server",
   upload_limit: "server",
   text_to_speech: "server",
@@ -139,6 +140,7 @@ function describeAudit(entry) {
     case "upload_limit": return detail ? ["limited files to ", auditStrong(detail)] : ["removed the file size limit"];
     case "text_to_speech": return [detail === "on" ? "turned on text-to-speech messages" : "turned off text-to-speech messages"];
     case "tip_jar": return detail ? ["set the tip jar to ", auditStrong(tipJarText(detail))] : ["removed the tip jar"];
+    case "file_store": return detail ? ["connected file storage at ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["turned off file storage"];
     case "join_approval": return [detail === "on" ? "asked new people to wait until a moderator lets them in" : "let new people join straight away"];
     case "join_admit": return ["let ", member, " in"];
     case "join_turn_away": return ["turned away ", member];

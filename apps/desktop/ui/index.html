@@ -2707,6 +2707,16 @@
               <button class="btn-primary btn-small" id="tip-jar-save">Save</button>
             </div>
           </div>
+          <h2 class="settings-subhead">File Storage</h2>
+          <div class="settings-card" id="file-store-card">
+            <div class="setting-sub">Files posted here travel between members' devices, so in a small server a picture can be missing while nobody who has it is online. Connect storage on your own Cloudflare account and members' apps also keep a locked copy of each file up to 30 MB there. Only members can open those copies, and you pay Cloudflare for what is stored. <button class="btn-link" id="file-store-guide" type="button">How to set it up</button></div>
+            <input id="file-store-input" type="url" maxlength="200" autocomplete="off" spellcheck="false" placeholder="https://commy-files.yourname.workers.dev" />
+            <div class="setting-sub file-store-status" id="file-store-status"></div>
+            <div class="form-actions">
+              <button class="btn-link hidden" id="file-store-remove">Remove</button>
+              <button class="btn-primary btn-small" id="file-store-save">Save</button>
+            </div>
+          </div>
           <h2 class="settings-subhead">Server Pet</h2>
           <div class="settings-card" id="pet-card">
             <div class="setting-sub">Adopt a little astronaut that lives on your server. Everyone can feed it, pat it and play with it, and it levels up as people look after it.</div>
@@ -3321,6 +3331,7 @@
   <script src="scripts/profile-look.js"></script>
   <script src="scripts/join-requests.js"></script>
   <script src="scripts/tip-jar.js"></script>
+  <script src="scripts/file-store.js"></script>
   <script src="scripts/pet.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/voice-filters.js"></script>

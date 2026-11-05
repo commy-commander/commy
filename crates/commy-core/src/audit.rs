@@ -85,6 +85,7 @@ pub enum AuditKind {
     JoinTurnAway,
     UploadLimit,
     TextToSpeech,
+    FileStore,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,6 +210,7 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::TipJarSet { url, .. } => (K::TipJar, None, None, url.clone()),
         E::UploadLimitSet { megabytes, .. } => (K::UploadLimit, None, None, megabytes.map(size_words)),
         E::TtsAllowed { allowed, .. } => (K::TextToSpeech, None, None, on_off(*allowed)),
+        E::FileStoreSet { url, .. } => (K::FileStore, None, None, url.clone()),
         E::PetSet { pet, .. } => (K::ServerPet, None, None, pet.as_ref().map(|p| clip(&p.name))),
         E::JoinAnswer { user, admit, .. } => {
             let asked = crate::join_request::request_of(server, *user).map(|r| &r.profile);

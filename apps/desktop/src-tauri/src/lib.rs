@@ -3,6 +3,7 @@ mod account_folder;
 mod account_log;
 mod app_icon;
 mod browser;
+mod cloud_files;
 mod activity;
 mod afk;
 mod call_service;
@@ -322,6 +323,22 @@ async fn set_tip_jar(app: tauri::State<'_, App>, handle: tauri::AppHandle, serve
     apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
+}
+
+#[tauri::command]
+async fn set_file_store(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, url: Option<String>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::file_store::set_file_store(state, perms, url.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn test_file_store(app: tauri::State<'_, App>, url: String) -> CmdResult<u64> {
+    let base = commy_core::file_store::clean_file_store(&url).ok_or(view::file_store::FILE_STORE_INVALID)?;
+    cloud_files::ask(&app.http, &base).await
 }
 
 #[tauri::command]
@@ -1011,7 +1028,9 @@ async fn send_attachment(
         require_permission(app, state, profile.id, Permissions::ATTACH_FILES, "send files or images here")?;
         view::moderate::upload_fits(state, contents.size())?;
     }
+    let shared = contents.in_memory().filter(|b| commy_sync::file::fits_plain(b.len())).map(<[u8]>::to_vec);
     let (blob, provider, size_bytes) = store_file(app, contents).await?;
+    offer_to_file_store(app, sid, &blob, shared.as_deref());
 
     let mime_type = mime_guess::from_path(&filename)
         .first_raw()
@@ -1105,7 +1124,9 @@ async fn send_voice_message(
         require_permission(&app, state, profile.id, Permissions::SEND_VOICE_MESSAGES, "send voice messages here")?;
     }
     let size_bytes = clip.bytes.len() as u64;
+    let shared = clip.bytes.clone();
     let (blob, provider) = store_blob(&app, clip.bytes, None).await?;
+    offer_to_file_store(&app, sid, &blob, Some(&shared));
     let mut message = Message::new(cid, profile.id, String::new());
     message.attachments.push(Attachment::voice_message(blob, size_bytes, provider));
     let _signing = app.signing.read().await;
@@ -1831,7 +1852,32 @@ fn neighbor_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<WirePaylo
     relayed.into_iter().map(WirePayload::Signed).chain(ours).collect()
 }
 
+fn file_store_of(app: &App, server: Option<ServerId>) -> Option<String> {
+    let server = server?;
+    app.servers.lock().unwrap().get(&server).and_then(|state| state.server.file_store.clone())
+}
+
+fn offer_to_file_store(app: &App, server: ServerId, blob: &str, bytes: Option<&[u8]>) {
+    let Some(bytes) = bytes.filter(|b| cloud_files::worth_offering(blob, b)) else { return };
+    cloud_files::offer(&app.http, file_store_of(app, Some(server)), blob, bytes.to_vec());
+}
+
 async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
+    let store = file_store_of(app, server.and_then(|s| s.parse::<ServerId>().ok()));
+    let kept = cloud_files::fetch(&app.http, store.as_deref(), blob, max).await;
+    if let cloud_files::Fetched::Found(bytes) = kept {
+        let shelf = app.net.lock().await.as_ref().and_then(|node| node.shelf());
+        kept_files::keep_opened(shelf, blob, &bytes);
+        return Ok(bytes);
+    }
+    let bytes = fetch_blob_from_members(app, blob, provider, server, max).await?;
+    if matches!(kept, cloud_files::Fetched::NotKept) {
+        cloud_files::offer(&app.http, store, blob, bytes.clone());
+    }
+    Ok(bytes)
+}
+
+async fn fetch_blob_from_members(app: &App, blob: &str, provider: Option<&str>, server: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let server = server.and_then(|s| s.parse::<ServerId>().ok());
     let members = server.map(|s| member_nodes(app, s)).unwrap_or_default();
     let (fetcher, sources, shelf) = {
@@ -3286,6 +3332,9 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
         }
         if state.server.tip_jar.is_some() {
             events.push(ServerEvent::TipJarSet { server: sid, url: state.server.tip_jar.clone() });
+        }
+        if state.server.file_store.is_some() {
+            events.push(ServerEvent::FileStoreSet { server: sid, url: state.server.file_store.clone() });
         }
         if state.server.pet.is_some() {
             events.push(ServerEvent::PetSet { server: sid, pet: state.server.pet.clone() });
@@ -8198,6 +8247,8 @@ pub fn run() {
             set_join_sound,
             set_server_tag,
             set_tip_jar,
+            set_file_store,
+            test_file_store,
             set_upload_limit,
             set_tts_allowed,
             set_pet,

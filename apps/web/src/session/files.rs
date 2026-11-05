@@ -47,7 +47,7 @@ impl Session {
                 let (server, channel) = server_channel(&args)?;
                 let clip = self.take_recording()?;
                 let size_bytes = clip.len() as u64;
-                let (blob, provider) = self.store_blob(clip).await?;
+                let (blob, provider) = self.store_shared_blob(server, clip).await?;
                 let attachment = Attachment::voice_message(blob, size_bytes, Some(provider));
                 self.post_attachment(server, channel, attachment, Permissions::SEND_VOICE_MESSAGES, "send voice messages here").await
             }
@@ -75,7 +75,7 @@ impl Session {
     async fn send_server_file(self: &Rc<Self>, server: ServerId, channel: ChannelId, filename: String, bytes: Vec<u8>) -> Result<Value, String> {
         let size_bytes = bytes.len() as u64;
         self.client.borrow().upload_fits(server, size_bytes)?;
-        let (blob, provider) = self.store_blob(bytes).await?;
+        let (blob, provider) = self.store_shared_blob(server, bytes).await?;
         let attachment = files::attachment(filename, size_bytes, blob, provider);
         self.post_attachment(server, channel, attachment, Permissions::ATTACH_FILES, "send files or images here").await
     }
@@ -83,6 +83,15 @@ impl Session {
     pub(super) async fn post_attachment(self: &Rc<Self>, server: ServerId, channel: ChannelId, attachment: Attachment, needed: Permissions, action: &str) -> Result<Value, String> {
         let (message, view) = self.client.borrow().compose_attachment(server, channel, attachment, needed, action)?;
         self.deliver(server, message, view).await
+    }
+
+    async fn store_shared_blob(self: &Rc<Self>, server: ServerId, bytes: Vec<u8>) -> Result<(String, String), String> {
+        let copy = (commy_sync::file::fits_plain(bytes.len()) && self.file_store_of(Some(server)).is_some()).then(|| bytes.clone());
+        let (blob, provider) = self.store_blob(bytes).await?;
+        if let Some(copy) = copy {
+            self.offer_file(server, &blob, copy);
+        }
+        Ok((blob, provider))
     }
 
     pub(super) async fn store_blob(&self, bytes: Vec<u8>) -> Result<(String, String), String> {
@@ -143,6 +152,9 @@ impl Session {
     pub(super) async fn fetch_blob(&self, blob: Option<&str>, provider: Option<&str>, server: Option<&str>, max: u64) -> Result<Vec<u8>, String> {
         let blob = blob.filter(|b| !b.is_empty()).ok_or("missing file")?;
         let server = server.and_then(|s| s.parse::<ServerId>().ok());
+        if let Some(bytes) = self.kept_file(self.file_store_of(server).as_deref(), blob, max).await {
+            return Ok(bytes);
+        }
         let members = server.and_then(|s| self.client.borrow().servers.lock().unwrap().get(&s).map(|state| state.member_nodes())).unwrap_or_default();
         let (fetcher, sources): (BlobFetcher, Vec<String>) = {
             let node = self.node.lock().await;

@@ -18,6 +18,13 @@ impl Contents {
             Contents::OnDisk { size, .. } => *size,
         }
     }
+
+    pub fn in_memory(&self) -> Option<&[u8]> {
+        match self {
+            Contents::Bytes(bytes) | Contents::Picked { bytes, .. } => Some(bytes),
+            Contents::OnDisk { .. } => None,
+        }
+    }
 }
 
 pub struct PickedFile {
