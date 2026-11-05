@@ -2019,6 +2019,7 @@ const ICONS = {
   micOff: "M19 11h-1.7c0 .7-.2 1.4-.4 2l1.2 1.2c.6-.9.9-2 .9-3.2zm-4 .2V5a3 3 0 0 0-5.9-.8L15 10.1v1.1zM4.3 3 3 4.3l6 6V11a3 3 0 0 0 4.2 2.8l1.6 1.6A5 5 0 0 1 7 11H5a7 7 0 0 0 6 6.9V21h2v-3.1c.9-.1 1.8-.4 2.5-.9l4.2 4.2 1.3-1.3z",
   headset: "M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z",
   headsetOff: "M12 4a7 7 0 0 0-5.2 2.3L5.4 4.9A9 9 0 0 1 21 12v7c0 .3-.1.6-.2.9L19 18.1V14h-3v1.1L8.2 7.7A7 7 0 0 1 19 13v-1a7 7 0 0 0-7-7zM3.3 3 2 4.3l1.7 1.7A9 9 0 0 0 3 12v7a2 2 0 0 0 2 2h3v-8H5v-1c0-1.2.3-2.4.9-3.4L19.7 21 21 19.7z",
+  chatBubble: "M5 3.5h14A2.5 2.5 0 0 1 21.5 6v9A2.5 2.5 0 0 1 19 17.5h-7.2L7 21.5v-4H5A2.5 2.5 0 0 1 2.5 15V6A2.5 2.5 0 0 1 5 3.5z",
   chat: "M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-2 12H6v-2h12zm0-3H6V9h12zm0-3H6V6h12z",
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z",
   forum: "M4 3h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v4h16V5H4zm0 8h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2zm0 2v4h16v-4H4zm2-9h5v2H6V6zm0 10h8v2H6v-2z",
@@ -2926,6 +2927,45 @@ function syncWindowTitle() {
   invoke("set_window_title", { server: name }).catch(() => {});
 }
 
+const RAIL_DM_COUNT = 2;
+let railDmsFetchedAt = 0;
+
+function railDmThreads() {
+  return (state.dmThreads || [])
+    .filter(t => t.kind === "inbox" && t.user)
+    .sort((a, b) => String(b.last_at || "").localeCompare(String(a.last_at || "")))
+    .slice(0, RAIL_DM_COUNT);
+}
+
+function renderRailDms() {
+  const host = $("rail-dms");
+  if (!host) return;
+  host.innerHTML = "";
+  for (const thread of railDmThreads()) {
+    const button = el("button", "rail-dm");
+    button.type = "button";
+    button.title = thread.name;
+    if (state.view === "dm" && state.currentDm && state.currentDm.user === thread.user) button.classList.add("active");
+    if (unread.dms.get(thread.user)) button.classList.add("unread");
+    button.appendChild(avatarWithPresence(thread.name, thread.user));
+    button.onclick = () => {
+      state.currentDm = { user: thread.user, name: thread.name };
+      enterDmMode();
+    };
+    host.appendChild(button);
+  }
+}
+
+async function refreshRailDms() {
+  const now = Date.now();
+  if (now - railDmsFetchedAt < 8000) return;
+  railDmsFetchedAt = now;
+  try {
+    state.dmThreads = await invoke("list_dm_threads");
+    renderRailDms();
+  } catch {}
+}
+
 function renderServerRail() {
   syncWindowTitle();
   const list = $("server-list");
@@ -2939,6 +2979,8 @@ function renderServerRail() {
     badge.id = "home-badge";
     $("home-btn").appendChild(badge);
   }
+  renderRailDms();
+  refreshRailDms();
   const byId = new Map(railServers().map(s => [s.id, s]));
   const layout = normalizeRailLayout(loadRailLayout(), railServers().map(s => s.id));
   saveRailLayout(layout);
@@ -5177,6 +5219,8 @@ function onDmReceived(dm) {
     unread.dms.set(dm.user, (unread.dms.get(dm.user) || 0) + 1);
     syncUnreadBadge();
   }
+  railDmsFetchedAt = 0;
+  refreshRailDms();
   const prefs = notifyPrefs();
   if (shouldNotify({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: true, mentioned: true })) {
     const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
@@ -16642,7 +16686,8 @@ function paintNarrowServerIcon(icon, server) {
   icon.replaceChildren();
   icon.style.background = "";
   if (!server) {
-    icon.appendChild(el("img")).src = "images/commy_v3_noback.png";
+    icon.style.background = "var(--bg-active)";
+    icon.appendChild(svgIcon("chatBubble", 26));
     return;
   }
   paintServerIcon(icon, server);
@@ -17205,6 +17250,7 @@ async function renderDmThreads() {
   const list = $("channel-list");
   list.innerHTML = "";
   state.dmThreads = threads;
+  renderRailDms();
   list.appendChild(savedSidebarRow());
   const query = $("dm-search").value.trim().toLowerCase();
   const matches = threads.filter(t => !query || t.name.toLowerCase().includes(query));

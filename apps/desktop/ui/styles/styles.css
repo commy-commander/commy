@@ -273,14 +273,6 @@ body.sidebar-resizing { cursor: col-resize; }
 }
 .rail::-webkit-scrollbar { display: none; }
 .rail-spacer { flex: 1; }
-.rail-brand {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 17px;
-  letter-spacing: -.01em;
-  color: var(--header-primary);
-  padding-right: 4px;
-}
 
 .rail-btn, .server-icon {
   width: 38px;
@@ -1919,7 +1911,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .app.members-collapsed #member-list { display: none; }
 #members-btn.active { color: var(--header-primary); }
 .app.dm-mode .dm-profile { grid-row: 2; }
-.rail-home.active { background: none; }
 
 .dm-search {
   width: 100%;
@@ -2659,11 +2650,17 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 
 #me-avatar .presence-dot { z-index: 2; border-color: var(--bg-dark); }
 
-.rail-home, .rail-home:hover, .rail-home.active { background: none; padding: 0 8px 0 0; overflow: hidden; }
-.rail-home { width: auto; gap: 8px; }
-.rail-home img { width: 38px; height: 38px; display: block; border-radius: 12px; }
-.rail-home, .rail-home:hover { background: none; }
-.rail-home.active { box-shadow: none; border-radius: var(--radius-lg); }
+.rail-home { width: auto; height: 34px; gap: 6px; padding: 0 11px 0 9px; border-radius: 17px; background: var(--bg-raised); color: var(--header-primary); font-family: var(--font); font-size: 13px; font-weight: 600; letter-spacing: .02em; flex: none; }
+.rail-home:hover { background: var(--bg-hover); }
+.rail-home.active { background: var(--bg-active); }
+.rail-home.active { box-shadow: none; }
+.rail-home > svg { flex: none; }
+.rail-dms { display: flex; align-items: center; gap: 6px; flex: none; }
+.rail-dm { position: relative; flex: none; width: 30px; height: 30px; padding: 0; border: none; border-radius: 50%; background: none; cursor: pointer; }
+.rail-dm .avatar { width: 30px; height: 30px; font-size: 13px; }
+.rail-dm .presence-dot { right: -2px; bottom: -2px; }
+.rail-dm.active::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid var(--header-primary); pointer-events: none; }
+.rail-dm.unread::before { content: ""; position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--red); border: 2px solid var(--bg-darkest); z-index: 1; }
 
 .avatar { overflow: visible; }
 .avatar > img.avatar-face {
@@ -6104,7 +6101,7 @@ body.mobile-app:not(.can-share-screen) .screen-share-only { display: none !impor
   .app[data-pane="people"] > #member-list:not(.hidden) { display: block; }
 
   .rail { gap: 6px; padding: 0 2px; overflow: hidden; }
-  .rail-brand, .rail-context { display: none; }
+  .rail-context, .rail-dms { display: none; }
   .rail-spacer { flex: 1 0 0; }
   .server-list { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 7px 8px 7px 0; margin: -7px -8px -7px 0; }
   .server-list::-webkit-scrollbar { display: none; }
@@ -7840,8 +7837,9 @@ button.role-chip { background: none; font-family: inherit; line-height: inherit;
   }
   .app[data-pane="list"] .count-badge { right: -4px; }
   .app[data-pane="list"] #home-badge { top: -2px; }
-  .app[data-pane="list"] .rail-home { padding: 0; width: 48px; height: 48px; justify-content: center; }
-  .app[data-pane="list"] .rail-home img { width: 44px; height: 44px; }
+  .app[data-pane="list"] .rail-home { padding: 0; width: 48px; height: 48px; justify-content: center; border-radius: 16px; }
+  .app[data-pane="list"] .rail-home-label { display: none; }
+  .app[data-pane="list"] .rail-home > svg { width: 22px; height: 22px; }
   .app[data-pane="list"] :is(.server-icon, .rail-btn:not(.rail-home)) { width: 48px; height: 48px; border-radius: 16px; }
   .app[data-pane="list"] .rail-add { border-radius: 50%; }
   .app[data-pane="list"] .server-icon.active::before {
