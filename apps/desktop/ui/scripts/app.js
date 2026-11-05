@@ -16724,7 +16724,7 @@ function narrowChannelTile(server) {
   const channel = state.currentChannel;
   const tile = el("button", "narrow-channel");
   tile.id = "narrow-channel";
-  tile.title = "Switch channel";
+  tile.title = server && channel ? `${channelTextName(channel.name)}: switch channel` : "Switch channel";
   const mark = el("span", "narrow-channel-mark");
   mark.appendChild(server && channel ? channelMark(channel) : svgIcon("chat", 18));
   const name = el("span", "narrow-channel-name");
