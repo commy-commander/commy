@@ -2938,43 +2938,155 @@ function syncWindowTitle() {
   invoke("set_window_title", { server: name }).catch(() => {});
 }
 
-const RAIL_DM_COUNT = 2;
-let railDmsFetchedAt = 0;
+const DM_MENU_COUNT = 6;
+const DM_CARD_MAX = 3;
+const DM_CARD_MS = 9000;
+const dmCards = new Map();
 
-function railDmThreads() {
+function wideRail() {
+  return window.matchMedia("(min-width: 701px)").matches;
+}
+
+function recentDmThreads() {
   return (state.dmThreads || [])
     .filter(t => t.kind === "inbox" && t.user)
-    .sort((a, b) => String(b.last_at || "").localeCompare(String(a.last_at || "")))
-    .slice(0, RAIL_DM_COUNT);
+    .sort((a, b) => (unread.dms.get(b.user) ? 1 : 0) - (unread.dms.get(a.user) ? 1 : 0) || String(b.last_at || "").localeCompare(String(a.last_at || "")))
+    .slice(0, DM_MENU_COUNT);
 }
 
-function renderRailDms() {
-  const host = $("rail-dms");
-  if (!host) return;
-  host.innerHTML = "";
-  for (const thread of railDmThreads()) {
-    const button = el("button", "rail-dm");
-    button.type = "button";
-    button.title = thread.name;
-    if (state.view === "dm" && state.currentDm && state.currentDm.user === thread.user) button.classList.add("active");
-    if (unread.dms.get(thread.user)) button.classList.add("unread");
-    button.appendChild(avatarWithPresence(thread.name, thread.user));
-    button.onclick = () => {
-      state.currentDm = { user: thread.user, name: thread.name };
-      enterDmMode();
-    };
-    host.appendChild(button);
+function closeDmMenu() {
+  const menu = $("dm-menu");
+  if (menu) menu.remove();
+  $("home-btn").setAttribute("aria-expanded", "false");
+}
+
+function openDm(user, name) {
+  closeDmMenu();
+  state.currentDm = { user, name };
+  enterDmMode();
+}
+
+function paintDmMenu(menu) {
+  menu.replaceChildren(el("div", "dm-menu-title", "Recent chats"));
+  const threads = recentDmThreads();
+  if (!threads.length) menu.appendChild(el("div", "dm-menu-empty", "Your conversations will show up here."));
+  for (const thread of threads) {
+    const row = el("button", "dm-menu-row");
+    row.type = "button";
+    row.appendChild(avatarWithPresence(thread.name, thread.user));
+    const meta = el("span", "dm-menu-meta");
+    meta.append(el("span", "dm-menu-name", thread.name), el("span", "dm-menu-preview", plainText(thread.last_message) || "No messages yet"));
+    row.appendChild(meta);
+    if (unread.dms.get(thread.user)) row.classList.add("unread");
+    row.onclick = () => openDm(thread.user, thread.name);
+    menu.appendChild(row);
   }
+  const all = el("button", "dm-menu-all", "Open all messages");
+  all.type = "button";
+  all.onclick = () => {
+    closeDmMenu();
+    enterDmMode();
+  };
+  menu.appendChild(all);
 }
 
-async function refreshRailDms() {
-  const now = Date.now();
-  if (now - railDmsFetchedAt < 8000) return;
-  railDmsFetchedAt = now;
+async function toggleDmMenu() {
+  if ($("dm-menu")) {
+    closeDmMenu();
+    return;
+  }
+  const menu = el("div", "dm-menu");
+  menu.id = "dm-menu";
+  const rect = $("home-btn").getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.round(rect.left))}px`;
+  menu.style.top = `${Math.round(rect.bottom + 8)}px`;
+  paintDmMenu(menu);
+  document.body.appendChild(menu);
+  $("home-btn").setAttribute("aria-expanded", "true");
   try {
     state.dmThreads = await invoke("list_dm_threads");
-    renderRailDms();
+    if ($("dm-menu") === menu) paintDmMenu(menu);
   } catch {}
+}
+
+function dmCardStack() {
+  let stack = $("dm-card-stack");
+  if (!stack) {
+    stack = el("div", "dm-card-stack");
+    stack.id = "dm-card-stack";
+    document.body.appendChild(stack);
+  }
+  return stack;
+}
+
+function removeDmCard(user) {
+  const entry = dmCards.get(user);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  entry.node.remove();
+  dmCards.delete(user);
+}
+
+function showDmCard(dm) {
+  removeDmCard(dm.user);
+  const card = el("div", "dm-card");
+  const head = el("div", "dm-card-head");
+  head.appendChild(avatarWithPresence(dm.name, dm.user));
+  const text = el("div", "dm-card-text");
+  const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "Sent an attachment");
+  text.append(el("div", "dm-card-name", dm.name), el("div", "dm-card-body", body));
+  const close = el("button", "dm-card-close", "\u00d7");
+  close.type = "button";
+  close.title = "Dismiss";
+  close.setAttribute("aria-label", "Dismiss");
+  head.append(text, close);
+  const row = el("div", "dm-card-row");
+  const input = el("input", "dm-card-input");
+  input.type = "text";
+  input.placeholder = "Reply";
+  input.autocomplete = "off";
+  const open = el("button", "dm-card-open", "Open");
+  open.type = "button";
+  row.append(input, open);
+  card.append(head, row);
+  const entry = { node: card, timer: null };
+  const arm = () => {
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => removeDmCard(dm.user), DM_CARD_MS);
+  };
+  card.onmouseenter = () => clearTimeout(entry.timer);
+  card.onmouseleave = () => {
+    if (!input.value && document.activeElement !== input) arm();
+  };
+  input.onfocus = () => clearTimeout(entry.timer);
+  close.onclick = () => removeDmCard(dm.user);
+  open.onclick = () => {
+    removeDmCard(dm.user);
+    openDm(dm.user, dm.name);
+  };
+  input.onkeydown = async e => {
+    if (e.key === "Escape") {
+      removeDmCard(dm.user);
+      return;
+    }
+    if (e.key !== "Enter" || e.isComposing) return;
+    const content = input.value.trim();
+    if (!content) return;
+    input.disabled = true;
+    try {
+      await invoke("send_dm", { userId: dm.user, content: encodeCustomEmojis(content), replyTo: null });
+      clearDmUnread(dm.user);
+      removeDmCard(dm.user);
+      toast(`Sent to ${dm.name}`);
+    } catch (err) {
+      input.disabled = false;
+      toast(String(err));
+    }
+  };
+  dmCardStack().appendChild(card);
+  dmCards.set(dm.user, entry);
+  arm();
+  while (dmCards.size > DM_CARD_MAX) removeDmCard(dmCards.keys().next().value);
 }
 
 function renderServerRail() {
@@ -2990,8 +3102,6 @@ function renderServerRail() {
     badge.id = "home-badge";
     $("home-btn").appendChild(badge);
   }
-  renderRailDms();
-  refreshRailDms();
   const byId = new Map(railServers().map(s => [s.id, s]));
   const layout = normalizeRailLayout(loadRailLayout(), railServers().map(s => s.id));
   saveRailLayout(layout);
@@ -5314,8 +5424,7 @@ function onDmReceived(dm) {
     unread.dms.set(dm.user, (unread.dms.get(dm.user) || 0) + 1);
     syncUnreadBadge();
   }
-  railDmsFetchedAt = 0;
-  refreshRailDms();
+  if (appFocused() && !viewing) showDmCard(dm);
   const prefs = notifyPrefs();
   if (shouldNotify({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: true, mentioned: true })) {
     const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
@@ -16929,7 +17038,7 @@ function narrowGlyph(name) {
 function serverSwitchRows() {
   const current = narrowViewServer();
   return [
-    narrowMenuRow("Direct Messages", icon => paintNarrowServerIcon(icon, null), () => $("home-btn").click(), !current),
+    narrowMenuRow("Direct Messages", icon => paintNarrowServerIcon(icon, null), enterDmMode, !current),
     ...railServers().map(server => narrowMenuRow(server.name, icon => paintNarrowServerIcon(icon, server), () => selectServer(server.id), Boolean(current) && server.id === current.id)),
     narrowMenuRow("Add a Server", narrowGlyph("plus"), () => $("add-server-btn").click()),
     narrowMenuRow("Discover Servers", narrowGlyph("globe"), () => $("discover-btn").click()),
@@ -17393,7 +17502,6 @@ async function renderDmThreads() {
   const list = $("channel-list");
   list.innerHTML = "";
   state.dmThreads = threads;
-  renderRailDms();
   list.appendChild(savedSidebarRow());
   const query = $("dm-search").value.trim().toLowerCase();
   const matches = threads.filter(t => !query || t.name.toLowerCase().includes(query));
@@ -20003,7 +20111,10 @@ function wireEvents() {
       toast(String(e));
     }
   };
-  $("home-btn").onclick = enterDmMode;
+  $("home-btn").onclick = () => (wideRail() ? toggleDmMenu() : enterDmMode());
+  document.addEventListener("pointerdown", e => {
+    if ($("dm-menu") && !e.target.closest("#dm-menu, #home-btn")) closeDmMenu();
+  });
 
   $("afk-timeout").addEventListener("change", async e => {
     try {

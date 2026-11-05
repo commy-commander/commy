@@ -300,9 +300,10 @@ body.sidebar-resizing { cursor: col-resize; }
 .rail-add:hover { background: var(--accent); color: var(--accent-ink); }
 
 .rail-divider {
-  width: 1px;
-  height: 24px;
-  background: var(--line);
+  width: 2px;
+  height: 32px;
+  border-radius: 2px;
+  background: rgba(242, 239, 230, .38);
   flex-shrink: 0;
 }
 
@@ -2656,12 +2657,6 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .rail-home.active { background: var(--bg-active); }
 .rail-home.active { box-shadow: none; }
 .rail-home > svg { flex: none; }
-.rail-dms { display: flex; align-items: center; gap: 6px; flex: none; }
-.rail-dm { position: relative; flex: none; width: 30px; height: 30px; padding: 0; border: none; border-radius: 50%; background: none; cursor: pointer; }
-.rail-dm .avatar { width: 30px; height: 30px; font-size: 13px; }
-.rail-dm .presence-dot { right: -2px; bottom: -2px; }
-.rail-dm.active::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid var(--header-primary); pointer-events: none; }
-.rail-dm.unread::before { content: ""; position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--red); border: 2px solid var(--bg-darkest); z-index: 1; }
 
 .avatar { overflow: visible; }
 .avatar > img.avatar-face {
@@ -3426,8 +3421,8 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   z-index: 2;
   font-variant-numeric: tabular-nums;
 }
-.server-icon.active + .count-badge, #home-badge { background: var(--header-primary); color: var(--bg-darkest); }
-#home-badge { right: auto; left: 28px; top: -4px; }
+.server-icon.active + .count-badge { background: var(--header-primary); color: var(--bg-darkest); }
+#home-badge { right: -6px; left: auto; top: -6px; }
 .rail { position: relative; }
 
 .ctx-menu { min-width: 220px; z-index: 170; }
@@ -6102,7 +6097,7 @@ body.mobile-app:not(.can-share-screen) .screen-share-only { display: none !impor
   .app[data-pane="people"] > #member-list:not(.hidden) { display: block; }
 
   .rail { gap: 6px; padding: 0 2px; overflow: hidden; }
-  .rail-context, .rail-dms { display: none; }
+  .rail-context { display: none; }
   .rail-spacer { flex: 1 0 0; }
   .server-list { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 7px 8px 7px 0; margin: -7px -8px -7px 0; }
   .server-list::-webkit-scrollbar { display: none; }
@@ -8575,3 +8570,31 @@ body.has-titlebar .offline-chip { top: 42px; }
   .startup-step[data-state="working"] .startup-mark { animation: none; }
   .startup-fill { transition: none; }
 }
+
+.dm-menu { position: fixed; z-index: 175; width: 300px; max-height: min(420px, calc(100vh - 80px)); overflow-y: auto; padding: 8px; border-radius: 16px; background: var(--bg-raised); box-shadow: 0 10px 28px rgba(0, 0, 0, .45), inset 0 0 0 1px var(--line); scrollbar-width: thin; }
+.dm-menu-title { padding: 4px 8px 8px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.dm-menu-empty { padding: 10px 8px; font-size: 13px; color: var(--text-muted); }
+.dm-menu-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px; border: none; border-radius: 10px; background: none; color: var(--text-normal); font: inherit; text-align: left; cursor: pointer; position: relative; }
+.dm-menu-row:hover { background: var(--bg-hover); }
+.dm-menu-row.unread { background: var(--bg-active); }
+.dm-menu-row.unread::after { content: ""; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--red); }
+.dm-menu-row .avatar { position: relative; width: 32px; height: 32px; flex: none; font-size: 13px; }
+.dm-menu-meta { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.dm-menu-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-menu-preview { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-menu-all { display: block; width: 100%; margin-top: 4px; padding: 10px 8px 6px; border: none; border-top: 1px solid var(--line); background: none; color: var(--accent-hover); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+.dm-menu-all:hover { color: var(--text-normal); }
+.dm-card-stack { position: fixed; right: 16px; bottom: 16px; z-index: 180; display: flex; flex-direction: column; gap: 8px; width: 300px; max-width: calc(100vw - 32px); pointer-events: none; }
+.dm-card { pointer-events: auto; padding: 12px; border-radius: 16px; background: var(--bg-raised); box-shadow: 0 10px 28px rgba(0, 0, 0, .45), inset 0 0 0 1px var(--line-strong); }
+.dm-card-head { display: flex; align-items: center; gap: 10px; }
+.dm-card-head .avatar { position: relative; width: 34px; height: 34px; flex: none; font-size: 14px; }
+.dm-card-text { flex: 1; min-width: 0; }
+.dm-card-name { font-size: 14px; font-weight: 700; color: var(--header-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-card-body { font-size: 13px; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-card-close { flex: none; width: 24px; height: 24px; padding: 0; border: none; border-radius: 50%; background: none; color: var(--text-faint); font-size: 18px; line-height: 24px; cursor: pointer; align-self: flex-start; }
+.dm-card-close:hover { background: var(--bg-hover); color: var(--text-normal); }
+.dm-card-row { display: flex; gap: 8px; margin-top: 10px; }
+.dm-card-input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border: none; border-radius: 10px; background: var(--bg-darkest); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-normal); font: inherit; font-size: 13px; outline: none; }
+.dm-card-input:focus { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.dm-card-open { flex: none; height: 32px; padding: 0 14px; border: none; border-radius: 10px; background: var(--accent); color: #fff; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.dm-card-open:hover { background: var(--accent-hover); }
