@@ -8162,6 +8162,9 @@ body.mobile-app .vp-actions > * { flex: 1 1 0; }
   .app.narrow-split :is(.narrow-active-icon, .narrow-grid-cell, .narrow-menu-icon) img { width: 100%; height: 100%; object-fit: cover; }
   .app.narrow-split .narrow-grid { display: grid; grid-template-columns: repeat(2, 18px); grid-auto-rows: 18px; gap: 3px; align-content: center; justify-content: center; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line); box-sizing: border-box; }
   .app.narrow-split .narrow-grid:hover { background: var(--bg-active); }
+  .app.narrow-split .narrow-grid.lone { display: flex; color: var(--text-muted); }
+  .app.narrow-split .voice-gate-pill { left: 8px; right: 8px; justify-content: center; padding: 10px 0; }
+  .app.narrow-split .voice-gate-text { display: none; }
   .app.narrow-split .narrow-grid-cell { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 6px; overflow: hidden; font-size: 7px; font-weight: 700; color: var(--header-primary); }
   .app.narrow-split .narrow-grid-more { background: var(--bg-active); color: var(--text-muted); font-size: 9px; font-variant-numeric: tabular-nums; }
   .app.narrow-split :is(.narrow-grid, .narrow-channel).unread::after { content: ""; position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-dark); }
@@ -8584,7 +8587,7 @@ body.has-titlebar .offline-chip { top: 42px; }
 .dm-menu-preview { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dm-menu-all { display: block; width: 100%; margin-top: 4px; padding: 10px 8px 6px; border: none; border-top: 1px solid var(--line); background: none; color: var(--accent-hover); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
 .dm-menu-all:hover { color: var(--text-normal); }
-.dm-card-stack { position: fixed; right: 16px; bottom: 16px; z-index: 180; display: flex; flex-direction: column; gap: 8px; width: 300px; max-width: calc(100vw - 32px); pointer-events: none; }
+.dm-card-stack { position: fixed; right: 16px; bottom: 84px; z-index: 180; display: flex; flex-direction: column; gap: 8px; width: 300px; max-width: calc(100vw - 32px); pointer-events: none; }
 .dm-card { pointer-events: auto; padding: 12px; border-radius: 16px; background: var(--bg-raised); box-shadow: 0 10px 28px rgba(0, 0, 0, .45), inset 0 0 0 1px var(--line-strong); }
 .dm-card-head { display: flex; align-items: center; gap: 10px; }
 .dm-card-head .avatar { position: relative; width: 34px; height: 34px; flex: none; font-size: 14px; }

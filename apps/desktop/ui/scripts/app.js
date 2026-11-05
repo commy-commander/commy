@@ -2181,7 +2181,7 @@ function selectSettingsTab(id, tab) {
   const layer = $(id);
   for (const btn of layer.querySelectorAll(".settings-tab[data-tab]")) {
     btn.classList.toggle("active", btn.dataset.tab === tab);
-    if (btn.dataset.tab === tab && isPhoneWidth(window.innerWidth)) btn.scrollIntoView({ block: "nearest", inline: "center" });
+    if (btn.dataset.tab === tab) btn.scrollIntoView(isPhoneWidth(window.innerWidth) ? { block: "nearest", inline: "center" } : { block: "nearest" });
   }
   for (const page of layer.querySelectorAll(".settings-page")) {
     page.classList.toggle("hidden", page.dataset.page !== tab);
@@ -17010,6 +17010,8 @@ function paintNarrowServers(server) {
   });
   if (others.length > shown.length) cells.push(el("span", "narrow-grid-cell narrow-grid-more", `+${others.length - shown.length}`));
   const grid = $("narrow-grid");
+  if (!cells.length) cells.push(svgIcon(server ? "chatBubble" : "plus", 20));
+  grid.classList.toggle("lone", !others.length);
   grid.replaceChildren(...cells);
   grid.title = others.length ? `Switch server: ${others.map(s => s.name).join(", ")}` : "Switch server";
   grid.classList.toggle("unread", others.some(s => serverUnreadCount(s.id) > 0));
