@@ -16356,7 +16356,7 @@ async function loadActivityVideo(run) {
   }
   $("activity-video-wait").classList.remove("hidden");
   try {
-    const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+    const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: state.voiceServer ? state.voiceServer.id : null });
     const objectUrl = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
     videoUrls.set(att.blob, objectUrl);
     if (activityUi.run && activityUi.run.id === run.id) video.src = objectUrl;
@@ -21908,7 +21908,8 @@ function openServerSettings(tab) {
   renderGameTagEditor(server);
   renderServerTagEditor(server);
   renderTipJarEditor(server);
-  renderFileStoreEditor(server);
+  $("tab-file-storage").classList.toggle("hidden", !server.can_manage_server);
+  if (server.can_manage_server) renderFileStoreEditor(server);
   renderPetEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
@@ -21928,6 +21929,7 @@ function openServerSettings(tab) {
   if (canBots) renderBotsPage(server);
   const allowed = {
     bots: canBots,
+    "file-storage": Boolean(server.can_manage_server),
     invites: canInvites,
     overview: true,
     discovery: true,

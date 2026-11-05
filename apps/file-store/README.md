@@ -40,7 +40,7 @@ The Workers free plan covers 100,000 requests a day. See Cloudflare's
    files keep loading from members' devices.
 4. Copy the worker's address, like `https://commy-files.yourname.workers.dev`.
    Opening it in a browser shows `{"commy_files":1,...}`.
-5. In Commy, open **Server Settings > Overview > File Storage**, paste the
+5. In Commy, open **Server Settings > Integrations > File Storage**, paste the
    address and choose **Save**. Commy checks that the address answers first.
 
 From then on, files up to 30 MB posted in that server's channels are also kept
