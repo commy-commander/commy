@@ -6485,7 +6485,7 @@ function renderMembers() {
 
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
   const { playing, rest } = splitPlaying(state.currentServer.members);
-  if (state.currentServer.pet) list.appendChild(petWidget(state.currentServer));
+  if (state.currentServer.pet) list.appendChild(petHidden(state.currentServer.id) ? petRestore(state.currentServer.id) : petWidget(state.currentServer));
   renderPlayingGroup(list, playing);
 
   const group = (title, members, dim, color) => {
@@ -11393,6 +11393,35 @@ function paintServerTagEditor() {
 
 let petSuitPick = "white";
 
+const HIDDEN_PETS_KEY = "commy.hiddenPets";
+
+function hiddenPets() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(HIDDEN_PETS_KEY) || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function petHidden(serverId) {
+  return hiddenPets().has(serverId);
+}
+
+function setPetHidden(serverId, hidden) {
+  const set = hiddenPets();
+  if (hidden) set.add(serverId);
+  else set.delete(serverId);
+  try { localStorage.setItem(HIDDEN_PETS_KEY, JSON.stringify([...set])); } catch {}
+  renderMembers();
+}
+
+function petRestore(serverId) {
+  const row = el("button", "pet-restore", "Show server pet");
+  row.type = "button";
+  row.onclick = () => setPetHidden(serverId, false);
+  return row;
+}
+
 function petWidget(server) {
   const pet = server.pet;
   const now = Date.now();
@@ -11402,7 +11431,12 @@ function petWidget(server) {
   figure.innerHTML = petSvg(pet.suit, mood.mood);
   const info = el("div", "pet-info");
   const head = el("div", "pet-head");
-  head.append(el("span", "pet-name", pet.name), el("span", "pet-level", petLevelLabel(pet)));
+  const dismiss = el("button", "pet-dismiss", "\u00d7");
+  dismiss.type = "button";
+  dismiss.title = "Hide pet";
+  dismiss.setAttribute("aria-label", "Hide pet");
+  dismiss.onclick = () => setPetHidden(server.id, true);
+  head.append(el("span", "pet-name", pet.name), el("span", "pet-level", petLevelLabel(pet)), dismiss);
   const bar = el("div", "pet-bar");
   bar.appendChild(el("span")).style.width = `${Math.round(petProgress(pet) * 100)}%`;
   bar.title = `${pet.xp} care points`;
