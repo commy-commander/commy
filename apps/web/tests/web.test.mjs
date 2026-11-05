@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { FILE_STORAGE_ORIGINS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
+import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
 const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal } = require("../ui/web-commands.js");
@@ -139,13 +139,14 @@ test("replies cross into the backend as a status line and body", () => {
   assert.equal(webReplyLine(200, '{"a":1}'), '200\n{"a":1}');
 });
 
-test("the page may only talk to its own site, the relay and server file storage, and frames nothing but the YouTube player", () => {
+test("the page may only talk to its own site, the relay, server file storage and GIF search, and frames nothing but the YouTube player", () => {
   const csp = contentSecurityPolicy(relayOrigins("https://relay.commy.chat:8443"));
   assert.match(csp, /default-src 'self'/);
-  assert.match(csp, /connect-src 'self' https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/\*\.workers\.dev;/);
+  assert.match(csp, /connect-src 'self' https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/\*\.workers\.dev https:\/\/api\.klipy\.com https:\/\/api\.giphy\.com;/);
   assert.match(csp, /frame-src https:\/\/www\.youtube-nocookie\.com;/);
   assert.deepEqual(FILE_STORAGE_ORIGINS, ["https://*.workers.dev"]);
-  assert.doesNotMatch(csp.replace(" https://*.workers.dev;", ";"), /\*/, "file storage on workers.dev is the only wildcard");
+  assert.deepEqual(GIF_SEARCH_ORIGINS, ["https://api.klipy.com", "https://api.giphy.com"]);
+  assert.doesNotMatch(csp.replace(" https://*.workers.dev ", " "), /\*/, "file storage on workers.dev is the only wildcard");
 });
 
 test("the bridge loads before the app and the policy lands in the head", () => {
@@ -180,7 +181,7 @@ test("the page allows every relay it may be pointed at and names the first as it
   const relays = webRelayList(" https://relay.commy.chat:8443/, https://relay-staging.commy.chat:8443 ", "https://fallback.example");
   assert.deepEqual(relays, ["https://relay.commy.chat:8443", "https://relay-staging.commy.chat:8443"]);
   const html = injectWebShell(read("apps", "desktop", "ui", "index.html"), { relays });
-  assert.match(html, /connect-src 'self' https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/relay-staging\.commy\.chat:8443 wss:\/\/relay-staging\.commy\.chat:8443 https:\/\/\*\.workers\.dev;/);
+  assert.match(html, /connect-src 'self' https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/relay-staging\.commy\.chat:8443 wss:\/\/relay-staging\.commy\.chat:8443 https:\/\/\*\.workers\.dev https:\/\/api\.klipy\.com https:\/\/api\.giphy\.com;/);
   assert.match(html, /<meta name="commy-relays" content="https:\/\/relay\.commy\.chat:8443" \/>/);
   assert.deepEqual(webRelayList("", "https://fallback.example"), ["https://fallback.example"]);
 });
@@ -387,7 +388,7 @@ test("controls for things only the desktop app does are hidden in the browser", 
     assert.ok(found, `index.html has ${attr}`);
     return found[0];
   };
-  for (const attr of ['id="share-btn"', 'id="vp-camera"', 'id="vp-game-share"', 'id="entry-sync"', 'id="stream-deck-card"', 'data-search="games twitch cover art"', 'data-search="game status playing activity"', 'data-tab="camera"', 'data-tab="storage"', 'data-tab="overlay"', 'data-tab="updates"', 'data-i18n="appearance.appIcon"', 'data-i18n="appearance.trayIcon"', 'data-search="push to talk ptt voice activity open mic"', 'id="startup-update"']) {
+  for (const attr of ['id="share-btn"', 'id="vp-camera"', 'id="vp-game-share"', 'id="entry-sync"', 'id="stream-deck-card"', 'id="tab-game-database"', 'data-tab="integrations"', 'data-search="game status playing activity"', 'data-tab="camera"', 'data-tab="storage"', 'data-tab="overlay"', 'data-tab="updates"', 'data-i18n="appearance.appIcon"', 'data-i18n="appearance.trayIcon"', 'data-search="push to talk ptt voice activity open mic"', 'id="startup-update"']) {
     assert.match(opener(attr), /class="[^"]*\bnative-only\b/, attr);
   }
   assert.ok(index.includes('<div class="settings-card native-only">\n            <div class="segmented input-mode"'));

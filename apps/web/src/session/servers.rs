@@ -271,6 +271,7 @@ impl Session {
             }
             "set_tip_jar" => vec![client().act(server, |state, me, _, _| commy_view::tip_jar::set_tip_jar(state, me.perms, args.url.as_deref()))?],
             "set_file_store" => vec![client().act(server, |state, me, _, _| commy_view::file_store::set_file_store(state, me.perms, args.url.as_deref()))?],
+            "set_gif_key" => vec![client().act(server, |state, me, _, _| commy_view::search_keys::set_gif_key(state, me.perms, args.provider.as_deref(), args.key.as_deref()))?],
             "set_pet" => {
                 let now = Utc::now().timestamp_millis();
                 let (name, color) = (args.name.as_deref(), args.color.as_deref().unwrap_or("white"));

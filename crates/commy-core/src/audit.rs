@@ -86,6 +86,8 @@ pub enum AuditKind {
     UploadLimit,
     TextToSpeech,
     FileStore,
+    GifKey,
+    GameDb,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,6 +213,8 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::UploadLimitSet { megabytes, .. } => (K::UploadLimit, None, None, megabytes.map(size_words)),
         E::TtsAllowed { allowed, .. } => (K::TextToSpeech, None, None, on_off(*allowed)),
         E::FileStoreSet { url, .. } => (K::FileStore, None, None, url.clone()),
+        E::GifKeySet { gifs, .. } => (K::GifKey, None, None, gifs.as_ref().map(|g| g.provider.clone())),
+        E::GameDbSet { games, .. } => (K::GameDb, None, None, set_or_removed(games.is_some())),
         E::PetSet { pet, .. } => (K::ServerPet, None, None, pet.as_ref().map(|p| clip(&p.name))),
         E::JoinAnswer { user, admit, .. } => {
             let asked = crate::join_request::request_of(server, *user).map(|r| &r.profile);

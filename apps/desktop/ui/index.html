@@ -1501,7 +1501,7 @@
         <button class="settings-tab" data-tab="appearance" data-i18n="settings.tab.appearance">Appearance</button>
         <button class="settings-tab" data-tab="accessibility" data-i18n="settings.tab.accessibility">Accessibility</button>
         <button class="settings-tab desktop-only" data-tab="keybinds" data-i18n="settings.tab.keybinds">Keybinds</button>
-        <button class="settings-tab" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
+        <button class="settings-tab desktop-only native-only" data-tab="integrations" data-i18n="settings.tab.integrations">Integrations</button>
         <div class="settings-nav-group" data-i18n="settings.group.advanced">Advanced</div>
         <button class="settings-tab native-only" data-tab="storage" data-i18n="settings.tab.storage">Storage</button>
         <button class="settings-tab desktop-only native-only" data-tab="updates" data-i18n="settings.tab.startupUpdates">Startup &amp; Updates</button>
@@ -2217,32 +2217,7 @@
 
         <section class="settings-page" data-page="integrations">
           <h1 data-i18n="settings.tab.integrations">Integrations</h1>
-          <p class="settings-intro" data-i18n="settings.intro.integrations">Connect Commy to GIF search, game info and more.</p>
-          <div class="settings-card integration-card" data-search="klipy api key gif search" id="gif-card">
-            <div class="integration-head">
-              <div class="integration-logo integration-logo-deck">
-                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M8.5 10.2H7.2a1.2 1.2 0 0 0-1.2 1.2v1.2a1.2 1.2 0 0 0 1.2 1.2h1.3v-1.2H7.8M11.5 10v4M14.2 14v-4h2.3M14.2 12h1.8"/></svg>
-              </div>
-              <div class="integration-copy">
-                <div class="setting-title">GIFs</div>
-                <div class="setting-sub">Type <strong>/gif</strong> in the message box or click the GIF button to search. Without a key, searches go through your Commy account server, which never shares its key with the app. A key of your own is stored only on this device and is never sent to other members.</div>
-              </div>
-            </div>
-            <label class="field-label">Provider
-              <select id="gif-provider">
-                <option value="klipy">KLIPY (recommended)</option>
-                <option value="giphy">GIPHY</option>
-              </select>
-            </label>
-            <label class="field-label">Your own API key (optional)
-              <input id="gif-key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the built-in search" />
-            </label>
-            <div class="setting-sub" id="gif-key-help"></div>
-            <div class="form-actions">
-              <button class="btn-secondary btn-small" id="gif-key-test">Test Key</button>
-              <button class="btn-primary btn-small" id="gif-key-save">Save</button>
-            </div>
-          </div>
+          <p class="settings-intro" data-i18n="settings.intro.integrations">Control Commy from other apps and devices on this computer.</p>
           <div class="settings-card integration-card desktop-only native-only" data-search="elgato keys buttons" id="stream-deck-card">
             <div class="integration-head">
               <div class="integration-logo integration-logo-deck">
@@ -2261,32 +2236,6 @@
             </ol>
             <div class="setting-sub stream-deck-note" id="stream-deck-note"></div>
             <div class="stream-deck-decks" id="stream-deck-decks"></div>
-          </div>
-          <div class="settings-card integration-card native-only" data-search="games twitch cover art">
-            <div class="integration-head">
-              <div class="integration-logo">IGDB</div>
-              <div>
-                <div class="setting-title">IGDB game database <span class="integration-state" id="igdb-state"></span></div>
-                <div class="setting-sub">Game search with cover art when tagging servers, and the proper title and cover for the game you are playing. Built in through your Commy account; add credentials here only if your account server does not offer game search.</div>
-              </div>
-            </div>
-            <ol class="integration-steps">
-              <li>Sign in at <a data-href="https://dev.twitch.tv/console/apps">dev.twitch.tv/console/apps</a> (IGDB uses Twitch developer accounts; two-factor sign-in must be on).</li>
-              <li>Choose <strong>Register Your Application</strong>. Any name works, OAuth Redirect URL <code>http://localhost</code>, Category <strong>Application Integration</strong>, Client Type <strong>Confidential</strong>.</li>
-              <li>Open the app, copy the <strong>Client ID</strong>, press <strong>New Secret</strong> and copy the secret.</li>
-            </ol>
-            <label class="field-label">Client ID
-              <input id="igdb-client-id" type="text" autocomplete="off" spellcheck="false" />
-            </label>
-            <label class="field-label">Client Secret
-              <input id="igdb-client-secret" type="password" autocomplete="off" spellcheck="false" />
-            </label>
-            <div class="setting-sub">Saved only on this device, in its settings folder.</div>
-            <div class="form-actions integration-actions">
-              <span class="integration-result" id="igdb-result"></span>
-              <button class="btn-link danger hidden" id="igdb-remove">Disconnect</button>
-              <button class="btn-primary btn-small" id="igdb-save">Save and Test</button>
-            </div>
           </div>
         </section>
 
@@ -2633,6 +2582,8 @@
         <div class="settings-nav-group">Integrations</div>
         <button class="settings-tab" data-tab="bots" id="tab-bots">Bots</button>
         <button class="settings-tab" data-tab="file-storage" id="tab-file-storage">File Storage</button>
+        <button class="settings-tab" data-tab="gif-search" id="tab-gif-search">GIFs</button>
+        <button class="settings-tab native-only" data-tab="game-database" id="tab-game-database">Game Database</button>
         <div class="settings-nav-sep"></div>
         <button class="settings-tab danger" id="leave-server-btn">Leave Server</button>
       </div>
@@ -3110,6 +3061,63 @@
           </div>
           <h2 class="settings-subhead" id="bots-count">Installed</h2>
           <div id="bots-list" class="bots-list"></div>
+        </section>
+        <section class="settings-page" data-page="gif-search">
+          <h1>GIFs</h1>
+          <div class="settings-card integration-card" id="server-gif-card">
+            <div class="integration-head">
+              <div class="integration-logo integration-logo-deck">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M8.5 10.2H7.2a1.2 1.2 0 0 0-1.2 1.2v1.2a1.2 1.2 0 0 0 1.2 1.2h1.3v-1.2H7.8M11.5 10v4M14.2 14v-4h2.3M14.2 12h1.8"/></svg>
+              </div>
+              <div class="integration-copy">
+                <div class="setting-title">GIF search <span class="integration-state" id="server-gif-state"></span></div>
+                <div class="setting-sub">GIF search works through each member's Commy account without a key. Add a KLIPY or GIPHY key here and everyone's GIF searches in this server use it instead. Members' apps hold a copy of the key, so make one just for this server.</div>
+              </div>
+            </div>
+            <label class="field-label">Provider
+              <select id="server-gif-provider">
+                <option value="klipy">KLIPY (recommended)</option>
+                <option value="giphy">GIPHY</option>
+              </select>
+            </label>
+            <label class="field-label">API key
+              <input id="server-gif-key" type="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the built-in search" />
+            </label>
+            <div class="setting-sub" id="server-gif-help"></div>
+            <div class="form-actions integration-actions">
+              <span class="integration-result" id="server-gif-result"></span>
+              <button class="btn-link danger hidden" id="server-gif-remove">Remove</button>
+              <button class="btn-primary btn-small" id="server-gif-save">Save and Test</button>
+            </div>
+          </div>
+        </section>
+        <section class="settings-page" data-page="game-database">
+          <h1>Game Database</h1>
+          <div class="settings-card integration-card" id="game-db-card">
+            <div class="integration-head">
+              <div class="integration-logo">IGDB</div>
+              <div>
+                <div class="setting-title">IGDB game database <span class="integration-state" id="game-db-state"></span></div>
+                <div class="setting-sub">Game search with cover art when tagging this server with games. It works through your Commy account without a login; add one here only if your account server does not offer game search. Members' apps hold a copy of the login, so make one just for this server.</div>
+              </div>
+            </div>
+            <ol class="integration-steps">
+              <li>Sign in at <a data-href="https://dev.twitch.tv/console/apps">dev.twitch.tv/console/apps</a> (IGDB uses Twitch developer accounts; two-factor sign-in must be on).</li>
+              <li>Choose <strong>Register Your Application</strong>. Any name works, OAuth Redirect URL <code>http://localhost</code>, Category <strong>Application Integration</strong>, Client Type <strong>Confidential</strong>.</li>
+              <li>Open the app, copy the <strong>Client ID</strong>, press <strong>New Secret</strong> and copy the secret.</li>
+            </ol>
+            <label class="field-label">Client ID
+              <input id="game-db-client-id" type="text" maxlength="200" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="field-label">Client Secret
+              <input id="game-db-client-secret" type="password" maxlength="200" autocomplete="off" spellcheck="false" />
+            </label>
+            <div class="form-actions integration-actions">
+              <span class="integration-result" id="game-db-result"></span>
+              <button class="btn-link danger hidden" id="game-db-remove">Disconnect</button>
+              <button class="btn-primary btn-small" id="game-db-save">Save and Test</button>
+            </div>
+          </div>
         </section>
         <section class="settings-page" data-page="file-storage">
           <h1>File Storage</h1>

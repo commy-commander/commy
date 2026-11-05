@@ -453,6 +453,14 @@ pub enum ServerEvent {
         server: ServerId,
         url: Option<String>,
     },
+    GifKeySet {
+        server: ServerId,
+        gifs: Option<crate::search_keys::GifKey>,
+    },
+    GameDbSet {
+        server: ServerId,
+        games: Option<crate::search_keys::GameDbKey>,
+    },
 }
 
 #[cfg(test)]
@@ -552,6 +560,8 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::UploadLimitSet { server, megabytes: Some(25), at: 1 }), 101);
         assert_eq!(wire_tag(ServerEvent::TtsAllowed { server, allowed: false }), 102);
         assert_eq!(wire_tag(ServerEvent::FileStoreSet { server, url: None }), 103);
+        assert_eq!(wire_tag(ServerEvent::GifKeySet { server, gifs: None }), 104);
+        assert_eq!(wire_tag(ServerEvent::GameDbSet { server, games: None }), 105);
     }
 
     #[test]

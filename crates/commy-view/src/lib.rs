@@ -27,6 +27,7 @@ pub mod pet;
 pub mod removals;
 pub mod templates;
 pub mod file_store;
+pub mod search_keys;
 pub mod tip_jar;
 pub mod voice_invite;
 pub mod voice_links;
@@ -380,6 +381,8 @@ pub struct ServerView {
     pub can_answer_joins: bool,
     pub tip_jar: Option<String>,
     pub file_store: Option<String>,
+    pub gif_key: Option<commy_core::search_keys::GifKey>,
+    pub game_db: Option<search_keys::GameDbView>,
     pub pet: Option<pet::PetView>,
     pub automod: Option<AutoMod>,
     pub onboarding: Option<commy_core::Onboarding>,
@@ -761,6 +764,8 @@ impl ServerView {
             can_answer_joins: viewer.is_some_and(|v| join_requests::may_answer(state, v)),
             tip_jar: state.server.tip_jar.clone(),
             file_store: is_member.then(|| state.server.file_store.clone()).flatten(),
+            gif_key: is_member.then(|| state.server.gif_key.clone()).flatten(),
+            game_db: search_keys::game_db_view(state, perms),
             pet: pet::view(state, viewer),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),
             onboarding: is_member.then(|| state.server.onboarding.clone()).flatten().map(|o| {

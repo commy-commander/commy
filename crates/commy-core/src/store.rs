@@ -1574,6 +1574,20 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.server.file_store, url))
             }
+            ServerEvent::GifKeySet { server, gifs } => {
+                self.same_server(server)?;
+                if gifs.as_ref().is_some_and(|g| !g.is_valid()) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.server.gif_key, gifs))
+            }
+            ServerEvent::GameDbSet { server, games } => {
+                self.same_server(server)?;
+                if games.as_ref().is_some_and(|g| !g.is_valid()) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.server.game_db, games))
+            }
             ServerEvent::TipJarSet { server, url } => {
                 self.same_server(server)?;
                 if url.as_deref().is_some_and(|u| !crate::tip_jar::is_tip_jar(u)) {
@@ -4156,6 +4170,30 @@ mod tests {
         assert_eq!(back.server.file_store.as_deref(), Some("https://commy-files.rockets.workers.dev"));
         assert_eq!(state.apply(set(None)), Ok(true));
         assert_eq!(state.server.file_store, None);
+    }
+
+    #[test]
+    fn search_keys_are_set_by_managers_and_survive_a_snapshot() {
+        use crate::search_keys::{GameDbKey, GifKey};
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let gifs = |g: Option<GifKey>| ServerEvent::GifKeySet { server: sid, gifs: g };
+        let games = |g: Option<GameDbKey>| ServerEvent::GameDbSet { server: sid, games: g };
+        assert_eq!(state.apply(gifs(GifKey::new("klipy", "abc123"))), Ok(true));
+        assert_eq!(state.apply(gifs(Some(GifKey { provider: "tenor".into(), key: "abc".into() }))), Ok(false));
+        assert_eq!(state.apply(games(GameDbKey::new("id1", "secret2"))), Ok(true));
+        assert_eq!(state.apply(games(Some(GameDbKey { client_id: "id 1".into(), client_secret: "s".into() }))), Ok(false));
+        assert!(crate::action::authorized(&state.server, owner, &gifs(None)));
+        assert!(!crate::action::authorized(&state.server, friend, &gifs(None)));
+        assert!(!crate::action::authorized(&state.server, friend, &games(None)));
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let back = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(back.server.gif_key, GifKey::new("klipy", "abc123"));
+        assert_eq!(back.server.game_db, GameDbKey::new("id1", "secret2"));
+        assert_eq!(state.apply(gifs(None)), Ok(true));
+        assert_eq!(state.apply(games(None)), Ok(true));
+        assert_eq!((state.server.gif_key.clone(), state.server.game_db.clone()), (None, None));
     }
 
     #[test]

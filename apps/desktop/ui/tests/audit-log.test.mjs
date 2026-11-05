@@ -117,3 +117,10 @@ test("filters narrow by group and by who acted, and actors list once each by nam
   assert.deepEqual(auditActors(log), [{ id: "b", name: "Ann" }, { id: "a", name: "Zed" }]);
   assert.deepEqual(filterAudit(null), []);
 });
+
+test("search keys are logged without the key itself", () => {
+  assert.equal(auditText(entry("gif_key", { detail: "giphy" })), "Mia gave GIF search a GIPHY key");
+  assert.equal(auditText(entry("gif_key", {})), "Mia removed the GIF search key");
+  assert.equal(auditText(entry("game_db", { detail: "set" })), "Mia connected the IGDB game database");
+  assert.equal(auditText(entry("game_db", { detail: "removed" })), "Mia disconnected the IGDB game database");
+});

@@ -13,7 +13,6 @@ const WEB_DEFAULTS = {
   startup_continue: null,
   get_update_status: WEB_UPDATE_STATUS,
   check_for_updates: WEB_UPDATE_STATUS,
-  get_integrations: { igdb_client_id: "", igdb_configured: false },
   get_storage_settings: { keep: "90", servers: {} },
   get_autostart: false,
   get_stream_deck: { enabled: false, status: "off", decks: [] },
