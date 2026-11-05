@@ -10,6 +10,7 @@ on:
       - "crates/commy-view/src/roles.rs"
       - "crates/commy-net/src/invite.rs"
       - "crates/commy-bot/clients/**"
+      - "apps/file-store/**"
       - "apps/desktop/src-tauri/installer/**"
       - ".github/actions/release-config/**"
       - ".github/workflows/ui.yml"
@@ -39,6 +40,8 @@ jobs:
         run: node --test "apps/desktop/ui/tests/**/*.test.mjs"
       - name: Bot client tests
         run: node --test "crates/commy-bot/clients/node/*.test.mjs"
+      - name: File storage worker tests
+        run: node --test "apps/file-store/test/*.test.mjs"
 
   installer:
     name: Installer data folder page

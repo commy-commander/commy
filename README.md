@@ -36,7 +36,9 @@ pieces are the account server and the website at [commy.chat](https://commy.chat
   files shown inline, voice messages recorded from the composer and played
   back in place, `/tts` messages that readers can have read aloud, clickable
   links, polls with a closing time, and a GIF picker when the server operator
-  has set up a GIF provider key.
+  has set up a GIF provider key. A server owner can connect file storage
+  on their own Cloudflare account so shared files load even while everyone
+  who has them is offline ([apps/file-store](apps/file-store/README.md)).
 - **Message search.** Search a server by keyword, phrase, author, mention or
   channel, or your direct messages and groups, scoped to the conversation you
   are viewing or all of them. Search runs on your device over the history it

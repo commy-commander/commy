@@ -424,6 +424,8 @@ pub struct Server {
     pub upload_limit_since: i64,
     #[serde(default)]
     pub tts_off: bool,
+    #[serde(default)]
+    pub file_store: Option<String>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -519,6 +521,7 @@ impl Server {
             upload_limit_mb: None,
             upload_limit_since: 0,
             tts_off: false,
+            file_store: None,
         }
     }
 

@@ -27,6 +27,7 @@ pub mod server_tag;
 pub mod store;
 pub mod pet;
 pub mod template;
+pub mod file_store;
 pub mod tip_jar;
 pub mod user;
 pub mod voice_invite;

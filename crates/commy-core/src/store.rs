@@ -1567,6 +1567,13 @@ impl ServerState {
                 self.same_server(server)?;
                 Ok(replace(&mut self.server.tts_off, !allowed))
             }
+            ServerEvent::FileStoreSet { server, url } => {
+                self.same_server(server)?;
+                if url.as_deref().is_some_and(|u| !crate::file_store::is_file_store(u)) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.server.file_store, url))
+            }
             ServerEvent::TipJarSet { server, url } => {
                 self.same_server(server)?;
                 if url.as_deref().is_some_and(|u| !crate::tip_jar::is_tip_jar(u)) {
@@ -4129,6 +4136,26 @@ mod tests {
         let json = serde_json::to_string(&state.snapshot()).unwrap();
         let back = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
         assert_eq!((back.server.pet.as_ref().map(|p| p.name.as_str()), back.server.pet_care.len()), (Some("Cosmo"), 1));
+    }
+
+    #[test]
+    fn file_storage_is_an_https_address_set_by_managers() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let set = |url: Option<&str>| ServerEvent::FileStoreSet { server: sid, url: url.map(str::to_string) };
+        assert_eq!(state.server.file_store, None, "files stay peer to peer until someone sets storage up");
+        assert_eq!(state.apply(set(Some("https://commy-files.rockets.workers.dev"))), Ok(true));
+        assert_eq!(state.apply(set(Some("http://commy-files.rockets.workers.dev"))), Ok(false));
+        assert_eq!(state.apply(set(Some("https://192.168.1.4"))), Ok(false));
+        assert_eq!(state.server.file_store.as_deref(), Some("https://commy-files.rockets.workers.dev"));
+        assert!(crate::action::authorized(&state.server, owner, &set(None)));
+        assert!(!crate::action::authorized(&state.server, friend, &set(None)));
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let back = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(back.server.file_store.as_deref(), Some("https://commy-files.rockets.workers.dev"));
+        assert_eq!(state.apply(set(None)), Ok(true));
+        assert_eq!(state.server.file_store, None);
     }
 
     #[test]

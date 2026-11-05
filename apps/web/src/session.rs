@@ -31,6 +31,7 @@ use crate::store::WebStore;
 
 mod activities;
 mod calls;
+mod cloud_files;
 mod community;
 mod directory;
 mod dms;
@@ -109,6 +110,7 @@ pub struct Session {
     voice: RefCell<calls::Voice>,
     admit: calls::Admit,
     kept: RefCell<pictures::Kept>,
+    files_answer: RefCell<cloud_files::Answers>,
     invited: RefCell<HashMap<ServerId, (KeyId, ChannelSecret)>>,
     links: RefCell<links::LinkSafety>,
 }
@@ -283,6 +285,7 @@ impl Session {
             voice: RefCell::default(),
             admit: calls::Admit::default(),
             kept: RefCell::default(),
+            files_answer: RefCell::default(),
             invited: RefCell::default(),
             links: RefCell::default(),
         })
@@ -492,6 +495,8 @@ impl Session {
             "kick_member" => self.server_command(cmd, args).await,
             "set_join_approval" | "answer_join_request" => self.server_command(cmd, args).await,
             "set_tip_jar" | "set_pet" | "care_for_pet" => self.server_command(cmd, args).await,
+            "set_file_store" => self.server_command(cmd, args).await,
+            "test_file_store" => self.test_file_store(args.url.as_deref().unwrap_or("")).await,
             "set_upload_limit" | "set_tts_allowed" => self.server_command(cmd, args).await,
             "move_voice_member" => self.server_command(cmd, args).await,
             "voice_gate" => to_json(&self.voice_gate_view().await),

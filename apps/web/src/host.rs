@@ -13,6 +13,15 @@ extern "C" {
     #[wasm_bindgen(method, catch, js_name = putBytes)]
     pub async fn put_bytes(this: &Host, url: &str, body: &[u8]) -> Result<JsValue, JsValue>;
 
+    #[wasm_bindgen(method, catch, js_name = fetchBytes)]
+    pub async fn fetch_bytes_within(this: &Host, url: &str, wait_ms: u32) -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = putBytes)]
+    pub async fn put_bytes_within(this: &Host, url: &str, body: &[u8], wait_ms: u32) -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = hasBytes)]
+    pub async fn has_bytes(this: &Host, url: &str, wait_ms: u32) -> Result<JsValue, JsValue>;
+
     #[wasm_bindgen(method)]
     pub fn load(this: &Host, key: &str) -> Option<String>;
 

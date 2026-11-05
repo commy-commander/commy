@@ -1,0 +1,10 @@
+{
+  "name": "commy-file-store",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that keeps sealed copies of a Commy server's shared files in the owner's own R2 bucket",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "deploy": "wrangler deploy"
+  }
+}

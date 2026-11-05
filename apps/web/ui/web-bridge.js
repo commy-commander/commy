@@ -33,9 +33,9 @@
       const res = await fetch(path, init);
       return webReplyLine(res.status, await res.text());
     },
-    async fetchBytes(url) {
+    async fetchBytes(url, waitMs = WEB_PICTURE_WAIT_MS) {
       const stop = new AbortController();
-      const timer = setTimeout(() => stop.abort(), WEB_PICTURE_WAIT_MS);
+      const timer = setTimeout(() => stop.abort(), waitMs);
       try {
         const res = await fetch(url, { credentials: "omit", signal: stop.signal });
         return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
@@ -45,9 +45,21 @@
         clearTimeout(timer);
       }
     },
-    async putBytes(url, body) {
+    async hasBytes(url, waitMs = WEB_PICTURE_WAIT_MS) {
       const stop = new AbortController();
-      const timer = setTimeout(() => stop.abort(), WEB_PICTURE_STORE_MS);
+      const timer = setTimeout(() => stop.abort(), waitMs);
+      try {
+        const res = await fetch(url, { method: "HEAD", credentials: "omit", signal: stop.signal });
+        return res.ok;
+      } catch {
+        return false;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    async putBytes(url, body, waitMs = WEB_PICTURE_STORE_MS) {
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), waitMs);
       try {
         const res = await fetch(url, { method: "PUT", credentials: "omit", body: body.slice(), signal: stop.signal });
         return res.ok;

@@ -787,7 +787,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
-        tip_jar: s.tip_jar || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
+        tip_jar: s.tip_jar || null, file_store: s.file_store || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_off && (!s.tts_restricted || !mock.plainMember), tts_allowed: !s.tts_off, upload_limit_mb: s.upload_limit_mb || null,
@@ -1522,6 +1522,17 @@ async function mockInvoke(cmd, args = {}) {
         pet.level += 1;
         pet.next_level_xp = 3 * pet.level * pet.level;
       }
+      return null;
+    }
+    case "test_file_store": {
+      const url = cleanFileStore(args.url);
+      if (!url || !url.endsWith(".workers.dev")) throw "That address did not answer as Commy file storage";
+      return 31457280;
+    }
+    case "set_file_store": {
+      const url = args.url ? cleanFileStore(args.url) : null;
+      if (args.url && !url) throw FILE_STORE_INVALID;
+      mock.servers[args.serverId].file_store = url;
       return null;
     }
     case "set_tip_jar": {
@@ -11578,6 +11589,39 @@ function renderTipJarEditor(server) {
   $("tip-jar-remove").classList.toggle("hidden", !editable || !server.tip_jar);
 }
 
+function renderFileStoreEditor(server) {
+  const editable = Boolean(server.can_manage_server);
+  $("file-store-input").value = server.file_store || "";
+  $("file-store-input").disabled = !editable;
+  $("file-store-status").textContent = fileStoreStatus(server);
+  $("file-store-save").classList.toggle("hidden", !editable);
+  $("file-store-remove").classList.toggle("hidden", !editable || !server.file_store);
+}
+
+async function saveFileStore(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const typed = $("file-store-input").value.trim();
+  const url = remove || !typed ? null : cleanFileStore(typed);
+  if (!remove && typed && !url) return toast(FILE_STORE_INVALID);
+  const save = $("file-store-save");
+  save.disabled = true;
+  try {
+    if (url) {
+      $("file-store-status").textContent = "Checking the address...";
+      await invoke("test_file_store", { url });
+    }
+    await invoke("set_file_store", { serverId: server.id, url });
+    toast(url ? "File storage connected" : "Files here are peer to peer only again");
+    await refreshCurrentServer();
+    renderFileStoreEditor(state.currentServer);
+  } catch (err) {
+    $("file-store-status").textContent = String(err);
+  } finally {
+    save.disabled = false;
+  }
+}
+
 async function saveTipJar(remove) {
   const server = state.currentServer;
   if (!server) return;
@@ -11645,6 +11689,12 @@ function wireServerTagEditor() {
   $("pet-save").onclick = () => savePet(false);
   $("pet-release").onclick = () => savePet(true);
   $("pet-name").addEventListener("input", () => paintPetEditor());
+  $("file-store-save").onclick = () => saveFileStore(false);
+  $("file-store-remove").onclick = () => saveFileStore(true);
+  $("file-store-guide").onclick = () => openOutsideLink(FILE_STORE_GUIDE);
+  $("file-store-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") saveFileStore(false);
+  });
   $("tip-jar-save").onclick = () => saveTipJar(false);
   $("tip-jar-remove").onclick = () => saveTipJar(true);
   $("tip-jar-input").addEventListener("keydown", e => {
@@ -16390,7 +16440,7 @@ async function loadActivityVideo(run) {
   }
   $("activity-video-wait").classList.remove("hidden");
   try {
-    const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null });
+    const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: state.voiceServer ? state.voiceServer.id : null });
     const objectUrl = URL.createObjectURL(new Blob([bytes], { type: att.mime }));
     videoUrls.set(att.blob, objectUrl);
     if (activityUi.run && activityUi.run.id === run.id) video.src = objectUrl;
@@ -21944,6 +21994,8 @@ function openServerSettings(tab) {
   renderGameTagEditor(server);
   renderServerTagEditor(server);
   renderTipJarEditor(server);
+  $("tab-file-storage").classList.toggle("hidden", !server.can_manage_server);
+  if (server.can_manage_server) renderFileStoreEditor(server);
   renderPetEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
@@ -21963,6 +22015,7 @@ function openServerSettings(tab) {
   if (canBots) renderBotsPage(server);
   const allowed = {
     bots: canBots,
+    "file-storage": Boolean(server.can_manage_server),
     invites: canInvites,
     overview: true,
     discovery: true,

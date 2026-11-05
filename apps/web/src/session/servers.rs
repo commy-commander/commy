@@ -270,6 +270,7 @@ impl Session {
                 vec![client().act(server, |state, me, _, _| moderate::tts_allowed(state, me.perms, enabled))?]
             }
             "set_tip_jar" => vec![client().act(server, |state, me, _, _| commy_view::tip_jar::set_tip_jar(state, me.perms, args.url.as_deref()))?],
+            "set_file_store" => vec![client().act(server, |state, me, _, _| commy_view::file_store::set_file_store(state, me.perms, args.url.as_deref()))?],
             "set_pet" => {
                 let now = Utc::now().timestamp_millis();
                 let (name, color) = (args.name.as_deref(), args.color.as_deref().unwrap_or("white"));
