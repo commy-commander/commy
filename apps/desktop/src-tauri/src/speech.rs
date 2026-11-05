@@ -1,18 +1,17 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::sync::OnceLock;
 
-use commy_media::{ClipQueue, OutputHandle};
+use commy_media::ClipQueue;
 use serde::Serialize;
 
+use crate::device_out::{DeviceOut, Hearing};
 use crate::state::App;
 
 const RATE_RANGE: (f64, f64) = (0.5, 2.0);
 const PITCH_RANGE: (f64, f64) = (0.5, 2.0);
 const MAX_SPOKEN_CHARS: usize = 1000;
 const MAX_CLIP_BYTES: usize = 64 * 1024 * 1024;
-const IDLE_CLOSE_FRAMES: u32 = 300;
-const IDLE_CHECK: Duration = Duration::from_secs(1);
+const MAX_PROBLEM_CHARS: usize = 300;
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Voice {
@@ -28,52 +27,26 @@ pub struct Voices {
     pub voices: Vec<Voice>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Hearing {
-    device: Option<String>,
-    volume: f32,
-}
-
-impl Hearing {
-    fn of(app: &App) -> Self {
-        let voice = app.voice.lock().unwrap();
-        Self { device: voice.output_device.clone(), volume: voice.output_volume }
-    }
-}
-
-struct Output {
-    device: Option<String>,
-    id: u64,
-    _handle: OutputHandle,
-}
-
 struct SpeechOut {
-    queue: Arc<Mutex<ClipQueue>>,
-    output: Mutex<Option<Output>>,
+    device: DeviceOut<ClipQueue>,
     generation: AtomicU64,
-    opened: AtomicU64,
 }
 
 fn out() -> &'static SpeechOut {
     static OUT: OnceLock<SpeechOut> = OnceLock::new();
-    OUT.get_or_init(|| SpeechOut {
-        queue: Arc::new(Mutex::new(ClipQueue::new())),
-        output: Mutex::new(None),
-        generation: AtomicU64::new(0),
-        opened: AtomicU64::new(0),
-    })
+    OUT.get_or_init(|| SpeechOut { device: DeviceOut::new(ClipQueue::new()), generation: AtomicU64::new(0) })
 }
 
 impl SpeechOut {
     fn stop(&self) -> u64 {
-        let mut queue = self.queue.lock().unwrap();
+        let mut queue = self.device.source();
         queue.clear();
         self.generation.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     fn play(&'static self, expected: Option<u64>, hearing: &Hearing, samples: &[f32], rate: f32, append: bool) -> Result<(), String> {
         {
-            let mut queue = self.queue.lock().unwrap();
+            let mut queue = self.device.source();
             match expected {
                 Some(generation) if generation != self.generation.load(Ordering::SeqCst) => return Ok(()),
                 Some(_) => queue.clear(),
@@ -86,35 +59,7 @@ impl SpeechOut {
             queue.set_volume(hearing.volume);
             queue.push(samples, rate);
         }
-        self.open(hearing.device.clone())
-    }
-
-    fn open(&'static self, device: Option<String>) -> Result<(), String> {
-        let mut output = self.output.lock().unwrap();
-        if output.as_ref().is_some_and(|o| o.device == device) {
-            return Ok(());
-        }
-        output.take();
-        let handle = commy_media::start_playback(self.queue.clone(), device.clone(), None)
-            .map_err(|e| format!("could not open the speakers: {e}"))?;
-        let id = self.opened.fetch_add(1, Ordering::SeqCst) + 1;
-        *output = Some(Output { device, id, _handle: handle });
-        let _ = std::thread::Builder::new().name("speech-idle".into()).spawn(move || self.close_when_idle(id));
-        Ok(())
-    }
-
-    fn close_when_idle(&self, id: u64) {
-        loop {
-            std::thread::sleep(IDLE_CHECK);
-            let mut output = self.output.lock().unwrap();
-            if output.as_ref().map(|o| o.id) != Some(id) {
-                return;
-            }
-            if self.queue.lock().unwrap().idle_frames() >= IDLE_CLOSE_FRAMES {
-                output.take();
-                return;
-            }
-        }
+        self.device.open(hearing.device.clone())
     }
 }
 
@@ -131,7 +76,7 @@ fn spoken(text: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-fn pcm_samples(bytes: &[u8]) -> Vec<f32> {
+pub fn pcm_samples(bytes: &[u8]) -> Vec<f32> {
     bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
 }
 
@@ -163,6 +108,12 @@ pub fn speech_play(app: tauri::State<'_, App>, request: tauri::ipc::Request<'_>)
     let rate: f32 = header("x-commy-rate").and_then(|v| v.parse().ok()).ok_or("the speech audio has no sample rate")?;
     let append = header("x-commy-append") == Some("1");
     out().play(None, &Hearing::of(&app), &pcm_samples(bytes), rate, append)
+}
+
+#[tauri::command]
+pub fn speech_problem(message: String) {
+    let message: String = message.chars().take(MAX_PROBLEM_CHARS).collect();
+    tracing::warn!("could not read the message aloud: {message}");
 }
 
 #[tauri::command]
@@ -318,7 +269,7 @@ mod tests {
         assert!(second > first);
         let hearing = Hearing { device: None, volume: 1.0 };
         assert!(out().play(Some(first), &hearing, &[0.5; 480], 48_000.0, false).is_ok());
-        assert_eq!(out().queue.lock().unwrap().queued(), 0);
+        assert_eq!(out().device.source().queued(), 0);
     }
 
     #[cfg(not(windows))]

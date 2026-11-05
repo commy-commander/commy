@@ -41,9 +41,30 @@ function joinSoundToPlay({ joined, joinSounds, allowed, hearJoinSounds }) {
   return (joinSounds || {})[joined[0]] || null;
 }
 
+function voiceRosterChange(before, now) {
+  const joined = [...now].filter(id => !before.has(id));
+  const left = [...before].some(id => !now.has(id));
+  return { joined, left };
+}
+
+function monoSamples(channels) {
+  const list = Array.from(channels || []);
+  if (!list.length) return new Float32Array(0);
+  const length = Math.min(...list.map(c => c.length));
+  const out = new Float32Array(length);
+  for (const channel of list) for (let i = 0; i < length; i++) out[i] += channel[i] / list.length;
+  return out;
+}
+
+function soundLevel(volume) {
+  const n = Number(volume);
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     ALERT_SOUND_PREFIX, MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND, RING_GAP_MS,
     isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, joinSoundToPlay,
+    voiceRosterChange, monoSamples, soundLevel,
   };
 }

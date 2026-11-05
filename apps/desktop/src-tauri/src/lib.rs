@@ -18,6 +18,7 @@ mod deleted;
 mod devices;
 mod dm_sync;
 mod directory;
+mod device_out;
 mod doorbell;
 mod expressions;
 mod media_engine;
@@ -54,6 +55,7 @@ use commy_view::catalog;
 use commy_view::search;
 mod server_wake;
 mod settle;
+mod sounds;
 mod speech;
 #[cfg(desktop)]
 mod single_instance;
@@ -8409,6 +8411,10 @@ pub fn run() {
             speech::speech_speak,
             speech::speech_play,
             speech::speech_stop,
+            speech::speech_problem,
+            sounds::sound_output,
+            sounds::sound_play,
+            sounds::sound_stop,
             voice_pack::voice_pack_status,
             data_location::data_folder,
             data_location::storage_usage,
