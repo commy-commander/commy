@@ -23,9 +23,27 @@ pub fn decide(idle_secs: i64, timeout_secs: i64, presence: Presence, auto_idle: 
     AfkAction::None
 }
 
+pub fn at_launch(chosen: Presence) -> Option<Presence> {
+    (chosen == Presence::Online).then_some(Presence::Idle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launching_shows_idle_until_the_first_activity() {
+        assert_eq!(at_launch(Presence::Online), Some(Presence::Idle));
+        assert_eq!(decide(i64::MAX / 2, 600, Presence::Idle, true), AfkAction::None, "stays idle while nobody is at the computer");
+        assert_eq!(decide(3, 600, Presence::Idle, true), AfkAction::Restore, "voice activity brings them back");
+    }
+
+    #[test]
+    fn a_chosen_presence_is_kept_at_launch() {
+        for presence in [Presence::Idle, Presence::DoNotDisturb, Presence::Invisible, Presence::Offline] {
+            assert_eq!(at_launch(presence), None);
+        }
+    }
 
     #[test]
     fn stays_online_before_timeout() {

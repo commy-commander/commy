@@ -57,6 +57,8 @@ pub struct VoiceSettings {
     #[serde(default)]
     pub tray_prompt_seen: bool,
     #[serde(default)]
+    pub autostart_decided: bool,
+    #[serde(default)]
     pub tray_hint_seen: bool,
     #[serde(default = "default_app_icon")]
     pub app_icon: String,
@@ -163,6 +165,7 @@ impl Default for VoiceSettings {
             output_device: None,
             close_to_tray: true,
             tray_prompt_seen: false,
+            autostart_decided: false,
             tray_hint_seen: false,
             app_icon: default_app_icon(),
             tray_icon: default_tray_icon(),
@@ -568,9 +571,17 @@ impl App {
 
     pub fn persist_profile(&self) {
         let Some(dir) = self.data_dir() else { return };
-        if let Some(profile) = self.profile.lock().unwrap().as_ref() {
-            warn_unsaved("profile", crate::persist::save_profile(dir, profile));
+        if let Some(profile) = self.chosen_profile() {
+            warn_unsaved("profile", crate::persist::save_profile(dir, &profile));
         }
+    }
+
+    pub fn chosen_profile(&self) -> Option<UserProfile> {
+        let mut profile = self.profile.lock().unwrap().clone()?;
+        if self.auto_idle.load(std::sync::atomic::Ordering::Relaxed) {
+            profile.presence = commy_core::Presence::Online;
+        }
+        Some(profile)
     }
 
     pub fn update_voice(&self, edit: impl FnOnce(&mut VoiceSettings)) -> VoiceSettings {
@@ -669,6 +680,18 @@ mod tests {
         assert_eq!(app.servers.lock().unwrap()[&sid].identity_of(me), Some(adopted.public()));
         assert_eq!(crate::persist::load_profile(&dir).unwrap().identity, Some(adopted.public()));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn going_idle_on_its_own_is_never_saved_as_the_chosen_presence() {
+        let app = App::default();
+        let mut me = UserProfile::new("me");
+        me.presence = commy_core::Presence::Idle;
+        *app.profile.lock().unwrap() = Some(me);
+        assert_eq!(app.chosen_profile().unwrap().presence, commy_core::Presence::Idle);
+        app.auto_idle.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(app.chosen_profile().unwrap().presence, commy_core::Presence::Online);
+        assert_eq!(app.profile.lock().unwrap().as_ref().unwrap().presence, commy_core::Presence::Idle);
     }
 
     #[test]

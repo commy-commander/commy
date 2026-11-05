@@ -16,6 +16,13 @@ test("a plain message from a friend notifies out of the box", () => {
   assert.equal(shouldNotify({ level, presence: "online", focusedOnIt: false, isDm: false, mentioned: false }), true);
 });
 
+test("idle, appearing offline or tucked away in the tray still notifies out of the box", () => {
+  for (const presence of ["idle", "invisible"]) {
+    assert.equal(shouldNotify({ level: DEFAULT_NOTIFY_LEVEL, presence, focusedOnIt: false, isDm: false, mentioned: false }), true, presence);
+    assert.equal(shouldNotify({ level: DEFAULT_NOTIFY_LEVEL, presence, focusedOnIt: false, isDm: true, mentioned: true }), true, presence);
+  }
+});
+
 test("looking at the conversation or Do Not Disturb keeps it quiet", () => {
   assert.equal(shouldNotify({ level: "all", presence: "online", focusedOnIt: true, isDm: false, mentioned: true }), false);
   assert.equal(shouldNotify({ level: "all", presence: "do_not_disturb", focusedOnIt: false, isDm: true, mentioned: true }), false);
