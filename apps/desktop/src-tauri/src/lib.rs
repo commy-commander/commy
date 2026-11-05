@@ -3707,8 +3707,9 @@ async fn update_profile(
         None => None,
     };
     let edit = view::profile::ProfileEdit { display_name: view::profile::display_name(display_name), custom_status, presence, status_emoji };
+    let still_away = app.auto_idle.load(std::sync::atomic::Ordering::Relaxed) && presence == Presence::Idle;
     let profile = edit_profile(&app, |profile| view::profile::apply_edit(profile, edit))?;
-    app.auto_idle.store(false, std::sync::atomic::Ordering::Relaxed);
+    app.auto_idle.store(still_away, std::sync::atomic::Ordering::Relaxed);
     publish_profile(&app, &handle, &profile).await;
     entry_list::record_profile_edit(&app);
     entry_list::schedule(&handle);
@@ -6405,6 +6406,22 @@ async fn set_auto_presence(app: &App, handle: &tauri::AppHandle, presence: Prese
     let _ = handle.emit("profile-changed", &profile);
 }
 
+fn start_away(app: &App) {
+    let (me, presence) = {
+        let mut guard = app.profile.lock().unwrap();
+        let Some(profile) = guard.as_mut() else { return };
+        if let Some(away) = afk::at_launch(profile.presence) {
+            profile.presence = away;
+            app.auto_idle.store(true, std::sync::atomic::Ordering::Relaxed);
+            app.last_user_activity.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
+        (profile.id, profile.presence)
+    };
+    for state in app.servers.lock().unwrap().values_mut() {
+        let _ = state.apply(ServerEvent::PresenceUpdate { user: me, presence });
+    }
+}
+
 const ACTIVITY_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 
 async fn run_activity_watcher(handle: tauri::AppHandle) {
@@ -7564,7 +7581,24 @@ fn set_autostart(handle: tauri::AppHandle, enabled: bool) -> CmdResult<bool> {
     } else {
         launcher.disable().map_err(|e| e.to_string())?;
     }
+    handle.state::<App>().update_voice(|voice| voice.autostart_decided = true);
     Ok(launcher.is_enabled().unwrap_or(enabled))
+}
+
+#[cfg(desktop)]
+fn autostart_default_due(voice: &VoiceSettings, allowed: bool) -> bool {
+    allowed && !voice.autostart_decided && !voice.tray_prompt_seen
+}
+
+#[cfg(desktop)]
+fn start_with_computer_by_default(handle: &tauri::AppHandle) {
+    let due = autostart_default_due(&handle.state::<App>().voice.lock().unwrap(), instance::autostart_allowed_here());
+    if !due {
+        return;
+    }
+    if let Err(e) = set_autostart(handle.clone(), true) {
+        tracing::warn!("could not set Commy to start with the computer: {e}");
+    }
 }
 
 #[tauri::command]
@@ -7714,12 +7748,15 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
         *app.voice.lock().unwrap() = voice;
         app_icon::apply(&handle, Some(dir.as_path()), &app_choice, &tray_choice);
     }
+    #[cfg(desktop)]
+    start_with_computer_by_default(handle);
     {
         let mut servers = app.servers.lock().unwrap();
         for state in persist::load_servers(&dir) {
             servers.insert(state.server.id, state);
         }
     }
+    start_away(&app);
     *app.deleted.lock().unwrap() = deleted::DeletedServers::load(&dir, chrono::Utc::now().timestamp_millis());
     let mut awaiting = persist::load_awaiting(&dir);
     {
@@ -8484,6 +8521,18 @@ mod hygiene_tests {
         assert!(cleaned.ends_with(".jpeg"));
         let no_ext = safe_file_name(&"y".repeat(300));
         assert_eq!(no_ext.chars().count(), MAX_FILE_NAME_CHARS);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn a_new_install_starts_with_the_computer_unless_someone_already_chose() {
+        let fresh = VoiceSettings::default();
+        assert!(autostart_default_due(&fresh, true));
+        assert!(!autostart_default_due(&fresh, false), "test builds and bench copies never start with the computer");
+        let prompted = VoiceSettings { tray_prompt_seen: true, ..VoiceSettings::default() };
+        assert!(!autostart_default_due(&prompted, true), "the choice made in the tray prompt stays");
+        let decided = VoiceSettings { autostart_decided: true, ..VoiceSettings::default() };
+        assert!(!autostart_default_due(&decided, true), "a choice made in Settings stays");
     }
 }
 

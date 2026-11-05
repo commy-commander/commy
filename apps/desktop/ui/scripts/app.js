@@ -4659,8 +4659,14 @@ async function markChannelsRead(serverId, channelIds) {
   } catch {}
 }
 
+let windowFocused = true;
+
+if (IS_TAURI && window.__TAURI__.window) {
+  window.__TAURI__.window.getCurrentWindow().onFocusChanged(({ payload }) => { windowFocused = Boolean(payload); }).catch(() => {});
+}
+
 function appFocused() {
-  return document.visibilityState === "visible" && document.hasFocus();
+  return windowFocused && document.visibilityState === "visible" && document.hasFocus();
 }
 
 function phoneShowing() {
