@@ -112,14 +112,6 @@ pub fn load_dms(dir: &Path) -> Option<DmStore> {
     read_json(&dir.join("dms.json"))
 }
 
-pub fn save_integrations(dir: &Path, creds: &crate::igdb::IgdbCredentials) -> Result<()> {
-    write_json(&dir.join("integrations.json"), creds)
-}
-
-pub fn load_integrations(dir: &Path) -> Option<crate::igdb::IgdbCredentials> {
-    read_json(&dir.join("integrations.json"))
-}
-
 pub fn save_safety(dir: &Path, json: &[u8]) -> Result<()> {
     write_json_bytes(&dir.join("safety.json"), json)
 }

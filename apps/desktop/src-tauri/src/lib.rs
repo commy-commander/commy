@@ -3338,6 +3338,12 @@ fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEv
         if state.server.file_store.is_some() {
             events.push(ServerEvent::FileStoreSet { server: sid, url: state.server.file_store.clone() });
         }
+        if state.server.gif_key.is_some() {
+            events.push(ServerEvent::GifKeySet { server: sid, gifs: state.server.gif_key.clone() });
+        }
+        if state.server.game_db.is_some() {
+            events.push(ServerEvent::GameDbSet { server: sid, games: state.server.game_db.clone() });
+        }
         if state.server.pet.is_some() {
             events.push(ServerEvent::PetSet { server: sid, pet: state.server.pet.clone() });
         }
@@ -6544,12 +6550,7 @@ async fn enrich_activity(app: &tauri::State<'_, App>, activity: Option<String>) 
 }
 
 async fn resolve_game(app: &tauri::State<'_, App>, name: &str) -> Option<igdb::GameHit> {
-    let creds = app.igdb_creds.lock().unwrap().clone();
-    if creds.configured() {
-        app.igdb.lock().await.resolve(&app.http, &creds, name).await
-    } else {
-        resolve_game_via_account(app, name).await
-    }
+    resolve_game_via_account(app, name).await
 }
 
 const MAX_GAME_NAME_CHARS: usize = 128;
@@ -6577,63 +6578,62 @@ async fn resolve_game_via_account(app: &tauri::State<'_, App>, name: &str) -> Op
     hit
 }
 
-#[derive(serde::Serialize)]
-struct IntegrationsView {
-    igdb_client_id: String,
-    igdb_configured: bool,
-}
-
 #[tauri::command]
-fn get_integrations(app: tauri::State<'_, App>) -> IntegrationsView {
-    let creds = app.igdb_creds.lock().unwrap();
-    IntegrationsView { igdb_client_id: creds.client_id.clone(), igdb_configured: creds.configured() }
-}
-
-#[tauri::command]
-async fn set_igdb_credentials(
+async fn set_game_db(
     app: tauri::State<'_, App>,
-    client_id: String,
+    handle: tauri::AppHandle,
+    server_id: String,
+    client_id: Option<String>,
     client_secret: Option<String>,
 ) -> CmdResult<Vec<igdb::GameHit>> {
-    let mut creds = app.igdb_creds.lock().unwrap().clone();
-    creds.client_id = client_id.trim().to_string();
-    if let Some(secret) = client_secret.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
-        creds.client_secret = secret;
-    }
-    if creds.client_id.is_empty() {
-        *app.igdb_creds.lock().unwrap() = igdb::IgdbCredentials::default();
-        app.igdb.lock().await.reset();
-        if let Some(dir) = app.data_dir() {
-            let _ = persist::save_integrations(dir, &igdb::IgdbCredentials::default());
-        }
-        return Ok(Vec::new());
-    }
-    if !creds.configured() {
-        return Err("enter both the client id and the client secret".into());
-    }
-    let sample = {
-        let mut client = app.igdb.lock().await;
-        client.reset();
-        client.search(&app.http, &creds, "Portal 2").await?
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let login = managed(&app, sid, me.id, |state, perms| {
+        view::search_keys::set_game_db(state, perms, None)?;
+        view::search_keys::game_db_login(state, client_id.as_deref(), client_secret.as_deref())
+    })?;
+    let sample = match &login {
+        Some(login) => igdb::IgdbClient::default().search(&app.http, &igdb::IgdbCredentials::of(login), "Portal 2").await?,
+        None => Vec::new(),
     };
-    *app.igdb_creds.lock().unwrap() = creds.clone();
-    if let Some(dir) = app.data_dir() {
-        persist::save_integrations(dir, &creds).map_err(err_to_string)?;
-    }
+    let event = managed(&app, sid, me.id, |state, perms| view::search_keys::set_game_db(state, perms, login))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    let _ = handle.emit("servers-changed", ());
     Ok(sample)
 }
 
 #[tauri::command]
-async fn search_games(app: tauri::State<'_, App>, query: String) -> CmdResult<Vec<igdb::GameHit>> {
-    let creds = app.igdb_creds.lock().unwrap().clone();
-    if !creds.configured() {
-        if query.trim().chars().count() < 2 {
-            return Ok(Vec::new());
-        }
-        let hits = account::server_search::<igdb::GameHit>(&app, "games", query.trim()).await?;
-        return Ok(igdb::safe_games(hits.unwrap_or_default()));
+async fn set_gif_key(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    server_id: String,
+    provider: Option<String>,
+    key: Option<String>,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::search_keys::set_gif_key(state, perms, provider.as_deref(), key.as_deref()))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+fn game_db_of(app: &App, server: Option<&str>) -> Option<igdb::IgdbCredentials> {
+    let sid: ServerId = server?.parse().ok()?;
+    let servers = app.servers.lock().unwrap();
+    servers.get(&sid)?.server.game_db.as_ref().map(igdb::IgdbCredentials::of)
+}
+
+#[tauri::command]
+async fn search_games(app: tauri::State<'_, App>, query: String, server_id: Option<String>) -> CmdResult<Vec<igdb::GameHit>> {
+    if let Some(creds) = game_db_of(&app, server_id.as_deref()) {
+        return app.igdb.lock().await.search(&app.http, &creds, &query).await;
     }
-    app.igdb.lock().await.search(&app.http, &creds, &query).await
+    if query.trim().chars().count() < 2 {
+        return Ok(Vec::new());
+    }
+    let hits = account::server_search::<igdb::GameHit>(&app, "games", query.trim()).await?;
+    Ok(igdb::safe_games(hits.unwrap_or_default()))
 }
 
 #[tauri::command]
@@ -7778,9 +7778,6 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
     if let Some(dms) = persist::load_dms(&dir) {
         *app.dms.lock().unwrap() = dms;
     }
-    if let Some(creds) = persist::load_integrations(&dir) {
-        *app.igdb_creds.lock().unwrap() = creds;
-    }
     stream_deck::load(&app, &handle);
     if let Some(storage) = persist::load_storage(&dir) {
         *app.storage.lock().unwrap() = storage;
@@ -8224,8 +8221,8 @@ pub fn run() {
             clear_timeout,
             set_user_voice,
             set_role_banner,
-            get_integrations,
-            set_igdb_credentials,
+            set_game_db,
+            set_gif_key,
             search_games,
             game_details,
             gif_search,

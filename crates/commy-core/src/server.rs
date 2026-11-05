@@ -426,6 +426,10 @@ pub struct Server {
     pub tts_off: bool,
     #[serde(default)]
     pub file_store: Option<String>,
+    #[serde(default)]
+    pub gif_key: Option<crate::search_keys::GifKey>,
+    #[serde(default)]
+    pub game_db: Option<crate::search_keys::GameDbKey>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -522,6 +526,8 @@ impl Server {
             upload_limit_since: 0,
             tts_off: false,
             file_store: None,
+            gif_key: None,
+            game_db: None,
         }
     }
 

@@ -28,6 +28,8 @@ const AUDIT_GROUP_OF = {
   server_tag: "server",
   tip_jar: "server",
   file_store: "server",
+  gif_key: "server",
+  game_db: "server",
   server_pet: "server",
   upload_limit: "server",
   text_to_speech: "server",
@@ -141,6 +143,8 @@ function describeAudit(entry) {
     case "text_to_speech": return [detail === "on" ? "turned on text-to-speech messages" : "turned off text-to-speech messages"];
     case "tip_jar": return detail ? ["set the tip jar to ", auditStrong(tipJarText(detail))] : ["removed the tip jar"];
     case "file_store": return detail ? ["connected file storage at ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["turned off file storage"];
+    case "gif_key": return detail ? ["gave GIF search a ", auditStrong(detail === "giphy" ? "GIPHY" : "KLIPY"), " key"] : ["removed the GIF search key"];
+    case "game_db": return detail === "set" ? ["connected the IGDB game database"] : ["disconnected the IGDB game database"];
     case "join_approval": return [detail === "on" ? "asked new people to wait until a moderator lets them in" : "let new people join straight away"];
     case "join_admit": return ["let ", member, " in"];
     case "join_turn_away": return ["turned away ", member];

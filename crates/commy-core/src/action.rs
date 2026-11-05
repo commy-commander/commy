@@ -156,6 +156,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::UploadLimitSet { .. } => "upload_limit".into(),
         E::TtsAllowed { .. } => "tts".into(),
         E::FileStoreSet { .. } => "file_store".into(),
+        E::GifKeySet { .. } => "gif_key".into(),
+        E::GameDbSet { .. } => "game_db".into(),
         E::PetSet { .. } => "pet".into(),
         E::PetCare { user, care, .. } => format!("pet_care:{user}:{}", crate::pet::care_name(*care)),
         E::DriveAdd { item, .. } => format!("drive:{}", item.id),
@@ -361,6 +363,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::UploadLimitSet { .. }
         | E::TtsAllowed { .. }
         | E::FileStoreSet { .. }
+        | E::GifKeySet { .. }
+        | E::GameDbSet { .. }
         | E::PetSet { .. } => allows(Permissions::MANAGE_SERVER),
         E::PetCare { .. } => member && actor(event) == Some(by) && server.pet.is_some(),
         E::DriveAdd { item, .. } => {

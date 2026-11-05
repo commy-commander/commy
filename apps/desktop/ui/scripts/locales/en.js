@@ -41,7 +41,7 @@ const LOCALE_EN = {
   "settings.intro.appearance": "Theme, language, chat text and the Commy icon.",
   "settings.intro.accessibility": "Motion, colour and contrast.",
   "settings.intro.keybinds": "Keys that work in any app, and shortcuts inside Commy.",
-  "settings.intro.integrations": "Connect Commy to GIF search, game info and more.",
+  "settings.intro.integrations": "Control Commy from other apps and devices on this computer.",
   "settings.intro.storage": "How much space Commy uses on this device, where it keeps it, and how long messages stay.",
   "settings.intro.updates": "How Commy starts, and how it stays up to date.",
   "settings.intro.diagnostics": "Check your connection, and save logs when something goes wrong.",

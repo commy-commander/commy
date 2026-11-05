@@ -22,6 +22,10 @@ pub struct IgdbCredentials {
 }
 
 impl IgdbCredentials {
+    pub fn of(login: &commy_core::search_keys::GameDbKey) -> Self {
+        Self { client_id: login.client_id.clone(), client_secret: login.client_secret.clone() }
+    }
+
     pub fn configured(&self) -> bool {
         !self.client_id.trim().is_empty() && !self.client_secret.trim().is_empty()
     }
@@ -116,6 +120,7 @@ fn to_hit(game: ApiGame) -> Option<GameHit> {
 
 #[derive(Default)]
 pub struct IgdbClient {
+    client: String,
     token: Option<(String, Instant)>,
     last_request: Option<Instant>,
     searches: HashMap<String, Vec<GameHit>>,
@@ -123,12 +128,6 @@ pub struct IgdbClient {
 }
 
 impl IgdbClient {
-    pub fn reset(&mut self) {
-        self.token = None;
-        self.searches.clear();
-        self.resolved.clear();
-    }
-
     async fn pace(&mut self) {
         if let Some(last) = self.last_request {
             if let Some(wait) = MIN_REQUEST_GAP.checked_sub(last.elapsed()) {
@@ -169,6 +168,11 @@ impl IgdbClient {
         if !creds.configured() || query.chars().count() < 2 {
             return Ok(Vec::new());
         }
+        if self.client != creds.client_id {
+            self.client = creds.client_id.clone();
+            self.token = None;
+            self.searches.clear();
+        }
         let key = normalize(query);
         if let Some(hits) = self.searches.get(&key) {
             return Ok(hits.clone());
@@ -201,19 +205,6 @@ impl IgdbClient {
         }
         self.searches.insert(key, hits.clone());
         Ok(hits)
-    }
-
-    pub async fn resolve(&mut self, http: &reqwest::Client, creds: &IgdbCredentials, name: &str) -> Option<GameHit> {
-        let key = normalize(name);
-        if let Some(hit) = self.resolved.get(&key) {
-            return hit.clone();
-        }
-        let hit = match self.search(http, creds, name).await {
-            Ok(hits) => best_match(name, &hits).cloned(),
-            Err(_) => return None,
-        };
-        self.resolved.insert(key, hit.clone());
-        hit
     }
 }
 

@@ -787,7 +787,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
-        tip_jar: s.tip_jar || null, file_store: s.file_store || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
+        tip_jar: s.tip_jar || null, file_store: s.file_store || null, gif_key: s.gif_key || null, game_db: s.game_db || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_off && (!s.tts_restricted || !mock.plainMember), tts_allowed: !s.tts_off, upload_limit_mb: s.upload_limit_mb || null,
@@ -1598,7 +1598,6 @@ async function mockInvoke(cmd, args = {}) {
     case "set_overlay_settings": mock.overlay = args.settings; return mock.overlay;
     case "overlay_hotkey_problems": return [];
     case "preview_overlay": return null;
-    case "get_integrations": return mock.integrations || { igdb_client_id: "", igdb_configured: false };
     case "get_stream_deck": return mock.streamDeck || (mock.streamDeck = { enabled: false, status: "off", decks: [] });
     case "set_stream_deck_enabled":
       mock.streamDeck = { ...(mock.streamDeck || { decks: [] }), enabled: args.enabled, status: args.enabled ? "listening" : "off" };
@@ -1607,8 +1606,11 @@ async function mockInvoke(cmd, args = {}) {
       mock.streamDeck.decks = mock.streamDeck.decks.filter(d => d.id !== args.id);
       return mock.streamDeck;
     case "answer_stream_deck_pairing": return null;
-    case "set_igdb_credentials":
-      mock.integrations = { igdb_client_id: args.clientId, igdb_configured: Boolean(args.clientId) };
+    case "set_gif_key":
+      mock.servers[args.serverId].gif_key = args.key ? { provider: args.provider, key: args.key } : null;
+      return null;
+    case "set_game_db":
+      mock.servers[args.serverId].game_db = args.clientId ? { client_id: args.clientId } : null;
       return args.clientId ? [{ id: 72, name: "Portal 2", cover: "co1rs4", year: 2011 }] : [];
     case "gif_search": return null;
     case "game_details":
@@ -10142,14 +10144,6 @@ function viaAccountServer(url) {
   return `${window.__TAURI__.core.convertFileSrc("", "commy-media")}?u=${encodeURIComponent(url)}`;
 }
 
-let integrations = { igdb_client_id: "", igdb_configured: false };
-
-async function loadIntegrations() {
-  try {
-    integrations = await invoke("get_integrations");
-  } catch {}
-}
-
 function igdbCover(imageId, size = "t_cover_small") {
   return /^[A-Za-z0-9]{1,32}$/.test(imageId || "") ? viaAccountServer(`https://images.igdb.com/igdb/image/upload/${size}/${imageId}.jpg`) : null;
 }
@@ -10305,27 +10299,76 @@ function renderPlayingGroup(list, playing) {
   list.appendChild(group);
 }
 
-function renderIntegrations() {
-  $("igdb-client-id").value = integrations.igdb_client_id || "";
-  $("igdb-client-secret").value = "";
-  $("igdb-client-secret").placeholder = integrations.igdb_configured ? "Saved (leave blank to keep)" : "";
-  $("igdb-state").textContent = integrations.igdb_configured ? "Connected" : "";
-  $("igdb-state").classList.toggle("on", integrations.igdb_configured);
-  $("igdb-remove").classList.toggle("hidden", !integrations.igdb_configured);
-  $("igdb-result").textContent = "";
+function syncServerGifHelp() {
+  const help = $("server-gif-help");
+  help.innerHTML = GIF_HELP[$("server-gif-provider").value] || "";
+  for (const a of help.querySelectorAll("a[data-href]")) wireExternalLink(a, a.dataset.href);
 }
 
-async function saveIgdb(remove) {
-  const result = $("igdb-result");
+function renderServerGifEditor(server) {
+  const own = server.gif_key;
+  $("server-gif-provider").value = own && GIF_PROVIDERS.has(own.provider) ? own.provider : "klipy";
+  $("server-gif-key").value = own ? own.key : "";
+  $("server-gif-state").textContent = own ? "Connected" : "";
+  $("server-gif-state").classList.toggle("on", Boolean(own));
+  $("server-gif-remove").classList.toggle("hidden", !own);
+  $("server-gif-result").textContent = "";
+  syncServerGifHelp();
+}
+
+async function saveServerGifKey(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const result = $("server-gif-result");
+  result.className = "integration-result";
+  const provider = $("server-gif-provider").value;
+  const key = remove ? "" : $("server-gif-key").value.trim();
+  try {
+    if (key) {
+      result.textContent = "Checking the key...";
+      await searchGifs("hello", { provider, key });
+    }
+    await invoke("set_gif_key", { serverId: server.id, provider, key: key || null });
+    await refreshCurrentServer();
+    renderServerGifEditor(state.currentServer);
+    syncGifButton();
+    if (key) {
+      result.textContent = "Working";
+      result.classList.add("ok");
+    } else {
+      toast("GIF search here uses the built-in search again");
+    }
+  } catch (e) {
+    result.textContent = e && e.message ? `That key did not work: ${e.message}` : String(e);
+    result.classList.add("bad");
+  }
+}
+
+function renderGameDbEditor(server) {
+  const login = server.game_db;
+  $("game-db-client-id").value = login ? login.client_id : "";
+  $("game-db-client-secret").value = "";
+  $("game-db-client-secret").placeholder = login ? "Saved (leave blank to keep)" : "";
+  $("game-db-state").textContent = login ? "Connected" : "";
+  $("game-db-state").classList.toggle("on", Boolean(login));
+  $("game-db-remove").classList.toggle("hidden", !login);
+  $("game-db-result").textContent = "";
+}
+
+async function saveGameDb(remove) {
+  const server = state.currentServer;
+  if (!server) return;
+  const result = $("game-db-result");
   result.className = "integration-result";
   result.textContent = remove ? "" : "Checking with Twitch and IGDB...";
   try {
-    const sample = await invoke("set_igdb_credentials", {
-      clientId: remove ? "" : $("igdb-client-id").value,
-      clientSecret: remove ? null : $("igdb-client-secret").value || null,
+    const sample = await invoke("set_game_db", {
+      serverId: server.id,
+      clientId: remove ? null : $("game-db-client-id").value,
+      clientSecret: remove ? null : $("game-db-client-secret").value || null,
     });
-    await loadIntegrations();
-    renderIntegrations();
+    await refreshCurrentServer();
+    renderGameDbEditor(state.currentServer);
     if (!remove) {
       result.textContent = sample.length ? `Working: found ${sample[0].name}` : "Connected";
       result.classList.add("ok");
@@ -10441,7 +10484,7 @@ function queueGameSearch(query) {
     const seq = ++gameSearchSeq;
     let hits = [];
     try {
-      hits = await invoke("search_games", { query });
+      hits = await invoke("search_games", { query, serverId: state.currentServer ? state.currentServer.id : null });
     } catch (e) {
       hits = [];
     }
@@ -17171,6 +17214,7 @@ async function selectServer(serverId) {
   state.historyAnchor = null;
   setViewMode("server");
   state.currentDm = null;
+  syncGifButton();
   if (state.currentServer.group) rememberSwitcherRecent(`group:${serverId}`);
   if (state.voiceServer && state.voiceServer.id === serverId) state.voiceServer.activities_enabled = Boolean(state.currentServer.activities_enabled);
   const firstText = state.currentServer.channels.find(c => c.kind === "text" && c.can_view !== false);
@@ -17328,6 +17372,7 @@ async function enterDmMode() {
   setViewMode("dm");
   state.currentServer = null;
   state.currentChannel = null;
+  syncGifButton();
   renderServerRail();
   await refreshPeople();
   const threads = await renderDmThreads();
@@ -18140,10 +18185,12 @@ function syncGifButton() {
 }
 
 function gifSettings() {
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(GIF_KEY) || "{}"); } catch {}
-  if (!GIF_PROVIDERS.has(saved.provider)) saved = { provider: "klipy", key: "" };
-  return { provider: "klipy", key: "", ...saved };
+  const own = state.currentServer && state.currentServer.gif_key;
+  return own && GIF_PROVIDERS.has(own.provider) && own.key ? { provider: own.provider, key: own.key } : { provider: "klipy", key: "" };
+}
+
+function forgetDeviceGifKey() {
+  try { localStorage.removeItem(GIF_KEY); } catch {}
 }
 
 function klipyUrl(file, sizes) {
@@ -18245,16 +18292,18 @@ async function renderGifResults(query, view = composerGifs) {
     if (token !== view.token) return;
     const note = el("div", "gif-note");
     if (e.message === "no-key") {
-      note.textContent = "Your account server does not offer GIF search. Add your own GIF API key to search. ";
-      const link = el("button", "btn-link", "Open GIF settings");
-      link.onclick = () => {
-        view.close();
-        openUserSettings("integrations");
-      };
-      note.appendChild(link);
+      note.textContent = "Your account server does not offer GIF search. Someone who manages this server can add a GIF key in Server Settings, then Integrations. ";
+      if (state.currentServer && state.currentServer.can_manage_server) {
+        const link = el("button", "btn-link", "Open GIF settings");
+        link.onclick = () => {
+          view.close();
+          openServerSettings("gif-search");
+        };
+        note.appendChild(link);
+      }
     } else {
       note.textContent = settings.key
-        ? `Could not load GIFs: ${e.message}. Check your API key in Settings, then Integrations. `
+        ? `Could not load GIFs: ${e.message}. Check this server's GIF key in Server Settings, then Integrations. `
         : `Could not load GIFs: ${e.message}. `;
       const retry = el("button", "btn-link", "Try again");
       retry.onclick = () => renderGifResults($(view.search).value, view);
@@ -20303,39 +20352,10 @@ function wireEvents() {
       closeGifPicker();
     }
   });
-  const syncGifHelp = () => {
-    const intro = serverHasGifs()
-      ? "Optional: GIF search works through your Commy account without a key."
-      : `${account.server_host || "Your account server"} does not offer GIF search, so add a key of your own to search.`;
-    $("gif-key-help").innerHTML = GIF_HELP[$("gif-provider").value] || "";
-    $("gif-key-help").prepend(`${intro} `);
-    for (const a of $("gif-key-help").querySelectorAll("a[data-href]")) {
-      a.onclick = () => invoke("open_url", { url: a.dataset.href }).catch(() => window.open(a.dataset.href, "_blank"));
-    }
-  };
-  $("gif-provider").addEventListener("change", syncGifHelp);
-  $("gif-key-save").onclick = () => {
-    const settings = { provider: $("gif-provider").value, key: $("gif-key").value.trim() };
-    try { localStorage.setItem(GIF_KEY, JSON.stringify(settings)); } catch {}
-    toast(settings.key ? "GIF key saved" : "GIF key removed");
-    syncGifButton();
-  };
-  $("gif-key-test").onclick = async () => {
-    if (!$("gif-key").value.trim()) return toast("Paste a key first");
-    try {
-      const gifs = await searchGifs("hello", { provider: $("gif-provider").value, key: $("gif-key").value.trim() });
-      toast(gifs.length ? "The key works" : "The key works, but no results came back");
-    } catch (e) {
-      toast(e.message === "no-key" ? "Paste a key first" : `That key did not work: ${e.message}`);
-    }
-  };
-  const fillGifSettings = () => {
-    const s = gifSettings();
-    $("gif-provider").value = s.provider;
-    $("gif-key").value = s.key;
-    syncGifHelp();
-  };
-  fillGifSettings();
+  forgetDeviceGifKey();
+  $("server-gif-provider").addEventListener("change", () => syncServerGifHelp());
+  $("server-gif-save").onclick = () => saveServerGifKey(false);
+  $("server-gif-remove").onclick = () => saveServerGifKey(true);
 
   for (const btn of $("server-menu").querySelectorAll(".ctx-radio")) {
     btn.onclick = () => {
@@ -20450,14 +20470,14 @@ function wireEvents() {
   });
   $("game-tag-input").addEventListener("input", e => queueGameSearch(e.target.value));
   $("game-tag-input").addEventListener("blur", () => setTimeout(closeGameSearch, 150));
-  $("igdb-save").onclick = () => saveIgdb(false);
+  $("game-db-save").onclick = () => saveGameDb(false);
   $("stream-deck-enabled").onchange = e => setStreamDeckEnabled(e.target.checked);
   $("stream-deck-allow").onclick = () => {
     answerStreamDeckPairing(true);
     hideModals();
   };
   $("stream-deck-deny").onclick = hideModals;
-  $("igdb-remove").onclick = () => saveIgdb(true);
+  $("game-db-remove").onclick = () => saveGameDb(true);
   for (const link of document.querySelectorAll(".integration-steps a[data-href]")) {
     wireExternalLink(link, link.dataset.href);
   }
@@ -21818,12 +21838,8 @@ function openUserSettings(tab) {
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();
   if (!document.documentElement.classList.contains("web-app")) loadDebugLogStatus();
-  loadIntegrations().then(renderIntegrations);
   loadStreamDeck().then(renderStreamDeck);
-  loadAccount().then(() => {
-    renderAccountSettings();
-    $("gif-provider").dispatchEvent(new Event("change"));
-  });
+  loadAccount().then(renderAccountSettings);
   $("notify-level").value = notifyPrefs().level;
   $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
   renderTtsSettings();
@@ -22089,7 +22105,13 @@ function openServerSettings(tab) {
   renderServerTagEditor(server);
   renderTipJarEditor(server);
   $("tab-file-storage").classList.toggle("hidden", !server.can_manage_server);
-  if (server.can_manage_server) renderFileStoreEditor(server);
+  $("tab-gif-search").classList.toggle("hidden", !server.can_manage_server);
+  $("tab-game-database").classList.toggle("hidden", !server.can_manage_server);
+  if (server.can_manage_server) {
+    renderFileStoreEditor(server);
+    renderServerGifEditor(server);
+    renderGameDbEditor(server);
+  }
   renderPetEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
   $("tab-reports").classList.toggle("hidden", !isOwner);
@@ -22110,6 +22132,8 @@ function openServerSettings(tab) {
   const allowed = {
     bots: canBots,
     "file-storage": Boolean(server.can_manage_server),
+    "gif-search": Boolean(server.can_manage_server),
+    "game-database": Boolean(server.can_manage_server) && !inBrowserApp(),
     invites: canInvites,
     overview: true,
     discovery: true,
@@ -22976,6 +23000,7 @@ async function refreshCurrentServer() {
   } catch {
     return;
   }
+  syncGifButton();
   renderServerRail();
   renderMembers();
   renderChannels();
@@ -23125,7 +23150,6 @@ async function boot() {
   loadUpdateStatus();
   loadSpeechVoices();
   loadVoicePack();
-  await loadIntegrations();
   await loadAccount();
   if (!account.signed_in) {
     showSignIn();

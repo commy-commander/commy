@@ -229,7 +229,6 @@ pub struct App {
     pub last_game: Mutex<Option<(u32, String)>>,
     pub account: Mutex<crate::account::AccountState>,
     pub sign_in: Mutex<Option<crate::account::PendingSignIn>>,
-    pub igdb_creds: Mutex<crate::igdb::IgdbCredentials>,
     pub stream_deck: Mutex<crate::stream_deck::StreamDeck>,
     pub igdb: tokio::sync::Mutex<crate::igdb::IgdbClient>,
     pub http: reqwest::Client,
@@ -294,7 +293,6 @@ impl Default for App {
             last_game: Mutex::new(None),
             account: Mutex::new(crate::account::AccountState::default()),
             sign_in: Mutex::new(None),
-            igdb_creds: Mutex::new(crate::igdb::IgdbCredentials::default()),
             stream_deck: Mutex::new(crate::stream_deck::StreamDeck::default()),
             igdb: tokio::sync::Mutex::new(crate::igdb::IgdbClient::default()),
             http: reqwest::Client::builder()
