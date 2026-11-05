@@ -19,6 +19,8 @@ const WEB_DEFAULTS = {
   get_stream_deck: { enabled: false, status: "off", decks: [] },
   speech_voices: { native: false, voices: [] },
   voice_pack_status: { available: false, voices: [] },
+  sound_output: false,
+  speech_problem: null,
   get_awaited: 0,
   set_window_title: null,
   set_unread: null,

@@ -54,13 +54,20 @@ test("settings read back with safe defaults", () => {
   assert.equal(DEFAULT_TTS_MODE, "open");
   assert.deepEqual(readTtsPrefs("not json"), defaults);
   assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "all", rate: 1.5 })), { ...defaults, mode: "all", rate: 1.5 });
-  assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "never" })), { ...defaults, mode: "never" });
+  assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "never", rate: 1, pitch: 1, voice: null })), { ...defaults, mode: "never" });
   assert.deepEqual(readTtsPrefs(JSON.stringify({ mode: "loud", rate: 9, pitch: -3 })), { ...defaults, rate: TTS_RATE_MAX, pitch: TTS_PITCH_MIN });
   assert.deepEqual(readTtsPrefs(JSON.stringify({ voice: "zira", pitch: 1.4 })), { ...defaults, voice: "zira", pitch: 1.4 });
   assert.deepEqual(readTtsPrefs(JSON.stringify({ voice: "" })), defaults);
   assert.deepEqual(readTtsPrefs(JSON.stringify({ voice: 7 })), defaults);
   assert.deepEqual(TTS_MODES.map(m => m.id), ["never", "open", "all"]);
   assert.ok(TTS_MODES.every(m => m.label));
+});
+
+test("Never saved by builds that defaulted to it moves to the current default", () => {
+  assert.equal(readTtsPrefs(JSON.stringify({ mode: "never", rate: 1 })).mode, DEFAULT_TTS_MODE);
+  assert.equal(readTtsPrefs(JSON.stringify({ mode: "never", rate: 1.2 })).rate, 1.2);
+  assert.equal(readTtsPrefs(JSON.stringify({ mode: "never", rate: 1, pitch: 1, voice: null })).mode, "never");
+  assert.equal(readTtsPrefs(JSON.stringify({ mode: "all", rate: 1 })).mode, "all");
 });
 
 test("the pitch stays within what a voice can do", () => {

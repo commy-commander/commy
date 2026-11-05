@@ -53,7 +53,9 @@ function readTtsPrefs(raw) {
   } catch {
     parsed = null;
   }
-  const mode = parsed && TTS_MODES.some(m => m.id === parsed.mode) ? parsed.mode : DEFAULT_TTS_MODE;
+  const savedByAnOlderDefault = parsed && parsed.mode === "never" && !Object.prototype.hasOwnProperty.call(parsed, "pitch");
+  const known = parsed && TTS_MODES.some(m => m.id === parsed.mode) && !savedByAnOlderDefault;
+  const mode = known ? parsed.mode : DEFAULT_TTS_MODE;
   const rate = clampRate(parsed && parsed.rate);
   const pitch = clampPitch(parsed && parsed.pitch);
   const voice = parsed && typeof parsed.voice === "string" && parsed.voice ? parsed.voice : null;

@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 const {
   MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND,
   isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, joinSoundToPlay,
+  voiceRosterChange, monoSamples, soundLevel,
 } = require("../scripts/alert-sounds.js");
 
 test("your own sounds have their own ids that never clash with built-in ones", () => {
@@ -51,4 +52,26 @@ test("a member's join sound plays only when one person joins and both sides allo
   assert.equal(joinSoundToPlay({ ...base, joined: ["a"], allowed: false }), null);
   assert.equal(joinSoundToPlay({ ...base, joined: ["a"], hearJoinSounds: false }), null);
   assert.equal(joinSoundToPlay({ ...base, joined: ["a"], joinSounds: undefined }), null);
+});
+
+test("a voice roster change names who joined and whether anyone left", () => {
+  assert.deepEqual(voiceRosterChange(new Set(["a"]), new Set(["a", "b"])), { joined: ["b"], left: false });
+  assert.deepEqual(voiceRosterChange(new Set(["a", "b"]), new Set(["b"])), { joined: [], left: true });
+  assert.deepEqual(voiceRosterChange(new Set(["a"]), new Set(["c"])), { joined: ["c"], left: true });
+  assert.deepEqual(voiceRosterChange(new Set(), new Set()), { joined: [], left: false });
+});
+
+test("a decoded sound becomes one channel for the chosen output", () => {
+  const left = Float32Array.of(0.5, 1, -1);
+  const right = Float32Array.of(0.5, 0, 1, 0.25);
+  assert.deepEqual(Array.from(monoSamples([left, right])), [0.5, 0.5, 0]);
+  assert.deepEqual(Array.from(monoSamples([left])), [0.5, 1, -1]);
+  assert.equal(monoSamples([]).length, 0);
+});
+
+test("sound levels stay between silent and full", () => {
+  assert.equal(soundLevel(0.4), 0.4);
+  assert.equal(soundLevel(3), 1);
+  assert.equal(soundLevel(-1), 0);
+  assert.equal(soundLevel(undefined), 1);
 });

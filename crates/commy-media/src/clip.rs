@@ -67,6 +67,85 @@ impl FrameSource for ClipQueue {
     }
 }
 
+pub const MAX_MIXED_CLIPS: usize = 4;
+
+#[derive(Debug)]
+struct MixedClip {
+    id: u64,
+    samples: VecDeque<f32>,
+}
+
+#[derive(Debug)]
+pub struct ClipMixer {
+    clips: VecDeque<MixedClip>,
+    gain: f32,
+    idle_frames: u32,
+}
+
+impl Default for ClipMixer {
+    fn default() -> Self {
+        Self { clips: VecDeque::new(), gain: 1.0, idle_frames: 0 }
+    }
+}
+
+impl ClipMixer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_volume(&mut self, volume: f32) {
+        self.gain = volume_gain(volume);
+    }
+
+    pub fn push(&mut self, id: u64, samples: &[f32], rate: f32, level: f32) {
+        let level = if level.is_finite() { level.clamp(0.0, 1.0) } else { 1.0 };
+        let samples: VecDeque<f32> = resample(samples, rate, SAMPLE_RATE).into_iter().map(|s| s * level).collect();
+        if samples.is_empty() {
+            return;
+        }
+        self.stop(id);
+        while self.clips.len() >= MAX_MIXED_CLIPS {
+            self.clips.pop_front();
+        }
+        self.idle_frames = 0;
+        self.clips.push_back(MixedClip { id, samples });
+    }
+
+    pub fn stop(&mut self, id: u64) {
+        self.clips.retain(|clip| clip.id != id);
+    }
+
+    pub fn clear(&mut self) {
+        self.clips.clear();
+    }
+
+    pub fn playing(&self) -> usize {
+        self.clips.len()
+    }
+
+    pub fn idle_frames(&self) -> u32 {
+        self.idle_frames
+    }
+}
+
+impl FrameSource for ClipMixer {
+    fn next_frame(&mut self) -> Vec<i16> {
+        if self.clips.is_empty() {
+            self.idle_frames = self.idle_frames.saturating_add(1);
+            return vec![0; FRAME_SIZE];
+        }
+        let gain = self.gain;
+        let frame = (0..FRAME_SIZE)
+            .map(|_| {
+                let sum: f32 = self.clips.iter_mut().filter_map(|clip| clip.samples.pop_front()).filter(|s| s.is_finite()).sum();
+                (soft_limit(sum * gain) * i16::MAX as f32).round() as i16
+            })
+            .collect();
+        self.clips.retain(|clip| !clip.samples.is_empty());
+        frame
+    }
+}
+
 pub fn resample(samples: &[f32], from_rate: f32, to_rate: u32) -> Vec<f32> {
     if samples.is_empty() || !from_rate.is_finite() {
         return Vec::new();
@@ -206,5 +285,35 @@ mod tests {
         queue.set_volume(0.0);
         queue.push(&vec![0.5; FRAME_SIZE], SAMPLE_RATE as f32);
         assert!(queue.next_frame().iter().all(|s| *s == 0));
+    }
+
+    #[test]
+    fn mixed_clips_play_together_and_end_on_their_own() {
+        let mut mixer = ClipMixer::new();
+        mixer.push(1, &vec![0.25; FRAME_SIZE], SAMPLE_RATE as f32, 1.0);
+        mixer.push(2, &vec![0.25; FRAME_SIZE * 2], SAMPLE_RATE as f32, 1.0);
+        assert_eq!(mixer.playing(), 2);
+        let both = mixer.next_frame();
+        let one = mixer.next_frame();
+        assert!(both[0] > one[0] && one[0] > 0);
+        assert_eq!(mixer.playing(), 0);
+        mixer.next_frame();
+        assert_eq!(mixer.idle_frames(), 1);
+    }
+
+    #[test]
+    fn a_mixed_clip_can_be_stopped_or_turned_down() {
+        let mut mixer = ClipMixer::new();
+        mixer.push(7, &vec![0.5; FRAME_SIZE], SAMPLE_RATE as f32, 0.0);
+        assert!(mixer.next_frame().iter().all(|s| *s == 0));
+        mixer.push(7, &vec![0.5; FRAME_SIZE], SAMPLE_RATE as f32, 1.0);
+        mixer.push(7, &vec![0.5; FRAME_SIZE], SAMPLE_RATE as f32, 1.0);
+        assert_eq!(mixer.playing(), 1, "the same clip id replaces itself");
+        mixer.stop(7);
+        assert_eq!(mixer.playing(), 0);
+        for id in 0..10 {
+            mixer.push(id, &[0.1; 48], SAMPLE_RATE as f32, 1.0);
+        }
+        assert_eq!(mixer.playing(), MAX_MIXED_CLIPS);
     }
 }

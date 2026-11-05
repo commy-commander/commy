@@ -3617,7 +3617,7 @@ function renderChannels() {
   paintVoiceGate();
   if (!state.currentServer) return;
   const server = state.currentServer;
-  checkVoiceRoster();
+  checkVoiceRoster(server);
   reconcileActivity();
   if (server.group) {
     renderDmThreads();
@@ -4245,16 +4245,84 @@ function alertSoundUrl(name) {
   return SOUND_FILES[name] || null;
 }
 
+const appSounds = { native: null, decoded: new Map(), next: 1 };
+const MAX_DECODED_SOUNDS = 32;
+
+function nativeSoundOutput() {
+  appSounds.native ||= invoke("sound_output").then(on => on === true, () => false);
+  return appSounds.native;
+}
+
+function decodedSound(url) {
+  if (appSounds.decoded.has(url)) return appSounds.decoded.get(url);
+  const job = fetch(url)
+    .then(response => response.arrayBuffer())
+    .then(bytes => new OfflineAudioContext(1, 1, 48000).decodeAudioData(bytes))
+    .then(buffer => ({
+      samples: monoSamples(Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i))),
+      rate: buffer.sampleRate,
+    }));
+  appSounds.decoded.set(url, job);
+  job.catch(() => appSounds.decoded.delete(url));
+  if (appSounds.decoded.size > MAX_DECODED_SOUNDS) appSounds.decoded.delete(appSounds.decoded.keys().next().value);
+  return job;
+}
+
+async function playOnOutput(url, level, sound) {
+  const { samples, rate } = await decodedSound(url);
+  if (sound.stopped || !samples.length) return;
+  const clip = appSounds.next++;
+  await invoke("sound_play", new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength), {
+    headers: { "x-commy-rate": String(rate), "x-commy-level": String(level), "x-commy-clip": String(clip) },
+  });
+  await new Promise(resolve => {
+    const timer = setTimeout(resolve, (samples.length / rate) * 1000);
+    sound.halt = () => {
+      clearTimeout(timer);
+      invoke("sound_stop", { clip }).catch(() => {});
+      resolve();
+    };
+  });
+}
+
+function playInWindow(url, level, sound) {
+  return new Promise(resolve => {
+    const audio = new Audio(url);
+    audio.volume = level;
+    audio.addEventListener("ended", resolve, { once: true });
+    audio.addEventListener("error", resolve, { once: true });
+    sound.halt = () => {
+      audio.pause();
+      resolve();
+    };
+    audio.play().catch(resolve);
+  });
+}
+
+function playAppSound(url, volume) {
+  const level = soundLevel(volume);
+  const sound = { stopped: false, halt: () => {} };
+  sound.ended = nativeSoundOutput()
+    .then(native => {
+      if (sound.stopped) return;
+      if (!native) return playInWindow(url, level, sound);
+      return playOnOutput(url, level, sound).catch(() => !sound.stopped && playInWindow(url, level, sound));
+    })
+    .catch(() => {});
+  sound.stop = () => {
+    sound.stopped = true;
+    sound.halt();
+  };
+  return sound;
+}
+
 function playSound(eventId, force) {
   const prefs = soundPrefs();
   const name = force || soundFor(eventId);
   const url = name && name !== NO_SOUND ? alertSoundUrl(name) : null;
   if (!url) return null;
   if (!force && (!prefs.enabled || state.user?.presence === "do_not_disturb")) return null;
-  const audio = new Audio(url);
-  audio.volume = Math.max(0, Math.min(1, prefs.volume));
-  audio.play().catch(() => {});
-  return audio;
+  return playAppSound(url, prefs.volume);
 }
 
 const ALERT_SOUND_DB = "commy-alert-sounds";
@@ -4403,22 +4471,33 @@ function playJoinCue(server, joined) {
   playExpressionSound(clip, board.volume);
 }
 
-function checkVoiceRoster() {
-  const server = state.currentServer;
-  const channel = server && state.voiceChannelId && server.channels.find(c => c.id === state.voiceChannelId);
+function checkVoiceRoster(server) {
+  const voiceServerId = state.voiceChannelId && state.voiceServer && state.voiceServer.id;
+  if (!voiceServerId) {
+    lastVoiceRoster = null;
+    return;
+  }
+  if (!server || server.id !== voiceServerId) return;
+  const channel = server.channels.find(c => c.id === state.voiceChannelId);
   if (!channel) {
     lastVoiceRoster = null;
     return;
   }
   const others = new Set((channel.voice_user_ids || []).filter(id => !state.user || id !== state.user.id));
-  const key = `${channel.id}`;
+  const key = `${server.id}:${channel.id}`;
   if (lastVoiceRoster && lastVoiceRoster.key === key) {
-    const joined = [...others].filter(id => !lastVoiceRoster.ids.has(id));
-    const left = [...lastVoiceRoster.ids].some(id => !others.has(id));
+    const { joined, left } = voiceRosterChange(lastVoiceRoster.ids, others);
     if (joined.length) playJoinCue(server, joined);
     else if (left) playSound("leave");
   }
   lastVoiceRoster = { key, ids: others };
+}
+
+async function checkVoiceRosterElsewhere(serverId) {
+  if (!state.voiceServer || state.voiceServer.id !== serverId || state.currentServer?.id === serverId) return;
+  try {
+    checkVoiceRoster(await invoke("get_server", { serverId }));
+  } catch {}
 }
 
 const NOTIFY_KEY = "commy.notify";
@@ -5013,9 +5092,14 @@ function speakInWindow(text, prefs, voiceId) {
   }, 60);
 }
 
+function speechFailed(message) {
+  toast(message);
+  invoke("speech_problem", { message }).catch(() => {});
+}
+
 function speakWithSystem(text, prefs, voiceId) {
   if (speech.native) {
-    invoke("speech_speak", { text, voice: voiceId, rate: prefs.rate, pitch: prefs.pitch }).catch(e => toast(`Could not read it aloud: ${e}`));
+    invoke("speech_speak", { text, voice: voiceId, rate: prefs.rate, pitch: prefs.pitch }).catch(e => speechFailed(`Could not read it aloud: ${e}`));
   } else if (windowSpeech()) {
     speakInWindow(text, prefs, voiceId);
   }
@@ -5027,13 +5111,13 @@ function speakNow(text, waitForVoice) {
   const voice = choice.kind === "builtin" ? builtInVoice(choice.id) : null;
   if (!voice) return speakWithSystem(text, prefs, choice.id);
   const builtIn = () => speakBuiltIn(text, voice.id, prefs).catch(e => {
-    toast(`Could not read it aloud with ${voice.name}: ${e && e.message ? e.message : e}`);
+    speechFailed(`Could not read it aloud with ${voice.name}: ${e && e.message ? e.message : e}`);
     if (speechAvailable()) speakWithSystem(text, prefs, null);
   });
   if (voice.ready) return builtIn();
   const download = downloadBuiltIn(voice);
   const asked = piper.token;
-  if (waitForVoice || !speechAvailable()) return download.then(() => asked === piper.token && builtIn(), e => toast(String(e)));
+  if (waitForVoice || !speechAvailable()) return download.then(() => asked === piper.token && builtIn(), e => speechFailed(String(e)));
   speakWithSystem(text, prefs, null);
 }
 
@@ -13953,19 +14037,16 @@ async function playExpressionSound(ref, volume) {
   const STOP_A_CLIP_THAT_RUNS_ON_MS = (MAX_SOUND_SECONDS + 1) * 1000;
   if (soundboardPlaying.size >= MAX_OVERLAPPING_CLIPS) {
     const oldest = soundboardPlaying.values().next().value;
-    oldest.pause();
+    oldest.stop();
     soundboardPlaying.delete(oldest);
   }
-  const audio = new Audio(url);
-  audio.volume = Math.max(0, Math.min(1, volume));
-  soundboardPlaying.add(audio);
-  const done = () => soundboardPlaying.delete(audio);
-  audio.addEventListener("ended", done);
-  setTimeout(() => {
-    audio.pause();
-    done();
-  }, STOP_A_CLIP_THAT_RUNS_ON_MS);
-  audio.play().catch(done);
+  const sound = playAppSound(url, volume);
+  soundboardPlaying.add(sound);
+  const timer = setTimeout(sound.stop, STOP_A_CLIP_THAT_RUNS_ON_MS);
+  sound.ended.then(() => {
+    clearTimeout(timer);
+    soundboardPlaying.delete(sound);
+  });
 }
 
 function onSoundboardPlay(play) {
@@ -17389,7 +17470,7 @@ let callRing = null;
 function stopCallRing() {
   if (callRing) {
     clearTimeout(callRing.timer);
-    callRing.audio?.pause();
+    callRing.audio?.stop();
   }
   callRing = null;
 }
@@ -17402,10 +17483,7 @@ function startCallRing() {
     if (callRing !== ring) return;
     ring.audio = playSound("ring");
     const gap = () => { ring.timer = setTimeout(again, RING_GAP_MS); };
-    if (ring.audio) {
-      ring.audio.addEventListener("ended", gap, { once: true });
-      ring.audio.addEventListener("error", gap, { once: true });
-    }
+    if (ring.audio) ring.audio.ended.then(gap);
     else ring.timer = setTimeout(again, 3000);
   };
   again();
@@ -18462,7 +18540,8 @@ async function toggleVoice(channel) {
       state.shareSource = null;
     }
     toast(leaving ? "Disconnected from voice" : isStageChannel(channel) ? `Joined the stage: ${channel.name}` : `Joined voice: ${channel.name}`);
-    playSound(leaving ? "leave" : "join");
+    if (leaving) playSound("leave");
+    else playJoinCue(state.currentServer, [state.user.id]);
     renderShareButton();
     await selectServer(state.currentServer.id);
   } catch (e) {
@@ -22727,6 +22806,7 @@ async function afterServerEvent(serverId) {
   if (state.currentServer && serverId === state.currentServer.id) {
     await refreshCurrentServer();
   }
+  await checkVoiceRosterElsewhere(serverId);
   if (state.view === "dm") {
     await refreshPeople();
     await renderDmThreads();
