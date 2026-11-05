@@ -14141,6 +14141,7 @@ function renderSoundboardSettings(server) {
   $("join-sounds-toggle").checked = Boolean(server.join_sounds_allowed);
   $("join-sounds-toggle").disabled = !server.can_manage_server;
   $("join-sounds-row").classList.toggle("readonly", !server.can_manage_server);
+  renderMyJoinSoundRow(server);
   $("sound-share-toggle").checked = Boolean(server.sounds_shareable);
   $("sound-share-toggle").disabled = !server.can_manage_server;
   $("sound-share-row").classList.toggle("readonly", !server.can_manage_server);
@@ -14400,6 +14401,16 @@ function wireSoundUpload() {
 
 let soundboardCooldown = 0;
 
+function joinSoundLabel(name) {
+  if (!name) return "None, you get the usual join chime";
+  return defaultSound(name)?.label || name;
+}
+
+function renderMyJoinSoundRow(server) {
+  $("my-join-sound-row").classList.toggle("hidden", !server.join_sounds_allowed || !server.can_use_soundboard);
+  $("my-join-sound-name").textContent = joinSoundLabel(server.my_join_sound);
+}
+
 async function openJoinSoundPicker(serverId) {
   let server;
   try {
@@ -14438,6 +14449,7 @@ function renderJoinSoundPicker(server, picked) {
       try {
         await invoke("set_join_sound", { serverId: server.id, name: choice.name });
         renderJoinSoundPicker(server, choice.name);
+        if (state.currentServer && state.currentServer.id === server.id) $("my-join-sound-name").textContent = joinSoundLabel(choice.name);
       } catch (e) {
         toast(String(e));
       }
@@ -20215,6 +20227,9 @@ function wireEvents() {
     if (server) openJoinSoundPicker(server.id);
   };
   $("join-sound-done").onclick = hideModals;
+  $("my-join-sound-pick").onclick = () => {
+    if (state.currentServer) openJoinSoundPicker(state.currentServer.id);
+  };
   for (const btn of $("server-notify-levels").querySelectorAll(".notify-level")) {
     btn.onclick = () => {
       if (!notifyServer) return;
