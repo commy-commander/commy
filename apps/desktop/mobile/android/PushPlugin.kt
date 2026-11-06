@@ -20,11 +20,11 @@ import com.google.firebase.messaging.FirebaseMessaging
 class PushPlugin(private val activity: Activity) : Plugin(activity) {
   init {
     NotificationManagerCompat.from(activity).cancelAll()
-    WakePreviews.targetOf(activity.intent)?.let { tapped = it }
+    WakePreviews.noteTap(activity.intent)
   }
 
   override fun onNewIntent(intent: Intent) {
-    WakePreviews.targetOf(intent)?.let { tapped = it }
+    WakePreviews.noteTap(intent)
   }
 
   override fun onResume() {
@@ -34,8 +34,7 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun takeTarget(invoke: Invoke) {
     val answer = JSObject()
-    tapped?.let { answer.put("target", it) }
-    tapped = null
+    WakePreviews.takeTap()?.let { answer.put("target", it) }
     invoke.resolve(answer)
   }
 
@@ -85,6 +84,5 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
 
   companion object {
     private const val REQUEST_NOTIFY = 7302
-    @Volatile private var tapped: String? = null
   }
 }

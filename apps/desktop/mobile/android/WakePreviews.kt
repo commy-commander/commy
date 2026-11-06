@@ -157,6 +157,18 @@ object WakePreviews {
     return PendingIntent.getActivity(context, target?.hashCode() ?: 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
   }
 
+  @Volatile private var tapped: String? = null
+
+  fun noteTap(intent: Intent?) {
+    targetOf(intent)?.let { tapped = it }
+  }
+
+  fun takeTap(): String? {
+    val target = tapped
+    tapped = null
+    return target
+  }
+
   fun targetOf(intent: Intent?): String? {
     if (intent == null || intent.action != ACTION_OPEN) return null
     if ((intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return null
