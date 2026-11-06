@@ -1360,10 +1360,11 @@ mod tests {
         let w = world();
         w.client.install_mirror(w.server, &mirror(&w)).unwrap();
         let (sent, _) = w.client.compose(w.server, w.channel, "hi @owner", None, false).unwrap();
-        let (private, whos) = w.client.wake_whos(w.server, &sent, || false).unwrap();
+        let (private, whos, text) = w.client.wake_whos(w.server, &sent, || false).unwrap();
         assert!(!private);
         assert_eq!(whos, vec![w.owner.0.id.to_string()]);
-        let (_, busy) = w.client.wake_whos(w.server, &sent, || true).unwrap();
+        assert_eq!(text, "hi @owner", "the sealed preview shows what was written");
+        let (_, busy, _) = w.client.wake_whos(w.server, &sent, || true).unwrap();
         assert_eq!(busy.len(), 2, "the once a minute ring for everyone listening rides along");
         let (owner, identity) = &w.owner;
         let mut theirs = Message::new(w.channel, owner.id, "hi @me");
