@@ -33,7 +33,7 @@ impl std::fmt::Debug for FileKey {
 
 impl FileKey {
     pub fn for_blob(blob: &str) -> Self {
-        let root = mac(FILE_DOMAIN, blob.as_bytes());
+        let root = mac(blob.as_bytes(), FILE_DOMAIN);
         Self { id: mac(&root, b"id"), seal: mac(&root, b"seal") }
     }
 
