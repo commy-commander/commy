@@ -146,6 +146,7 @@
             <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
           </div>
           <button class="icon-btn native-only" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
+          <button class="icon-btn" id="vp-grid" type="button" title="Show Stream Grid" aria-label="Show Stream Grid"></button>
         </div>
         <button class="vp-talk hidden" id="vp-talk" type="button">Hold to talk</button>
         <div class="vp-actions" id="vp-actions">
@@ -200,6 +201,7 @@
         <button class="vp-talk hidden" id="phone-voice-talk" type="button">Hold to talk</button>
         <button class="icon-btn" id="phone-voice-mute" type="button" title="Mute"></button>
         <button class="icon-btn" id="phone-voice-deafen" type="button" title="Deafen"></button>
+        <button class="icon-btn" id="phone-voice-grid" type="button" title="Show Stream Grid" aria-label="Show Stream Grid"></button>
         <button class="icon-btn vp-hangup" id="phone-voice-hangup" type="button" title="Disconnect"></button>
       </div>
       <section class="search-pop hidden" id="search-pop" role="dialog" aria-label="Search Results">
@@ -267,13 +269,16 @@
               <button class="stage-btn" id="stage-ink-pen" title="Draw" aria-pressed="false"></button>
               <button class="stage-btn" id="stage-ink-clear" title="Clear my drawings"></button>
             </div>
+            <button class="stage-btn hidden" id="stage-grid" title="Back to the grid"></button>
             <button class="stage-btn" id="stage-focus" title="Focus Mode"></button>
             <button class="stage-btn" id="stage-fullscreen" title="Fullscreen"></button>
             <button class="stage-btn danger" id="video-close" title="Stop Watching"></button>
           </div>
         </div>
       </div>
-      <div class="cam-grid hidden" id="cam-grid"></div>
+      <div class="cam-grid hidden" id="cam-grid" role="region" tabindex="-1" aria-label="People streaming and on camera">
+        <button class="stage-btn cam-grid-focus" id="cam-grid-focus" type="button" title="Hide Chat"></button>
+      </div>
       <section class="activity-panel hidden" id="activity-panel" aria-label="Activity">
         <header class="activity-head">
           <span class="activity-icon" id="activity-icon"></span>

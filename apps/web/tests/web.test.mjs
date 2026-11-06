@@ -407,7 +407,9 @@ test("watching streams and cameras explains itself in the browser instead of fai
   const app = read("apps", "desktop", "ui", "scripts", "app.js");
   const watch = /async function watchScreen\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
   assert.ok(watch.indexOf("inBrowserApp()") < watch.indexOf('invoke("watch_screen"'));
-  assert.match(app, /!cam\.watching\.has\(user\.id\) && !inBrowserApp\(\)/);
+  const cameras = /function syncCameraWatches\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
+  assert.ok(cameras.indexOf("if (inBrowserApp()) return;") > 0);
+  assert.ok(cameras.indexOf("if (inBrowserApp()) return;") < cameras.indexOf('invoke("watch_camera"'));
 });
 
 test("the browser waits for a current server before joining voice, like the desktop", () => {
