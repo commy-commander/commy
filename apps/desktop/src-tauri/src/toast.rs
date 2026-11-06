@@ -136,7 +136,12 @@ pub fn show(handle: &AppHandle, title: &str, body: &str, target: Option<String>)
         .map_err(|e| e.to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "android")]
+pub fn show(_handle: &AppHandle, title: &str, body: &str, target: Option<String>) -> Result<(), String> {
+    crate::push_wake::show(title, body, target)
+}
+
+#[cfg(not(any(windows, target_os = "android")))]
 pub fn show(handle: &AppHandle, title: &str, body: &str, _target: Option<String>) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
     handle

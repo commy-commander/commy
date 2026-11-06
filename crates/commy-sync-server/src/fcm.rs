@@ -111,12 +111,12 @@ impl Fcm {
         Ok(grant.access_token)
     }
 
-    pub async fn wake(&self, token: &str) -> Delivery {
+    pub async fn wake(&self, token: &str, preview: Option<&str>) -> Delivery {
         let access = match self.access_token().await {
             Ok(access) => access,
             Err(e) => return Delivery::Failed(e),
         };
-        let sent = self.http.post(&self.send_url).bearer_auth(access).json(&message(token)).send().await;
+        let sent = self.http.post(&self.send_url).bearer_auth(access).json(&message(token, preview)).send().await;
         match sent {
             Ok(res) if res.status().is_success() => Delivery::Sent,
             Ok(res) => match res.status().as_u16() {
@@ -132,11 +132,15 @@ impl Fcm {
     }
 }
 
-pub fn message(token: &str) -> serde_json::Value {
+pub fn message(token: &str, preview: Option<&str>) -> serde_json::Value {
+    let mut data = serde_json::json!({ "wake": "1" });
+    if let Some(preview) = preview {
+        data["preview"] = preview.into();
+    }
     serde_json::json!({
         "message": {
             "token": token,
-            "data": { "wake": "1" },
+            "data": data,
             "android": { "priority": "high", "ttl": WAKE_TTL, "collapse_key": WAKE_COLLAPSE_KEY },
         }
     })
@@ -155,16 +159,19 @@ mod tests {
 
     #[test]
     fn the_push_carries_nothing_but_a_wake_marker() {
-        let m = message("tok");
+        let m = message("tok", None);
         assert_eq!(m["message"]["token"], "tok");
         assert_eq!(m["message"]["data"], serde_json::json!({ "wake": "1" }));
+        let sealed = message("tok", Some("c2VhbGVk"));
+        assert_eq!(sealed["message"]["data"], serde_json::json!({ "wake": "1", "preview": "c2VhbGVk" }), "a preview travels only as the sender sealed it");
+        assert!(sealed["message"].get("notification").is_none());
         assert_eq!(m["message"]["android"]["priority"], "high");
         assert!(m["message"].get("notification").is_none(), "no visible text ever comes from the push");
     }
 
     #[test]
     fn a_phone_that_is_offline_for_a_while_still_gets_one_wake_when_it_returns() {
-        let m = message("tok");
+        let m = message("tok", None);
         assert_eq!(m["message"]["android"]["ttl"], "3600s");
         assert_eq!(m["message"]["android"]["collapse_key"], "wake", "queued wakes collapse into one");
     }

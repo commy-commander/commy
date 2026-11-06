@@ -2,6 +2,7 @@ package chat.commy.mobile
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.ActivityCompat
@@ -19,10 +20,44 @@ import com.google.firebase.messaging.FirebaseMessaging
 class PushPlugin(private val activity: Activity) : Plugin(activity) {
   init {
     NotificationManagerCompat.from(activity).cancelAll()
+    WakePreviews.targetOf(activity.intent)?.let { tapped = it }
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    WakePreviews.targetOf(intent)?.let { tapped = it }
   }
 
   override fun onResume() {
     NotificationManagerCompat.from(activity).cancelAll()
+  }
+
+  @Command
+  fun takeTarget(invoke: Invoke) {
+    val answer = JSObject()
+    tapped?.let { answer.put("target", it) }
+    tapped = null
+    invoke.resolve(answer)
+  }
+
+  @Command
+  fun previews(invoke: Invoke) {
+    val args = invoke.getArgs().toString()
+    Thread {
+      try {
+        WakePreviews.save(activity.applicationContext, args)
+        invoke.resolve()
+      } catch (e: Exception) {
+        invoke.reject("could not keep the message previews")
+      }
+    }.start()
+  }
+
+  @Command
+  fun show(invoke: Invoke) {
+    val args = invoke.getArgs()
+    val target = args.optString("target").takeIf { WakePreviews.validTarget(it) }
+    WakePreviews.postPlain(activity.applicationContext, args.optString("title"), args.optString("body"), target)
+    invoke.resolve()
   }
 
   @Command
@@ -50,5 +85,6 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
 
   companion object {
     private const val REQUEST_NOTIFY = 7302
+    @Volatile private var tapped: String? = null
   }
 }

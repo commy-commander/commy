@@ -324,7 +324,7 @@ async fn a_ring_wakes_the_rung_persons_phones_once_per_gap() {
     assert_eq!(post(&address, "/sync/wake/register", &register(&bob, "apns:x", today)).await, 400);
     assert_eq!(post(&address, "/sync/wake/register", &register(&bob, "fcm:late", today + 3)).await, 400);
 
-    let ring = serde_json::to_value(WakeRing { tags: vec![bob.clone()] }).unwrap();
+    let ring = serde_json::to_value(WakeRing { tags: vec![bob.clone()], preview: None }).unwrap();
     assert_eq!(post(&address, "/sync/wake/ring", &ring).await, 204);
     let mut woken = vec![tokio::time::timeout(WAIT, pushes.recv()).await.unwrap().unwrap(), tokio::time::timeout(WAIT, pushes.recv()).await.unwrap().unwrap()];
     woken.sort();
@@ -335,11 +335,11 @@ async fn a_ring_wakes_the_rung_persons_phones_once_per_gap() {
 
     let forget = serde_json::to_value(WakeForget { tag: alice.clone(), push: "fcm:alice-phone".into() }).unwrap();
     assert_eq!(post(&address, "/sync/wake/forget", &forget).await, 204);
-    let ring_alice = serde_json::to_value(WakeRing { tags: vec![alice.clone()] }).unwrap();
+    let ring_alice = serde_json::to_value(WakeRing { tags: vec![alice.clone()], preview: None }).unwrap();
     assert_eq!(post(&address, "/sync/wake/ring", &ring_alice).await, 204);
     assert!(tokio::time::timeout(Duration::from_millis(500), pushes.recv()).await.is_err(), "a forgotten tag wakes nobody");
 
-    let too_many = serde_json::to_value(WakeRing { tags: vec![bob; MAX_RING_TAGS + 1] }).unwrap();
+    let too_many = serde_json::to_value(WakeRing { tags: vec![bob; MAX_RING_TAGS + 1], preview: None }).unwrap();
     assert_eq!(post(&address, "/sync/wake/ring", &too_many).await, 400);
 }
 
@@ -350,7 +350,7 @@ async fn wake_ups_are_off_without_a_push_service() {
     let tag = Bytes([1; 32]);
     let register = serde_json::to_value(WakeRegister { tag: tag.clone(), push: "fcm:x".into(), until: 0 }).unwrap();
     assert_eq!(post(&address, "/sync/wake/register", &register).await, 404);
-    assert_eq!(post(&address, "/sync/wake/ring", &serde_json::to_value(WakeRing { tags: vec![tag] }).unwrap()).await, 204);
+    assert_eq!(post(&address, "/sync/wake/ring", &serde_json::to_value(WakeRing { tags: vec![tag], preview: None }).unwrap()).await, 204);
 }
 
 async fn request(address: &str, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {

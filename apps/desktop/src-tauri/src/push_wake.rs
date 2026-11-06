@@ -5,9 +5,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use chrono::Utc;
-use commy_sync::wake::{wake_day, WakeForget, WakeRegister, WakeRing, MAX_DAYS_AHEAD, MAX_RING_TAGS};
+use commy_sync::wake::{sealed_preview, wake_day, WakeForget, WakeRegister, WakeRing, MAX_DAYS_AHEAD, MAX_RING_TAGS};
+use commy_sync::StreamKeys;
 use commy_core::ServerId;
 use commy_sync::wire::Bytes;
+use data_encoding::BASE64;
 use rand::Rng;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -63,7 +65,11 @@ pub fn today() -> i64 {
     wake_day(Utc::now().timestamp_millis())
 }
 
-pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>) {
+pub fn preview(keys: &StreamKeys, author: &str, channel: Option<String>, text: &str, call: bool) -> Option<String> {
+    sealed_preview(keys, today(), author, channel, text, call)
+}
+
+pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>) {
     let Some(base) = sync_link::url().as_deref().and_then(wake_url) else { return };
     if tags.is_empty() {
         return;
@@ -71,7 +77,7 @@ pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>) {
     let delay = rand::thread_rng().gen_range(RING_DELAY_MS);
     tokio::time::sleep(Duration::from_millis(delay)).await;
     for chunk in tags.chunks(MAX_RING_TAGS) {
-        let body = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect() };
+        let body = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone() };
         match http.post(format!("{base}/ring")).json(&body).send().await {
             Ok(res) if res.status().is_success() => tracing::info!("rang {} wake-up tags", chunk.len()),
             Ok(res) => tracing::info!("the sync service refused a wake-up ring: {}", res.status()),
@@ -136,6 +142,9 @@ pub fn register(handle: &AppHandle) {
 }
 
 pub async fn forget_everything(app: &App) {
+    if cfg!(target_os = "android") {
+        phone::save_previews(serde_json::json!({ "keys": [] }));
+    }
     let Some((push, base)) = target() else { return };
     let today = today();
     let held: Vec<Tag> = {
@@ -277,9 +286,25 @@ async fn register_now(handle: &AppHandle, push: String, base: String) -> bool {
     let app = handle.state::<App>();
     let today = today();
     begin(&push, &base, || load_kept(&app, &push, &base));
+    share_previews(&app, today);
     let done = sync_tags(&app, &push, &base, today).await;
     save_kept(&app, &push, today);
     done
+}
+
+fn phone_previews(app: &App, days: &[i64]) -> serde_json::Value {
+    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id.to_string());
+    let mut keys: Vec<serde_json::Value> = dm_sync::preview_keys(app, days).iter().map(|key| serde_json::json!({ "k": BASE64.encode(key) })).collect();
+    keys.extend(server_wake::preview_keys(app, days).iter().map(|(server, key)| serde_json::json!({ "k": BASE64.encode(key), "s": server.to_string() })));
+    let users: std::collections::BTreeMap<String, String> =
+        app.dms.lock().unwrap().contacts.iter().map(|(id, profile)| (id.to_string(), profile.visible_name().to_string())).collect();
+    serde_json::json!({ "me": me, "keys": keys, "servers": server_wake::labels(app), "users": users })
+}
+
+fn share_previews(app: &App, today: i64) {
+    if cfg!(target_os = "android") {
+        phone::save_previews(phone_previews(app, &days_from(today)));
+    }
 }
 
 async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
@@ -410,6 +435,44 @@ mod android {
             .build()
     }
 
+    #[derive(Deserialize, Default)]
+    struct TargetAnswer {
+        #[serde(default)]
+        target: Option<String>,
+    }
+
+    fn plugin() -> Option<PluginHandle<Wry>> {
+        PLUGIN.lock().unwrap().clone()
+    }
+
+    pub fn save_previews(previews: serde_json::Value) {
+        let Some(plugin) = plugin() else { return };
+        let _ = std::thread::Builder::new().name("push-previews".into()).spawn(move || {
+            if let Err(e) = plugin.run_mobile_plugin::<serde_json::Value>("previews", previews) {
+                tracing::info!("could not hand message previews to the phone: {e}");
+            }
+        });
+    }
+
+    pub fn take_target() -> Option<String> {
+        let plugin = plugin()?;
+        plugin.run_mobile_plugin::<TargetAnswer>("takeTarget", serde_json::json!({})).ok()?.target
+    }
+
+    pub fn show(title: &str, body: &str, target: Option<String>) -> Result<(), String> {
+        let plugin = plugin().ok_or("notifications are not ready")?;
+        let args = serde_json::json!({ "title": title, "body": body, "target": target });
+        std::thread::Builder::new()
+            .name("push-show".into())
+            .spawn(move || {
+                if let Err(e) = plugin.run_mobile_plugin::<serde_json::Value>("show", args) {
+                    tracing::info!("could not show a notification: {e}");
+                }
+            })
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
     pub fn fetch_token(handle: AppHandle) {
         let Some(plugin) = PLUGIN.lock().unwrap().clone() else { return };
         if ASKING.swap(true, Ordering::SeqCst) {
@@ -433,6 +496,43 @@ mod android {
 pub use android::init;
 
 #[cfg(target_os = "android")]
+pub use android::show;
+
+#[cfg(target_os = "android")]
+use android as phone;
+
+#[cfg(not(target_os = "android"))]
+mod phone {
+    pub fn save_previews(_previews: serde_json::Value) {}
+
+    pub fn take_target() -> Option<String> {
+        None
+    }
+}
+
+static TARGET: Mutex<Option<String>> = Mutex::new(None);
+static UI_TAKES_TARGETS: AtomicBool = AtomicBool::new(false);
+
+fn tapped(handle: &AppHandle) {
+    let Some(target) = phone::take_target().filter(|t| crate::toast::valid_target(t)) else { return };
+    if UI_TAKES_TARGETS.load(Ordering::SeqCst) {
+        use tauri::Emitter;
+        let _ = handle.emit("notification-clicked", target);
+    } else {
+        *TARGET.lock().unwrap() = Some(target);
+    }
+}
+
+#[tauri::command]
+pub async fn take_notification_target() -> Option<String> {
+    UI_TAKES_TARGETS.store(true, Ordering::SeqCst);
+    if let Some(target) = TARGET.lock().unwrap().take() {
+        return Some(target);
+    }
+    tauri::async_runtime::spawn_blocking(phone::take_target).await.ok().flatten().filter(|t| crate::toast::valid_target(t))
+}
+
+#[cfg(target_os = "android")]
 fn ask_token(handle: &AppHandle) {
     if TOKEN.lock().unwrap().is_none() {
         android::fetch_token(handle.clone());
@@ -442,13 +542,14 @@ fn ask_token(handle: &AppHandle) {
 #[cfg(not(target_os = "android"))]
 fn ask_token(_handle: &AppHandle) {}
 
-#[cfg(target_os = "android")]
 pub fn on_resumed(handle: &AppHandle) {
+    #[cfg(target_os = "android")]
     android::fetch_token(handle.clone());
+    if cfg!(target_os = "android") {
+        let handle = handle.clone();
+        let _ = std::thread::Builder::new().name("push-tap".into()).spawn(move || tapped(&handle));
+    }
 }
-
-#[cfg(not(target_os = "android"))]
-pub fn on_resumed(_handle: &AppHandle) {}
 
 #[cfg(test)]
 mod tests {

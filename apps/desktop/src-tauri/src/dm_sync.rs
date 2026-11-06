@@ -310,7 +310,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     let keys = inbox_to(app, me, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
     let Some(plain) = inbox::seal(&key, envelope) else { return false };
     let stream = keys.id;
-    let wake = rings(&envelope.message).then(|| keys.wake_tag(&to.to_string(), push_wake::today()));
+    let wake = rings(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(&keys, &envelope.message)));
     let (client, borrowed) = {
         let mut guard = LIVE.lock().unwrap();
         let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return false };
@@ -329,9 +329,9 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     match sent {
         Ok(Ok(_)) => {
             tracing::info!("left a first message for {to} on the sync service");
-            if let Some(tag) = wake {
+            if let Some((tag, preview)) = wake {
                 let http = app.http.clone();
-                tauri::async_runtime::spawn(push_wake::ring(http, vec![tag]));
+                tauri::async_runtime::spawn(push_wake::ring(http, vec![tag], preview));
             }
             true
         }
@@ -384,7 +384,11 @@ fn on_inbox(handle: &AppHandle, server: Option<ServerId>, plain: &[u8], at: i64,
     });
 }
 
-pub fn wake_tags(app: &App, days: &[i64]) -> Option<Vec<([u8; 32], i64)>> {
+fn wake_preview(keys: &StreamKeys, message: &DmMessage) -> Option<String> {
+    push_wake::preview(keys, &message.from.to_string(), None, &commy_view::dms::wake_text(message), is_call(message))
+}
+
+fn wake_streams(app: &App, days: &[i64]) -> Option<(String, Vec<(StreamKeys, i64)>)> {
     let (Some(identity), Some(me)) = (app.identity(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return None };
     let partners: Vec<IdentityKey> = match LIVE.lock().unwrap().as_ref() {
         Some(live) if live.me_key == identity.public() => live.partners.values().map(|p| p.key).collect(),
@@ -392,20 +396,26 @@ pub fn wake_tags(app: &App, days: &[i64]) -> Option<Vec<([u8; 32], i64)>> {
     };
     let inboxes: Vec<StreamKeys> =
         LIVE.lock().unwrap().as_ref().map(|live| live.inboxes.values().map(|(_, keys)| keys.clone()).collect()).unwrap_or_default();
-    let who = me.to_string();
-    let name = who.as_str();
-    let mut tags: Vec<([u8; 32], i64)> =
-        days.iter().flat_map(|day| inboxes.iter().map(move |keys| (keys.wake_tag(name, *day), *day))).collect();
+    let mut streams: Vec<(StreamKeys, i64)> = days.iter().flat_map(|day| inboxes.iter().map(move |keys| (keys.clone(), *day))).collect();
     for day in days {
         let Some(start) = DateTime::from_timestamp_millis(day * DAY_MS) else { continue };
         let epoch = sync_streams::dm_epoch(start);
         for key in &partners {
             if let Some(keys) = sync_streams::dm_stream(&identity, key, &epoch) {
-                tags.push((keys.wake_tag(&who, *day), *day));
+                streams.push((keys, *day));
             }
         }
     }
-    Some(tags)
+    Some((me.to_string(), streams))
+}
+
+pub fn wake_tags(app: &App, days: &[i64]) -> Option<Vec<([u8; 32], i64)>> {
+    let (who, streams) = wake_streams(app, days)?;
+    Some(streams.iter().map(|(keys, day)| (keys.wake_tag(&who, *day), *day)).collect())
+}
+
+pub fn preview_keys(app: &App, days: &[i64]) -> Vec<[u8; 32]> {
+    wake_streams(app, days).map(|(_, streams)| streams.iter().map(|(keys, day)| keys.preview_key(*day)).collect()).unwrap_or_default()
 }
 
 
@@ -563,7 +573,7 @@ async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
     let epoch = sync_streams::dm_epoch(Utc::now());
     let Some(keys) = sync_streams::dm_stream(&identity, &key, &epoch) else { return false };
     let stream = keys.id;
-    let wake = rings(&envelope.message).then(|| keys.wake_tag(&partner.to_string(), push_wake::today()));
+    let wake = rings(&envelope.message).then(|| (keys.wake_tag(&partner.to_string(), push_wake::today()), wake_preview(&keys, &envelope.message)));
     let mut new_partner = false;
     let client = {
         let mut guard = LIVE.lock().unwrap();
@@ -583,9 +593,9 @@ async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
     let plain = sync_streams::encode_dm(envelope);
     match tokio::time::timeout(HOLD_WAIT, sync_link::append(client, stream, plain)).await {
         Ok(Ok(_)) => {
-            if let Some(tag) = wake {
+            if let Some((tag, preview)) = wake {
                 let http = app.http.clone();
-                tauri::async_runtime::spawn(push_wake::ring(http, vec![tag]));
+                tauri::async_runtime::spawn(push_wake::ring(http, vec![tag], preview));
             }
             true
         }

@@ -2,10 +2,6 @@ package chat.commy.mobile
 
 import android.Manifest
 import android.app.ActivityManager
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
@@ -22,13 +18,13 @@ class WakeService : FirebaseMessagingService() {
     val allowed = mayNotify()
     Log.i(TAG, "wake-up push received, foreground=$foreground, notifications allowed=$allowed")
     if (foreground || !allowed) return
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val channel = NotificationChannel(CHANNEL_ID, "New messages", NotificationManager.IMPORTANCE_DEFAULT)
-      channel.description = "Shown when something new is waiting while Commy is closed"
-      getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    val shown = message.data["preview"]?.let { WakePreviews.open(this, it) }
+    Log.i(TAG, "preview opened=${shown != null}")
+    if (shown != null) {
+      WakePreviews.post(this, shown)
+      return
     }
-    val open = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    val tap = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    WakePreviews.ensureChannel(this)
     val notification = NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(android.R.drawable.stat_notify_chat)
       .setContentTitle("Commy")
@@ -37,7 +33,7 @@ class WakeService : FirebaseMessagingService() {
       .setAutoCancel(true)
       .setWhen(System.currentTimeMillis())
       .setShowWhen(true)
-      .setContentIntent(tap)
+      .setContentIntent(WakePreviews.tapIntent(this, null))
       .build()
     NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, notification)
   }

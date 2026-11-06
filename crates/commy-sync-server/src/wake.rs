@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -7,7 +7,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use commy_sync::wake::{push_target, register_until_ok, wake_day, WakeForget, WakeRegister, WakeRing, MAX_RING_TAGS, PUSH_GAP_SECS};
+use commy_sync::wake::{preview_ok, push_target, register_until_ok, wake_day, WakeForget, WakeRegister, WakeRing, MAX_RING_TAGS, PUSH_GAP_SECS};
 use tokio::sync::mpsc;
 
 use crate::fcm::{Delivery, Fcm};
@@ -32,26 +32,34 @@ enum Plan {
 pub struct Wakes {
     pusher: Pusher,
     last: Mutex<HashMap<String, Instant>>,
-    queued: Mutex<HashSet<String>>,
+    queued: Mutex<HashMap<String, Option<String>>>,
 }
 
 impl Wakes {
     pub fn new(pusher: Pusher) -> Self {
-        Self { pusher, last: Mutex::new(HashMap::new()), queued: Mutex::new(HashSet::new()) }
+        Self { pusher, last: Mutex::new(HashMap::new()), queued: Mutex::new(HashMap::new()) }
     }
 
     pub fn enabled(&self) -> bool {
         !matches!(self.pusher, Pusher::Off)
     }
 
-    fn plan(&self, push: &str, now: Instant) -> Plan {
+    fn plan(&self, push: &str, now: Instant, preview: Option<&str>) -> Plan {
         let mut last = self.last.lock().unwrap();
         match last.get(push).map(|at| now.saturating_duration_since(*at)) {
             Some(since) if since < PUSH_GAP => {
-                if self.queued.lock().unwrap().insert(push.to_string()) {
-                    Plan::After(PUSH_GAP - since)
-                } else {
-                    Plan::AlreadyQueued
+                let mut queued = self.queued.lock().unwrap();
+                match queued.get_mut(push) {
+                    Some(held) => {
+                        if preview.is_some() {
+                            *held = preview.map(str::to_string);
+                        }
+                        Plan::AlreadyQueued
+                    }
+                    None => {
+                        queued.insert(push.to_string(), preview.map(str::to_string));
+                        Plan::After(PUSH_GAP - since)
+                    }
                 }
             }
             _ => {
@@ -61,9 +69,10 @@ impl Wakes {
         }
     }
 
-    fn release_queued(&self, push: &str, now: Instant) {
-        self.queued.lock().unwrap().remove(push);
+    fn release_queued(&self, push: &str, now: Instant) -> Option<String> {
+        let preview = self.queued.lock().unwrap().remove(push).flatten();
         self.last.lock().unwrap().insert(push.to_string(), now);
+        preview
     }
 
     pub fn forget_idle(&self) {
@@ -72,10 +81,10 @@ impl Wakes {
     }
 }
 
-async fn deliver(service: &Service, push: &str, token: &str) -> Option<Delivery> {
+async fn deliver(service: &Service, push: &str, token: &str, preview: Option<&str>) -> Option<Delivery> {
     match &service.wakes.pusher {
         Pusher::Off => None,
-        Pusher::Fcm(fcm) => Some(fcm.wake(token).await),
+        Pusher::Fcm(fcm) => Some(fcm.wake(token, preview).await),
         Pusher::Recording(sent) => {
             let _ = sent.send(push.to_string());
             Some(Delivery::Sent)
@@ -83,29 +92,29 @@ async fn deliver(service: &Service, push: &str, token: &str) -> Option<Delivery>
     }
 }
 
-async fn deliver_with_retries(service: &Service, push: &str, token: &str) -> Option<Delivery> {
-    let mut delivery = deliver(service, push, token).await?;
+async fn deliver_with_retries(service: &Service, push: &str, token: &str, preview: Option<&str>) -> Option<Delivery> {
+    let mut delivery = deliver(service, push, token, preview).await?;
     for wait in RETRY_WAITS {
         if !matches!(delivery, Delivery::Failed(_)) {
             break;
         }
         tokio::time::sleep(wait).await;
-        delivery = deliver(service, push, token).await?;
+        delivery = deliver(service, push, token, preview).await?;
     }
     Some(delivery)
 }
 
 async fn send_after(service: Arc<Service>, push: String, wait: Duration) {
     tokio::time::sleep(wait).await;
-    service.wakes.release_queued(&push, Instant::now());
-    send(service, push).await;
+    let preview = service.wakes.release_queued(&push, Instant::now());
+    send(service, push, preview).await;
 }
 
-async fn send(service: Arc<Service>, push: String) {
+async fn send(service: Arc<Service>, push: String, preview: Option<String>) {
     let Some((_, token)) = push_target(&push) else {
         return;
     };
-    let Some(delivery) = deliver_with_retries(&service, &push, token).await else {
+    let Some(delivery) = deliver_with_retries(&service, &push, token, preview.as_deref()).await else {
         return;
     };
     match delivery {
@@ -191,7 +200,7 @@ pub async fn ring(
     headers: HeaderMap,
     Json(request): Json<WakeRing>,
 ) -> Response {
-    if request.tags.is_empty() || request.tags.len() > MAX_RING_TAGS {
+    if request.tags.is_empty() || request.tags.len() > MAX_RING_TAGS || request.preview.as_deref().is_some_and(|p| !preview_ok(p)) {
         return StatusCode::BAD_REQUEST.into_response();
     }
     if !service.wakes.enabled() {
@@ -210,9 +219,9 @@ pub async fn ring(
     };
     let now = Instant::now();
     for push in pushes {
-        match service.wakes.plan(&push, now) {
+        match service.wakes.plan(&push, now, request.preview.as_deref()) {
             Plan::Now => {
-                tokio::spawn(send(service.clone(), push));
+                tokio::spawn(send(service.clone(), push, request.preview.clone()));
             }
             Plan::After(wait) => {
                 tokio::spawn(send_after(service.clone(), push, wait));
@@ -231,38 +240,51 @@ mod tests {
     fn a_phone_is_woken_at_most_once_per_gap() {
         let wakes = Wakes::new(Pusher::Off);
         let start = Instant::now();
-        assert_eq!(wakes.plan("fcm:a", start), Plan::Now);
-        assert_eq!(wakes.plan("fcm:b", start), Plan::Now, "other phones are not held back");
-        assert_eq!(wakes.plan("fcm:a", start + PUSH_GAP), Plan::Now);
+        assert_eq!(wakes.plan("fcm:a", start, None), Plan::Now);
+        assert_eq!(wakes.plan("fcm:b", start, None), Plan::Now, "other phones are not held back");
+        assert_eq!(wakes.plan("fcm:a", start + PUSH_GAP, None), Plan::Now);
     }
 
     #[test]
     fn a_ring_inside_the_gap_is_kept_for_when_the_gap_ends() {
         let wakes = Wakes::new(Pusher::Off);
         let start = Instant::now();
-        assert_eq!(wakes.plan("fcm:a", start), Plan::Now);
+        assert_eq!(wakes.plan("fcm:a", start, None), Plan::Now);
         let early = PUSH_GAP / 3;
-        assert_eq!(wakes.plan("fcm:a", start + early), Plan::After(PUSH_GAP - early));
-        assert_eq!(wakes.plan("fcm:a", start + PUSH_GAP / 2), Plan::AlreadyQueued, "one held push covers every ring in the gap");
+        assert_eq!(wakes.plan("fcm:a", start + early, None), Plan::After(PUSH_GAP - early));
+        assert_eq!(wakes.plan("fcm:a", start + PUSH_GAP / 2, None), Plan::AlreadyQueued, "one held push covers every ring in the gap");
     }
 
     #[test]
     fn a_held_push_starts_a_new_gap_when_it_goes_out() {
         let wakes = Wakes::new(Pusher::Off);
         let start = Instant::now();
-        assert_eq!(wakes.plan("fcm:a", start), Plan::Now);
+        assert_eq!(wakes.plan("fcm:a", start, None), Plan::Now);
         let early = PUSH_GAP / 3;
-        assert_eq!(wakes.plan("fcm:a", start + early), Plan::After(PUSH_GAP - early));
+        assert_eq!(wakes.plan("fcm:a", start + early, None), Plan::After(PUSH_GAP - early));
         let sent = start + PUSH_GAP;
         wakes.release_queued("fcm:a", sent);
-        assert_eq!(wakes.plan("fcm:a", sent + early), Plan::After(PUSH_GAP - early));
+        assert_eq!(wakes.plan("fcm:a", sent + early, None), Plan::After(PUSH_GAP - early));
     }
+    #[test]
+    fn a_held_push_carries_the_newest_preview() {
+        let wakes = Wakes::new(Pusher::Off);
+        let start = Instant::now();
+        assert_eq!(wakes.plan("fcm:a", start, Some("first")), Plan::Now);
+        let early = PUSH_GAP / 3;
+        assert_eq!(wakes.plan("fcm:a", start + early, Some("second")), Plan::After(PUSH_GAP - early));
+        assert_eq!(wakes.plan("fcm:a", start + early, Some("third")), Plan::AlreadyQueued);
+        assert_eq!(wakes.plan("fcm:a", start + early, None), Plan::AlreadyQueued, "a ring without a preview keeps the one held");
+        assert_eq!(wakes.release_queued("fcm:a", start + PUSH_GAP).as_deref(), Some("third"));
+        assert_eq!(wakes.release_queued("fcm:b", start + PUSH_GAP), None);
+    }
+
     #[tokio::test]
     async fn a_delivered_push_is_sent_once() {
         let (pushed, mut pushes) = tokio::sync::mpsc::unbounded_channel();
         let config = crate::config::Config::from_env(|_| None).unwrap();
         let service = Service::with_pusher(crate::store::Store::memory(), &config, Pusher::Recording(pushed));
-        assert_eq!(deliver_with_retries(&service, "fcm:a", "a").await, Some(Delivery::Sent));
+        assert_eq!(deliver_with_retries(&service, "fcm:a", "a", None).await, Some(Delivery::Sent));
         assert_eq!(pushes.recv().await.as_deref(), Some("fcm:a"));
         assert!(pushes.try_recv().is_err());
     }
