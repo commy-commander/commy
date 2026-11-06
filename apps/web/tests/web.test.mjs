@@ -483,6 +483,15 @@ test("the browser shows its server list recovery code like the desktop", () => {
   assert.equal(webDefault("list_shareable_emojis").known, false);
 });
 
+test("voice filters are offered in the browser and follow the server's switch like the desktop", () => {
+  const index = read("apps", "desktop", "ui", "index.html");
+  assert.ok(index.includes('<h2 class="settings-subhead">Voice Filter</h2>\n          <div class="settings-card" id="voice-filter-card"'));
+  const calls = read("apps", "web", "src", "session", "calls.rs");
+  assert.ok(calls.includes('self.emit("voice-filter-held"'));
+  assert.ok(calls.includes("can_use_voice_filters()"));
+  assert.ok(read("apps", "web", "ui", "web-bridge.js").includes("started.filter_test_frame(frame)"));
+});
+
 test("the app looks for the browser on the html element, where the bridge marks it", () => {
   assert.ok(read("apps", "web", "ui", "web-bridge.js").includes('document.documentElement.classList.add("web-app")'));
   for (const file of ["app.js", "updates.js"]) {

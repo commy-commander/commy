@@ -87,7 +87,7 @@
     emit,
   };
 
-  const voice = webVoice(window);
+  const voice = webVoice(window, { testFrame: frame => (started ? started.filter_test_frame(frame) : null) });
   let voicePrefs = webVoicePrefs(host.load(WEB_VOICE_PREFS_KEY));
   voice.configure(voicePrefs);
   let started = null;

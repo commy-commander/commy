@@ -210,3 +210,33 @@ test("the bridge answers the voice settings the app changes, and the backend sho
   const fields = /const LOCAL_VOICE_FIELDS: \[&str; \d+\] = \[([^\]]+)\]/.exec(calls)[1].match(/"[a-z_]+"/g).map(f => f.slice(1, -1));
   assert.deepEqual(fields.sort(), Object.keys(webVoiceDefaults()).sort());
 });
+
+test("a voice filter is kept in this browser and the mic test plays you back through it", async () => {
+  const { WEB_VOICE_FILTERS, WEB_TEST_SPEAKER } = voiceScripts;
+  assert.deepEqual(WEB_VOICE_FILTERS, ["off", "higher", "lower", "robot", "radio", "cave", "whisper"]);
+  assert.equal(webVoiceApply(webVoiceDefaults(), "set_voice_filter", { filter: "cave" }).voice_filter, "cave");
+  assert.throws(() => webVoiceApply(webVoiceDefaults(), "set_voice_filter", { filter: "kazoo" }), /unknown voice filter/);
+  assert.equal(webVoicePrefs({ voice_filter: "kazoo" }).voice_filter, "off");
+  const app = read("apps", "desktop", "ui", "scripts", "voice-filters.js");
+  for (const key of WEB_VOICE_FILTERS) assert.ok(app.includes(`key: "${key}"`), key);
+
+  const win = fakeWindow();
+  const nodes = [];
+  win.AudioWorkletNode = class {
+    constructor(ctx, name) { Object.assign(this, { name, sent: [], port: { postMessage: pcm => this.sent.push(pcm) }, connect: next => next, disconnect() {} }); nodes.push(this); }
+  };
+  const heard = [];
+  const voice = webVoice(win, { testFrame: frame => { heard.push(frame); return Int16Array.from(frame, s => s >> 1); } });
+  await voice.configure(webVoiceApply(webVoiceDefaults(), "set_voice_filter", { filter: "robot" }));
+  await voice.startTest();
+  const mic = nodes.find(n => n.port.onmessage);
+  mic.port.onmessage({ data: new Int16Array([800, -800]) });
+  assert.equal(heard.length, 1);
+  const speaker = nodes.find(n => n.name === "commy-speaker");
+  assert.deepEqual(Array.from(speaker.sent[0]), [400, -400]);
+  assert.equal(WEB_TEST_SPEAKER, "mic-test");
+  await voice.configure(webVoiceDefaults());
+  mic.port.onmessage({ data: new Int16Array([800, -800]) });
+  assert.equal(heard.length, 1, "with the filter off the test plays the plain mic instead");
+  voice.stopTest();
+});

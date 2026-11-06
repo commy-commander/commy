@@ -200,13 +200,37 @@ impl Session {
             "sensitivity_db": -45,
             "mute_hotkey": "",
             "deafen_hotkey": "",
+            "voice_filter": "off",
             "afk_timeout_minutes": personal.afk_timeout_minutes.unwrap_or(afk::DEFAULT_TIMEOUT_MINUTES),
         });
         drop(voice);
         let local = self.host.load(voice_prefs::LOCAL_VOICE_KEY).and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
         voice_prefs::overlay_local_voice(&mut settings, local);
-        self.mic.borrow_mut().configure(crate::mic_gate::MicSettings::of(&settings));
+        let changed = self.mic.borrow_mut().configure(crate::mic_gate::MicSettings::of(&settings));
+        if let Some(held) = changed {
+            let server = self.voice.borrow().link.as_ref().and_then(|link| link.server);
+            self.emit("voice-filter-held", json!({ "held": held, "server": server.map(|s| s.to_string()), "news": true }));
+        }
         settings
+    }
+
+    fn voice_filter_allowed(&self) -> (Option<ServerId>, bool) {
+        let server = self.voice.borrow().link.as_ref().and_then(|link| link.server);
+        let allowed = server.is_none_or(|server| self.read_state(server, |state, me| Ok(state.server.permissions_for(me).can_use_voice_filters())).unwrap_or(true));
+        (server, allowed)
+    }
+
+    pub(super) fn announce_voice_filter(&self, joining: bool) {
+        let (server, allowed) = self.voice_filter_allowed();
+        let changed = self.mic.borrow_mut().allow_filter(allowed).is_some();
+        if changed || joining {
+            let held = self.mic.borrow().filter_held_back();
+            self.emit("voice-filter-held", json!({ "held": held, "server": server.map(|s| s.to_string()), "news": changed }));
+        }
+    }
+
+    pub fn filter_test_frame(&self, pcm: &[i16]) -> Vec<i16> {
+        self.mic.borrow_mut().test_frame(pcm)
     }
 
     fn press_talk(self: &Rc<Self>, pressed: bool) {
@@ -390,6 +414,7 @@ impl Session {
         self.voice.borrow_mut().link = Some(link);
         self.refresh_gates();
         *self.admit.lock().unwrap() = Some(Gate::Room(channel));
+        self.announce_voice_filter(true);
         self.say_seat(server, Some(joined)).await;
         self.say_here(server);
         self.emit("server-event", json!(server.to_string()));
@@ -911,6 +936,7 @@ impl Session {
     }
 
     pub(super) fn refresh_gates(&self) {
+        self.announce_voice_filter(false);
         let here = self.voice.borrow().link.as_ref().and_then(|link| Some((link.server?, link.channel, link.me)));
         let Some((server, channel, me)) = here else { return };
         let Ok(gates) = self.read_state(server, |state, _| Ok(VoiceGates::of(state, channel, me, Utc::now()))) else { return };

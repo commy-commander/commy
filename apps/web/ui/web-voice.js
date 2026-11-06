@@ -8,7 +8,9 @@ const WEB_MAX_DEVICE_NAME = 200;
 const WEB_MAX_TUNED_PEOPLE = 500;
 const WEB_SILENCE_DB = -100;
 const WEB_PSEUDO_DEVICES = ["default", "communications"];
-const WEB_VOICE_COMMANDS = ["set_noise_cancellation", "set_echo_cancellation", "set_auto_level", "set_volumes", "set_audio_devices", "set_user_voice", "set_stream_volume", "set_input_mode", "set_sensitivity", "set_voice_hotkeys"];
+const WEB_VOICE_COMMANDS = ["set_noise_cancellation", "set_echo_cancellation", "set_auto_level", "set_volumes", "set_audio_devices", "set_user_voice", "set_stream_volume", "set_input_mode", "set_sensitivity", "set_voice_hotkeys", "set_voice_filter"];
+const WEB_VOICE_FILTERS = ["off", "higher", "lower", "robot", "radio", "cave", "whisper"];
+const WEB_TEST_SPEAKER = "mic-test";
 const WEB_TALK_KEY = "Ctrl+Shift+Space";
 const WEB_MAX_RELEASE_MS = 2000;
 const WEB_HOTKEY = /^(?:(?:Ctrl|Alt|Shift|Super)\+)+[A-Za-z0-9]{1,24}$/;
@@ -18,7 +20,7 @@ const WEB_MIC_REFUSED = "Commy could not open your microphone. Allow it for this
 function webVoiceDefaults() {
   return {
     noise_cancellation: true, echo_cancellation: true, auto_level: true, input_gain: 1, output_volume: 1, stream_volume: 1, input_device: null, output_device: null, user_volumes: {}, muted_users: [],
-    input_mode: "voice_activity", talk_key: WEB_TALK_KEY, talk_release_ms: 200, auto_sensitivity: true, sensitivity_db: -45, mute_hotkey: "", deafen_hotkey: "",
+    input_mode: "voice_activity", talk_key: WEB_TALK_KEY, talk_release_ms: 200, auto_sensitivity: true, sensitivity_db: -45, mute_hotkey: "", deafen_hotkey: "", voice_filter: "off",
   };
 }
 
@@ -88,6 +90,7 @@ function webVoicePrefs(raw) {
   if (saved.sensitivity_db !== null && saved.sensitivity_db !== "" && Number.isFinite(db)) prefs.sensitivity_db = Math.min(0, Math.max(-100, db));
   prefs.mute_hotkey = webHotkey(saved.mute_hotkey) || "";
   prefs.deafen_hotkey = webHotkey(saved.deafen_hotkey) || "";
+  if (WEB_VOICE_FILTERS.includes(saved.voice_filter)) prefs.voice_filter = saved.voice_filter;
   return prefs;
 }
 
@@ -126,6 +129,10 @@ function webVoiceApply(prefs, cmd, args) {
       if (trimmed && !webHotkey(trimmed)) throw `${trimmed} is not a hotkey Commy can use for ${what}`;
       next[field] = trimmed;
     }
+  }
+  if (cmd === "set_voice_filter") {
+    if (!WEB_VOICE_FILTERS.includes(given.filter)) throw "unknown voice filter";
+    next.voice_filter = given.filter;
   }
   const clash = webHotkeyClash(next);
   if (clash) throw `${clash} is already used by another Commy hotkey`;
@@ -176,7 +183,7 @@ function webLevelDb(samples) {
   return rms > 0 ? Math.max(WEB_SILENCE_DB, 20 * Math.log10(rms)) : WEB_SILENCE_DB;
 }
 
-function webVoice(win) {
+function webVoice(win, hooks = {}) {
   let context = null;
   let master = null;
   let parts = null;
@@ -224,8 +231,12 @@ function webVoice(win) {
     return context;
   }
 
+  function hearsFilter() {
+    return prefs.voice_filter !== "off" && typeof hooks.testFrame === "function";
+  }
+
   function monitorOn() {
-    if (!parts || parts.monitor) return;
+    if (!parts || parts.monitor || hearsFilter()) return;
     parts.monitor = context.createGain();
     parts.gain.connect(parts.monitor).connect(master);
   }
@@ -281,7 +292,13 @@ function webVoice(win) {
     const mic = new win.AudioWorkletNode(ctx, "commy-mic", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: "explicit" });
     const hush = ctx.createGain();
     hush.gain.value = 0;
-    mic.port.onmessage = e => sendFrame && sendFrame(e.data);
+    mic.port.onmessage = e => {
+      if (sendFrame) sendFrame(e.data);
+      if (testing && hearsFilter()) {
+        const heard = hooks.testFrame(e.data);
+        if (heard && heard.length) play(WEB_TEST_SPEAKER, heard);
+      }
+    };
     source.connect(gain);
     if (analyser) gain.connect(analyser);
     gain.connect(mic).connect(hush).connect(ctx.destination);
@@ -359,6 +376,10 @@ function webVoice(win) {
     prefs = webVoicePrefs(next);
     if (master) master.gain.value = prefs.output_volume;
     if (parts) parts.gain.gain.value = prefs.input_gain;
+    if (testing && parts) {
+      if (hearsFilter()) monitorOff();
+      else monitorOn();
+    }
     for (const [peer, speaker] of speakers) speaker.gain.gain.value = webPeerGain(prefs, peer);
     if (before.output_device !== prefs.output_device) await applyOutput();
     if (parts && parts.shape !== webMicShape(prefs)) await restartMic();
@@ -417,5 +438,5 @@ function webVoice(win) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_TALK_KEY, webHotkey, webHotkeyAction, WEB_STREAM_SPEAKER, WEB_VOICE_WORKLET, WEB_VOICE_PREFS_KEY, WEB_VOICE_COMMANDS, WEB_MIC_REFUSED, WEB_SILENCE_DB, webVoiceDefaults, webVoicePrefs, webVoiceApply, webPeerGain, webMicConstraints, webDeviceNames, webDeviceId, webLevelDb, webVoice };
+  module.exports = { WEB_VOICE_FILTERS, WEB_TEST_SPEAKER, WEB_TALK_KEY, webHotkey, webHotkeyAction, WEB_STREAM_SPEAKER, WEB_VOICE_WORKLET, WEB_VOICE_PREFS_KEY, WEB_VOICE_COMMANDS, WEB_MIC_REFUSED, WEB_SILENCE_DB, webVoiceDefaults, webVoicePrefs, webVoiceApply, webPeerGain, webMicConstraints, webDeviceNames, webDeviceId, webLevelDb, webVoice };
 }

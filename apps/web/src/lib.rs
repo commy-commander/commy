@@ -92,6 +92,10 @@ mod bindings {
             self.session.voice_frame(pcm);
         }
 
+        pub fn filter_test_frame(&self, pcm: &[i16]) -> Vec<i16> {
+            self.session.filter_test_frame(pcm)
+        }
+
         pub fn screen_frame(&self, width: u32, height: u32, jpeg: Vec<u8>) -> Result<u32, JsValue> {
             self.session.screen_frame(width, height, jpeg).map(|viewers| viewers as u32).map_err(|message| JsValue::from_str(&message))
         }

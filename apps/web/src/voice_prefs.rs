@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 pub const LOCAL_VOICE_KEY: &str = "commy.web.voice";
-const LOCAL_VOICE_FIELDS: [&str; 17] = [
+const LOCAL_VOICE_FIELDS: [&str; 18] = [
     "noise_cancellation",
     "echo_cancellation",
     "auto_level",
@@ -19,6 +19,7 @@ const LOCAL_VOICE_FIELDS: [&str; 17] = [
     "sensitivity_db",
     "mute_hotkey",
     "deafen_hotkey",
+    "voice_filter",
 ];
 
 pub fn overlay_local_voice(settings: &mut Value, local: Option<Value>) {

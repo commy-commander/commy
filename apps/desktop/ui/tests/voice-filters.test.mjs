@@ -52,6 +52,6 @@ test("the notes say who hears what", () => {
 test("the voice settings carry the picker and the app loads its script", () => {
   const html = read("apps", "desktop", "ui", "index.html");
   assert.ok(html.includes('<script src="scripts/voice-filters.js"></script>'));
-  assert.ok(html.includes('class="settings-card native-only" id="voice-filter-card"'), "the browser, which cannot filter, hides it");
+  assert.ok(html.includes('<div class="settings-card" id="voice-filter-card"'), "the browser filters too, so the card shows everywhere");
   assert.ok(html.includes('id="voice-filter"') && html.includes('id="voice-filter-note"'));
 });
