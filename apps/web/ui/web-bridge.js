@@ -45,14 +45,17 @@
         clearTimeout(timer);
       }
     },
-    async hasBytes(url, waitMs = WEB_PICTURE_WAIT_MS) {
+    async storageRequest(method, url, headersJson, body, waitMs = WEB_PICTURE_WAIT_MS) {
       const stop = new AbortController();
       const timer = setTimeout(() => stop.abort(), waitMs);
       try {
-        const res = await fetch(url, { method: "HEAD", credentials: "omit", signal: stop.signal });
-        return res.ok;
+        const init = { method, credentials: "omit", headers: JSON.parse(headersJson || "{}"), signal: stop.signal };
+        if (body && body.length) init.body = body.slice();
+        const res = await fetch(url, init);
+        const bytes = method === "HEAD" ? null : new Uint8Array(await res.arrayBuffer());
+        return { status: res.status, body: bytes };
       } catch {
-        return false;
+        return { status: 0, body: null };
       } finally {
         clearTimeout(timer);
       }

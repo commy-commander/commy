@@ -3,6 +3,9 @@ main = "worker.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
 
+[vars]
+DAILY_UPLOAD_MB = "500"
+
 [[r2_buckets]]
 binding = "FILES"
 bucket_name = "commy-files"

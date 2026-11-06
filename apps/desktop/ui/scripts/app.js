@@ -783,7 +783,7 @@ async function mockInvoke(cmd, args = {}) {
             return view;
           })
           .filter(c => c.can_view || !mock.plainMember),
-        can_manage_server: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
+        can_manage_server: !mock.plainMember, can_manage_file_storage: !mock.plainMember, can_manage_channels: !mock.plainMember, can_manage_roles: !mock.plainMember, can_kick: !mock.plainMember, can_manage_messages: !mock.plainMember, can_bypass_slow_mode: !mock.plainMember,
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
@@ -1527,11 +1527,18 @@ async function mockInvoke(cmd, args = {}) {
     case "test_file_store": {
       const url = cleanFileStore(args.url);
       if (!url || !url.endsWith(".workers.dev")) throw "That address did not answer as Commy file storage";
-      return 31457280;
+      return { max_bytes: 31457280, paired: Boolean(mock.pairedStores && mock.pairedStores[url]) };
     }
     case "set_file_store": {
       const url = args.url ? cleanFileStore(args.url) : null;
       if (args.url && !url) throw FILE_STORE_INVALID;
+      if (url) {
+        mock.pairedStores = mock.pairedStores || {};
+        const code = (args.setupCode || "").trim();
+        if (!code && !mock.pairedStores[url]) throw "Enter the setup code you gave the worker on Cloudflare";
+        if (code && code.length < 16) throw "The worker did not accept that setup code";
+        mock.pairedStores[url] = true;
+      }
       mock.servers[args.serverId].file_store = url;
       return null;
     }
@@ -11826,9 +11833,11 @@ function renderTipJarEditor(server) {
 }
 
 function renderFileStoreEditor(server) {
-  const editable = Boolean(server.can_manage_server);
+  const editable = Boolean(server.can_manage_file_storage);
   $("file-store-input").value = server.file_store || "";
   $("file-store-input").disabled = !editable;
+  $("file-store-code").value = "";
+  $("file-store-code").disabled = !editable;
   $("file-store-status").textContent = fileStoreStatus(server);
   $("file-store-save").classList.toggle("hidden", !editable);
   $("file-store-remove").classList.toggle("hidden", !editable || !server.file_store);
@@ -11843,11 +11852,15 @@ async function saveFileStore(remove) {
   const save = $("file-store-save");
   save.disabled = true;
   try {
+    const setupCode = $("file-store-code").value.trim() || null;
     if (url) {
       $("file-store-status").textContent = "Checking the address...";
-      await invoke("test_file_store", { url });
+      const info = await invoke("test_file_store", { url });
+      if (info && !info.paired && !setupCode) throw "Enter the setup code you gave the worker on Cloudflare";
+      if (setupCode) $("file-store-status").textContent = "Handing the worker this server's member list...";
     }
-    await invoke("set_file_store", { serverId: server.id, url });
+    await invoke("set_file_store", { serverId: server.id, url, setupCode: url ? setupCode : null });
+    $("file-store-code").value = "";
     toast(url ? "File storage connected" : "Files here are peer to peer only again");
     await refreshCurrentServer();
     renderFileStoreEditor(state.currentServer);
@@ -11928,9 +11941,11 @@ function wireServerTagEditor() {
   $("file-store-save").onclick = () => saveFileStore(false);
   $("file-store-remove").onclick = () => saveFileStore(true);
   $("file-store-guide").onclick = () => openOutsideLink(FILE_STORE_GUIDE);
-  $("file-store-input").addEventListener("keydown", e => {
-    if (e.key === "Enter") saveFileStore(false);
-  });
+  for (const id of ["file-store-input", "file-store-code"]) {
+    $(id).addEventListener("keydown", e => {
+      if (e.key === "Enter") saveFileStore(false);
+    });
+  }
   $("tip-jar-save").onclick = () => saveTipJar(false);
   $("tip-jar-remove").onclick = () => saveTipJar(true);
   $("tip-jar-input").addEventListener("keydown", e => {
@@ -12432,7 +12447,7 @@ async function removeRoleBanner(server, role) {
 const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff", "c05ccf", "ff6fa8", "99aab5"];
 
 const PERMISSION_GROUPS = [
-  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "create_events", "manage_events", "view_audit_log"]],
+  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "create_events", "manage_events", "view_audit_log", "manage_file_storage"]],
   ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "embed_links", "read_message_history", "create_threads", "send_polls", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
   ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
   ["Voice", ["priority_speaker", "use_voice_filters"]],
@@ -21861,6 +21876,7 @@ const PERMISSION_LABELS = [
   ["kick_members", "Kick Members"],
   ["create_invites", "Create Invites"],
   ["view_audit_log", "View Audit Log"],
+  ["manage_file_storage", "Manage Cloudflare Storage"],
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["time_out_members", "Time Out Members"],
@@ -22225,7 +22241,7 @@ function openServerSettings(tab) {
   renderGameTagEditor(server);
   renderServerTagEditor(server);
   renderTipJarEditor(server);
-  $("tab-file-storage").classList.toggle("hidden", !server.can_manage_server);
+  $("tab-file-storage").classList.toggle("hidden", !server.can_manage_file_storage);
   $("tab-gif-search").classList.toggle("hidden", !server.can_manage_server);
   $("tab-game-database").classList.toggle("hidden", !server.can_manage_server);
   if (server.can_manage_server) {
@@ -22252,7 +22268,7 @@ function openServerSettings(tab) {
   if (canBots) renderBotsPage(server);
   const allowed = {
     bots: canBots,
-    "file-storage": Boolean(server.can_manage_server),
+    "file-storage": Boolean(server.can_manage_file_storage),
     "gif-search": Boolean(server.can_manage_server),
     "game-database": Boolean(server.can_manage_server) && !inBrowserApp(),
     invites: canInvites,

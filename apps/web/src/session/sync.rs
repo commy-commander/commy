@@ -89,6 +89,7 @@ impl Session {
         spawn_local(self.clone().run_sync(events));
         spawn_local(self.clone().tend_sync());
         spawn_local(self.clone().tend_presence());
+        spawn_local(self.clone().tend_file_storage());
         self.refresh_sync();
     }
 

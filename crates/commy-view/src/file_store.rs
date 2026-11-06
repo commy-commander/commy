@@ -7,7 +7,7 @@ use crate::manage::need;
 pub const FILE_STORE_INVALID: &str = "Use the https address of your file storage, like https://commy-files.yourname.workers.dev";
 
 pub fn set_file_store(state: &ServerState, perms: Permissions, address: Option<&str>) -> Act<ServerEvent> {
-    need(perms, Permissions::MANAGE_SERVER, "change where this server keeps files")?;
+    need(perms, Permissions::MANAGE_FILE_STORAGE, "change where this server keeps files")?;
     let url = match address.map(str::trim).filter(|a| !a.is_empty()) {
         None => None,
         Some(address) => Some(clean_file_store(address).ok_or(FILE_STORE_INVALID)?),
@@ -28,5 +28,7 @@ mod tests {
         assert!(matches!(set_file_store(&state, Permissions::all(), Some("  ")), Ok(ServerEvent::FileStoreSet { url: None, .. })));
         assert_eq!(set_file_store(&state, Permissions::all(), Some("http://files.example.org")).unwrap_err(), FILE_STORE_INVALID);
         assert!(set_file_store(&state, Permissions::default_member(), Some("https://files.example.org")).is_err());
+        assert!(set_file_store(&state, Permissions::MANAGE_SERVER, None).is_err(), "Manage Server alone does not reach storage");
+        assert!(set_file_store(&state, Permissions::MANAGE_FILE_STORAGE, None).is_ok());
     }
 }
