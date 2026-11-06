@@ -256,6 +256,7 @@ pub struct MemberView {
     pub server_tag: Option<server_tags::ServerTagView>,
     pub avatar_border: Option<String>,
     pub card_effect: Option<String>,
+    pub phone: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -581,6 +582,7 @@ impl ServerView {
                     server_tag: server_tags::shown(p.server_tag.as_ref(), state, p.id),
                     avatar_border: p.avatar_border.clone().filter(|b| commy_core::user::valid_avatar_border(b)),
                     card_effect: p.card_effect.clone().filter(|e| commy_core::user::valid_card_effect(e)),
+                    phone: !p.presence.is_visible_online() && commy_core::user::phone_reachable(p.phone_until, now.timestamp_millis()),
                 }
             })
             .collect();

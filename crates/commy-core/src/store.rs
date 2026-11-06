@@ -1143,6 +1143,7 @@ impl ServerState {
                 self.pin_identity(&mut profile)?;
                 profile = profile.as_seen_by_others();
                 if self.server.is_member(profile.id) {
+                    self.keep_phone_mark(&mut profile);
                     let changed = self.profiles.get(&profile.id) != Some(&profile);
                     self.profiles.insert(profile.id, profile);
                     return Ok(changed);
@@ -2139,6 +2140,7 @@ impl ServerState {
                 }
                 self.pin_identity(&mut profile)?;
                 profile = profile.as_seen_by_others();
+                self.keep_phone_mark(&mut profile);
                 match self.profiles.get(&profile.id) {
                     Some(existing) if *existing == profile => Ok(false),
                     _ => {
@@ -2758,6 +2760,11 @@ impl ServerState {
         self.end_seat(user) || stood
     }
 
+    fn keep_phone_mark(&self, profile: &mut UserProfile) {
+        let held = self.profiles.get(&profile.id).and_then(|p| p.phone_until);
+        profile.phone_until = crate::user::kept_phone_until(profile.phone_until, held, Utc::now().timestamp_millis());
+    }
+
     fn pin_identity(&self, profile: &mut UserProfile) -> Result<(), StoreError> {
         if profile.pin_identity(self.identity_of(profile.id)) {
             Ok(())
@@ -3348,6 +3355,20 @@ mod tests {
             }),
             Ok(false)
         );
+    }
+
+    #[test]
+    fn a_phone_mark_survives_profile_updates_from_other_devices() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let mut phone = UserProfile::new("traveller");
+        phone.phone_until = Some(Utc::now().timestamp_millis() + crate::user::PHONE_REACH_MS);
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: phone.clone() }).unwrap();
+        let desktop = UserProfile { phone_until: None, custom_status: Some("at my desk".into()), ..phone.clone() };
+        assert_eq!(state.apply(ServerEvent::ProfileUpdate { profile: desktop.clone() }), Ok(true));
+        assert_eq!(state.profiles[&phone.id].phone_until, phone.phone_until);
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: desktop }).unwrap();
+        assert_eq!(state.profiles[&phone.id].phone_until, phone.phone_until, "a rejoin from the desktop keeps it too");
     }
 
     #[test]

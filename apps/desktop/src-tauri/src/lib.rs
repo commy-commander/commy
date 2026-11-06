@@ -6537,6 +6537,16 @@ async fn publish_profile(app: &App, handle: &tauri::AppHandle, profile: &UserPro
     let _ = handle.emit("profile-changed", profile);
 }
 
+pub(crate) async fn note_phone_reachable(app: &App, handle: &tauri::AppHandle) {
+    let now = chrono::Utc::now().timestamp_millis();
+    let due = app.profile.lock().unwrap().as_ref().is_some_and(|p| commy_core::user::phone_mark_due(p.phone_until, now));
+    if !due {
+        return;
+    }
+    let Ok(profile) = edit_profile(app, |p| p.phone_until = Some(now + commy_core::user::PHONE_REACH_MS)) else { return };
+    publish_profile(app, handle, &profile).await;
+}
+
 async fn set_auto_presence(app: &App, handle: &tauri::AppHandle, presence: Presence, auto_idle: bool) {
     let profile = {
         let mut guard = app.profile.lock().unwrap();
