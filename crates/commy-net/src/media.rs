@@ -10,6 +10,8 @@ pub const MAX_MEDIA_FRAME: u32 = 4 * 1024 * 1024;
 
 pub const MAX_INK_POINTS: usize = 64;
 
+const INK_SCALE: f32 = u16::MAX as f32;
+
 #[derive(Debug, Error)]
 pub enum MediaError {
     #[error("media frame of {0} bytes exceeds limit")]
@@ -65,6 +67,59 @@ impl MediaPacket {
     pub fn is_video(&self) -> bool {
         matches!(self, MediaPacket::Video { .. })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InkMarkView {
+    pub kind: &'static str,
+    pub stroke: u32,
+    pub points: Vec<[f32; 2]>,
+}
+
+fn to_fraction(v: u16) -> f32 {
+    v as f32 / INK_SCALE
+}
+
+fn from_fraction(v: f32) -> u16 {
+    if !v.is_finite() {
+        return 0;
+    }
+    (v.clamp(0.0, 1.0) * INK_SCALE).round() as u16
+}
+
+pub fn mark_view(mark: &InkMark) -> InkMarkView {
+    match mark {
+        InkMark::Point { x, y } => InkMarkView { kind: "point", stroke: 0, points: vec![[to_fraction(*x), to_fraction(*y)]] },
+        InkMark::Line { stroke, points } => InkMarkView {
+            kind: "line",
+            stroke: *stroke,
+            points: points.iter().map(|[x, y]| [to_fraction(*x), to_fraction(*y)]).collect(),
+        },
+        InkMark::Clear => InkMarkView { kind: "clear", stroke: 0, points: Vec::new() },
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InkMarkInput {
+    pub kind: String,
+    #[serde(default)]
+    pub stroke: u32,
+    #[serde(default)]
+    pub points: Vec<[f32; 2]>,
+}
+
+pub fn mark_from(input: &InkMarkInput) -> Option<InkMark> {
+    let points: Vec<[u16; 2]> = input.points.iter().map(|[x, y]| [from_fraction(*x), from_fraction(*y)]).collect();
+    let mark = match input.kind.as_str() {
+        "point" => {
+            let [x, y] = *points.first()?;
+            InkMark::Point { x, y }
+        }
+        "line" if points.len() <= MAX_INK_POINTS => InkMark::Line { stroke: input.stroke, points },
+        "clear" => InkMark::Clear,
+        _ => return None,
+    };
+    mark.is_valid().then_some(mark)
 }
 
 pub async fn write_frame<W, T>(writer: &mut W, value: &T) -> Result<(), MediaError>
@@ -270,5 +325,22 @@ mod tests {
             .unwrap();
         let result: Result<Option<MediaHello>, _> = read_frame(&mut b).await;
         assert!(matches!(result, Err(MediaError::Malformed)));
+    }
+
+    #[test]
+    fn marks_convert_between_fractions_and_the_wire() {
+        let input = |kind: &str, points: Vec<[f32; 2]>| InkMarkInput { kind: kind.into(), stroke: 3, points };
+        assert_eq!(mark_from(&input("point", vec![[0.0, 1.0]])), Some(InkMark::Point { x: 0, y: u16::MAX }));
+        assert_eq!(mark_from(&input("point", vec![[-2.0, f32::NAN]])), Some(InkMark::Point { x: 0, y: 0 }));
+        assert_eq!(mark_from(&input("point", vec![])), None);
+        assert_eq!(mark_from(&input("line", vec![[0.5, 0.5]; MAX_INK_POINTS + 1])), None);
+        assert_eq!(mark_from(&input("line", vec![])), None);
+        assert_eq!(mark_from(&input("clear", vec![])), Some(InkMark::Clear));
+        assert_eq!(mark_from(&input("scribble", vec![])), None);
+        let line = mark_from(&input("line", vec![[0.25, 0.75]])).unwrap();
+        let view = mark_view(&line);
+        assert_eq!(view.kind, "line");
+        assert_eq!(view.stroke, 3);
+        assert!((view.points[0][0] - 0.25).abs() < 0.001 && (view.points[0][1] - 0.75).abs() < 0.001);
     }
 }

@@ -5625,7 +5625,6 @@ function syncCameraWatches(users) {
       invoke("stop_watching_camera", { userId: id }).catch(() => {});
     }
   }
-  if (inBrowserApp()) return;
   for (const id of users) {
     if ((state.user && id === state.user.id) || cam.watching.has(id)) continue;
     cam.watching.add(id);
@@ -5737,7 +5736,7 @@ function paintCallTile(tile, t, focused) {
     } else {
       const waiting = !tileHasFrame(tile);
       cover.classList.toggle("hidden", !waiting);
-      text.textContent = inBrowserApp() ? WEB_CAMERA_NOTE : "Connecting";
+      text.textContent = "Connecting";
     }
     tile.title = isMe ? "Your camera" : `${t.name}'s camera`;
     return;
@@ -5747,9 +5746,9 @@ function paintCallTile(tile, t, focused) {
   tile.classList.toggle("watched", live && !isMe);
   if (!live) tilePainter(tile).clear();
   cover.classList.toggle("hidden", live && !onStage && tileHasFrame(tile));
-  text.textContent = onStage ? "On the big screen" : live ? "Connecting to stream" : inBrowserApp() ? WEB_STREAM_NOTE : `${t.name} is streaming`;
+  text.textContent = onStage ? "On the big screen" : live ? "Connecting to stream" : `${t.name} is streaming`;
   const watch = tile.querySelector(".cam-watch");
-  if (watch) watch.classList.toggle("hidden", live || inBrowserApp());
+  if (watch) watch.classList.toggle("hidden", live);
   tile.title = onStage ? "Back to the grid" : isMe ? "Open your stream preview" : live ? `Show ${t.name}'s stream big` : `Watch ${t.name}'s stream`;
 }
 
@@ -16587,9 +16586,6 @@ const YOUTUBE_GREET_MS = 250;
 const YOUTUBE_GREET_TRIES = 40;
 const YOUTUBE_NOTICE = "This video plays from YouTube. Loading it connects you to YouTube, which can see your IP address and may store data under Google's privacy policy.";
 const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
-const WEB_WATCH_NOTE = "Streams play in the Commy desktop app.";
-const WEB_CAMERA_NOTE = "Camera shows in the desktop app";
-const WEB_STREAM_NOTE = "Stream plays in the desktop app";
 
 const activityUi = {
   run: null,
@@ -19893,7 +19889,6 @@ async function watchScreen(userId, name, { retry = false } = {}) {
   }
   const serverId = state.currentServer ? state.currentServer.id : state.voiceServer && state.voiceServer.id;
   if (!serverId) return;
-  if (inBrowserApp()) return toast(WEB_WATCH_NOTE);
   try {
     if (state.watchingUser !== userId) await releaseStage();
     if (!retry) {

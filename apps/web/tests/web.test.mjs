@@ -403,16 +403,20 @@ test("the app looks for the browser on the html element, where the bridge marks 
   }
 });
 
-test("watching streams and cameras explains itself in the browser instead of failing", () => {
+test("the browser watches streams and cameras, draws on them and sets stream volume like the desktop", () => {
   const app = read("apps", "desktop", "ui", "scripts", "app.js");
   const watch = /async function watchScreen\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
-  assert.ok(watch.indexOf("inBrowserApp()") < watch.indexOf('invoke("watch_screen"'));
+  assert.ok(!watch.includes("inBrowserApp()"));
   const cameras = /function syncCameraWatches\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
-  assert.ok(cameras.indexOf("if (inBrowserApp()) return;") > 0);
-  assert.ok(cameras.indexOf("if (inBrowserApp()) return;") < cameras.indexOf('invoke("watch_camera"'));
-  const tile = /function paintCallTile\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
-  assert.match(tile, /inBrowserApp\(\) \? WEB_STREAM_NOTE/);
-  assert.match(tile, /watch\.classList\.toggle\("hidden", live \|\| inBrowserApp\(\)\)/);
+  assert.ok(!cameras.includes("inBrowserApp()"));
+  const session = read("apps", "web", "src", "session.rs");
+  for (const cmd of ["watch_screen", "watch_camera", "stop_watching", "stop_watching_camera", "send_stream_ink"]) assert.ok(session.includes(`"${cmd}"`), cmd);
+  const backend = read("apps", "web", "src", "session", "watch.rs");
+  for (const event of ["video-frame", "camera-frame", "stream-ink", "stream-ink-allowed"]) {
+    assert.ok(read("apps", "web", "src", "watching.rs").includes(`"${event}"`) || backend.includes(`"${event}"`), event);
+    assert.ok(app.includes(`listen("${event}"`), event);
+  }
+  assert.ok(createRequire(import.meta.url)("../ui/web-voice.js").WEB_VOICE_COMMANDS.includes("set_stream_volume"));
 });
 
 test("the browser waits for a current server before joining voice, like the desktop", () => {

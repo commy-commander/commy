@@ -184,6 +184,7 @@ impl Session {
             "presence_until": personal.presence_until,
             "status_until": personal.status_until,
             "output_volume": 1,
+            "stream_volume": 1,
             "input_gain": 1,
             "input_device": null,
             "output_device": null,
@@ -194,6 +195,11 @@ impl Session {
         let local = self.host.load(voice_prefs::LOCAL_VOICE_KEY).and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
         voice_prefs::overlay_local_voice(&mut settings, local);
         settings
+    }
+
+    pub(super) fn voice_deafened(&self) -> bool {
+        let voice = self.voice.borrow();
+        voice.deafened || voice.link.as_ref().is_some_and(|link| link.gates.deafened)
     }
 
     pub(super) fn voice_link_open(&self) -> bool {
