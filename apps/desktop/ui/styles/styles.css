@@ -3190,8 +3190,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .cam-tile.speaking { box-shadow: 0 0 0 2px var(--green), 0 0 12px rgba(53, 194, 107, .35); }
 .cam-tile.on-stage { box-shadow: 0 0 0 2px var(--accent); }
 .cam-tile canvas, .cam-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.cam-tile.screen img { object-fit: contain; }
-.cam-tile img:not([src]) { display: none; }
+.cam-tile.screen img, .cam-tile.screen .tile-frame { object-fit: contain; }
+.cam-tile img:not([src]), .cam-tile .tile-frame.blank { display: none; }
 .cam-cover {
   position: absolute;
   inset: 0;
