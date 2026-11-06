@@ -5,6 +5,7 @@ pub mod files;
 pub mod knocks;
 pub mod mic_gate;
 pub mod recording;
+pub mod sharing;
 pub mod store;
 pub mod sync_book;
 pub mod voice_prefs;
@@ -89,6 +90,10 @@ mod bindings {
 
         pub fn voice_frame(&self, pcm: &[i16]) {
             self.session.voice_frame(pcm);
+        }
+
+        pub fn screen_frame(&self, width: u32, height: u32, jpeg: Vec<u8>) -> Result<u32, JsValue> {
+            self.session.screen_frame(width, height, jpeg).map(|viewers| viewers as u32).map_err(|message| JsValue::from_str(&message))
         }
     }
 }

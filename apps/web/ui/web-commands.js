@@ -26,6 +26,8 @@ const WEB_DEFAULTS = {
   take_pending_invite_link: null,
   take_notification_target: null,
   list_shareable_emojis: [],
+  share_audio_supported: false,
+  list_share_sources: [],
   account_cancel_sign_in: null,
   entry_list_status: { state: "synced", servers: 0, has_key: false, detail: "This browser opens your servers through your other devices." },
 };
@@ -152,10 +154,37 @@ function webNotice(args) {
   return { title: clip(args && args.title, WEB_NOTICE_TITLE_CHARS) || "Commy", options, target };
 }
 
+const WEB_SHARE_QUALITY = {
+  sharp: { fps: 8, width: 1920, quality: 0.8 },
+  balanced: { fps: 12, width: 1600, quality: 0.72 },
+  smooth: { fps: 20, width: 1280, quality: 0.62 },
+};
+const WEB_SHARE_REFUSED = "Screen sharing was not allowed. Press Share Your Screen and pick what to share.";
+const WEB_SHARE_UNSUPPORTED = "This browser cannot share its screen. Try Chrome, Edge or Firefox on a computer.";
+
+function webShareQuality(name) {
+  return WEB_SHARE_QUALITY[name] || WEB_SHARE_QUALITY.balanced;
+}
+
+function webFrameSize(width, height, maxWidth) {
+  const w = Math.floor(Number(width) || 0);
+  const h = Math.floor(Number(height) || 0);
+  if (w <= 0 || h <= 0) return null;
+  const scale = Math.min(1, maxWidth / w);
+  const even = n => Math.max(2, Math.round(n / 2) * 2);
+  return { width: even(w * scale), height: even(h * scale) };
+}
+
+function webShareError(e) {
+  const name = e && e.name;
+  if (name === "NotAllowedError" || name === "AbortError") return WEB_SHARE_REFUSED;
+  return `Could not share your screen: ${(e && e.message) || e}`;
+}
+
 function webReplyLine(status, text) {
   return `${status}\n${text}`;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget };
+  module.exports = { WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget };
 }

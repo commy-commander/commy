@@ -158,8 +158,11 @@ fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
 }
 
-pub(super) fn media_gate(admit: Admit) -> MediaGate {
+pub(super) fn media_gate(admit: Admit, shares: super::share::ShareGate) -> MediaGate {
     Arc::new(move |peer, hello| {
+        if let Some((feed, _, channel)) = crate::sharing::feed_of(hello) {
+            return shares.lock().unwrap().contains(&(feed, channel));
+        }
         let MediaHello::Voice { user, channel } = hello else { return false };
         let node = data_encoding::HEXLOWER.encode(&peer);
         match admit.lock().unwrap().as_ref() {
@@ -475,7 +478,7 @@ impl Session {
         });
     }
 
-    async fn send_voice(&self, server: ServerId, payload: &WirePayload) {
+    pub(super) async fn send_voice(&self, server: ServerId, payload: &WirePayload) {
         self.publish(server, payload);
         let node = self.node.lock().await;
         if let Some(node) = node.as_ref().filter(|node| node.neighbor_count(server) > 0) {
@@ -586,6 +589,7 @@ impl Session {
     }
 
     pub(super) fn hang_up_media(&self) {
+        self.end_shares();
         *self.admit.lock().unwrap() = None;
         let link = self.voice.borrow_mut().link.take();
         let Some(mut link) = link else { return };
@@ -783,6 +787,10 @@ impl Session {
 
     pub(super) async fn run_media(self: Rc<Self>, mut incoming: mpsc::UnboundedReceiver<MediaChannel>) {
         while let Some(media) = incoming.recv().await {
+            if crate::sharing::feed_of(&media.hello).is_some() {
+                self.add_share_viewer(media);
+                continue;
+            }
             let MediaHello::Voice { user, channel } = media.hello else { continue };
             let node = data_encoding::HEXLOWER.encode(&media.peer);
             let room = self.voice.borrow().link.as_ref().filter(|link| link.channel == channel).map(|link| link.server);

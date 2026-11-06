@@ -45,6 +45,7 @@ mod links;
 mod pictures;
 mod profile;
 mod servers;
+mod share;
 mod sync;
 mod voice_gate;
 mod voice_invites;
@@ -120,6 +121,8 @@ pub struct Session {
     links: RefCell<links::LinkSafety>,
     watching: RefCell<crate::watching::Watching>,
     mic: RefCell<crate::mic_gate::MicGate>,
+    shares: RefCell<share::Shares>,
+    share_gate: share::ShareGate,
 }
 
 #[derive(Deserialize, Default)]
@@ -182,6 +185,9 @@ struct Args {
     muted: Option<bool>,
     deafened: Option<bool>,
     pressed: Option<bool>,
+    jpeg: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
     filename: Option<String>,
     data: Option<String>,
     which: Option<String>,
@@ -302,6 +308,8 @@ impl Session {
             links: RefCell::default(),
             watching: RefCell::default(),
             mic: RefCell::default(),
+            shares: RefCell::default(),
+            share_gate: share::ShareGate::default(),
         })
     }
 
@@ -585,6 +593,7 @@ impl Session {
             "set_status_expiry" => self.profile_command(cmd, args).await,
             "set_profile_privacy" => self.profile_command(cmd, args).await,
             "watch_screen" | "watch_camera" | "stop_watching" | "stop_watching_camera" | "send_stream_ink" => self.watch_command(cmd, args).await,
+            "start_screen_share" | "stop_screen_share" | "own_share_frame" | "start_camera" | "stop_camera" | "push_camera_frame" => self.share_command(cmd, args).await,
             "web_farewell" => {
                 self.stop_all_watching();
                 self.hang_up_on_farewell().await;
@@ -938,7 +947,7 @@ impl Session {
             changed: changed_tx,
         });
         node.set_catchup_store(store.clone());
-        node.set_media_gate(calls::media_gate(self.admit.clone()));
+        node.set_media_gate(calls::media_gate(self.admit.clone(), self.share_gate.clone()));
         let _ = node.take_entry_key_requests();
         let _ = node.take_mirror_requests();
         let _ = node.take_knock_requests();
