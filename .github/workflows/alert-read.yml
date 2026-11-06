@@ -1,0 +1,24 @@
+name: Alert read
+on:
+  push:
+    branches: [claude/project-thread-pj73e4]
+permissions:
+  security-events: read
+  contents: read
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/code-scanning/alerts?state=open&per_page=100" --jq '.[] | {number, rule: .rule.id, path: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line, msg: .most_recent_instance.message.text}'
+          for tool in CodeQL; do
+            ids=$(gh api "repos/$REPO/code-scanning/analyses?ref=refs/heads/main&per_page=20" --jq '.[] | "\(.id) \(.category)"')
+            echo "$ids"
+          done
+          gh api "repos/$REPO/code-scanning/analyses?ref=refs/heads/main&per_page=20" --jq '[.[] | {id, category}] | unique_by(.category) | .[] | .id' | while read id; do
+            gh api -H "Accept: application/sarif+json" "repos/$REPO/code-scanning/analyses/$id" > sarif.json
+            jq -c '.runs[].results[] | select(.ruleId=="js/clear-text-logging" or .ruleId=="rust/hard-coded-cryptographic-value") | {rule: .ruleId, loc: .locations[0].physicalLocation, flows: [.codeFlows[]?.threadFlows[]?.locations[]? | {f: .location.physicalLocation.artifactLocation.uri, l: .location.physicalLocation.region.startLine, m: .location.message.text}]}' sarif.json || true
+          done
