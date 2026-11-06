@@ -17,7 +17,8 @@ use crate::files;
 const JOIN_WAIT: Duration = Duration::from_secs(20);
 const JOIN_POLL: Duration = Duration::from_millis(250);
 const DEFAULT_ACCOUNT_SERVER: &str = "https://commy.chat";
-const ASKS_TO_JOIN: &str = "This server lets people in once a moderator says yes. Ask to join from the Commy app on your computer or phone.";
+const OPEN_A_LINK: &str = "Open an invite link to join a server from the browser";
+const TURNED_AWAY: &str = "This server did not let you in";
 
 #[derive(Deserialize)]
 struct ErrorReply {
@@ -49,7 +50,7 @@ impl Session {
                 to_json(&self.create_invite(server, expiry, name).await?)
             }
             "resolve_invite_link" => to_json(&self.resolve_invite(args.link.as_deref().unwrap_or("")).await?),
-            "join_server" => to_json(&self.join_invited(args.ticket.as_deref().unwrap_or("")).await?),
+            "join_server" => self.join_invited(args.ticket.as_deref().unwrap_or(""), args.note.as_deref().unwrap_or("")).await,
             "list_invites" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let me = self.client.borrow().profile().ok_or("Your servers are not unlocked yet")?.id;
@@ -157,18 +158,28 @@ impl Session {
         Some(files::data_url(commy_view::pictures::picture_mime(&bytes), &bytes))
     }
 
-    async fn join_invited(self: &Rc<Self>, raw: &str) -> Result<ServerSummary, String> {
+    async fn join_invited(self: &Rc<Self>, raw: &str, note: &str) -> Result<Value, String> {
         let ticket = ServerTicket::decode(raw.trim()).map_err(|_| "That invite is damaged".to_string())?;
         let server = ticket.server_id;
         if let Some(summary) = self.client.borrow().summary(server) {
-            return Ok(summary);
+            return to_json(&summary);
         }
-        match self.knock(&ticket).await {
-            Some(KnockReply::Waiting(_)) => return Err(ASKS_TO_JOIN.into()),
-            Some(KnockReply::TurnedAway) => return Err("This server did not let you in".into()),
+        let asked_at = Utc::now().timestamp_millis();
+        match self.knock(&ticket, note, asked_at).await {
+            Some(KnockReply::Waiting(lobby)) => {
+                let key = self.invited.borrow().get(&server).cloned().ok_or(OPEN_A_LINK)?;
+                let view = self.edit_knocks(|knocks| {
+                    knocks.ask(server, raw.trim(), &key, lobby, note, asked_at);
+                    knocks.view(server)
+                });
+                self.emit("join-waits-changed", Value::Null);
+                return Ok(view.unwrap_or(Value::Null));
+            }
+            Some(KnockReply::TurnedAway) => return Err(TURNED_AWAY.into()),
             _ => {}
         }
-        let key = self.invited.borrow_mut().remove(&server).ok_or("Open an invite link to join a server from the browser")?;
+        self.edit_knocks(|knocks| knocks.remove(server));
+        let key = self.invited.borrow_mut().remove(&server).ok_or(OPEN_A_LINK)?;
         if ticket.owner.is_none() {
             return Err("That invite is damaged".into());
         }
@@ -176,12 +187,12 @@ impl Session {
         let deadline = web_time::Instant::now() + JOIN_WAIT;
         while web_time::Instant::now() < deadline {
             if let Some(summary) = self.client.borrow().summary(server) {
-                return Ok(summary);
+                return to_json(&summary);
             }
             n0_future::time::sleep(JOIN_POLL).await;
         }
         self.emit("servers-changed", Value::Null);
-        Ok(ServerSummary { id: server.to_string(), name: ticket.server_name, member_count: 0, icon: None, can_invite: false, group: false, tag: None })
+        to_json(&ServerSummary { id: server.to_string(), name: ticket.server_name, member_count: 0, icon: None, can_invite: false, group: false, tag: None })
     }
 
     pub(super) async fn reachable(&self, ticket: ServerTicket) -> ServerTicket {
@@ -192,8 +203,8 @@ impl Session {
         }
     }
 
-    async fn knock(&self, ticket: &ServerTicket) -> Option<KnockReply> {
-        let request = self.client.borrow().join_ask(ticket.server_id, "")?;
+    pub(super) async fn knock(&self, ticket: &ServerTicket, note: &str, asked_at: i64) -> Option<KnockReply> {
+        let request = self.client.borrow().join_ask(ticket.server_id, note, asked_at)?;
         let knocking = self.node.lock().await.as_ref()?.knock(ticket, request);
         knocking.await
     }

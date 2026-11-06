@@ -40,6 +40,7 @@ mod expressions;
 mod files;
 mod handoff;
 mod invites;
+mod join_waits;
 mod links;
 mod pictures;
 mod profile;
@@ -462,6 +463,9 @@ impl Session {
             "set_activity" | "send_activity_input" => self.activity_command(cmd, args).await,
             "get_voice_settings" => self.call_command(cmd, args).await,
             "press_talk" => self.call_command(cmd, args).await,
+            "list_join_waits" => self.join_wait_command(cmd, args).await,
+            "cancel_join_request" => self.join_wait_command(cmd, args).await,
+            "send_join_note" => self.join_wait_command(cmd, args).await,
             "drive_view" => self.drive_command(cmd, args).await,
             "drive_new_folder" => self.drive_command(cmd, args).await,
             "drive_rename" => self.drive_command(cmd, args).await,
@@ -927,6 +931,7 @@ impl Session {
         spawn_local(self.clone().run_changes(changed_rx));
         spawn_local(self.clone().run_dms(incoming));
         spawn_local(self.clone().run_media(media));
+        spawn_local(self.clone().watch_knocks());
         self.start_voice_gate();
         Ok(())
     }

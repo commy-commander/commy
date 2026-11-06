@@ -2,6 +2,7 @@ pub mod account;
 pub mod client;
 pub mod dm_book;
 pub mod files;
+pub mod knocks;
 pub mod mic_gate;
 pub mod recording;
 pub mod store;
