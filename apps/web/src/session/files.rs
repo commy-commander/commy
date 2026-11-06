@@ -135,6 +135,9 @@ impl Session {
 
     pub async fn file_bytes(self: &Rc<Self>, cmd: &str, args: &str) -> Result<Vec<u8>, String> {
         let args: Args = serde_json::from_str(args).unwrap_or_default();
+        if cmd == "drive_download" {
+            return self.drive_bytes(&args).await;
+        }
         let (max, refusal) = files::byte_limit(cmd).ok_or_else(|| format!("{cmd} is not available in the web app yet"))?;
         files::fits(args.size_bytes, max, refusal)?;
         self.fetch_blob(args.blob.as_deref(), args.provider.as_deref(), args.server_id.as_deref(), max).await

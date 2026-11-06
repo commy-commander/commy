@@ -7572,7 +7572,7 @@ function wireForum() {
 const driveUi = { channel: null, folder: null, view: null, dialog: null, busy: new Map() };
 
 function driveWorksHere() {
-  return !inBrowserApp() && !document.body.classList.contains("mobile-app");
+  return !document.body.classList.contains("mobile-app");
 }
 
 function showDriveView() {
@@ -7770,7 +7770,7 @@ async function uploadToDrive() {
   if (!server || !driveUi.channel) return;
   try {
     const added = await invoke("drive_upload", { serverId: server.id, channelId: driveUi.channel, parentId: driveUi.folder });
-    if (added) toast("Shared. It stays available while this computer, or someone who downloads it, is online");
+    if (added) toast(inBrowserApp() ? "Shared. It stays available while this tab is open, or while someone who downloaded it in the desktop app is online" : "Shared. It stays available while this computer, or someone who downloads it, is online");
     await refreshDrive();
   } catch (e) {
     toast(String(e));
@@ -7783,8 +7783,8 @@ async function downloadDriveItem(item) {
   driveUi.busy.set(item.id, 0);
   renderDrive();
   try {
-    const path = await invoke("drive_download", { serverId: server.id, itemId: item.id });
-    toast(path ? `Saved to ${path}. You now help keep it available` : "Download cancelled");
+    const path = await invoke("drive_download", { serverId: server.id, itemId: item.id, name: item.name });
+    toast(path ? (inBrowserApp() ? `Downloaded ${path}` : `Saved to ${path}. You now help keep it available`) : "Download cancelled");
   } catch (e) {
     toast(String(e));
   } finally {

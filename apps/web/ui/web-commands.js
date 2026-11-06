@@ -32,8 +32,8 @@ const WEB_DEFAULTS = {
 
 const WEB_SERVER_WAIT_MS = 20000;
 
-const WEB_BYTE_COMMANDS = ["get_attachment_video", "get_voice_message", "download_attachment"];
-const WEB_PICKED_COMMANDS = ["attach_dm_file", "attach_file"];
+const WEB_BYTE_COMMANDS = ["get_attachment_video", "get_voice_message", "download_attachment", "drive_download"];
+const WEB_PICKED_COMMANDS = ["attach_dm_file", "attach_file", "drive_upload"];
 const WEB_PICTURE_WAIT_MS = 15_000;
 const WEB_PICTURE_STORE_MS = 60_000;
 const WEB_VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm,.mp4,.m4v,.mov,.webm";

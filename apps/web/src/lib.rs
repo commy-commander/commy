@@ -66,6 +66,16 @@ mod bindings {
             })
         }
 
+        pub fn drive_upload(&self, server_id: String, channel_id: String, parent_id: Option<String>, filename: String, data: Vec<u8>) -> js_sys::Promise {
+            let session = self.session.clone();
+            wasm_bindgen_futures::future_to_promise(async move {
+                match session.drive_upload(&server_id, &channel_id, parent_id, &filename, data).await {
+                    Ok(value) => Ok(JsValue::from_str(&value.to_string())),
+                    Err(message) => Err(JsValue::from_str(&message)),
+                }
+            })
+        }
+
         pub fn file_bytes(&self, cmd: String, args: String) -> js_sys::Promise {
             let session = self.session.clone();
             wasm_bindgen_futures::future_to_promise(async move {

@@ -35,6 +35,7 @@ mod cloud_files;
 mod community;
 mod directory;
 mod dms;
+mod drive;
 mod expressions;
 mod files;
 mod handoff;
@@ -195,6 +196,7 @@ struct Args {
     template: Option<String>,
     kind: Option<String>,
     parent_id: Option<String>,
+    item_id: Option<String>,
     retention_days: Option<u32>,
     moves: Option<Vec<servers::MoveArg>>,
     role_id: Option<String>,
@@ -460,6 +462,11 @@ impl Session {
             "set_activity" | "send_activity_input" => self.activity_command(cmd, args).await,
             "get_voice_settings" => self.call_command(cmd, args).await,
             "press_talk" => self.call_command(cmd, args).await,
+            "drive_view" => self.drive_command(cmd, args).await,
+            "drive_new_folder" => self.drive_command(cmd, args).await,
+            "drive_rename" => self.drive_command(cmd, args).await,
+            "drive_remove" => self.drive_command(cmd, args).await,
+            "drive_stop_keeping" => self.drive_command(cmd, args).await,
             "set_muted" => self.call_command(cmd, args).await,
             "set_deafened" => self.call_command(cmd, args).await,
             "set_afk_timeout" | "note_user_activity" => self.call_command(cmd, args).await,

@@ -110,15 +110,17 @@
   async function fileBytes(cmd, args) {
     const bytes = await (await client).file_bytes(cmd, JSON.stringify(args || {}));
     if (cmd === "download_attachment") return webSaveFile(document, URL, bytes, args && args.filename);
+    if (cmd === "drive_download") return webSaveFile(document, URL, bytes, args && args.name);
     return bytes.buffer;
   }
 
   async function attachPicked(cmd, args) {
     const file = await webPickFile(document, args && args.kind);
-    if (!file) return null;
+    if (!file) return cmd === "drive_upload" ? false : null;
     if (file.size > WEB_MAX_SEND_BYTES) throw WEB_SEND_TOO_LARGE;
     const data = new Uint8Array(await file.arrayBuffer());
     const web = await client;
+    if (cmd === "drive_upload") return JSON.parse(await web.drive_upload(args.serverId, args.channelId, args.parentId || undefined, file.name, data));
     const sent = cmd === "attach_file" ? web.attach(args.serverId, args.channelId, file.name, data) : web.attach_dm(args.userId, file.name, data);
     return JSON.parse(await sent);
   }
