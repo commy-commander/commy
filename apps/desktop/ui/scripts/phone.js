@@ -16,6 +16,12 @@ function phonePaneGoesDeeper(from, to) {
   return (PHONE_PANE_DEPTH[to] ?? 0) > (PHONE_PANE_DEPTH[from] ?? 0);
 }
 
+function stepToChat(pane) {
+  if (pane === "people") return "back";
+  if (pane === "list") return "open";
+  return null;
+}
+
 function rowOpensConversation(rowClasses, tappedButton) {
   if (tappedButton) return false;
   const classes = new Set(rowClasses);
@@ -23,5 +29,5 @@ function rowOpensConversation(rowClasses, tappedButton) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PHONE_MAX_WIDTH_PX, isPhoneWidth, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation };
+  module.exports = { PHONE_MAX_WIDTH_PX, isPhoneWidth, phonePaneAfter, phonePaneGoesDeeper, stepToChat, rowOpensConversation };
 }

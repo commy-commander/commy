@@ -17214,9 +17214,13 @@ function phoneStep(action) {
 
 function phoneShowChat() {
   if (!isPhoneWidth(window.innerWidth) || narrowSplit()) return;
-  const pane = phonePane();
-  if (pane === "people") phoneStep("back");
-  else if (pane === "list") phoneStep("open");
+  const step = stepToChat(phonePane());
+  if (step) phoneStep(step);
+}
+
+function showWatchedStream() {
+  phoneShowChat();
+  $("video-pane").scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 function settingsPhoneView(layer, view) {
@@ -19521,6 +19525,7 @@ async function watchScreen(userId, name) {
   try {
     if (state.watchingUser && state.watchingUser !== userId) await stopWatching();
     openStage("watch", `${name}'s screen`);
+    showWatchedStream();
     await invoke("watch_screen", { serverId, userId });
     state.watchingUser = userId;
     state.watchingName = name;
@@ -20969,6 +20974,7 @@ function wireEvents() {
 
   $("vp-stop-share").onclick = toggleShare;
   $("vp-change-source").onclick = openSharePicker;
+  $("vp-show-watch").onclick = showWatchedStream;
   $("vp-stop-watch").onclick = stopWatching;
   $("vp-disconnect").onclick = disconnectVoice;
   document.querySelector(".vp-status").title = "Connection details";
