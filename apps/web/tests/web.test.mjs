@@ -409,6 +409,18 @@ test("the browser offers push to talk, input sensitivity and the mute and deafen
   assert.ok(calls.includes('self.emit("talk-key"'));
 });
 
+test("server drives open in the browser: browse, make folders, rename, remove, upload and download", () => {
+  const app = read("apps", "desktop", "ui", "scripts", "app.js");
+  const works = /function driveWorksHere\(\) \{([\s\S]*?)\n\}/.exec(app)[1];
+  assert.ok(!works.includes("inBrowserApp()"));
+  for (const cmd of ["drive_view", "drive_new_folder", "drive_rename", "drive_remove", "drive_stop_keeping"]) assert.ok(rustCommands.has(cmd), cmd);
+  assert.ok(WEB_PICKED_COMMANDS.includes("drive_upload"));
+  assert.ok(WEB_BYTE_COMMANDS.includes("drive_download"));
+  assert.ok(read("apps", "web", "src", "session", "files.rs").includes('if cmd == "drive_download"'));
+  assert.ok(read("apps", "web", "src", "lib.rs").includes("pub fn drive_upload("));
+  assert.match(app, /invoke\("drive_download", \{ serverId: server\.id, itemId: item\.id, name: item\.name \}\)/);
+});
+
 test("the app looks for the browser on the html element, where the bridge marks it", () => {
   assert.ok(read("apps", "web", "ui", "web-bridge.js").includes('document.documentElement.classList.add("web-app")'));
   for (const file of ["app.js", "updates.js"]) {
