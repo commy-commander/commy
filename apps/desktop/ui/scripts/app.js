@@ -19515,6 +19515,17 @@ async function uploadFileObject(file) {
 }
 
 async function watchScreen(userId, name) {
+  const action = streamOpenAction({
+    userId,
+    meId: state.user && state.user.id,
+    sharing: Boolean(state.sharing),
+    watchingUser: state.watchingUser,
+  });
+  if (action === "preview") return openOwnPreview();
+  if (action === "already") {
+    if (state.stageMode !== "watch") openStage("watch", `${name}'s screen`);
+    return;
+  }
   const serverId = state.currentServer ? state.currentServer.id : state.voiceServer && state.voiceServer.id;
   if (!serverId) return;
   if (inBrowserApp()) return toast(WEB_WATCH_NOTE);
