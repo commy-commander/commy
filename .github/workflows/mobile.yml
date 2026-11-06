@@ -27,9 +27,9 @@ on:
         options: [debug, play]
         default: debug
       ios:
-        description: "iOS build: simulator app, signed IPA, or signed IPA sent to TestFlight"
+        description: "iOS build: simulator app, signed IPA, signed IPA sent to TestFlight, or none"
         type: choice
-        options: [simulator, signed, testflight]
+        options: [simulator, signed, testflight, none]
         default: simulator
       version:
         description: "App version for Play and signed iOS builds, e.g. 0.1.16 (prod servers) or 0.1.16-rc.1 (staging servers)"
@@ -152,7 +152,10 @@ jobs:
         run: |
           export ANDROID_UPLOAD_KEYSTORE_FILE="$RUNNER_TEMP/upload.jks"
           if [ -n "$ANDROID_UPLOAD_KEYSTORE" ] && [ -n "$ANDROID_UPLOAD_PASSWORD" ]; then
-            printf '%s' "$ANDROID_UPLOAD_KEYSTORE" | base64 -d > "$ANDROID_UPLOAD_KEYSTORE_FILE"
+            printf '%s\n' "$ANDROID_UPLOAD_KEYSTORE" | grep -v -- '-----' | tr -d '\r\n\t ' | base64 -d > "$ANDROID_UPLOAD_KEYSTORE_FILE" \
+              || { echo "::error::ANDROID_UPLOAD_KEYSTORE is not valid base64"; exit 1; }
+            keytool -list -keystore "$ANDROID_UPLOAD_KEYSTORE_FILE" -storepass "$ANDROID_UPLOAD_PASSWORD" -alias commy-upload > /dev/null \
+              || { echo "::error::ANDROID_UPLOAD_PASSWORD does not open ANDROID_UPLOAD_KEYSTORE, or it has no commy-upload key"; exit 1; }
             echo "Signing with the upload key from ANDROID_UPLOAD_KEYSTORE"
           else
             ANDROID_UPLOAD_PASSWORD="$(openssl rand -hex 16)"
@@ -181,7 +184,7 @@ jobs:
 
   ios:
     name: iOS ${{ inputs.ios || 'simulator' }} build
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.ios != 'none'
     timeout-minutes: 90
     continue-on-error: ${{ inputs.ios == 'simulator' }}
     runs-on: macos-26
