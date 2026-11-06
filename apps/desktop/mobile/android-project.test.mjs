@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, MAX_SDK } from "./android-project.mjs";
+import { withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -214,4 +214,13 @@ test("a build file without a release build type is refused when an upload key is
   const debugOnly = tauriGradle.replace(/        getByName\("release"\)[\s\S]*?\n        \}\n/, "");
   assert.ok(!debugOnly.includes("release"));
   assert.throws(() => withSigning(debugOnly, { releaseStore: "/u.jks" }), /release build type/);
+});
+
+test("release bundles carry the native symbol table for Play crash reports, once", () => {
+  const out = withNativeSymbols(withNativeSymbols(withSigning(tauriGradle, { releaseStore: "/u.jks" })));
+  assert.equal(out.split("debugSymbolLevel").length - 1, 1);
+  assert.match(out, /getByName\("release"\) \{\n            ndk \{\n                debugSymbolLevel = "SYMBOL_TABLE"\n            \}\n            signingConfig = /);
+  assert.ok(out.indexOf("debugSymbolLevel") > out.indexOf('getByName("release") {'));
+  const debugOnly = tauriGradle.replace(/        getByName\("release"\)[\s\S]*?\n        \}\n/, "");
+  assert.equal(withNativeSymbols(debugOnly), debugOnly);
 });

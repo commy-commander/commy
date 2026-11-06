@@ -126,6 +126,15 @@ export function withSigning(gradle, { debugStore, releaseStore } = {}) {
 
 export const withDebugSigning = (gradle, storeFile) => withSigning(gradle, { debugStore: storeFile });
 
+export function withNativeSymbols(gradle) {
+  if (gradle.includes("debugSymbolLevel")) return gradle;
+  const release = gradle.match(/^([ \t]*)getByName\("release"\) \{\n/m);
+  if (!release) return gradle;
+  const at = release.index + release[0].length;
+  const indent = `${release[1]}    `;
+  return `${gradle.slice(0, at)}${indent}ndk {\n${indent}    debugSymbolLevel = "SYMBOL_TABLE"\n${indent}}\n${gradle.slice(at)}`;
+}
+
 export function applicationId(gradle) {
   return gradle.match(/applicationId\s*=\s*"([^"]+)"/)?.[1] ?? null;
 }
@@ -185,7 +194,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const gradle = readFileSync(gradlePath, "utf8");
   const debugStore = process.env.ANDROID_DEBUG_KEYSTORE_FILE;
   const releaseStore = process.env.ANDROID_UPLOAD_KEYSTORE_FILE;
-  const withDependencies = withSigning(withCommyDependencies(gradle), { debugStore, releaseStore });
+  const withDependencies = withNativeSymbols(withSigning(withCommyDependencies(gradle), { debugStore, releaseStore }));
   if (withDependencies !== gradle) writeFileSync(gradlePath, withDependencies);
   console.log(debugStore ? "Debug builds sign with the kept debug key" : "ANDROID_DEBUG_KEYSTORE_FILE is not set, so debug builds sign with a new key");
   console.log(releaseStore ? `Release builds sign with the upload key, password from ${UPLOAD_KEY.passwordEnv}` : "ANDROID_UPLOAD_KEYSTORE_FILE is not set, so release builds are unsigned");
