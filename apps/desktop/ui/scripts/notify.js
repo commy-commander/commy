@@ -17,6 +17,7 @@ function noticeText(content, hasAttachments, plain, voiceMessage) {
 }
 
 function noticeTitle(authorName, channelName, serverName) {
+  if (!serverName) return authorName || "Someone";
   return `${authorName || "Someone"} (#${channelName}, ${serverName})`;
 }
 

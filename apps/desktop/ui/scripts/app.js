@@ -21343,7 +21343,6 @@ function wireEvents() {
     window.__TAURI__.event.listen("dm-call", event => onDmCall(event.payload));
     invoke("get_dm_call").then(call => call && onDmCall(call)).catch(() => {});
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
-    invoke("take_notification_target").then(target => target && openNotificationTarget(target)).catch(() => {});
     window.__TAURI__.event.listen("tray-toggle-mute", () => $("mute-btn").click());
     window.__TAURI__.event.listen("voice-settings-changed", event => {
       state.voice = event.payload;
@@ -23360,6 +23359,8 @@ async function continueBoot() {
   if (railServers().length) await selectServer(railServers()[0].id);
   else await enterDmMode();
   await primeFriendPresence();
+  const target = await invoke("take_notification_target").catch(() => null);
+  if (target) await openNotificationTarget(target);
   if (!(await takePendingInviteLink())) await offerTrayPrompt();
 }
 

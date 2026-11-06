@@ -53,6 +53,7 @@ test("an announcement is named as one in its notification", () => {
   const strip = s => s.replace(/\*\*/g, "");
   assert.deepEqual(messageNotice({ ...msg, announcement: true }, strip), { title: "Announcement in #news (Rust Hangout)", body: "ferris: Patch day" });
   assert.deepEqual(messageNotice(msg, strip), { title: "ferris (#news, Rust Hangout)", body: "Patch day" });
+  assert.equal(messageNotice({ ...msg, channel_name: "chat", server_name: "" }, strip).title, "ferris", "a group with no name shows just the sender");
   assert.equal(messageNotice({ ...msg, content: "", has_attachments: true }, strip).body, "Sent an attachment");
 });
 
