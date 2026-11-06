@@ -25,6 +25,7 @@ const WEB_DEFAULTS = {
   set_unread: null,
   get_custom_icon: null,
   take_pending_invite_link: null,
+  take_notification_target: null,
   list_shareable_emojis: [],
   account_cancel_sign_in: null,
   entry_list_status: { state: "synced", servers: 0, has_key: false, detail: "This browser opens your servers through your other devices." },

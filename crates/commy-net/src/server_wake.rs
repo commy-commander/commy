@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use commy_core::mention::{mentions_everyone, names_mentioned, role_tokens};
-use commy_core::{ServerId, ServerState, UserId};
+use commy_core::{Attachment, ServerId, ServerState, UserId};
 use serde_json::Value;
 
 pub const ALL: &str = "all";
@@ -76,6 +76,16 @@ fn pref<'a>(prefs: &'a BTreeMap<String, Value>, key: &str) -> Option<&'a Value> 
 
 fn flag(prefs: &BTreeMap<String, Value>, key: &str) -> bool {
     pref(prefs, key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+pub fn wake_text(content: &str, attachments: &[Attachment]) -> String {
+    if commy_core::message::only_a_voice_message(content, attachments.iter()) {
+        return "Voice message".to_string();
+    }
+    if !content.trim().is_empty() {
+        return content.to_string();
+    }
+    if attachments.iter().any(|a| !a.is_card()) { "Sent an attachment".to_string() } else { String::new() }
 }
 
 pub fn choice(prefs: &BTreeMap<String, Value>, server: ServerId) -> Choice {
@@ -168,6 +178,17 @@ mod tests {
             state.apply(ServerEvent::MemberJoin { server: state.server.id, profile }).unwrap();
         }
         (state, ids)
+    }
+
+    #[test]
+    fn a_wake_preview_says_what_was_sent() {
+        let voice = Attachment::voice_message("b".into(), 10, None);
+        let file = Attachment { blob: "b".into(), filename: "cat.png".into(), size_bytes: 10, mime_type: "image/png".into(), provider: None };
+        assert_eq!(wake_text("hello", &[]), "hello");
+        assert_eq!(wake_text("", std::slice::from_ref(&voice)), "Voice message");
+        assert_eq!(wake_text(" ", std::slice::from_ref(&file)), "Sent an attachment");
+        assert_eq!(wake_text("look", &[file]), "look");
+        assert_eq!(wake_text("", &[Attachment::tts_marker()]), "");
     }
 
     fn crew(state: &mut ServerState, holder: UserId) -> RoleId {

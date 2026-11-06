@@ -21331,6 +21331,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("dm-call", event => onDmCall(event.payload));
     invoke("get_dm_call").then(call => call && onDmCall(call)).catch(() => {});
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
+    invoke("take_notification_target").then(target => target && openNotificationTarget(target)).catch(() => {});
     window.__TAURI__.event.listen("tray-toggle-mute", () => $("mute-btn").click());
     window.__TAURI__.event.listen("voice-settings-changed", event => {
       state.voice = event.payload;

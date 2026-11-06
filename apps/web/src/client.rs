@@ -817,14 +817,15 @@ impl Client {
         }))
     }
 
-    pub fn wake_whos(&self, server: ServerId, message: &Message, all_due: impl FnOnce() -> bool) -> Option<(bool, Vec<String>)> {
+    pub fn wake_whos(&self, server: ServerId, message: &Message, all_due: impl FnOnce() -> bool) -> Option<(bool, Vec<String>, String)> {
         let keys = self.keys();
         let me = keys.user().filter(|me| *me == message.author)?;
         let servers = self.servers.lock().unwrap();
         let state = servers.get(&server)?;
         let private = state.server.channel(message.channel).is_some_and(|c| c.is_private());
         let opened = keys.open(state, message)?;
-        Some((private, server_wake::ring_whos(state, me, &opened.content, all_due())))
+        let text = server_wake::wake_text(&opened.content, &message.attachments);
+        Some((private, server_wake::ring_whos(state, me, &opened.content, all_due()), text))
     }
 }
 

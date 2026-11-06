@@ -687,7 +687,7 @@ impl Session {
         if writers.is_empty() {
             return;
         }
-        let tags = self.server_wake_tags(server, message);
+        let (tags, preview) = self.server_wake_tags(server, message);
         let (this, id) = (self.clone(), message.id);
         spawn_local(async move {
             let mut stored = false;
@@ -696,7 +696,7 @@ impl Session {
             }
             if stored {
                 this.settle_delivered(server, &[id]);
-                this.ring_wake(tags);
+                this.ring_wake(tags, preview);
             }
         });
     }

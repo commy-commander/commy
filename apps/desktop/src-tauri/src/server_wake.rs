@@ -1,8 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
 use commy_core::{ChannelId, Message, ServerId, ServerState, UserId};
-use commy_net::server_wake::{choice, listen_whos, ring_whos, unwanted_whos, AllRings};
+use commy_net::server_wake::{choice, listen_whos, ring_whos, unwanted_whos, wake_text, AllRings};
 
 use crate::state::App;
 use crate::{account_log, channel_lock, community_sync, push_wake};
@@ -23,17 +23,19 @@ pub fn ring(app: &App, server: ServerId, message: &Message) {
         servers.get(&server).and_then(|state| {
             let private = state.server.channel(message.channel).is_some_and(|c| c.is_private());
             let opened = channel_lock::holder_of(app).open(state, message)?;
-            Some((private, ring_whos(state, me, &opened.content, all_due(server))))
+            let text = wake_text(&opened.content, &message.attachments);
+            Some((private, ring_whos(state, me, &opened.content, all_due(server)), text))
         })
     };
-    let Some((private, whos)) = found else { return };
+    let Some((private, whos, text)) = found else { return };
     let Some(keys) = community_sync::wake_keys(server, private.then_some(message.channel)) else { return };
     let today = push_wake::today();
     let tags: Vec<[u8; 32]> = whos.iter().map(|who| keys.wake_tag(who, today)).collect();
     if tags.is_empty() {
         return;
     }
-    tauri::async_runtime::spawn(push_wake::ring(app.http.clone(), tags));
+    let preview = push_wake::preview(&keys, &me.to_string(), Some(message.channel.to_string()), &text, false);
+    tauri::async_runtime::spawn(push_wake::ring(app.http.clone(), tags, preview));
 }
 
 #[derive(Default)]
@@ -76,6 +78,48 @@ pub fn wake_tags(app: &App, days: &[i64]) -> ServerTags {
     ServerTags { tags, unsettled, unwanted }
 }
 
+pub fn preview_keys(app: &App, days: &[i64]) -> Vec<(ServerId, [u8; 32])> {
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return Vec::new() };
+    let points = community_sync::wake_points();
+    let servers = app.servers.lock().unwrap();
+    points
+        .into_iter()
+        .filter(|(server, channel, _)| servers.get(server).is_some_and(|state| channel.is_none_or(|c| state.server.can_view(c, me))))
+        .flat_map(|(server, _, keys)| days.iter().map(move |day| (server, keys.preview_key(*day))))
+        .collect()
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct Label {
+    #[serde(rename = "n")]
+    name: String,
+    #[serde(rename = "g")]
+    group: bool,
+    #[serde(rename = "c")]
+    channels: BTreeMap<String, String>,
+    #[serde(rename = "m")]
+    members: BTreeMap<String, String>,
+}
+
+pub fn label(state: &ServerState, me: UserId) -> Option<Label> {
+    let server = &state.server;
+    if !server.is_current_member(me) || state.is_deleted() {
+        return None;
+    }
+    let channels = server.channels.iter().filter(|c| c.kind.holds_messages() && server.can_view(c.id, me)).map(|c| (c.id.to_string(), c.name.clone())).collect();
+    let members = server
+        .members
+        .iter()
+        .filter_map(|m| commy_view::known_name_of(state, m.user).map(|name| (m.user.to_string(), name)))
+        .collect();
+    Some(Label { name: server.name.clone(), group: server.group, channels, members })
+}
+
+pub fn labels(app: &App) -> BTreeMap<String, Label> {
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return BTreeMap::new() };
+    app.servers.lock().unwrap().iter().filter_map(|(id, state)| label(state, me).map(|l| (id.to_string(), l))).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +158,24 @@ mod tests {
         state.apply(ServerEvent::RoleCreate { server, role }).unwrap();
         state.apply(ServerEvent::RoleAssign { server, user: holder, role: id }).unwrap();
         id
+    }
+
+    #[test]
+    fn a_phone_learns_only_the_channels_it_can_read() {
+        let (mut state, ids) = server_with(&["kit", "sam"]);
+        let (kit, sam) = (ids[1], ids[2]);
+        let role = crew(&mut state, kit);
+        let mut locked = commy_core::server::Channel::new("crew", commy_core::ChannelKind::Text, 9);
+        locked.view_roles = vec![role];
+        let channel = locked.id.to_string();
+        state.server.channels.push(locked);
+        let for_kit = label(&state, kit).unwrap();
+        let for_sam = label(&state, sam).unwrap();
+        assert_eq!(for_kit.channels.get(&channel).map(String::as_str), Some("crew"));
+        assert!(!for_sam.channels.contains_key(&channel));
+        assert_eq!(for_sam.members.get(&kit.to_string()).map(String::as_str), Some("kit"));
+        assert_eq!(for_sam.name, "test");
+        assert!(label(&state, UserId::new()).is_none(), "a server we are not in shows nothing");
     }
 
     #[test]

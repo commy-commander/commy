@@ -10,6 +10,7 @@ const STREAM_ID_DOMAIN: &[u8] = b"commy-sync-stream-id/v1";
 const APPEND_DOMAIN: &[u8] = b"commy-sync-append/v1";
 const SEAL_DOMAIN: &[u8] = b"commy-sync-seal/v1";
 const WAKE_DOMAIN: &[u8] = b"commy-sync-wake/v1";
+const PREVIEW_DOMAIN: &[u8] = b"commy-sync-wake-preview/v1";
 const SIGNAL_DOMAIN: &[u8] = b"commy-sync-signal/v1";
 
 pub const NONCE_BYTES: usize = 12;
@@ -178,6 +179,14 @@ impl StreamKeys {
         mac.update(&self.id.0);
         mac.update(&(who.len() as u64).to_be_bytes());
         mac.update(who.as_bytes());
+        mac.update(&day.to_be_bytes());
+        mac.finalize().into_bytes().into()
+    }
+
+    pub fn preview_key(&self, day: i64) -> [u8; 32] {
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.seal).expect("HMAC takes any key length");
+        mac.update(PREVIEW_DOMAIN);
+        mac.update(&self.id.0);
         mac.update(&day.to_be_bytes());
         mac.finalize().into_bytes().into()
     }

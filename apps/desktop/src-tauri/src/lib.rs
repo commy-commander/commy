@@ -8334,6 +8334,7 @@ pub fn run() {
             invite_link::invite_full_link,
             invite_link::account_server_info,
             invite_link::take_pending_invite_link,
+            push_wake::take_notification_target,
             directory::publish_listing,
             directory::unlist_server,
             directory::server_listing,
