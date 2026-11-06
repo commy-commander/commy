@@ -602,7 +602,7 @@ body.voice-dragging, body.voice-dragging * { cursor: grabbing !important; }
   max-height: 55%;
 }
 
-.video-pane img {
+.video-pane img, .video-pane .stage-frame {
   width: 100%;
   object-fit: contain;
   min-height: 0;
@@ -2233,8 +2233,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   container-type: inline-size;
 }
 .stage-view:fullscreen { border-radius: 0; border: none; background: #000; }
-.stage-view img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
-.stage-view img:not([src]) { display: none; }
+.stage-view img, .stage-view .stage-frame { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.stage-view img:not([src]), .stage-view .stage-frame.blank { display: none; }
 .stage-ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; touch-action: none; }
 .stage-ink.drawing { pointer-events: auto; cursor: crosshair; }
 .stage-ink.drawing[data-tool="point"] { cursor: pointer; }
@@ -3193,8 +3193,8 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .cam-tile.speaking { box-shadow: 0 0 0 2px var(--green), 0 0 12px rgba(53, 194, 107, .35); }
 .cam-tile.on-stage { box-shadow: 0 0 0 2px var(--accent); }
 .cam-tile canvas, .cam-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.cam-tile.screen img { object-fit: contain; }
-.cam-tile img:not([src]) { display: none; }
+.cam-tile.screen img, .cam-tile.screen .tile-frame { object-fit: contain; }
+.cam-tile img:not([src]), .cam-tile .tile-frame.blank { display: none; }
 .cam-cover {
   position: absolute;
   inset: 0;
@@ -8193,6 +8193,7 @@ body.has-titlebar .app { height: calc(100vh - 32px); margin-top: 32px; }
 .phone-voice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phone-voice .vp-talk { flex: 0 1 112px; min-width: 92px; padding: 0; }
 .phone-voice .icon-btn { flex-shrink: 0; width: 44px; height: 44px; }
+.phone-voice .icon-btn.active { color: var(--header-primary); background: var(--bg-active); }
 
 @media (max-width: 700px) {
   .phone-voice:not(.hidden) {

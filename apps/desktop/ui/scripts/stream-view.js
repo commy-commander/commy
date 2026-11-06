@@ -46,7 +46,8 @@ function callTilePages(tiles, perPage = PHONE_TILES_PER_PAGE) {
 
 function callGridLayout({ tiles, focusedStream }) {
   if (!tiles || !tiles.length) return "none";
-  return focusedStream ? "strip" : "grid";
+  if (!focusedStream) return "grid";
+  return tiles.some(t => !(t.kind === "screen" && t.user === focusedStream)) ? "strip" : "none";
 }
 
 function streamsToStop(watched, { tileUsers, focused }) {
