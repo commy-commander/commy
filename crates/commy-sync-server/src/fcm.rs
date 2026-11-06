@@ -111,12 +111,12 @@ impl Fcm {
         Ok(grant.access_token)
     }
 
-    pub async fn wake(&self, token: &str, preview: Option<&str>) -> Delivery {
+    pub async fn wake(&self, token: &str, previews: &[String]) -> Delivery {
         let access = match self.access_token().await {
             Ok(access) => access,
             Err(e) => return Delivery::Failed(e),
         };
-        let sent = self.http.post(&self.send_url).bearer_auth(access).json(&message(token, preview)).send().await;
+        let sent = self.http.post(&self.send_url).bearer_auth(access).json(&message(token, previews)).send().await;
         match sent {
             Ok(res) if res.status().is_success() => Delivery::Sent,
             Ok(res) => match res.status().as_u16() {
@@ -132,10 +132,13 @@ impl Fcm {
     }
 }
 
-pub fn message(token: &str, preview: Option<&str>) -> serde_json::Value {
+pub fn message(token: &str, previews: &[String]) -> serde_json::Value {
     let mut data = serde_json::json!({ "wake": "1" });
-    if let Some(preview) = preview {
-        data["preview"] = preview.into();
+    if let Some(newest) = previews.last() {
+        data["preview"] = newest.as_str().into();
+    }
+    if previews.len() > 1 {
+        data["previews"] = previews.join(",").into();
     }
     serde_json::json!({
         "message": {
@@ -159,19 +162,21 @@ mod tests {
 
     #[test]
     fn the_push_carries_nothing_but_a_wake_marker() {
-        let m = message("tok", None);
+        let m = message("tok", &[]);
         assert_eq!(m["message"]["token"], "tok");
         assert_eq!(m["message"]["data"], serde_json::json!({ "wake": "1" }));
-        let sealed = message("tok", Some("c2VhbGVk"));
+        let sealed = message("tok", &["c2VhbGVk".to_string()]);
         assert_eq!(sealed["message"]["data"], serde_json::json!({ "wake": "1", "preview": "c2VhbGVk" }), "a preview travels only as the sender sealed it");
         assert!(sealed["message"].get("notification").is_none());
+        let held = message("tok", &["b25l".to_string(), "dHdv".to_string()]);
+        assert_eq!(held["message"]["data"], serde_json::json!({ "wake": "1", "preview": "dHdv", "previews": "b25l,dHdv" }), "a held push carries every preview, newest last");
         assert_eq!(m["message"]["android"]["priority"], "high");
         assert!(m["message"].get("notification").is_none(), "no visible text ever comes from the push");
     }
 
     #[test]
     fn a_phone_that_is_offline_for_a_while_still_gets_one_wake_when_it_returns() {
-        let m = message("tok", None);
+        let m = message("tok", &[]);
         assert_eq!(m["message"]["android"]["ttl"], "3600s");
         assert_eq!(m["message"]["android"]["collapse_key"], "wake", "queued wakes collapse into one");
     }

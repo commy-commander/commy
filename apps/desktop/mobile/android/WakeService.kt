@@ -18,10 +18,11 @@ class WakeService : FirebaseMessagingService() {
     val allowed = mayNotify()
     Log.i(TAG, "wake-up push received, foreground=$foreground, notifications allowed=$allowed")
     if (foreground || !allowed) return
-    val shown = message.data["preview"]?.let { WakePreviews.open(this, it) }
-    Log.i(TAG, "preview opened=${shown != null}")
-    if (shown != null) {
-      WakePreviews.post(this, shown)
+    val sealed = (message.data["previews"] ?: message.data["preview"]).orEmpty().split(",").filter { it.isNotBlank() }
+    val shown = sealed.mapNotNull { WakePreviews.open(this, it) }
+    Log.i(TAG, "previews opened=${shown.size} of ${sealed.size}")
+    if (shown.isNotEmpty()) {
+      WakePreviews.postAll(this, shown)
       return
     }
     WakePreviews.ensureChannel(this)
