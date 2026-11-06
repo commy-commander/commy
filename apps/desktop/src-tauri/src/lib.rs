@@ -6538,7 +6538,7 @@ async fn publish_profile(app: &App, handle: &tauri::AppHandle, profile: &UserPro
 }
 
 pub(crate) async fn note_phone_reachable(app: &App, handle: &tauri::AppHandle) {
-    let now = Utc::now().timestamp_millis();
+    let now = chrono::Utc::now().timestamp_millis();
     let due = app.profile.lock().unwrap().as_ref().is_some_and(|p| commy_core::user::phone_mark_due(p.phone_until, now));
     if !due {
         return;
