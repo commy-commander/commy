@@ -57,6 +57,7 @@ static REGISTERED: Mutex<Option<Registered>> = Mutex::new(None);
 static REGISTERING: AtomicBool = AtomicBool::new(false);
 static AGAIN: AtomicBool = AtomicBool::new(false);
 static RETRY_SOON: AtomicBool = AtomicBool::new(false);
+static MAY_NOTIFY: AtomicBool = AtomicBool::new(false);
 static HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 pub use commy_net::server_wake::wake_url;
@@ -289,6 +290,9 @@ async fn register_now(handle: &AppHandle, push: String, base: String) -> bool {
     share_previews(&app, today);
     let done = sync_tags(&app, &push, &base, today).await;
     save_kept(&app, &push, today);
+    if done && cfg!(target_os = "android") && MAY_NOTIFY.load(Ordering::SeqCst) {
+        crate::note_phone_reachable(&app, handle).await;
+    }
     done
 }
 
@@ -419,6 +423,8 @@ mod android {
     struct TokenAnswer {
         #[serde(default)]
         token: Option<String>,
+        #[serde(default)]
+        allowed: bool,
     }
 
     static PLUGIN: Mutex<Option<PluginHandle<Wry>>> = Mutex::new(None);
@@ -482,7 +488,10 @@ mod android {
             let answer = plugin.run_mobile_plugin::<TokenAnswer>("token", serde_json::json!({}));
             ASKING.store(false, Ordering::SeqCst);
             match answer {
-                Ok(answer) => super::set_token(&handle, answer.token),
+                Ok(answer) => {
+                    super::MAY_NOTIFY.store(answer.allowed, Ordering::SeqCst);
+                    super::set_token(&handle, answer.token)
+                }
                 Err(e) => tracing::info!("no push token: {e}"),
             }
         });

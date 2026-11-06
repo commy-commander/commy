@@ -36,3 +36,15 @@ test("presence label carries the back time in lower case", () => {
   assert.equal(presenceLabel({ presence: "idle" }, now), "Idle");
   assert.equal(presenceLabel({}, now), "Offline");
 });
+
+test("an offline person whose phone gets notifications shows a phone mark", async () => {
+  const { onPhone, presenceDot } = require("../scripts/presence.js");
+  assert.equal(presenceDot({ presence: "offline", phone: true }), "offline phone");
+  assert.equal(presenceDot({ presence: "invisible", phone: true }), "offline phone");
+  assert.equal(presenceDot({ presence: "online", phone: true }), "online", "someone at the app shows their real presence");
+  assert.equal(presenceDot({ presence: "offline" }), "offline");
+  assert.equal(presenceDot(null), "offline");
+  assert.equal(onPhone({ presence: "idle", phone: true }), false);
+  assert.equal(presenceLabel({ presence: "offline", phone: true }, now), "Offline · gets notifications on phone");
+  assert.equal(presenceLabel({ presence: "offline" }, now), "Offline");
+});

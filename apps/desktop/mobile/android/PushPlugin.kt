@@ -72,6 +72,7 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
     FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
       val answer = JSObject()
       if (task.isSuccessful && !task.result.isNullOrEmpty()) answer.put("token", task.result)
+      answer.put("allowed", NotificationManagerCompat.from(activity).areNotificationsEnabled())
       invoke.resolve(answer)
     }
   }
