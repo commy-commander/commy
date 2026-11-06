@@ -19144,10 +19144,24 @@ function startOwnPreview() {
   ownPreviewTimer = setInterval(tick, 1000);
 }
 
-const stageStats = { times: [], width: 0, height: 0 };
+const stageStats = { times: [], width: 0, height: 0, watchSince: 0, retried: false };
+const FIRST_FRAME_MS = 12000;
 
 const STREAM_STALL_MS = 6000;
 setInterval(() => {
+  if (state.watchingUser && !stageStats.lastAt && stageStats.watchSince) {
+    const waited = performance.now() - stageStats.watchSince;
+    if (waited < FIRST_FRAME_MS) return;
+    const [user, name] = [state.watchingUser, state.watchingName];
+    stageStats.watchSince = 0;
+    if (!stageStats.retried) {
+      invoke("stop_watching", { userId: user }).catch(() => {}).then(() => watchScreen(user, name, { retry: true }));
+      return;
+    }
+    toast(`Couldn't reach ${name ? `${name}'s` : "the"} stream. Try again in a moment.`);
+    stopWatching();
+    return;
+  }
   if (!state.watchingUser || !stageStats.lastAt) return;
   if (performance.now() - stageStats.lastAt < STREAM_STALL_MS) return;
   stageStats.lastAt = 0;
@@ -19514,22 +19528,40 @@ async function uploadFileObject(file) {
   }
 }
 
-async function watchScreen(userId, name) {
+async function watchScreen(userId, name, { retry = false } = {}) {
   const serverId = state.currentServer ? state.currentServer.id : state.voiceServer && state.voiceServer.id;
   if (!serverId) return;
   if (inBrowserApp()) return toast(WEB_WATCH_NOTE);
   try {
     if (state.watchingUser && state.watchingUser !== userId) await stopWatching();
-    openStage("watch", `${name}'s screen`);
-    await invoke("watch_screen", { serverId, userId });
+    if (!retry) {
+      openStage("watch", `${name}'s screen`);
+      phoneShowChat();
+    }
     state.watchingUser = userId;
     state.watchingName = name;
-    renderStageInkTools();
+    stageStats.lastAt = 0;
+    stageStats.watchSince = performance.now();
+    stageStats.retried = retry;
     renderVoicePanel();
+    await invoke("watch_screen", { serverId, userId });
+    renderStageInkTools();
   } catch (e) {
+    state.watchingUser = null;
+    state.watchingName = null;
     closeStage();
+    renderVoicePanel();
     toast(String(e));
   }
+}
+
+function showWatchedStream() {
+  if (!state.watchingUser) return;
+  if (state.stageMode !== "watch") {
+    openStage("watch", `${state.watchingName || "Their"}'s screen`);
+    if (stageStats.lastAt) $("stage-wait").classList.add("hidden");
+  }
+  phoneShowChat();
 }
 
 async function stopWatching() {
@@ -19541,6 +19573,7 @@ async function stopWatching() {
   }
   state.watchingUser = null;
   state.watchingName = null;
+  stageStats.watchSince = 0;
   if (state.stageMode === "watch") closeStage();
   renderVoicePanel();
 }
@@ -20970,6 +21003,7 @@ function wireEvents() {
   $("vp-stop-share").onclick = toggleShare;
   $("vp-change-source").onclick = openSharePicker;
   $("vp-stop-watch").onclick = stopWatching;
+  $("vp-watch-label").onclick = showWatchedStream;
   $("vp-disconnect").onclick = disconnectVoice;
   document.querySelector(".vp-status").title = "Connection details";
   document.querySelector(".vp-status").addEventListener("click", e => {
