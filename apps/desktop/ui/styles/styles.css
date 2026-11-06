@@ -7511,7 +7511,7 @@ body.mobile-app:not(.can-share-screen) .screen-share-only { display: none !impor
 .voice-invite-join:disabled { background: var(--bg-active); color: var(--text-muted); cursor: default; }
 .voice-invite-join:disabled:hover { background: var(--bg-active); }
 .voice-invite-where { font-family: var(--font-display); font-size: 15px; font-weight: 600; color: var(--header-primary); margin: -6px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.vp-invite:hover { color: var(--accent); }
+.vp-grid:hover { color: var(--accent); }
 
 .stage-group {
   display: flex;
@@ -8349,7 +8349,7 @@ body.mobile-app .vp-actions > * { flex: 1 1 0; }
 
   .app.narrow-split .voice-panel { display: grid; grid-template-columns: repeat(2, 18px); gap: 4px; justify-content: center; width: var(--narrow-tile); box-sizing: border-box; margin: 0 auto 8px; padding: 4px; border-radius: var(--narrow-radius); }
   .app.narrow-split .voice-panel.hidden { display: none; }
-  .app.narrow-split :is(.vp-conn-meta, .vp-invite, .vp-live, .vp-watch, .vp-streams, .vp-stage, .vp-game-share, .caret-btn, .vp-activities > span) { display: none; }
+  .app.narrow-split :is(.vp-conn-meta, .vp-grid, .vp-live, .vp-watch, .vp-streams, .vp-stage, .vp-game-share, .caret-btn, .vp-activities > span) { display: none; }
   .app.narrow-split :is(.vp-voice, .vp-conn, .vp-actions, .vp-voice .split-btn) { display: contents; }
   .app.narrow-split .voice-panel :is(.icon-btn, .vp-activities) { width: 18px; height: 18px; min-width: 0; flex: none; padding: 0; justify-content: center; border-radius: 7px; background: var(--bg-hover); }
   .app.narrow-split .voice-panel :is(.icon-btn, .vp-activities):hover { background: var(--bg-active); }

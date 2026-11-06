@@ -16439,7 +16439,6 @@ function renderVoicePanel() {
   renderVoiceTopic(call ? null : vs);
   $("vp-camera").classList.toggle("hidden", Boolean(call));
   $("vp-grid").classList.toggle("hidden", Boolean(call));
-  renderVoiceInviteButton(Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
     : null;
@@ -24473,18 +24472,7 @@ async function joinVoiceInvite(invite) {
   await toggleVoice(channel);
 }
 
-function renderVoiceInviteButton(call) {
-  const button = $("vp-invite");
-  setIcon(button, "friendAdd", 18);
-  button.classList.toggle("hidden", call);
-}
-
 function wireVoiceInvites() {
-  $("vp-invite").onclick = () => {
-    const vs = state.voiceServer;
-    if (!vs || vs.call || !state.voiceChannelId) return;
-    openVoiceInvite(vs.id, state.voiceChannelId);
-  };
   $("chm-voice-invite").onclick = () => {
     closeFloating();
     if (menuChannel && state.currentServer) openVoiceInvite(state.currentServer.id, menuChannel.id);
