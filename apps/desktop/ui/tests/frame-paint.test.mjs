@@ -95,6 +95,7 @@ test("a frame still decoding when the stage closes is never drawn", async () => 
   const bitmap = { id: 1, width: 10, height: 10, closed: false, close() { this.closed = true; } };
   const painter = createFramePainter(canvas, { decode: () => gate.promise.then(() => bitmap) });
   painter.paint(btoa("\x01"));
+  await tick();
   painter.clear();
   gate.resolve();
   await tick();
@@ -106,4 +107,29 @@ test("a frame still decoding when the stage closes is never drawn", async () => 
 
 test("frame bytes come through unchanged", () => {
   assert.deepEqual([...base64Bytes(btoa("\xff\xd8\x00\x10"))], [0xff, 0xd8, 0x00, 0x10]);
+});
+
+test("a frame can be fetched only when the painter is ready for it, and an empty answer draws nothing", async () => {
+  const canvas = fakeCanvas();
+  const fetched = [];
+  const painter = createFramePainter(canvas, {
+    decode: async bytes => ({ id: bytes[0], width: 4, height: 3, close() {} }),
+  });
+  painter.paint(async () => { fetched.push("a"); return new Uint8Array([5]).buffer; });
+  painter.paint(async () => { fetched.push("b"); return new Uint8Array([6]).buffer; });
+  painter.paint(async () => { fetched.push("c"); return new Uint8Array([7]).buffer; });
+  await tick();
+  await tick();
+  assert.deepEqual(fetched, ["a", "c"]);
+  assert.deepEqual(canvas.drawn, [5, 7]);
+  painter.paint(async () => new ArrayBuffer(0));
+  await tick();
+  assert.deepEqual(canvas.drawn, [5, 7]);
+});
+
+test("frame data can be base64, bytes or a fetch", async () => {
+  const { frameBytes } = require("../scripts/frame-paint.js");
+  assert.deepEqual([...await frameBytes(btoa("\x01\x02"))], [1, 2]);
+  assert.deepEqual([...await frameBytes(new Uint8Array([3]))], [3]);
+  assert.deepEqual([...await frameBytes(async () => new Uint8Array([4]).buffer)], [4]);
 });

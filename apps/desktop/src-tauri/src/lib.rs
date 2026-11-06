@@ -21,6 +21,7 @@ mod directory;
 mod device_out;
 mod doorbell;
 mod expressions;
+mod frames;
 mod media_engine;
 mod ink_window;
 mod mirror;
@@ -2227,8 +2228,11 @@ async fn start_screen_share(
     let (preview_tx, preview_rx) = tokio::sync::mpsc::unbounded_channel();
     session.add_subscriber(preview_tx);
     let emitter = handle.clone();
+    let frames = app.frames.clone();
     let preview = ScreenWatch::from_frames(profile.id, preview_rx, None, None, move |user, seq, width, height, jpeg| {
-        let _ = emitter.emit("video-frame", video_frame_payload(user, Some(seq), width, height, &jpeg));
+        let key = frames::screen_key(user);
+        frames.put(key.clone(), jpeg);
+        let _ = emitter.emit("video-frame", frames::ready_payload(user, &key, Some(seq), width, height));
     }, None);
     *app.own_preview.lock().unwrap() = Some(preview);
     *app.screen_share.lock().unwrap() = Some(session);
@@ -2317,9 +2321,12 @@ async fn watch_screen(
     .await?;
 
     let emitter = handle.clone();
+    let frames = app.frames.clone();
     let audio = stream_audio_sink(&app, user);
     let watch = ScreenWatch::start(user, media, audio, move |user, seq, width, height, jpeg| {
-        let _ = emitter.emit("video-frame", video_frame_payload(user, Some(seq), width, height, &jpeg));
+        let key = frames::screen_key(user);
+        frames.put(key.clone(), jpeg);
+        let _ = emitter.emit("video-frame", frames::ready_payload(user, &key, Some(seq), width, height));
     }, Some(ink_sink(&handle, user, false)));
     app.watches.lock().unwrap().insert(user, watch);
     Ok(())
@@ -2361,17 +2368,9 @@ fn set_stream_volume(app: tauri::State<App>, volume: f32) -> VoiceSettings {
     snapshot
 }
 
-fn video_frame_payload(user: UserId, seq: Option<u64>, width: u32, height: u32, jpeg: &[u8]) -> serde_json::Value {
-    let mut payload = serde_json::json!({
-        "user": user.to_string(),
-        "width": width,
-        "height": height,
-        "jpeg": base64::engine::general_purpose::STANDARD.encode(jpeg),
-    });
-    if let Some(seq) = seq {
-        payload["seq"] = serde_json::json!(seq);
-    }
-    payload
+#[tauri::command]
+fn take_video_frame(app: tauri::State<App>, key: String) -> tauri::ipc::Response {
+    tauri::ipc::Response::new(app.frames.take(&key).unwrap_or_default())
 }
 
 const MAX_CAMERA_FRAME_BYTES: usize = 400 * 1024;
@@ -2448,8 +2447,11 @@ async fn watch_camera(
     };
     let media = dial_media(&app, &their_hex, MediaHello::CameraSubscribe { user: profile.id, channel }).await?;
     let emitter = handle.clone();
+    let frames = app.frames.clone();
     let watch = ScreenWatch::start(user, media, None, move |user, _seq, width, height, jpeg| {
-        let _ = emitter.emit("camera-frame", video_frame_payload(user, None, width, height, &jpeg));
+        let key = frames::camera_key(user);
+        frames.put(key.clone(), jpeg);
+        let _ = emitter.emit("camera-frame", frames::ready_payload(user, &key, None, width, height));
     }, None);
     app.camera_watches.lock().unwrap().insert(user, watch);
     Ok(())
@@ -2459,6 +2461,7 @@ async fn watch_camera(
 fn stop_watching_camera(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     app.camera_watches.lock().unwrap().remove(&user);
+    app.frames.take(&frames::camera_key(user));
     Ok(())
 }
 
@@ -2541,6 +2544,7 @@ fn block_stream_ink(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
 fn stop_watching(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     app.watches.lock().unwrap().remove(&user);
+    app.frames.take(&frames::screen_key(user));
     Ok(())
 }
 
@@ -8278,6 +8282,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            take_video_frame,
             doorbell::get_awaited,
             link_preview::prepare_link_preview,
             link_safety::check_link,

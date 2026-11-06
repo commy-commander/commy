@@ -5,6 +5,12 @@ function base64Bytes(base64) {
   return bytes;
 }
 
+async function frameBytes(source) {
+  if (typeof source === "function") return new Uint8Array(await source());
+  if (typeof source === "string") return base64Bytes(source);
+  return new Uint8Array(source);
+}
+
 function createLatestOnly(run) {
   let busy = false;
   let waiting = null;
@@ -44,8 +50,10 @@ function createLatestOnly(run) {
 
 function createFramePainter(canvas, { decode = bytes => createImageBitmap(new Blob([bytes], { type: "image/jpeg" })), onPaint = () => {} } = {}) {
   let generation = 0;
-  const queue = createLatestOnly(async ({ base64, at }) => {
-    const bitmap = await decode(base64Bytes(base64));
+  const queue = createLatestOnly(async ({ source, at }) => {
+    const bytes = await frameBytes(source);
+    if (at !== generation || !bytes.length) return;
+    const bitmap = await decode(bytes);
     try {
       if (at !== generation) return;
       if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
@@ -60,8 +68,8 @@ function createFramePainter(canvas, { decode = bytes => createImageBitmap(new Bl
     }
   });
   return {
-    paint(base64) {
-      queue.push({ base64, at: generation });
+    paint(source) {
+      queue.push({ source, at: generation });
     },
     clear() {
       generation++;
@@ -77,5 +85,5 @@ function createFramePainter(canvas, { decode = bytes => createImageBitmap(new Bl
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { base64Bytes, createLatestOnly, createFramePainter };
+  module.exports = { base64Bytes, frameBytes, createLatestOnly, createFramePainter };
 }

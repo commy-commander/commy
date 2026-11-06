@@ -5750,12 +5750,16 @@ function paintCallTile(tile, t, focused) {
   tile.title = onStage ? "Back to the grid" : isMe ? "Open your stream preview" : live ? `Show ${t.name}'s stream big` : `Watch ${t.name}'s stream`;
 }
 
+function frameData(frame) {
+  return frame.jpeg || (() => invoke("take_video_frame", { key: frame.key }));
+}
+
 function onVideoFrame(frame) {
   if (state.streamsWatched.has(frame.user)) {
-    if (frame.user === state.watchingUser && state.stageMode === "watch") showStageFrame(frame.jpeg, frame.width, frame.height);
+    if (frame.user === state.watchingUser && state.stageMode === "watch") showStageFrame(frameData(frame), frame.width, frame.height);
     else {
       const tile = callStreamTile(frame.user);
-      if (tile) showCallStreamFrame(tile, frame.jpeg);
+      if (tile) showCallStreamFrame(tile, frameData(frame));
     }
   } else if (state.sharing && state.user && frame.user === state.user.id) {
     showOwnFrame(frame);
@@ -5829,7 +5833,7 @@ async function stopStream(user) {
 function showCameraFrame(frame) {
   const tile = $("cam-grid").querySelector(`.cam-tile.camera[data-user="${CSS.escape(frame.user)}"]`);
   if (!tile) return;
-  tilePainter(tile).paint(frame.jpeg);
+  tilePainter(tile).paint(frameData(frame));
   tile.querySelector(".cam-cover")?.classList.add("hidden");
 }
 
@@ -19386,14 +19390,18 @@ let ownPreviewTimer = null;
 let ownFpsSample = null;
 let ownFrameAt = 0;
 
-function showOwnFrame(frame) {
-  if (!state.sharing) return;
+const ownFrames = createLatestOnly(async frame => {
+  const bytes = await frameBytes(frameData(frame));
+  if (!state.sharing || !bytes.length) return;
   ownFrameAt = performance.now();
-  const src = frameUrls.from("own", frame.jpeg);
-  $("vp-preview-img").src = src;
+  $("vp-preview-img").src = frameUrls.from("own", bytes);
   $("vp-preview-empty").classList.add("hidden");
-  if (state.stageMode === "self") showStageFrame(frame.jpeg, frame.width, frame.height);
-  else if (state.user && callStreamTile(state.user.id)) showCallStreamFrame(callStreamTile(state.user.id), frame.jpeg);
+  if (state.stageMode === "self") showStageFrame(bytes, frame.width, frame.height);
+  else if (state.user && callStreamTile(state.user.id)) showCallStreamFrame(callStreamTile(state.user.id), bytes);
+});
+
+function showOwnFrame(frame) {
+  if (state.sharing) ownFrames.push(frame);
 }
 
 function startOwnPreview() {
@@ -23509,6 +23517,7 @@ async function refreshCurrentServer() {
   noteJoinRequests(state.currentServer);
   refreshVoiceInviteCards();
   renderVoicePanelActivity();
+  if (state.voiceServer && state.voiceServer.id === state.currentServer.id) renderVoicePanel();
   syncRulesGate();
   syncAwaitedBar();
   syncAttachAccess();
