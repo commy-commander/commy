@@ -20,15 +20,17 @@ import com.google.firebase.messaging.FirebaseMessaging
 class PushPlugin(private val activity: Activity) : Plugin(activity) {
   init {
     NotificationManagerCompat.from(activity).cancelAll()
-    WakePreviews.noteTap(activity.intent)
+    WakePreviews.opened()
+    WakePreviews.noteTap(activity, activity.intent)
   }
 
   override fun onNewIntent(intent: Intent) {
-    WakePreviews.noteTap(intent)
+    WakePreviews.noteTap(activity, intent)
   }
 
   override fun onResume() {
     NotificationManagerCompat.from(activity).cancelAll()
+    WakePreviews.opened()
   }
 
   @Command

@@ -20,15 +20,17 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import org.json.JSONObject
 
-data class Shown(val target: String, val sender: String, val text: String, val conversation: String?, val call: Boolean = false)
+data class Shown(val target: String, val sender: String, val text: String, val conversation: String?, val call: Boolean = false, val ended: Boolean = false)
 
 object WakePreviews {
   const val ACTION_OPEN = "chat.commy.mobile.OPEN_CHAT"
   const val EXTRA_TARGET = "target"
+  const val EXTRA_ANSWER = "answer"
   private const val FILE = "wake-previews.json"
   private const val CHANNEL_ID = "messages"
   private const val CALL_CHANNEL_ID = "calls-ringing"
   private const val RING_FOR_MS = 45_000L
+  private const val MISSED_LATE_MS = 30_000L
   private const val NONCE_BYTES = 12
   private const val TAG_BITS = 128
   private const val KEEP_LINES = 6
@@ -36,6 +38,7 @@ object WakePreviews {
   private val AAD = "commy-wake-preview/v1".toByteArray()
   private val ID = Regex("^[0-9a-fA-F-]{1,64}$")
   private val recent = LinkedHashMap<String, Long>()
+  private val ringing = LinkedHashMap<String, Long>()
   private const val TAG = "CommyWake"
   private const val CALL_ID_MIX = 0x5a5a5a5a
 
@@ -102,7 +105,7 @@ object WakePreviews {
     if (!ID.matches(author) || author == held.optString("me")) return null
     if (server == null) {
       val name = held.optJSONObject("users")?.optString(author)?.ifEmpty { null } ?: "Someone"
-      return Shown("dm:$author", name, text, null, preview.optBoolean("k"))
+      return Shown("dm:$author", name, text, null, preview.optBoolean("k"), preview.optBoolean("e"))
     }
     val channel = preview.optString("c")
     if (!ID.matches(server) || !ID.matches(channel)) return null
@@ -148,20 +151,32 @@ object WakePreviews {
     context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
   }
 
-  fun tapIntent(context: Context, target: String?): PendingIntent {
+  fun tapIntent(context: Context, target: String?, answer: Boolean = false): PendingIntent {
     val open = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
     if (target != null) {
       open.action = ACTION_OPEN
       open.putExtra(EXTRA_TARGET, target)
+      if (answer) open.putExtra(EXTRA_ANSWER, true)
     }
-    return PendingIntent.getActivity(context, target?.hashCode() ?: 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    val code = (target?.hashCode() ?: 0) xor (if (answer) CALL_ID_MIX else 0)
+    return PendingIntent.getActivity(context, code, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
   }
 
   @Volatile private var tapped: String? = null
 
-  fun noteTap(intent: Intent?) {
-    targetOf(intent)?.let { tapped = it }
+  fun noteTap(context: Context, intent: Intent?) {
+    val answer = intent?.getBooleanExtra(EXTRA_ANSWER, false) == true
+    intent?.removeExtra(EXTRA_ANSWER)
+    val target = targetOf(intent) ?: return
+    if (answer && target.startsWith("dm:")) {
+      NotificationManagerCompat.from(context).cancel(callId(target))
+      tapped = "call:" + target.removePrefix("dm:")
+    } else {
+      tapped = target
+    }
   }
+
+  private fun callId(target: String): Int = target.hashCode() xor CALL_ID_MIX
 
   fun takeTap(): String? {
     val target = tapped
@@ -205,18 +220,48 @@ object WakePreviews {
       .setWhen(System.currentTimeMillis())
       .setShowWhen(true)
       .setContentIntent(tap)
-      .addAction(android.R.drawable.stat_sys_phone_call, "Answer", tap)
+      .addAction(android.R.drawable.stat_sys_phone_call, "Answer", tapIntent(context, shown.target, answer = true))
       .build()
     notification.flags = notification.flags or Notification.FLAG_INSISTENT
+    noteRinging(shown.target, true)
     try {
-      NotificationManagerCompat.from(context).notify(shown.target.hashCode() xor CALL_ID_MIX, notification)
+      NotificationManagerCompat.from(context).notify(callId(shown.target), notification)
       NotificationManagerCompat.from(context).cancel(WakeService.NOTIFICATION_ID)
     } catch (e: SecurityException) {
       Log.i(TAG, "notifications are not allowed")
     }
   }
 
+  @Synchronized
+  private fun noteRinging(target: String, now: Boolean): Boolean {
+    val at = System.currentTimeMillis()
+    ringing.entries.removeAll { at - it.value > RING_FOR_MS + MISSED_LATE_MS }
+    if (now) {
+      ringing[target] = at
+      return true
+    }
+    return ringing.remove(target) != null
+  }
+
+  @Synchronized
+  fun opened() {
+    ringing.clear()
+  }
+
+  private fun endCall(context: Context, shown: Shown) {
+    val id = callId(shown.target)
+    val showing = context.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == id }
+    val rang = noteRinging(shown.target, false)
+    if (!showing && !rang) return
+    NotificationManagerCompat.from(context).cancel(id)
+    post(context, shown.copy(call = false, ended = false))
+  }
+
   fun post(context: Context, shown: Shown) {
+    if (shown.call && shown.ended) {
+      endCall(context, shown)
+      return
+    }
     if (shown.call) {
       postCall(context, shown)
       return

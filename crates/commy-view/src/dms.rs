@@ -34,11 +34,19 @@ pub fn is_call(message: &DmMessage) -> bool {
 }
 
 pub fn rings(message: &DmMessage) -> bool {
-    matches!(message.action, DmAction::Post | DmAction::GroupInvite { .. } | DmAction::Call { signal: CallSignal::Ring, .. })
+    matches!(
+        message.action,
+        DmAction::Post | DmAction::GroupInvite { .. } | DmAction::Call { signal: CallSignal::Ring | CallSignal::HangUp, .. }
+    )
+}
+
+pub fn call_ended(message: &DmMessage) -> bool {
+    matches!(message.action, DmAction::Call { signal: CallSignal::HangUp, .. })
 }
 
 pub fn wake_text(message: &DmMessage) -> String {
     match message.action {
+        DmAction::Call { signal: CallSignal::HangUp, .. } => "Missed call".to_string(),
         DmAction::Call { .. } => "Calling you".to_string(),
         DmAction::GroupInvite { .. } => "Added you to a group".to_string(),
         _ => crate::dm_excerpt(message),
@@ -224,7 +232,12 @@ mod tests {
         assert!(!is_call(&DmMessage::new(a, b, "hello")));
         assert!(!syncable(&ring), "calls never become conversation history");
         assert!(rings(&ring));
-        assert!(!rings(&hang_up));
+        assert!(rings(&hang_up), "a hang-up reaches a closed phone so its ringing stops");
+        assert!(call_ended(&hang_up) && !call_ended(&ring));
+        assert_eq!(wake_text(&ring), "Calling you");
+        assert_eq!(wake_text(&hang_up), "Missed call");
+        let accept = DmMessage::acting(a, b, DmAction::Call { call: channel, signal: CallSignal::Accept }, "");
+        assert!(!rings(&accept));
         let now = 1_000_000_000_000;
         assert!(call_fresh(now - 5_000, now));
         assert!(call_fresh(now + 5_000, now), "a clock a little ahead still rings");

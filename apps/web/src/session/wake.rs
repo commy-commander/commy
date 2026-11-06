@@ -21,7 +21,7 @@ pub(super) fn dm_wake_tag(keys: &StreamKeys, partner: UserId) -> [u8; 32] {
 
 pub(super) fn dm_wake_preview(keys: &StreamKeys, message: &DmMessage) -> Option<String> {
     let day = wake_day(Utc::now().timestamp_millis());
-    sealed_preview(keys, day, &message.from.to_string(), None, &commy_view::dms::wake_text(message), commy_view::dms::is_call(message))
+    sealed_preview(keys, day, &message.from.to_string(), None, &commy_view::dms::wake_text(message), commy_view::dms::is_call(message), commy_view::dms::call_ended(message))
 }
 
 fn ring_delay() -> Duration {
@@ -38,7 +38,7 @@ impl Session {
         let Some((private, whos, text)) = found else { return (Vec::new(), None) };
         let Some(keys) = live.book.wake_keys(server, private.then_some(message.channel)) else { return (Vec::new(), None) };
         let today = wake_day(now);
-        let preview = sealed_preview(&keys, today, &message.author.to_string(), Some(message.channel.to_string()), &text, false);
+        let preview = sealed_preview(&keys, today, &message.author.to_string(), Some(message.channel.to_string()), &text, false, false);
         (whos.iter().map(|who| keys.wake_tag(who, today)).collect(), preview)
     }
 

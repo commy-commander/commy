@@ -23362,6 +23362,8 @@ async function continueBoot() {
   await primeFriendPresence();
   const target = await invoke("take_notification_target").catch(() => null);
   if (target) await openNotificationTarget(target);
+  const call = await invoke("get_dm_call").catch(() => null);
+  if (call) onDmCall(call);
   if (!(await takePendingInviteLink())) await offerTrayPrompt();
 }
 

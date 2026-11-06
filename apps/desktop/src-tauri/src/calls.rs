@@ -8,6 +8,7 @@ use tauri::{Emitter, Manager};
 
 pub const RING_FOR: Duration = Duration::from_secs(45);
 static RING_SENDING: std::sync::LazyLock<std::sync::Arc<tokio::sync::Mutex<()>>> = std::sync::LazyLock::new(Default::default);
+static ANSWER_TAPPED: std::sync::Mutex<Option<(UserId, Instant)>> = std::sync::Mutex::new(None);
 
 #[derive(Debug, Clone)]
 pub struct DmCall {
@@ -152,6 +153,7 @@ pub async fn on_signal(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, f
             *app.dm_call.lock().unwrap() = Some(call.clone());
             announce(app, handle, &call, "ringing", None);
             ring_timeout(handle.clone(), channel);
+            answer_if_tapped(handle);
         }
         CallSignal::Accept => {
             let Some(call) = matching(app, from, channel).filter(|c| c.outgoing && !c.active) else { return };
@@ -171,6 +173,34 @@ pub async fn on_signal(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, f
             }
         }
     }
+}
+
+fn tapped_for(tapped: &mut Option<(UserId, Instant)>, partner: UserId) -> bool {
+    let wanted = tapped.is_some_and(|(user, at)| user == partner && at.elapsed() < RING_FOR);
+    if wanted || tapped.is_some_and(|(_, at)| at.elapsed() >= RING_FOR) {
+        *tapped = None;
+    }
+    wanted
+}
+
+fn answer_if_tapped(handle: &tauri::AppHandle) {
+    let app = handle.state::<App>();
+    let Some(partner) = app.dm_call.lock().unwrap().as_ref().filter(|c| !c.outgoing && !c.active).map(|c| c.partner) else { return };
+    if !tapped_for(&mut ANSWER_TAPPED.lock().unwrap(), partner) {
+        return;
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = answer_dm_call(handle.state::<App>(), handle.clone(), true).await {
+            tracing::info!("could not answer the call from the notification: {e}");
+        }
+    });
+}
+
+pub fn answer_from_notification(handle: &tauri::AppHandle, user: &str) {
+    let Ok(partner) = user.parse::<UserId>() else { return };
+    *ANSWER_TAPPED.lock().unwrap() = Some((partner, Instant::now()));
+    answer_if_tapped(handle);
 }
 
 pub fn settled_elsewhere(app: &App, handle: &tauri::AppHandle, partner: UserId, channel: ChannelId, signal: CallSignal) {
@@ -248,4 +278,22 @@ pub async fn end_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle) -
 #[tauri::command]
 pub fn get_dm_call(app: tauri::State<App>) -> Option<DmCallView> {
     current(&app)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_answer_tap_answers_only_that_callers_ring_and_only_once() {
+        let (caller, other) = (UserId::new(), UserId::new());
+        let mut tapped = Some((caller, Instant::now()));
+        assert!(!tapped_for(&mut tapped, other), "someone else's ring is not answered");
+        assert!(tapped.is_some(), "the tap still waits for its caller's ring");
+        assert!(tapped_for(&mut tapped, caller));
+        assert!(!tapped_for(&mut tapped, caller), "a tap answers one ring");
+        let mut stale = Instant::now().checked_sub(RING_FOR).map(|at| (caller, at));
+        assert!(!tapped_for(&mut stale, caller), "a tap from a call long over answers nothing");
+        assert!(stale.is_none());
+    }
 }
