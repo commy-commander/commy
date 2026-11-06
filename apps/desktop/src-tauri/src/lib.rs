@@ -2678,15 +2678,28 @@ async fn send_direct_dm(
     app: &App,
     me: &UserProfile,
     hex: Option<&str>,
+    message: DmMessage,
+    offline: &str,
+    note: Option<String>,
+) -> CmdResult<()> {
+    send_direct_dm_then(app, me, hex, message, offline, note, || {}).await
+}
+
+async fn send_direct_dm_then(
+    app: &App,
+    me: &UserProfile,
+    hex: Option<&str>,
     mut message: DmMessage,
     offline: &str,
     note: Option<String>,
+    stored: impl FnOnce(),
 ) -> CmdResult<()> {
     sign_dm(app, &mut message)?;
     let sender = app.profile_for(me, message.to);
     let to = message.to;
     let envelope = DmEnvelope::new(message, sender).with_note(note);
     let inboxed = dm_sync::post_inbox(app, to, &envelope).await;
+    stored();
     let Some(hex) = hex else {
         return if inboxed { Ok(()) } else { Err("that person's device is unknown".into()) };
     };

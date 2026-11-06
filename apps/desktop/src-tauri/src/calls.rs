@@ -60,11 +60,15 @@ fn matching(app: &App, partner: UserId, channel: ChannelId) -> Option<DmCall> {
 }
 
 async fn send_signal(app: &App, to: UserId, call: ChannelId, signal: CallSignal) -> CmdResult<()> {
+    send_signal_then(app, to, call, signal, || {}).await
+}
+
+async fn send_signal_then(app: &App, to: UserId, call: ChannelId, signal: CallSignal, stored: impl FnOnce()) -> CmdResult<()> {
     let _signing = app.signing.read().await;
     let me = current_profile(app)?;
     let hex = node_hex_for_user(app, to);
     let message = DmMessage::acting(me.id, to, DmAction::Call { call, signal }, "");
-    crate::send_direct_dm(app, &me, hex.as_deref(), message, "they are offline right now", None).await
+    crate::send_direct_dm_then(app, &me, hex.as_deref(), message, "they are offline right now", None, stored).await
 }
 
 pub fn peer_ok(app: &App, user: UserId, node_hex: &str, channel: ChannelId) -> bool {
@@ -234,8 +238,7 @@ pub async fn start_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle,
     let sending = RING_SENDING.clone().lock_owned().await;
     tauri::async_runtime::spawn(async move {
         let app = sender.state::<App>();
-        let rung = send_signal(&app, partner, channel, CallSignal::Ring).await;
-        drop(sending);
+        let rung = send_signal_then(&app, partner, channel, CallSignal::Ring, move || drop(sending)).await;
         if let Err(e) = rung {
             tracing::info!("could not ring {partner}: {e}");
             let ours = app.dm_call.lock().unwrap().as_ref().is_some_and(|c| c.channel == channel && !c.active);
