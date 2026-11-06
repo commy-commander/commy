@@ -432,6 +432,18 @@ test("the browser can ask to join a server that needs a moderator's yes, then wa
   assert.ok(read("apps", "web", "src", "session.rs").includes("spawn_local(self.clone().watch_knocks());"));
 });
 
+test("the browser searches direct messages and reaches channel history older than the first load", () => {
+  for (const cmd of ["search_dms", "search_messages", "get_messages"]) {
+    assert.ok(rustCommands.has(cmd), cmd);
+    assert.equal(webDefault(cmd).known, false, cmd);
+  }
+  const session = read("apps", "web", "src", "session.rs");
+  assert.match(session, /self\.deepen_history\(server, Some\(channel\), FIND_OLDER_WAIT, shown\)\.await;/);
+  assert.match(session, /self\.deepen_history\(server, channel, SEARCH_OLDER_WAIT, \|\| false\)\.await;/);
+  const sync = read("apps", "web", "src", "session", "sync.rs");
+  assert.match(sync, /follow_together_tail\(keys\.into_iter\(\)\.map\(\|k\| \(k, 0\)\)\.collect\(\), None\)/);
+});
+
 test("the app looks for the browser on the html element, where the bridge marks it", () => {
   assert.ok(read("apps", "web", "ui", "web-bridge.js").includes('document.documentElement.classList.add("web-app")'));
   for (const file of ["app.js", "updates.js"]) {
