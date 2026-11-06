@@ -16,5 +16,8 @@
         "description": "How many megabytes each member may upload a day. 500 if left as is."
       }
     }
+  },
+  "devDependencies": {
+    "wrangler": "4.153.0"
   }
 }
