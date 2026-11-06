@@ -289,7 +289,12 @@ means uninstalling the old one first; to keep one key, store a debug keystore
 bundle for Google Play and a release APK, signed with the upload key from the
 `ANDROID_UPLOAD_KEYSTORE` (base64 PKCS12, alias `commy-upload`) and
 `ANDROID_UPLOAD_PASSWORD` secrets; without them it signs with a throwaway key
-that Google Play rejects. Screen sharing, the overlay, hotkeys, the
+that Google Play rejects. When the `PLAY_SERVICE_ACCOUNT_JSON` secret holds a
+Google service account key with permission to release to testing tracks,
+`apps/desktop/mobile/play-upload.mjs` then sends the bundle to the Play testing
+track picked in `play_testing` (internal by default, or closed or open). Test
+builds with an `-rc` version are not sent, and production releases stay a manual
+step in Play Console. Screen sharing, the overlay, hotkeys, the
 tray and Stream Deck are desktop only.
 
 ## Self-hosting
