@@ -93,11 +93,16 @@ pub fn fits_plain(plain_len: usize) -> bool {
 mod tests {
     use super::*;
 
+    fn any_blob() -> String {
+        data_encoding::HEXLOWER.encode(&rand::random::<[u8; 32]>())
+    }
+
     #[test]
     fn a_file_opens_only_with_the_reference_it_was_sealed_for() {
-        let key = FileKey::for_blob("abc123");
-        assert_eq!(key, FileKey::for_blob("abc123"));
-        let other = FileKey::for_blob("abc124");
+        let blob = any_blob();
+        let key = FileKey::for_blob(&blob);
+        assert_eq!(key, FileKey::for_blob(&blob));
+        let other = FileKey::for_blob(&any_blob());
         assert_ne!(key.id, other.id);
         let sealed = key.seal(b"a pasted picture").unwrap();
         assert_eq!(sealed, key.seal(b"a pasted picture").unwrap(), "every member who has the file seals it the same way");
@@ -114,12 +119,13 @@ mod tests {
 
     #[test]
     fn files_and_pictures_never_share_an_id() {
-        assert_ne!(FileKey::for_blob("same").id, crate::PictureKey::for_blob("same").id);
+        let blob = any_blob();
+        assert_ne!(FileKey::for_blob(&blob).id, crate::PictureKey::for_blob(&blob).id);
     }
 
     #[test]
     fn files_up_to_the_limit_fit() {
-        let key = FileKey::for_blob("big");
+        let key = FileKey::for_blob(&any_blob());
         let largest = vec![7u8; MAX_FILE_PLAIN];
         let sealed = key.seal(&largest).unwrap();
         assert_eq!(sealed.len(), MAX_FILE_SEALED);
@@ -133,7 +139,7 @@ mod tests {
 
     #[test]
     fn a_middle_sized_file_lands_in_the_next_bucket_up() {
-        let key = FileKey::for_blob("photo");
+        let key = FileKey::for_blob(&any_blob());
         let photo = vec![1u8; 3 * MIB];
         let sealed = key.seal(&photo).unwrap();
         assert_eq!(sealed.len(), 4 * MIB + TAG_BYTES);
