@@ -257,7 +257,21 @@ object WakePreviews {
     post(context, shown.copy(call = false, ended = false))
   }
 
-  fun post(context: Context, shown: Shown) {
+  fun postAll(context: Context, all: List<Shown>) {
+    val held = mutableListOf<Shown>()
+    all.forEachIndexed { i, shown ->
+      val next = all.getOrNull(i + 1)
+      val sameChat = next != null && !next.call && !shown.call && next.target == shown.target
+      if (!sameChat) {
+        post(context, shown, held.toList())
+        held.clear()
+      } else {
+        held.add(shown)
+      }
+    }
+  }
+
+  fun post(context: Context, shown: Shown, before: List<Shown> = emptyList()) {
     if (shown.call && shown.ended) {
       endCall(context, shown)
       return
@@ -266,7 +280,8 @@ object WakePreviews {
       postCall(context, shown)
       return
     }
-    if (seenRecently(shown.target, shown.text)) return
+    val fresh = (before + shown).filterNot { seenRecently(it.target, it.text) }
+    if (fresh.isEmpty()) return
     ensureChannel(context)
     val id = shown.target.hashCode()
     val manager = NotificationManagerCompat.from(context)
@@ -274,8 +289,12 @@ object WakePreviews {
       .firstOrNull { it.id == id }
       ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it.notification) }
     val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
-    earlier?.messages?.takeLast(KEEP_LINES - 1)?.forEach { style.addMessage(it) }
-    style.addMessage(shown.text.ifEmpty { "New message" }, System.currentTimeMillis(), Person.Builder().setName(shown.sender).build())
+    val now = System.currentTimeMillis()
+    val lines = fresh.takeLast(KEEP_LINES)
+    earlier?.messages?.takeLast(KEEP_LINES - lines.size)?.forEach { style.addMessage(it) }
+    lines.forEachIndexed { i, line ->
+      style.addMessage(line.text.ifEmpty { "New message" }, now - lines.size + 1 + i, Person.Builder().setName(line.sender).build())
+    }
     if (shown.conversation != null) {
       style.setConversationTitle(shown.conversation)
       style.setGroupConversation(true)
