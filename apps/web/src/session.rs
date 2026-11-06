@@ -115,6 +115,7 @@ pub struct Session {
     invited: RefCell<HashMap<ServerId, (KeyId, ChannelSecret)>>,
     links: RefCell<links::LinkSafety>,
     watching: RefCell<crate::watching::Watching>,
+    mic: RefCell<crate::mic_gate::MicGate>,
 }
 
 #[derive(Deserialize, Default)]
@@ -176,6 +177,7 @@ struct Args {
     admit: Option<bool>,
     muted: Option<bool>,
     deafened: Option<bool>,
+    pressed: Option<bool>,
     filename: Option<String>,
     data: Option<String>,
     which: Option<String>,
@@ -294,6 +296,7 @@ impl Session {
             invited: RefCell::default(),
             links: RefCell::default(),
             watching: RefCell::default(),
+            mic: RefCell::default(),
         })
     }
 
@@ -456,6 +459,7 @@ impl Session {
             "set_voice_channel" => self.call_command(cmd, args).await,
             "set_activity" | "send_activity_input" => self.activity_command(cmd, args).await,
             "get_voice_settings" => self.call_command(cmd, args).await,
+            "press_talk" => self.call_command(cmd, args).await,
             "set_muted" => self.call_command(cmd, args).await,
             "set_deafened" => self.call_command(cmd, args).await,
             "set_afk_timeout" | "note_user_activity" => self.call_command(cmd, args).await,

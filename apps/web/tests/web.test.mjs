@@ -389,12 +389,24 @@ test("controls for things only the desktop app does are hidden in the browser", 
     assert.ok(found, `index.html has ${attr}`);
     return found[0];
   };
-  for (const attr of ['id="share-btn"', 'id="vp-camera"', 'id="vp-game-share"', 'id="entry-sync"', 'id="stream-deck-card"', 'id="tab-game-database"', 'data-tab="integrations"', 'data-search="game status playing activity"', 'data-tab="camera"', 'data-tab="storage"', 'data-tab="overlay"', 'data-tab="updates"', 'data-i18n="appearance.appIcon"', 'data-i18n="appearance.trayIcon"', 'data-search="push to talk ptt voice activity open mic"', 'id="startup-update"']) {
+  for (const attr of ['id="share-btn"', 'id="vp-camera"', 'id="vp-game-share"', 'id="entry-sync"', 'id="stream-deck-card"', 'id="tab-game-database"', 'data-tab="integrations"', 'data-search="game status playing activity"', 'data-tab="camera"', 'data-tab="storage"', 'data-tab="overlay"', 'data-tab="updates"', 'data-i18n="appearance.appIcon"', 'data-i18n="appearance.trayIcon"', 'id="startup-update"']) {
     assert.match(opener(attr), /class="[^"]*\bnative-only\b/, attr);
   }
-  assert.ok(index.includes('<div class="settings-card native-only">\n            <div class="segmented input-mode"'));
   assert.ok(index.includes('<div class="entry-recovery native-only">\n              <button class="btn-link" id="entry-show-code">'));
   assert.match(read("apps", "web", "ui", "web.css"), /\.web-app \.native-only \{ display: none !important; \}/);
+});
+
+test("the browser offers push to talk, input sensitivity and the mute and deafen keys like the desktop", () => {
+  const index = read("apps", "desktop", "ui", "index.html");
+  assert.ok(index.includes('<h2 class="settings-subhead" data-search="push to talk ptt voice activity open mic">Input Mode</h2>\n          <div class="settings-card">'));
+  assert.ok(index.includes('<h2 class="settings-subhead desktop-only">Voice</h2>\n          <div class="settings-card desktop-only">\n            <div class="setting-row" data-search="hotkey keybind mic">'));
+  const bridge = read("apps", "web", "ui", "web-bridge.js");
+  assert.ok(bridge.includes('backend("press_talk"'));
+  assert.ok(rustCommands.has("press_talk"));
+  for (const cmd of ["set_input_mode", "set_sensitivity", "set_voice_hotkeys"]) assert.ok(webVoiceScripts.WEB_VOICE_COMMANDS.includes(cmd), cmd);
+  const calls = read("apps", "web", "src", "session", "calls.rs");
+  assert.ok(calls.includes("self.mic.borrow_mut().process(&mut pcm)"));
+  assert.ok(calls.includes('self.emit("talk-key"'));
 });
 
 test("the app looks for the browser on the html element, where the bridge marks it", () => {

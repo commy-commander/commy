@@ -25,9 +25,9 @@ function meterState(db, auto, thresholdDb, listening) {
   return db >= thresholdDb ? "open" : "quiet";
 }
 
-function inputModeCopy(mode, onPhone = false) {
+function inputModeCopy(mode, onPhone = false, inBrowser = false) {
   if (mode === "push_to_talk") {
-    const text = onPhone ? "Your mic sends only while you hold the Hold to talk button." : "Your mic sends only while the talk key is held, in any app.";
+    const text = onPhone ? "Your mic sends only while you hold the Hold to talk button." : inBrowser ? "Your mic sends only while the talk key is held with Commy as the tab you are on." : "Your mic sends only while the talk key is held, in any app.";
     return { title: "Push to Talk", text };
   }
   return { title: "Voice Activity", text: "Your mic opens on its own when you speak." };
