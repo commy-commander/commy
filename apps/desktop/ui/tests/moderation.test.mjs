@@ -71,3 +71,11 @@ test("only people who can kick or ban see the list", () => {
   assert.equal(canSeeRemoved({}), false);
   assert.equal(canSeeRemoved(null), false);
 });
+
+test("Invite Back sends an invite link anyone can open, never a raw server ticket", () => {
+  const app = readFileSync(join(repo, "apps", "desktop", "ui", "scripts", "app.js"), "utf8");
+  const body = /async function inviteBack\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
+  assert.match(body, /invoke\("create_invite_link"/);
+  assert.doesNotMatch(body, /get_invite/);
+  assert.ok(body.indexOf("create_invite_link") < body.indexOf('invoke("open_dm"'));
+});
