@@ -65,8 +65,8 @@ pub fn today() -> i64 {
     wake_day(Utc::now().timestamp_millis())
 }
 
-pub fn preview(keys: &StreamKeys, author: &str, channel: Option<String>, text: &str, call: bool) -> Option<String> {
-    sealed_preview(keys, today(), author, channel, text, call)
+pub fn preview(keys: &StreamKeys, author: &str, channel: Option<String>, text: &str, call: bool, ended: bool) -> Option<String> {
+    sealed_preview(keys, today(), author, channel, text, call, ended)
 }
 
 pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>) {
@@ -513,8 +513,23 @@ mod phone {
 static TARGET: Mutex<Option<String>> = Mutex::new(None);
 static UI_TAKES_TARGETS: AtomicBool = AtomicBool::new(false);
 
+fn opened(handle: &AppHandle, target: Option<String>) -> Option<String> {
+    let target = target?;
+    match target.strip_prefix("call:") {
+        Some(user) => {
+            let target = format!("dm:{user}");
+            if !crate::toast::valid_target(&target) {
+                return None;
+            }
+            crate::calls::answer_from_notification(handle, user);
+            Some(target)
+        }
+        None => Some(target).filter(|t| crate::toast::valid_target(t)),
+    }
+}
+
 fn tapped(handle: &AppHandle) {
-    let Some(target) = phone::take_target().filter(|t| crate::toast::valid_target(t)) else { return };
+    let Some(target) = opened(handle, phone::take_target()) else { return };
     if UI_TAKES_TARGETS.load(Ordering::SeqCst) {
         use tauri::Emitter;
         let _ = handle.emit("notification-clicked", target);
@@ -524,12 +539,13 @@ fn tapped(handle: &AppHandle) {
 }
 
 #[tauri::command]
-pub async fn take_notification_target() -> Option<String> {
+pub async fn take_notification_target(handle: AppHandle) -> Option<String> {
     UI_TAKES_TARGETS.store(true, Ordering::SeqCst);
     if let Some(target) = TARGET.lock().unwrap().take() {
         return Some(target);
     }
-    tauri::async_runtime::spawn_blocking(phone::take_target).await.ok().flatten().filter(|t| crate::toast::valid_target(t))
+    let target = tauri::async_runtime::spawn_blocking(phone::take_target).await.ok().flatten();
+    opened(&handle, target)
 }
 
 #[cfg(target_os = "android")]

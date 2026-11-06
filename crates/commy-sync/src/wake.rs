@@ -53,6 +53,8 @@ pub struct Preview {
     pub text: String,
     #[serde(rename = "k", default, skip_serializing_if = "std::ops::Not::not")]
     pub call: bool,
+    #[serde(rename = "e", default, skip_serializing_if = "std::ops::Not::not")]
+    pub ended: bool,
 }
 
 pub fn preview_text(text: &str) -> String {
@@ -88,8 +90,8 @@ pub fn seal_preview(key: &[u8; 32], preview: &Preview) -> Option<String> {
     Some(BASE64.encode(&out))
 }
 
-pub fn sealed_preview(keys: &StreamKeys, day: i64, author: &str, channel: Option<String>, text: &str, call: bool) -> Option<String> {
-    seal_preview(&keys.preview_key(day), &Preview { author: author.to_string(), channel, text: preview_text(text), call })
+pub fn sealed_preview(keys: &StreamKeys, day: i64, author: &str, channel: Option<String>, text: &str, call: bool, ended: bool) -> Option<String> {
+    seal_preview(&keys.preview_key(day), &Preview { author: author.to_string(), channel, text: preview_text(text), call, ended })
 }
 
 pub fn open_preview(key: &[u8; 32], encoded: &str) -> Option<Preview> {
@@ -183,7 +185,7 @@ mod tests {
     fn a_preview_opens_only_with_its_stream_and_day() {
         let keys = StreamSecret::from_bytes([7; 32]).keys();
         let other = StreamSecret::from_bytes([8; 32]).keys();
-        let preview = Preview { author: "alice".into(), channel: Some("general".into()), text: "hello there".into(), call: false };
+        let preview = Preview { author: "alice".into(), channel: Some("general".into()), text: "hello there".into(), call: false, ended: false };
         let sealed = seal_preview(&keys.preview_key(20_000), &preview).unwrap();
         assert!(preview_ok(&sealed));
         assert_eq!(open_preview(&keys.preview_key(20_000), &sealed), Some(preview.clone()));
@@ -197,14 +199,17 @@ mod tests {
     #[test]
     fn every_preview_is_the_same_size_whatever_it_says() {
         let key = StreamSecret::from_bytes([7; 32]).keys().preview_key(1);
-        let short = seal_preview(&key, &Preview { author: "a".into(), channel: None, text: "hi".into(), call: true }).unwrap();
-        let long = seal_preview(&key, &Preview { author: "a".into(), channel: None, text: "\"\u{1}".repeat(400), call: false }).unwrap();
+        let short = seal_preview(&key, &Preview { author: "a".into(), channel: None, text: "hi".into(), call: true, ended: false }).unwrap();
+        let long = seal_preview(&key, &Preview { author: "a".into(), channel: None, text: "\"\u{1}".repeat(400), call: false, ended: false }).unwrap();
         assert_eq!(short.len(), long.len());
         assert!(short.len() <= MAX_PREVIEW_ENCODED);
         assert!(!preview_ok(&"A".repeat(MAX_PREVIEW_ENCODED + 4)));
         assert!(!preview_ok("not base64!"));
         assert!(open_preview(&key, &long).is_some_and(|p| !p.call));
-        assert!(open_preview(&key, &short).is_some_and(|p| p.call), "a call says so");
+        assert!(open_preview(&key, &short).is_some_and(|p| p.call && !p.ended), "a call says so");
+        let missed = seal_preview(&key, &Preview { author: "a".into(), channel: None, text: "Missed call".into(), call: true, ended: true }).unwrap();
+        assert_eq!(missed.len(), short.len());
+        assert!(open_preview(&key, &missed).is_some_and(|p| p.call && p.ended), "a call that stopped ringing says so");
     }
 
     #[test]

@@ -34,7 +34,7 @@ pub fn ring(app: &App, server: ServerId, message: &Message) {
     if tags.is_empty() {
         return;
     }
-    let preview = push_wake::preview(&keys, &me.to_string(), Some(message.channel.to_string()), &text, false);
+    let preview = push_wake::preview(&keys, &me.to_string(), Some(message.channel.to_string()), &text, false, false);
     tauri::async_runtime::spawn(push_wake::ring(app.http.clone(), tags, preview));
 }
 

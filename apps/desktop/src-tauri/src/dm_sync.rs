@@ -385,7 +385,7 @@ fn on_inbox(handle: &AppHandle, server: Option<ServerId>, plain: &[u8], at: i64,
 }
 
 fn wake_preview(keys: &StreamKeys, message: &DmMessage) -> Option<String> {
-    push_wake::preview(keys, &message.from.to_string(), None, &commy_view::dms::wake_text(message), is_call(message))
+    push_wake::preview(keys, &message.from.to_string(), None, &commy_view::dms::wake_text(message), is_call(message), commy_view::dms::call_ended(message))
 }
 
 fn wake_streams(app: &App, days: &[i64]) -> Option<(String, Vec<(StreamKeys, i64)>)> {

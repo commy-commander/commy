@@ -8,11 +8,11 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
-    WakePreviews.noteTap(intent)
+    WakePreviews.noteTap(this, intent)
   }
 
   override fun onNewIntent(intent: Intent) {
-    WakePreviews.noteTap(intent)
+    WakePreviews.noteTap(this, intent)
     super.onNewIntent(intent)
   }
 }
