@@ -259,6 +259,7 @@ object WakePreviews {
       .build()
     try {
       NotificationManagerCompat.from(context).notify(id, notification)
+      if (target != null) NotificationManagerCompat.from(context).cancel(WakeService.NOTIFICATION_ID)
     } catch (e: SecurityException) {
       Log.i(TAG, "notifications are not allowed")
     }
