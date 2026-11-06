@@ -5675,7 +5675,7 @@ function sizeCallGrid(grid, count, layout) {
     return;
   }
   const main = document.querySelector(".main");
-  const width = (grid.clientWidth || (main ? main.clientWidth : 0)) - 32;
+  const width = (grid.clientWidth || (main ? main.clientWidth : 0)) - 76;
   const fills = main && main.classList.contains("stage-focus");
   const height = (fills ? grid.clientHeight : (main ? main.clientHeight - 48 : 0) * 0.56) - 24;
   const slots = count + (cam.bigTile ? 3 : 0);
@@ -5781,6 +5781,23 @@ async function openCallTile(t) {
   const onStage = t.me ? state.stageMode === "self" : state.stageMode === "watch" && state.watchingUser === t.user;
   if (onStage) return backToCallGrid();
   await watchScreen(t.user, t.name);
+}
+
+async function showCallGrid() {
+  const vs = state.voiceServer;
+  if (!vs || vs.call) return;
+  if (!state.currentServer || state.currentServer.id !== vs.id) await selectServer(vs.id);
+  if (state.stageMode === "watch") backToCallGrid();
+  else if (state.stageMode === "self") closeStage({ keepFocus: true });
+  phoneShowChat();
+  if (!callTilesHere().length) {
+    renderCamGrid();
+    return toast("Nobody in your voice channel is streaming or on camera yet");
+  }
+  if (!isPhoneWidth(window.innerWidth)) document.querySelector(".main").classList.add("stage-focus");
+  paintFocusButtons();
+  renderCamGrid();
+  $("cam-grid").focus({ preventScroll: true });
 }
 
 function backToCallGrid() {
@@ -10056,6 +10073,7 @@ function renderPhoneVoice() {
   $("phone-voice").classList.toggle("hidden", !live);
   if (!live) return;
   $("phone-voice-name").textContent = vs.call ? `Call with ${vs.name}` : vs.channelName;
+  $("phone-voice-grid").classList.toggle("hidden", Boolean(vs.call));
   $("phone-voice-signal").replaceChildren(svgIcon("signal", 14));
   setIcon($("phone-voice-mute"), state.voice.muted ? "micOff" : "mic");
   setIcon($("phone-voice-deafen"), state.voice.deafened ? "headsetOff" : "headset");
@@ -10070,6 +10088,8 @@ function wirePhoneVoice() {
   $("phone-voice-mute").onclick = () => $("mute-btn").click();
   $("phone-voice-deafen").onclick = () => $("deafen-btn").click();
   $("phone-voice-hangup").onclick = disconnectVoice;
+  setIcon($("phone-voice-grid"), "grid", 20);
+  $("phone-voice-grid").onclick = showCallGrid;
   $("phone-voice-where").onclick = () => {
     $("vp-conn-meta").click();
     phoneStep("back");
@@ -16418,6 +16438,7 @@ function renderVoicePanel() {
   $("vp-where").textContent = call ? `Call with ${vs.name}` : `${channelTextName(vs.channelName)} / ${vs.name}`;
   renderVoiceTopic(call ? null : vs);
   $("vp-camera").classList.toggle("hidden", Boolean(call));
+  $("vp-grid").classList.toggle("hidden", Boolean(call));
   renderVoiceInviteButton(Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
@@ -21119,6 +21140,8 @@ function wireEvents() {
   });
 
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
+  setIcon($("vp-grid"), "grid", 18);
+  $("vp-grid").onclick = showCallGrid;
   $("cam-preview-btn").onclick = toggleCameraPreview;
   for (const button of $("cam-bg").querySelectorAll("button")) {
     button.onclick = () => {
