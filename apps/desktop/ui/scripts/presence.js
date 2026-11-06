@@ -19,12 +19,24 @@ function subLine(person, now = Date.now()) {
   return [backLine(person, now), statusLine(person)].filter(Boolean).join(" · ");
 }
 
+function onPhone(person) {
+  const presence = (person && person.presence) || "offline";
+  return Boolean(person && person.phone) && (presence === "offline" || presence === "invisible");
+}
+
+function presenceDot(person) {
+  const presence = (person && person.presence) || "offline";
+  const shown = presence === "invisible" ? "offline" : presence;
+  return onPhone(person) ? `${shown} phone` : shown;
+}
+
 function presenceLabel(person, now = Date.now()) {
+  if (onPhone(person)) return "Offline · gets notifications on phone";
   const base = PRESENCE_LABELS[(person && person.presence) || "offline"] || "Offline";
   const back = backLine(person, now);
   return back ? `${base} · ${back[0].toLowerCase()}${back.slice(1)}` : base;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PRESENCE_LABELS, statusLine, backLine, subLine, presenceLabel };
+  module.exports = { PRESENCE_LABELS, statusLine, backLine, subLine, presenceLabel, onPhone, presenceDot };
 }

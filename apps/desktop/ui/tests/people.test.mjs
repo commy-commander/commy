@@ -55,3 +55,12 @@ test("a game keeps its own cover and start time, taken from the server that repo
   assert.equal(pal.activity_cover, "co3byy");
   assert.equal(pal.activity_since, 100);
 });
+
+test("a phone mark seen in any server stays with the person", () => {
+  const servers = [
+    { id: "s1", name: "One", members: [member("b", "pal", "offline")] },
+    { id: "s2", name: "Two", members: [member("b", "pal", "offline", { phone: true })] },
+  ];
+  assert.equal(indexPeople(servers, "a").get("b").phone, true);
+  assert.equal(indexPeople(servers.slice(0, 1), "a").get("b").phone, false);
+});
