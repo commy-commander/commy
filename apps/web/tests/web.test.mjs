@@ -421,6 +421,17 @@ test("server drives open in the browser: browse, make folders, rename, remove, u
   assert.match(app, /invoke\("drive_download", \{ serverId: server\.id, itemId: item\.id, name: item\.name \}\)/);
 });
 
+test("the browser can ask to join a server that needs a moderator's yes, then wait, add a note or withdraw", () => {
+  for (const cmd of ["list_join_waits", "cancel_join_request", "send_join_note"]) {
+    assert.ok(rustCommands.has(cmd), cmd);
+    assert.equal(webDefault(cmd).known, false, cmd);
+  }
+  const invites = read("apps", "web", "src", "session", "invites.rs");
+  assert.ok(!invites.includes("Ask to join from the Commy app"));
+  assert.match(invites, /Some\(KnockReply::Waiting\(lobby\)\) => \{/);
+  assert.ok(read("apps", "web", "src", "session.rs").includes("spawn_local(self.clone().watch_knocks());"));
+});
+
 test("the app looks for the browser on the html element, where the bridge marks it", () => {
   assert.ok(read("apps", "web", "ui", "web-bridge.js").includes('document.documentElement.classList.add("web-app")'));
   for (const file of ["app.js", "updates.js"]) {

@@ -533,11 +533,10 @@ impl Client {
         Some(WirePayload::Signed(SignedEvent::sign(server, profile.id, Utc::now().timestamp_millis(), event, &identity)))
     }
 
-    pub fn join_ask(&self, server: ServerId, note: &str) -> Option<commy_net::KnockRequest> {
+    pub fn join_ask(&self, server: ServerId, note: &str, asked_at: i64) -> Option<commy_net::KnockRequest> {
         let (profile, identity) = self.me.lock().unwrap().clone()?;
-        let now = Utc::now().timestamp_millis();
-        let event = commy_view::join_requests::ask(server, &profile, note, now).ok()?;
-        Some(commy_net::KnockRequest { server, ask: SignedEvent::sign(server, profile.id, now, event, &identity) })
+        let event = commy_view::join_requests::ask(server, &profile, note, asked_at).ok()?;
+        Some(commy_net::KnockRequest { server, ask: SignedEvent::sign(server, profile.id, asked_at, event, &identity) })
     }
 
     pub fn edit_me(&self, edit: impl FnOnce(&mut UserProfile)) -> Result<UserProfile, String> {
