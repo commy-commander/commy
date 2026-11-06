@@ -8,6 +8,7 @@ const PERMISSION_HINTS = {
   create_events: "Schedule events, and edit or delete the ones they created.",
   manage_events: "Edit or delete any scheduled event.",
   view_audit_log: "Read who changed what in the server.",
+  manage_file_storage: "See and change the server's Cloudflare file storage, and keep its member list up to date.",
   manage_messages: "Delete or pin anyone's messages and tend any thread or poll.",
   pin_messages: "Pin and unpin messages in channels they can see.",
   attach_files: "Upload files and images and paste pictures into chat.",

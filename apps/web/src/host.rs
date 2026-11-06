@@ -19,8 +19,8 @@ extern "C" {
     #[wasm_bindgen(method, catch, js_name = putBytes)]
     pub async fn put_bytes_within(this: &Host, url: &str, body: &[u8], wait_ms: u32) -> Result<JsValue, JsValue>;
 
-    #[wasm_bindgen(method, catch, js_name = hasBytes)]
-    pub async fn has_bytes(this: &Host, url: &str, wait_ms: u32) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(method, catch, js_name = storageRequest)]
+    pub async fn storage_request(this: &Host, method: &str, url: &str, headers: &str, body: &[u8], wait_ms: u32) -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(method)]
     pub fn load(this: &Host, key: &str) -> Option<String>;

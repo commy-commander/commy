@@ -15,6 +15,13 @@ messages. The worker and the bucket only ever hold sealed copies with random
 looking names, rounded up to a few fixed sizes, so neither the owner's
 Cloudflare account nor Cloudflare can open them or tell what they are.
 
+The worker is also private to the server. Every upload and every read is
+signed by a member's Commy identity, and the worker only answers members on
+the list it keeps. The server owner's app, and the apps of people whose role
+has **Manage Cloudflare Storage**, keep that list up to date as people join
+and leave. Only they see the worker's address in Commy; other members' apps
+use it without showing it. Each member can upload at most 500 MB a day.
+
 ## What it costs
 
 R2 charges US$0.015 per GB stored each month after the first 10 GB, and
@@ -29,19 +36,24 @@ The Workers free plan covers 100,000 requests a day. See Cloudflare's
 1. Sign in to the Cloudflare dashboard and open **R2 Object Storage**. Turn R2
    on if it is not on yet.
 2. Deploy the worker with the button below. It creates a bucket named
-   `commy-files` and a worker named `commy-files` on your account.
+   `commy-files` and a worker named `commy-files` on your account. When it
+   asks for `SETUP_CODE`, make up a code of at least 16 letters, digits or
+   dashes, and keep it to yourself.
 
    [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/commy-commander/commy/tree/main/apps/file-store)
 
-   Or from a copy of this folder: `npx wrangler r2 bucket create commy-files`
-   then `npx wrangler deploy`.
+   Or from a copy of this folder: `npx wrangler r2 bucket create commy-files`,
+   `npx wrangler deploy`, then `npx wrangler secret put SETUP_CODE`.
 3. Open the bucket's **Settings > Object lifecycle rules** and add a rule
-   that deletes objects 90 days after upload, so storage stays small. Older
-   files keep loading from members' devices.
+   for the prefix `f/` that deletes objects 90 days after upload, so storage
+   stays small. Older files keep loading from members' devices. Leave the
+   `_commy/` and `u/` prefixes alone: they hold the member list and each
+   member's upload count for the day.
 4. Copy the worker's address, like `https://commy-files.yourname.workers.dev`.
-   Opening it in a browser shows `{"commy_files":1,...}`.
-5. In Commy, open **Server Settings > Integrations > File Storage**, paste the
-   address and choose **Save**. Commy checks that the address answers first.
+   Opening it in a browser shows `{"commy_files":2,...}`.
+5. In Commy, open **Server Settings > Integrations > Cloudflare Storage**,
+   paste the address and the setup code, and choose **Save**. Commy checks
+   that the address answers, then hands the worker the server's member list.
 
 From then on, files up to 30 MB posted in that server's channels are also kept
 in the bucket, and members load them from there first. Direct messages and
@@ -52,11 +64,29 @@ The browser app at commy.chat reaches storage on a `workers.dev` address.
 A worker on a custom domain works in the desktop and phone apps; in the
 browser those files load peer to peer.
 
+## Who can reach it
+
+- **Members** can read and upload files, signed with their own identity. When
+  someone joins, the owner's or a manager's app adds them within a couple of
+  minutes while it is open; when someone leaves or is banned, it takes them
+  off the same way.
+- **People whose role has Manage Cloudflare Storage** can see and change the
+  address, and their apps keep the member list up to date. The owner's app
+  decides who they are: when you give or take away that role, the change
+  reaches the worker the next time your app is open.
+- **The setup code** is only needed the first time, or to connect the worker
+  to another server or a new owner. Anyone with it can take the worker over,
+  so change it in the worker's **Settings > Variables and Secrets** if it gets
+  out.
+
+To change the daily upload limit, set `DAILY_UPLOAD_MB` in the worker's
+**Settings > Variables and Secrets**.
+
 ## Limits worth knowing
 
-Anyone who can read the server's messages can learn the worker's address and
-upload sealed files to it. Keep an eye on the bucket's size in the dashboard,
-and set a [billing notification](https://developers.cloudflare.com/billing/manage/budget-alerts/)
+Members can upload sealed files up to the daily limit. Keep an eye on the
+bucket's size in the dashboard, and set a
+[billing notification](https://developers.cloudflare.com/billing/manage/budget-alerts/)
 if you want a warning. The worker never deletes or replaces a file it has
 kept.
 

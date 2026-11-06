@@ -362,10 +362,10 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         | E::TipJarSet { .. }
         | E::UploadLimitSet { .. }
         | E::TtsAllowed { .. }
-        | E::FileStoreSet { .. }
         | E::GifKeySet { .. }
         | E::GameDbSet { .. }
         | E::PetSet { .. } => allows(Permissions::MANAGE_SERVER),
+        E::FileStoreSet { .. } => allows(Permissions::MANAGE_FILE_STORAGE),
         E::PetCare { .. } => member && actor(event) == Some(by) && server.pet.is_some(),
         E::DriveAdd { item, .. } => {
             let drive = server.channel(item.channel).is_some_and(|c| c.is_drive());

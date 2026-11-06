@@ -49,6 +49,7 @@ impl Permissions {
     pub const NO_SEND_POLLS: Permissions = Permissions(1 << 39);
     pub const NO_CREATE_EVENTS: Permissions = Permissions(1 << 40);
     pub const NO_VOICE_FILTERS: Permissions = Permissions(1 << 41);
+    pub const MANAGE_FILE_STORAGE: Permissions = Permissions(1 << 42);
     pub const RESTRICTIONS: Permissions = Permissions(
         Self::NO_EMBED_LINKS.0
             | Self::NO_READ_MESSAGE_HISTORY.0
