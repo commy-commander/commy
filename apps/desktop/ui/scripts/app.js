@@ -5545,7 +5545,10 @@ function renderCamGrid() {
   grid.classList.toggle("hidden", !users.length);
   grid.dataset.count = String(Math.min(users.length, 4));
   for (const tile of [...grid.children]) {
-    if (!wanted.has(tile.dataset.user)) tile.remove();
+    if (!wanted.has(tile.dataset.user)) {
+      frameUrls.drop(`cam:${tile.dataset.user}`);
+      tile.remove();
+    }
   }
   for (const user of users) {
     let tile = grid.querySelector(`[data-user="${CSS.escape(user.id)}"]`);
@@ -5577,7 +5580,7 @@ function showCameraFrame(frame) {
   const tile = $("cam-grid").querySelector(`[data-user="${CSS.escape(frame.user)}"]`);
   if (!tile) return;
   const img = tile.querySelector("img");
-  if (img) img.src = `data:image/jpeg;base64,${frame.jpeg}`;
+  if (img) img.src = frameUrls.from(`cam:${frame.user}`, frame.jpeg);
   tile.querySelector(".cam-wait")?.remove();
 }
 
@@ -19097,7 +19100,7 @@ let ownFrameAt = 0;
 function showOwnFrame(frame) {
   if (!state.sharing) return;
   ownFrameAt = performance.now();
-  const src = `data:image/jpeg;base64,${frame.jpeg}`;
+  const src = frameUrls.from("own", frame.jpeg);
   $("vp-preview-img").src = src;
   $("vp-preview-empty").classList.add("hidden");
   if (state.stageMode === "self") showStageFrame(src, frame.width, frame.height);
@@ -19145,6 +19148,7 @@ function startOwnPreview() {
 }
 
 const stageStats = { times: [], width: 0, height: 0, watchSince: 0, retried: false };
+const frameUrls = createFrameUrls();
 const FIRST_FRAME_MS = 12000;
 
 const STREAM_STALL_MS = 6000;
@@ -19207,6 +19211,7 @@ function closeStage() {
   document.querySelector(".main").classList.remove("stage-focus");
   $("video-pane").classList.add("hidden");
   $("video-frame").removeAttribute("src");
+  frameUrls.drop("stage");
 }
 
 function showStageFrame(src, width, height) {
@@ -21393,7 +21398,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("video-frame", event => {
       const frame = event.payload;
       if (state.watchingUser && frame.user === state.watchingUser) {
-        showStageFrame(`data:image/jpeg;base64,${frame.jpeg}`, frame.width, frame.height);
+        showStageFrame(frameUrls.from("stage", frame.jpeg), frame.width, frame.height);
       } else if (state.sharing && state.user && frame.user === state.user.id) {
         showOwnFrame(frame);
       }
