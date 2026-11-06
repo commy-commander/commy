@@ -19103,7 +19103,7 @@ function showOwnFrame(frame) {
   const src = frameUrls.from("own", frame.jpeg);
   $("vp-preview-img").src = src;
   $("vp-preview-empty").classList.add("hidden");
-  if (state.stageMode === "self") showStageFrame(src, frame.width, frame.height);
+  if (state.stageMode === "self") showStageFrame(frame.jpeg, frame.width, frame.height);
 }
 
 function startOwnPreview() {
@@ -19149,6 +19149,16 @@ function startOwnPreview() {
 
 const stageStats = { times: [], width: 0, height: 0, watchSince: 0, retried: false };
 const frameUrls = createFrameUrls();
+let stagePainter = null;
+
+function stageFrames() {
+  if (!stagePainter) {
+    stagePainter = createFramePainter($("video-frame"), {
+      onPaint: () => { if (ink.store.lines.size || ink.store.pings.length) scheduleInkPaint(); },
+    });
+  }
+  return stagePainter;
+}
 const FIRST_FRAME_MS = 12000;
 
 const STREAM_STALL_MS = 6000;
@@ -19181,7 +19191,7 @@ function openStage(mode, label) {
   $("stage-stats").textContent = "";
   $("stage-viewers").textContent = "";
   $("stage-viewers").classList.add("hidden");
-  $("video-frame").removeAttribute("src");
+  stageFrames().clear();
   $("stage-wait").classList.remove("hidden");
   $("video-pane").classList.remove("hidden");
   $("video-pane").classList.toggle("self", mode === "self");
@@ -19210,13 +19220,12 @@ function closeStage() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   document.querySelector(".main").classList.remove("stage-focus");
   $("video-pane").classList.add("hidden");
-  $("video-frame").removeAttribute("src");
-  frameUrls.drop("stage");
+  stageFrames().clear();
 }
 
-function showStageFrame(src, width, height) {
+function showStageFrame(jpeg, width, height) {
   stageStats.lastAt = performance.now();
-  $("video-frame").src = src;
+  stageFrames().paint(jpeg);
   $("stage-wait").classList.add("hidden");
   const now = performance.now();
   stageStats.times.push(now);
@@ -19361,8 +19370,8 @@ function renderStageDrawers(drawers) {
 
 function stageInkRect() {
   const canvas = $("stage-ink");
-  const img = $("video-frame");
-  return inkFit(img.naturalWidth, img.naturalHeight, canvas.clientWidth, canvas.clientHeight);
+  const frame = $("video-frame");
+  return inkFit(frame.width, frame.height, canvas.clientWidth, canvas.clientHeight);
 }
 
 function scheduleInkPaint() {
@@ -19466,7 +19475,6 @@ function wireStageInk() {
   canvas.addEventListener("pointermove", onInkPointerMove);
   canvas.addEventListener("pointerup", finishInkStroke);
   canvas.addEventListener("pointercancel", finishInkStroke);
-  $("video-frame").addEventListener("load", () => { if (ink.store.lines.size || ink.store.pings.length) scheduleInkPaint(); });
   new ResizeObserver(() => scheduleInkPaint()).observe($("stage-view"));
   $("vp-ink").onchange = e => setStreamInk(e.target.checked);
   $("share-ink").onchange = e => inkSave(INK_STREAM_KEY, e.target.checked ? "1" : "0");
@@ -21408,7 +21416,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("video-frame", event => {
       const frame = event.payload;
       if (state.watchingUser && frame.user === state.watchingUser) {
-        showStageFrame(frameUrls.from("stage", frame.jpeg), frame.width, frame.height);
+        showStageFrame(frame.jpeg, frame.width, frame.height);
       } else if (state.sharing && state.user && frame.user === state.user.id) {
         showOwnFrame(frame);
       }

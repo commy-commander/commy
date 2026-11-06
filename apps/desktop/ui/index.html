@@ -242,7 +242,7 @@
       </section>
       <div class="stage hidden" id="video-pane">
         <div class="stage-view" id="stage-view">
-          <img id="video-frame" alt="Shared screen" />
+          <canvas class="stage-frame blank" id="video-frame" role="img" aria-label="Shared screen"></canvas>
           <canvas class="stage-ink" id="stage-ink" aria-hidden="true"></canvas>
           <div class="stage-wait" id="stage-wait">
             <div class="spinner"></div>
@@ -3436,6 +3436,7 @@
   <script src="scripts/layout.js"></script>
   <script src="scripts/phone.js"></script>
   <script src="scripts/frame-urls.js"></script>
+  <script src="scripts/frame-paint.js"></script>
   <script src="scripts/tint.js"></script>
   <script src="scripts/i18n.js"></script>
   <script src="scripts/locales/en.js"></script>
