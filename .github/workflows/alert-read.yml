@@ -1,0 +1,17 @@
+name: Alert read
+on:
+  push:
+    branches: [claude/project-thread-pj73e4]
+permissions:
+  security-events: read
+  contents: read
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          for n in 97 98 99 100 101 102 103 104 105; do gh api "repos/$REPO/code-scanning/alerts/$n" --jq '"ALERT \(.number) \(.state) fixed_at=\(.fixed_at)"'; done
+          gh api "repos/$REPO/code-scanning/alerts?state=open&per_page=100" --jq '"OPEN \(length)", (.[] | "OPEN \(.number) \(.rule.id) \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)")'
