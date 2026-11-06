@@ -91,6 +91,7 @@ struct Status {
     features: Option<account::Features>,
     looking: bool,
     key_copy: KeyCopy,
+    key: Option<SealKey>,
 }
 
 enum Found {
@@ -295,6 +296,7 @@ impl Session {
                 features: None,
                 looking: false,
                 key_copy: KeyCopy::Missing,
+                key: None,
             }),
             node: Mutex::new(None),
             store: RefCell::new(None),
@@ -325,6 +327,8 @@ impl Session {
             "web_unlock" => self.unlock().await,
             "web_try_again" => self.unlock().await,
             "entry_list_use_recovery_code" => self.use_recovery_code(args.code.as_deref().unwrap_or("")).await,
+            "entry_list_status" => Ok(self.entry_status()),
+            "entry_list_recovery_code" => self.status.borrow().key.as_ref().map(|key| json!(key.to_text())).ok_or_else(|| account::NO_LIST_KEY.to_string()),
             "get_user" => to_json(&self.client.borrow().profile()),
             "list_servers" => to_json(&self.client.borrow().list_servers()),
             "get_server" => {
@@ -705,6 +709,12 @@ impl Session {
         })
     }
 
+    fn entry_status(&self) -> Value {
+        let status = self.status.borrow();
+        let unlocked = status.unlock == Unlock::Unlocked;
+        account::entry_status(status.account.is_some(), unlocked, status.key.is_some(), self.client.borrow().list_servers().len())
+    }
+
     fn set_unlock(&self, unlock: Unlock, detail: impl Into<String>) {
         {
             let mut status = self.status.borrow_mut();
@@ -1072,6 +1082,7 @@ impl Session {
             client.tickets = tickets.iter().map(|t| (t.server_id, t.clone())).collect();
         }
         self.load_dms();
+        self.status.borrow_mut().key = Some(key.clone());
         self.set_unlock(Unlock::Unlocked, "");
         spawn_local(self.clone().load_servers(tickets));
         spawn_local(self.clone().start_sync(key, list));

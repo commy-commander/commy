@@ -25,11 +25,9 @@ const WEB_DEFAULTS = {
   get_custom_icon: null,
   take_pending_invite_link: null,
   take_notification_target: null,
-  list_shareable_emojis: [],
   share_audio_supported: false,
   list_share_sources: [],
   account_cancel_sign_in: null,
-  entry_list_status: { state: "synced", servers: 0, has_key: false, detail: "This browser opens your servers through your other devices." },
 };
 
 const WEB_SERVER_WAIT_MS = 20000;

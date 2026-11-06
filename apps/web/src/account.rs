@@ -22,6 +22,7 @@ pub const REMINDERS_KEY: &str = "commy.reminders";
 pub const LISTINGS_KEY: &str = "commy.listings";
 pub const SAFETY_KEY: &str = "commy.safety";
 pub const PERSONAL_KEY: &str = "commy.personal";
+pub const NO_LIST_KEY: &str = "This browser has no server list key yet";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountUser {
@@ -335,6 +336,15 @@ pub fn parse_device_secret(raw: Option<&str>) -> Option<[u8; 32]> {
     bytes.try_into().ok()
 }
 
+pub fn entry_status(signed_in: bool, unlocked: bool, has_key: bool, servers: usize) -> serde_json::Value {
+    let (state, detail) = match (signed_in, unlocked) {
+        (false, _) => ("off", ""),
+        (true, true) => ("synced", "Your server list is open in this browser."),
+        (true, false) => ("waiting", "This browser opens your servers through your other devices."),
+    };
+    serde_json::json!({ "state": state, "servers": servers, "has_key": has_key && unlocked, "detail": detail })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,5 +503,16 @@ mod tests {
         let reply = Reply { status: 200, body: r#"{"features":{"gifs":true,"media":true}}"#.into() };
         assert_eq!(features(&reply), Features { gifs: true, media: true, ..Features::default() });
         assert_eq!(features(&Reply { status: 500, body: String::new() }), Features::default());
+    }
+
+    #[test]
+    fn the_server_list_card_offers_the_recovery_code_once_this_browser_holds_the_key() {
+        let open = entry_status(true, true, true, 4);
+        assert_eq!(open["state"], "synced");
+        assert_eq!(open["servers"], 4);
+        assert_eq!(open["has_key"], true);
+        assert_eq!(entry_status(true, false, true, 0)["has_key"], false);
+        assert_eq!(entry_status(true, false, false, 0)["state"], "waiting");
+        assert_eq!(entry_status(false, false, false, 0)["state"], "off");
     }
 }

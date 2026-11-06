@@ -392,7 +392,6 @@ test("controls for things only the desktop app does are hidden in the browser", 
   for (const attr of ['id="vp-game-share"', 'id="entry-sync"', 'id="stream-deck-card"', 'id="tab-game-database"', 'data-tab="integrations"', 'data-search="game status playing activity"', 'data-tab="storage"', 'data-tab="overlay"', 'data-tab="updates"', 'data-i18n="appearance.appIcon"', 'data-i18n="appearance.trayIcon"', 'id="startup-update"']) {
     assert.match(opener(attr), /class="[^"]*\bnative-only\b/, attr);
   }
-  assert.ok(index.includes('<div class="entry-recovery native-only">\n              <button class="btn-link" id="entry-show-code">'));
   assert.match(read("apps", "web", "ui", "web.css"), /\.web-app \.native-only \{ display: none !important; \}/);
 });
 
@@ -472,6 +471,16 @@ test("a shared screen is scaled to the picked quality and a refused pick says wh
   assert.equal(webFrameSize(0, 720, 1600), null);
   assert.equal(webShareError({ name: "NotAllowedError" }), WEB_SHARE_REFUSED);
   assert.match(webShareError(new Error("no screens")), /no screens/);
+});
+
+test("the browser shows its server list recovery code like the desktop", () => {
+  const index = read("apps", "desktop", "ui", "index.html");
+  assert.ok(index.includes('<div class="entry-recovery">\n              <button class="btn-link" id="entry-show-code">'));
+  for (const cmd of ["entry_list_status", "entry_list_recovery_code"]) {
+    assert.ok(rustCommands.has(cmd), cmd);
+    assert.equal(webDefault(cmd).known, false, cmd);
+  }
+  assert.equal(webDefault("list_shareable_emojis").known, false);
 });
 
 test("the app looks for the browser on the html element, where the bridge marks it", () => {
