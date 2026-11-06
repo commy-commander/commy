@@ -17857,6 +17857,7 @@ function callEndedLine(view) {
     case "missed": return `Missed call from ${name}`;
     case "elsewhere": return "Answered on another device";
     case "failed": return "The call could not connect";
+    case "offline": return `${name} is offline right now`;
     default: return "Call ended";
   }
 }

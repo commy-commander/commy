@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 pub const RING_FOR: Duration = Duration::from_secs(45);
+static RING_SENDING: std::sync::LazyLock<std::sync::Arc<tokio::sync::Mutex<()>>> = std::sync::LazyLock::new(Default::default);
 
 #[derive(Debug, Clone)]
 pub struct DmCall {
@@ -83,12 +84,13 @@ fn stop_session(app: &App, channel: ChannelId) {
 pub async fn end(app: &App, handle: &tauri::AppHandle, notify: bool, reason: &str) {
     let Some(call) = app.dm_call.lock().unwrap().take() else { return };
     stop_session(app, call.channel);
+    announce(app, handle, &call, "ended", Some(reason));
     if notify {
+        let _after_the_ring = RING_SENDING.lock().await;
         if let Err(e) = send_signal(app, call.partner, call.channel, CallSignal::HangUp).await {
             tracing::debug!("could not tell {} the call ended: {e}", call.partner);
         }
     }
-    announce(app, handle, &call, "ended", Some(reason));
 }
 
 pub fn dial_partner(app: &App, handle: &tauri::AppHandle, me: &UserProfile) {
@@ -194,11 +196,25 @@ pub async fn start_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle,
         return Err("leave your current call or voice channel first".into());
     }
     let channel = ChannelId::new();
-    send_signal(&app, partner, channel, CallSignal::Ring).await?;
     let call = DmCall { partner, channel, outgoing: true, active: false, since: Instant::now() };
     *app.dm_call.lock().unwrap() = Some(call.clone());
     ring_timeout(handle.clone(), channel);
-    Ok(announce(&app, &handle, &call, "ringing", None))
+    let ringing = announce(&app, &handle, &call, "ringing", None);
+    let sender = handle.clone();
+    let sending = RING_SENDING.clone().lock_owned().await;
+    tauri::async_runtime::spawn(async move {
+        let app = sender.state::<App>();
+        let rung = send_signal(&app, partner, channel, CallSignal::Ring).await;
+        drop(sending);
+        if let Err(e) = rung {
+            tracing::info!("could not ring {partner}: {e}");
+            let ours = app.dm_call.lock().unwrap().as_ref().is_some_and(|c| c.channel == channel && !c.active);
+            if ours {
+                end(&app, &sender, false, "offline").await;
+            }
+        }
+    });
+    Ok(ringing)
 }
 
 #[tauri::command]
