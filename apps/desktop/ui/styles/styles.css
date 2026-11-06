@@ -8114,6 +8114,10 @@ body.mobile-app .vp-actions > * { flex: 1 1 0; }
     height: 100dvh;
     padding: env(safe-area-inset-top) calc(10px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
   }
+  body.mobile-app .settings-layer {
+    padding: calc(10px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
+  }
+  body.mobile-app .dm-card-stack { top: calc(64px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right)); bottom: auto; }
 }
 
 @media (min-width: 701px) and (max-width: 1000px) {

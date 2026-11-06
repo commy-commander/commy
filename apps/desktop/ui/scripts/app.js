@@ -21257,14 +21257,11 @@ function wireEvents() {
       afterSafetyChange();
     });
     window.__TAURI__.event.listen("dm-changed", async event => {
-      if (state.view === "dm") {
-        if (state.currentDm && event.payload === state.currentDm.user) {
-          await selectDm(state.currentDm.user, state.currentDm.name);
-        } else {
-          await renderDmThreads();
-        }
+      if (state.view !== "dm") return;
+      if (state.currentDm && event.payload === state.currentDm.user) {
+        await selectDm(state.currentDm.user, state.currentDm.name);
       } else {
-        toast("New direct message");
+        await renderDmThreads();
       }
     });
     for (const name of ["dm-sending", "dm-sent"]) {
