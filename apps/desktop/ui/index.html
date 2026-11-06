@@ -2581,7 +2581,7 @@
         <button class="settings-tab" data-tab="audit" id="tab-audit">Audit Log</button>
         <div class="settings-nav-group">Integrations</div>
         <button class="settings-tab" data-tab="bots" id="tab-bots">Bots</button>
-        <button class="settings-tab" data-tab="file-storage" id="tab-file-storage">File Storage</button>
+        <button class="settings-tab" data-tab="file-storage" id="tab-file-storage">Cloudflare Storage</button>
         <button class="settings-tab" data-tab="gif-search" id="tab-gif-search">GIFs</button>
         <button class="settings-tab native-only" data-tab="game-database" id="tab-game-database">Game Database</button>
         <div class="settings-nav-sep"></div>
@@ -3120,9 +3120,22 @@
           </div>
         </section>
         <section class="settings-page" data-page="file-storage">
-          <h1>File Storage</h1>
-          <div class="settings-card" id="file-store-card">
-            <div class="setting-sub">Files posted here travel between members' devices, so in a small server a picture can be missing while nobody who has it is online. Connect storage on your own Cloudflare account and members' apps also keep a locked copy of each file up to 30 MB there. Only members can open those copies, and you pay Cloudflare for what is stored. <button class="btn-link" id="file-store-guide" type="button">How to set it up</button></div>
+          <h1>Cloudflare File Storage</h1>
+          <div class="settings-card integration-card" id="file-store-card">
+            <div class="integration-head">
+              <div class="integration-logo integration-logo-deck">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.6 9.2 4.7 4.7 0 0 0 7 18.5z"/></svg>
+              </div>
+              <div class="integration-copy">
+                <div class="setting-title">Keep every file posted here loadable, even when nobody who has it is online</div>
+                <div class="setting-sub">Commy shares files between members' devices. In a small server everyone who has a picture can be offline at once, and it won't load until one of them is back. Connect an R2 bucket on your own Cloudflare account, and members' apps also keep an encrypted copy of each file up to 30 MB there.</div>
+                <div class="setting-sub">Only members can open those copies; Cloudflare and Commy can't. You pay Cloudflare for what is stored, which for a small server is usually nothing: the first 10 GB a month are free. Direct messages and bigger files stay peer to peer.</div>
+              </div>
+            </div>
+            <ol class="integration-steps">
+              <li>Deploy the Commy storage worker to your Cloudflare account. <button class="btn-link" id="file-store-guide" type="button">How to set it up</button></li>
+              <li>Paste the worker's address below and choose <strong>Save</strong>.</li>
+            </ol>
             <input id="file-store-input" type="text" inputmode="url" maxlength="200" autocomplete="off" spellcheck="false" placeholder="https://commy-files.yourname.workers.dev" />
             <div class="setting-sub file-store-status" id="file-store-status"></div>
             <div class="form-actions">
