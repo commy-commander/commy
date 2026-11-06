@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, SPEECH_VOICE_ORIGINS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -389,7 +389,7 @@ test("controls for things only the desktop app does are hidden in the browser", 
     assert.ok(found, `index.html has ${attr}`);
     return found[0];
   };
-  for (const attr of ['id="share-btn"', 'id="vp-camera"', 'id="vp-game-share"', 'id="entry-sync"', 'id="stream-deck-card"', 'id="tab-game-database"', 'data-tab="integrations"', 'data-search="game status playing activity"', 'data-tab="camera"', 'data-tab="storage"', 'data-tab="overlay"', 'data-tab="updates"', 'data-i18n="appearance.appIcon"', 'data-i18n="appearance.trayIcon"', 'id="startup-update"']) {
+  for (const attr of ['id="vp-game-share"', 'id="entry-sync"', 'id="stream-deck-card"', 'id="tab-game-database"', 'data-tab="integrations"', 'data-search="game status playing activity"', 'data-tab="storage"', 'data-tab="overlay"', 'data-tab="updates"', 'data-i18n="appearance.appIcon"', 'data-i18n="appearance.trayIcon"', 'id="startup-update"']) {
     assert.match(opener(attr), /class="[^"]*\bnative-only\b/, attr);
   }
   assert.ok(index.includes('<div class="entry-recovery native-only">\n              <button class="btn-link" id="entry-show-code">'));
@@ -442,6 +442,36 @@ test("the browser searches direct messages and reaches channel history older tha
   assert.match(session, /self\.deepen_history\(server, channel, SEARCH_OLDER_WAIT, \|\| false\)\.await;/);
   const sync = read("apps", "web", "src", "session", "sync.rs");
   assert.match(sync, /follow_together_tail\(keys\.into_iter\(\)\.map\(\|k\| \(k, 0\)\)\.collect\(\), None\)/);
+});
+
+test("the browser shares its screen and camera with the voice channel like the desktop", () => {
+  const index = read("apps", "desktop", "ui", "index.html");
+  for (const attr of ['id="share-btn"', 'id="vp-camera"', 'id="vp-camera-split"', 'data-tab="camera"']) {
+    const tag = new RegExp(`<[a-z0-9]+ [^>]*${attr}[^>]*>`).exec(index)[0];
+    assert.doesNotMatch(tag, /\bnative-only\b/, attr);
+  }
+  const session = read("apps", "web", "src", "session.rs");
+  for (const cmd of ["start_screen_share", "stop_screen_share", "own_share_frame", "start_camera", "stop_camera", "push_camera_frame"]) {
+    assert.ok(session.includes(`"${cmd}"`), cmd);
+    assert.equal(webDefault(cmd).known, false, cmd);
+  }
+  assert.equal(webDefault("share_audio_supported").value, false);
+  const bridge = read("apps", "web", "ui", "web-bridge.js");
+  assert.ok(bridge.includes('if (cmd === "start_screen_share") return startScreenShare(args);'));
+  assert.ok(bridge.includes('emit("screen-share-ended");'));
+  assert.match(read("apps", "desktop", "ui", "scripts", "app.js"), /if \(inBrowserApp\(\)\) return startShareWith\(\{ kind: "monitor", id: 0, name: "your screen" \}, shareQuality\(\), false\);/);
+  assert.doesNotMatch(read("apps", "web", "build.mjs"), /vendor\/mediapipe|vendor\/three/);
+  assert.ok(read("apps", "web", "src", "session", "calls.rs").includes("self.end_shares();"));
+});
+
+test("a shared screen is scaled to the picked quality and a refused pick says what to do", () => {
+  assert.deepEqual(webShareQuality("sharp"), { fps: 8, width: 1920, quality: 0.8 });
+  assert.equal(webShareQuality("bogus"), webShareQuality("balanced"));
+  assert.deepEqual(webFrameSize(3840, 2160, 1600), { width: 1600, height: 900 });
+  assert.deepEqual(webFrameSize(1001, 601, 1600), { width: 1002, height: 602 });
+  assert.equal(webFrameSize(0, 720, 1600), null);
+  assert.equal(webShareError({ name: "NotAllowedError" }), WEB_SHARE_REFUSED);
+  assert.match(webShareError(new Error("no screens")), /no screens/);
 });
 
 test("the app looks for the browser on the html element, where the bridge marks it", () => {

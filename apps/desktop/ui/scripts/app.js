@@ -19225,6 +19225,7 @@ async function toggleShare() {
   if (!state.voiceServer || !state.voiceChannelId) return;
   if (state.sharing) return stopSharing();
   if (document.body.classList.contains("mobile-app")) return startShareWith({ kind: "monitor", id: 0, name: "your screen" }, "balanced", false);
+  if (inBrowserApp()) return startShareWith({ kind: "monitor", id: 0, name: "your screen" }, shareQuality(), false);
   await openSharePicker();
 }
 

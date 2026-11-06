@@ -125,6 +125,105 @@
     return JSON.parse(await sent);
   }
 
+  const screen = { stream: null, reader: null, timer: null, video: null, busy: false, lastAt: 0, pick: null, canvas: null };
+
+  function stopScreenCapture() {
+    const stream = screen.stream;
+    screen.stream = null;
+    clearInterval(screen.timer);
+    screen.timer = null;
+    if (screen.reader) screen.reader.cancel().catch(() => {});
+    screen.reader = null;
+    if (screen.video) screen.video.srcObject = null;
+    screen.video = null;
+    if (stream) for (const track of stream.getTracks()) track.stop();
+  }
+
+  async function sendScreenFrame(source, width, height, stream) {
+    const size = webFrameSize(width, height, screen.pick.width);
+    if (!size) return;
+    if (!screen.canvas) screen.canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(2, 2) : document.createElement("canvas");
+    const canvas = screen.canvas;
+    canvas.width = size.width;
+    canvas.height = size.height;
+    canvas.getContext("2d").drawImage(source, 0, 0, size.width, size.height);
+    const blob = canvas.convertToBlob
+      ? await canvas.convertToBlob({ type: "image/jpeg", quality: screen.pick.quality })
+      : await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", screen.pick.quality));
+    if (!blob || screen.stream !== stream) return;
+    (await client).screen_frame(size.width, size.height, new Uint8Array(await blob.arrayBuffer()));
+  }
+
+  function due() {
+    const now = performance.now();
+    if (screen.busy || now - screen.lastAt < 1000 / screen.pick.fps) return false;
+    screen.lastAt = now;
+    return true;
+  }
+
+  async function readScreenFrames(track, stream) {
+    const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
+    screen.reader = reader;
+    while (screen.stream === stream) {
+      const { value: frame, done } = await reader.read().catch(() => ({ done: true }));
+      if (done) return;
+      if (due()) {
+        screen.busy = true;
+        try { await sendScreenFrame(frame, frame.displayWidth, frame.displayHeight, stream); } catch {}
+        screen.busy = false;
+      }
+      frame.close();
+    }
+  }
+
+  function pollScreenFrames(stream) {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    video.play().catch(() => {});
+    screen.video = video;
+    screen.timer = setInterval(async () => {
+      if (screen.stream !== stream || !video.videoWidth || !due()) return;
+      screen.busy = true;
+      try { await sendScreenFrame(video, video.videoWidth, video.videoHeight, stream); } catch {}
+      screen.busy = false;
+    }, Math.round(1000 / screen.pick.fps));
+  }
+
+  async function startScreenShare(args) {
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== "function") throw WEB_SHARE_UNSUPPORTED;
+    const pick = webShareQuality(args && args.quality);
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: pick.fps, max: pick.fps } }, audio: false });
+    } catch (e) {
+      throw webShareError(e);
+    }
+    stopScreenCapture();
+    try {
+      await backend("start_screen_share", args);
+    } catch (e) {
+      for (const track of stream.getTracks()) track.stop();
+      throw e;
+    }
+    Object.assign(screen, { stream, pick, busy: false, lastAt: 0 });
+    const [track] = stream.getVideoTracks();
+    track.addEventListener("ended", () => {
+      if (screen.stream !== stream) return;
+      stopScreenCapture();
+      emit("screen-share-ended");
+    }, { once: true });
+    if (typeof MediaStreamTrackProcessor === "function") readScreenFrames(track, stream).catch(() => {});
+    else pollScreenFrames(stream);
+    return null;
+  }
+
+  async function stopScreenShare(args) {
+    stopScreenCapture();
+    return backend("stop_screen_share", args);
+  }
+
   async function pickImage() {
     const file = await webPickFile(document, "image");
     if (!file) return null;
@@ -312,6 +411,8 @@
     if (WEB_BYTE_COMMANDS.includes(cmd)) return fileBytes(cmd, args);
     if (WEB_PICKED_COMMANDS.includes(cmd)) return attachPicked(cmd, args);
     if (cmd === "notify") return showNotice(args);
+    if (cmd === "start_screen_share") return startScreenShare(args);
+    if (cmd === "stop_screen_share") return stopScreenShare(args);
     if (cmd === "pick_image") return pickImage();
     if (cmd === "pick_sound") return pickSound();
     if (cmd === "fetch_catalog_image") return fetchCatalogImage(args);
