@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { SUGGEST_LIMIT, suggestTokenAt, emojiSuggestions, commandSuggestions, suggestionInsert } = require("../scripts/composer-suggest.js");
+const { SUGGEST_LIMIT, suggestTokenAt, emojiSuggestions, commandSuggestions, suggestionInsert, composerCommandAction } = require("../scripts/composer-suggest.js");
 const { playsInline, MAX_INLINE_VIDEO_BYTES } = require("../scripts/embeds.js");
 
 const STANDARD = [["\u{1F44D}", "thumbs up"], ["\u{1F525}", "fire lit"], ["\u{1F980}", "crab"], ["\u{1F389}", "party popper tada"]];
@@ -125,4 +125,13 @@ test("common video files play inline up to the size cap", () => {
   assert.equal(playsInline({ mime: "image/png", size_bytes: 1000 }), false);
   assert.equal(playsInline({ mime: "video/webm", size_bytes: MAX_INLINE_VIDEO_BYTES + 1 }), false);
   assert.equal(playsInline(null), false);
+});
+
+test("Enter on a typed /tts sends it, a bare /tts waits for words, /gif opens the picker", () => {
+  const tts = commandSuggestions({ kind: "command", start: 0, query: "tts", args: "test" }, { tts: true })[0];
+  assert.equal(composerCommandAction(tts), "send");
+  const bare = commandSuggestions({ kind: "command", start: 0, query: "tts", args: null }, { tts: true })[0];
+  assert.equal(composerCommandAction(bare), "complete");
+  const gif = commandSuggestions({ kind: "command", start: 0, query: "gif", args: "cats" }, { gifs: true })[0];
+  assert.equal(composerCommandAction(gif), "gif");
 });

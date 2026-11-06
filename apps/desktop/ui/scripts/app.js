@@ -15060,9 +15060,17 @@ function closeSuggestPop() {
 }
 
 function runComposerCommand(input, item) {
-  input.value = "";
+  const action = composerCommandAction(item);
   closeSuggestPop();
-  if (item.name === "gif") openGifPicker(item.args);
+  if (action === "send") return sendMessage();
+  if (action === "complete") {
+    input.value = `/${item.name} `;
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.focus();
+    return;
+  }
+  input.value = "";
+  openGifPicker(item.args);
 }
 
 function pickSuggestion(i) {
