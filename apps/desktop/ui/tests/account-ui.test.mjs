@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, accountChangeStep } = require("../scripts/account-ui.js");
+const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, accountChangeStep, accountScreenName } = require("../scripts/account-ui.js");
 const LOCALE_EN = require("../scripts/locales/en.js");
 
 function memoryStorage(entries = {}) {
@@ -103,4 +103,15 @@ test("signing out or a waiting sign-in code shows the sign-in screen", () => {
   assert.equal(accountChangeStep(true, { signed_in: false }, false), "sign-in");
   assert.equal(accountChangeStep(false, { signed_in: false, pending_code: "ABCD" }, false), "sign-in");
   assert.equal(accountChangeStep(false, { signed_in: false }, false), null);
+});
+
+test("the account's own name becomes the screen name, so sign-in skips the name step", () => {
+  assert.equal(accountScreenName({ name: "  Commy Commander " }), "Commy Commander");
+  assert.equal(accountScreenName({ name: "Ada\u0007 Lovelace" }), "Ada Lovelace");
+  assert.equal(accountScreenName({ name: "" , email: "nova@example.test" }), "");
+  assert.equal(accountScreenName({ name: "   " }), "");
+  assert.equal(accountScreenName(null), "");
+  const long = accountScreenName({ name: "é".repeat(40) });
+  assert.equal(new TextEncoder().encode(long).length, 32);
+  assert.equal(long, "é".repeat(16));
 });
