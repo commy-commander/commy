@@ -3141,16 +3141,38 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .device-grid select { width: 100%; min-width: 0; text-overflow: ellipsis; }
 
 .cam-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
+  position: relative;
   padding: 12px 16px;
   background: var(--bg-darkest);
-  max-height: 46%;
-  overflow-y: auto;
+  max-height: 56%;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
-.cam-grid[data-count="1"] { grid-template-columns: minmax(220px, 480px); justify-content: center; }
+.cam-pages { min-height: 0; overflow-y: auto; }
+.cam-page {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), minmax(0, var(--tile-w, 1fr)));
+  justify-content: safe center;
+  gap: 8px;
+}
+.cam-grid[data-layout="strip"] { padding: 4px 12px 8px; }
+.cam-grid[data-layout="strip"] .cam-pages { overflow-x: auto; overflow-y: hidden; }
+.cam-grid[data-layout="strip"] .cam-page { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 168px; justify-content: safe center; }
+.cam-grid[data-layout="strip"] .cam-tile.big { grid-column: auto; grid-row: auto; }
+.cam-grid[data-layout="strip"] .cam-name { font-size: 12px; left: 6px; bottom: 6px; }
+.cam-grid[data-layout="strip"] .cam-avatar { width: 32px; height: 32px; }
+.cam-grid[data-layout="strip"] .cam-watch,
+.cam-grid[data-layout="strip"] .cam-cover-text { display: none; }
+.cam-grid[data-layout="strip"] .cam-tile.on-stage .cam-cover-text { display: block; font-size: 12px; color: var(--header-primary); }
+.cam-grid[data-layout="strip"] .cam-tile.on-stage .cam-avatar { display: none; }
+.cam-grid[data-layout="strip"] .cam-grid-focus { display: none; }
+.main.stage-focus .cam-grid[data-layout="grid"] { flex: 1; max-height: none; }
+.main.stage-focus .cam-grid[data-layout="strip"] { flex: 0 0 auto; }
+.cam-grid-focus { position: absolute; top: 18px; right: 22px; z-index: 2; opacity: 0; transition: opacity .12s; }
+.cam-grid:hover .cam-grid-focus,
+.cam-grid-focus:focus-visible { opacity: 1; }
 .cam-tile {
   position: relative;
   aspect-ratio: 16 / 9;
@@ -3159,14 +3181,39 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   overflow: hidden;
   box-shadow: 0 0 0 2px transparent;
   transition: box-shadow .12s;
+  cursor: pointer;
 }
+.cam-tile.big { grid-column: span 2; grid-row: span 2; }
 .cam-tile.speaking { box-shadow: 0 0 0 2px var(--green), 0 0 12px rgba(53, 194, 107, .35); }
+.cam-tile.on-stage { box-shadow: 0 0 0 2px var(--accent); }
 .cam-tile canvas, .cam-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam-tile.screen img { object-fit: contain; }
 .cam-tile img:not([src]) { display: none; }
+.cam-cover {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg-dark);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 8px 8px 32px;
+}
+.cam-tile.on-stage .cam-cover { background: rgba(11, 13, 23, .88); }
+.cam-avatar { width: 56px; height: 56px; font-size: 20px; }
+.cam-watch { min-width: 88px; }
 .cam-name {
   position: absolute;
   left: 8px;
   bottom: 8px;
+  max-width: calc(100% - 16px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
   background: rgba(0, 0, 0, .6);
   color: #fff;
   font-size: 13px;
@@ -3174,14 +3221,46 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
   padding: 2px 8px;
   border-radius: 6px;
 }
-.cam-wait {
+.cam-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cam-name .live-badge { flex: 0 0 auto; }
+.cam-stop {
   position: absolute;
-  inset: 0;
-  display: flex;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  display: none;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted);
-  font-size: 13px;
+  background: rgba(0, 0, 0, .65);
+  color: #fff;
+  cursor: pointer;
+}
+.cam-tile.watched:hover .cam-stop,
+.cam-stop:focus-visible { display: flex; }
+.cam-stop:hover { background: var(--accent); }
+.cam-dots { display: flex; justify-content: center; gap: 8px; padding-top: 10px; }
+.cam-dot { width: 8px; height: 8px; padding: 0; border: none; border-radius: 50%; background: rgba(242, 239, 230, .28); cursor: pointer; }
+.cam-dot.on { background: var(--header-primary); }
+@media (max-width: 700px) {
+  .cam-grid { padding: 8px 0; max-height: 62%; }
+  .cam-grid-focus { display: none; }
+  .cam-pages { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; }
+  .cam-pages::-webkit-scrollbar { display: none; }
+  .cam-page { flex: 0 0 100%; padding: 0 12px; box-sizing: border-box; scroll-snap-align: start; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
+  .cam-grid[data-count="1"] .cam-page { grid-template-columns: minmax(0, 1fr); }
+  .cam-grid[data-layout="strip"] .cam-page { grid-auto-columns: 132px; justify-content: start; }
+  .cam-tile { aspect-ratio: 4 / 3; }
+  .cam-tile.big { grid-column: span 2; grid-row: auto; aspect-ratio: 16 / 9; }
+  .cam-tile.watched .cam-stop { display: flex; }
+  .cam-cover { gap: 8px; }
+  .cam-cover-text { display: none; }
+  .cam-tile.on-stage .cam-cover-text { display: block; }
+  .cam-avatar { width: 40px; height: 40px; font-size: 16px; }
+  .cam-watch { min-width: 72px; padding: 4px 12px; }
+  .cam-name { font-size: 12px; left: 6px; bottom: 6px; }
 }
 
 .field-label.grow { flex: 1; min-width: 0; }

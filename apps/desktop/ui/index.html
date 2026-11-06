@@ -267,13 +267,16 @@
               <button class="stage-btn" id="stage-ink-pen" title="Draw" aria-pressed="false"></button>
               <button class="stage-btn" id="stage-ink-clear" title="Clear my drawings"></button>
             </div>
+            <button class="stage-btn hidden" id="stage-grid" title="Back to the grid"></button>
             <button class="stage-btn" id="stage-focus" title="Focus Mode"></button>
             <button class="stage-btn" id="stage-fullscreen" title="Fullscreen"></button>
             <button class="stage-btn danger" id="video-close" title="Stop Watching"></button>
           </div>
         </div>
       </div>
-      <div class="cam-grid hidden" id="cam-grid"></div>
+      <div class="cam-grid hidden" id="cam-grid" aria-label="People streaming and on camera">
+        <button class="stage-btn cam-grid-focus" id="cam-grid-focus" type="button" title="Hide Chat"></button>
+      </div>
       <section class="activity-panel hidden" id="activity-panel" aria-label="Activity">
         <header class="activity-head">
           <span class="activity-icon" id="activity-icon"></span>
