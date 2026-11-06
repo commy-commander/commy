@@ -9948,7 +9948,7 @@ function renderVoiceInputSettings() {
     button.classList.toggle("active", on);
     button.setAttribute("aria-checked", String(on));
   }
-  $("input-mode-note").textContent = inputModeCopy(v.mode, document.body.classList.contains("mobile-app")).text;
+  $("input-mode-note").textContent = inputModeCopy(v.mode, document.body.classList.contains("mobile-app"), inBrowserApp()).text;
   $("talk-key").value = v.talkKey;
   const release = $("talk-release");
   if (!release.options.length) {

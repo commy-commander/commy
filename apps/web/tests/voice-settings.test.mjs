@@ -173,10 +173,34 @@ test("stream sound opens the speakers on its own when you watch without being in
   assert.equal(win.asked.length, 0);
 });
 
+test("push to talk, sensitivity and voice keys are kept in this browser and checked like the desktop", () => {
+  const { webHotkey, webHotkeyAction } = voiceScripts;
+  let prefs = webVoiceApply(webVoiceDefaults(), "set_input_mode", { mode: "push_to_talk", talkKey: "Ctrl+Alt+T", releaseMs: 9999 });
+  assert.equal(prefs.input_mode, "push_to_talk");
+  assert.equal(prefs.talk_key, "Ctrl+Alt+T");
+  assert.equal(prefs.talk_release_ms, 2000);
+  prefs = webVoiceApply(prefs, "set_sensitivity", { auto: false, thresholdDb: -300 });
+  assert.equal(prefs.auto_sensitivity, false);
+  assert.equal(prefs.sensitivity_db, -100);
+  prefs = webVoiceApply(prefs, "set_voice_hotkeys", { mute: "Ctrl+Shift+M", deafen: "" });
+  assert.equal(prefs.mute_hotkey, "Ctrl+Shift+M");
+  assert.throws(() => webVoiceApply(prefs, "set_voice_hotkeys", { mute: "Ctrl+Alt+T", deafen: "" }), /already used by another Commy hotkey/);
+  assert.throws(() => webVoiceApply(prefs, "set_input_mode", { mode: "push_to_talk", talkKey: "T", releaseMs: 0 }), /not a key Commy can use/);
+  assert.throws(() => webVoiceApply(prefs, "set_voice_hotkeys", { mute: "Shift", deafen: "" }), /not a hotkey Commy can use for mute/);
+  assert.equal(webHotkeyAction(prefs, "ctrl+alt+t"), "talk");
+  assert.equal(webHotkeyAction(prefs, "Ctrl+Shift+M"), "mute");
+  assert.equal(webHotkeyAction({ ...prefs, input_mode: "voice_activity" }, "Ctrl+Alt+T"), null);
+  assert.equal(webHotkey("Ctrl+Shift+Space"), "Ctrl+Shift+Space");
+  assert.equal(webHotkey("Banana"), null);
+  const saved = webVoicePrefs(JSON.stringify(prefs));
+  assert.deepEqual(saved, prefs);
+  assert.deepEqual(webVoicePrefs({ talk_key: "nope", sensitivity_db: "x", input_mode: "loud", mute_hotkey: 4 }), webVoiceDefaults());
+});
+
 test("the bridge answers the voice settings the app changes, and the backend shows them", () => {
   const app = read("apps", "desktop", "ui", "scripts", "app.js");
   for (const cmd of [...WEB_VOICE_COMMANDS, "list_audio_devices", "start_mic_test", "stop_mic_test", "mic_level"]) {
-    assert.ok(app.includes(`invoke("${cmd}"`), cmd);
+    assert.ok(app.includes(`invoke("${cmd}"`) || app.includes(`saveVoiceInput("${cmd}"`), cmd);
     assert.equal(Object.prototype.hasOwnProperty.call(WEB_DEFAULTS, cmd), false, cmd);
   }
   const bridge = read("apps", "web", "ui", "web-bridge.js");

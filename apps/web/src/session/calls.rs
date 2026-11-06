@@ -190,11 +190,37 @@ impl Session {
             "output_device": null,
             "user_volumes": {},
             "muted_users": [],
+            "input_mode": "voice_activity",
+            "talk_key": crate::mic_gate::DEFAULT_TALK_KEY,
+            "talk_release_ms": crate::mic_gate::DEFAULT_RELEASE_MS,
+            "auto_sensitivity": true,
+            "sensitivity_db": -45,
+            "mute_hotkey": "",
+            "deafen_hotkey": "",
             "afk_timeout_minutes": personal.afk_timeout_minutes.unwrap_or(afk::DEFAULT_TIMEOUT_MINUTES),
         });
+        drop(voice);
         let local = self.host.load(voice_prefs::LOCAL_VOICE_KEY).and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
         voice_prefs::overlay_local_voice(&mut settings, local);
+        self.mic.borrow_mut().configure(crate::mic_gate::MicSettings::of(&settings));
         settings
+    }
+
+    fn press_talk(self: &Rc<Self>, pressed: bool) {
+        let Some(press) = self.mic.borrow_mut().press(pressed) else {
+            if self.mic.borrow().settings().push_to_talk {
+                self.emit("talk-key", json!(true));
+            }
+            return;
+        };
+        let wait = Duration::from_millis(u64::from(self.mic.borrow().settings().release_ms));
+        let this = self.clone();
+        spawn_local(async move {
+            n0_future::time::sleep(wait).await;
+            if this.mic.borrow_mut().release(press) {
+                this.emit("talk-key", json!(false));
+            }
+        });
     }
 
     pub(super) fn voice_deafened(&self) -> bool {
@@ -300,6 +326,10 @@ impl Session {
                 Ok(Value::Null)
             }
             "get_voice_settings" => Ok(self.voice_settings()),
+            "press_talk" => {
+                self.press_talk(args.pressed.unwrap_or(false));
+                Ok(Value::Null)
+            }
             "set_afk_timeout" => {
                 let mut personal = self.personal();
                 personal.afk_timeout_minutes = Some(afk::clamp_timeout_minutes(args.minutes.unwrap_or(0)));
@@ -846,13 +876,17 @@ impl Session {
         if link.gates.keeps_me_quiet(link.me, now) {
             return;
         }
+        let mut pcm = pcm.to_vec();
+        if !self.mic.borrow_mut().process(&mut pcm) {
+            return;
+        }
         link.spoke_ms = now;
-        if frame_has_signal(pcm) {
+        if frame_has_signal(&pcm) {
             link.active_ms = now;
         }
-        let change = link.mine.push(pcm);
+        let change = link.mine.push(&pcm);
         let me = link.me;
-        if let Some(data) = link.encoder.encode(pcm) {
+        if let Some(data) = link.encoder.encode(&pcm) {
             for peer in link.peers.values_mut() {
                 if let Some(out) = &peer.out {
                     if out.send(MediaPacket::Opus { seq: link.seq, data: data.clone() }).is_ok() {

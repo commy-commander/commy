@@ -327,6 +327,26 @@
     return backend(cmd, args);
   }
 
+  let talking = false;
+  function talk(down) {
+    if (talking === down) return;
+    talking = down;
+    backend("press_talk", { pressed: down }).catch(() => {});
+  }
+
+  function onVoiceKey(e) {
+    if (e.repeat || !unlocked || e.target?.classList?.contains("hotkey-input") || typeof hotkeyFromEvent !== "function") return;
+    const action = webHotkeyAction(voicePrefs, hotkeyFromEvent(e));
+    if (!action) return;
+    e.preventDefault();
+    if (action === "talk") return talk(true);
+    document.getElementById(action === "mute" ? "mute-btn" : "deafen-btn")?.click();
+  }
+
+  window.addEventListener("keydown", onVoiceKey, true);
+  window.addEventListener("keyup", () => talk(false), true);
+  window.addEventListener("blur", () => talk(false));
+
   const nudge = () => { if (unlocked) backend("web_nudge").catch(() => {}); };
   window.addEventListener("online", nudge);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") nudge(); });
@@ -362,4 +382,7 @@
   const settingNote = id => document.getElementById(id)?.closest(".setting-row")?.querySelector(".setting-sub");
   setWebText(settingNote("nc-toggle"), "Removes keyboards, fans and other background noise using your browser's noise suppression.");
   setWebText(settingNote("mic-test-btn"), "Plays your mic back to you, with the noise and echo handling you chose.");
+  setWebText(document.querySelector('[data-i18n="settings.intro.keybinds"]'), "Keys for your voice while Commy is the tab you are on, and shortcuts inside Commy.");
+  setWebText(settingNote("talk-key"), "Works while Commy is the tab you are on. Click the box and press a new combination.");
+  setWebText(settingNote("mute-key"), "Works while Commy is the tab you are on. Click the box and press a combination, or Backspace to clear it.");
 })();

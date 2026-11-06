@@ -39,6 +39,8 @@ test("copy follows the mode and the talk key", () => {
   assert.equal(inputModeCopy("voice_activity").title, "Voice Activity");
   assert.match(inputModeCopy("push_to_talk").text, /talk key/);
   assert.match(inputModeCopy("push_to_talk", true).text, /Hold to talk button/);
+  assert.match(inputModeCopy("push_to_talk", false, true).text, /tab you are on/);
+  assert.match(inputModeCopy("push_to_talk").text, /in any app/);
   assert.equal(talkKeyTitle("push_to_talk", "Alt+Q", false), "Hold Alt+Q to talk");
   assert.equal(talkKeyTitle("push_to_talk", "Alt+Q", true), "Talking (Alt+Q)");
   assert.equal(talkKeyTitle("voice_activity", "Alt+Q", true), "");
