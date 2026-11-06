@@ -118,6 +118,7 @@ function webVoice(win) {
   let context = null;
   let master = null;
   let parts = null;
+  let opening = null;
   let generation = 0;
   let sendFrame = null;
   let testing = false;
@@ -142,14 +143,19 @@ function webVoice(win) {
   }
 
   async function ready() {
-    if (!context) {
+    opening ||= (async () => {
       context = new win.AudioContext({ latencyHint: "interactive" });
       await context.audioWorklet.addModule(WEB_VOICE_WORKLET);
       master = context.createGain();
       master.gain.value = prefs.output_volume;
       master.connect(context.destination);
       await applyOutput();
-    }
+    })().catch(e => {
+      opening = null;
+      master = null;
+      throw e;
+    });
+    await opening;
     if (context.state === "suspended") await context.resume().catch(() => {});
     return context;
   }
@@ -300,7 +306,10 @@ function webVoice(win) {
   }
 
   function play(peer, pcm) {
-    if (!context) return;
+    if (!master) {
+      ready().catch(() => {});
+      return;
+    }
     let speaker = speakers.get(peer);
     if (!speaker) {
       const node = new win.AudioWorkletNode(context, "commy-speaker", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });

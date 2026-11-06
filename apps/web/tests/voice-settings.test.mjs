@@ -159,6 +159,20 @@ test("the speakers follow the chosen output where the browser can switch it", as
   assert.deepEqual((await voice.devices()).outputs, []);
 });
 
+test("stream sound opens the speakers on its own when you watch without being in a call", async () => {
+  const win = fakeWindow();
+  let made = 0;
+  const Speaker = win.AudioWorkletNode;
+  win.AudioWorkletNode = class extends Speaker { constructor() { super(); made += 1; this.port = { posted: 0, postMessage() { this.posted += 1; } }; } };
+  const voice = webVoice(win);
+  voice.play("stream:u1", new Float32Array(960));
+  voice.play("stream:u1", new Float32Array(960));
+  await new Promise(resolve => setImmediate(resolve));
+  voice.play("stream:u1", new Float32Array(960));
+  assert.equal(made, 1);
+  assert.equal(win.asked.length, 0);
+});
+
 test("the bridge answers the voice settings the app changes, and the backend shows them", () => {
   const app = read("apps", "desktop", "ui", "scripts", "app.js");
   for (const cmd of [...WEB_VOICE_COMMANDS, "list_audio_devices", "start_mic_test", "stop_mic_test", "mic_level"]) {
