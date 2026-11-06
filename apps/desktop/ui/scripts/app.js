@@ -5545,7 +5545,10 @@ function renderCamGrid() {
   grid.classList.toggle("hidden", !users.length);
   grid.dataset.count = String(Math.min(users.length, 4));
   for (const tile of [...grid.children]) {
-    if (!wanted.has(tile.dataset.user)) tile.remove();
+    if (!wanted.has(tile.dataset.user)) {
+      frameUrls.drop(`cam:${tile.dataset.user}`);
+      tile.remove();
+    }
   }
   for (const user of users) {
     let tile = grid.querySelector(`[data-user="${CSS.escape(user.id)}"]`);
@@ -5577,7 +5580,7 @@ function showCameraFrame(frame) {
   const tile = $("cam-grid").querySelector(`[data-user="${CSS.escape(frame.user)}"]`);
   if (!tile) return;
   const img = tile.querySelector("img");
-  if (img) img.src = `data:image/jpeg;base64,${frame.jpeg}`;
+  if (img) img.src = frameUrls.from(`cam:${frame.user}`, frame.jpeg);
   tile.querySelector(".cam-wait")?.remove();
 }
 
@@ -19097,7 +19100,7 @@ let ownFrameAt = 0;
 function showOwnFrame(frame) {
   if (!state.sharing) return;
   ownFrameAt = performance.now();
-  const src = `data:image/jpeg;base64,${frame.jpeg}`;
+  const src = frameUrls.from("own", frame.jpeg);
   $("vp-preview-img").src = src;
   $("vp-preview-empty").classList.add("hidden");
   if (state.stageMode === "self") showStageFrame(src, frame.width, frame.height);
@@ -19144,10 +19147,25 @@ function startOwnPreview() {
   ownPreviewTimer = setInterval(tick, 1000);
 }
 
-const stageStats = { times: [], width: 0, height: 0 };
+const stageStats = { times: [], width: 0, height: 0, watchSince: 0, retried: false };
+const frameUrls = createFrameUrls();
+const FIRST_FRAME_MS = 12000;
 
 const STREAM_STALL_MS = 6000;
 setInterval(() => {
+  if (state.watchingUser && !stageStats.lastAt && stageStats.watchSince) {
+    const waited = performance.now() - stageStats.watchSince;
+    if (waited < FIRST_FRAME_MS) return;
+    const [user, name] = [state.watchingUser, state.watchingName];
+    stageStats.watchSince = 0;
+    if (!stageStats.retried) {
+      invoke("stop_watching", { userId: user }).catch(() => {}).then(() => watchScreen(user, name, { retry: true }));
+      return;
+    }
+    toast(`Couldn't reach ${name ? `${name}'s` : "the"} stream. Try again in a moment.`);
+    stopWatching();
+    return;
+  }
   if (!state.watchingUser || !stageStats.lastAt) return;
   if (performance.now() - stageStats.lastAt < STREAM_STALL_MS) return;
   stageStats.lastAt = 0;
@@ -19193,6 +19211,7 @@ function closeStage() {
   document.querySelector(".main").classList.remove("stage-focus");
   $("video-pane").classList.add("hidden");
   $("video-frame").removeAttribute("src");
+  frameUrls.drop("stage");
 }
 
 function showStageFrame(src, width, height) {
@@ -19514,33 +19533,50 @@ async function uploadFileObject(file) {
   }
 }
 
-async function watchScreen(userId, name) {
-  const action = streamOpenAction({
-    userId,
-    meId: state.user && state.user.id,
-    sharing: Boolean(state.sharing),
-    watchingUser: state.watchingUser,
-  });
-  if (action === "preview") return openOwnPreview();
-  if (action === "already") {
-    if (state.stageMode !== "watch") openStage("watch", `${name}'s screen`);
-    return;
+async function watchScreen(userId, name, { retry = false } = {}) {
+  if (!retry) {
+    const action = streamOpenAction({
+      userId,
+      meId: state.user && state.user.id,
+      sharing: Boolean(state.sharing),
+      watchingUser: state.watchingUser,
+    });
+    if (action === "preview") return openOwnPreview();
+    if (action === "already") return showWatchedStream();
   }
   const serverId = state.currentServer ? state.currentServer.id : state.voiceServer && state.voiceServer.id;
   if (!serverId) return;
   if (inBrowserApp()) return toast(WEB_WATCH_NOTE);
   try {
     if (state.watchingUser && state.watchingUser !== userId) await stopWatching();
-    openStage("watch", `${name}'s screen`);
-    await invoke("watch_screen", { serverId, userId });
+    if (!retry) {
+      openStage("watch", `${name}'s screen`);
+      phoneShowChat();
+    }
     state.watchingUser = userId;
     state.watchingName = name;
-    renderStageInkTools();
+    stageStats.lastAt = 0;
+    stageStats.watchSince = performance.now();
+    stageStats.retried = retry;
     renderVoicePanel();
+    await invoke("watch_screen", { serverId, userId });
+    renderStageInkTools();
   } catch (e) {
+    state.watchingUser = null;
+    state.watchingName = null;
     closeStage();
+    renderVoicePanel();
     toast(String(e));
   }
+}
+
+function showWatchedStream() {
+  if (!state.watchingUser) return;
+  if (state.stageMode !== "watch") {
+    openStage("watch", `${state.watchingName || "Their"}'s screen`);
+    if (stageStats.lastAt) $("stage-wait").classList.add("hidden");
+  }
+  phoneShowChat();
 }
 
 async function stopWatching() {
@@ -19552,6 +19588,7 @@ async function stopWatching() {
   }
   state.watchingUser = null;
   state.watchingName = null;
+  stageStats.watchSince = 0;
   if (state.stageMode === "watch") closeStage();
   renderVoicePanel();
 }
@@ -20981,6 +21018,7 @@ function wireEvents() {
   $("vp-stop-share").onclick = toggleShare;
   $("vp-change-source").onclick = openSharePicker;
   $("vp-stop-watch").onclick = stopWatching;
+  $("vp-watch-label").onclick = showWatchedStream;
   $("vp-disconnect").onclick = disconnectVoice;
   document.querySelector(".vp-status").title = "Connection details";
   document.querySelector(".vp-status").addEventListener("click", e => {
@@ -21370,7 +21408,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("video-frame", event => {
       const frame = event.payload;
       if (state.watchingUser && frame.user === state.watchingUser) {
-        showStageFrame(`data:image/jpeg;base64,${frame.jpeg}`, frame.width, frame.height);
+        showStageFrame(frameUrls.from("stage", frame.jpeg), frame.width, frame.height);
       } else if (state.sharing && state.user && frame.user === state.user.id) {
         showOwnFrame(frame);
       }
