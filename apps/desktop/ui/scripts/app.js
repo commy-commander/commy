@@ -5744,9 +5744,9 @@ function paintCallTile(tile, t, focused) {
   tile.classList.toggle("watched", live && !isMe);
   if (!live) tilePainter(tile).clear();
   cover.classList.toggle("hidden", live && !onStage && tileHasFrame(tile));
-  text.textContent = onStage ? "On the big screen" : live ? "Connecting to stream" : `${t.name} is streaming`;
+  text.textContent = onStage ? "On the big screen" : live ? "Connecting to stream" : inBrowserApp() ? WEB_STREAM_NOTE : `${t.name} is streaming`;
   const watch = tile.querySelector(".cam-watch");
-  if (watch) watch.classList.toggle("hidden", live);
+  if (watch) watch.classList.toggle("hidden", live || inBrowserApp());
   tile.title = onStage ? "Back to the grid" : isMe ? "Open your stream preview" : live ? `Show ${t.name}'s stream big` : `Watch ${t.name}'s stream`;
 }
 
@@ -16561,6 +16561,7 @@ const YOUTUBE_NOTICE = "This video plays from YouTube. Loading it connects you t
 const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
 const WEB_WATCH_NOTE = "Streams play in the Commy desktop app.";
 const WEB_CAMERA_NOTE = "Camera shows in the desktop app";
+const WEB_STREAM_NOTE = "Stream plays in the desktop app";
 
 const activityUi = {
   run: null,
