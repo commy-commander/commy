@@ -5477,7 +5477,7 @@ function onDmReceived(dm) {
 
 const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
-const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null };
+const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null, tucked: false };
 
 function savedCameraId() {
   try { return localStorage.getItem(CAMERA_KEY) || ""; } catch { return ""; }
@@ -5577,7 +5577,9 @@ function renderCamGrid() {
   syncStreamWatches(tiles.filter(t => t.kind === "screen" && !t.me).map(t => t.user));
   const focused = state.stageMode === "watch" ? state.watchingUser : state.stageMode === "self" && state.user ? state.user.id : null;
   const layout = callGridLayout({ tiles, focusedStream: focused });
-  grid.classList.toggle("hidden", layout === "none");
+  if (layout === "none") cam.tucked = false;
+  const tucked = cam.tucked && layout === "grid" && isPhoneWidth(window.innerWidth);
+  grid.classList.toggle("hidden", layout === "none" || tucked);
   grid.dataset.layout = layout;
   $("stage-grid").classList.toggle("hidden", layout !== "strip");
   grid.dataset.count = String(Math.min(tiles.length, 4));
@@ -5585,7 +5587,7 @@ function renderCamGrid() {
   const wanted = new Set(tiles.map(t => t.key));
   for (const tile of [...grid.querySelectorAll(".cam-tile")]) {
     if (wanted.has(tile.dataset.key)) continue;
-    frameUrls.drop(tile.dataset.key);
+    tilePainter(tile).clear();
     tile.remove();
   }
   const pages = layout === "grid" && isPhoneWidth(window.innerWidth) ? callTilePages(tiles) : [tiles];
@@ -5601,6 +5603,7 @@ function renderCamGrid() {
   });
   sizeCallGrid(grid, tiles.length, layout);
   paintCallDots(grid, scroller, pages.length);
+  paintPhoneGridButton();
 }
 
 function callPagesNode(grid) {
@@ -5690,7 +5693,7 @@ function callTileNode(grid, t) {
   tile = el("div", `cam-tile ${t.kind}`);
   tile.dataset.key = t.key;
   tile.dataset.user = t.user;
-  tile.appendChild(el("img"));
+  tile.appendChild(el("canvas", "tile-frame blank"));
   const cover = el("div", "cam-cover");
   cover.appendChild(makeAvatar(t.user, t.name, "avatar cam-avatar"));
   cover.appendChild(el("span", "cam-cover-text"));
@@ -5732,7 +5735,7 @@ function paintCallTile(tile, t, focused) {
       if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
       cover.classList.add("hidden");
     } else {
-      const waiting = !tile.querySelector("img").hasAttribute("src");
+      const waiting = !tileHasFrame(tile);
       cover.classList.toggle("hidden", !waiting);
       text.textContent = inBrowserApp() ? WEB_CAMERA_NOTE : "Connecting";
     }
@@ -5742,20 +5745,24 @@ function paintCallTile(tile, t, focused) {
   const live = isMe ? state.sharing : state.streamsWatched.has(t.user);
   const onStage = focused === t.user;
   tile.classList.toggle("watched", live && !isMe);
-  if (!live) tile.querySelector("img").removeAttribute("src");
-  cover.classList.toggle("hidden", live && !onStage && tile.querySelector("img").hasAttribute("src"));
+  if (!live) tilePainter(tile).clear();
+  cover.classList.toggle("hidden", live && !onStage && tileHasFrame(tile));
   text.textContent = onStage ? "On the big screen" : live ? "Connecting to stream" : inBrowserApp() ? WEB_STREAM_NOTE : `${t.name} is streaming`;
   const watch = tile.querySelector(".cam-watch");
   if (watch) watch.classList.toggle("hidden", live || inBrowserApp());
   tile.title = onStage ? "Back to the grid" : isMe ? "Open your stream preview" : live ? `Show ${t.name}'s stream big` : `Watch ${t.name}'s stream`;
 }
 
+function frameData(frame) {
+  return frame.jpeg || (() => invoke("take_video_frame", { key: frame.key }));
+}
+
 function onVideoFrame(frame) {
   if (state.streamsWatched.has(frame.user)) {
-    if (frame.user === state.watchingUser && state.stageMode === "watch") showStageFrame(frameUrls.from("stage", frame.jpeg), frame.width, frame.height);
+    if (frame.user === state.watchingUser && state.stageMode === "watch") showStageFrame(frameData(frame), frame.width, frame.height);
     else {
       const tile = callStreamTile(frame.user);
-      if (tile) showCallStreamFrame(tile, frameUrls.from(tile.dataset.key, frame.jpeg));
+      if (tile) showCallStreamFrame(tile, frameData(frame));
     }
   } else if (state.sharing && state.user && frame.user === state.user.id) {
     showOwnFrame(frame);
@@ -5767,8 +5774,17 @@ function callStreamTile(user) {
   return tile && !tile.classList.contains("on-stage") ? tile : null;
 }
 
-function showCallStreamFrame(tile, src) {
-  tile.querySelector("img").src = src;
+function tilePainter(tile) {
+  if (!tile.framePainter) tile.framePainter = createFramePainter(tile.querySelector(".tile-frame"));
+  return tile.framePainter;
+}
+
+function tileHasFrame(tile) {
+  return !tile.querySelector(".tile-frame").classList.contains("blank");
+}
+
+function showCallStreamFrame(tile, jpeg) {
+  tilePainter(tile).paint(jpeg);
   tile.querySelector(".cam-cover").classList.add("hidden");
 }
 
@@ -5783,9 +5799,33 @@ async function openCallTile(t) {
   await watchScreen(t.user, t.name);
 }
 
+function paintPhoneGridButton() {
+  const showing = phoneGridShowing();
+  const button = $("phone-voice-grid");
+  const label = showing ? "Hide Stream Grid" : "Show Stream Grid";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(showing));
+  button.classList.toggle("active", showing);
+}
+
+function phoneGridShowing() {
+  const vs = state.voiceServer;
+  return Boolean(vs && state.currentServer && state.currentServer.id === vs.id && phonePane() === "chat" && $("cam-grid").dataset.layout === "grid" && !$("cam-grid").classList.contains("hidden"));
+}
+
+function togglePhoneCallGrid() {
+  if (phoneGridShowing()) {
+    cam.tucked = true;
+    return renderCamGrid();
+  }
+  return showCallGrid();
+}
+
 async function showCallGrid() {
   const vs = state.voiceServer;
   if (!vs || vs.call) return;
+  cam.tucked = false;
   if (!state.currentServer || state.currentServer.id !== vs.id) await selectServer(vs.id);
   if (state.stageMode === "watch") backToCallGrid();
   else if (state.stageMode === "self") closeStage({ keepFocus: true });
@@ -5820,8 +5860,7 @@ async function stopStream(user) {
 function showCameraFrame(frame) {
   const tile = $("cam-grid").querySelector(`.cam-tile.camera[data-user="${CSS.escape(frame.user)}"]`);
   if (!tile) return;
-  const img = tile.querySelector("img");
-  if (img) img.src = frameUrls.from(callTileKey("camera", frame.user), frame.jpeg);
+  tilePainter(tile).paint(frameData(frame));
   tile.querySelector(".cam-cover")?.classList.add("hidden");
 }
 
@@ -10076,6 +10115,7 @@ function renderPhoneVoice() {
   if (!live) return;
   $("phone-voice-name").textContent = vs.call ? `Call with ${vs.name}` : vs.channelName;
   $("phone-voice-grid").classList.toggle("hidden", Boolean(vs.call));
+  paintPhoneGridButton();
   $("phone-voice-signal").replaceChildren(svgIcon("signal", 14));
   setIcon($("phone-voice-mute"), state.voice.muted ? "micOff" : "mic");
   setIcon($("phone-voice-deafen"), state.voice.deafened ? "headsetOff" : "headset");
@@ -10091,7 +10131,7 @@ function wirePhoneVoice() {
   $("phone-voice-deafen").onclick = () => $("deafen-btn").click();
   $("phone-voice-hangup").onclick = disconnectVoice;
   setIcon($("phone-voice-grid"), "grid", 20);
-  $("phone-voice-grid").onclick = showCallGrid;
+  $("phone-voice-grid").onclick = togglePhoneCallGrid;
   $("phone-voice-where").onclick = () => {
     $("vp-conn-meta").click();
     phoneStep("back");
@@ -17486,6 +17526,7 @@ function setPhonePane(pane, { fromHistory = false } = {}) {
   if (was === pane) return;
   $("app").dataset.pane = pane;
   if (!fromHistory && phonePaneGoesDeeper(was, pane)) history.pushState({ pane }, "");
+  paintPhoneGridButton();
 }
 
 function phoneStep(action) {
@@ -19379,14 +19420,18 @@ let ownPreviewTimer = null;
 let ownFpsSample = null;
 let ownFrameAt = 0;
 
-function showOwnFrame(frame) {
-  if (!state.sharing) return;
+const ownFrames = createLatestOnly(async frame => {
+  const bytes = await frameBytes(frameData(frame));
+  if (!state.sharing || !bytes.length) return;
   ownFrameAt = performance.now();
-  const src = frameUrls.from("own", frame.jpeg);
-  $("vp-preview-img").src = src;
+  $("vp-preview-img").src = frameUrls.from("own", bytes);
   $("vp-preview-empty").classList.add("hidden");
-  if (state.stageMode === "self") showStageFrame(src, frame.width, frame.height);
-  else if (state.user && callStreamTile(state.user.id)) showCallStreamFrame(callStreamTile(state.user.id), src);
+  if (state.stageMode === "self") showStageFrame(bytes, frame.width, frame.height);
+  else if (state.user && callStreamTile(state.user.id)) showCallStreamFrame(callStreamTile(state.user.id), bytes);
+});
+
+function showOwnFrame(frame) {
+  if (state.sharing) ownFrames.push(frame);
 }
 
 function startOwnPreview() {
@@ -19432,6 +19477,16 @@ function startOwnPreview() {
 
 const stageStats = { times: [], width: 0, height: 0, watchSince: 0, retried: false };
 const frameUrls = createFrameUrls();
+let stagePainter = null;
+
+function stageFrames() {
+  if (!stagePainter) {
+    stagePainter = createFramePainter($("video-frame"), {
+      onPaint: () => { if (ink.store.lines.size || ink.store.pings.length) scheduleInkPaint(); },
+    });
+  }
+  return stagePainter;
+}
 const FIRST_FRAME_MS = 12000;
 
 const STREAM_STALL_MS = 6000;
@@ -19464,7 +19519,7 @@ function openStage(mode, label) {
   $("stage-stats").textContent = "";
   $("stage-viewers").textContent = "";
   $("stage-viewers").classList.add("hidden");
-  $("video-frame").removeAttribute("src");
+  stageFrames().clear();
   $("stage-wait").classList.remove("hidden");
   $("video-pane").classList.remove("hidden");
   $("video-pane").classList.toggle("self", mode === "self");
@@ -19494,15 +19549,14 @@ function closeStage({ keepFocus = false } = {}) {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   if (!keepFocus) document.querySelector(".main").classList.remove("stage-focus");
   $("video-pane").classList.add("hidden");
-  $("video-frame").removeAttribute("src");
-  frameUrls.drop("stage");
+  stageFrames().clear();
   paintFocusButtons();
   renderCamGrid();
 }
 
-function showStageFrame(src, width, height) {
+function showStageFrame(jpeg, width, height) {
   stageStats.lastAt = performance.now();
-  $("video-frame").src = src;
+  stageFrames().paint(jpeg);
   $("stage-wait").classList.add("hidden");
   const now = performance.now();
   stageStats.times.push(now);
@@ -19655,8 +19709,8 @@ function renderStageDrawers(drawers) {
 
 function stageInkRect() {
   const canvas = $("stage-ink");
-  const img = $("video-frame");
-  return inkFit(img.naturalWidth, img.naturalHeight, canvas.clientWidth, canvas.clientHeight);
+  const frame = $("video-frame");
+  return inkFit(frame.width, frame.height, canvas.clientWidth, canvas.clientHeight);
 }
 
 function scheduleInkPaint() {
@@ -19760,7 +19814,6 @@ function wireStageInk() {
   canvas.addEventListener("pointermove", onInkPointerMove);
   canvas.addEventListener("pointerup", finishInkStroke);
   canvas.addEventListener("pointercancel", finishInkStroke);
-  $("video-frame").addEventListener("load", () => { if (ink.store.lines.size || ink.store.pings.length) scheduleInkPaint(); });
   new ResizeObserver(() => scheduleInkPaint()).observe($("stage-view"));
   $("vp-ink").onchange = e => setStreamInk(e.target.checked);
   $("share-ink").onchange = e => inkSave(INK_STREAM_KEY, e.target.checked ? "1" : "0");
@@ -23486,6 +23539,7 @@ async function refreshCurrentServer() {
   noteJoinRequests(state.currentServer);
   refreshVoiceInviteCards();
   renderVoicePanelActivity();
+  if (state.voiceServer && state.voiceServer.id === state.currentServer.id) renderVoicePanel();
   syncRulesGate();
   syncAwaitedBar();
   syncAttachAccess();

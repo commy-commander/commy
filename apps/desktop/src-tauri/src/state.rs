@@ -6,7 +6,7 @@ use commy_net::{CommyNode, ServerTicket, WirePayload};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 fn default_gain() -> f32 {
@@ -208,6 +208,7 @@ pub struct App {
     pub watches: Mutex<HashMap<UserId, ScreenWatch>>,
     pub camera: Mutex<Option<CameraSession>>,
     pub camera_watches: Mutex<HashMap<UserId, ScreenWatch>>,
+    pub frames: Arc<crate::frames::FrameStore>,
     pub dms: Mutex<DmStore>,
     pub safety: Mutex<crate::safety::SafetySettings>,
     pub storage: Mutex<crate::storage::StorageSettings>,
@@ -270,6 +271,7 @@ impl Default for App {
             watches: Mutex::new(HashMap::new()),
             camera: Mutex::new(None),
             camera_watches: Mutex::new(HashMap::new()),
+            frames: Arc::new(crate::frames::FrameStore::default()),
             dms: Mutex::new(DmStore::new()),
             safety: Mutex::new(crate::safety::SafetySettings::default()),
             storage: Mutex::new(crate::storage::StorageSettings::default()),
