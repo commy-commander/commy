@@ -395,6 +395,19 @@ impl Book {
         self.live.contains(&stream)
     }
 
+    pub fn deepen(&mut self, server: ServerId, channel: Option<ChannelId>) -> Vec<StreamKeys> {
+        let picked: Vec<StreamKeys> = self
+            .routes
+            .iter()
+            .filter(|(_, (sid, want))| *sid == server && matches!(want.lane, Lane::Channel(c) if channel.is_none_or(|wanted| wanted == c)))
+            .map(|(_, (_, want))| want.keys.clone())
+            .collect();
+        for keys in &picked {
+            self.live.remove(&keys.id);
+        }
+        picked
+    }
+
     pub fn holds_state(&self, server: ServerId) -> bool {
         self.routes.iter().any(|(stream, (sid, want))| *sid == server && want.lane == Lane::State && want.writes && self.live.contains(stream))
     }
@@ -451,6 +464,26 @@ mod tests {
         want.lane = lane;
         want.writes = writes;
         want
+    }
+
+    #[test]
+    fn deepening_a_channel_reloads_only_its_message_streams_and_waits_for_them_again() {
+        let server = ServerId::new();
+        let (general, other) = (ChannelId::new(), ChannelId::new());
+        let mut book = Book::new(EntryList::default());
+        let wants = vec![want(server, Lane::State, true), want(server, Lane::Channel(general), true), want(server, Lane::Channel(other), true)];
+        let ids: Vec<StreamId> = wants.iter().map(|w| w.keys.id).collect();
+        book.replan([(server, wants)].into());
+        for id in &ids {
+            book.caught_up(*id, 300);
+        }
+        let deeper = book.deepen(server, Some(general));
+        assert_eq!(deeper.iter().map(|k| k.id).collect::<Vec<_>>(), vec![ids[1]]);
+        assert!(!book.is_live(ids[1]));
+        assert!(book.is_live(ids[0]) && book.is_live(ids[2]));
+        assert!(book.caught_up(ids[1], 300));
+        assert_eq!(book.deepen(server, None).len(), 2);
+        assert!(book.deepen(ServerId::new(), None).is_empty());
     }
 
     #[test]

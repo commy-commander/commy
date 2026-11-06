@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope};
-use commy_core::{IdentityKey, Message, ServerEvent, ServerId, UserId};
+use commy_core::{ChannelId, IdentityKey, Message, ServerEvent, ServerId, UserId};
 use commy_net::community_streams::{self as streams, Lane};
 use commy_net::entry_list::{self, EntryList};
 use commy_net::sync_streams::SharedKey;
@@ -27,6 +27,7 @@ const REFRESH_EVERY: Duration = Duration::from_secs(30);
 const STORE_WAIT: Duration = Duration::from_secs(5);
 const SNAPSHOT_EVERY_MS: i64 = 6 * 60 * 60 * 1000;
 const MAX_MARKS_PER_RECORD: usize = 300;
+const DEEPEN_POLL: Duration = Duration::from_millis(250);
 
 fn chunks(marks: BTreeMap<String, ReadMark>, size: usize) -> Vec<BTreeMap<String, ReadMark>> {
     let mut out = Vec::new();
@@ -56,6 +57,7 @@ pub(super) struct Live {
     pub(super) pictures: Option<String>,
     pub(super) wake: Option<String>,
     pub(super) all_rings: AllRings,
+    deepened: HashSet<(ServerId, Option<ChannelId>)>,
 }
 
 impl Session {
@@ -85,6 +87,7 @@ impl Session {
             pictures,
             wake,
             all_rings: AllRings::default(),
+            deepened: HashSet::new(),
         });
         spawn_local(self.clone().run_sync(events));
         spawn_local(self.clone().tend_sync());
@@ -271,6 +274,39 @@ impl Session {
 
     pub(super) fn said_goodbye(&self) -> bool {
         self.sync.borrow().as_ref().is_some_and(|live| live.gone)
+    }
+
+    pub(super) async fn deepen_history(&self, server: ServerId, channel: Option<ChannelId>, wait: Duration, ready: impl Fn() -> bool) {
+        let streams: Vec<StreamId> = {
+            let mut guard = self.sync.borrow_mut();
+            let Some(live) = guard.as_mut() else { return };
+            if live.deepened.contains(&(server, None)) || !live.deepened.insert((server, channel)) {
+                return;
+            }
+            let keys = live.book.deepen(server, channel);
+            for k in &keys {
+                live.pool.unfollow(k.id);
+            }
+            let streams = keys.iter().map(|k| k.id).collect();
+            if !keys.is_empty() {
+                live.pool.follow_together_tail(keys.into_iter().map(|k| (k, 0)).collect(), None);
+            }
+            streams
+        };
+        if streams.is_empty() {
+            return;
+        }
+        let started = Utc::now();
+        loop {
+            let caught_up = self.sync.borrow().as_ref().is_none_or(|live| streams.iter().all(|s| live.book.is_live(*s)));
+            if caught_up || ready() {
+                return;
+            }
+            if (Utc::now() - started).to_std().unwrap_or_default() >= wait {
+                return;
+            }
+            n0_future::time::sleep(DEEPEN_POLL).await;
+        }
     }
 
     pub(super) fn refresh_sync(&self) {
