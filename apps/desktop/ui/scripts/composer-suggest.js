@@ -100,6 +100,12 @@ function suggestionInsert(item) {
   return `@${item.name} `;
 }
 
+function composerCommandAction(item) {
+  if (item.name === "gif") return "gif";
+  if (item.name === "tts") return item.args ? "send" : "complete";
+  return "complete";
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { SUGGEST_LIMIT, COMPOSER_COMMANDS, suggestTokenAt, emojiSuggestions, commandSuggestions, suggestionInsert };
+  module.exports = { SUGGEST_LIMIT, COMPOSER_COMMANDS, suggestTokenAt, emojiSuggestions, commandSuggestions, suggestionInsert, composerCommandAction };
 }
