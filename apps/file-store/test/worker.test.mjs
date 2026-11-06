@@ -90,12 +90,12 @@ test("signatures from the apps check out in the worker", async () => {
 });
 
 test("a request and a member list signed by the Commy apps check out", async () => {
-  const key = "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c";
+  const signer = "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c";
   const sig = "ac92251a45380696c83571842764f431fb3987334cfe4078b6b56e5be7a2ab0399775d6cd2f8f69d7db0d92d3ce2d6768189f73c30975946de0b555bbc145702";
-  assert.ok(await verifies(key, requestMessage("GET", "ab".repeat(32), 1762430400000, 0), sig));
-  const roster = `{"owner":"${key}","managers":[],"members":["${key}"],"at":1762430400000}`;
+  assert.ok(await verifies(signer, requestMessage("GET", "ab".repeat(32), 1762430400000, 0), sig));
+  const roster = `{"owner":"${signer}","managers":[],"members":["${signer}"],"at":1762430400000}`;
   const rosterSig = "8dcdd3d0c9dc197d99394d9cea0005708b1576c4a379a815cc4942955ad9c5573ff32db33c4bbaafcfb099bc27ed41761b55054ec031da1768deb656f2df190a";
-  assert.ok(await verifies(key, rosterMessage(roster), rosterSig));
+  assert.ok(await verifies(signer, rosterMessage(roster), rosterSig));
 });
 
 test("pairing needs the setup code and a list signed by its owner or a manager", async () => {

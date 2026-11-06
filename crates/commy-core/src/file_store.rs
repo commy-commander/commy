@@ -267,10 +267,10 @@ mod tests {
     #[test]
     fn signatures_match_the_ones_the_worker_checks() {
         let me = Identity::from_bytes(&[7u8; 32]);
-        let [(_, key), _, (_, sig)] = signed_headers(&me, "GET", &"ab".repeat(32), 1_762_430_400_000, 0);
-        assert_eq!(key, "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c");
+        let [(_, signer), _, (_, sig)] = signed_headers(&me, "GET", &"ab".repeat(32), 1_762_430_400_000, 0);
+        assert_eq!(signer, "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c");
         assert_eq!(sig, "ac92251a45380696c83571842764f431fb3987334cfe4078b6b56e5be7a2ab0399775d6cd2f8f69d7db0d92d3ce2d6768189f73c30975946de0b555bbc145702");
-        let roster = Roster { owner: key.clone(), managers: vec![], members: vec![key], at: 1_762_430_400_000 };
+        let roster = Roster { owner: signer.clone(), managers: vec![], members: vec![signer], at: 1_762_430_400_000 };
         assert_eq!(sign_roster(&me, &roster).sig, "8dcdd3d0c9dc197d99394d9cea0005708b1576c4a379a815cc4942955ad9c5573ff32db33c4bbaafcfb099bc27ed41761b55054ec031da1768deb656f2df190a");
     }
 
