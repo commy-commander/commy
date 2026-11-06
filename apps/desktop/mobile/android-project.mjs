@@ -192,7 +192,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call and screen share services, relaunching and invite links");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
-  const packageName = applicationId(withDependencies);
+  const packageName = applicationId(gradle);
   const firebase = googleServices && firebaseValues(googleServices, packageName);
   if (firebase) {
     writeFileSync(firebasePath, firebase);
