@@ -21,3 +21,10 @@ test("each stream keeps only its last few frames alive, so watching does not fil
   assert.equal(urls.held("cam:a"), 1, "another stream keeps its frame");
   assert.equal(revoked.length, 100);
 });
+
+test("frame bytes can be handed over without base64", () => {
+  const made = [];
+  const urls = createFrameUrls({ make: bytes => (made.push([...bytes]), `u${made.length}`), revoke: () => {} });
+  urls.from("own", new Uint8Array([9, 8]));
+  assert.deepEqual(made, [[9, 8]]);
+});
