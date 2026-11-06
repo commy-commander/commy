@@ -6,12 +6,13 @@ export function relayOrigins(relay) {
 
 export const FILE_STORAGE_ORIGINS = ["https://*.workers.dev"];
 export const GIF_SEARCH_ORIGINS = ["https://api.klipy.com", "https://api.giphy.com"];
+export const SPEECH_VOICE_ORIGINS = ["https://cdn.jsdelivr.net", "https://huggingface.co", "https://*.hf.co"];
 
 export function contentSecurityPolicy(relays) {
   return [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
-    `connect-src 'self' ${[...relays, ...FILE_STORAGE_ORIGINS, ...GIF_SEARCH_ORIGINS].join(" ")}`,
+    `connect-src 'self' blob: ${[...relays, ...FILE_STORAGE_ORIGINS, ...GIF_SEARCH_ORIGINS, ...SPEECH_VOICE_ORIGINS].join(" ")}`,
     "img-src 'self' data: blob:",
     "media-src 'self' data: blob:",
     "style-src 'self' 'unsafe-inline'",
@@ -44,6 +45,6 @@ export function injectWebShell(html, { relays, base }) {
   );
   const firstScript = withHead.indexOf('<script src="scripts/');
   if (firstScript < 0 || withHead === based || (base && based === html)) throw new Error("index.html no longer has the expected stylesheet and script tags");
-  const bridge = '<script src="scripts/web-commands.js"></script>\n  <script src="scripts/web-voice.js"></script>\n  <script src="scripts/web-bridge.js"></script>\n  ';
+  const bridge = '<script src="scripts/web-commands.js"></script>\n  <script src="scripts/web-voice.js"></script>\n  <script src="scripts/web-speech.js"></script>\n  <script src="scripts/web-bridge.js"></script>\n  ';
   return withHead.slice(0, firstScript) + bridge + withHead.slice(firstScript);
 }

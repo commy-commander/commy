@@ -124,6 +124,8 @@ function webVoice(win) {
   let testing = false;
   let prefs = webVoiceDefaults();
   const speakers = new Map();
+  const speech = new Set();
+  let speechEnds = 0;
 
   const mediaDevices = () => win.navigator.mediaDevices;
   const canPickOutput = () => typeof win.AudioContext === "function" && typeof win.AudioContext.prototype.setSinkId === "function";
@@ -322,7 +324,34 @@ function webVoice(win) {
     speaker.node.port.postMessage(pcm, [pcm.buffer]);
   }
 
-  return { start, stop, play, startTest, stopTest, level, configure, devices };
+  async function speak(samples, rate, append) {
+    const ctx = await ready();
+    if (!append) hush();
+    const buffer = ctx.createBuffer(1, samples.length, rate);
+    buffer.copyToChannel(samples, 0);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(master);
+    const at = Math.max(ctx.currentTime, speechEnds);
+    source.start(at);
+    speechEnds = at + buffer.duration;
+    speech.add(source);
+    source.onended = () => speech.delete(source);
+  }
+
+  function hush() {
+    for (const source of speech) {
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {}
+      source.disconnect();
+    }
+    speech.clear();
+    speechEnds = 0;
+  }
+
+  return { start, stop, play, speak, hush, startTest, stopTest, level, configure, devices };
 }
 
 if (typeof module !== "undefined" && module.exports) {
