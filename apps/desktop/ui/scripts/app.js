@@ -5477,7 +5477,7 @@ function onDmReceived(dm) {
 
 const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
-const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null };
+const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null, tucked: false };
 
 function savedCameraId() {
   try { return localStorage.getItem(CAMERA_KEY) || ""; } catch { return ""; }
@@ -5577,7 +5577,9 @@ function renderCamGrid() {
   syncStreamWatches(tiles.filter(t => t.kind === "screen" && !t.me).map(t => t.user));
   const focused = state.stageMode === "watch" ? state.watchingUser : state.stageMode === "self" && state.user ? state.user.id : null;
   const layout = callGridLayout({ tiles, focusedStream: focused });
-  grid.classList.toggle("hidden", layout === "none");
+  if (layout === "none") cam.tucked = false;
+  const tucked = cam.tucked && layout === "grid" && isPhoneWidth(window.innerWidth);
+  grid.classList.toggle("hidden", layout === "none" || tucked);
   grid.dataset.layout = layout;
   $("stage-grid").classList.toggle("hidden", layout !== "strip");
   grid.dataset.count = String(Math.min(tiles.length, 4));
@@ -5601,6 +5603,7 @@ function renderCamGrid() {
   });
   sizeCallGrid(grid, tiles.length, layout);
   paintCallDots(grid, scroller, pages.length);
+  paintPhoneGridButton();
 }
 
 function callPagesNode(grid) {
@@ -5796,9 +5799,33 @@ async function openCallTile(t) {
   await watchScreen(t.user, t.name);
 }
 
+function paintPhoneGridButton() {
+  const showing = phoneGridShowing();
+  const button = $("phone-voice-grid");
+  const label = showing ? "Hide Stream Grid" : "Show Stream Grid";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(showing));
+  button.classList.toggle("active", showing);
+}
+
+function phoneGridShowing() {
+  const vs = state.voiceServer;
+  return Boolean(vs && state.currentServer && state.currentServer.id === vs.id && phonePane() === "chat" && $("cam-grid").dataset.layout === "grid" && !$("cam-grid").classList.contains("hidden"));
+}
+
+function togglePhoneCallGrid() {
+  if (phoneGridShowing()) {
+    cam.tucked = true;
+    return renderCamGrid();
+  }
+  return showCallGrid();
+}
+
 async function showCallGrid() {
   const vs = state.voiceServer;
   if (!vs || vs.call) return;
+  cam.tucked = false;
   if (!state.currentServer || state.currentServer.id !== vs.id) await selectServer(vs.id);
   if (state.stageMode === "watch") backToCallGrid();
   else if (state.stageMode === "self") closeStage({ keepFocus: true });
@@ -10088,6 +10115,7 @@ function renderPhoneVoice() {
   if (!live) return;
   $("phone-voice-name").textContent = vs.call ? `Call with ${vs.name}` : vs.channelName;
   $("phone-voice-grid").classList.toggle("hidden", Boolean(vs.call));
+  paintPhoneGridButton();
   $("phone-voice-signal").replaceChildren(svgIcon("signal", 14));
   setIcon($("phone-voice-mute"), state.voice.muted ? "micOff" : "mic");
   setIcon($("phone-voice-deafen"), state.voice.deafened ? "headsetOff" : "headset");
@@ -10103,7 +10131,7 @@ function wirePhoneVoice() {
   $("phone-voice-deafen").onclick = () => $("deafen-btn").click();
   $("phone-voice-hangup").onclick = disconnectVoice;
   setIcon($("phone-voice-grid"), "grid", 20);
-  $("phone-voice-grid").onclick = showCallGrid;
+  $("phone-voice-grid").onclick = togglePhoneCallGrid;
   $("phone-voice-where").onclick = () => {
     $("vp-conn-meta").click();
     phoneStep("back");
@@ -17498,6 +17526,7 @@ function setPhonePane(pane, { fromHistory = false } = {}) {
   if (was === pane) return;
   $("app").dataset.pane = pane;
   if (!fromHistory && phonePaneGoesDeeper(was, pane)) history.pushState({ pane }, "");
+  paintPhoneGridButton();
 }
 
 function phoneStep(action) {
