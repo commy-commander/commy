@@ -25,6 +25,7 @@ const state = {
   watchingName: null,
   sharing: false,
   watchingUser: null,
+  streamsWatched: new Set(),
   view: "server",
   currentDm: null,
   micTesting: false,
@@ -318,6 +319,7 @@ function mockSeed() {
   server.members[0].voice_muted = true;
   server.members[0].priority_speaker = true;
   general.voice_status = "Ranked grind";
+  if (new URLSearchParams(location.search).has("streams")) mockSeedStreams(server);
   const hall = server.channels.find(c => c.kind === "stage");
   const seated = [["m2", "nova", 1810], ["m6", "ash", 1790], ["m7", "pip", 640], ["m8", "lumen", 420], ["m9", "dot", 95]];
   hall.voice_users = seated.map(([, name]) => name);
@@ -598,6 +600,30 @@ function mockPinViews(channelId) {
     .map(p => ({ ...p, message: { ...p.message, pinned: true } }));
 }
 
+function mockScreenShares(server) {
+  const voice = server.channels.find(c => c.kind === "voice");
+  const mine = mock.share && mock.user ? [{ user: "me", name: mock.user.username, channel: (server.channels.find(c => (c.voice_user_ids || []).includes("me")) || {}).id }] : [];
+  return [...(server.shares || []).map(x => ({ user: x.user, name: x.name, channel: voice && voice.id })), ...mine];
+}
+
+function mockSeedStreams(server) {
+  const general = server.channels.find(c => c.kind === "voice");
+  const join = [["m2", "nova", 610], ["m6", "ash", 420], ["m7", "pip", 300], ["m8", "lumen", 200], ["m9", "dot", 90]];
+  for (const [id, name, ago] of join) {
+    general.voice_users.push(name);
+    general.voice_user_ids.push(id);
+    general.voice_since.push(Math.floor(Date.now() / 1000) - ago);
+    general.voice_muted.push(false);
+    general.voice_deafened.push(false);
+    const member = server.members.find(m => m.id === id);
+    Object.assign(member, { voice_channel: general.id, voice_since: Math.floor(Date.now() / 1000) - ago });
+  }
+  general.activity = null;
+  server.shares = [{ user: "m1", name: "ferris", what: "game", hue: 210 }, { user: "m2", name: "nova", what: "screen", hue: 300 }];
+  server.cameras = ["m6", "m7", "m8", "m9"];
+  mock.shares = server.shares;
+}
+
 function mockFrame(label, width, height, hue) {
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -767,7 +793,7 @@ async function mockInvoke(cmd, args = {}) {
         members.unshift(me);
       }
       return {
-        ...s, members, screen_shares: [], cameras: mock.cameraOn ? ["me"] : [], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
+        ...s, members, screen_shares: mockScreenShares(s), cameras: [...(mock.cameraOn ? ["me"] : []), ...(s.cameras || [])], roles: s.roles || [], afk_channel: s.afk_channel ?? null,
         game_tags: s.game_tags || [], events: s.events || [], rules: s.rules || null, needs_rules: Boolean(s.needs_rules), can_manage_events: !mock.plainMember, onboarding: s.onboarding || null,
         chat_restricted: { embed_links: false, read_history: false, create_threads: false, send_polls: false, create_events: false, voice_filters: false, ...(s.chat_restricted || {}) },
         can_embed_links: !mockChatRestricted(s, "embed_links"), can_read_history: !mockChatRestricted(s, "read_history"), can_create_threads: !mockChatRestricted(s, "create_threads"),
@@ -1940,8 +1966,14 @@ async function mockInvoke(cmd, args = {}) {
     case "set_autostart": mock.autostart = args.enabled; return mock.autostart;
     case "stop_camera": mock.cameraOn = false; return null;
     case "push_camera_frame": return 1;
-    case "watch_camera": return null;
-    case "stop_watching_camera": return null;
+    case "watch_camera": {
+      const timers = (mock.cameraTimers ||= {});
+      clearInterval(timers[args.userId]);
+      const hue = 20 + 70 * Object.keys(timers).length;
+      timers[args.userId] = setInterval(() => showCameraFrame({ user: args.userId, jpeg: mockFrame("Camera", 480, 270, hue) }), 250);
+      return null;
+    }
+    case "stop_watching_camera": clearInterval((mock.cameraTimers || {})[args.userId]); return null;
     case "set_audio_devices": mock.voice.input_device = args.input; mock.voice.output_device = args.output; return mock.voice;
     case "set_afk_channel": mock.servers[args.serverId].afk_channel = args.channelId; return null;
     case "set_volumes":
@@ -1978,15 +2010,16 @@ async function mockInvoke(cmd, args = {}) {
     case "own_share_frame":
       if (!mock.share) throw "not sharing";
       return { width: 1280, height: 720, jpeg: mockFrame(mock.share.name, 640, 360, mock.share.hue), viewers: 2, audio: Boolean(mock.share.audio), ink: mock.share.ink, drawers: mock.share.drawers };
-    case "watch_screen":
-      clearInterval(mock.watchTimer);
-      mock.watchTimer = setInterval(() => {
-        if (!state.watchingUser) return clearInterval(mock.watchTimer);
-        showStageFrame(`data:image/jpeg;base64,${mockFrame("Remote stream", 960, 540, 200)}`, 1280, 720);
-      }, 125);
+    case "watch_screen": {
+      const timers = (mock.watchTimers ||= {});
+      clearInterval(timers[args.userId]);
+      const share = (mock.shares || []).find(x => x.user === args.userId);
+      const label = share ? `${share.name}'s ${share.what}` : "Remote stream";
+      timers[args.userId] = setInterval(() => onVideoFrame({ user: args.userId, width: 1280, height: 720, jpeg: mockFrame(label, 960, 540, share ? share.hue : 200) }), 125);
       setTimeout(() => onStreamInkAllowed({ sharer: args.userId, on: true }), 300);
       return null;
-    case "stop_watching": clearInterval(mock.watchTimer); return null;
+    }
+    case "stop_watching": clearInterval((mock.watchTimers || {})[args.userId]); return null;
     case "create_role": {
       const roles = mock.servers[args.serverId].roles;
       const id = crypto.randomUUID();
@@ -5444,7 +5477,7 @@ function onDmReceived(dm) {
 
 const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
-const cam = { pipe: null, timer: null, busy: false, watching: new Set() };
+const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null };
 
 function savedCameraId() {
   try { return localStorage.getItem(CAMERA_KEY) || ""; } catch { return ""; }
@@ -5517,71 +5550,279 @@ async function stopCamera() {
   if (state.currentServer) await refreshCurrentServer();
 }
 
-function cameraUsersHere() {
+function callChannelHere() {
   const server = state.currentServer;
-  if (!server || !state.voiceChannelId || !state.voiceServer || server.id !== state.voiceServer.id) return [];
-  const channel = server.channels.find(c => c.id === state.voiceChannelId);
+  if (!server || !state.voiceChannelId || !state.voiceServer || server.id !== state.voiceServer.id) return null;
+  return server.channels.find(c => c.id === state.voiceChannelId) || null;
+}
+
+function callTilesHere() {
+  const channel = callChannelHere();
   if (!channel) return [];
-  const on = new Set(server.cameras || []);
-  const ids = channel.voice_user_ids || [];
-  const users = ids
-    .map((id, i) => ({ id, name: channel.voice_users[i] }))
-    .filter(u => on.has(u.id));
-  const me = state.user && users.findIndex(u => u.id === state.user.id);
-  if (me > 0) users.unshift(...users.splice(me, 1));
-  return users;
+  const server = state.currentServer;
+  return callTiles({
+    userIds: channel.voice_user_ids || [],
+    names: channel.voice_users || [],
+    cameras: server.cameras || [],
+    shares: server.screen_shares || [],
+    meId: state.user && state.user.id,
+    channelId: channel.id,
+  });
 }
 
 function renderCamGrid() {
   const grid = $("cam-grid");
-  const users = cameraUsersHere();
-  const wanted = new Set(users.map(u => u.id));
+  const tiles = callTilesHere();
+  syncCameraWatches(tiles.filter(t => t.kind === "camera").map(t => t.user));
+  syncStreamWatches(tiles.filter(t => t.kind === "screen" && !t.me).map(t => t.user));
+  const focused = state.stageMode === "watch" ? state.watchingUser : state.stageMode === "self" && state.user ? state.user.id : null;
+  const layout = callGridLayout({ tiles, focusedStream: focused });
+  grid.classList.toggle("hidden", layout === "none");
+  grid.dataset.layout = layout;
+  $("stage-grid").classList.toggle("hidden", layout !== "strip");
+  grid.dataset.count = String(Math.min(tiles.length, 4));
+  if (!cam.bigTile || !tiles.some(t => t.key === cam.bigTile)) cam.bigTile = null;
+  const wanted = new Set(tiles.map(t => t.key));
+  for (const tile of [...grid.querySelectorAll(".cam-tile")]) {
+    if (wanted.has(tile.dataset.key)) continue;
+    frameUrls.drop(tile.dataset.key);
+    tile.remove();
+  }
+  const pages = layout === "grid" && isPhoneWidth(window.innerWidth) ? callTilePages(tiles) : [tiles];
+  const scroller = callPagesNode(grid);
+  syncCallPages(scroller, pages.length);
+  pages.forEach((page, at) => {
+    const holder = scroller.children[at];
+    page.forEach((t, i) => {
+      const tile = callTileNode(grid, t);
+      paintCallTile(tile, t, focused);
+      if (holder.children[i] !== tile) holder.insertBefore(tile, holder.children[i] || null);
+    });
+  });
+  sizeCallGrid(grid, tiles.length, layout);
+  paintCallDots(grid, scroller, pages.length);
+}
+
+function callPagesNode(grid) {
+  let scroller = grid.querySelector(".cam-pages");
+  if (scroller) return scroller;
+  scroller = el("div", "cam-pages");
+  grid.appendChild(scroller);
+  const dots = el("div", "cam-dots");
+  grid.appendChild(dots);
+  scroller.addEventListener("scroll", () => markCallDot(scroller, dots), { passive: true });
+  return scroller;
+}
+
+function syncCameraWatches(users) {
+  const wanted = new Set(users);
   for (const id of [...cam.watching]) {
     if (!wanted.has(id)) {
       cam.watching.delete(id);
       invoke("stop_watching_camera", { userId: id }).catch(() => {});
     }
   }
-  grid.classList.toggle("hidden", !users.length);
-  grid.dataset.count = String(Math.min(users.length, 4));
-  for (const tile of [...grid.children]) {
-    if (!wanted.has(tile.dataset.user)) {
-      frameUrls.drop(`cam:${tile.dataset.user}`);
-      tile.remove();
-    }
-  }
-  for (const user of users) {
-    let tile = grid.querySelector(`[data-user="${CSS.escape(user.id)}"]`);
-    const isMe = state.user && user.id === state.user.id;
-    if (!tile) {
-      tile = el("div", "cam-tile");
-      tile.dataset.user = user.id;
-      if (!isMe) {
-        tile.appendChild(el("img"));
-        tile.appendChild(el("div", "cam-wait", inBrowserApp() ? WEB_CAMERA_NOTE : "Connecting"));
-      }
-      tile.appendChild(el("div", "cam-name", isMe ? `${user.name} (you)` : user.name));
-      grid.appendChild(tile);
-    }
-    tile.classList.toggle("speaking", state.speaking.has(user.id));
-    if (isMe) {
-      if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
-    } else if (!cam.watching.has(user.id) && !inBrowserApp()) {
-      cam.watching.add(user.id);
-      invoke("watch_camera", { serverId: state.currentServer.id, userId: user.id }).catch(e => {
-        cam.watching.delete(user.id);
-        toast(String(e));
-      });
-    }
+  if (inBrowserApp()) return;
+  for (const id of users) {
+    if ((state.user && id === state.user.id) || cam.watching.has(id)) continue;
+    cam.watching.add(id);
+    invoke("watch_camera", { serverId: state.currentServer.id, userId: id }).catch(e => {
+      cam.watching.delete(id);
+      toast(String(e));
+    });
   }
 }
 
+function syncStreamWatches(tileUsers) {
+  for (const user of streamsToStop(state.streamsWatched, { tileUsers, focused: state.watchingUser })) {
+    state.streamsWatched.delete(user);
+    invoke("stop_watching", { userId: user }).catch(() => {});
+  }
+}
+
+function syncCallPages(scroller, count) {
+  while (scroller.children.length < count) scroller.appendChild(el("div", "cam-page"));
+  while (scroller.children.length > Math.max(count, 1)) {
+    const page = scroller.lastChild;
+    scroller.firstChild.append(...page.children);
+    page.remove();
+  }
+}
+
+function paintCallDots(grid, scroller, count) {
+  const dots = grid.querySelector(".cam-dots");
+  dots.classList.toggle("hidden", count < 2);
+  while (dots.children.length < count) {
+    const dot = el("button", "cam-dot");
+    dot.type = "button";
+    dot.onclick = () => scroller.scrollTo({ left: scroller.clientWidth * [...dots.children].indexOf(dot), behavior: "smooth" });
+    dots.appendChild(dot);
+  }
+  while (dots.children.length > count) dots.lastChild.remove();
+  [...dots.children].forEach((dot, i) => dot.setAttribute("aria-label", `Page ${i + 1} of ${count}`));
+  markCallDot(scroller, dots);
+}
+
+function markCallDot(scroller, dots) {
+  const at = scroller.clientWidth ? Math.round(scroller.scrollLeft / scroller.clientWidth) : 0;
+  [...dots.children].forEach((dot, i) => dot.classList.toggle("on", i === at));
+}
+
+function sizeCallGrid(grid, count, layout) {
+  if (layout !== "grid" || isPhoneWidth(window.innerWidth)) {
+    grid.style.removeProperty("--cols");
+    grid.style.removeProperty("--tile-w");
+    return;
+  }
+  const main = document.querySelector(".main");
+  const width = (grid.clientWidth || (main ? main.clientWidth : 0)) - 76;
+  const fills = main && main.classList.contains("stage-focus");
+  const height = (fills ? grid.clientHeight : (main ? main.clientHeight - 48 : 0) * 0.56) - 24;
+  const slots = count + (cam.bigTile ? 3 : 0);
+  const size = callGridSize(slots, width, height);
+  grid.style.setProperty("--cols", String(size.cols));
+  grid.style.setProperty("--tile-w", `${Math.max(160, size.tileWidth)}px`);
+}
+
+function callTileNode(grid, t) {
+  let tile = grid.querySelector(`.cam-tile[data-key="${CSS.escape(t.key)}"]`);
+  if (tile) return tile;
+  tile = el("div", `cam-tile ${t.kind}`);
+  tile.dataset.key = t.key;
+  tile.dataset.user = t.user;
+  tile.appendChild(el("img"));
+  const cover = el("div", "cam-cover");
+  cover.appendChild(makeAvatar(t.user, t.name, "avatar cam-avatar"));
+  cover.appendChild(el("span", "cam-cover-text"));
+  if (t.kind === "screen" && !t.me) {
+    const watch = el("button", "vp-pill cam-watch", "Watch");
+    watch.type = "button";
+    cover.appendChild(watch);
+  }
+  tile.appendChild(cover);
+  const name = el("div", "cam-name");
+  if (t.kind === "screen") name.appendChild(el("span", "live-badge", "LIVE"));
+  name.appendChild(el("span", "cam-name-text", t.me ? `${t.name} (you)` : t.name));
+  tile.appendChild(name);
+  if (t.kind === "screen" && !t.me) {
+    const stop = el("button", "cam-stop");
+    stop.type = "button";
+    stop.title = "Stop Watching";
+    stop.setAttribute("aria-label", "Stop Watching");
+    stop.appendChild(svgIcon("close", 14));
+    stop.onclick = e => {
+      e.stopPropagation();
+      stopStream(t.user);
+    };
+    tile.appendChild(stop);
+  }
+  tile.onclick = () => openCallTile(t);
+  return tile;
+}
+
+function paintCallTile(tile, t, focused) {
+  const isMe = t.me;
+  tile.classList.toggle("speaking", state.speaking.has(t.user));
+  tile.classList.toggle("big", cam.bigTile === t.key);
+  tile.classList.toggle("on-stage", t.kind === "screen" && focused === t.user);
+  const cover = tile.querySelector(".cam-cover");
+  const text = tile.querySelector(".cam-cover-text");
+  if (t.kind === "camera") {
+    if (isMe) {
+      if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
+      cover.classList.add("hidden");
+    } else {
+      const waiting = !tile.querySelector("img").hasAttribute("src");
+      cover.classList.toggle("hidden", !waiting);
+      text.textContent = inBrowserApp() ? WEB_CAMERA_NOTE : "Connecting";
+    }
+    tile.title = isMe ? "Your camera" : `${t.name}'s camera`;
+    return;
+  }
+  const live = isMe ? state.sharing : state.streamsWatched.has(t.user);
+  const onStage = focused === t.user;
+  tile.classList.toggle("watched", live && !isMe);
+  if (!live) tile.querySelector("img").removeAttribute("src");
+  cover.classList.toggle("hidden", live && !onStage && tile.querySelector("img").hasAttribute("src"));
+  text.textContent = onStage ? "On the big screen" : live ? "Connecting to stream" : `${t.name} is streaming`;
+  const watch = tile.querySelector(".cam-watch");
+  if (watch) watch.classList.toggle("hidden", live);
+  tile.title = onStage ? "Back to the grid" : isMe ? "Open your stream preview" : live ? `Show ${t.name}'s stream big` : `Watch ${t.name}'s stream`;
+}
+
+function onVideoFrame(frame) {
+  if (state.streamsWatched.has(frame.user)) {
+    if (frame.user === state.watchingUser && state.stageMode === "watch") showStageFrame(frameUrls.from("stage", frame.jpeg), frame.width, frame.height);
+    else {
+      const tile = callStreamTile(frame.user);
+      if (tile) showCallStreamFrame(tile, frameUrls.from(tile.dataset.key, frame.jpeg));
+    }
+  } else if (state.sharing && state.user && frame.user === state.user.id) {
+    showOwnFrame(frame);
+  }
+}
+
+function callStreamTile(user) {
+  const tile = $("cam-grid").querySelector(`.cam-tile.screen[data-user="${CSS.escape(user)}"]`);
+  return tile && !tile.classList.contains("on-stage") ? tile : null;
+}
+
+function showCallStreamFrame(tile, src) {
+  tile.querySelector("img").src = src;
+  tile.querySelector(".cam-cover").classList.add("hidden");
+}
+
+async function openCallTile(t) {
+  if (t.kind === "camera") {
+    cam.bigTile = cam.bigTile === t.key ? null : t.key;
+    renderCamGrid();
+    return;
+  }
+  const onStage = t.me ? state.stageMode === "self" : state.stageMode === "watch" && state.watchingUser === t.user;
+  if (onStage) return backToCallGrid();
+  await watchScreen(t.user, t.name);
+}
+
+async function showCallGrid() {
+  const vs = state.voiceServer;
+  if (!vs || vs.call) return;
+  if (!state.currentServer || state.currentServer.id !== vs.id) await selectServer(vs.id);
+  if (state.stageMode === "watch") backToCallGrid();
+  else if (state.stageMode === "self") closeStage({ keepFocus: true });
+  phoneShowChat();
+  if (!callTilesHere().length) {
+    renderCamGrid();
+    return toast("Nobody in your voice channel is streaming or on camera yet");
+  }
+  if (!isPhoneWidth(window.innerWidth)) document.querySelector(".main").classList.add("stage-focus");
+  paintFocusButtons();
+  renderCamGrid();
+  $("cam-grid").focus({ preventScroll: true });
+}
+
+function backToCallGrid() {
+  if (state.stageMode === "watch") state.watchingUser = null;
+  state.watchingName = null;
+  closeStage({ keepFocus: true });
+  renderVoicePanel();
+}
+
+async function stopStream(user) {
+  if (state.watchingUser === user) return stopWatching();
+  state.streamsWatched.delete(user);
+  try {
+    await invoke("stop_watching", { userId: user });
+  } catch (e) {}
+  ink.allowed.delete(user);
+  renderCamGrid();
+}
+
 function showCameraFrame(frame) {
-  const tile = $("cam-grid").querySelector(`[data-user="${CSS.escape(frame.user)}"]`);
+  const tile = $("cam-grid").querySelector(`.cam-tile.camera[data-user="${CSS.escape(frame.user)}"]`);
   if (!tile) return;
   const img = tile.querySelector("img");
-  if (img) img.src = frameUrls.from(`cam:${frame.user}`, frame.jpeg);
-  tile.querySelector(".cam-wait")?.remove();
+  if (img) img.src = frameUrls.from(callTileKey("camera", frame.user), frame.jpeg);
+  tile.querySelector(".cam-cover")?.classList.add("hidden");
 }
 
 async function loadCameraDevices() {
@@ -9832,6 +10073,7 @@ function renderPhoneVoice() {
   $("phone-voice").classList.toggle("hidden", !live);
   if (!live) return;
   $("phone-voice-name").textContent = vs.call ? `Call with ${vs.name}` : vs.channelName;
+  $("phone-voice-grid").classList.toggle("hidden", Boolean(vs.call));
   $("phone-voice-signal").replaceChildren(svgIcon("signal", 14));
   setIcon($("phone-voice-mute"), state.voice.muted ? "micOff" : "mic");
   setIcon($("phone-voice-deafen"), state.voice.deafened ? "headsetOff" : "headset");
@@ -9846,6 +10088,8 @@ function wirePhoneVoice() {
   $("phone-voice-mute").onclick = () => $("mute-btn").click();
   $("phone-voice-deafen").onclick = () => $("deafen-btn").click();
   $("phone-voice-hangup").onclick = disconnectVoice;
+  setIcon($("phone-voice-grid"), "grid", 20);
+  $("phone-voice-grid").onclick = showCallGrid;
   $("phone-voice-where").onclick = () => {
     $("vp-conn-meta").click();
     phoneStep("back");
@@ -16187,13 +16431,14 @@ function renderVoicePanel() {
   panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
   syncSignalPolling(Boolean(state.voiceChannelId && vs));
   renderPhoneVoice();
-  if (!state.voiceChannelId || !vs) return;
+  if (!state.voiceChannelId || !vs) return renderCamGrid();
 
   const call = vs.call ? state.call : null;
   $("vp-status-text").textContent = call && call.state !== "active" ? "Calling" : "Voice Connected";
   $("vp-where").textContent = call ? `Call with ${vs.name}` : `${channelTextName(vs.channelName)} / ${vs.name}`;
   renderVoiceTopic(call ? null : vs);
   $("vp-camera").classList.toggle("hidden", Boolean(call));
+  $("vp-grid").classList.toggle("hidden", Boolean(call));
   renderVoiceInviteButton(Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
@@ -19104,6 +19349,7 @@ function showOwnFrame(frame) {
   $("vp-preview-img").src = src;
   $("vp-preview-empty").classList.add("hidden");
   if (state.stageMode === "self") showStageFrame(src, frame.width, frame.height);
+  else if (state.user && callStreamTile(state.user.id)) showCallStreamFrame(callStreamTile(state.user.id), src);
 }
 
 function startOwnPreview() {
@@ -19187,6 +19433,7 @@ function openStage(mode, label) {
   $("video-pane").classList.toggle("self", mode === "self");
   $("video-close").title = mode === "self" ? "Close Preview" : "Stop Watching";
   renderStageVolume(streamVolumePercent(state.voice));
+  renderCamGrid();
 }
 
 function renderStageVolume(percent) {
@@ -19204,14 +19451,16 @@ async function setStreamVolume(percent) {
   }
 }
 
-function closeStage() {
+function closeStage({ keepFocus = false } = {}) {
   state.stageMode = null;
   resetStageInk();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  document.querySelector(".main").classList.remove("stage-focus");
+  if (!keepFocus) document.querySelector(".main").classList.remove("stage-focus");
   $("video-pane").classList.add("hidden");
   $("video-frame").removeAttribute("src");
   frameUrls.drop("stage");
+  paintFocusButtons();
+  renderCamGrid();
 }
 
 function showStageFrame(src, width, height) {
@@ -19228,9 +19477,17 @@ function showStageFrame(src, width, height) {
 }
 
 function toggleStageFocus() {
-  const focused = document.querySelector(".main").classList.toggle("stage-focus");
+  document.querySelector(".main").classList.toggle("stage-focus");
+  paintFocusButtons();
+  renderCamGrid();
+}
+
+function paintFocusButtons() {
+  const focused = document.querySelector(".main").classList.contains("stage-focus");
   $("stage-focus").title = focused ? "Exit Focus Mode" : "Focus Mode";
   setIcon($("stage-focus"), focused ? "collapse" : "expand", 20);
+  $("cam-grid-focus").title = focused ? "Show Chat" : "Hide Chat";
+  setIcon($("cam-grid-focus"), focused ? "collapse" : "expand", 18);
 }
 
 const ink = { store: inkStore(), sharer: null, allowed: new Map(), tool: null, stroke: 0, pending: [], last: null, flushTimer: null, raf: 0, drawing: false, drawersKey: "" };
@@ -19548,7 +19805,7 @@ async function watchScreen(userId, name, { retry = false } = {}) {
   if (!serverId) return;
   if (inBrowserApp()) return toast(WEB_WATCH_NOTE);
   try {
-    if (state.watchingUser && state.watchingUser !== userId) await stopWatching();
+    if (state.watchingUser !== userId) await releaseStage();
     if (!retry) {
       openStage("watch", `${name}'s screen`);
       phoneShowChat();
@@ -19558,10 +19815,13 @@ async function watchScreen(userId, name, { retry = false } = {}) {
     stageStats.lastAt = 0;
     stageStats.watchSince = performance.now();
     stageStats.retried = retry;
+    const dial = retry || !state.streamsWatched.has(userId);
+    state.streamsWatched.add(userId);
     renderVoicePanel();
-    await invoke("watch_screen", { serverId, userId });
+    if (dial) await invoke("watch_screen", { serverId, userId });
     renderStageInkTools();
   } catch (e) {
+    state.streamsWatched.delete(userId);
     state.watchingUser = null;
     state.watchingName = null;
     closeStage();
@@ -19580,15 +19840,17 @@ function showWatchedStream() {
 }
 
 async function stopWatching() {
-  if (state.watchingUser) {
-    try {
-      await invoke("stop_watching", { userId: state.watchingUser });
-    } catch (e) {}
-    ink.allowed.delete(state.watchingUser);
-  }
+  const user = state.watchingUser;
   state.watchingUser = null;
   state.watchingName = null;
   stageStats.watchSince = 0;
+  if (user) {
+    state.streamsWatched.delete(user);
+    try {
+      await invoke("stop_watching", { userId: user });
+    } catch (e) {}
+    ink.allowed.delete(user);
+  }
   if (state.stageMode === "watch") closeStage();
   renderVoicePanel();
 }
@@ -19600,8 +19862,16 @@ async function closeStageButton() {
 
 async function openOwnPreview() {
   if (!state.sharing) return;
-  if (state.watchingUser) await stopWatching();
+  await releaseStage();
   openStage("self", "Your stream preview");
+}
+
+async function releaseStage() {
+  const user = state.watchingUser;
+  if (!user) return;
+  if (!callTilesHere().some(t => t.kind === "screen" && t.user === user)) return stopWatching();
+  state.watchingUser = null;
+  state.watchingName = null;
 }
 
 function wireEvents() {
@@ -20208,6 +20478,9 @@ function wireEvents() {
     try { localStorage.setItem(SHARE_AUDIO_KEY, shareAudioSaveValue($("share-audio").checked)); } catch {}
   };
   $("stage-focus").onclick = toggleStageFocus;
+  setIcon($("stage-grid"), "grid", 20);
+  $("stage-grid").onclick = backToCallGrid;
+  $("cam-grid-focus").onclick = toggleStageFocus;
   wireStageInk();
   $("stage-fullscreen").onclick = toggleStageFullscreen;
   $("stage-view").ondblclick = toggleStageFullscreen;
@@ -20867,6 +21140,8 @@ function wireEvents() {
   });
 
   $("vp-camera").onclick = () => (state.cameraOn ? stopCamera() : startCamera());
+  setIcon($("vp-grid"), "grid", 18);
+  $("vp-grid").onclick = showCallGrid;
   $("cam-preview-btn").onclick = toggleCameraPreview;
   for (const button of $("cam-bg").querySelectorAll("button")) {
     button.onclick = () => {
@@ -21405,14 +21680,7 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("stream-ink", event => onStreamInk(event.payload));
     window.__TAURI__.event.listen("stream-ink-allowed", event => onStreamInkAllowed(event.payload));
-    window.__TAURI__.event.listen("video-frame", event => {
-      const frame = event.payload;
-      if (state.watchingUser && frame.user === state.watchingUser) {
-        showStageFrame(frameUrls.from("stage", frame.jpeg), frame.width, frame.height);
-      } else if (state.sharing && state.user && frame.user === state.user.id) {
-        showOwnFrame(frame);
-      }
-    });
+    window.__TAURI__.event.listen("video-frame", event => onVideoFrame(event.payload));
   }
 }
 
