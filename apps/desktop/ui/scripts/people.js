@@ -6,8 +6,9 @@ function indexPeople(servers, meId) {
       const person = people.get(member.id) || {
         id: member.id, name: member.name, presence: member.presence, presence_until: member.presence_until ?? null,
         custom_status: member.custom_status, status_emoji: member.status_emoji, activity: member.activity,
-        activity_cover: member.activity_cover ?? null, activity_since: member.activity_since ?? null, servers: [],
+        activity_cover: member.activity_cover ?? null, activity_since: member.activity_since ?? null, phone: false, servers: [],
       };
+      person.phone ||= Boolean(member.phone);
       if (person.presence === "offline" && member.presence !== "offline") person.presence = member.presence;
       person.presence_until ||= member.presence_until ?? null;
       person.custom_status ||= member.custom_status;

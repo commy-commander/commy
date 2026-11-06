@@ -58,6 +58,24 @@ pub struct UserProfile {
     pub avatar_border: Option<String>,
     #[serde(default)]
     pub card_effect: Option<String>,
+    #[serde(default)]
+    pub phone_until: Option<i64>,
+}
+
+pub const PHONE_REACH_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+pub fn phone_mark_due(until: Option<i64>, now_ms: i64) -> bool {
+    until.is_none_or(|until| until - now_ms < PHONE_REACH_MS - DAY_MS)
+}
+
+pub fn phone_reachable(until: Option<i64>, now_ms: i64) -> bool {
+    until.is_some_and(|until| until > now_ms && until <= now_ms + PHONE_REACH_MS + DAY_MS)
+}
+
+pub fn kept_phone_until(incoming: Option<i64>, held: Option<i64>, now_ms: i64) -> Option<i64> {
+    let fresh = |until: &i64| phone_reachable(Some(*until), now_ms);
+    incoming.filter(fresh).max(held.filter(fresh))
 }
 
 pub const AVATAR_BORDERS: [&str; 8] = ["ring", "double", "sunset", "ocean", "neon", "stars", "leaves", "orbit"];
@@ -190,6 +208,7 @@ impl UserProfile {
             server_tag: None,
             avatar_border: None,
             card_effect: None,
+            phone_until: None,
         }
     }
 
@@ -239,6 +258,23 @@ impl UserProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_phone_mark_lasts_a_week_and_no_device_erases_it_early() {
+        let now = 1_000_000_000_000;
+        assert!(phone_mark_due(None, now));
+        assert!(!phone_mark_due(Some(now + PHONE_REACH_MS), now));
+        assert!(phone_mark_due(Some(now + PHONE_REACH_MS - DAY_MS - 1), now), "renewed once a day at most");
+        assert!(phone_reachable(Some(now + 1), now));
+        assert!(!phone_reachable(Some(now), now));
+        assert!(!phone_reachable(Some(now + 30 * DAY_MS), now), "a mark far in the future is not believed");
+        let week = Some(now + PHONE_REACH_MS);
+        assert_eq!(kept_phone_until(None, week, now), week, "a desktop profile without the mark keeps it");
+        assert_eq!(kept_phone_until(Some(now + 5), week, now), week);
+        assert_eq!(kept_phone_until(week, Some(now - 1), now), week);
+        assert_eq!(kept_phone_until(None, Some(now - 1), now), None, "an expired mark goes away");
+        assert_eq!(kept_phone_until(Some(now + 30 * DAY_MS), None, now), None);
+    }
 
     #[test]
     fn only_built_in_borders_and_card_effects_travel() {

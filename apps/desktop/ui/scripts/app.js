@@ -244,7 +244,7 @@ function mockSeed() {
         activity: "Playing Hollow Knight", activity_since: Math.floor(Date.now() / 1000) - 4332 },
       { id: "m2", name: "nova", pronouns: "they / them", presence: "idle", custom_status: null, roles: ["r2"],
         activity: "Playing Portal 2", activity_cover: "co1rs4", activity_since: Math.floor(Date.now() / 1000) - 983 },
-      { id: "m3", name: "sleepy", presence: "offline", custom_status: null },
+      { id: "m3", name: "sleepy", presence: "offline", custom_status: null, phone: true },
       { id: "m5", name: "quill", presence: "offline", custom_status: null, about: "Only friends get to read this.", pronouns: "she / her", profile_policy: "friends" },
       { id: "m4", name: "Tidy", presence: "online", custom_status: "Keeping chat tidy", bot: true, roles: ["r2"] },
       { id: "m10", name: "Quotebook", presence: "offline", custom_status: null, bot: true },
@@ -6761,7 +6761,8 @@ function renderMembers() {
       row.dataset.user = member.id;
       row.classList.toggle("speaking", state.speaking.has(member.id));
       const avatar = makeAvatar(member.id, member.name);
-      const dot = el("span", "presence-dot " + member.presence);
+      const dot = el("span", "presence-dot " + presenceDot(member));
+      if (onPhone(member)) dot.title = presenceLabel(member);
       avatar.appendChild(dot);
       row.appendChild(avatar);
       const meta = el("div");
@@ -12174,7 +12175,7 @@ async function openFullProfile(member) {
   const av = $("fp-avatar");
   av.replaceChildren();
   paintAvatar(av, person.id, person.name);
-  av.appendChild(el("span", "presence-dot " + (person.presence || "offline")));
+  av.appendChild(el("span", "presence-dot " + presenceDot(person)));
   $("fp-name").textContent = person.name;
   paintRole($("fp-name"), person.color);
   $("fp-name").parentElement.querySelectorAll(".role-tag, .server-tag").forEach(n => n.remove());
@@ -12281,7 +12282,7 @@ function openMemberCard(member, anchor) {
   const av = $("mc-avatar");
   av.replaceChildren();
   paintAvatar(av, member.id, member.name);
-  av.appendChild(el("span", "presence-dot " + (member.presence || "offline")));
+  av.appendChild(el("span", "presence-dot " + presenceDot({ ...(state.people.get(member.id) || {}), ...member })));
   const name = $("mc-name");
   name.textContent = member.name;
   paintRole(name, member.color);
@@ -17485,7 +17486,7 @@ function personPresence(userId) {
 
 function avatarWithPresence(name, userId, className = "avatar") {
   const avatar = makeAvatar(userId, name, className);
-  avatar.appendChild(el("span", "presence-dot " + personPresence(userId)));
+  avatar.appendChild(el("span", "presence-dot " + presenceDot({ ...(state.people.get(userId) || {}), presence: personPresence(userId) })));
   return avatar;
 }
 
@@ -17637,7 +17638,7 @@ async function renderDmThreads() {
       const meta = el("div", "dm-meta");
       meta.appendChild(el("div", "dm-name", friend.name));
       const person = state.people.get(friend.id);
-      meta.appendChild(appendEmojiText(el("div", "dm-preview"), (person && statusLine(person)) || PRESENCE_LABELS[personPresence(friend.id)] || "Offline"));
+      meta.appendChild(appendEmojiText(el("div", "dm-preview"), (person && statusLine(person)) || presenceLabel({ ...(person || {}), presence: personPresence(friend.id) })));
       row.appendChild(meta);
       row.onclick = () => messageUser(friend.id, friend.name);
       row.oncontextmenu = e => {
@@ -17894,7 +17895,7 @@ function onDmCall(view) {
 function renderDmHeader(userId, name) {
   const presence = personPresence(userId);
   const person = state.people.get(userId);
-  $("chat-presence").className = `presence-dot inline ${presence}`;
+  $("chat-presence").className = `presence-dot inline ${presenceDot({ ...(person || {}), presence })}`;
   $("chat-presence").title = presenceLabel({ ...(person || {}), presence });
   setEmojiText($("channel-topic"), (person && subLine(person)) || "");
   renderDmProfile(userId, name);
@@ -17907,7 +17908,7 @@ function renderDmProfile(userId, name) {
   $("dm-profile-btn").classList.toggle("active", state.showDmProfile);
   $("dm-profile-btn").title = state.showDmProfile ? "Hide User Profile" : "Show User Profile";
   paintAvatar($("dm-profile-avatar"), userId, name);
-  $("dm-profile-presence").className = `presence-dot ${presence}`;
+  $("dm-profile-presence").className = `presence-dot ${presenceDot({ ...(person || {}), presence })}`;
   $("dm-profile-banner").style.background = bannerColor(userId);
   $("dm-profile-name").textContent = name;
   const seen = { ...(person || {}), presence };
