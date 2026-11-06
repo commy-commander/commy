@@ -623,6 +623,9 @@ impl ScreenShareSession {
         tx: mpsc::UnboundedSender<MediaPacket>,
         mut requests: mpsc::UnboundedReceiver<MediaPacket>,
     ) {
+        if let Some(frame) = self.latest_frame() {
+            let _ = tx.send(MediaPacket::Video { seq: 0, width: frame.width, height: frame.height, jpeg: frame.jpeg });
+        }
         self.add_subscriber(tx.clone());
         let mut listeners = self.audio_subscribers.clone();
         let ink = self.ink.clone();
