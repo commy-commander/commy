@@ -2076,7 +2076,7 @@ const ICONS = {
   chat: "M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-2 12H6v-2h12zm0-3H6V9h12zm0-3H6V6h12z",
   plus: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z",
   forum: "M4 3h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v4h16V5H4zm0 8h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2zm0 2v4h16v-4H4zm2-9h5v2H6V6zm0 10h8v2H6v-2z",
-  grid: "M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h8v8h-8v-8zm2 2v4h4v-4h-4z",
+  grid: "M4.5 3h5a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 3 9.5v-5A1.5 1.5 0 0 1 4.5 3zM14.5 3h5a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 13 9.5v-5A1.5 1.5 0 0 1 14.5 3zM4.5 13h5a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 3 19.5v-5A1.5 1.5 0 0 1 4.5 13zM14.5 13h5a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 13 19.5v-5A1.5 1.5 0 0 1 14.5 13z",
   list: "M3 5h2v2H3V5zm4 0h14v2H7V5zM3 11h2v2H3v-2zm4 0h14v2H7v-2zM3 17h2v2H3v-2zm4 0h14v2H7v-2z",
   screen: "M20 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h5v2H7v2h10v-2h-2v-2h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 13H4V5h16zm-9-2 5-3.5L11 7z",
   screenOff: "M21 16V5a2 2 0 0 0-2-2H6.8l2 2H19v10.2zM2.4 2.1 1.1 3.4 3 5.3V16a2 2 0 0 0 2 2h5v2H8v2h8v-2h-2v-2h3.7l3 3 1.3-1.3zM5 16V7.3l8.7 8.7z",
@@ -5878,13 +5878,14 @@ const CAMERA_FX_NOTES = {
 
 function renderCameraFx(status = cameraFxStatus()) {
   const { background, mirror } = cameraFx.settings;
-  for (const button of $("cam-bg").querySelectorAll("button")) {
+  for (const button of document.querySelectorAll("#cam-bg button, #vpop-bg button")) {
     const on = button.dataset.bg === background;
     button.classList.toggle("active", on);
     button.setAttribute("aria-checked", String(on));
   }
   renderAvatarPicker();
   $("cam-mirror").checked = mirror;
+  $("vpop-mirror").checked = mirror;
   document.body.dataset.camMirror = mirror ? "on" : "off";
   const note = $("cam-fx-note");
   note.textContent = CAMERA_FX_NOTES[status];
@@ -5997,7 +5998,7 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -10289,6 +10290,41 @@ function animateToggle(button, off) {
   button.classList.add("toggle-anim");
   if (off) button.classList.add("slash-in");
   setTimeout(() => button.classList.remove("toggle-anim", "slash-in"), 450);
+}
+
+async function useCameraDevice(id) {
+  try { localStorage.setItem(CAMERA_KEY, id); } catch {}
+  if ($("camera-device").value !== id) $("camera-device").value = id;
+  if (previewPipe) {
+    stopCameraPreview();
+    toggleCameraPreview();
+  }
+  if (state.cameraOn) {
+    await stopCamera();
+    await startCamera();
+  }
+}
+
+async function toggleVideoPop(anchor) {
+  const pop = $("video-pop");
+  if (!pop.classList.contains("hidden")) {
+    pop.classList.add("hidden");
+    return;
+  }
+  closeFloating();
+  renderCameraFx();
+  const select = $("vpop-device");
+  select.replaceChildren(el("option", null, "Loading cameras..."));
+  pop.classList.remove("hidden");
+  placePopup(pop, anchor, "above");
+  try {
+    const cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+    const chosen = savedCameraId();
+    select.replaceChildren(new Option("Default", ""), ...cameras.map((d, i) => new Option(d.label || `Camera ${i + 1}`, d.deviceId)));
+    select.value = cameras.some(d => d.deviceId === chosen) ? chosen : "";
+  } catch {
+    select.replaceChildren(el("option", null, "No cameras found"));
+  }
 }
 
 async function toggleAudioPop(which, anchor) {
@@ -16437,9 +16473,8 @@ function renderVoicePanel() {
   $("vp-status-text").textContent = call && call.state !== "active" ? "Calling" : "Voice Connected";
   $("vp-where").textContent = call ? `Call with ${vs.name}` : `${channelTextName(vs.channelName)} / ${vs.name}`;
   renderVoiceTopic(call ? null : vs);
-  $("vp-camera").classList.toggle("hidden", Boolean(call));
+  $("vp-camera-split").classList.toggle("hidden", Boolean(call));
   $("vp-grid").classList.toggle("hidden", Boolean(call));
-  renderVoiceInviteButton(Boolean(call));
   const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
     ? state.user.activity.slice(8)
     : null;
@@ -20734,7 +20769,7 @@ function wireEvents() {
     applyAvatar("none");
   };
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
     if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
@@ -21143,7 +21178,7 @@ function wireEvents() {
   setIcon($("vp-grid"), "grid", 18);
   $("vp-grid").onclick = showCallGrid;
   $("cam-preview-btn").onclick = toggleCameraPreview;
-  for (const button of $("cam-bg").querySelectorAll("button")) {
+  for (const button of document.querySelectorAll("#cam-bg button, #vpop-bg button")) {
     button.onclick = () => {
       if (button.dataset.bg === "image" && !hasCameraBackdrop()) chooseCameraBackdrop();
       else updateCameraFx({ background: button.dataset.bg });
@@ -21155,19 +21190,17 @@ function wireEvents() {
   }
   $("cam-avatar-btn").onclick = chooseCameraAvatar;
   $("cam-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
+  $("vpop-mirror").addEventListener("change", e => updateCameraFx({ mirror: e.target.checked }));
+  $("camera-caret").replaceChildren(svgIcon("chevronDown", 12));
+  $("camera-caret").onclick = e => toggleVideoPop(e.currentTarget);
+  $("vpop-device").addEventListener("change", e => useCameraDevice(e.target.value));
+  $("vpop-settings").onclick = () => {
+    closeFloating();
+    openUserSettings("camera");
+  };
   onCameraFxChange(renderCameraFx);
   renderCameraFx();
-  $("camera-device").addEventListener("change", async e => {
-    try { localStorage.setItem(CAMERA_KEY, e.target.value); } catch {}
-    if (previewPipe) {
-      stopCameraPreview();
-      toggleCameraPreview();
-    }
-    if (state.cameraOn) {
-      await stopCamera();
-      await startCamera();
-    }
-  });
+  $("camera-device").addEventListener("change", e => useCameraDevice(e.target.value));
   $("input-device").addEventListener("change", saveAudioDevices);
   $("output-device").addEventListener("change", saveAudioDevices);
 
@@ -24473,18 +24506,7 @@ async function joinVoiceInvite(invite) {
   await toggleVoice(channel);
 }
 
-function renderVoiceInviteButton(call) {
-  const button = $("vp-invite");
-  setIcon(button, "friendAdd", 18);
-  button.classList.toggle("hidden", call);
-}
-
 function wireVoiceInvites() {
-  $("vp-invite").onclick = () => {
-    const vs = state.voiceServer;
-    if (!vs || vs.call || !state.voiceChannelId) return;
-    openVoiceInvite(vs.id, state.voiceChannelId);
-  };
   $("chm-voice-invite").onclick = () => {
     closeFloating();
     if (menuChannel && state.currentServer) openVoiceInvite(state.currentServer.id, menuChannel.id);
