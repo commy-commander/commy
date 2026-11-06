@@ -34,12 +34,13 @@ pub fn is_call(message: &DmMessage) -> bool {
 }
 
 pub fn rings(message: &DmMessage) -> bool {
-    matches!(message.action, DmAction::Post | DmAction::Call { signal: CallSignal::Ring, .. })
+    matches!(message.action, DmAction::Post | DmAction::GroupInvite { .. } | DmAction::Call { signal: CallSignal::Ring, .. })
 }
 
 pub fn wake_text(message: &DmMessage) -> String {
     match message.action {
         DmAction::Call { .. } => "Calling you".to_string(),
+        DmAction::GroupInvite { .. } => "Added you to a group".to_string(),
         _ => crate::dm_excerpt(message),
     }
 }
@@ -251,6 +252,9 @@ mod tests {
         assert!(!rings(&DmMessage::acting(a, b, DmAction::Edit { target }, "hello!")));
         assert!(!rings(&DmMessage::acting(a, b, DmAction::React { target, emoji: "🔥".into(), active: true }, "")));
         assert!(!rings(&DmMessage::acting(a, b, DmAction::Delete { target }, "")));
+        let invite = group_invite(a, b, "ticket".into(), Some((KeyId([1; 16]), &ChannelSecret::from_bytes([2; 32]))));
+        assert!(rings(&invite), "a group invite wakes the phone so the group can be joined");
+        assert_eq!(wake_text(&invite), "Added you to a group", "the invite's key never goes in a preview");
     }
 
     #[test]
