@@ -145,7 +145,10 @@
             <button class="icon-btn" id="deafen-btn" title="Deafen"></button>
             <button class="caret-btn" id="deafen-caret" title="Output Options"></button>
           </div>
-          <button class="icon-btn native-only" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
+          <div class="split-btn native-only" id="vp-camera-split">
+            <button class="icon-btn native-only" id="vp-camera" title="Turn On Camera"><span id="vp-camera-icon"></span></button>
+            <button class="caret-btn" id="camera-caret" title="Video Options" aria-label="Video Options" aria-haspopup="dialog"></button>
+          </div>
         </div>
         <button class="vp-talk hidden" id="vp-talk" type="button">Hold to talk</button>
         <div class="vp-actions" id="vp-actions">
@@ -3269,6 +3272,19 @@
     <input type="range" id="ap-volume" min="0" max="200" value="100" />
     <label class="ap-row" id="ap-nc-row"><span>Noise Cancellation</span><input type="checkbox" id="ap-nc" class="switch" /></label>
     <button class="pp-link" id="ap-settings">Voice Settings</button>
+  </div>
+
+  <div class="audio-pop video-pop hidden" id="video-pop" role="dialog" aria-label="Video Options">
+    <div class="ap-title">Camera</div>
+    <select id="vpop-device" class="compact-select" aria-label="Camera"></select>
+    <div class="ap-title" id="vpop-bg-label">Background</div>
+    <div class="segmented vpop-bg" id="vpop-bg" role="radiogroup" aria-labelledby="vpop-bg-label">
+      <button data-bg="off" role="radio"><strong>Off</strong></button>
+      <button data-bg="blur" role="radio"><strong>Blur</strong></button>
+      <button data-bg="image" role="radio"><strong>Image</strong></button>
+    </div>
+    <label class="ap-row"><span>Mirror my video</span><input type="checkbox" id="vpop-mirror" class="switch" /></label>
+    <button class="pp-link" id="vpop-settings">Video Settings</button>
   </div>
 
   <div class="pop-menu ctx-menu hidden" id="member-menu" role="menu"></div>

@@ -7577,7 +7577,15 @@ body.mobile-app:not(.can-share-screen) .screen-share-only { display: none !impor
   white-space: nowrap;
   overflow: hidden;
 }
-.vp-activities > span { overflow: hidden; text-overflow: ellipsis; }
+.vp-activities > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vp-activities > svg { flex: 0 0 auto; }
+.vp-actions .vp-activities { padding: 0 4px; gap: 5px; }
+.voice-panel { container: voice-panel / inline-size; }
+@container voice-panel (max-width: 213px) {
+  .vp-actions .vp-activities:not(#vp-activities) > span { display: none; }
+  #vp-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+.video-pop .segmented button { padding: 5px 6px; }
 .vp-activities:hover { background: var(--bg-active); }
 .vp-activities.running { background: var(--accent); color: var(--accent-ink); }
 .vp-activities.running:hover { background: var(--accent-hover); }
