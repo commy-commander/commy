@@ -11,7 +11,7 @@ const release = !process.argv.includes("--dev");
 const relays = webRelayList(process.env.COMMY_WEB_RELAYS, process.env.COMMY_DEFAULT_RELAY || "https://relay.commy.chat:8443");
 const base = process.env.COMMY_WEB_BASE || "";
 
-const SKIPPED = ["apps/desktop/ui/tests/", "apps/desktop/ui/vendor/", "apps/desktop/ui/overlay.html", "apps/desktop/ui/ink.html"];
+const SKIPPED = ["apps/desktop/ui/tests/", "apps/desktop/ui/vendor/mediapipe/", "apps/desktop/ui/vendor/three/", "apps/desktop/ui/overlay.html", "apps/desktop/ui/ink.html"];
 
 const run = (cmd, args, env = {}) => execFileSync(cmd, args, { cwd: repo, stdio: "inherit", env: { ...process.env, ...env } });
 
@@ -34,12 +34,14 @@ for (const path of tracked) {
 for (const [from, to] of [
   ["web-commands.js", "scripts/web-commands.js"],
   ["web-voice.js", "scripts/web-voice.js"],
+  ["web-speech.js", "scripts/web-speech.js"],
   ["web-voice-worklet.js", "scripts/web-voice-worklet.js"],
   ["web-bridge.js", "scripts/web-bridge.js"],
   ["web.css", "styles/web.css"],
 ]) {
   cpSync(join(web, "ui", from), join(dist, to));
 }
+cpSync(join(repo, "apps", "desktop", "src-tauri", "voice-pack.json"), join(dist, "scripts", "voice-pack.json"));
 run("wasm-bindgen", ["--target", "web", "--no-typescript", "--out-dir", join(dist, "scripts", "pkg"), wasm]);
 
 const index = join(dist, "index.html");

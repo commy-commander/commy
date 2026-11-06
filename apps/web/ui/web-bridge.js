@@ -94,6 +94,7 @@
   host.startVoice = () => voice.start(frame => started && started.voice_frame(frame));
   host.stopVoice = () => voice.stop();
   host.playVoice = (peer, pcm) => voice.play(peer, pcm.slice());
+  const voicePack = webVoicePack(window, emit);
 
   const client = import("./pkg/commy_web_client.js").then(async module => {
     await module.default();
@@ -283,7 +284,17 @@
     return null;
   }
 
-  async function invoke(cmd, args) {
+  async function speech(cmd, args, options) {
+    if (cmd === "voice_pack_status") return voicePack.status();
+    if (cmd === "voice_pack_download") return voicePack.download(args);
+    if (cmd === "voice_pack_file") return voicePack.file(args);
+    if (cmd === "speech_stop") return voice.hush();
+    const clip = webSpeechClip(args, options);
+    await voice.speak(clip.samples, clip.rate, clip.append);
+    return null;
+  }
+
+  async function invoke(cmd, args, options) {
     const fallback = webDefault(cmd);
     if (fallback.known) return fallback.value;
     if (cmd === "open_url") return openLinkInNewTab(window, args && args.url);
@@ -303,6 +314,7 @@
     if (cmd === "pick_sound") return pickSound();
     if (cmd === "fetch_catalog_image") return fetchCatalogImage(args);
     if (WEB_VOICE_COMMANDS.includes(cmd)) return setVoice(cmd, args);
+    if (WEB_SPEECH_COMMANDS.includes(cmd)) return speech(cmd, args, options);
     if (cmd === "list_audio_devices") return voice.devices();
     if (cmd === "start_mic_test") return startMicTest();
     if (cmd === "stop_mic_test") return voice.stopTest();
