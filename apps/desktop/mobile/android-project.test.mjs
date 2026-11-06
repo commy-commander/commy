@@ -221,6 +221,8 @@ test("release bundles carry the native symbol table for Play crash reports, once
   assert.equal(out.split("debugSymbolLevel").length - 1, 1);
   assert.match(out, /getByName\("release"\) \{\n            ndk \{\n                debugSymbolLevel = "SYMBOL_TABLE"\n            \}\n            signingConfig = /);
   assert.ok(out.indexOf("debugSymbolLevel") > out.indexOf('getByName("release") {'));
+  assert.equal(out.split("ndkPath").length - 1, 1);
+  assert.match(out, /android \{\n    System\.getenv\("NDK_HOME"\)\?\.takeIf \{ it\.isNotBlank\(\) \}\?\.let \{ ndkPath = it \}\n    namespace/);
   const debugOnly = tauriGradle.replace(/        getByName\("release"\)[\s\S]*?\n        \}\n/, "");
   assert.equal(withNativeSymbols(debugOnly), debugOnly);
 });

@@ -132,7 +132,11 @@ export function withNativeSymbols(gradle) {
   if (!release) return gradle;
   const at = release.index + release[0].length;
   const indent = `${release[1]}    `;
-  return `${gradle.slice(0, at)}${indent}ndk {\n${indent}    debugSymbolLevel = "SYMBOL_TABLE"\n${indent}}\n${gradle.slice(at)}`;
+  const out = `${gradle.slice(0, at)}${indent}ndk {\n${indent}    debugSymbolLevel = "SYMBOL_TABLE"\n${indent}}\n${gradle.slice(at)}`;
+  const android = out.match(/^([ \t]*)android \{\n/m);
+  if (!android || out.includes("ndkPath")) return out;
+  const from = android.index + android[0].length;
+  return `${out.slice(0, from)}${android[1]}    System.getenv("NDK_HOME")?.takeIf { it.isNotBlank() }?.let { ndkPath = it }\n${out.slice(from)}`;
 }
 
 export function applicationId(gradle) {

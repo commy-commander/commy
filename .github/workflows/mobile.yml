@@ -151,7 +151,7 @@ jobs:
       - name: Build the Play bundle
         if: env.ANDROID_MODE == 'play'
         env:
-          CARGO_PROFILE_RELEASE_STRIP: "false"
+          CARGO_PROFILE_RELEASE_STRIP: debuginfo
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           ANDROID_UPLOAD_KEYSTORE: ${{ secrets.ANDROID_UPLOAD_KEYSTORE }}
           ANDROID_UPLOAD_PASSWORD: ${{ secrets.ANDROID_UPLOAD_PASSWORD }}
@@ -187,6 +187,8 @@ jobs:
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs dist/*.apk | grep 'SHA-256'
           symbols="$(unzip -l dist/*.aab | grep -c 'BUNDLE-METADATA/com.android.tools.build.debugsymbols/.*\.so' || true)"
           if [ "$symbols" -gt 0 ]; then echo "The bundle carries native debug symbols for $symbols libraries"; else echo "::warning::The bundle has no native debug symbols, so Play crash reports will show raw addresses"; fi
+          unzip -p dist/*.apk lib/arm64-v8a/libcommy_desktop.so > "$RUNNER_TEMP/libcommy_desktop.so"
+          echo "APK native library: $(file -b "$RUNNER_TEMP/libcommy_desktop.so" | grep -o 'not stripped\|stripped' || echo unknown), $(wc -c < "$RUNNER_TEMP/libcommy_desktop.so") bytes"
           ls -la dist
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
