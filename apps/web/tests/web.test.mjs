@@ -410,6 +410,9 @@ test("watching streams and cameras explains itself in the browser instead of fai
   const cameras = /function syncCameraWatches\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
   assert.ok(cameras.indexOf("if (inBrowserApp()) return;") > 0);
   assert.ok(cameras.indexOf("if (inBrowserApp()) return;") < cameras.indexOf('invoke("watch_camera"'));
+  const tile = /function paintCallTile\([^)]*\) \{([\s\S]*?)\n\}/.exec(app)[1];
+  assert.match(tile, /inBrowserApp\(\) \? WEB_STREAM_NOTE/);
+  assert.match(tile, /watch\.classList\.toggle\("hidden", live \|\| inBrowserApp\(\)\)/);
 });
 
 test("the browser waits for a current server before joining voice, like the desktop", () => {
