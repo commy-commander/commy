@@ -94,7 +94,7 @@ jobs:
           fi
           ls -la dist
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         with:
           name: ${{ matrix.artifact }}
           path: dist/*

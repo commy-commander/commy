@@ -140,7 +140,7 @@ jobs:
           echo "APK:      $got"
           [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::The APK is not signed with the key from ANDROID_DEBUG_KEYSTORE"; exit 1; }
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: env.ANDROID_MODE == 'debug'
         with:
           name: commy-android-debug
@@ -186,7 +186,7 @@ jobs:
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs dist/*.apk | grep 'SHA-256'
           ls -la dist
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: env.ANDROID_MODE == 'play'
         with:
           name: commy-android-play
@@ -340,7 +340,7 @@ jobs:
           fi
           ls -la dist
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         with:
           name: commy-ios-${{ env.IOS_MODE }}
           path: dist/*

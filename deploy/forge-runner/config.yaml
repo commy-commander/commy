@@ -1,0 +1,26 @@
+log:
+  level: info
+runner:
+  file: /data/.runner
+  capacity: 1
+  timeout: 3h
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  envs:
+    DOCKER_HOST: tcp://127.0.0.1:2375
+  labels:
+    - commy-ci:docker://catthehacker/ubuntu:full-24.04
+    - commy-pc:docker://catthehacker/ubuntu:full-24.04
+    - ubuntu-latest:docker://catthehacker/ubuntu:full-24.04
+    - ubuntu-24.04:docker://catthehacker/ubuntu:full-24.04
+    - ubuntu-22.04:docker://catthehacker/ubuntu:full-22.04
+cache:
+  enabled: true
+  dir: /data/cache
+container:
+  network: host
+  privileged: false
+  docker_host: tcp://127.0.0.1:2375
+  force_pull: false
+host:
+  workdir_parent: /data/host

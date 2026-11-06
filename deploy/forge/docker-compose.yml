@@ -1,0 +1,53 @@
+name: commy-forge
+
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:15.0.11-rootless
+    container_name: commy-forge
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    pids_limit: 512
+    mem_limit: ${FORGE_MEM_LIMIT:-1g}
+    cpus: ${FORGE_CPUS:-1}
+    environment:
+      FORGEJO__server__DOMAIN: ${FORGE_DOMAIN:-git.commy.chat}
+      FORGEJO__server__ROOT_URL: https://${FORGE_DOMAIN:-git.commy.chat}/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__server__OFFLINE_MODE: "true"
+      FORGEJO__server__LANDING_PAGE: explore
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES: 172.16.0.0/12
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__service__REQUIRE_SIGNIN_VIEW: "false"
+      FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE: "true"
+      FORGEJO__openid__ENABLE_OPENID_SIGNIN: "false"
+      FORGEJO__openid__ENABLE_OPENID_SIGNUP: "false"
+      FORGEJO__picture__DISABLE_GRAVATAR: "true"
+      FORGEJO__mailer__ENABLED: "false"
+      FORGEJO__repository__DEFAULT_PRIVATE: private
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__actions__ENABLED: "true"
+      FORGEJO__actions__DEFAULT_ACTIONS_URL: github
+      FORGEJO__actions__ABANDONED_JOB_TIMEOUT: ${FORGE_ABANDONED_JOB_TIMEOUT:-24h}
+      FORGEJO__log__LEVEL: Warn
+      FORGEJO__cron_0X2E_update_checker__ENABLED: "false"
+    volumes:
+      - forge-data:/var/lib/gitea
+      - forge-config:/etc/gitea
+    networks: [forge]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  forge:
+    name: commy-forge
+
+volumes:
+  forge-data:
+  forge-config:

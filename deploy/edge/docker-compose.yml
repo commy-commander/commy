@@ -21,13 +21,14 @@ services:
       DOCS_DOMAIN: ${DOCS_DOMAIN:-docs.${PROD_DOMAIN}}
       RELAY_DOMAIN: ${RELAY_DOMAIN:-relay.${PROD_DOMAIN}}
       STAGING_RELAY_DOMAIN: ${STAGING_RELAY_DOMAIN:-relay-staging.${PROD_DOMAIN}}
+      FORGE_DOMAIN: ${FORGE_DOMAIN:-git.${PROD_DOMAIN}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./certs:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
       - /var/log/commy-caddy:/var/log/caddy
-    networks: [prod, staging, dev, relay]
+    networks: [prod, staging, dev, relay, forge]
     logging:
       driver: json-file
       options:
@@ -47,6 +48,9 @@ networks:
   relay:
     external: true
     name: commy-relay
+  forge:
+    external: true
+    name: commy-forge
 
 volumes:
   caddy_data:

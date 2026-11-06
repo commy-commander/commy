@@ -34,16 +34,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       linux: ${{ steps.pick.outputs.linux }}
       windows: ${{ steps.pick.outputs.windows }}
       macos: ${{ steps.pick.outputs.macos }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
       - id: pick
         env:
-          GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.ref }}
         run: |
           pick() {
             echo "linux=$1" >> "$GITHUB_OUTPUT"
@@ -55,7 +58,7 @@ jobs:
             pick true true
             exit 0
           fi
-          files="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename')"
+          files="$(git diff --name-only "origin/$BASE...HEAD")"
           not_compiled='\.md$|^crates/commy-bot/clients/'
           phone_only='^apps/desktop/src-tauri/(gen/|tauri\.(android|ios)\.conf\.json$|Info\.ios\.plist$|package(-lock)?\.json$)|/phone\.rs$'
           no_os_code='^apps/web/|^crates/commy-(view|bot)/'

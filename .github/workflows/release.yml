@@ -130,7 +130,7 @@ jobs:
           esac
           ls -la "$out"
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: matrix.bundles
         with:
           name: commy-${{ matrix.target }}
@@ -138,7 +138,7 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: runner.os == 'macOS'
         with:
           name: macos-bin-${{ matrix.target }}
@@ -164,7 +164,7 @@ jobs:
         id: version
         uses: ./.github/actions/release-config
 
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: https://data.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4
         with:
           pattern: macos-bin-*
           path: bins
@@ -201,7 +201,7 @@ jobs:
           COPYFILE_DISABLE=1 tar -czf "$out/Commy_${VERSION}_universal.app.tar.gz" -C "$bundle/macos" Commy.app
           ls -la "$out"
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         with:
           name: commy-universal-apple-darwin
           path: dist/*
@@ -226,7 +226,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: https://data.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4
         with:
           pattern: commy-*
           path: dist

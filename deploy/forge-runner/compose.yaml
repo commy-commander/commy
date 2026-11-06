@@ -1,0 +1,52 @@
+name: commy-forge-runner
+
+x-limits: &limits
+  cpus: ${CI_CPUS:-4}
+  cpu_shares: 256
+  mem_limit: ${CI_MEMORY:-8g}
+  memswap_limit: ${CI_MEMORY:-8g}
+  pids_limit: 4096
+  oom_score_adj: 500
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  dind:
+    <<: *limits
+    image: docker:29-dind
+    privileged: true
+    dns: ["1.1.1.1", "1.0.0.1"]
+    command: ["dockerd", "--host=tcp://127.0.0.1:2375"]
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - runner-docker:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "-H", "tcp://127.0.0.1:2375", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  runner:
+    <<: *limits
+    image: code.forgejo.org/forgejo/runner:13.2.1
+    user: "0:0"
+    network_mode: service:dind
+    depends_on:
+      dind:
+        condition: service_healthy
+        restart: true
+    environment:
+      DOCKER_HOST: tcp://127.0.0.1:2375
+    command: ["forgejo-runner", "daemon", "--config", "/etc/forgejo-runner/config.yaml"]
+    volumes:
+      - ./config.yaml:/etc/forgejo-runner/config.yaml:ro
+      - runner-data:/data
+
+volumes:
+  runner-docker:
+  runner-data:
