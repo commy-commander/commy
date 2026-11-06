@@ -3178,6 +3178,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .cam-grid-focus { position: absolute; top: 12px; right: 12px; z-index: 2; }
 .cam-tile {
   position: relative;
+  container: cam-tile / inline-size;
   aspect-ratio: 16 / 9;
   background: #000;
   border-radius: var(--radius);
@@ -3209,6 +3210,13 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .cam-tile.on-stage .cam-cover { background: rgba(11, 13, 23, .88); }
 .cam-avatar { width: 56px; height: 56px; font-size: 20px; }
 .cam-watch { min-width: 88px; }
+@container cam-tile (max-width: 260px) {
+  .cam-cover { gap: 6px; padding-bottom: 28px; }
+  .cam-cover-text { display: none; }
+  .cam-tile.on-stage .cam-cover-text { display: block; }
+  .cam-avatar { width: 40px; height: 40px; font-size: 16px; }
+  .cam-watch { min-width: 72px; padding: 4px 12px; }
+}
 .cam-name {
   position: absolute;
   left: 8px;
