@@ -72,6 +72,8 @@ test("a stream on the big screen turns the grid into a row of tiles under it", (
   assert.equal(callGridLayout({ tiles: [], focusedStream: null }), "none");
   assert.equal(callGridLayout({ tiles: [{}], focusedStream: null }), "grid");
   assert.equal(callGridLayout({ tiles: [{}], focusedStream: "b" }), "strip");
+  assert.equal(callGridLayout({ tiles: [{ kind: "screen", user: "b" }], focusedStream: "b" }), "none");
+  assert.equal(callGridLayout({ tiles: [{ kind: "screen", user: "b" }, { kind: "camera", user: "b" }], focusedStream: "b" }), "strip");
 });
 
 test("streams leave only once they have neither a tile nor the big screen", () => {
