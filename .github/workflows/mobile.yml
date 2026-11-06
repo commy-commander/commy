@@ -154,8 +154,15 @@ jobs:
           if [ -n "$ANDROID_UPLOAD_KEYSTORE" ] && [ -n "$ANDROID_UPLOAD_PASSWORD" ]; then
             printf '%s\n' "$ANDROID_UPLOAD_KEYSTORE" | grep -av -- '-----' | tr -cd 'A-Za-z0-9+/=' | base64 -d > "$ANDROID_UPLOAD_KEYSTORE_FILE" \
               || { echo "::error::ANDROID_UPLOAD_KEYSTORE is not valid base64 (${#ANDROID_UPLOAD_KEYSTORE} characters)"; exit 1; }
-            keytool -list -keystore "$ANDROID_UPLOAD_KEYSTORE_FILE" -storepass "$ANDROID_UPLOAD_PASSWORD" -alias commy-upload > /dev/null \
-              || { echo "::error::ANDROID_UPLOAD_PASSWORD does not open ANDROID_UPLOAD_KEYSTORE, or it has no commy-upload key"; exit 1; }
+            ANDROID_UPLOAD_PASSWORD="${ANDROID_UPLOAD_PASSWORD#$'\xef\xbb\xbf'}"
+            ANDROID_UPLOAD_PASSWORD="${ANDROID_UPLOAD_PASSWORD%%[$'\r\n']*}"
+            echo "Upload key file: $(wc -c < "$ANDROID_UPLOAD_KEYSTORE_FILE") bytes, starts with $(head -c 4 "$ANDROID_UPLOAD_KEYSTORE_FILE" | od -An -tx1 | tr -d ' ')"
+            if ! listing="$(keytool -list -keystore "$ANDROID_UPLOAD_KEYSTORE_FILE" -storepass "$ANDROID_UPLOAD_PASSWORD" 2>&1)"; then
+              echo "::error::ANDROID_UPLOAD_PASSWORD does not open ANDROID_UPLOAD_KEYSTORE (${#ANDROID_UPLOAD_PASSWORD} characters): $(printf '%s' "$listing" | grep -i 'error' | head -n 1)"
+              exit 1
+            fi
+            keytool -list -keystore "$ANDROID_UPLOAD_KEYSTORE_FILE" -storepass "$ANDROID_UPLOAD_PASSWORD" -alias commy-upload > /dev/null 2>&1 \
+              || { echo "::error::ANDROID_UPLOAD_KEYSTORE has no commy-upload key; its keys are: $(printf '%s' "$listing" | grep -E 'PrivateKeyEntry|trustedCertEntry|SecretKeyEntry' | cut -d, -f1 | paste -sd ' ')"; exit 1; }
             echo "Signing with the upload key from ANDROID_UPLOAD_KEYSTORE"
           else
             ANDROID_UPLOAD_PASSWORD="$(openssl rand -hex 16)"
