@@ -271,6 +271,13 @@ impl Client {
         Ok(commy_view::search::search(state, query, me, page, &keys, &commy_view::ChannelOpens::new(), Some(Utc::now())))
     }
 
+    pub fn search_dms(&self, dms: &commy_core::dm::DmStore, query: &SearchQuery, partner: Option<UserId>, blocked: &[UserId], page: Page) -> Result<commy_view::search::DmSearchResults, String> {
+        let me = self.me_id().ok_or("Your servers are not unlocked yet")?;
+        let keys = self.keys();
+        let servers = self.servers.lock().unwrap();
+        Ok(commy_view::search::search_dms(dms, &servers, query, me, partner, blocked, page, &keys))
+    }
+
     pub fn apply_live(&self, server: ServerId, event: ServerEvent, action: Option<Action>) -> Applied {
         self.apply_from(server, event, action, false, true)
     }

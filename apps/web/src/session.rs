@@ -59,6 +59,8 @@ const LOOK_FOR_KEY: std::time::Duration = std::time::Duration::from_secs(90);
 const RECHECK_ACCOUNT_KEY: std::time::Duration = std::time::Duration::from_secs(5);
 const START_FRESH_AFTER: chrono::TimeDelta = chrono::TimeDelta::seconds(20);
 const OPENING: &str = "Opening your servers";
+const FIND_OLDER_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
+const SEARCH_OLDER_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Unlock {
@@ -325,6 +327,12 @@ impl Session {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
                 let around: Option<MessageId> = args.around.as_ref().map(|a| parse(Some(a), "message")).transpose()?;
+                let found = self.client.borrow().get_messages(server, channel, around);
+                if found.is_ok() || around.is_none() {
+                    return to_json(&found?);
+                }
+                let shown = || self.client.borrow().get_messages(server, channel, around).is_ok();
+                self.deepen_history(server, Some(channel), FIND_OLDER_WAIT, shown).await;
                 to_json(&self.client.borrow().get_messages(server, channel, around)?)
             }
             "send_message" => self.send_message(args).await,
@@ -361,7 +369,16 @@ impl Session {
                 let channel: Option<ChannelId> = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
                 let query = SearchQuery::new(&args.terms.unwrap_or_default(), user(args.from.as_ref())?, user(args.mentions.as_ref())?, channel);
                 let page = args.offset.map_or(Page::newest(), Page::at);
+                self.deepen_history(server, channel, SEARCH_OLDER_WAIT, || false).await;
                 to_json(&self.client.borrow().search(server, &query, page)?)
+            }
+            "search_dms" => {
+                let user = |raw: Option<&String>| raw.map(|u| parse::<commy_core::UserId>(Some(u), "user")).transpose();
+                let query = SearchQuery::new(&args.terms.unwrap_or_default(), user(args.from.as_ref())?, user(args.mentions.as_ref())?, None);
+                let partner = user(args.user_id.as_ref())?;
+                let page = args.offset.map_or(Page::newest(), Page::at);
+                let dms = self.dms.borrow();
+                to_json(&self.client.borrow().search_dms(&dms.store, &query, partner, &dms.safety.blocked, page)?)
             }
             "gif_search" => {
                 let params = [("q", catalog::gif_query(args.query.as_deref().unwrap_or("")))];
