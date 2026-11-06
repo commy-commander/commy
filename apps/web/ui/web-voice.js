@@ -8,11 +8,12 @@ const WEB_MAX_DEVICE_NAME = 200;
 const WEB_MAX_TUNED_PEOPLE = 500;
 const WEB_SILENCE_DB = -100;
 const WEB_PSEUDO_DEVICES = ["default", "communications"];
-const WEB_VOICE_COMMANDS = ["set_noise_cancellation", "set_echo_cancellation", "set_auto_level", "set_volumes", "set_audio_devices", "set_user_voice"];
+const WEB_VOICE_COMMANDS = ["set_noise_cancellation", "set_echo_cancellation", "set_auto_level", "set_volumes", "set_audio_devices", "set_user_voice", "set_stream_volume"];
+const WEB_STREAM_SPEAKER = "stream:";
 const WEB_MIC_REFUSED = "Commy could not open your microphone. Allow it for this site in your browser and try again.";
 
 function webVoiceDefaults() {
-  return { noise_cancellation: true, echo_cancellation: true, auto_level: true, input_gain: 1, output_volume: 1, input_device: null, output_device: null, user_volumes: {}, muted_users: [] };
+  return { noise_cancellation: true, echo_cancellation: true, auto_level: true, input_gain: 1, output_volume: 1, stream_volume: 1, input_device: null, output_device: null, user_volumes: {}, muted_users: [] };
 }
 
 function webGain(value, fallback) {
@@ -42,6 +43,7 @@ function webVoicePrefs(raw) {
   }
   prefs.input_gain = webGain(saved.input_gain, 1);
   prefs.output_volume = webGain(saved.output_volume, 1);
+  prefs.stream_volume = webGain(saved.stream_volume, 1);
   prefs.input_device = webDeviceName(saved.input_device);
   prefs.output_device = webDeviceName(saved.output_device);
   const volumes = saved.user_volumes && typeof saved.user_volumes === "object" ? Object.entries(saved.user_volumes) : [];
@@ -60,6 +62,7 @@ function webVoiceApply(prefs, cmd, args) {
     next.output_volume = webGain(given.outputVolume, next.output_volume);
     next.input_gain = webGain(given.inputGain, next.input_gain);
   }
+  if (cmd === "set_stream_volume") next.stream_volume = webGain(given.volume, next.stream_volume);
   if (cmd === "set_audio_devices") {
     next.input_device = webDeviceName(given.input);
     next.output_device = webDeviceName(given.output);
@@ -75,6 +78,7 @@ function webVoiceApply(prefs, cmd, args) {
 }
 
 function webPeerGain(prefs, peer) {
+  if (peer.startsWith(WEB_STREAM_SPEAKER)) return prefs.stream_volume;
   return prefs.muted_users.includes(peer) ? 0 : prefs.user_volumes[peer] ?? 1;
 }
 
@@ -313,5 +317,5 @@ function webVoice(win) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_VOICE_WORKLET, WEB_VOICE_PREFS_KEY, WEB_VOICE_COMMANDS, WEB_MIC_REFUSED, WEB_SILENCE_DB, webVoiceDefaults, webVoicePrefs, webVoiceApply, webPeerGain, webMicConstraints, webDeviceNames, webDeviceId, webLevelDb, webVoice };
+  module.exports = { WEB_STREAM_SPEAKER, WEB_VOICE_WORKLET, WEB_VOICE_PREFS_KEY, WEB_VOICE_COMMANDS, WEB_MIC_REFUSED, WEB_SILENCE_DB, webVoiceDefaults, webVoicePrefs, webVoiceApply, webPeerGain, webMicConstraints, webDeviceNames, webDeviceId, webLevelDb, webVoice };
 }

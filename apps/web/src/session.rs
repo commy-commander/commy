@@ -47,6 +47,7 @@ mod sync;
 mod voice_gate;
 mod voice_invites;
 mod wake;
+mod watch;
 
 const DEVICE_NAME: &str = "Web browser";
 const MAX_PREF_KEY: usize = 200;
@@ -113,6 +114,7 @@ pub struct Session {
     files_answer: RefCell<cloud_files::Answers>,
     invited: RefCell<HashMap<ServerId, (KeyId, ChannelSecret)>>,
     links: RefCell<links::LinkSafety>,
+    watching: RefCell<crate::watching::Watching>,
 }
 
 #[derive(Deserialize, Default)]
@@ -226,6 +228,7 @@ struct Args {
     status_until: Option<i64>,
     text: Option<String>,
     volume: Option<f32>,
+    mark: Option<Value>,
     stickers: Option<bool>,
     emoticons: Option<bool>,
     emojis_shareable: Option<bool>,
@@ -290,6 +293,7 @@ impl Session {
             files_answer: RefCell::default(),
             invited: RefCell::default(),
             links: RefCell::default(),
+            watching: RefCell::default(),
         })
     }
 
@@ -548,7 +552,9 @@ impl Session {
             "set_profile_look" => self.profile_command(cmd, args).await,
             "set_status_expiry" => self.profile_command(cmd, args).await,
             "set_profile_privacy" => self.profile_command(cmd, args).await,
+            "watch_screen" | "watch_camera" | "stop_watching" | "stop_watching_camera" | "send_stream_ink" => self.watch_command(cmd, args).await,
             "web_farewell" => {
+                self.stop_all_watching();
                 self.hang_up_on_farewell().await;
                 self.say_goodbye();
                 Ok(Value::Null)

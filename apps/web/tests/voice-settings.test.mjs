@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const voiceScripts = require("../ui/web-voice.js");
 const { WEB_DEFAULTS } = require("../ui/web-commands.js");
-const { WEB_VOICE_PREFS_KEY, WEB_VOICE_COMMANDS, WEB_SILENCE_DB, webVoiceDefaults, webVoicePrefs, webVoiceApply, webPeerGain, webMicConstraints, webDeviceNames, webDeviceId, webLevelDb, webVoice } = voiceScripts;
+const { WEB_STREAM_SPEAKER, WEB_VOICE_PREFS_KEY, WEB_VOICE_COMMANDS, WEB_SILENCE_DB, webVoiceDefaults, webVoicePrefs, webVoiceApply, webPeerGain, webMicConstraints, webDeviceNames, webDeviceId, webLevelDb, webVoice } = voiceScripts;
 
 const repo = join(import.meta.dirname, "..", "..", "..");
 const read = (...path) => readFileSync(join(repo, ...path), "utf8");
@@ -44,6 +44,16 @@ test("each voice setting the app changes lands in this browser's choices", () =>
   assert.equal(webPeerGain(prefs, alice), 0.3);
   assert.equal(webPeerGain(prefs, "someone-else"), 1);
   assert.throws(() => webVoiceApply(prefs, "set_user_voice", { userId: "not an id" }));
+});
+
+test("stream sound follows the stream volume, apart from the person's own voice volume", () => {
+  let prefs = webVoiceApply(webVoiceDefaults(), "set_user_voice", { userId: alice, volume: 0.3, muted: true });
+  prefs = webVoiceApply(prefs, "set_stream_volume", { volume: 0.6 });
+  assert.equal(prefs.stream_volume, 0.6);
+  assert.equal(webPeerGain(prefs, `${WEB_STREAM_SPEAKER}${alice}`), 0.6);
+  assert.equal(webPeerGain(prefs, alice), 0);
+  assert.equal(webVoicePrefs({ stream_volume: "loud" }).stream_volume, 1);
+  assert.equal(webVoiceApply(prefs, "set_stream_volume", { volume: 99 }).stream_volume, webVoiceApply(prefs, "set_stream_volume", { volume: 98 }).stream_volume);
 });
 
 test("the microphone is asked for with the chosen device and the chosen browser processing", () => {

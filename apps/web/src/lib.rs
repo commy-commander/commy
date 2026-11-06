@@ -6,6 +6,7 @@ pub mod recording;
 pub mod store;
 pub mod sync_book;
 pub mod voice_prefs;
+pub mod watching;
 
 #[cfg(target_arch = "wasm32")]
 mod host;
