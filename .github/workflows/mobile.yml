@@ -35,6 +35,11 @@ on:
         description: "App version for Play and signed iOS builds, e.g. 0.1.16 (prod servers) or 0.1.16-rc.1 (staging servers)"
         type: string
         default: ""
+      play_testing:
+        description: "Google Play testing track a Play bundle goes to, or none to only keep the files"
+        type: choice
+        options: [internal, closed, open, none]
+        default: internal
 
 permissions:
   contents: read
@@ -188,6 +193,31 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 30
+
+      - name: Send the bundle to Google Play testing
+        if: env.ANDROID_MODE == 'play' && inputs.play_testing != 'none'
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          ANDROID_UPLOAD_KEYSTORE: ${{ secrets.ANDROID_UPLOAD_KEYSTORE }}
+          PLAY_TESTING: ${{ inputs.play_testing }}
+          PLAY_RELEASE_NAME: ${{ inputs.version }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::notice::PLAY_SERVICE_ACCOUNT_JSON is not set, so the bundle stays in the run's files for a manual upload"
+            exit 0
+          fi
+          if [ -z "$ANDROID_UPLOAD_KEYSTORE" ]; then
+            echo "::warning::This bundle is signed with a throwaway key, so it is not sent to Google Play"
+            exit 0
+          fi
+          case "$PLAY_RELEASE_NAME" in
+            *-*)
+              echo "::notice::$PLAY_RELEASE_NAME is a test build that uses the staging servers, so it is not sent to Google Play"
+              exit 0
+              ;;
+          esac
+          export PLAY_RELEASE_NOTES="Built from ${GITHUB_SHA::7}: $(git log -1 --format=%s)"
+          node apps/desktop/mobile/play-upload.mjs dist/*.aab "$PLAY_TESTING"
 
   ios:
     name: iOS ${{ inputs.ios || 'simulator' }} build
