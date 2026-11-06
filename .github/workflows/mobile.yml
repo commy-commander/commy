@@ -185,6 +185,8 @@ jobs:
           mkdir -p dist
           cp apps/desktop/src-tauri/gen/android/Commy-*.aab apps/desktop/src-tauri/gen/android/Commy-*.apk dist/
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs dist/*.apk | grep 'SHA-256'
+          symbols="$(unzip -l dist/*.aab | grep -c 'BUNDLE-METADATA/com.android.tools.build.debugsymbols/.*\.so' || true)"
+          if [ "$symbols" -gt 0 ]; then echo "The bundle carries native debug symbols for $symbols libraries"; else echo "::warning::The bundle has no native debug symbols, so Play crash reports will show raw addresses"; fi
           ls -la dist
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
