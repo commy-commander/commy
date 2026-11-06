@@ -328,19 +328,91 @@ async fn set_tip_jar(app: tauri::State<'_, App>, handle: tauri::AppHandle, serve
 }
 
 #[tauri::command]
-async fn set_file_store(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, url: Option<String>) -> CmdResult<()> {
+async fn set_file_store(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, url: Option<String>, setup_code: Option<String>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let event = managed(&app, sid, me.id, |state, perms| view::file_store::set_file_store(state, perms, url.as_deref()))?;
+    if let ServerEvent::FileStoreSet { url: Some(base), .. } = &event {
+        let info = cloud_files::ask(&app.http, base).await?;
+        let code = setup_code.as_deref().map(str::trim).filter(|c| !c.is_empty());
+        match code {
+            Some(code) => {
+                if !commy_core::file_store::setup_code_ok(code) {
+                    return Err(cloud_files::WRONG_SETUP_CODE.into());
+                }
+                let identity = signing_key(&app)?;
+                let roster = storage_roster(&app, sid).ok_or("the server owner's identity key is not known yet")?;
+                cloud_files::pair(&app.http, base, code, &identity, &roster).await?;
+                remember_roster(sid, base, &roster);
+            }
+            None if !info.paired => return Err(cloud_files::NEEDS_SETUP_CODE.into()),
+            None => {}
+        }
+    }
     apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
 
 #[tauri::command]
-async fn test_file_store(app: tauri::State<'_, App>, url: String) -> CmdResult<u64> {
+async fn test_file_store(app: tauri::State<'_, App>, url: String) -> CmdResult<serde_json::Value> {
     let base = commy_core::file_store::clean_file_store(&url).ok_or(view::file_store::FILE_STORE_INVALID)?;
-    cloud_files::ask(&app.http, &base).await
+    let info = cloud_files::ask(&app.http, &base).await?;
+    Ok(serde_json::json!({ "max_bytes": info.max_bytes, "paired": info.paired }))
+}
+
+fn storage_roster(app: &App, sid: ServerId) -> Option<commy_core::file_store::Roster> {
+    let servers = app.servers.lock().unwrap();
+    commy_core::file_store::roster_of(servers.get(&sid)?, chrono::Utc::now().timestamp_millis())
+}
+
+type SentRosters = std::collections::HashMap<(ServerId, String), (commy_core::file_store::Roster, std::time::Instant)>;
+
+static SENT_ROSTERS: std::sync::Mutex<Option<SentRosters>> = std::sync::Mutex::new(None);
+const ROSTER_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(120);
+const ROSTER_RECHECK_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+fn remember_roster(sid: ServerId, base: &str, roster: &commy_core::file_store::Roster) {
+    SENT_ROSTERS.lock().unwrap().get_or_insert_with(Default::default).insert((sid, base.to_string()), (roster.clone(), std::time::Instant::now()));
+}
+
+fn roster_is_fresh(sid: ServerId, base: &str, roster: &commy_core::file_store::Roster) -> bool {
+    SENT_ROSTERS.lock().unwrap().as_ref().and_then(|sent| sent.get(&(sid, base.to_string()))).is_some_and(|(sent, at)| {
+        commy_core::file_store::same_people(sent, roster) && at.elapsed() < ROSTER_RECHECK_AFTER
+    })
+}
+
+fn storage_to_tend(app: &App, me: UserId) -> Vec<(ServerId, String, commy_core::file_store::Roster)> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let servers = app.servers.lock().unwrap();
+    servers
+        .values()
+        .filter(|state| commy_core::file_store::can_manage_storage(our_permissions(app, state, me)))
+        .filter_map(|state| Some((state.server.id, state.server.file_store.clone()?, commy_core::file_store::roster_of(state, now)?)))
+        .filter(|(sid, base, roster)| !roster_is_fresh(*sid, base, roster))
+        .collect()
+}
+
+async fn run_storage_roster(handle: tauri::AppHandle) {
+    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    loop {
+        let app = handle.state::<App>();
+        let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+        if let (Some(me), Some(identity)) = (me, app.identity()) {
+            for (sid, base, roster) in storage_to_tend(&app, me) {
+                match cloud_files::send_roster(&app.http, &base, &identity, &roster).await {
+                    Ok(sent) => {
+                        if sent {
+                            tracing::info!("sent server {sid}'s member list to its file storage");
+                        }
+                        remember_roster(sid, &base, &roster);
+                    }
+                    Err(e) => tracing::debug!("could not update file storage for {sid}: {e}"),
+                }
+            }
+        }
+        tokio::time::sleep(ROSTER_CHECK_EVERY).await;
+    }
 }
 
 #[tauri::command]
@@ -1861,12 +1933,13 @@ fn file_store_of(app: &App, server: Option<ServerId>) -> Option<String> {
 
 fn offer_to_file_store(app: &App, server: ServerId, blob: &str, bytes: Option<&[u8]>) {
     let Some(bytes) = bytes.filter(|b| cloud_files::worth_offering(blob, b)) else { return };
-    cloud_files::offer(&app.http, file_store_of(app, Some(server)), blob, bytes.to_vec());
+    cloud_files::offer(&app.http, file_store_of(app, Some(server)), app.identity(), blob, bytes.to_vec());
 }
 
 async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Option<&str>, max: u64) -> CmdResult<Vec<u8>> {
     let store = file_store_of(app, server.and_then(|s| s.parse::<ServerId>().ok()));
-    let kept = cloud_files::fetch(&app.http, store.as_deref(), blob, max).await;
+    let identity = app.identity();
+    let kept = cloud_files::fetch(&app.http, store.as_deref(), identity.as_ref(), blob, max).await;
     if let cloud_files::Fetched::Found(bytes) = kept {
         let shelf = app.net.lock().await.as_ref().and_then(|node| node.shelf());
         kept_files::keep_opened(shelf, blob, &bytes);
@@ -1874,7 +1947,7 @@ async fn fetch_blob(app: &App, blob: &str, provider: Option<&str>, server: Optio
     }
     let bytes = fetch_blob_from_members(app, blob, provider, server, max).await?;
     if matches!(kept, cloud_files::Fetched::NotKept) {
-        cloud_files::offer(&app.http, store, blob, bytes.clone());
+        cloud_files::offer(&app.http, store, identity, blob, bytes.clone());
     }
     Ok(bytes)
 }
@@ -8002,6 +8075,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
                 tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
                 tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
+                tauri::async_runtime::spawn(run_storage_roster(handle.clone()));
                 tauri::async_runtime::spawn(channel_lock::run(handle.clone()));
                 tauri::async_runtime::spawn(community_sync::run(handle.clone()));
                 tauri::async_runtime::spawn(voice_gate::run(handle.clone()));

@@ -124,6 +124,7 @@ struct Args {
     avatar_border: Option<String>,
     card_effect: Option<String>,
     url: Option<String>,
+    setup_code: Option<String>,
     label: Option<String>,
     trusted: Option<Vec<String>>,
     entry: Option<commy_view::saved::Entry>,
@@ -496,7 +497,12 @@ impl Session {
             "kick_member" => self.server_command(cmd, args).await,
             "set_join_approval" | "answer_join_request" => self.server_command(cmd, args).await,
             "set_tip_jar" | "set_pet" | "care_for_pet" => self.server_command(cmd, args).await,
-            "set_file_store" | "set_gif_key" => self.server_command(cmd, args).await,
+            "set_file_store" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                self.pair_file_store(server, args.url.as_deref(), args.setup_code.as_deref()).await?;
+                self.server_command(cmd, args).await
+            }
+            "set_gif_key" => self.server_command(cmd, args).await,
             "test_file_store" => self.test_file_store(args.url.as_deref().unwrap_or("")).await,
             "set_upload_limit" | "set_tts_allowed" => self.server_command(cmd, args).await,
             "move_voice_member" => self.server_command(cmd, args).await,

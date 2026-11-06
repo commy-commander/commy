@@ -6,5 +6,15 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "deploy": "wrangler deploy"
+  },
+  "cloudflare": {
+    "bindings": {
+      "SETUP_CODE": {
+        "description": "A code of at least 16 letters, digits or dashes that you type into Commy once to connect this storage to your server. Keep it to yourself."
+      },
+      "DAILY_UPLOAD_MB": {
+        "description": "How many megabytes each member may upload a day. 500 if left as is."
+      }
+    }
   }
 }
