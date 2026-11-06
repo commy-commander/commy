@@ -56,6 +56,20 @@ function accountChangeStep(was, account, addingAccount) {
   return null;
 }
 
+const MAX_SCREEN_NAME_BYTES = 32;
+
+function accountScreenName(user) {
+  const name = String((user && user.name) || "").trim();
+  const encoder = new TextEncoder();
+  let kept = "";
+  for (const char of name) {
+    if (/\p{Cc}/u.test(char)) continue;
+    if (encoder.encode(kept + char).length > MAX_SCREEN_NAME_BYTES) break;
+    kept += char;
+  }
+  return kept.trimEnd();
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, accountChangeStep };
+  module.exports = { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, accountChangeStep, accountScreenName };
 }

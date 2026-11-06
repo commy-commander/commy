@@ -751,6 +751,7 @@ function mockCanSetVoiceStatus(channel) {
 async function mockInvoke(cmd, args = {}) {
   switch (cmd) {
     case "get_user": return mock.user;
+    case "adopt_account_profile": return mock.user || null;
     case "init_user":
       mock.user = { id: "me", username: args.username, display_name: null, presence: "online", custom_status: null };
       if (Object.keys(mock.servers).length === 0) mockSeed();
@@ -23736,7 +23737,7 @@ setupTitlebar();
 
 async function continueBoot() {
   try { claimUiState(localStorage, account.user && account.user.id); } catch {}
-  state.user = await invoke("get_user");
+  state.user = (await invoke("get_user")) || (await profileFromAccount());
   if (!state.user) {
     showModal("modal-username");
     const suggestion = ((account.user && account.user.name) || "").toLowerCase().replace(/[^a-z0-9_.]/g, "").slice(0, 32);
@@ -23758,6 +23759,17 @@ async function continueBoot() {
   const call = await invoke("get_dm_call").catch(() => null);
   if (call) onDmCall(call);
   if (!(await takePendingInviteLink())) await offerTrayPrompt();
+}
+
+const ACCOUNT_PROFILE_WAIT_MS = 15000;
+
+async function profileFromAccount() {
+  const waited = new Promise(resolve => setTimeout(() => resolve(null), ACCOUNT_PROFILE_WAIT_MS));
+  const adopted = await Promise.race([invoke("adopt_account_profile").catch(() => null), waited]);
+  if (adopted) return adopted;
+  const username = accountScreenName(account.user);
+  if (!username) return null;
+  return invoke("init_user", { username }).catch(() => null);
 }
 
 async function offerTrayPrompt() {
