@@ -229,7 +229,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.ios != 'none'
     timeout-minutes: 90
     continue-on-error: ${{ inputs.ios == 'simulator' }}
-    runs-on: macos-26
+    runs-on: commy-mac
     defaults:
       run:
         shell: bash
@@ -257,16 +257,21 @@ jobs:
             need IOS_CERTIFICATE_PASSWORD
             need IOS_MOBILE_PROVISION
             echo "Signing with the certificate and profile from IOS_CERTIFICATE and IOS_MOBILE_PROVISION"
-          else
+          elif [ -n "$APPLE_API_KEY" ]; then
             need APPLE_API_KEY_ID
             need APPLE_API_ISSUER
-            need APPLE_API_KEY
             echo "Signing automatically with the App Store Connect API key"
+          else
+            echo "Signing with the Apple account added in this Mac's Xcode settings"
           fi
           if [ "$IOS_MODE" = testflight ]; then
             need APPLE_API_KEY_ID
             need APPLE_API_ISSUER
-            need APPLE_API_KEY
+            if [ -z "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] \
+              && [ ! -f ~/.appstoreconnect/private_keys/"AuthKey_${APPLE_API_KEY_ID}.p8" ]; then
+              echo "::error::Put AuthKey_${APPLE_API_KEY_ID}.p8 in ~/.appstoreconnect/private_keys on the Mac, or set the APPLE_API_KEY secret"
+              exit 1
+            fi
           fi
           [[ "$APP_VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
             || { echo "::error::Set the version input, e.g. 0.1.16 or 0.1.16-rc.1"; exit 1; }
@@ -319,12 +324,14 @@ jobs:
             key_path=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
             printf '%s' "$ASC_KEY" > "$key_path"
           fi
-          if [ -z "$IOS_CERTIFICATE" ]; then
-            unset IOS_CERTIFICATE IOS_CERTIFICATE_PASSWORD IOS_MOBILE_PROVISION
-            export APPLE_API_KEY="$ASC_KEY_ID" APPLE_API_ISSUER="$ASC_ISSUER_ID" APPLE_API_KEY_PATH="$key_path"
-          else
+          unset APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH
+          if [ -n "$IOS_CERTIFICATE" ]; then
             [ -n "$IOS_MOBILE_PROVISION" ] || unset IOS_MOBILE_PROVISION
+          else
+            unset IOS_CERTIFICATE IOS_CERTIFICATE_PASSWORD IOS_MOBILE_PROVISION
+            [ -z "$ASC_KEY" ] || export APPLE_API_KEY="$ASC_KEY_ID" APPLE_API_ISSUER="$ASC_ISSUER_ID" APPLE_API_KEY_PATH="$key_path"
           fi
+          [ -n "$ASC_KEY_ID" ] || unset ASC_KEY_ID ASC_ISSUER_ID
           upload=()
           [ "$IOS_MODE" != testflight ] || upload=(--testflight)
           apps/desktop/mobile/ios-build.sh "$APP_VERSION_INPUT" "${upload[@]}"

@@ -274,12 +274,15 @@ The "Mobile builds" workflow builds a debug APK on every change to native or
 phone files; iOS builds only when the workflow is run by hand. Its `ios` input
 picks `simulator` (an Apple silicon simulator app plus an unsigned device build),
 `signed` or `testflight`, which run `ios-build.sh` with the `version` input.
-Signing on CI needs
-`APPLE_DEVELOPMENT_TEAM` plus either an App Store Connect API key
-(`APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, and the `.p8` contents in
-`APPLE_API_KEY`) or a distribution certificate and profile (`IOS_CERTIFICATE`
-and `IOS_MOBILE_PROVISION` as base64, `IOS_CERTIFICATE_PASSWORD`); TestFlight
-always needs the API key. To let the sync service wake the Android app with an empty push, set
+The iOS job runs on the Mac runner labelled `commy-mac`. Signing needs the
+`APPLE_DEVELOPMENT_TEAM` secret and, with nothing else set, uses the Apple
+account in that Mac's Xcode settings. Without one, set either an App Store
+Connect API key with Admin access (`APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, and
+the `.p8` contents in `APPLE_API_KEY`) or a distribution certificate and profile
+(`IOS_CERTIFICATE` and `IOS_MOBILE_PROVISION` as base64,
+`IOS_CERTIFICATE_PASSWORD`). TestFlight needs `APPLE_API_KEY_ID` and
+`APPLE_API_ISSUER`, with the key's `.p8` either in `APPLE_API_KEY` or in
+`~/.appstoreconnect/private_keys` on the Mac. To let the sync service wake the Android app with an empty push, set
 `GOOGLE_SERVICES_JSON` to your Firebase project's `google-services.json` (its
 contents, its base64 or a path) before running `android-project.mjs`; the workflow reads it
 from the secret of the same name. Without it the app builds without push
