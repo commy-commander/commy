@@ -194,6 +194,20 @@ check "signed image deploys" "$(images)" "sha256:new"
 check "cosign checks the pulled digest, its tag and the website's promote identity" "$(cat "$FAKE/cosign_calls")" \
 	"verify -a tag=dev --certificate-identity $COSIGN_WEB_IDENTITY --certificate-oidc-issuer $COSIGN_ISSUER ghcr.io/commy/commy-web@sha256:new"
 
+COSIGN_KEY=/repo/deploy/agent/cosign.pub
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "an image signed with the key deploys" "$(images)" "sha256:new"
+check "with a key, cosign checks the digest and tag against that key alone" "$(cat "$FAKE/cosign_calls")" \
+	"verify -a tag=dev --key /repo/deploy/agent/cosign.pub ghcr.io/commy/commy-web@sha256:new"
+reset
+echo "sha256:new" >"$FAKE/remote"
+touch "$FAKE/cosign_fails"
+run_once
+check "an image the key did not sign is refused" "$(images)" "sha256:old"
+COSIGN_KEY=
+
 reset
 echo "sha256:new" >"$FAKE/remote"
 touch "$FAKE/cosign_fails"

@@ -10,6 +10,7 @@ VERIFY="${AGENT_VERIFY:-auto}"
 COSIGN_IDENTITY="${AGENT_COSIGN_IDENTITY:-https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main}"
 COSIGN_WEB_IDENTITY="${AGENT_COSIGN_WEB_IDENTITY:-https://github.com/commy-commander/commy-web/.github/workflows/promote.yml@refs/heads/main}"
 COSIGN_ISSUER="${AGENT_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
+COSIGN_KEY="${AGENT_COSIGN_KEY:-}"
 
 log() {
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
@@ -77,7 +78,11 @@ verified() {
 		return 1
 	fi
 	tag="$(tag_of "$ref")"
-	set -- --certificate-identity "$(identity_of "$repo")" --certificate-oidc-issuer "$COSIGN_ISSUER"
+	if [ -n "$COSIGN_KEY" ]; then
+		set -- --key "$COSIGN_KEY"
+	else
+		set -- --certificate-identity "$(identity_of "$repo")" --certificate-oidc-issuer "$COSIGN_ISSUER"
+	fi
 	[ -n "$tag" ] && set -- -a "tag=$tag" "$@"
 	cosign verify "$@" "$digest" >/dev/null 2>&1
 }
@@ -187,7 +192,9 @@ jitter() {
 
 main() {
 	log "watching [$SERVICES] in project ${COMPOSE_PROJECT_NAME:-commy} every ${INTERVAL}s"
-	if verify_enabled; then
+	if verify_enabled && [ -n "$COSIGN_KEY" ]; then
+		log "deploying only images signed with the key in $COSIGN_KEY"
+	elif verify_enabled; then
 		log "deploying only images signed by $COSIGN_IDENTITY or, for the website, $COSIGN_WEB_IDENTITY"
 	else
 		log "image signatures are not checked (AGENT_VERIFY=$VERIFY)"

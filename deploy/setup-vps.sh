@@ -7,7 +7,7 @@ EMAIL="${2:?usage: setup-vps.sh <domain> <acme-email> [envs]}"
 ENVS="${3:-prod staging dev}"
 REPO="${COMMY_REPO:-https://github.com/commy-commander/commy.git}"
 ROOT="${COMMY_ROOT:-/srv}"
-IMAGES="${COMMY_IMAGES:-ghcr.io/commy-commander}"
+IMAGES="${COMMY_IMAGES:-git.commy.chat/commy}"
 
 command -v docker >/dev/null || { echo "Docker is not installed"; exit 1; }
 docker compose version >/dev/null || { echo "Docker Compose v2 is not installed"; exit 1; }

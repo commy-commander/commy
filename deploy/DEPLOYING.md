@@ -185,7 +185,7 @@ environment set up before it existed, add to that environment's `deploy/.env`
 (dev shown; staging uses `commy-sync:staging` and `staging.commy.chat`):
 
 ```bash
-SYNC_IMAGE=ghcr.io/commy-commander/commy-sync:dev
+SYNC_IMAGE=git.commy.chat/commy/commy-sync:dev
 AGENT_SERVICES=auth web sync
 SYNC_URL=wss://dev.commy.chat/sync
 ```
@@ -262,8 +262,8 @@ For a single server running only production with the stack's own Caddy, follow
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:docker-compose.agent.yml
-WEB_IMAGE=ghcr.io/commy-commander/commy-web:prod
-AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
+WEB_IMAGE=git.commy.chat/commy/commy-web:prod
+AUTH_IMAGE=git.commy.chat/commy/commy-auth:prod
 ```
 
 ## Shipping a change
@@ -284,34 +284,31 @@ AUTH_IMAGE=ghcr.io/commy-commander/commy-auth:prod
 ### Signed promotes
 
 **Promote images** signs the promoted digest with
-[cosign](https://github.com/sigstore/cosign) (keyless, through GitHub's OIDC
-token) before it moves the tag, and the signature names the tag it was promoted
-to. The prod agent runs `cosign verify` on every new image before starting it
-and only accepts a signature made by this repository's `promote.yml` on `main`
-for that tag, so an image retagged as `:prod` by anything else, or a staging
-signature moved onto the prod tag, is refused and logged; the running
-container keeps serving and the image is tried again on the next cycle, in case
-the signature was still being written. Settings in that environment's `.env`:
+[cosign](https://github.com/sigstore/cosign) using the Commy signing key before it
+moves the tag, and the signature names the tag it was promoted to. The private key
+and its password are the forge secrets `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`;
+the public key is `deploy/agent/cosign.pub`. Only the accounts in the `PROMOTERS`
+variable (by default `commy-commander`) can run the workflow. The prod agent runs
+`cosign verify` against that public key on every new image before starting it, so
+an image retagged as `:prod` by anything else, or a staging signature moved onto
+the prod tag, is refused and logged; the running container keeps serving and the
+image is tried again on the next cycle, in case the signature was still being
+written. Settings in that environment's `.env`:
 
 - `AGENT_VERIFY`: `auto` (default) checks signatures when `COMPOSE_PROJECT_NAME`
   contains `prod` and cosign is in the agent image; `on` checks everywhere and
   fails closed; `off` never checks. A single-environment server that runs the
   `:prod` tags under another project name should set `on`.
-- `AGENT_COSIGN_IDENTITY`: the workflow identity to accept, by default
-  `https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main`.
-  A fork promoting its own images sets its own repository here.
-- `AGENT_COSIGN_WEB_IDENTITY`: the identity accepted for the website image,
-  which the website repository promotes and signs itself, by default
-  `https://github.com/commy-commander/commy-web/.github/workflows/promote.yml@refs/heads/main`.
-- `AGENT_COSIGN_ISSUER`: the OIDC issuer, by default GitHub Actions.
+- `AGENT_COSIGN_KEY`: the public key to accept, by default
+  `/repo/deploy/agent/cosign.pub` (the checkout the agent mounts). A fork signs
+  with its own key pair and points this at its public key. Set it empty to fall
+  back to keyless signatures, checked with `AGENT_COSIGN_IDENTITY`,
+  `AGENT_COSIGN_WEB_IDENTITY` and `AGENT_COSIGN_ISSUER`.
 
 To check an image by hand from any machine with cosign:
 
 ```bash
-cosign verify -a tag=prod \
-  --certificate-identity https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/commy-commander/commy-auth:prod
+cosign verify -a tag=prod --key deploy/agent/cosign.pub git.commy.chat/commy/commy-auth:prod
 ```
 
 Changes to the compose files themselves (a new environment variable, a new
@@ -326,15 +323,14 @@ Run **Promote images** with the environment and the version to go back to in
 **source**, for example `0.1.0`. The agent deploys it like any other update.
 To pause automatic updates, `docker compose stop agent`.
 
-## One-time GitHub setup
+## One-time forge setup
 
-- **Package visibility.** The first image push creates `commy-web` and
-  `commy-auth` under the organisation's Packages tab as private. Make both public
-  (Package settings > Change visibility) so servers can pull without a login, or
-  run `docker login ghcr.io` on the server with a token that has `read:packages`
-  and mount `/root/.docker/config.json` into the agent.
-- **Environments.** Settings > Environments needs `production` with a required
-  reviewer, which gates promotion to prod, and `staging` without one.
+- **Package visibility.** Images live in the forge registry under the `commy`
+  organisation, which is public, so servers pull without a login. For a private
+  registry, run `docker login git.commy.chat` on the server with a token that has
+  `read:package` and mount `/root/.docker/config.json` into the agent.
+- **Image pushes.** CI pushes with the `PACKAGES_TOKEN` secret, a token with
+  `write:package`, falling back to the job token.
 - **Release hosting.** Releases publish to the Cloudflare R2 bucket `commy-releases`,
   served at releases.commy.chat. `node deploy/releases/publish.mjs <tag> <dist-dir>`
   uploads a built release (add `--dry-run` to see the plan): files go under the tag,

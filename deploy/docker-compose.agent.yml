@@ -18,6 +18,7 @@ services:
       AGENT_COSIGN_IDENTITY: ${AGENT_COSIGN_IDENTITY:-https://github.com/commy-commander/commy/.github/workflows/promote.yml@refs/heads/main}
       AGENT_COSIGN_WEB_IDENTITY: ${AGENT_COSIGN_WEB_IDENTITY:-https://github.com/commy-commander/commy-web/.github/workflows/promote.yml@refs/heads/main}
       AGENT_COSIGN_ISSUER: ${AGENT_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}
+      AGENT_COSIGN_KEY: ${AGENT_COSIGN_KEY-/repo/deploy/agent/cosign.pub}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ..:/repo:ro

@@ -67,14 +67,8 @@ commits are pushed". The forge stays the source of truth; GitHub only receives.
 
 ## Container images
 
-`images.yml` and `promote.yml` still push to ghcr.io. The fallback is the forge's own
-registry, `git.commy.chat/commy/<image>`: switching means pointing those workflows and
-the `*_IMAGE` values in `deploy/.env` at it, with CI logging in using the job token and
-the VPS logging in once with a token that has `read:package`:
-
-```bash
-docker login git.commy.chat -u commy-commander
-```
-
-Through the Cloudflare proxy a single upload is capped at 100 MB, so image layers
-larger than that need git.commy.chat set to DNS only.
+Server and website images live in the forge registry, `git.commy.chat/commy/<image>`.
+CI pushes with the `PACKAGES_TOKEN` secret (a token with `write:package`), and
+**Promote images** signs with the key pair described in DEPLOYING.md. Uploads go
+through the Cloudflare proxy, which caps a single request at 100 MB, so a layer
+larger than that needs git.commy.chat set to DNS only.

@@ -43,7 +43,7 @@ services:
   web:
     <<: *hardened
     mem_limit: ${WEB_MEM_LIMIT:-1g}
-    image: ${WEB_IMAGE:-ghcr.io/commy-commander/commy-web:prod}
+    image: ${WEB_IMAGE:-git.commy.chat/commy/commy-web:prod}
     restart: unless-stopped
     environment:
       AUTH_INTERNAL_URL: http://auth:3001
