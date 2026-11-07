@@ -335,8 +335,17 @@ To pause automatic updates, `docker compose stop agent`.
   and mount `/root/.docker/config.json` into the agent.
 - **Environments.** Settings > Environments needs `production` with a required
   reviewer, which gates promotion to prod, and `staging` without one.
-- **Desktop update signing.** Installed desktop apps update themselves from the
-  releases on their channel (pre-releases for test builds, finals for the rest),
+- **Release hosting.** Releases publish to the Cloudflare R2 bucket `commy-releases`,
+  served at releases.commy.chat. `node deploy/releases/publish.mjs <tag> <dist-dir>`
+  uploads a built release (add `--dry-run` to see the plan): files go under the tag,
+  then `stable/` or `rc/` gets `release.json` and, last, `latest.json`. Tags with
+  `-test` never move a channel. `--files <folder> <dir>` uploads other immutable
+  files, such as the voice pack, under `<folder>/`. It needs `R2_ACCOUNT_ID`,
+  `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` (an R2 token with Object Read and
+  Write on that bucket only) as repository secrets.
+- **Desktop update signing.** Installed desktop apps update themselves from
+  `https://releases.commy.chat/<channel>/latest.json` (`rc` for test builds, `stable`
+  for the rest),
   and install only files signed with the key whose public half is
   `plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`. Make the key
   once with `npx @tauri-apps/cli@2 signer generate -w commy-updater.key`, put the

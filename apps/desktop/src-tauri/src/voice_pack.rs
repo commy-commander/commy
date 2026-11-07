@@ -80,7 +80,7 @@ impl Pack {
     }
 
     fn url(&self, file: &PackFile) -> String {
-        format!("https://github.com/{}/releases/download/{}/{}", crate::updater::REPO, self.release, file.name)
+        format!("{}/{}/{}", crate::updater::RELEASES.trim_end_matches('/'), self.release, file.name)
     }
 }
 
@@ -226,7 +226,7 @@ mod tests {
             assert!(names.insert(file.name.clone()), "duplicate {}", file.name);
         }
         assert!(pack.voice("en_US-kristin-medium").is_some());
-        assert!(pack.url(&pack.runtime[0]).starts_with("https://github.com/"));
+        assert!(pack.url(&pack.runtime[0]).starts_with(&format!("{}/{}/", crate::updater::RELEASES, pack.release)));
     }
 
     #[test]

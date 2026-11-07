@@ -99,8 +99,10 @@ toasts, are Windows only for now.
 
 ## Download
 
-Releases are on the [Releases page](https://github.com/commy-commander/commy/releases)
-and at [commy.chat](https://commy.chat). Release candidates (`-rc`) are
+Downloads are at [commy.chat/download](https://commy.chat/download), served from
+releases.commy.chat: every version keeps its files under its tag, such as
+`https://releases.commy.chat/v0.2.0/`, and `stable/release.json` and `rc/release.json`
+name the newest final and release candidate. Release candidates (`-rc`) are
 pre-releases for testing and connect only to the staging servers. Each release
 also carries `commy-bot` for Windows, macOS and Linux, for running bots; see the
 [bot guide](crates/commy-bot/README.md).

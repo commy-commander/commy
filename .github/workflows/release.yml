@@ -31,14 +31,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             rust_targets: x86_64-pc-windows-msvc
             bundles: nsis
-          - name: macOS arm64
-            os: macos-15-intel
-            target: aarch64-apple-darwin
-            rust_targets: aarch64-apple-darwin
-          - name: macOS x64
-            os: macos-15-intel
-            target: x86_64-apple-darwin
-            rust_targets: x86_64-apple-darwin
           - name: Linux x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -121,7 +113,139 @@ jobs:
               grep -qiE 'Classes[\\]+commy' "$nsi" || { echo "installer does not register commy://"; grep -n 'URL Protocol' "$nsi"; exit 1; }
               grep -q 'data-folder.nsh' "$nsi" || { echo "installer has no data folder page"; exit 1; }
               cp "$bundle"/nsis/*-setup.exe "$out/Commy_${VERSION}_x64-setup.exe"
-              7z a -tzip "$out/Commy_${VERSION}_x64-portable.zip" "./target/$TARGET/release/commy-desktop.exe"
+              exe="./target/$TARGET/release/commy-desktop.exe"
+              zip="$out/Commy_${VERSION}_x64-portable.zip"
+              if command -v 7z >/dev/null; then
+                7z a -tzip "$zip" "$exe"
+              else
+                powershell -NoProfile -Command "Compress-Archive -Path '$(cygpath -m "$exe")' -DestinationPath '$(cygpath -m "$zip")'"
+              fi
+              ;;
+            Linux)
+              cp "$bundle"/deb/*.deb "$out/Commy_${VERSION}_amd64.deb"
+              cp "$bundle"/appimage/*.AppImage "$out/Commy_${VERSION}_amd64.AppImage"
+              ;;
+          esac
+          ls -la "$out"
+
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        if: matrix.bundles
+        with:
+          name: commy-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
+
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        if: runner.os == 'macOS'
+        with:
+          name: macos-bin-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/commy-desktop
+          if-no-files-found: error
+          retention-days: 1
+
+  build-macos:
+    name: ${{ matrix.name }}
+    if: github.server_url == 'https://github.com' || vars.MAC_BUILDS == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-15-intel
+            target: aarch64-apple-darwin
+            rust_targets: aarch64-apple-darwin
+            bundles: ""
+          - name: macOS x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
+            bundles: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
+            libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
+            libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+            libxdo-dev libssl-dev clang cmake
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ">=24.22.1 <25"
+
+      - name: Release config
+        id: version
+        uses: ./.github/actions/release-config
+
+      - name: Build and bundle
+        working-directory: apps/desktop/src-tauri
+        env:
+          TEST_BUILD: ${{ steps.version.outputs.test_build }}
+          FULL_VERSION: ${{ steps.version.outputs.full }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            export COMMY_VERSION="$FULL_VERSION"
+          fi
+          echo "Self-updating version: ${COMMY_VERSION:-none}"
+          if [ -n "$TEST_BUILD" ]; then
+            export COMMY_TEST_BUILD=1
+            export COMMY_DEFAULT_ACCOUNT_SERVER=https://staging.commy.chat
+            export COMMY_DEFAULT_RELAY=https://relay-staging.commy.chat:8443
+            export COMMY_RELAY_QAD_PORT=7843
+          fi
+          echo "Test build: ${COMMY_TEST_BUILD:-no}"
+          echo "Account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"
+          echo "Relay: ${COMMY_DEFAULT_RELAY:-https://relay.commy.chat:8443}"
+          if [ -n "${{ matrix.bundles }}" ]; then
+            bundle_args=(--bundles "${{ matrix.bundles }}")
+          else
+            bundle_args=(--no-bundle)
+          fi
+          npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" build \
+            --ci --target "${{ matrix.target }}" "${bundle_args[@]}" \
+            --config tauri.release.conf.json
+
+      - name: Collect artifacts
+        if: matrix.bundles
+        env:
+          VERSION: ${{ steps.version.outputs.full }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          out="$PWD/dist"
+          mkdir -p "$out"
+          bundle="target/$TARGET/release/bundle"
+          case "$RUNNER_OS" in
+            Windows)
+              nsi="target/$TARGET/release/nsis/x64/installer.nsi"
+              grep -qiE 'Classes[\\]+commy' "$nsi" || { echo "installer does not register commy://"; grep -n 'URL Protocol' "$nsi"; exit 1; }
+              grep -q 'data-folder.nsh' "$nsi" || { echo "installer has no data folder page"; exit 1; }
+              cp "$bundle"/nsis/*-setup.exe "$out/Commy_${VERSION}_x64-setup.exe"
+              exe="./target/$TARGET/release/commy-desktop.exe"
+              zip="$out/Commy_${VERSION}_x64-portable.zip"
+              if command -v 7z >/dev/null; then
+                7z a -tzip "$zip" "$exe"
+              else
+                powershell -NoProfile -Command "Compress-Archive -Path '$(cygpath -m "$exe")' -DestinationPath '$(cygpath -m "$zip")'"
+              fi
               ;;
             Linux)
               cp "$bundle"/deb/*.deb "$out/Commy_${VERSION}_amd64.deb"
@@ -148,7 +272,8 @@ jobs:
 
   macos-universal:
     name: macOS universal
-    needs: build
+    needs: build-macos
+    if: github.server_url == 'https://github.com' || vars.MAC_BUILDS == 'true'
     runs-on: macos-15-intel
     defaults:
       run:
@@ -218,8 +343,8 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [build, macos-universal, streamdeck, bot]
-    if: github.ref_type == 'tag'
+    needs: [build, build-macos, macos-universal, streamdeck, bot]
+    if: github.ref_type == 'tag' && !cancelled() && !failure()
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -253,32 +378,28 @@ jobs:
             cat "$1.sig"
             rm "$1.sig"
           }
-          windows="$(sign "Commy_${version}_x64-setup.exe")"
-          macos="$(sign "Commy_${version}_universal.app.tar.gz")"
-          appimage="$(sign "Commy_${version}_amd64.AppImage")"
-          jq -n \
-            --arg version "$version" \
-            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --arg base "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG" \
-            --arg windows "$windows" --arg macos "$macos" --arg appimage "$appimage" \
-            '{
-              version: $version,
-              notes: "Commy \($version)",
-              pub_date: $date,
-              platforms: {
-                "windows-x86_64": { url: "\($base)/Commy_\($version)_x64-setup.exe", signature: $windows },
-                "darwin-aarch64": { url: "\($base)/Commy_\($version)_universal.app.tar.gz", signature: $macos },
-                "darwin-x86_64": { url: "\($base)/Commy_\($version)_universal.app.tar.gz", signature: $macos },
-                "linux-x86_64-appimage": { url: "\($base)/Commy_\($version)_amd64.AppImage", signature: $appimage }
-              }
-            }' > latest.json
+          base="https://releases.commy.chat/$TAG"
+          platforms='{}'
+          add() {
+            [ -f "$2" ] || { echo "::warning::$2 is missing, so $1 apps will not update to $TAG"; return 0; }
+            platforms="$(jq --arg key "$1" --arg url "$base/$2" --arg signature "$(sign "$2")" \
+              '. + {($key): {url: $url, signature: $signature}}' <<< "$platforms")"
+          }
+          add windows-x86_64 "Commy_${version}_x64-setup.exe"
+          add darwin-aarch64 "Commy_${version}_universal.app.tar.gz"
+          add darwin-x86_64 "Commy_${version}_universal.app.tar.gz"
+          add linux-x86_64-appimage "Commy_${version}_amd64.AppImage"
+          jq -n --arg version "$version" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson platforms "$platforms" \
+            '{version: $version, notes: "Commy \($version)", pub_date: $date, platforms: $platforms}' > latest.json
           jq . latest.json
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: github.server_url == 'https://github.com'
         with:
           cosign-release: v2.6.1
 
       - name: Sign the checksums
+        if: github.server_url == 'https://github.com'
         working-directory: dist
         env:
           IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}
@@ -288,6 +409,7 @@ jobs:
             --certificate-identity "$IDENTITY" --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS.txt
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.server_url == 'https://github.com'
         with:
           subject-path: |
             dist/Commy_*
@@ -295,15 +417,32 @@ jobs:
             dist/commy-bot-*
             dist/SHA256SUMS.txt
 
-      - name: Create release
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          sparse-checkout: deploy/releases
+
+      - name: Publish to releases.commy.chat
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node source/deploy/releases/publish.mjs "$TAG" dist
+
+      - name: Write the release notes
+        env:
+          TAG: ${{ github.ref_name }}
+          ON_GITHUB: ${{ github.server_url == 'https://github.com' }}
         run: |
-          flags=(--generate-notes --title "Commy ${TAG}")
-          [[ "$TAG" == *-test* ]] && flags+=(--draft)
-          [[ "$TAG" == *-* ]] && flags+=(--prerelease)
-          cat > notes.md <<'EOF'
+          cat > notes.md <<EOF
+          ## Downloads
+
+          Every file is at https://releases.commy.chat/$TAG/ and the newest version is always on
+          https://commy.chat/download.
+
+          EOF
+          cat >> notes.md <<'EOF'
           ## Downloads
 
           | Platform | File |
@@ -312,14 +451,42 @@ jobs:
           | macOS 11+ (Apple Silicon and Intel) | `*_universal.dmg` |
           | Linux x64 | `*_amd64.AppImage` or `*_amd64.deb` |
           | Stream Deck 7.1+ (Windows and macOS) | `commy-soundboard.streamDeckPlugin` |
-          | Bots (`commy-bot`, see the [bot guide](https://github.com/commy-commander/commy/blob/main/crates/commy-bot/README.md)) | `commy-bot-windows-x64.zip`, `commy-bot-macos-universal.tar.gz` or `commy-bot-linux-x64.tar.gz` |
+          | Bots (`commy-bot`, see the [bot guide](https://git.commy.chat/commy/commy/src/branch/main/crates/commy-bot/README.md)) | `commy-bot-windows-x64.zip`, `commy-bot-macos-universal.tar.gz` or `commy-bot-linux-x64.tar.gz` |
 
           These builds are not code signed yet. On Windows choose **More info > Run anyway**
           in SmartScreen. On macOS right click Commy.app and choose **Open** the first time,
           or run `xattr -dr com.apple.quarantine /Applications/Commy.app`.
-          Verify downloads against `SHA256SUMS.txt`. That file is signed with cosign
-          (`SHA256SUMS.txt.sig` and `SHA256SUMS.txt.pem`), and every file carries a build
-          provenance attestation: `gh attestation verify <file> --repo commy-commander/commy`.
-          The README explains both checks.
+          Verify downloads against `SHA256SUMS.txt`.
           EOF
+          if [ "$ON_GITHUB" = true ]; then
+            cat >> notes.md <<'EOF'
+          That file is signed with cosign (`SHA256SUMS.txt.sig` and `SHA256SUMS.txt.pem`), and
+          every file carries a build provenance attestation:
+          `gh attestation verify <file> --repo commy-commander/commy`. The README explains both checks.
+          EOF
+          fi
+          cat notes.md
+
+      - name: Create the GitHub release
+        if: github.server_url == 'https://github.com'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          flags=(--generate-notes --title "Commy ${TAG}")
+          [[ "$TAG" == *-test* ]] && flags+=(--draft)
+          [[ "$TAG" == *-* ]] && flags+=(--prerelease)
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --notes-file notes.md "${flags[@]}"
+
+      - name: Create the forge release
+        if: github.server_url != 'https://github.com'
+        env:
+          TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=false; [[ "$TAG" == *-* ]] && prerelease=true
+          draft=false; [[ "$TAG" == *-test* ]] && draft=true
+          jq -n --arg tag "$TAG" --rawfile body notes.md --argjson prerelease "$prerelease" --argjson draft "$draft" \
+            '{tag_name: $tag, name: "Commy \($tag)", body: $body, prerelease: $prerelease, draft: $draft}' |
+            curl -fsS -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" --data @- \
+              "$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY/releases" -o /dev/null

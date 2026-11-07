@@ -26,10 +26,6 @@ jobs:
             os: windows-latest
             artifact: commy-bot-windows-x64
             targets: x86_64-pc-windows-msvc
-          - name: macOS universal
-            os: macos-15-intel
-            artifact: commy-bot-macos-universal
-            targets: aarch64-apple-darwin,x86_64-apple-darwin
           - name: Linux x64
             os: ubuntu-22.04
             artifact: commy-bot-linux-x64
@@ -87,7 +83,94 @@ jobs:
         run: |
           mkdir -p dist
           if [ "$RUNNER_OS" = Windows ]; then
-            7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
+            if command -v 7z >/dev/null; then
+              7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
+            else
+              powershell -NoProfile -Command "Compress-Archive -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
+            fi
+          else
+            chmod +x bin/commy-bot
+            tar -czf "dist/$ARTIFACT.tar.gz" -C bin commy-bot
+          fi
+          ls -la dist
+
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
+
+  build-macos:
+    name: commy-bot ${{ matrix.name }}
+    if: github.server_url == 'https://github.com' || vars.MAC_BUILDS == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS universal
+            os: macos-15-intel
+            artifact: commy-bot-macos-universal
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: bot-${{ matrix.artifact }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" == *-* ]]; then
+            export COMMY_DEFAULT_RELAY=https://relay-staging.commy.chat:8443
+            export COMMY_RELAY_QAD_PORT=7843
+          fi
+          echo "Relay: ${COMMY_DEFAULT_RELAY:-https://relay.commy.chat:8443}"
+          mkdir -p bin
+          IFS=, read -ra targets <<< "$TARGETS"
+          for target in "${targets[@]}"; do
+            cargo build --release --locked -p commy-bot --target "$target"
+          done
+          case "$RUNNER_OS" in
+            Windows) cp "target/${targets[0]}/release/commy-bot.exe" bin/ ;;
+            macOS)
+              lipo -create -output bin/commy-bot \
+                target/aarch64-apple-darwin/release/commy-bot \
+                target/x86_64-apple-darwin/release/commy-bot
+              lipo -info bin/commy-bot
+              ;;
+            Linux) cp "target/${targets[0]}/release/commy-bot" bin/ ;;
+          esac
+
+      - name: Smoke test
+        run: |
+          data="$RUNNER_TEMP/commy-bot-smoke"
+          ./bin/commy-bot* --data "$data" init Smoke
+          ./bin/commy-bot* --data "$data" servers
+
+      - name: Package
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          mkdir -p dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            if command -v 7z >/dev/null; then
+              7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
+            else
+              powershell -NoProfile -Command "Compress-Archive -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
+            fi
           else
             chmod +x bin/commy-bot
             tar -czf "dist/$ARTIFACT.tar.gz" -C bin commy-bot

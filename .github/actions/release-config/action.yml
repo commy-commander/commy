@@ -13,6 +13,21 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Install jq on Windows runners that lack it
+      if: runner.os == 'Windows'
+      shell: bash
+      env:
+        JQ_URL: https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe
+        JQ_SHA256: 23cb60a1354eed6bcc8d9b9735e8c7b388cd1fdcb75726b93bc299ef22dd9334
+      run: |
+        command -v jq >/dev/null && exit 0
+        mkdir -p "$RUNNER_TEMP/jq"
+        curl -fsSL -o "$RUNNER_TEMP/jq/jq.exe" "$JQ_URL"
+        echo "$JQ_SHA256  $RUNNER_TEMP/jq/jq.exe" | sha256sum -c -
+        echo "$RUNNER_TEMP/jq" >> "$GITHUB_PATH"
+        export PATH="$RUNNER_TEMP/jq:$PATH"
+        jq --version
+
     - name: Resolve version
       id: version
       shell: bash

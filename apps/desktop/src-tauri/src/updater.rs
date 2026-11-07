@@ -7,11 +7,15 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 pub const VERSION: Option<&str> = option_env!("COMMY_VERSION");
-pub const REPO: &str = match option_env!("COMMY_UPDATE_REPO") {
-    Some(repo) => repo,
-    None => "commy-commander/commy",
+pub const RELEASES: &str = match option_env!("COMMY_RELEASES_URL") {
+    Some(url) => url,
+    None => "https://releases.commy.chat",
 };
+const DOWNLOAD_PAGE: &str = "https://commy.chat/download";
 const MANIFEST: &str = "latest.json";
+const STABLE_CHANNEL: &str = "stable";
+const TEST_CHANNEL: &str = "rc";
+const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 const FIRST_CHECK: Duration = Duration::from_secs(30);
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -51,43 +55,33 @@ pub struct Updates {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Release {
-    pub tag_name: String,
-    #[serde(default)]
-    pub draft: bool,
-    #[serde(default)]
-    pub prerelease: bool,
-    #[serde(default)]
-    pub html_url: String,
-    #[serde(default)]
-    pub assets: Vec<Asset>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Asset {
-    pub name: String,
-    pub browser_download_url: String,
+pub struct Manifest {
+    pub version: String,
 }
 
 pub fn parse_version(tag: &str) -> Option<semver::Version> {
     semver::Version::parse(tag.trim().trim_start_matches('v')).ok()
 }
 
-pub fn pick_release<'a>(
-    releases: &'a [Release],
-    current: &semver::Version,
-    test_build: bool,
-) -> Option<(&'a Release, semver::Version, &'a str)> {
-    releases
-        .iter()
-        .filter(|r| !r.draft && r.prerelease == test_build)
-        .filter_map(|r| {
-            let version = parse_version(&r.tag_name)?;
-            let manifest = r.assets.iter().find(|a| a.name == MANIFEST)?;
-            Some((r, version, manifest.browser_download_url.as_str()))
-        })
-        .filter(|(_, version, _)| version > current)
-        .max_by(|a, b| a.1.cmp(&b.1))
+pub fn channel(test_build: bool) -> &'static str {
+    if test_build {
+        TEST_CHANNEL
+    } else {
+        STABLE_CHANNEL
+    }
+}
+
+pub fn manifest_url(releases: &str, test_build: bool) -> String {
+    format!("{}/{}/{MANIFEST}", releases.trim_end_matches('/'), channel(test_build))
+}
+
+pub fn is_offered(remote: &semver::Version, current: &semver::Version, test_build: bool) -> bool {
+    let is_pre_release = !remote.pre.is_empty();
+    remote > current && is_pre_release == test_build
+}
+
+pub fn offered_version(manifest: &Manifest, current: &semver::Version, test_build: bool) -> Option<semver::Version> {
+    parse_version(&manifest.version).filter(|remote| is_offered(remote, current, test_build))
 }
 
 fn install_blocker(handle: &AppHandle) -> Option<&'static str> {
@@ -210,12 +204,13 @@ async fn run_check(handle: &AppHandle) -> Result<(), String> {
     let Some(current) = VERSION.and_then(parse_version) else {
         return Err("This build does not update itself.".into());
     };
-    let releases = fetch_releases().await?;
-    let Some((release, version, manifest)) = pick_release(&releases, &current, crate::instance::TEST_BUILD) else {
+    let test_build = crate::instance::TEST_BUILD;
+    let manifest = manifest_url(RELEASES, test_build);
+    let Some(version) = offered_version(&fetch_manifest(&manifest).await?, &current, test_build) else {
         return Ok(());
     };
     let found = version.to_string();
-    let page = release.html_url.clone();
+    let page = DOWNLOAD_PAGE.to_string();
     let can_install = handle.state::<Updates>().status.lock().unwrap().can_install;
     if !can_install {
         set(handle, |s| {
@@ -225,7 +220,7 @@ async fn run_check(handle: &AppHandle) -> Result<(), String> {
         });
         return Ok(());
     }
-    install(handle, manifest, current, found, page).await
+    install(handle, &manifest, current, found, page).await
 }
 
 #[cfg(mobile)]
@@ -237,11 +232,13 @@ async fn install(_handle: &AppHandle, _manifest: &str, _current: semver::Version
 async fn install(handle: &AppHandle, manifest: &str, current: semver::Version, found: String, page: String) -> Result<(), String> {
     let url = manifest.parse().map_err(|e| format!("bad manifest link: {e}"))?;
     let newer_than = current;
+    let test_build = crate::instance::TEST_BUILD;
     let update = handle
         .updater_builder()
         .endpoints(vec![url])
         .map_err(|e| e.to_string())?
-        .version_comparator(move |_, remote| remote.version > newer_than)
+        .timeout(FETCH_TIMEOUT)
+        .version_comparator(move |_, remote| is_offered(&remote.version, &newer_than, test_build))
         .build()
         .map_err(|e| e.to_string())?
         .check()
@@ -286,20 +283,19 @@ async fn install(handle: &AppHandle, manifest: &str, current: semver::Version, f
     Ok(())
 }
 
-async fn fetch_releases() -> Result<Vec<Release>, String> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=30");
+async fn fetch_manifest(url: &str) -> Result<Manifest, String> {
     let response = reqwest::Client::new()
         .get(url)
         .header("User-Agent", format!("Commy/{}", current_version()))
-        .header("Accept", "application/vnd.github+json")
-        .timeout(Duration::from_secs(20))
+        .header("Cache-Control", "no-cache")
+        .timeout(FETCH_TIMEOUT)
         .send()
         .await
         .map_err(|_| "Could not reach the update server.".to_string())?;
     if !response.status().is_success() {
         return Err(format!("The update server answered {}.", response.status().as_u16()));
     }
-    response.json().await.map_err(|e| format!("unreadable release list: {e}"))
+    response.json().await.map_err(|e| format!("unreadable update manifest: {e}"))
 }
 
 pub fn restart(handle: &AppHandle) -> Result<(), String> {
@@ -321,18 +317,9 @@ pub fn restart(handle: &AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn release(tag: &str, prerelease: bool, manifest: bool) -> Release {
-        Release {
-            tag_name: tag.into(),
-            draft: false,
-            prerelease,
-            html_url: format!("https://example.test/{tag}"),
-            assets: if manifest {
-                vec![Asset { name: MANIFEST.into(), browser_download_url: format!("https://example.test/{tag}/latest.json") }]
-            } else {
-                vec![]
-            },
-        }
+    fn offered(remote: &str, current: &str, test_build: bool) -> Option<String> {
+        let manifest = Manifest { version: remote.into() };
+        offered_version(&manifest, &parse_version(current).unwrap(), test_build).map(|v| v.to_string())
     }
 
     #[test]
@@ -362,34 +349,43 @@ mod tests {
     }
 
     #[test]
-    fn test_builds_follow_only_pre_releases() {
-        let releases = vec![release("v0.3.0", false, true), release("v0.2.0-rc.6", true, true), release("v0.2.0-rc.5", true, true)];
-        let current = parse_version("0.2.0-rc.5").unwrap();
-        let (picked, version, manifest) = pick_release(&releases, &current, true).unwrap();
-        assert_eq!(picked.tag_name, "v0.2.0-rc.6");
-        assert_eq!(version.to_string(), "0.2.0-rc.6");
-        assert!(manifest.ends_with("/v0.2.0-rc.6/latest.json"));
+    fn each_build_reads_its_own_channel() {
+        assert_eq!(manifest_url("https://releases.commy.chat", false), "https://releases.commy.chat/stable/latest.json");
+        assert_eq!(manifest_url("https://releases.commy.chat", true), "https://releases.commy.chat/rc/latest.json");
     }
 
     #[test]
-    fn final_builds_follow_only_finals() {
-        let releases = vec![release("v0.3.0-rc.1", true, true), release("v0.2.1", false, true)];
-        let current = parse_version("0.2.0").unwrap();
-        assert_eq!(pick_release(&releases, &current, false).unwrap().0.tag_name, "v0.2.1");
+    fn a_trailing_slash_on_the_releases_url_is_ignored() {
+        assert_eq!(manifest_url("https://mirror.example/", false), "https://mirror.example/stable/latest.json");
+    }
+
+    #[test]
+    fn test_builds_take_newer_pre_releases_only() {
+        assert_eq!(offered("0.2.0-rc.6", "0.2.0-rc.5", true).as_deref(), Some("0.2.0-rc.6"));
+        assert_eq!(offered("0.3.0", "0.2.0-rc.5", true), None);
+    }
+
+    #[test]
+    fn final_builds_take_newer_finals_only() {
+        assert_eq!(offered("0.2.1", "0.2.0", false).as_deref(), Some("0.2.1"));
+        assert_eq!(offered("0.3.0-rc.1", "0.2.0", false), None);
     }
 
     #[test]
     fn nothing_newer_means_no_update() {
-        let releases = vec![release("v0.2.0", false, true), release("v0.1.9", false, true)];
-        assert!(pick_release(&releases, &parse_version("0.2.0").unwrap(), false).is_none());
+        assert_eq!(offered("0.2.0", "0.2.0", false), None);
+        assert_eq!(offered("0.1.9", "0.2.0", false), None);
     }
 
     #[test]
-    fn releases_without_a_manifest_and_drafts_are_skipped() {
-        let mut draft = release("v0.4.0", false, true);
-        draft.draft = true;
-        let releases = vec![draft, release("v0.3.0", false, false), release("v0.2.1", false, true)];
-        let current = parse_version("0.2.0").unwrap();
-        assert_eq!(pick_release(&releases, &current, false).unwrap().0.tag_name, "v0.2.1");
+    fn an_unreadable_manifest_version_offers_nothing() {
+        assert_eq!(offered("latest", "0.2.0", false), None);
+    }
+
+    #[test]
+    fn the_signed_manifest_parses_for_its_version() {
+        let body = r#"{"version":"0.2.1","notes":"Commy 0.2.1","pub_date":"2026-11-06T20:00:00Z","platforms":{"windows-x86_64":{"url":"https://releases.commy.chat/v0.2.1/Commy_0.2.1_x64-setup.exe","signature":"sig"}}}"#;
+        let manifest: Manifest = serde_json::from_str(body).unwrap();
+        assert_eq!(offered_version(&manifest, &parse_version("0.2.0").unwrap(), false).unwrap().to_string(), "0.2.1");
     }
 }

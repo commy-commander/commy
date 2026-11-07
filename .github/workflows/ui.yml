@@ -11,6 +11,7 @@ on:
       - "crates/commy-net/src/invite.rs"
       - "crates/commy-bot/clients/**"
       - "apps/file-store/**"
+      - "deploy/releases/**"
       - "apps/desktop/src-tauri/installer/**"
       - ".github/actions/release-config/**"
       - ".github/workflows/ui.yml"
@@ -42,6 +43,8 @@ jobs:
         run: node --test "crates/commy-bot/clients/node/*.test.mjs"
       - name: File storage worker tests
         run: node --test "apps/file-store/test/*.test.mjs"
+      - name: Release publisher tests
+        run: node --test "deploy/releases/*.test.mjs"
 
   installer:
     name: Installer data folder page

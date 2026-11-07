@@ -40,6 +40,13 @@ jobs:
             jq -r '.voices[] | "- \(.name) (\(.lang)): \(.credit)"' apps/desktop/src-tauri/voice-pack.json
           } > notes.md
 
+      - name: Publish to releases.commy.chat
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node deploy/releases/publish.mjs --files "$(jq -r .release apps/desktop/src-tauri/voice-pack.json)" pack
+
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
