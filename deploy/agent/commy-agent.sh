@@ -130,7 +130,8 @@ update_service() {
 	fi
 
 	first="$(echo "$old" | head -n 1)"
-	ref="$(docker inspect -f '{{.Config.Image}}' "$first")"
+	ref="$(docker compose config --images "$svc" 2>/dev/null | head -n 1)"
+	[ -n "$ref" ] || ref="$(docker inspect -f '{{.Config.Image}}' "$first")"
 	running="$(docker inspect -f '{{.Image}}' "$first")"
 	latest="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null)"
 

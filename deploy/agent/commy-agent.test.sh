@@ -54,7 +54,7 @@ docker() {
 	"inspect -f")
 		id="$4"
 		case "$3" in
-		*Config.Image*) echo "$REF" ;;
+		*Config.Image*) echo "${RUNNING_REF:-$REF}" ;;
 		*State.Health*)
 			if grep -qx "$id" "$FAKE/new"; then cat "$FAKE/health"; else echo healthy; fi
 			;;
@@ -65,7 +65,10 @@ docker() {
 	"image inspect")
 		case "$4" in
 		*RepoDigests*) [ -f "$FAKE/nodigest" ] || echo "ghcr.io/commy/commy-web@$(cat "$FAKE/tag")" ;;
-		*) cat "$FAKE/tag" ;;
+		*)
+			[ -z "$5" ] || [ "$5" = "$REF" ] || return 1
+			cat "$FAKE/tag"
+			;;
 		esac
 		;;
 	"stop "*) ;;
@@ -109,6 +112,13 @@ reset
 run_once
 check "unchanged image does not start containers" "$(called 'compose up')" "0"
 check "unchanged image keeps the old container" "$(images)" "sha256:old"
+
+RUNNING_REF="old.registry.example/commy/commy-web:dev"
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "a service moves to the image its compose file names, not the one it started from" "$(images)" "sha256:new"
+RUNNING_REF=
 
 reset
 echo "sha256:new" >"$FAKE/remote"
