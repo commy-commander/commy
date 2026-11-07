@@ -60,7 +60,7 @@ EOF
 done
 
 first="$(echo "$ENVS" | cut -d' ' -f1)"
-for net in commy-prod commy-staging commy-dev commy-relay; do
+for net in commy-prod commy-staging commy-dev commy-relay commy-forge; do
 	docker network inspect "$net" >/dev/null 2>&1 || docker network create "$net" >/dev/null
 done
 edge="$ROOT/commy-$first/deploy/edge"

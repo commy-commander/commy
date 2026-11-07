@@ -20,12 +20,13 @@ The VPS only serves git. It never runs builds.
 ## The forge
 
 ```bash
+docker network inspect commy-forge >/dev/null 2>&1 || docker network create commy-forge
 cd /srv/commy-forge && docker compose up -d
 ```
 
 Registration is closed. The admin is `commy-commander`; its first password is in
-`/srv/commy-forge/admin-password` (owner only). The edge joins the `commy-forge`
-network, so start the forge before recreating the edge. Workflows in
+`/srv/commy-forge/admin-password` (owner only). The edge and the forge share the `commy-forge`
+network, which `setup-vps.sh` creates along with the other edge networks. Workflows in
 `.github/workflows` run as Forgejo Actions; `uses:` actions are fetched from github.com.
 
 Settings applied to both repositories: squash merge only, branches deleted on merge,

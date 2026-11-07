@@ -46,6 +46,7 @@ services:
 
 networks:
   forge:
+    external: true
     name: commy-forge
 
 volumes:

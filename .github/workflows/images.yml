@@ -104,12 +104,20 @@ jobs:
     name: VPS setup end to end
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      STACK: commy-stack-e2e-${{ github.run_number }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver: docker
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.PACKAGES_TOKEN || github.token }}
 
       - name: Build the sync service image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -119,30 +127,51 @@ jobs:
           load: true
           tags: localhost:5000/commy-sync:candidate
 
-      - name: Build images into a local registry
+      - name: Build the auth image and fetch the web image
         run: |
-          docker run -d --name registry -p 5000:5000 registry:2
+          docker build -q -t localhost:5000/commy-auth:candidate auth
+          docker pull -q "$IMAGES/commy-web:dev"
+          docker tag "$IMAGES/commy-web:dev" localhost:5000/commy-web:candidate
+
+      - name: Start a throwaway Docker host
+        run: |
+          stale="$(docker ps -aq --filter label=commy-stack-e2e)"
+          [ -z "$stale" ] || echo "$stale" | xargs docker rm -fv >/dev/null
+          docker run -d --privileged --label commy-stack-e2e --name "$STACK" docker:29-dind >/dev/null
+          deadline=$(( $(date +%s) + 120 ))
+          until docker exec "$STACK" docker info >/dev/null 2>&1; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then docker logs "$STACK"; exit 1; fi
+            sleep 2
+          done
+          docker exec "$STACK" apk add -q --no-cache curl git openssl
+          docker save localhost:5000/commy-sync:candidate localhost:5000/commy-auth:candidate localhost:5000/commy-web:candidate \
+            | docker exec -i "$STACK" docker load -q
+          docker cp "$GITHUB_WORKSPACE" "$STACK:/srv/checkout"
+          for env in prod staging dev; do docker exec "$STACK" cp -r /srv/checkout "/srv/commy-$env"; done
+
+      - name: Push images into a local registry
+        run: |
+          docker exec -i "$STACK" sh -e <<'EOF'
+          docker run -d --name registry -p 5000:5000 registry:2 >/dev/null
+          until curl -sf -o /dev/null http://127.0.0.1:5000/v2/; do sleep 1; done
           for env in staging dev; do
             docker tag localhost:5000/commy-sync:candidate "localhost:5000/commy-sync:$env"
             docker push -q "localhost:5000/commy-sync:$env"
           done
-          docker build -q -t "localhost:5000/commy-auth:candidate" auth
-          docker pull -q "$IMAGES/commy-web:dev"
-          docker tag "$IMAGES/commy-web:dev" localhost:5000/commy-web:candidate
           for svc in web auth; do
             for env in prod staging dev; do
               docker tag "localhost:5000/commy-$svc:candidate" "localhost:5000/commy-$svc:$env"
               docker push -q "localhost:5000/commy-$svc:$env"
             done
           done
+          EOF
 
       - name: Run setup-vps.sh
-        run: |
-          for env in prod staging dev; do sudo cp -r "$GITHUB_WORKSPACE" "/srv/commy-$env"; done
-          sudo COMMY_IMAGES=localhost:5000 AGENT_VERIFY=off sh deploy/setup-vps.sh commy.localhost ci@example.org
+        run: docker exec "$STACK" env COMMY_IMAGES=localhost:5000 AGENT_VERIFY=off sh /srv/commy-prod/deploy/setup-vps.sh commy.localhost ci@example.org
 
       - name: Every environment answers through the edge proxy
         run: |
+          docker exec -i "$STACK" sh -e <<'EOF'
           urls=""
           for host in commy.localhost staging.commy.localhost dev.commy.localhost; do
             urls="$urls https://$host/ https://$host/.well-known/commy-auth.json"
@@ -176,9 +205,11 @@ jobs:
           echo "ok   - prod does not advertise a sync service"
           robots="$(curl -sk -m 5 -D - -o /dev/null --resolve staging.commy.localhost:443:127.0.0.1 https://staging.commy.localhost/ | grep -i x-robots-tag || true)"
           [ -n "$robots" ] && echo "ok   - staging is noindex" || { echo "FAIL - staging is missing X-Robots-Tag"; exit 1; }
+          EOF
 
       - name: Environments cannot reach each other
         run: |
+          docker exec -i "$STACK" sh <<'EOF'
           probe() {
             if docker exec "$1" wget -qO- -T 5 "http://$2:3001/healthz" >/dev/null 2>&1; then got=reachable; else got=unreachable; fi
             if [ "$got" = "$3" ]; then echo "ok   - $1 -> $2 is $got"; else echo "FAIL - $1 -> $2 is $got, expected $3"; return 1; fi
@@ -200,18 +231,25 @@ jobs:
           sync_probe commy-edge-caddy-1 commy-staging-sync reachable || status=1
           sync_probe commy-edge-caddy-1 commy-dev-sync reachable || status=1
           exit $status
+          EOF
 
       - name: Logs on failure
         if: failure()
         run: |
+          docker exec -i "$STACK" sh <<'EOF'
           docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'
           for net in commy-prod commy-staging commy-dev commy-relay; do
             docker network inspect "$net" --format '{{.Name}}: {{range .Containers}}{{.Name}} {{end}}'
           done
           for env in prod staging dev; do
-            (cd "/srv/commy-$env/deploy" && sudo docker compose ps -a && sudo docker compose logs --tail 40)
+            (cd "/srv/commy-$env/deploy" && docker compose ps -a && docker compose logs --tail 40)
           done
-          (cd /srv/commy-prod/deploy/edge && sudo docker compose logs --tail 40)
+          (cd /srv/commy-prod/deploy/edge && docker compose logs --tail 40)
+          EOF
+
+      - name: Remove the throwaway Docker host
+        if: always()
+        run: docker rm -fv "$STACK" >/dev/null 2>&1 || true
 
   sync-image:
     name: sync image
