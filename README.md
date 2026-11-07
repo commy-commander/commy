@@ -276,7 +276,11 @@ picks `simulator` (an Apple silicon simulator app plus an unsigned device build)
 `signed` or `testflight`, which run `ios-build.sh` with the `version` input.
 The iOS job runs on the Mac runner labelled `commy-mac`. Signing needs the
 `APPLE_DEVELOPMENT_TEAM` secret and, with nothing else set, uses the Apple
-account in that Mac's Xcode settings. Without one, set either an App Store
+account in that Mac's Xcode settings, which needs at least one iPhone or iPad
+registered to the team. The `ios_signing: api-key` input instead signs with
+the App Store Connect key named by `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`,
+whose `.p8` is in `~/.appstoreconnect/private_keys` on the Mac; that key needs
+Admin access and no devices. Without the Mac, set either an App Store
 Connect API key with Admin access (`APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, and
 the `.p8` contents in `APPLE_API_KEY`) or a distribution certificate and profile
 (`IOS_CERTIFICATE` and `IOS_MOBILE_PROVISION` as base64,
