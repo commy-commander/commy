@@ -686,6 +686,40 @@ fn adopt_identity(app: &App, dir: &Path, shared: &EntryList) -> bool {
     true
 }
 
+async fn opened_account_list(app: &App, dir: &Path, s: &Session) -> Result<Option<EntryList>, String> {
+    let Fetched::Item(item) = fetch(app, s, VAULT_ITEM).await? else { return Ok(None) };
+    let Some(data) = item.data.as_deref() else { return Ok(None) };
+    let own = own_key(app.base_dir().map(|b| b.as_path()), dir, s, Some(data));
+    if let Some(list) = own.and_then(|key| EntryList::open(&key, data).ok()) {
+        return Ok(Some(list));
+    }
+    let AccountCopy::Opens(key) = account_copy(app, s, data).await else { return Ok(None) };
+    save_key(dir, &s.server, &s.account, &key);
+    Ok(EntryList::open(&key, data).ok())
+}
+
+#[tauri::command]
+pub async fn adopt_account_profile(handle: AppHandle) -> Result<Option<UserProfile>, String> {
+    let app = handle.state::<App>();
+    if let Some(profile) = app.profile.lock().unwrap().clone() {
+        return Ok(Some(profile));
+    }
+    let adopted = {
+        let _guard = SYNC.lock().await;
+        let (dir, s) = signed_in(&app)?;
+        let Some(shared) = opened_account_list(&app, &dir, &s).await? else { return Ok(None) };
+        let swap = app.signing.write().await;
+        if !adopt_identity(&app, &dir, &shared) {
+            return Ok(None);
+        }
+        crate::settle::settle_loaded_key(&app, &swap).map_err(|e| format!("could not load the account's identity: {e}"))?;
+        app.profile.lock().unwrap().clone()
+    };
+    crate::settle::use_settled_key(&handle).await;
+    schedule(&handle);
+    Ok(adopted)
+}
+
 fn same_shared_fields(a: Option<&UserProfile>, b: Option<&UserProfile>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => commy_view::profile::shared_fields_match(a, b),

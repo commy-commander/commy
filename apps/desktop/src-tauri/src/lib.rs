@@ -8443,6 +8443,7 @@ pub fn run() {
             directory::browse_directory,
             entry_list::entry_list_status,
             entry_list::entry_list_sync,
+            entry_list::adopt_account_profile,
             entry_list::entry_list_recovery_code,
             entry_list::entry_list_use_recovery_code,
             entry_list::entry_list_start_over,
