@@ -6,6 +6,7 @@ on:
     paths: &rust-paths
       - "crates/**"
       - "apps/desktop/src-tauri/**"
+      - "apps/desktop/apple-sign-in/**"
       - "apps/web/src/**"
       - "apps/web/Cargo.toml"
       - "Cargo.toml"

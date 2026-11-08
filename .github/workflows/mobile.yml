@@ -6,6 +6,7 @@ on:
     paths:
       - "crates/**"
       - "apps/desktop/src-tauri/**"
+      - "apps/desktop/apple-sign-in/**"
       - "apps/desktop/mobile/**"
       - "apps/desktop/ui/**"
       - "Cargo.toml"
@@ -15,6 +16,7 @@ on:
     paths:
       - "crates/**"
       - "apps/desktop/src-tauri/**"
+      - "apps/desktop/apple-sign-in/**"
       - "apps/desktop/mobile/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -303,6 +305,8 @@ jobs:
           npx tauri ios init --ci
           npx tauri icon ../mobile/app-icon.png
           grep -q "SystemConfiguration.framework" gen/apple/project.yml
+          ../mobile/ios-entitlements.sh
+          grep -q "com.apple.developer.applesignin" gen/apple/*_iOS/*_iOS.entitlements
 
       - name: Build the simulator app and an unsigned device app
         if: env.IOS_MODE == 'simulator'

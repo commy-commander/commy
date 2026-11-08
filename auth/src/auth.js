@@ -6,6 +6,8 @@ import { kyselyAdapter } from "@better-auth/kysely-adapter";
 import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
 import { commyAccountDeletion } from "./account-deletion.js";
+import { commyAppSignIn } from "./app-sign-in.js";
+import { appleClientSecret } from "./apple.js";
 import { hasAccess } from "./access.js";
 import { sealedAtRest } from "./at-rest.js";
 import { commyDeviceRequests } from "./device-requests.js";
@@ -32,7 +34,23 @@ export function socialProviders(config) {
     const client = config[name];
     if (client) providers[name] = { clientId: client.clientId, clientSecret: client.clientSecret, disableSignUp: !config.allowSignup };
   }
+  if (config.apple) providers.apple = appleProvider(config.apple, config.allowSignup);
   return providers;
+}
+
+export function appleProvider(apple, allowSignup) {
+  const audience = [...(apple.web ? [apple.web.servicesId] : []), ...apple.appBundleIds];
+  const provider = {
+    clientId: audience[0],
+    audience,
+    disableImplicitSignUp: true,
+    disableSignUp: !allowSignup,
+  };
+  if (apple.web) {
+    const secret = appleClientSecret(apple.web);
+    Object.defineProperty(provider, "clientSecret", { enumerable: true, get: () => secret.current() });
+  }
+  return provider;
 }
 
 export function postgresDatabase(pool) {
@@ -66,6 +84,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     commyPasswords(),
     commySecurityNotices({ baseURL: config.baseURL, send }),
     commyAccountDeletion({ instanceName: config.instanceName, send, emailCodes: Boolean(config.smtp) }),
+    commyAppSignIn({ accessCode: config.accessCode, turnstileSiteKey: config.turnstile?.siteKey ?? null }),
     commyEmailPreferences({ secret: config.secret, instanceName: config.instanceName, basePath: config.basePath }),
   ];
 
@@ -212,6 +231,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/commy/email/preferences": { window: 60, max: 20 },
         "/passkey/verify-authentication": { window: 60, max: 10 },
         "/sign-in/social": { window: 60, max: 20 },
+        "/commy/access": { window: 600, max: 10 },
+        "/commy/captcha": { window: 60, max: 30 },
         "/device/code": { window: 60, max: 10 },
         "/device": { window: 600, max: 30 },
         "/device/approve": { window: 60, max: 10 },

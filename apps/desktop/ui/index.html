@@ -534,8 +534,33 @@
       <h2 id="signin-title" data-i18n="signin.title">Sign in to Commy</h2>
       <p id="signin-intro" data-i18n="signin.intro">A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
       <div class="signin-start" id="signin-start">
+        <form class="signin-form hidden" id="signin-form" novalidate>
+          <button type="button" class="signin-apple hidden" id="signin-apple"><span class="signin-apple-logo" aria-hidden="true"></span><span data-i18n="signin.apple">Sign in with Apple</span></button>
+          <div class="modal-divider hidden" id="signin-or" data-i18n="signin.or">or</div>
+          <input class="signin-field" id="signin-email" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="254" data-i18n-placeholder="signin.email" placeholder="Email" data-i18n-aria-label="signin.email" aria-label="Email" />
+          <input class="signin-field" id="signin-password" type="password" autocomplete="current-password" maxlength="128" data-i18n-placeholder="signin.password" placeholder="Password" data-i18n-aria-label="signin.password" aria-label="Password" />
+          <div class="signin-check hidden" id="signin-check"></div>
+          <button type="submit" class="btn-primary signin-go" id="signin-submit" data-i18n="signin.submit">Sign in</button>
+        </form>
+        <div class="signin-step hidden" id="signin-code-step">
+          <div class="signin-label" data-i18n="signin.code.ask">Enter the code from your authenticator app, or a backup code</div>
+          <input class="signin-field signin-code-input" id="signin-code-input" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="40" data-i18n-aria-label="signin.code.label" aria-label="Sign-in code" />
+          <button class="btn-primary signin-go" id="signin-code-go" data-i18n="signin.continue">Continue</button>
+        </div>
+        <div class="signin-step hidden" id="signin-new-step">
+          <div class="signin-label" data-i18n="signin.apple.new">No Commy account uses this Apple ID yet.</div>
+          <label class="signin-adult"><input type="checkbox" id="signin-adult" /><span><span data-i18n="signin.adult">I am 18 or older and agree to the</span> <button type="button" class="btn-link signin-terms" id="signin-terms" data-i18n="signin.terms">Terms</button></span></label>
+          <button class="btn-primary signin-go" id="signin-apple-create" data-i18n="signin.apple.create" disabled>Create a new account</button>
+          <button class="btn-secondary signin-go" id="signin-apple-existing" data-i18n="signin.apple.existing">I already have an account</button>
+        </div>
+        <div class="signin-step hidden" id="signin-access-step">
+          <div class="signin-label" data-i18n="signin.access.ask">New accounts need the access code for now.</div>
+          <input class="signin-field" id="signin-access-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200" data-i18n-aria-label="signin.access.label" aria-label="Access code" />
+          <button class="btn-primary signin-go" id="signin-access-go" data-i18n="signin.continue">Continue</button>
+        </div>
         <button class="btn-primary signin-go" id="signin-go" data-i18n="signin.go">Sign in with your browser</button>
-        <div class="signin-note" data-i18n="signin.note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
+        <div class="signin-note" id="signin-note" data-i18n="signin.note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
+        <button class="btn-link signin-back hidden" id="signin-step-back" data-i18n="signin.step.back">Back</button>
       </div>
       <div class="signin-wait hidden" id="signin-wait">
         <div class="signin-label" data-i18n="signin.code">Check that your browser shows this code, then approve it</div>
@@ -3401,6 +3426,7 @@
   <script src="scripts/typing.js"></script>
   <script src="scripts/nicknames.js"></script>
   <script src="scripts/onboarding.js"></script>
+  <script src="scripts/signin-flow.js"></script>
   <script src="scripts/message-link.js"></script>
   <script src="scripts/slow-mode.js"></script>
   <script src="scripts/threads.js"></script>

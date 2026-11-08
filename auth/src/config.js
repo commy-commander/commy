@@ -2,6 +2,8 @@ import { normalizeAccessCode } from "./access.js";
 import { PRIVATE_NETWORKS, trustedProxyList } from "./client-ip.js";
 import { LINK_BLOCKLIST_PATH, linkBlocklistSources } from "./link-blocklist.js";
 
+export const APPLE_ORIGIN = "https://appleid.apple.com";
+export const CAPTCHA_PATH = "/commy/captcha";
 const DEFAULT_PORT = 3001;
 const SMTP_SUBMISSION_PORT = 587;
 const SMTPS_IMPLICIT_TLS_PORT = 465;
@@ -30,6 +32,32 @@ function oauthClient(env, prefix, warnings, uses) {
     warnings.push(`${missing} is empty, so ${uses} stays off until both ${prefix}_CLIENT_ID and ${prefix}_CLIENT_SECRET are set`);
   }
   return null;
+}
+
+const COMMY_IOS_APP = "chat.commy.mobile";
+
+function applePrivateKey(value) {
+  return value.replace(/\\n/g, "\n").trim();
+}
+
+function appleConfig(env, warnings, errors) {
+  const bundles = (env.APPLE_APP_BUNDLE_IDS ?? "").trim();
+  const appBundleIds = bundles === "off" ? [] : bundles ? list(bundles) : [COMMY_IOS_APP];
+  const servicesId = (env.APPLE_CLIENT_ID ?? "").trim();
+  const teamId = (env.APPLE_TEAM_ID ?? "").trim();
+  const keyId = (env.APPLE_KEY_ID ?? "").trim();
+  const privateKey = applePrivateKey(env.APPLE_PRIVATE_KEY ?? "");
+  const webParts = { APPLE_CLIENT_ID: servicesId, APPLE_TEAM_ID: teamId, APPLE_KEY_ID: keyId, APPLE_PRIVATE_KEY: privateKey };
+  const missing = Object.entries(webParts).filter(([, value]) => !value).map(([name]) => name);
+  let web = null;
+  if (missing.length === 0) {
+    if (!privateKey.includes("PRIVATE KEY")) errors.push("APPLE_PRIVATE_KEY must be the contents of the .p8 key file from Apple");
+    else web = { servicesId, teamId, keyId, privateKey };
+  } else if (missing.length < 4) {
+    warnings.push(`${missing.join(", ")} empty, so Sign in with Apple on the website stays off until all four APPLE_ values are set`);
+  }
+  if (!web && appBundleIds.length === 0) return null;
+  return { appBundleIds, web };
 }
 
 function smtpConfig(env, errors) {
@@ -105,13 +133,15 @@ export function loadConfig(env = process.env) {
   }
 
   const smtp = smtpConfig(env, errors);
+  const appleWarnings = [];
+  const apple = appleConfig(env, appleWarnings, errors);
   const trustedProxies = trustedProxiesConfig(env, errors);
 
   if (errors.length > 0) {
     throw new Error(`Invalid auth server configuration:\n- ${errors.join("\n- ")}`);
   }
 
-  const warnings = [];
+  const warnings = [...appleWarnings];
   const google = oauthClient(env, "GOOGLE", warnings, "Google sign-in");
   const twitch = oauthClient(env, "TWITCH", warnings, "Twitch sign-in");
   const igdb = oauthClient(env, "IGDB", warnings, "the separate IGDB app") ?? twitch;
@@ -133,7 +163,7 @@ export function loadConfig(env = process.env) {
     databaseUrl,
     baseURL,
     basePath: "/api/auth",
-    trustedOrigins: [...new Set([baseURL, ...list(env.TRUSTED_ORIGINS)])],
+    trustedOrigins: [...new Set([baseURL, ...(apple?.web ? [APPLE_ORIGIN] : []), ...list(env.TRUSTED_ORIGINS)])],
     instanceName: env.COMMY_INSTANCE_NAME || "Commy",
     postalAddress: (env.EMAIL_POSTAL_ADDRESS ?? "").trim() || null,
     desktopClientIds: list(env.DEVICE_CLIENT_IDS).length > 0 ? list(env.DEVICE_CLIENT_IDS) : ["commy-desktop"],
@@ -148,6 +178,7 @@ export function loadConfig(env = process.env) {
     trustedProxies,
     google,
     twitch,
+    apple,
     smtp,
     turnstile,
     igdb,
@@ -161,6 +192,7 @@ export function featureSummary(config) {
   return [
     `google=${on(config.google)}`,
     `twitch=${on(config.twitch)}`,
+    `apple=${config.apple?.web ? "app+web" : on(config.apple)}`,
     `email=${on(config.smtp)}`,
     `turnstile=${on(config.turnstile)}`,
     `gifs=${on(config.klipyKey)}`,
@@ -184,6 +216,8 @@ export function discoveryDocument(config) {
     providers: {
       google: Boolean(config.google),
       twitch: Boolean(config.twitch),
+      apple: Boolean(config.apple?.web),
+      appleApp: Boolean(config.apple?.appBundleIds.length),
       magicLink: Boolean(config.smtp),
       emailVerification: Boolean(config.smtp),
       passwordReset: Boolean(config.smtp),
@@ -199,6 +233,12 @@ export function discoveryDocument(config) {
     },
     endpoints: {
       session: `${api}/get-session`,
+      signInEmail: `${api}/sign-in/email`,
+      signInSocial: `${api}/sign-in/social`,
+      twoFactorVerify: `${api}/two-factor/verify-totp`,
+      twoFactorBackupCode: `${api}/two-factor/verify-backup-code`,
+      ...(config.turnstile ? { captcha: `${api}${CAPTCHA_PATH}` } : {}),
+      ...(config.accessCode ? { accessCode: `${api}/commy/access` } : {}),
       signOut: `${api}/sign-out`,
       devices: `${api}/commy/devices`,
       linkChallenge: `${api}/commy/devices/challenge`,
@@ -234,6 +274,7 @@ export function discoveryDocument(config) {
       folderLock: true,
       doorbell: Boolean(config.doorbell),
       twoFactor: true,
+      accessCode: Boolean(config.accessCode),
       changeEmail: Boolean(config.smtp),
       sync: Boolean(config.syncUrl),
       linkBlocklist: config.linkBlocklistSources.length > 0,

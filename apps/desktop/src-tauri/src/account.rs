@@ -356,13 +356,25 @@ fn node_id_of(key: &SigningKey) -> String {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct Discovery {
+pub(crate) struct Discovery {
     issuer: String,
     #[serde(rename = "deviceAuthorization")]
     device: DeviceEndpoints,
-    endpoints: Endpoints,
+    pub(crate) endpoints: Endpoints,
     #[serde(default)]
     features: Option<ServerFeatures>,
+    #[serde(default)]
+    pub(crate) providers: Providers,
+    #[serde(default, rename = "turnstileSiteKey")]
+    pub(crate) turnstile_site_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub(crate) struct Providers {
+    #[serde(default, rename = "emailPassword")]
+    pub(crate) email_password: bool,
+    #[serde(default, rename = "appleApp")]
+    pub(crate) apple_app: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -376,7 +388,7 @@ struct DeviceEndpoints {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct Endpoints {
+pub(crate) struct Endpoints {
     session: String,
     #[serde(rename = "signOut")]
     sign_out: String,
@@ -390,6 +402,33 @@ struct Endpoints {
     account_delete_start: Option<String>,
     #[serde(default, rename = "accountDeleteFinish")]
     account_delete_finish: Option<String>,
+    #[serde(default, rename = "signInEmail")]
+    pub(crate) sign_in_email: Option<String>,
+    #[serde(default, rename = "signInSocial")]
+    pub(crate) sign_in_social: Option<String>,
+    #[serde(default, rename = "twoFactorVerify")]
+    pub(crate) two_factor_verify: Option<String>,
+    #[serde(default, rename = "twoFactorBackupCode")]
+    pub(crate) two_factor_backup_code: Option<String>,
+    #[serde(default)]
+    pub(crate) captcha: Option<String>,
+    #[serde(default, rename = "accessCode")]
+    pub(crate) access_code: Option<String>,
+}
+
+impl Endpoints {
+    fn optional(&self) -> [&Option<String>; 8] {
+        [
+            &self.account_delete_start,
+            &self.account_delete_finish,
+            &self.sign_in_email,
+            &self.sign_in_social,
+            &self.two_factor_verify,
+            &self.two_factor_backup_code,
+            &self.captcha,
+            &self.access_code,
+        ]
+    }
 }
 
 impl Discovery {
@@ -406,7 +445,7 @@ impl Discovery {
             ]
             .iter()
             .all(|u| ok(u))
-            && [&self.endpoints.account_delete_start, &self.endpoints.account_delete_finish].into_iter().flatten().all(|u| ok(u))
+            && self.endpoints.optional().into_iter().flatten().all(|u| ok(u))
     }
 }
 
@@ -418,7 +457,7 @@ fn use_sync_service(handle: &AppHandle, server: &str, doc: &Discovery) {
     }
 }
 
-async fn discover(http: &reqwest::Client, server: &str) -> Result<Discovery, String> {
+pub(crate) async fn discover(http: &reqwest::Client, server: &str) -> Result<Discovery, String> {
     let host = host_of(server);
     let res = http
         .get(format!("{server}/.well-known/commy-auth.json"))
@@ -728,12 +767,7 @@ fn default_interval() -> u64 {
 
 #[tauri::command]
 pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle) -> Result<SignInStart, String> {
-    {
-        let state = app.account.lock().unwrap();
-        if is_signed_in(&state) && state.others.len() + 1 >= MAX_ACCOUNTS {
-            return Err(format!("This computer keeps up to {MAX_ACCOUNTS} accounts. Sign out of one first."));
-        }
-    }
+    room_for_another_account(&app)?;
     let server = effective_server();
     let doc = discover(&app.http, &server).await?;
     let res = app
@@ -771,6 +805,7 @@ pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle
 
 #[tauri::command]
 pub fn account_cancel_sign_in(app: tauri::State<'_, App>) {
+    crate::app_sign_in::forget();
     if let Some(pending) = app.sign_in.lock().unwrap().take() {
         let _ = pending.cancel.send(true);
     }
@@ -843,13 +878,24 @@ async fn poll_for_token(
     app.sign_in.lock().unwrap().take();
     forget_pending_sign_in(&app);
     let Some(token) = token else { return };
-    match finish_sign_in(&handle, &server, &doc, &token).await {
-        Ok(()) => {
-            let _ = handle.emit("account-changed", ());
-            crate::entry_list::schedule(&handle);
-        }
-        Err(e) => fail(&e),
+    if let Err(e) = complete_sign_in(&handle, &server, &doc, &token).await {
+        fail(&e);
     }
+}
+
+pub(crate) async fn complete_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
+    finish_sign_in(handle, server, doc, token).await?;
+    let _ = handle.emit("account-changed", ());
+    crate::entry_list::schedule(handle);
+    Ok(())
+}
+
+pub(crate) fn room_for_another_account(app: &App) -> Result<(), String> {
+    let state = app.account.lock().unwrap();
+    if is_signed_in(&state) && state.others.len() + 1 >= MAX_ACCOUNTS {
+        return Err(format!("This computer keeps up to {MAX_ACCOUNTS} accounts. Sign out of one first."));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1498,8 +1544,16 @@ mod tests {
                 sync: None,
                 account_delete_start: Some(format!("{api}/commy/account/delete/start")),
                 account_delete_finish: Some(format!("{api}/commy/account/delete/finish")),
+                sign_in_email: Some(format!("{api}/sign-in/email")),
+                sign_in_social: Some(format!("{api}/sign-in/social")),
+                two_factor_verify: Some(format!("{api}/two-factor/verify-totp")),
+                two_factor_backup_code: Some(format!("{api}/two-factor/verify-backup-code")),
+                captcha: None,
+                access_code: None,
             },
             features: None,
+            providers: Providers::default(),
+            turnstile_site_key: None,
         }
     }
 
@@ -1517,6 +1571,9 @@ mod tests {
         older_server.endpoints.account_delete_start = None;
         older_server.endpoints.account_delete_finish = None;
         assert!(older_server.same_origin("https://commy.chat"), "a server without deletion still signs in");
+        let mut password_elsewhere = doc("https://commy.chat");
+        password_elsewhere.endpoints.sign_in_email = Some("https://evil.example/api/auth/sign-in/email".into());
+        assert!(!password_elsewhere.same_origin("https://commy.chat"), "a password never goes to another site");
     }
 
     #[test]

@@ -980,6 +980,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "commy-apple-sign-in"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
 name = "commy-audio"
 version = "0.1.0"
 dependencies = [
@@ -1040,6 +1049,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "chrono",
+ "commy-apple-sign-in",
  "commy-audio",
  "commy-core",
  "commy-media",

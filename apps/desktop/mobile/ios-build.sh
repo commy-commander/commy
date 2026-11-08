@@ -22,6 +22,7 @@ cd "$src_tauri"
   npx tauri ios init --ci
   npx tauri icon ../mobile/app-icon.png
 }
+"$mobile/ios-entitlements.sh"
 
 config="$(printf '{"version":"%s","bundle":{"iOS":{"bundleVersion":"%s"}}}' "$release_app_version" "$build_number")"
 rm -rf gen/apple/build/arm64

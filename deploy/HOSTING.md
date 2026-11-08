@@ -65,6 +65,16 @@ Email and password works with no extra setup. The rest are optional:
   and `TWITCH_CLIENT_SECRET`. Commy asks Twitch for the account email; a
   Twitch sign-in joins an existing Commy account only when Twitch reports that
   email as verified.
+- **Apple**: the Commy iPhone app offers Sign in with Apple with no setup
+  (`APPLE_APP_BUNDLE_IDS` empty accepts `chat.commy.mobile`; `off` turns it
+  off). An Apple ID that matches no account is only signed up after the person
+  confirms in the app, so a private relay address never quietly makes a second
+  account. For the website button, create a Services ID in the Apple developer
+  portal with return URL `https://<DOMAIN>/api/auth/callback/apple` and a Sign in
+  with Apple key, then set `APPLE_CLIENT_ID` (the Services ID), `APPLE_TEAM_ID`,
+  `APPLE_KEY_ID` and `APPLE_PRIVATE_KEY` (the .p8 text, `\n` between lines).
+  To email private relay addresses, register your sending address under Sign in
+  with Apple for Email Communication.
 - **Email** (verification, password reset, magic links): set `SMTP_HOST`,
   `SMTP_PORT` (587 for STARTTLS, 465 for TLS), `SMTP_USER`, `SMTP_PASSWORD`
   and `EMAIL_FROM`, or a single `SMTP_URL`. Many providers want an

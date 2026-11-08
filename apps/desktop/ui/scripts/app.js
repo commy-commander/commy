@@ -1769,6 +1769,18 @@ async function mockInvoke(cmd, args = {}) {
     case "account_claim_profile": mock.account.unclaimed_profile = null; mock.account.needs_account_folder = false; return mock.account;
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
+    case "account_in_app_options": return { password: true, apple: new URLSearchParams(location.search).has("ios"), captcha_url: null };
+    case "account_sign_in_password":
+      if (args.password !== "correct horse") throw "That email and password don't match.";
+      return { step: /two-step/.test(args.email) ? "code" : "done" };
+    case "account_sign_in_code":
+      if (args.code.replace(/\s/g, "") !== "123456") throw "That code isn't right. Try the newest one.";
+      return { step: "done" };
+    case "account_sign_in_apple":
+      if (!args.create) return { step: "new_account" };
+      if (!args.adultConfirmed) return { step: "confirm_adult" };
+      if (!args.accessCode) return { step: "access_code" };
+      return { step: "done" };
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
     case "account_delete_start": return { confirm: "email", password: true, email: mock.account.user ? mock.account.user.email : null };
     case "account_delete_finish":
@@ -2432,6 +2444,7 @@ function applyTranslations(root) {
   for (const node of root.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
   for (const node of root.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
   for (const node of root.querySelectorAll("[data-i18n-placeholder]")) node.placeholder = t(node.dataset.i18nPlaceholder);
+  for (const node of root.querySelectorAll("[data-i18n-aria-label]")) node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
 }
 
 function renderAccessibilitySettings(prefs, resolved) {
@@ -20110,6 +20123,25 @@ async function releaseStage() {
 
 function wireEvents() {
   $("signin-go").onclick = beginSignIn;
+  $("signin-form").addEventListener("submit", submitPasswordSignIn);
+  $("signin-apple").onclick = () => signInWithApple(false);
+  $("signin-apple-create").onclick = () => signInWithApple(true);
+  $("signin-adult").addEventListener("change", syncAdultConfirmation);
+  $("signin-terms").onclick = () => invoke("open_url", { url: `${account.server}/terms` }).catch(e => toast(String(e)));
+  $("signin-apple-existing").onclick = async () => {
+    await leaveInAppStep();
+    showInAppNote(t("signin.apple.use.email"));
+    $("signin-email").focus();
+  };
+  $("signin-access-go").onclick = () => signInWithApple(true, $("signin-access-input").value);
+  $("signin-code-go").onclick = () => runInAppStep(() => invoke("account_sign_in_code", { code: $("signin-code-input").value }));
+  for (const [input, go] of [["signin-code-input", "signin-code-go"], ["signin-access-input", "signin-access-go"]]) {
+    $(input).addEventListener("keydown", e => {
+      if (e.key === "Enter") $(go).click();
+    });
+  }
+  $("signin-step-back").onclick = leaveInAppStep;
+  window.addEventListener("message", onSignInCheckMessage);
   $("signin-reopen").onclick = () => {
     if (signInUrl) invoke("open_url", { url: signInUrl }).catch(e => toast(String(e)));
   };
@@ -24032,13 +24064,155 @@ function showSignIn() {
   select.classList.remove("hidden");
   $("signin-server-edit").classList.add("hidden");
   syncServerNote();
+  showSignInStep("form");
   if (!account.signed_in && account.pending_code) {
     signInUrl = account.pending_url;
     $("signin-code").textContent = account.pending_code;
     $("signin-start").classList.add("hidden");
     $("signin-wait").classList.remove("hidden");
   }
+  prepareInAppSignIn();
   showModal("modal-signin");
+}
+
+let inAppOptions = null;
+let signInCheck = { url: null, token: null };
+let inAppBusy = false;
+
+async function prepareInAppSignIn() {
+  const start = $("signin-start");
+  const server = account && account.server;
+  if (inAppOptions && inAppOptions.server === server) return renderInAppSignIn(inAppOptions.view);
+  const mobile = await invoke("is_mobile_app").catch(() => false);
+  if (!mobile) return renderInAppSignIn(inAppSignIn(null, false));
+  start.classList.add("signin-loading");
+  const options = await invoke("account_in_app_options").catch(() => null);
+  const view = inAppSignIn(options, true);
+  if (options) inAppOptions = { server, view };
+  start.classList.remove("signin-loading");
+  renderInAppSignIn(view);
+}
+
+function renderInAppSignIn(view) {
+  $("signin-form").classList.toggle("hidden", !view.form);
+  $("signin-apple").classList.toggle("hidden", !view.apple);
+  $("signin-or").classList.toggle("hidden", !(view.apple && view.password));
+  for (const id of ["signin-email", "signin-password", "signin-submit"]) $(id).classList.toggle("hidden", !view.password);
+  const browser = $("signin-go");
+  browser.classList.toggle("btn-primary", !view.form);
+  browser.classList.toggle("btn-secondary", view.form);
+  browser.dataset.i18n = view.form ? "signin.browser" : "signin.go";
+  browser.textContent = t(browser.dataset.i18n);
+  const note = $("signin-note");
+  note.dataset.i18n = view.form ? "signin.browser.note" : "signin.note";
+  note.textContent = t(note.dataset.i18n);
+  showSignInCheck(view.captchaUrl);
+}
+
+function showSignInCheck(url) {
+  const box = $("signin-check");
+  box.classList.toggle("hidden", !url);
+  if (signInCheck.url === url && box.firstChild) return;
+  signInCheck = { url, token: null };
+  box.replaceChildren();
+  if (!url) return;
+  const frame = document.createElement("iframe");
+  frame.title = t("signin.check.label");
+  frame.src = url;
+  box.append(frame);
+}
+
+function reloadSignInCheck() {
+  const frame = $("signin-check").querySelector("iframe");
+  signInCheck.token = null;
+  if (frame && signInCheck.url) frame.src = signInCheck.url;
+}
+
+function onSignInCheckMessage(event) {
+  const message = readCaptchaMessage(event, signInCheck.url);
+  if (!message) return;
+  signInCheck.token = message.token || null;
+  if (message.failed) showInAppNote(t("signin.check.failed"));
+}
+
+function showSignInStep(name) {
+  const steps = { form: "signin-form", code: "signin-code-step", new: "signin-new-step", access: "signin-access-step" };
+  for (const step of SIGNIN_STEPS) {
+    if (step !== "form") $(steps[step]).classList.toggle("hidden", step !== name);
+  }
+  const onForm = name === "form";
+  if (!onForm) $("signin-form").classList.add("hidden");
+  else if (inAppOptions) $("signin-form").classList.toggle("hidden", !inAppOptions.view.form);
+  for (const id of ["signin-go", "signin-note"]) $(id).classList.toggle("hidden", !onForm);
+  $("signin-step-back").classList.toggle("hidden", onForm);
+  if (name === "form") $("signin-adult").checked = false;
+  syncAdultConfirmation();
+  const focus = { code: "signin-code-input", access: "signin-access-input" }[name];
+  if (focus) {
+    $(focus).value = "";
+    setTimeout(() => $(focus).focus(), 0);
+  }
+}
+
+function showInAppNote(message) {
+  $("signin-error").textContent = message;
+  $("signin-error").classList.remove("hidden");
+}
+
+async function runInAppStep(call, { resetCheck = false } = {}) {
+  if (inAppBusy) return;
+  inAppBusy = true;
+  const buttons = ["signin-submit", "signin-apple", "signin-code-go", "signin-apple-create", "signin-access-go"];
+  for (const id of buttons) $(id).disabled = true;
+  $("signin-error").classList.add("hidden");
+  try {
+    followInAppStep(await call());
+  } catch (err) {
+    showInAppNote(String(err));
+    if (resetCheck) reloadSignInCheck();
+  } finally {
+    inAppBusy = false;
+    for (const id of buttons) $(id).disabled = false;
+    syncAdultConfirmation();
+  }
+}
+
+function followInAppStep(result) {
+  const step = result && result.step;
+  if (step === "canceled") return;
+  if (step === "done") {
+    $("signin-password").value = "";
+    signInCheck.token = null;
+    return;
+  }
+  if (step === "check_email") {
+    showInAppNote(t("signin.check.email"));
+    reloadSignInCheck();
+    return;
+  }
+  showSignInStep(signInStepView(step));
+}
+
+function submitPasswordSignIn(event) {
+  event.preventDefault();
+  const email = $("signin-email").value.trim();
+  const password = $("signin-password").value;
+  runInAppStep(() => invoke("account_sign_in_password", { email, password, captcha: signInCheck.token }), { resetCheck: true });
+}
+
+function signInWithApple(create, accessCode = null) {
+  const adultConfirmed = create && $("signin-adult").checked;
+  runInAppStep(() => invoke("account_sign_in_apple", { create, adultConfirmed, accessCode }));
+}
+
+function syncAdultConfirmation() {
+  $("signin-apple-create").disabled = inAppBusy || !$("signin-adult").checked;
+}
+
+async function leaveInAppStep() {
+  await invoke("account_cancel_sign_in").catch(() => {});
+  $("signin-error").classList.add("hidden");
+  showSignInStep("form");
 }
 
 async function beginSignIn() {

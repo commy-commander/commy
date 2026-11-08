@@ -2,6 +2,7 @@ mod account;
 mod account_folder;
 mod account_log;
 mod app_icon;
+mod app_sign_in;
 mod browser;
 mod cloud_files;
 mod activity;
@@ -8196,6 +8197,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(commy_apple_sign_in::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init());
     #[cfg(desktop)]
@@ -8324,6 +8327,10 @@ pub fn run() {
             account::set_account_server,
             account::account_begin_sign_in,
             account::account_cancel_sign_in,
+            app_sign_in::account_in_app_options,
+            app_sign_in::account_sign_in_password,
+            app_sign_in::account_sign_in_code,
+            app_sign_in::account_sign_in_apple,
             account::account_sign_out,
             account::account_delete_start,
             account::account_delete_finish,

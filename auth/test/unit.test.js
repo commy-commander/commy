@@ -58,6 +58,8 @@ test("discovery document points at the public URL", () => {
   assert.deepEqual(d.providers, {
     google: false,
     twitch: false,
+    apple: false,
+    appleApp: true,
     magicLink: true,
     emailVerification: true,
     passwordReset: true,
@@ -243,7 +245,10 @@ test("twitch is enabled only with both values and appears in discovery", () => {
 });
 
 test("socialProviders lists configured providers and honours ALLOW_SIGNUP", () => {
-  assert.deepEqual(socialProviders(loadConfig(base)), {});
+  assert.deepEqual(socialProviders(loadConfig({ ...base, APPLE_APP_BUNDLE_IDS: "off" })), {});
+  assert.deepEqual(socialProviders(loadConfig(base)), {
+    apple: { clientId: "chat.commy.mobile", audience: ["chat.commy.mobile"], disableImplicitSignUp: true, disableSignUp: false },
+  });
   const c = loadConfig({
     ...base,
     GOOGLE_CLIENT_ID: "g",
@@ -253,6 +258,7 @@ test("socialProviders lists configured providers and honours ALLOW_SIGNUP", () =
     ALLOW_SIGNUP: "false",
   });
   const p = socialProviders(c);
-  assert.deepEqual(Object.keys(p), ["google", "twitch"]);
+  assert.deepEqual(Object.keys(p), ["google", "twitch", "apple"]);
+  assert.equal(p.apple.disableSignUp, true);
   assert.deepEqual(p.twitch, { clientId: "t", clientSecret: "ts", disableSignUp: true });
 });

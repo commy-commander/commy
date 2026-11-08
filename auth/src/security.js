@@ -5,6 +5,7 @@ import { generateRandomString } from "better-auth/crypto";
 
 export const TWO_FACTOR_PAGE = "/account/two-factor";
 export const SIGN_INS_THAT_REDIRECT = ["/magic-link/verify", "/callback/:id", "/verify-email"];
+export const SIGN_IN_WITH_PROVIDER_TOKEN = "/sign-in/social";
 const TWO_FACTOR_COOKIE = "two_factor";
 const TWO_FACTOR_CHALLENGE_SECONDS = 600;
 const MIN_PASSWORD = 8;
@@ -55,6 +56,19 @@ export const commyTwoFactorEverywhere = ({ baseURL }) => ({
           throw ctx.redirect(page.toString());
         }),
       },
+      {
+        matcher: (ctx) => ctx.path === SIGN_IN_WITH_PROVIDER_TOKEN,
+        handler: createAuthMiddleware(async (ctx) => {
+          const signedIn = ctx.context.newSession;
+          if (!signedIn?.user.twoFactorEnabled) return;
+          if (!(await hasVerifiedAuthenticator(ctx.context.adapter, signedIn.user.id))) return;
+          deleteSessionCookie(ctx, true);
+          await ctx.context.internalAdapter.deleteSession(signedIn.session.token);
+          ctx.context.setNewSession(null);
+          await startTwoFactorChallenge(ctx, signedIn.user.id);
+          return ctx.json({ twoFactorRedirect: true, twoFactorMethods: ["totp"] });
+        }),
+      },
     ],
   },
 });
@@ -99,7 +113,7 @@ const NOTICES = {
   },
   "/unlink-account": {
     subject: "A sign-in method was removed",
-    body: "A Google or Twitch sign-in was just unlinked from this account.",
+    body: "A Google, Twitch or Apple sign-in was just unlinked from this account.",
   },
   "/two-factor/disable": {
     subject: "Two-step sign-in was turned off",
@@ -111,7 +125,7 @@ const NOTICES = {
   },
 };
 
-const SOCIAL_NAMES = { google: "Google", twitch: "Twitch" };
+const SOCIAL_NAMES = { google: "Google", twitch: "Twitch", apple: "Apple" };
 
 function noticeMail(baseURL, to, subject, body) {
   return {
