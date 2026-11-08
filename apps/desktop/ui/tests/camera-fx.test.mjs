@@ -11,6 +11,8 @@ const {
   parseCameraFx,
   cameraFxNeedsSegmenter,
   cameraFxShowsAvatar,
+  cameraFxOnPhone,
+  cameraBlurIsCheap,
   edgeStep,
   writeMaskAlpha,
   maskMemory,
@@ -137,4 +139,19 @@ test("a custom background fills the frame from its centre without stretching", (
   assert.deepEqual(coverCrop(960, 540, 640, 480), { sx: 120, sy: 0, sw: 720, sh: 540 });
   assert.deepEqual(coverCrop(1000, 1000, 640, 360), { sx: 0, sy: 218.75, sw: 1000, sh: 562.5 });
   assert.equal(coverCrop(0, 540, 640, 360), null);
+});
+
+test("phones never run camera avatars and keep the chosen background", () => {
+  const fx = cameraFxOnPhone({ background: "blur", mirror: false, avatar: "alien" });
+  assert.equal(fx.avatar, "off");
+  assert.equal(fx.background, "blur");
+  assert.equal(fx.mirror, false);
+  assert.equal(cameraFxShowsAvatar(fx), false);
+  assert.equal(cameraFxNeedsSegmenter(fx), true);
+});
+
+test("phones and canvases without filters use the cheap downscaled blur", () => {
+  assert.equal(cameraBlurIsCheap(true, true), true);
+  assert.equal(cameraBlurIsCheap(false, false), true);
+  assert.equal(cameraBlurIsCheap(false, true), false);
 });

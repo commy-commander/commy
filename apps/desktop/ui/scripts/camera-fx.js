@@ -22,6 +22,14 @@ function cameraFxNeedsSegmenter(settings) {
   return fx.avatar === "off" && fx.background !== "off";
 }
 
+function cameraFxOnPhone(settings) {
+  return { ...parseCameraFx(settings), avatar: "off" };
+}
+
+function cameraBlurIsCheap(onPhone, filterWorks) {
+  return onPhone || !filterWorks;
+}
+
 function cameraFxShowsAvatar(settings) {
   return parseCameraFx(settings).avatar !== "off";
 }
@@ -81,6 +89,8 @@ if (typeof module !== "undefined" && module.exports) {
     parseCameraFx,
     cameraFxNeedsSegmenter,
     cameraFxShowsAvatar,
+    cameraFxOnPhone,
+    cameraBlurIsCheap,
     edgeStep,
     writeMaskAlpha,
     maskMemory,

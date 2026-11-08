@@ -22,6 +22,9 @@ xcap = "0.9"
 [target.'cfg(not(any(windows, target_os = "macos", target_os = "android", target_os = "ios")))'.dependencies]
 xcap = "0.4"
 
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-avf-audio = { version = "0.3", default-features = false, features = ["std", "AVAudioSession", "AVAudioSessionTypes"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-capture = "2.0.1"
 windows-core = "0.62"

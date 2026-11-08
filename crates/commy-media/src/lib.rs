@@ -4,6 +4,8 @@ pub mod devices;
 mod display;
 #[cfg(any(windows, test))]
 mod hdr;
+#[cfg(target_os = "ios")]
+mod ios_audio;
 pub mod jitter;
 #[cfg(windows)]
 mod loopback;

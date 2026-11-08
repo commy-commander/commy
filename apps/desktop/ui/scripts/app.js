@@ -3965,6 +3965,7 @@ function channelSensitiveMark(row, channel) {
 
 function textChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel");
+  if (isDriveChannel(channel)) row.classList.add("drive-channel");
   row.appendChild(channelMark(channel));
   row.appendChild(channelNameNode(channel, "channel-label"));
   channelLockMark(row, channel);
@@ -7164,6 +7165,7 @@ async function resetSensitiveConfirmations() {
 }
 
 function renderMessages(messages) {
+  state.chatLogKey = null;
   const box = $("messages");
   showForumView(false);
   if (state.view === "server" && ageGated(state.currentChannel)) {
@@ -7259,14 +7261,41 @@ function showForumView(on) {
   $("drive-view").classList.add("hidden");
   $("forum-view").classList.toggle("hidden", !on);
   $("messages").classList.toggle("hidden", on);
+  requestAnimationFrame(paintScrollDown);
+}
+
+function paintScrollDown() {
+  const box = $("messages");
+  $("scroll-down").classList.toggle("hidden", !scrollDownShown(box.scrollHeight, box.scrollTop, box.clientHeight));
+}
+
+function wireScrollDown() {
+  setIcon($("scroll-down"), "chevronDown", 24);
+  $("messages").addEventListener("scroll", paintScrollDown, { passive: true });
+  $("scroll-down").onclick = () => {
+    if (state.historyAnchor) return jumpToPresent();
+    const box = $("messages");
+    box.scrollTo({ top: box.scrollHeight, behavior: "smooth" });
+  };
 }
 
 function renderChannelLog(messages) {
   if (isForumChannel(state.currentChannel)) renderForum(messages);
   else renderMessages(messages);
+  state.chatLogKey = currentChatLogKey(messages);
+}
+
+function currentChatLogKey(messages) {
+  const channel = state.currentChannel;
+  return chatLogKey(channel && channel.id, channel && lineFor(readState.line, channel.id), messages, state.currentServer);
+}
+
+function redrawChannelLogIfChanged(messages) {
+  if (currentChatLogKey(messages) !== state.chatLogKey) renderChannelLog(messages);
 }
 
 function renderForum(messages) {
+  state.chatLogKey = null;
   const channel = state.currentChannel;
   state.renderedMessages = messages;
   showForumView(true);
@@ -7580,6 +7609,7 @@ function showDriveView() {
   $("forum-view").classList.add("hidden");
   $("messages").classList.add("hidden");
   $("drive-view").classList.remove("hidden");
+  paintScrollDown();
 }
 
 async function openDrive(channel, fresh) {
@@ -17523,6 +17553,7 @@ function setPhonePane(pane, { fromHistory = false } = {}) {
   if (was === pane) return;
   $("app").dataset.pane = pane;
   if (!fromHistory && phonePaneGoesDeeper(was, pane)) history.pushState({ pane }, "");
+  if (pane === "list") closeDiscover();
   paintPhoneGridButton();
 }
 
@@ -17597,15 +17628,31 @@ function wirePhoneLayout() {
   window.addEventListener("popstate", onPhoneHistory);
   wireSettingsPhoneBars();
   $("phone-back").onclick = () => phoneStep("back");
+  $("discover-back").onclick = () => phoneStep("back");
+  document.querySelector(".chat-header").addEventListener("click", e => {
+    const button = e.target.closest(".header-actions button");
+    if (button && headerTapLeavesPeople(phonePane(), button.id)) phoneShowChat();
+  }, true);
   $("channel-list").addEventListener("click", e => {
     const row = e.target.closest(".channel");
     if (row && rowOpensConversation([...row.classList], Boolean(e.target.closest("button")))) phoneStep("open");
   });
 }
 
+function clearTouchedMessages() {
+  for (const msg of document.querySelectorAll(".msg.touched")) msg.classList.remove("touched");
+}
+
 function wireTouchMessages() {
+  let lastScrollAt = 0;
+  document.addEventListener("scroll", e => {
+    if (!document.body.classList.contains("mobile-app") || !e.target.closest || !e.target.closest(".messages, .thread-messages")) return;
+    lastScrollAt = Date.now();
+    clearTouchedMessages();
+  }, true);
   document.addEventListener("click", e => {
     if (!document.body.classList.contains("mobile-app")) return;
+    if (tapEndsScroll(lastScrollAt, Date.now())) return;
     const msg = e.target.closest(".msg");
     if (msg && e.target.closest("a, button, input, textarea, video, audio, .msg-actions")) return;
     for (const other of document.querySelectorAll(".msg.touched")) {
@@ -17615,9 +17662,25 @@ function wireTouchMessages() {
   });
 }
 
+function lockPhoneViewport() {
+  document.querySelector('meta[name="viewport"]').setAttribute("content", PHONE_APP_VIEWPORT);
+  const view = window.visualViewport;
+  if (!view) return;
+  const fit = () => {
+    document.documentElement.style.setProperty("--app-height", `${Math.round(view.height)}px`);
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+  };
+  view.addEventListener("resize", fit);
+  view.addEventListener("scroll", fit);
+  fit();
+}
+
 async function markMobileApp() {
   const mobile = await invoke("is_mobile_app").catch(() => false);
   document.body.classList.toggle("mobile-app", Boolean(mobile));
+  document.documentElement.classList.toggle("mobile-app", Boolean(mobile));
+  if (mobile) lockPhoneViewport();
+  keepCameraAvatarsOffOnPhones();
   const share = mobile ? await invoke("can_share_screen").catch(() => false) : true;
   document.body.classList.toggle("can-share-screen", Boolean(share));
 }
@@ -20171,6 +20234,7 @@ function wireEvents() {
       if (state.micTesting) {
         await stopMicTest();
       } else {
+        await askForMicrophoneOnPhones();
         await invoke("start_mic_test");
         state.micTesting = true;
         $("mic-test-btn").textContent = "Stop Test";
@@ -23552,7 +23616,7 @@ async function refreshCurrentServer() {
         syncRulesGate();
       }
       if (isDriveChannel(still)) return openDrive(still, false);
-      renderChannelLog(await fetchChannelMessages(still));
+      redrawChannelLogIfChanged(await fetchChannelMessages(still));
       return;
     }
   }
@@ -23660,6 +23724,7 @@ async function boot() {
   wirePhoneLayout();
   wireNarrowLayout();
   wireTouchMessages();
+  wireScrollDown();
   wireTalkButton();
   wirePhoneVoice();
   wireTimeoutModal();
@@ -24158,6 +24223,7 @@ function closeDiscover() {
 }
 
 async function openDiscover() {
+  phoneShowChat();
   if (discoverState.open) return;
   discoverState.open = true;
   $("discover").classList.remove("hidden");
@@ -24165,7 +24231,7 @@ async function openDiscover() {
   button.classList.add("active");
   button.setAttribute("aria-pressed", "true");
   renderDiscoverChips();
-  $("discover-search").focus();
+  if (!isPhoneWidth(window.innerWidth)) $("discover-search").focus();
   await loadDiscover(true);
 }
 

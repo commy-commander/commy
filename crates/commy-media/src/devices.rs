@@ -349,6 +349,8 @@ pub fn start_microphone(
     tx: UnboundedSender<Vec<i16>>,
     device_name: Option<String>,
 ) -> Result<InputHandle> {
+    #[cfg(target_os = "ios")]
+    crate::ios_audio::prepare_session_for_voice()?;
     let opened = OpenedDevice::default();
     let watched = opened.clone();
     let wanted = device_name.clone();

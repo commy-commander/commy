@@ -680,8 +680,10 @@ body.voice-dragging, body.voice-dragging * { cursor: grabbing !important; }
 .msg .avatar.spacer { visibility: hidden; height: 0; }
 
 .msg-body { min-width: 0; flex: 1; user-select: text; }
-.msg-head { display: flex; align-items: baseline; gap: 8px; }
+.msg-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.msg-head > * { flex: none; white-space: nowrap; }
 .msg-author { font-weight: 600; color: var(--header-primary); }
+.msg-head > .msg-author { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .msg-time { font-size: 12px; color: var(--text-muted); }
 .msg-content { color: var(--text-normal); line-height: 1.4; word-wrap: break-word; }
 .msg-content .edited { font-size: 10px; color: var(--text-faint); }
@@ -7958,7 +7960,8 @@ button.role-chip { background: none; font-family: inherit; line-height: inherit;
   }
   .app[data-pane="list"] .user-chip { padding: 0; justify-content: center; }
   .app[data-pane="list"] .user-panel #me-avatar { width: 40px; height: 40px; }
-  .app[data-pane="list"] .user-actions .icon-btn { width: 44px; height: 44px; }
+  .app[data-pane="list"] .user-actions { justify-content: center; width: 44px; }
+  .app[data-pane="list"] .user-actions .icon-btn { flex: 0 0 44px; width: 44px; height: 44px; }
 
   .sidebar-header { min-height: 56px; }
   .sidebar .header-btns .icon-btn { width: 44px; height: 44px; }
@@ -8709,4 +8712,69 @@ body.has-titlebar .offline-chip { top: 42px; }
 
 @media (max-width: 700px) {
   .dm-card-stack { top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); bottom: auto; left: calc(12px + env(safe-area-inset-left)); width: auto; max-width: none; }
+}
+
+.scroll-down-dock { position: relative; height: 0; z-index: 3; }
+.scroll-down {
+  position: absolute;
+  right: calc(20px + var(--chat-gutter, 0px));
+  bottom: 12px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg-raised);
+  color: var(--header-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  cursor: pointer;
+}
+.scroll-down:hover { background: var(--bg-active); }
+
+html.mobile-app, body.mobile-app { overscroll-behavior: none; }
+body.mobile-app {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+body.mobile-app .app { height: var(--app-height, 100dvh); }
+body.mobile-app .msg:hover { background: none; }
+body.mobile-app .msg.touched { background: rgba(0, 0, 0, .12); }
+body.mobile-app .msg:not(.touched):hover .msg-actions { display: none; }
+body.mobile-app .msg:not(.touched):hover .reaction.add { opacity: 0; }
+body.mobile-app .scroll-down { width: 44px; height: 44px; right: 16px; }
+
+@media (max-width: 700px) {
+  .discover-head { flex-wrap: wrap; align-items: center; gap: 8px 4px; padding: 10px 12px 8px; }
+  .discover-head .phone-back { margin-left: -4px; }
+  .discover-title { flex: 1 1 0; min-width: 0; }
+  .discover-title h2 { font-size: 20px; }
+  .discover-search { flex: 1 1 100%; height: 42px; }
+  .discover-search input { font-size: 16px; }
+  .discover-chips { padding: 4px 12px 10px; }
+  .discover-body { padding: 12px; }
+  .discover-grid { grid-template-columns: minmax(0, 1fr); }
+}
+body.mobile-app .channel.drive-channel { display: none; }
+
+@media (max-width: 700px) {
+  .setting-row:has(> select) { flex-wrap: wrap; gap: 8px 16px; }
+  .setting-row:has(> select) > div:first-child { flex: 1 1 100%; }
+  .setting-row > select { flex: 1 1 100%; width: 100%; min-width: 0; height: 44px; }
+  .settings-layer select { font-size: 16px; }
+  .settings-layer .form-actions .btn-primary { flex: 1 1 auto; min-height: 44px; font-size: 15px; }
+
+  .profile-body { flex-wrap: wrap; gap: 8px 12px; padding: 0 12px; }
+  .profile-names { flex: 1 1 0; }
+  .profile-display { overflow-wrap: anywhere; }
+  .profile-avatar-btn { flex: 1 1 100%; min-height: 44px; margin: 0; font-size: 15px; }
+  .profile-fields { margin: 12px 8px 8px; padding: 14px 12px; }
+  .profile-banner .role-banner-btn { height: 36px; padding: 0 14px; font-size: 14px; }
+  .profile-banner .role-banner-btn.icon { width: 36px; padding: 0; }
+  .look-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+  .look-option { width: auto; min-height: 76px; padding: 12px 4px 8px; font-size: 13px; }
 }

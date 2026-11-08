@@ -65,7 +65,8 @@ function readCameraFx() {
 }
 
 function updateCameraFx(patch) {
-  cameraFx.settings = parseCameraFx({ ...cameraFx.settings, ...patch });
+  const next = parseCameraFx({ ...cameraFx.settings, ...patch });
+  cameraFx.settings = onPhoneApp() ? cameraFxOnPhone(next) : next;
   try { localStorage.setItem(CAMERA_FX_KEY, JSON.stringify(cameraFx.settings)); } catch {}
   if (cameraFxNeedsSegmenter(cameraFx.settings)) prepareCameraSegmenter();
   if (cameraFxShowsAvatar(cameraFx.settings)) prepareCameraAvatar();
@@ -291,9 +292,17 @@ function canvasFilterWorks(ctx) {
   return typeof ctx.filter === "string";
 }
 
+function onPhoneApp() {
+  return document.body.classList.contains("mobile-app");
+}
+
+function keepCameraAvatarsOffOnPhones() {
+  if (onPhoneApp()) cameraFx.settings = cameraFxOnPhone(cameraFx.settings);
+}
+
 function drawBlurredBackground(pipe, size) {
   const { ctx, video } = pipe;
-  if (canvasFilterWorks(ctx)) {
+  if (!cameraBlurIsCheap(onPhoneApp(), canvasFilterWorks(ctx))) {
     const radius = Math.max(6, Math.round(size.width / 40));
     ctx.filter = `blur(${radius}px)`;
     ctx.drawImage(video, -radius, -radius, size.width + radius * 2, size.height + radius * 2);

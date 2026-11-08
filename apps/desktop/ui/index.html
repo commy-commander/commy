@@ -324,8 +324,14 @@
         </div>
       </section>
       <div class="messages" id="messages"></div>
+      <div class="scroll-down-dock">
+        <button class="scroll-down hidden" id="scroll-down" type="button" title="Scroll to newest" aria-label="Scroll to newest"></button>
+      </div>
       <section class="discover hidden" id="discover" aria-label="Discover Servers">
         <header class="discover-head">
+          <button class="icon-btn phone-back" id="discover-back" type="button" title="Back" aria-label="Back">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/></svg>
+          </button>
           <div class="discover-title">
             <h2>Discover</h2>
             <p id="discover-sub">Public servers listed by the people who run them.</p>
@@ -1854,8 +1860,8 @@
                 <button data-bg="blur" role="radio"><strong>Blur</strong></button>
                 <button data-bg="image" role="radio"><strong>Image</strong></button>
               </div>
-              <div class="field-label" id="cam-avatar-label">Avatar</div>
-              <div class="segmented cam-avatars" id="cam-avatar" role="radiogroup" aria-labelledby="cam-avatar-label">
+              <div class="field-label desktop-only" id="cam-avatar-label">Avatar</div>
+              <div class="segmented cam-avatars desktop-only" id="cam-avatar" role="radiogroup" aria-labelledby="cam-avatar-label">
                 <button data-avatar="off" role="radio" title="No avatar"><strong>Off</strong></button>
                 <button data-avatar="cat" role="radio" title="Cat"><img alt="Cat" /></button>
                 <button data-avatar="bot" role="radio" title="Robot"><img alt="Robot" /></button>
@@ -1870,7 +1876,7 @@
               <div class="cam-actions">
                 <button class="btn-secondary btn-small" id="cam-preview-btn">Test Camera</button>
                 <button class="btn-secondary btn-small" id="cam-backdrop-btn">Choose Image</button>
-                <button class="btn-secondary btn-small" id="cam-avatar-btn">Choose Avatar</button>
+                <button class="btn-secondary btn-small desktop-only" id="cam-avatar-btn">Choose Avatar</button>
               </div>
             </div>
           </div>
@@ -3455,6 +3461,8 @@
   <script src="scripts/app-icons.js"></script>
   <script src="scripts/layout.js"></script>
   <script src="scripts/phone.js"></script>
+  <script src="scripts/chat-scroll.js"></script>
+  <script src="scripts/chat-log-key.js"></script>
   <script src="scripts/frame-urls.js"></script>
   <script src="scripts/frame-paint.js"></script>
   <script src="scripts/tint.js"></script>

@@ -39,3 +39,23 @@ test("tapping a channel or a conversation opens it, but links, requests and row 
   assert.equal(rowOpensConversation(["channel"], true), false);
   assert.equal(rowOpensConversation(["channel-group"], false), false);
 });
+
+test("a tap that only stops a scroll does not open message actions", () => {
+  const { tapEndsScroll } = require("../scripts/phone.js");
+  assert.equal(tapEndsScroll(1000, 1100), true);
+  assert.equal(tapEndsScroll(1000, 2000), false);
+});
+
+test("header buttons pressed from the people pane go back to the chat, except the people button", () => {
+  const { headerTapLeavesPeople } = require("../scripts/phone.js");
+  assert.equal(headerTapLeavesPeople("people", "pins-btn"), true);
+  assert.equal(headerTapLeavesPeople("people", "members-btn"), false);
+  assert.equal(headerTapLeavesPeople("chat", "pins-btn"), false);
+});
+
+test("the phone app viewport cannot zoom", () => {
+  const { PHONE_APP_VIEWPORT } = require("../scripts/phone.js");
+  assert.match(PHONE_APP_VIEWPORT, /maximum-scale=1/);
+  assert.match(PHONE_APP_VIEWPORT, /user-scalable=no/);
+  assert.match(PHONE_APP_VIEWPORT, /viewport-fit=cover/);
+});

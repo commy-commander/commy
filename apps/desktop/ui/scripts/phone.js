@@ -1,5 +1,7 @@
 const PHONE_MAX_WIDTH_PX = 700;
 const PHONE_PANE_DEPTH = { list: 0, chat: 1, people: 2 };
+const PHONE_APP_VIEWPORT = "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content";
+const TAP_AFTER_SCROLL_MS = 350;
 
 function isPhoneWidth(width) {
   return width <= PHONE_MAX_WIDTH_PX;
@@ -22,6 +24,14 @@ function rowOpensConversation(rowClasses, tappedButton) {
   return classes.has("channel") && !classes.has("sidebar-link") && !classes.has("friend-request");
 }
 
+function tapEndsScroll(lastScrollAt, now) {
+  return now - lastScrollAt < TAP_AFTER_SCROLL_MS;
+}
+
+function headerTapLeavesPeople(pane, buttonId) {
+  return pane === "people" && buttonId !== "members-btn";
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PHONE_MAX_WIDTH_PX, isPhoneWidth, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation };
+  module.exports = { PHONE_MAX_WIDTH_PX, PHONE_APP_VIEWPORT, isPhoneWidth, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation, tapEndsScroll, headerTapLeavesPeople };
 }
