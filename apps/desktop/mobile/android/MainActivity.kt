@@ -15,4 +15,9 @@ class MainActivity : TauriActivity() {
     WakePreviews.noteTap(this, intent)
     super.onNewIntent(intent)
   }
+
+  @Suppress("OVERRIDE_DEPRECATION")
+  override fun onBackPressed() {
+    moveTaskToBack(true)
+  }
 }
