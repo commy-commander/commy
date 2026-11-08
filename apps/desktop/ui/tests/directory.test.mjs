@@ -68,8 +68,12 @@ test("the description counter tracks the account server's limit", () => {
 test("the settings section is only live for managers of a public server", () => {
   const manager = { can_manage_server: true, public: true };
   assert.deepEqual(discoverySettingsState({ server: { ...manager, public: false }, listing: null }), {
-    enabled: false, listed: false, hint: "Turn on Public server above to list it in Discover.",
+    enabled: false, listed: false, canUnlist: false, hint: "Turn on Public server above to list it in Discover.",
   });
+  const leftPrivate = discoverySettingsState({ server: { ...manager, public: false }, listing: { code: "KQ7M3N4P" } });
+  assert.equal(leftPrivate.enabled, false);
+  assert.equal(leftPrivate.canUnlist, true);
+  assert.match(leftPrivate.hint, /Still listed/);
   assert.equal(discoverySettingsState({ server: { can_manage_server: false, public: true }, listing: null }).enabled, false);
   const fresh = discoverySettingsState({ server: manager, listing: null });
   assert.equal(fresh.enabled, true);

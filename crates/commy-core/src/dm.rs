@@ -162,6 +162,10 @@ impl DmStore {
         Self::default()
     }
 
+    pub fn file_blobs(&self) -> std::collections::HashSet<String> {
+        self.conversations.values().flatten().flat_map(|m| m.attachments.iter()).filter(|a| !a.is_card()).map(|a| a.blob.clone()).collect()
+    }
+
     pub fn insert(&mut self, partner: UserId, message: DmMessage) -> bool {
         let list = self.conversations.entry(partner).or_default();
         if list.iter().any(|m| m.id == message.id) {

@@ -341,6 +341,9 @@ impl Session {
         if cmd == "rename_server" {
             wasm_bindgen_futures::spawn_local(self.clone().refresh_listing(server));
         }
+        if cmd == "set_server_public" && args.public != Some(true) {
+            self.take_down_listing(server).await;
+        }
         if cmd == "transfer_ownership" {
             self.follow_owner(server);
         }

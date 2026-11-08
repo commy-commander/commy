@@ -113,7 +113,7 @@ async fn refresh_listings(app: &App, failed: &mut HashMap<ServerId, Instant>) {
     let origin = crate::account::effective_server();
     let Some(token) = invite_link::signed_in_token(app) else { return };
     let _serial = LISTING_CHANGES.lock().await;
-    unlist_deleted_servers(app, &origin, &token).await;
+    take_down_listings(app, &origin, &token).await;
     let now = Instant::now();
     failed.retain(|_, at| now.duration_since(*at) < RETRY_AFTER);
     for (sid, listing) in outdated_listings(app, &origin) {
@@ -130,21 +130,30 @@ async fn refresh_listings(app: &App, failed: &mut HashMap<ServerId, Instant>) {
     }
 }
 
-async fn unlist_deleted_servers(app: &App, origin: &str, token: &str) {
-    for (sid, listing) in deleted_listings(app, origin) {
+async fn take_down_listings(app: &App, origin: &str, token: &str) {
+    for (sid, listing) in listings_to_take_down(app, origin) {
         match send_unlist(app, &listing, token).await {
             Ok(()) => forget_listing(app, sid),
-            Err(e) => tracing::warn!("Discover listing of a deleted server not removed: {e}"),
+            Err(e) => tracing::warn!("Discover listing not taken down: {e}"),
         }
     }
 }
 
-fn deleted_listings(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
+pub async fn take_down_now(app: &App) {
+    let origin = crate::account::effective_server();
+    let Some(token) = invite_link::signed_in_token(app) else { return };
+    let _serial = LISTING_CHANGES.lock().await;
+    take_down_listings(app, &origin, &token).await;
+}
+
+fn listings_to_take_down(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
     let listings = app.listings.lock().unwrap().clone();
     let deleted = app.deleted.lock().unwrap();
+    let servers = app.servers.lock().unwrap();
+    let gone_private = |sid: &ServerId| servers.get(sid).is_some_and(|state| !state.server.public);
     listings
         .into_iter()
-        .filter(|(sid, listing)| listing.origin == origin && deleted.contains(*sid))
+        .filter(|(sid, listing)| listing.origin == origin && (deleted.contains(*sid) || gone_private(sid)))
         .collect()
 }
 
@@ -311,11 +320,20 @@ mod tests {
         );
         app.servers.lock().unwrap().remove(&gone);
         app.deleted.lock().unwrap().insert(gone, crate::deleted::DeletedServer { name: "Old Crabs".into(), notice, ticket: None });
-        assert_eq!(deleted_listings(&app, "https://commy.chat"), vec![(gone, listing)]);
-        assert!(deleted_listings(&app, "https://staging.commy.chat").is_empty());
+        assert_eq!(listings_to_take_down(&app, "https://commy.chat"), vec![(gone, listing)]);
+        assert!(listings_to_take_down(&app, "https://staging.commy.chat").is_empty());
         forget_listing(&app, gone);
-        assert!(deleted_listings(&app, "https://commy.chat").is_empty());
+        assert!(listings_to_take_down(&app, "https://commy.chat").is_empty());
         assert!(app.listings.lock().unwrap().contains_key(&kept));
+    }
+
+    #[test]
+    fn listings_of_servers_made_private_are_taken_down() {
+        let app = App::default();
+        let (sid, listing) = listed(&app, "Rust Hangout", true);
+        assert!(listings_to_take_down(&app, "https://commy.chat").is_empty());
+        app.servers.lock().unwrap().get_mut(&sid).unwrap().server.public = false;
+        assert_eq!(listings_to_take_down(&app, "https://commy.chat"), vec![(sid, listing)]);
     }
 
     #[test]

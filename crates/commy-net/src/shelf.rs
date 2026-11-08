@@ -200,6 +200,19 @@ impl Shelf {
         Ok(gone)
     }
 
+    pub async fn drop_kept(&self, hash: &str) -> Result<u64> {
+        let hash: Hash = hash.parse().context("invalid file hash")?;
+        let mut gone = 0;
+        for prefix in KEPT_TAG_PREFIXES {
+            let tags = self.store.tags().list_prefix(prefix).await.context("could not read the shared files list")?;
+            let names: Vec<_> = tags.filter_map(|tag| tag.ok().filter(|t| t.hash == hash).map(|t| t.name)).collect().await;
+            for name in names {
+                gone += self.store.tags().delete(name).await.context("could not drop a kept file")?;
+            }
+        }
+        Ok(gone)
+    }
+
     pub async fn copy_out(&self, hash: &str, target: &Path) -> Result<u64> {
         let hash: Hash = hash.parse().context("invalid file hash")?;
         let target = std::path::absolute(target).context("could not use that folder")?;
@@ -329,6 +342,22 @@ mod tests {
         assert_eq!(reopened.bytes(&sent).await, Some(video));
         assert_eq!(reopened.drop_kept_before(2_000).await.unwrap(), 1, "it is swept like any other sent file");
         reopened.shutdown().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn dropping_a_kept_file_lets_go_of_every_copy_of_it_and_nothing_else() {
+        let dir = tempdir();
+        let shelf = Shelf::open(&dir.join("shelf")).await.unwrap();
+        let file = |seed: u32| -> Vec<u8> { (0..50_000u32).map(|i| ((i + seed) % 233) as u8).collect() };
+        let gone = shelf.keep_sent_bytes(file(1), 1_000).await.unwrap();
+        shelf.keep_opened_bytes(file(1), 2_000).await.unwrap();
+        let kept = shelf.keep_opened_bytes(file(2), 3_000).await.unwrap();
+        assert_eq!(shelf.drop_kept(&gone).await.unwrap(), 2);
+        let tags: Vec<_> = shelf.store.tags().list().await.unwrap().filter_map(|t| t.ok().map(|t| t.hash.to_hex().to_string())).collect().await;
+        assert_eq!(tags, vec![kept]);
+        assert_eq!(shelf.drop_kept(&gone).await.unwrap(), 0);
+        shelf.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     }
 

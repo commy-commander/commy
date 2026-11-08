@@ -58,10 +58,11 @@ function discoverySettingsState({ server, listing }) {
   const listed = Boolean(listing);
   let hint = "";
   if (!canManage) hint = "Only members with Manage Server can list this server.";
+  else if (!isPublic && listed) hint = "Still listed in Discover. Unlist it, or it comes down on its own once your account server is reachable.";
   else if (!isPublic) hint = "Turn on Public server above to list it in Discover.";
   else if (listed) hint = "Listed in Discover. Anyone browsing can join with a link that never expires.";
   else hint = "Listing shares the server name, your description, the category and a rounded member count with your account server.";
-  return { enabled: canManage && isPublic, listed, hint };
+  return { enabled: canManage && isPublic, listed, canUnlist: canManage && listed, hint };
 }
 
 function discoverEmptyView({ loading = false, error = "", unavailable = false, host = "", filtered = false } = {}) {

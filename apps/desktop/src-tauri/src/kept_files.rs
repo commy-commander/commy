@@ -132,6 +132,33 @@ pub(crate) fn keep_opened(shelf: Option<commy_net::shelf::Shelf>, blob: &str, by
     });
 }
 
+pub(crate) fn only_used_by(gone: &commy_core::ServerState, app: &App) -> Vec<String> {
+    let mut blobs = gone.file_blobs();
+    for state in app.servers.lock().unwrap().values() {
+        let used = state.file_blobs();
+        blobs.retain(|blob| !used.contains(blob));
+    }
+    let in_dms = app.dms.lock().unwrap().file_blobs();
+    blobs.retain(|blob| !in_dms.contains(blob));
+    blobs.into_iter().collect()
+}
+
+pub(crate) fn drop_files_of_deleted(handle: &tauri::AppHandle, blobs: Vec<String>) {
+    if blobs.is_empty() {
+        return;
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let app = handle.state::<App>();
+        let Some(shelf) = app.net.lock().await.as_ref().and_then(|node| node.shelf()) else { return };
+        for blob in blobs {
+            if let Err(e) = shelf.drop_kept(&blob).await {
+                tracing::debug!("a file of a deleted server was not dropped: {e:#}");
+            }
+        }
+    });
+}
+
 pub(crate) async fn roll(shelf: commy_net::shelf::Shelf) {
     loop {
         trim(&shelf).await;

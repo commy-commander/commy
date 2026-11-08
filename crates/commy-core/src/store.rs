@@ -641,6 +641,33 @@ impl ServerState {
         self.tombstones.keys().filter(|id| self.has_message(**id)).copied().collect()
     }
 
+    pub fn file_blobs(&self) -> HashSet<String> {
+        let attached = self.messages.values().flatten().flat_map(Message::files).map(|file| file.blob.clone());
+        let drive = self.server.drive.iter().filter_map(|item| item.file.as_ref()).map(|file| file.blob.clone());
+        attached.chain(drive).filter(|blob| !blob.is_empty()).collect()
+    }
+
+    pub fn own_picture_blobs(&self) -> HashSet<String> {
+        let server = &self.server;
+        let refs = server
+            .icon
+            .iter()
+            .chain(server.banner.iter())
+            .chain(self.invite_background.iter())
+            .chain(server.emojis.iter().map(|e| &e.blob))
+            .chain(server.stickers.iter().map(|s| &s.blob))
+            .chain(server.soundboard.iter().map(|s| &s.blob))
+            .chain(server.join_sounds.values());
+        refs.filter_map(|raw| crate::server::ImageRef::parse(raw)).map(|image| image.blob).collect()
+    }
+
+    pub fn picture_blobs_in_use(&self) -> HashSet<String> {
+        let mut used = self.own_picture_blobs();
+        let in_messages = self.messages.values().flatten().flat_map(|m| crate::server::image_tokens(&m.content));
+        used.extend(in_messages.map(|(_, _, image)| image.blob));
+        used
+    }
+
     pub fn messages(&self, channel: ChannelId) -> &[Message] {
         self.messages.get(&channel).map(Vec::as_slice).unwrap_or(&[])
     }
@@ -4044,6 +4071,38 @@ mod tests {
         });
         let file = crate::test_support::signed(&state, file);
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: file }), Ok(true), "files still follow their own permission");
+    }
+
+    #[test]
+    fn file_blobs_lists_every_attached_file_once() {
+        let (mut state, channel, owner) = fixture();
+        for text in ["one", "two"] {
+            let mut message = Message::new(channel, owner, text);
+            message.attachments.push(crate::message::Attachment {
+                blob: "abc".into(),
+                filename: "cat.png".into(),
+                size_bytes: 10,
+                mime_type: "image/png".into(),
+                provider: None,
+            });
+            let message = crate::test_support::signed(&state, message);
+            state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        }
+        let plain = crate::test_support::signed(&state, Message::new(channel, owner, "no files"));
+        state.apply(ServerEvent::MessageCreate { message: plain }).unwrap();
+        assert_eq!(state.file_blobs(), HashSet::from(["abc".to_string()]));
+    }
+
+    #[test]
+    fn picture_blobs_cover_the_server_images_and_the_emoji_its_messages_use() {
+        let (mut state, channel, owner) = fixture();
+        state.server.icon = Some("icon1@f00d".into());
+        state.server.emojis.push(crate::server::CustomEmoji { name: "wave".into(), blob: "wave1@f00d".into() });
+        assert_eq!(state.own_picture_blobs(), HashSet::from(["icon1".to_string(), "wave1".to_string()]));
+        let message = crate::test_support::signed(&state, Message::new(channel, owner, "hi <:elsewhere:other1@beef>"));
+        state.apply(ServerEvent::MessageCreate { message }).unwrap();
+        assert!(state.picture_blobs_in_use().contains("other1"));
+        assert!(!state.own_picture_blobs().contains("other1"));
     }
 
     #[test]

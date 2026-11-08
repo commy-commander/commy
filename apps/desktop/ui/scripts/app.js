@@ -24421,7 +24421,7 @@ async function paintDiscoverySettings(server) {
   $("discovery-update").classList.toggle("hidden", !view.listed);
   $("discovery-update").disabled = !view.enabled;
   $("discovery-unlist").classList.toggle("hidden", !view.listed);
-  $("discovery-unlist").disabled = !view.enabled;
+  $("discovery-unlist").disabled = !view.canUnlist;
 }
 
 async function saveDiscoveryListing() {

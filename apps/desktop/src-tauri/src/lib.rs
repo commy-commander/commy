@@ -4788,6 +4788,26 @@ async fn set_server_image(
     Ok(())
 }
 
+fn pictures_only_used_by(gone: &ServerState, app: &App) -> Vec<String> {
+    let mut blobs = gone.own_picture_blobs();
+    for state in app.servers.lock().unwrap().values() {
+        let used = state.picture_blobs_in_use();
+        blobs.retain(|blob| !used.contains(blob));
+    }
+    let profile = app.profile.lock().unwrap().as_ref().and_then(|p| serde_json::to_string(p).ok()).unwrap_or_default();
+    let dms = serde_json::to_string(&*app.dms.lock().unwrap()).unwrap_or_default();
+    blobs.retain(|blob| !profile.contains(blob.as_str()) && !dms.contains(blob.as_str()));
+    blobs.into_iter().collect()
+}
+
+fn drop_pictures_of_deleted(app: &App, gone: &ServerState) {
+    for blob in pictures_only_used_by(gone, app) {
+        if let Some(path) = server_image_path(app, &blob) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 #[tauri::command]
 async fn fetch_server_image(app: tauri::State<'_, App>, image: String) -> CmdResult<String> {
     let bytes = server_image_bytes(&app, &image).await?;
@@ -5590,7 +5610,12 @@ async fn on_removed(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice:
 
 fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent, owned: bool) -> String {
     let ticket = (!owned).then(|| app.invites.lock().unwrap().get(&sid).cloned()).flatten();
-    let name = forget_server_locally(app, sid).map(|s| s.server.name).unwrap_or_default();
+    let gone = forget_server_locally(app, sid);
+    let name = gone.as_ref().map(|s| s.server.name.clone()).unwrap_or_default();
+    if let Some(gone) = &gone {
+        drop_pictures_of_deleted(app, gone);
+        kept_files::drop_files_of_deleted(handle, kept_files::only_used_by(gone, app));
+    }
     end_voice_in(app, sid);
     let later = handle.clone();
     tauri::async_runtime::spawn(async move { refresh_worn_tag(&later.state::<App>(), &later).await });
@@ -6214,6 +6239,9 @@ async fn set_server_public(
     let me = current_profile(&app)?;
     let event = managed(&app, sid, me.id, |state, perms| view::moderate::public(state, perms, public))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
+    if !public {
+        directory::take_down_now(&app).await;
+    }
     let _ = handle.emit("servers-changed", ());
     Ok(())
 }
