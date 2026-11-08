@@ -75,7 +75,12 @@ Email and password works with no extra setup. The rest are optional:
   24 hours, reset links 1 hour, and a reset signs out every other session.
   Without SMTP, accounts work unverified and password reset is unavailable (the
   emails are dropped, never logged).
-  `EMAIL_REPLY_TO` optionally sends replies to another mailbox. To keep these
+  `EMAIL_REPLY_TO` optionally sends replies to another mailbox, and
+  `EMAIL_POSTAL_ADDRESS` prints your postal address at the bottom of every
+  email. Every email links to a page where the person manages their emails and
+  carries one-click unsubscribe headers. Unsubscribing turns off marketing
+  emails only; account emails (sign-in links, resets, codes and security
+  alerts) always arrive. To keep these
   emails out of spam, send from your own domain through your mail provider and
   publish the SPF, DKIM and DMARC records it gives you for that domain.
 

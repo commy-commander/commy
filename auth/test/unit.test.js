@@ -114,6 +114,23 @@ test("emails carry their own icon and load nothing from other servers", () => {
   assert.match(text, /Sent by Commy from commy\.chat/);
 });
 
+test("email footers carry the email settings link and postal address", () => {
+  const preferencesUrl = "https://commy.chat/api/auth/commy/email/preferences?a=x&t=y";
+  const { html, text } = renderEmail({
+    instanceName: "Commy",
+    siteUrl: "https://commy.chat",
+    heading: "Verify your email",
+    body: "Confirm this address.",
+    preferencesUrl,
+    postalAddress: "1 Example Street, Springfield",
+  });
+  assert.ok(html.includes(`href="${preferencesUrl.replace("&", "&amp;")}"`));
+  assert.ok(html.includes(">Unsubscribe or manage emails</a>"));
+  assert.ok(html.includes("1 Example Street, Springfield"));
+  assert.ok(text.includes(`Unsubscribe or manage emails:\n${preferencesUrl}`));
+  assert.match(text, /1 Example Street, Springfield\n$/);
+});
+
 test("notice emails without a link render no button", () => {
   const { html, text } = renderEmail({
     instanceName: "Commy",
@@ -132,10 +149,16 @@ test("sent mail is multipart with the inline icon, reply-to and auto-reply heade
   const send = createMailer({
     instanceName: "Commy",
     baseURL: "https://commy.chat",
+    basePath: "/api/auth",
+    secret: "test-secret-".repeat(4),
+    postalAddress: "1 Example Street, Springfield",
     smtp: { transport: { streamTransport: true, buffer: true }, from: "Commy <no-reply@commy.chat>", replyTo: "help@commy.chat" },
   });
   const info = await send({ to: "a@example.test", subject: "Sign in", heading: "Sign in", body: "b", actionLabel: "Sign in", url: "https://commy.chat/x" });
   const raw = info.message.toString();
+  assert.match(raw, /^List-Unsubscribe:\s+<https:\/\/commy\.chat\/api\/auth\/commy\/email\/preferences\?a=[\w-]+&t=[\w-]+>/m);
+  assert.match(raw, /^List-Unsubscribe-Post: List-Unsubscribe=One-Click/m);
+  assert.match(raw, /1 Example Street, Springfield/);
   assert.match(raw, /^Reply-To: help@commy\.chat/m);
   assert.match(raw, /^Auto-Submitted: auto-generated/m);
   assert.match(raw, /multipart\/alternative/);

@@ -135,6 +135,7 @@ export function loadConfig(env = process.env) {
     basePath: "/api/auth",
     trustedOrigins: [...new Set([baseURL, ...list(env.TRUSTED_ORIGINS)])],
     instanceName: env.COMMY_INSTANCE_NAME || "Commy",
+    postalAddress: (env.EMAIL_POSTAL_ADDRESS ?? "").trim() || null,
     desktopClientIds: list(env.DEVICE_CLIENT_IDS).length > 0 ? list(env.DEVICE_CLIENT_IDS) : ["commy-desktop"],
     allowSignup: env.ALLOW_SIGNUP !== "false",
     accessCode: normalizeAccessCode(env.ACCESS_CODE) || null,

@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import nodemailer from "nodemailer";
+import { preferencesUrlMaker } from "./email-links.js";
 
 const ICON_CID = "icon@commy";
 const ICON = readFileSync(new URL("../assets/email-icon.png", import.meta.url));
 
-const COLOR = {
+export const COLOR = {
   ground: "#0b0d17",
   panel: "#151929",
   line: "#1f2438",
@@ -16,8 +17,8 @@ const COLOR = {
   accentInk: "#ffffff",
 };
 
-const TEXT_FONT = "Figtree,'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif";
-const DISPLAY_FONT = "'Space Grotesk',Figtree,'Segoe UI',Helvetica,Arial,sans-serif";
+export const TEXT_FONT = "Figtree,'Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif";
+export const DISPLAY_FONT = "'Space Grotesk',Figtree,'Segoe UI',Helvetica,Arial,sans-serif";
 
 const IGNORE_NOTE = "If you didn't ask for this, you can ignore this email and nothing will change.";
 
@@ -42,9 +43,16 @@ function paragraphs(body) {
   return [body].flat().filter(Boolean);
 }
 
-function renderText({ instanceName, siteUrl, heading, body, actionLabel, url, note }) {
+const PREFERENCES_LABEL = "Unsubscribe or manage emails";
+
+function renderText({ instanceName, siteUrl, heading, body, actionLabel, url, note, preferencesUrl, postalAddress }) {
   const link = url ? [`${actionLabel}:\n${url}`] : [];
-  return [instanceName, heading, ...paragraphs(body), ...link, note, sentByLine(instanceName, siteUrl)].join("\n\n") + "\n";
+  const preferences = preferencesUrl ? [`${PREFERENCES_LABEL}:\n${preferencesUrl}`] : [];
+  return (
+    [instanceName, heading, ...paragraphs(body), ...link, note, sentByLine(instanceName, siteUrl), ...preferences, postalAddress]
+      .filter(Boolean)
+      .join("\n\n") + "\n"
+  );
 }
 
 function header(instanceName) {
@@ -85,13 +93,23 @@ ${url ? action(actionLabel, url) : ""}
 </td></tr>`;
 }
 
-function footer(instanceName, siteUrl, note) {
+function preferencesLine(preferencesUrl) {
+  if (!preferencesUrl) return "";
+  return `<br><a href="${escapeHtml(preferencesUrl)}" style="color:${COLOR.muted};text-decoration:underline">${PREFERENCES_LABEL}</a>`;
+}
+
+function postalLine(postalAddress) {
+  return postalAddress ? `<br>${escapeHtml(postalAddress)}` : "";
+}
+
+function footer({ instanceName, siteUrl, note, preferencesUrl, postalAddress }) {
   return `<tr><td style="padding:20px 4px 0;font-family:${TEXT_FONT};font-size:13px;line-height:20px;color:${COLOR.faint}">
-${escapeHtml(note)}<br>${escapeHtml(sentByLine(instanceName, siteUrl))}
+${escapeHtml(note)}<br>${escapeHtml(sentByLine(instanceName, siteUrl))}${preferencesLine(preferencesUrl)}${postalLine(postalAddress)}
 </td></tr>`;
 }
 
-function renderHtml({ instanceName, siteUrl, subject, heading, body, actionLabel, url, note }) {
+function renderHtml(message) {
+  const { subject, heading, body, actionLabel, url, instanceName } = message;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -108,7 +126,7 @@ function renderHtml({ instanceName, siteUrl, subject, heading, body, actionLabel
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px">
 ${header(instanceName)}
 ${card({ heading, body, actionLabel, url })}
-${footer(instanceName, siteUrl, note)}
+${footer(message)}
 </table>
 </td></tr>
 </table>
@@ -122,15 +140,27 @@ export function renderEmail(message) {
   return { text: renderText(filled), html: renderHtml(filled) };
 }
 
+function unsubscribeHeaders(preferencesUrl) {
+  return { "List-Unsubscribe": `<${preferencesUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" };
+}
+
 export function createMailer(config) {
   const transport = config.smtp ? nodemailer.createTransport(config.smtp.transport) : null;
+  const preferencesUrlFor = preferencesUrlMaker(config);
 
   return async function send({ to, ...message }) {
     if (!transport) {
       console.warn(`[mail] SMTP not configured, dropped one "${message.subject}" email`);
       return;
     }
-    const { text, html } = renderEmail({ instanceName: config.instanceName, siteUrl: config.baseURL, ...message });
+    const preferencesUrl = preferencesUrlFor(to);
+    const { text, html } = renderEmail({
+      instanceName: config.instanceName,
+      siteUrl: config.baseURL,
+      preferencesUrl,
+      postalAddress: config.postalAddress,
+      ...message,
+    });
     return transport.sendMail({
       from: config.smtp.from,
       ...(config.smtp.replyTo ? { replyTo: config.smtp.replyTo } : {}),
@@ -139,7 +169,7 @@ export function createMailer(config) {
       text,
       html,
       attachments: [{ filename: "icon.png", content: ICON, cid: ICON_CID, contentDisposition: "inline" }],
-      headers: { "Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All" },
+      headers: { "Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All", ...unsubscribeHeaders(preferencesUrl) },
     });
   };
 }

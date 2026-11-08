@@ -12,6 +12,7 @@ import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
 import { commyDirectory } from "./directory.js";
 import { commyDoorbell } from "./doorbell.js";
+import { commyEmailPreferences } from "./email-preferences.js";
 import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
 import { commyPasswords, commySecurityNotices, commyTwoFactorEverywhere, noticeWhenALoginIsLinked } from "./security.js";
@@ -65,6 +66,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     commyPasswords(),
     commySecurityNotices({ baseURL: config.baseURL, send }),
     commyAccountDeletion({ instanceName: config.instanceName, send, emailCodes: Boolean(config.smtp) }),
+    commyEmailPreferences({ secret: config.secret, instanceName: config.instanceName, basePath: config.basePath }),
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
@@ -207,6 +209,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/commy/password/set": { window: 600, max: 10 },
         "/commy/account/delete/start": { window: 600, max: 5 },
         "/commy/account/delete/finish": { window: 600, max: 10 },
+        "/commy/email/preferences": { window: 60, max: 20 },
         "/passkey/verify-authentication": { window: 60, max: 10 },
         "/sign-in/social": { window: 60, max: 20 },
         "/device/code": { window: 60, max: 10 },
