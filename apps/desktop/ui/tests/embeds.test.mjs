@@ -3,17 +3,17 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { MAX_IMAGE_EMBEDS, MAX_AUTO_IMAGE_BYTES, isMediaHost, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText } = require("../scripts/embeds.js");
+const { MAX_IMAGE_EMBEDS, MAX_VIDEO_LINK_EMBEDS, youtubeThumbnail, videoLinkEmbeds, MAX_AUTO_IMAGE_BYTES, isMediaHost, relaysImage, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText } = require("../scripts/embeds.js");
 
 const KLIPY = "https://static.klipy.com/ii/4e7b/fd/3b/5wGhb3j5.gif";
 const GIPHY = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYWJj/giphy.gif?cid=790b7611abc&rid=giphy.gif&ct=g";
 const OTHER = "https://pics.example.org/cat.png";
 
 test("only the hosts the account server proxies count as media hosts", () => {
-  for (const host of ["static.klipy.com", "images.igdb.com", "media.giphy.com", "media0.giphy.com", "media4.giphy.com", "media9.giphy.com", "i.giphy.com", "I.GIPHY.COM", "cdn3.emoji.gg"]) {
+  for (const host of ["static.klipy.com", "images.igdb.com", "media.giphy.com", "media0.giphy.com", "media4.giphy.com", "media9.giphy.com", "i.giphy.com", "I.GIPHY.COM", "cdn3.emoji.gg", "media.tenor.com", "media1.tenor.com", "c.tenor.com", "i.ytimg.com", "i9.ytimg.com", "img.youtube.com"]) {
     assert.ok(isMediaHost(host), host);
   }
-  for (const host of ["giphy.com", "api.giphy.com", "media10.giphy.com", "media0.giphy.com.evil.example", "evilmedia0.giphy.com", "static.klipy.com.evil.example", "klipy.com", "emoji.gg", "cdn3.emoji.gg.evil.example", "example.org", "", null]) {
+  for (const host of ["giphy.com", "api.giphy.com", "media10.giphy.com", "media0.giphy.com.evil.example", "evilmedia0.giphy.com", "static.klipy.com.evil.example", "klipy.com", "emoji.gg", "cdn3.emoji.gg.evil.example", "tenor.com", "media.tenor.com.evil.example", "youtube.com", "www.youtube.com", "img.youtube.com.evil.example", "example.org", "", null]) {
     assert.equal(isMediaHost(host), false, String(host));
   }
 });
@@ -38,6 +38,62 @@ test("image links are https links with an image extension, at most four", () => 
   assert.deepEqual(imageLinks(null), []);
   const many = Array.from({ length: 6 }, (_, i) => `https://a.example/${i}.png`);
   assert.equal(imageLinks(many.join(" ")).length, MAX_IMAGE_EMBEDS);
+});
+
+test("shared GIPHY and Tenor links go through the account server", () => {
+  for (const url of [
+    "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHB4eHQ3b2F4cHd4/l0MYt5jPR6QX5pnqM/giphy.gif",
+    "https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjEx/3o7TKSjRrfIPjeiVyM/giphy.gif?cid=790b7611&ep=v1_gifs&rid=giphy.gif&ct=g",
+    "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif",
+    "https://i.giphy.com/l0MYt5jPR6QX5pnqM.webp",
+    "https://media.tenor.com/x8v1oNUOmg4AAAAC/rickroll-roll.gif",
+    "https://media1.tenor.com/m/x8v1oNUOmg4AAAAC/rickroll-roll.gif",
+    "https://c.tenor.com/x8v1oNUOmg4AAAAC/tenor.gif",
+  ]) {
+    assert.ok(relaysImage(url), url);
+    assert.equal(embedMode(url), "auto", url);
+  }
+});
+
+test("links on a media host that the account server would refuse wait for a click", () => {
+  for (const url of [
+    "https://media1.giphy.com/media/a/b/c/giphy.gif",
+    "https://media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif?" + "x".repeat(300),
+    "https://media.tenor.com/x8v1oNUOmg4AAAAC/rickroll-roll.gif?size=2",
+    "https://cdn3.emoji.gg/stickers/790374-smile.png",
+    "https://images.igdb.com/other/path.jpg",
+    "https://static.klipy.com:8443/a.gif",
+  ]) {
+    assert.equal(relaysImage(url), false, url);
+    assert.equal(embedMode(url), "click", url);
+  }
+  assert.equal(relaysImage("not a url"), false);
+  assert.equal(relaysImage(OTHER), false);
+});
+
+test("YouTube thumbnails go through the account server", () => {
+  for (const url of [
+    "https://i.ytimg.com/vi/Sp0ZZuNrXh8/sddefault.jpg",
+    "https://i.ytimg.com/vi/Sp0ZZuNrXh8/maxresdefault.jpg",
+    "https://i.ytimg.com/vi_webp/Sp0ZZuNrXh8/hqdefault.webp",
+    "https://i9.ytimg.com/vi/Sp0ZZuNrXh8/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg&rs=AOn4CLA",
+    "https://img.youtube.com/vi/Sp0ZZuNrXh8/hqdefault.jpg",
+    "https://img.youtube.com/vi_webp/Sp0ZZuNrXh8/hqdefault.webp",
+  ]) {
+    assert.ok(relaysImage(url), url);
+    assert.equal(embedMode(url), "auto", url);
+    assert.deepEqual(imageLinks(`look ${url}`), [url], url);
+  }
+  for (const url of [
+    "https://www.youtube.com/vi/Sp0ZZuNrXh8/hqdefault.jpg",
+    "https://i.ytimg.com/vi/short/sddefault.jpg",
+    "https://i.ytimg.com/an/Sp0ZZuNrXh8/sddefault.jpg",
+    "https://i.ytimg.com/vi/Sp0ZZuNrXh8/sddefault.png",
+    "https://i10.ytimg.com/vi/Sp0ZZuNrXh8/sddefault.jpg",
+    "https://i.ytimg.com.evil.example/vi/Sp0ZZuNrXh8/sddefault.jpg",
+  ]) {
+    assert.equal(relaysImage(url), false, url);
+  }
 });
 
 test("proxied hosts embed on their own, everything else waits for a click", () => {
@@ -138,4 +194,21 @@ test("a video nobody online has says whose app to wait for and keeps trying", ()
   const other = missingVideoText("video too large to play here", "nova");
   assert.equal(other.waiting, false);
   assert.equal(other.label, "Could not load the video: video too large to play here");
+});
+
+test("YouTube links get one thumbnail each, from the thumbnail host the account server loads", () => {
+  const { youtubeVideoId } = require("../scripts/activities.js");
+  const watch = "https://www.youtube.com/watch?v=Sp0ZZuNrXh8";
+  const short = "https://youtu.be/Sp0ZZuNrXh8";
+  const other = "https://youtu.be/dQw4w9WgXcQ";
+  assert.equal(youtubeThumbnail("Sp0ZZuNrXh8"), "https://i.ytimg.com/vi/Sp0ZZuNrXh8/hqdefault.jpg");
+  assert.ok(relaysImage(youtubeThumbnail("Sp0ZZuNrXh8")));
+  assert.deepEqual(videoLinkEmbeds([watch, short, other, OTHER], youtubeVideoId), [
+    { url: watch, thumbnail: youtubeThumbnail("Sp0ZZuNrXh8") },
+    { url: other, thumbnail: youtubeThumbnail("dQw4w9WgXcQ") },
+  ]);
+  assert.deepEqual(videoLinkEmbeds([watch], youtubeVideoId, [short]), [], "a link card with a picture already shows it");
+  assert.deepEqual(videoLinkEmbeds([OTHER, "https://example.org/watch?v=Sp0ZZuNrXh8"], youtubeVideoId), []);
+  const many = ["a", "b", "c"].map(c => `https://youtu.be/${c.repeat(11)}`);
+  assert.equal(videoLinkEmbeds(many, youtubeVideoId).length, MAX_VIDEO_LINK_EMBEDS);
 });

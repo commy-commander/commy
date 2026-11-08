@@ -58,8 +58,10 @@ const IMAGE_TIMEOUT_MS = 15_000;
 const MEDIA_HOSTS = [
   { host: "static.klipy.com", path: /^\/[A-Za-z0-9._~\-\/]{1,400}$/, query: 200 },
   { host: "images.igdb.com", path: /^\/igdb\/image\/upload\/t_[a-z0-9_]{1,40}\/[A-Za-z0-9]{1,32}\.(jpg|png|webp)$/, query: 0 },
-  { host: /^(?:media[0-9]?|i)\.giphy\.com$/, path: /^\/(?:media\/[A-Za-z0-9._=\-]{1,500}\/)?[A-Za-z0-9_\-]{1,80}\.(?:gif|webp)$/, query: 300 },
+  { host: /^(?:media[0-9]?|i)\.giphy\.com$/, path: /^\/(?:media\/(?:[A-Za-z0-9._=\-]{1,500}\/){1,2})?[A-Za-z0-9_\-]{1,80}\.(?:gif|webp)$/, query: 300 },
   { host: "cdn3.emoji.gg", path: /^\/emojis\/[A-Za-z0-9_\-]{1,160}\.(?:png|gif)$/, query: 0 },
+  { host: /^(?:media[0-9]?|c)\.tenor\.com$/, path: /^\/(?:m\/)?[A-Za-z0-9_\-]{1,40}\/[A-Za-z0-9_\-]{1,160}\.(?:gif|webp|png|jpe?g)$/, query: 0 },
+  { host: /^(?:i[0-9]?\.ytimg|img\.youtube)\.com$/, path: /^\/vi(?:_webp)?\/[A-Za-z0-9_\-]{11}\/[A-Za-z0-9_]{1,40}\.(?:jpg|webp)$/, query: 300 },
 ];
 
 export function mediaHost(hostname) {

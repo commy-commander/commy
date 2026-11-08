@@ -8000,7 +8000,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
       inlineMark = false;
       body.appendChild(content);
     }
-    if (showsEmbeds(message)) body.append(...imageEmbeds(imageLinks(message.content)));
+    if (showsEmbeds(message)) body.append(...imageEmbeds(imageLinks(message.content)), ...videoLinkThumbs(message));
   }
   if (linkPreviewPrefs().show && showsEmbeds(message)) {
     for (const preview of message.previews || []) body.appendChild(renderLinkPreview(preview));
@@ -16132,6 +16132,29 @@ function imageEmbeds(urls) {
   return [grid];
 }
 
+function videoLinkThumbs(message) {
+  if (!mediaProxyOn()) return [];
+  const pictured = linkPreviewPrefs().show ? (message.previews || []).filter(p => p.image).map(p => p.url) : [];
+  return videoLinkEmbeds(linksIn(message.content), youtubeVideoId, pictured).map(renderVideoLinkThumb);
+}
+
+function renderVideoLinkThumb({ url, thumbnail }) {
+  const box = el("div", "chat-video video-link-thumb");
+  box.title = `Open ${url}`;
+  const picture = el("img", "video-link-picture");
+  picture.alt = "";
+  picture.loading = "lazy";
+  picture.onerror = () => box.remove();
+  picture.src = viaAccountServer(thumbnail);
+  const play = el("button", "chat-video-play");
+  play.type = "button";
+  play.setAttribute("aria-label", `Open ${url}`);
+  play.appendChild(svgIcon("play", 30));
+  box.onclick = () => openOutsideLink(url);
+  box.append(picture, play);
+  return box;
+}
+
 function renderLinkPreview(preview) {
   const layout = previewLayout(preview);
   const card = el("div", `link-card ${layout}`);
@@ -16195,16 +16218,31 @@ function renderImageEmbed(url) {
     const img = embedImage(url);
     keepScrolledOnLoad(img);
     img.loading = "lazy";
-    img.onerror = () => {
+    const sources = loadedImageLinks.has(url) ? embedSources(url) : [viaAccountServer(url)];
+    loadEmbedFrom(img, sources, () => {
       failedImageLinks.add(url);
       img.replaceWith(imageGate(url, host, { failed: true }));
-    };
-    img.src = viaAccountServer(url);
+    });
     wrap.appendChild(img);
   } else {
     wrap.appendChild(imageGate(url, host));
   }
   return wrap;
+}
+
+function embedSources(url) {
+  if (embedMode(url, mediaProxyOn()) !== "auto") return [url];
+  return [viaAccountServer(url), url];
+}
+
+function loadEmbedFrom(img, sources, failed) {
+  const left = [...sources];
+  img.onerror = () => {
+    left.shift();
+    if (left.length) img.src = left[0];
+    else failed();
+  };
+  img.src = left[0];
 }
 
 function embedImage(url) {
@@ -16238,13 +16276,12 @@ function imageGate(url, host, { failed = false } = {}) {
       gate.replaceWith(img);
       img.scrollIntoView({ block: "nearest" });
     };
-    img.onerror = () => {
+    loadEmbedFrom(img, embedSources(url), () => {
       failedImageLinks.add(url);
       title.textContent = text.failed;
       button.textContent = text.retry;
       button.disabled = false;
-    };
-    img.src = viaAccountServer(url);
+    });
   };
   gate.appendChild(lines);
   gate.appendChild(button);

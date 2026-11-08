@@ -412,6 +412,16 @@ test("only GIF and cover image URLs are accepted for loading", () => {
   assert.ok(mediaUrl("https://media.giphy.com/media/3o7aD2saalBwwftBIY/giphy-downsized-medium.gif"));
   assert.ok(mediaUrl("https://media0.giphy.com/media/3o7aD2saalBwwftBIY/giphy.webp"));
   assert.ok(mediaUrl("https://i.giphy.com/3o7aD2saalBwwftBIY.gif"));
+  assert.ok(mediaUrl("https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHB4eHQ3b2F4cHd4/l0MYt5jPR6QX5pnqM/giphy.gif"));
+  assert.ok(mediaUrl("https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjEx/3o7TKSjRrfIPjeiVyM/giphy.gif?cid=790b7611&ep=v1_gifs&rid=giphy.gif&ct=g"));
+  assert.ok(mediaUrl("https://media.tenor.com/x8v1oNUOmg4AAAAC/rickroll-roll.gif"));
+  assert.ok(mediaUrl("https://media1.tenor.com/m/x8v1oNUOmg4AAAAC/rickroll-roll.gif"));
+  assert.ok(mediaUrl("https://c.tenor.com/x8v1oNUOmg4AAAAC/tenor.gif"));
+  assert.ok(mediaUrl("https://i.ytimg.com/vi/Sp0ZZuNrXh8/sddefault.jpg"));
+  assert.ok(mediaUrl("https://i.ytimg.com/vi_webp/Sp0ZZuNrXh8/hqdefault.webp"));
+  assert.ok(mediaUrl("https://i9.ytimg.com/vi/Sp0ZZuNrXh8/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARUAAIhCGAFwAcABBg&rs=AOn4CLA"));
+  assert.ok(mediaUrl("https://img.youtube.com/vi/Sp0ZZuNrXh8/hqdefault.jpg"));
+  assert.ok(mediaUrl("https://img.youtube.com/vi_webp/Sp0ZZuNrXh8/hqdefault.webp"));
   assert.ok(mediaUrl("https://cdn3.emoji.gg/emojis/4384_falco_stare.png"));
   assert.ok(mediaUrl("https://cdn3.emoji.gg/emojis/9025-party-blob.gif"));
   assert.equal(mediaUrl("https://cdn3.emoji.gg/stickers/790374-smile.png"), null);
@@ -423,6 +433,19 @@ test("only GIF and cover image URLs are accepted for loading", () => {
     "https://media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.mp4",
     "https://media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif?" + "x".repeat(300),
     "https://media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif#frag",
+    "https://media1.giphy.com/media/a/b/c/giphy.gif",
+    "https://media1.giphy.com/media/v1.x/../giphy.gif",
+    "https://tenor.com/view/rickroll-roll-gif-4726",
+    "https://media.tenor.com/x8v1oNUOmg4AAAAC/rickroll-roll.gif?size=2",
+    "https://media.tenor.com/x8v1oNUOmg4AAAAC/rickroll-roll.mp4",
+    "https://media.tenor.com.evil.example/x8v1oNUOmg4AAAAC/a.gif",
+    "https://i.ytimg.com/vi/short/sddefault.jpg",
+    "https://i.ytimg.com/an/Sp0ZZuNrXh8/sddefault.jpg",
+    "https://i.ytimg.com/vi/Sp0ZZuNrXh8/sddefault.png",
+    "https://i.ytimg.com/vi/Sp0ZZuNrXh8/../sddefault.jpg",
+    "https://i.ytimg.com.evil.example/vi/Sp0ZZuNrXh8/sddefault.jpg",
+    "https://www.youtube.com/vi/Sp0ZZuNrXh8/hqdefault.jpg",
+    "https://img.youtube.com.evil.example/vi/Sp0ZZuNrXh8/hqdefault.jpg",
     "https://user:pw@media1.giphy.com/media/3o7aD2saalBwwftBIY/giphy.gif",
     "http://static.klipy.com/a.gif",
     "https://api.klipy.com/api/v1/key/gifs/search",
@@ -442,8 +465,8 @@ test("only GIF and cover image URLs are accepted for loading", () => {
 
 test("media hosts match exactly, with one pattern for the numbered GIPHY hosts", () => {
   assert.equal(mediaHost("static.klipy.com").host, "static.klipy.com");
-  for (const host of ["media.giphy.com", "media0.giphy.com", "media4.giphy.com", "i.giphy.com"]) assert.ok(mediaHost(host), host);
-  for (const host of ["klipy.com", "static.klipy.com.evil.example", "xstatic.klipy.com", "media00.giphy.com", "giphy.com", ""]) {
+  for (const host of ["media.giphy.com", "media0.giphy.com", "media4.giphy.com", "i.giphy.com", "media.tenor.com", "media1.tenor.com", "c.tenor.com", "i.ytimg.com", "i9.ytimg.com", "img.youtube.com"]) assert.ok(mediaHost(host), host);
+  for (const host of ["klipy.com", "static.klipy.com.evil.example", "xstatic.klipy.com", "media00.giphy.com", "giphy.com", "ytimg.com", "i10.ytimg.com", "youtube.com", "www.youtube.com", ""]) {
     assert.equal(mediaHost(host), null, host);
   }
 });
