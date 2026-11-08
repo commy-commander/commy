@@ -8100,6 +8100,7 @@ async function togglePinsPanel() {
   closeFloating();
   pop.classList.remove("hidden");
   $("pins-btn").classList.add("active");
+  notePhonePanelOpened();
   await renderPinsPanel();
 }
 
@@ -8153,8 +8154,13 @@ function pinRow(pin, { jump, showChannel = false } = {}) {
   body.appendChild(head);
   const pinChannel = state.currentServer && state.currentServer.channels.find(c => c.id === pin.channel);
   const text = sensitivePreview({ channel: pinChannel, confirmed: sensitiveConfirmed(), text: pinExcerpt(message, plainText) });
-  const excerpt = el("div", "pin-text", text);
-  if (!text || text === SENSITIVE_PREVIEW) excerpt.classList.add("muted");
+  const excerpt = el("div", "pin-text");
+  if (!text || text === SENSITIVE_PREVIEW) {
+    excerpt.textContent = text;
+    excerpt.classList.add("muted");
+  } else {
+    appendDecodedEmojiText(excerpt, text, message.content);
+  }
   body.appendChild(excerpt);
   const images = (message.attachments || []).filter(a => a.is_image && !imagePreviewFailures.has(a.blob) && (loadsImageOnItsOwn(a) || imagePreviewCache.has(a.blob)));
   if (images.length) {
@@ -9083,6 +9089,7 @@ function toggleThreadsPanel() {
   closeFloating();
   pop.classList.remove("hidden");
   $("threads-btn").classList.add("active");
+  notePhonePanelOpened();
   renderThreadsPanel();
 }
 
@@ -14236,6 +14243,21 @@ function appendEmojiText(node, text) {
   return node;
 }
 
+function appendDecodedEmojiText(node, text, source) {
+  const refs = new Map();
+  EMOJI_TOKEN_RE.lastIndex = 0;
+  for (const m of String(source || "").matchAll(EMOJI_TOKEN_RE)) refs.set(m[1], m[2]);
+  if (!refs.size) {
+    node.appendChild(document.createTextNode(text));
+    return node;
+  }
+  for (const part of String(text).split(/(:[a-z0-9_]{2,32}:)/)) {
+    const ref = refs.get(part.slice(1, -1));
+    node.appendChild(ref && part.startsWith(":") ? customEmojiImg(part.slice(1, -1), ref, "custom-emoji profile-emoji") : document.createTextNode(part));
+  }
+  return node;
+}
+
 function setEmojiText(node, text) {
   node.replaceChildren();
   return appendEmojiText(node, text);
@@ -15768,6 +15790,7 @@ function openSavedView() {
   $("saved-view").classList.remove("hidden");
   $("saved-btn").classList.add("active");
   for (const row of document.querySelectorAll(".saved-entry")) row.classList.add("active");
+  notePhonePanelOpened();
   renderSavedView();
 }
 
@@ -17554,6 +17577,7 @@ function setPhonePane(pane, { fromHistory = false } = {}) {
   $("app").dataset.pane = pane;
   if (!fromHistory && phonePaneGoesDeeper(was, pane)) history.pushState({ pane }, "");
   if (pane === "list") closeDiscover();
+  $("members-btn").classList.toggle("active", pane === "people");
   paintPhoneGridButton();
 }
 
@@ -17586,11 +17610,24 @@ function showSettingsMenuOnPhone(id) {
   if (isPhoneWidth(window.innerWidth) && !$(id).classList.contains("hidden")) settingsPhoneView($(id), "menu");
 }
 
+function closeOpenPhonePanel() {
+  const panels = [["pins-pop", closePinsPanel], ["threads-pop", closeThreadsPanel], ["saved-view", closeSavedView]];
+  const open = panels.find(([id]) => !$(id).classList.contains("hidden"));
+  if (open) open[1]();
+  return Boolean(open);
+}
+
+function notePhonePanelOpened() {
+  if (!isPhoneWidth(window.innerWidth) || narrowSplit() || (history.state && history.state.panel)) return;
+  history.pushState({ pane: phonePane(), panel: true }, "");
+}
+
 function onPhoneHistory(e) {
   const entry = e.state || {};
   const layer = document.querySelector(".settings-layer:not(.hidden)");
   if (layer && !entry.settings) closeSettingsLayers();
   else if (layer && !entry.page) settingsPhoneView(layer, "menu");
+  else if (!entry.panel && closeOpenPhonePanel()) return;
   setPhonePane(entry.pane || "list", { fromHistory: true });
 }
 
@@ -17662,8 +17699,18 @@ function wireTouchMessages() {
   });
 }
 
+function fitPhoneViewport() {
+  const portrait = window.matchMedia("(orientation: portrait)");
+  const shortSide = Math.min(screen.width, screen.height);
+  const longSide = Math.max(screen.width, screen.height);
+  const content = phoneAppViewport(portrait.matches ? shortSide : longSide, portrait.matches);
+  const meta = document.querySelector('meta[name="viewport"]');
+  if (meta.getAttribute("content") !== content) meta.setAttribute("content", content);
+}
+
 function lockPhoneViewport() {
-  document.querySelector('meta[name="viewport"]').setAttribute("content", PHONE_APP_VIEWPORT);
+  fitPhoneViewport();
+  window.matchMedia("(orientation: portrait)").addEventListener("change", fitPhoneViewport);
   const view = window.visualViewport;
   if (!view) return;
   const fit = () => {

@@ -59,3 +59,14 @@ test("the phone app viewport cannot zoom", () => {
   assert.match(PHONE_APP_VIEWPORT, /user-scalable=no/);
   assert.match(PHONE_APP_VIEWPORT, /viewport-fit=cover/);
 });
+
+test("wide portrait phone screens such as the iPhone Duo inner display get the two pane layout", () => {
+  const { phoneAppViewport, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT, TWO_PANE_LAYOUT_WIDTH_PX, isPhoneWidth } = require("../scripts/phone.js");
+  assert.equal(phoneAppViewport(669, true), TWO_PANE_VIEWPORT);
+  assert.equal(isPhoneWidth(TWO_PANE_LAYOUT_WIDTH_PX), false);
+  assert.equal(phoneAppViewport(466, true), PHONE_APP_VIEWPORT);
+  assert.equal(phoneAppViewport(393, true), PHONE_APP_VIEWPORT);
+  assert.equal(phoneAppViewport(601, true), PHONE_APP_VIEWPORT);
+  assert.equal(phoneAppViewport(951, false), PHONE_APP_VIEWPORT);
+  assert.match(TWO_PANE_VIEWPORT, /user-scalable=no/);
+});
