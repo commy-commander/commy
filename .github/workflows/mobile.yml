@@ -22,9 +22,9 @@ on:
   workflow_dispatch:
     inputs:
       android:
-        description: "Android build: debug APK, or a Play Store bundle signed with the upload key"
+        description: "Android build: debug APK, a Play Store bundle signed with the upload key, or none"
         type: choice
-        options: [debug, play]
+        options: [debug, play, none]
         default: debug
       ios:
         description: "iOS build: simulator app, signed IPA, signed IPA sent to TestFlight, or none"
@@ -56,6 +56,7 @@ env:
 jobs:
   android:
     name: Android ${{ inputs.android == 'play' && 'Play bundle' || 'debug APK' }}
+    if: inputs.android != 'none'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -239,6 +240,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Check Xcode is ready
+        run: |
+          xcodebuild -version
+          xcodebuild -checkFirstLaunchStatus \
+            || { echo "::error::Xcode on the Mac needs its first launch setup. Run 'sudo xcodebuild -runFirstLaunch' on the Mac, then run this build again"; exit 1; }
+
       - name: Check the signing secrets
         if: env.IOS_MODE != 'simulator'
         env:
@@ -284,11 +291,6 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: ios-arm64
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
