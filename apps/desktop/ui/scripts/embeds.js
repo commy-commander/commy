@@ -16,6 +16,11 @@ const MAX_IMAGE_EMBEDS = 4;
 const MAX_VIDEO_LINK_EMBEDS = 2;
 const INLINE_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-m4v", "video/ogg"]);
 const MAX_INLINE_VIDEO_BYTES = 100 * 1024 * 1024;
+const MAX_AUTO_VIDEO_BYTES = 10 * 1024 * 1024;
+const POSTER_VIDEO_EXTENSIONS = ["mp4", "m4v", "mov", "webm"];
+const POSTER_SIDE = 640;
+const MAX_POSTER_BYTES = 256 * 1024;
+const POSTER_AT_SECS = 1;
 const MAX_AUTO_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_RETRY_AFTER_MS = 30 * 1000;
 const VIDEO_RETRIES = 10;
@@ -143,6 +148,31 @@ function playsInline(att) {
   return att.size_bytes > 0 && att.size_bytes <= MAX_INLINE_VIDEO_BYTES;
 }
 
+function loadsVideoOnItsOwn(att) {
+  return playsInline(att) && att.size_bytes <= MAX_AUTO_VIDEO_BYTES;
+}
+
+function wantsPoster(name, size) {
+  const file = String(name || "");
+  const dot = file.lastIndexOf(".");
+  if (dot <= 0 || !(size > 0) || size > MAX_INLINE_VIDEO_BYTES) return false;
+  return POSTER_VIDEO_EXTENSIONS.includes(file.slice(dot + 1).toLowerCase());
+}
+
+function posterTime(duration) {
+  return Number.isFinite(duration) && duration > 0 ? Math.min(POSTER_AT_SECS, duration / 10) : 0;
+}
+
+function posterSize(width, height) {
+  if (!(width > 0) || !(height > 0)) return null;
+  const scale = Math.min(1, POSTER_SIDE / Math.max(width, height));
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+}
+
+function posterFits(bytes) {
+  return Boolean(bytes) && bytes.length > 0 && bytes.length <= MAX_POSTER_BYTES;
+}
+
 const BIG_FILE_BYTES = 100 * 1024 * 1024;
 
 function isBigFile(size) {
@@ -156,5 +186,5 @@ function downloadProgressText(done, total) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { BIG_FILE_BYTES, isBigFile, downloadProgressText, MAX_IMAGE_EMBEDS, MAX_VIDEO_LINK_EMBEDS, youtubeThumbnail, videoLinkEmbeds, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_IMAGE_BYTES, isMediaHost, relaysImage, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, retriesImageNow, sentFileGone, missingImageText, missingVideoText, IMAGE_RETRY_AFTER_MS, VIDEO_RETRIES, playsInline };
+  module.exports = { BIG_FILE_BYTES, isBigFile, downloadProgressText, MAX_IMAGE_EMBEDS, MAX_VIDEO_LINK_EMBEDS, youtubeThumbnail, videoLinkEmbeds, MAX_INLINE_VIDEO_BYTES, MAX_AUTO_VIDEO_BYTES, loadsVideoOnItsOwn, MAX_POSTER_BYTES, wantsPoster, posterTime, posterSize, posterFits, MAX_AUTO_IMAGE_BYTES, isMediaHost, relaysImage, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText, retriesImageNow, sentFileGone, missingImageText, missingVideoText, IMAGE_RETRY_AFTER_MS, VIDEO_RETRIES, playsInline };
 }

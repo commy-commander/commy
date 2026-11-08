@@ -1096,6 +1096,7 @@ async fn send_attachment(
     cid: ChannelId,
     filename: String,
     contents: picker::Contents,
+    poster: Option<Vec<u8>>,
 ) -> CmdResult<MessageView> {
     let profile = current_profile(app)?;
     {
@@ -1121,9 +1122,23 @@ async fn send_attachment(
         mime_type,
         provider,
     });
+    add_video_poster(app, &mut message.attachments, poster).await;
     let _signing = app.signing.read().await;
     seal_and_sign(app, sid, &mut message)?;
     commit_message(app, handle, sid, message).await
+}
+
+async fn add_video_poster(app: &App, attachments: &mut Vec<Attachment>, poster: Option<Vec<u8>>) {
+    let Some(bytes) = poster.filter(|b| commy_core::video_poster::is_poster_picture(b)) else { return };
+    let Some(video) = attachments.first().filter(|a| a.is_video()).cloned() else { return };
+    let size_bytes = bytes.len() as u64;
+    let Ok((blob, provider)) = store_blob(app, bytes.clone(), None).await else { return };
+    pictures::offer(&app.http, &blob, &bytes);
+    attachments.push(Attachment::video_poster(&video, blob, size_bytes, provider));
+}
+
+fn poster_bytes(poster: Option<String>) -> Option<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD.decode(poster?).ok()
 }
 
 async fn store_sent(app: &App, bytes: Vec<u8>, picked_from: Option<&std::path::Path>) -> CmdResult<(String, Option<String>, u64)> {
@@ -1260,9 +1275,88 @@ async fn attach_file(
     let Some(picked) = pick_attachment(&handle, title, filter).await? else {
         return Ok(None);
     };
-    send_attachment(&app, &handle, sid, cid, picked.name, picked.contents)
+    send_attachment(&app, &handle, sid, cid, picked.name, picked.contents, None)
         .await
         .map(Some)
+}
+
+#[derive(serde::Serialize)]
+struct PickedUpload {
+    token: String,
+    name: String,
+    size_bytes: u64,
+    video: bool,
+}
+
+#[tauri::command]
+async fn pick_upload(app: tauri::State<'_, App>, handle: tauri::AppHandle, kind: Option<String>) -> CmdResult<Option<PickedUpload>> {
+    let (title, filter) = match kind.as_deref() {
+        Some("video") => ("Post a video", Some(picker::Filter { label: "Videos", extensions: INLINE_VIDEO_EXTENSIONS })),
+        _ => ("Share a file", None),
+    };
+    let Some(picked) = pick_attachment(&handle, title, filter).await? else {
+        return Ok(None);
+    };
+    let video = picked.contents.in_memory().is_some_and(|b| b.len() <= MAX_INLINE_VIDEO_BYTES) && is_inline_video_name(&picked.name);
+    let upload = PickedUpload { token: format!("{:016x}", rand::random::<u64>()), name: picked.name.clone(), size_bytes: picked.contents.size(), video };
+    *app.picked_upload.lock().unwrap() = Some((upload.token.clone(), picked));
+    Ok(Some(upload))
+}
+
+fn is_inline_video_name(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| INLINE_VIDEO_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+fn take_picked_upload(app: &App, token: &str) -> CmdResult<picker::PickedFile> {
+    let mut slot = app.picked_upload.lock().unwrap();
+    match slot.take() {
+        Some((held, picked)) if held == token => Ok(picked),
+        other => {
+            *slot = other;
+            Err("pick the file again".into())
+        }
+    }
+}
+
+#[tauri::command]
+fn picked_upload_bytes(app: tauri::State<'_, App>, token: String) -> CmdResult<tauri::ipc::Response> {
+    let slot = app.picked_upload.lock().unwrap();
+    let bytes = match slot.as_ref() {
+        Some((held, picked)) if *held == token => picked.contents.in_memory().ok_or("that file is too large to read here")?.to_vec(),
+        _ => return Err("pick the file again".into()),
+    };
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+async fn send_picked_upload(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    token: String,
+    server_id: String,
+    channel_id: String,
+    poster: Option<String>,
+) -> CmdResult<MessageView> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
+    let picked = take_picked_upload(&app, &token)?;
+    send_attachment(&app, &handle, sid, cid, picked.name, picked.contents, poster_bytes(poster)).await
+}
+
+#[tauri::command]
+async fn send_picked_dm_upload(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    token: String,
+    user_id: String,
+    poster: Option<String>,
+) -> CmdResult<DmMessageView> {
+    dm_partner(&app, &user_id)?;
+    let picked = take_picked_upload(&app, &token)?;
+    send_dm_attachment(&app, &handle, &user_id, picked.name, picked.contents, poster_bytes(poster)).await
 }
 
 const INLINE_VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "webm"];
@@ -1331,6 +1425,7 @@ async fn attach_bytes(
     channel_id: String,
     filename: String,
     data: String,
+    poster: Option<String>,
 ) -> CmdResult<MessageView> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
@@ -1344,7 +1439,7 @@ async fn attach_bytes(
     if bytes.is_empty() {
         return Err("empty file".into());
     }
-    send_attachment(&app, &handle, sid, cid, filename, picker::Contents::Bytes(bytes)).await
+    send_attachment(&app, &handle, sid, cid, filename, picker::Contents::Bytes(bytes), poster_bytes(poster)).await
 }
 
 #[tauri::command]
@@ -3230,6 +3325,7 @@ async fn send_dm_attachment(
     user_id: &str,
     filename: String,
     contents: picker::Contents,
+    poster: Option<Vec<u8>>,
 ) -> CmdResult<DmMessageView> {
     let (me, partner) = dm_partner(app, user_id)?;
     let (blob, provider, size_bytes) = store_file(app, contents).await?;
@@ -3239,6 +3335,7 @@ async fn send_dm_attachment(
         .to_string();
     let mut message = DmMessage::new(me.id, partner, String::new());
     message.attachments.push(Attachment { blob, filename, size_bytes, mime_type, provider });
+    add_video_poster(app, &mut message.attachments, poster).await;
     let view = post_dm(app, handle, &me, partner, message).await?;
     view.ok_or_else(|| "file not sent".to_string())
 }
@@ -3258,7 +3355,7 @@ async fn attach_dm_file(
     let Some(picked) = pick_attachment(&handle, title, filter).await? else {
         return Ok(None);
     };
-    send_dm_attachment(&app, &handle, &user_id, picked.name, picked.contents).await.map(Some)
+    send_dm_attachment(&app, &handle, &user_id, picked.name, picked.contents, None).await.map(Some)
 }
 
 #[tauri::command]
@@ -3268,6 +3365,7 @@ async fn attach_dm_bytes(
     user_id: String,
     filename: String,
     data: String,
+    poster: Option<String>,
 ) -> CmdResult<DmMessageView> {
     let filename = filename.trim().to_string();
     if filename.is_empty() || filename.len() > 255 {
@@ -3279,7 +3377,7 @@ async fn attach_dm_bytes(
     if bytes.is_empty() {
         return Err("empty file".into());
     }
-    send_dm_attachment(&app, &handle, &user_id, filename, picker::Contents::Bytes(bytes)).await
+    send_dm_attachment(&app, &handle, &user_id, filename, picker::Contents::Bytes(bytes), poster_bytes(poster)).await
 }
 
 fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
@@ -8509,6 +8607,10 @@ pub fn run() {
             send_message,
             attach_file,
             attach_bytes,
+            pick_upload,
+            picked_upload_bytes,
+            send_picked_upload,
+            send_picked_dm_upload,
             open_url,
             note_user_activity,
             download_attachment,

@@ -48,20 +48,20 @@ mod bindings {
             })
         }
 
-        pub fn attach_dm(&self, user_id: String, filename: String, data: Vec<u8>) -> js_sys::Promise {
+        pub fn attach_dm(&self, user_id: String, filename: String, data: Vec<u8>, poster: Option<Vec<u8>>) -> js_sys::Promise {
             let session = self.session.clone();
             wasm_bindgen_futures::future_to_promise(async move {
-                match session.attach_dm(&user_id, &filename, data).await {
+                match session.attach_dm(&user_id, &filename, data, poster).await {
                     Ok(value) => Ok(JsValue::from_str(&value.to_string())),
                     Err(message) => Err(JsValue::from_str(&message)),
                 }
             })
         }
 
-        pub fn attach(&self, server_id: String, channel_id: String, filename: String, data: Vec<u8>) -> js_sys::Promise {
+        pub fn attach(&self, server_id: String, channel_id: String, filename: String, data: Vec<u8>, poster: Option<Vec<u8>>) -> js_sys::Promise {
             let session = self.session.clone();
             wasm_bindgen_futures::future_to_promise(async move {
-                match session.attach_server(&server_id, &channel_id, &filename, data).await {
+                match session.attach_server(&server_id, &channel_id, &filename, data, poster).await {
                     Ok(value) => Ok(JsValue::from_str(&value.to_string())),
                     Err(message) => Err(JsValue::from_str(&message)),
                 }

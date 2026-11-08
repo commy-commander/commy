@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { MAX_IMAGE_EMBEDS, MAX_VIDEO_LINK_EMBEDS, youtubeThumbnail, videoLinkEmbeds, MAX_AUTO_IMAGE_BYTES, isMediaHost, relaysImage, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText } = require("../scripts/embeds.js");
+const { MAX_POSTER_BYTES, wantsPoster, posterTime, posterSize, posterFits, MAX_AUTO_VIDEO_BYTES, loadsVideoOnItsOwn, MAX_IMAGE_EMBEDS, MAX_VIDEO_LINK_EMBEDS, youtubeThumbnail, videoLinkEmbeds, MAX_AUTO_IMAGE_BYTES, isMediaHost, relaysImage, imageHost, imageLinks, embedMode, imageGateText, loadsImageOnItsOwn, largeImageGateText } = require("../scripts/embeds.js");
 
 const KLIPY = "https://static.klipy.com/ii/4e7b/fd/3b/5wGhb3j5.gif";
 const GIPHY = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYWJj/giphy.gif?cid=790b7611abc&rid=giphy.gif&ct=g";
@@ -211,4 +211,39 @@ test("YouTube links get one thumbnail each, from the thumbnail host the account 
   assert.deepEqual(videoLinkEmbeds([OTHER, "https://example.org/watch?v=Sp0ZZuNrXh8"], youtubeVideoId), []);
   const many = ["a", "b", "c"].map(c => `https://youtu.be/${c.repeat(11)}`);
   assert.equal(videoLinkEmbeds(many, youtubeVideoId).length, MAX_VIDEO_LINK_EMBEDS);
+});
+
+test("small playable videos load on their own so their first frame shows", () => {
+  const video = size => ({ mime: "video/mp4", size_bytes: size });
+  assert.equal(MAX_AUTO_VIDEO_BYTES, 10 * 1024 * 1024);
+  assert.ok(loadsVideoOnItsOwn(video(3 * 1024 * 1024)));
+  assert.ok(loadsVideoOnItsOwn(video(MAX_AUTO_VIDEO_BYTES)));
+  assert.equal(loadsVideoOnItsOwn(video(MAX_AUTO_VIDEO_BYTES + 1)), false);
+  assert.equal(loadsVideoOnItsOwn(video(0)), false);
+  assert.equal(loadsVideoOnItsOwn({ mime: "video/x-msvideo", size_bytes: 1024 }), false);
+  assert.equal(loadsVideoOnItsOwn(null), false);
+});
+
+test("the sender makes a poster for videos that play inline", () => {
+  assert.ok(wantsPoster("clip.MP4", 5_000_000));
+  assert.ok(wantsPoster("screen.webm", 1));
+  assert.equal(wantsPoster("clip.avi", 5_000_000), false);
+  assert.equal(wantsPoster("notes.txt", 10), false);
+  assert.equal(wantsPoster(".mp4", 10), false);
+  assert.equal(wantsPoster("clip.mp4", 0), false);
+  assert.equal(wantsPoster("clip.mp4", 100 * 1024 * 1024 + 1), false);
+});
+
+test("the poster frame comes from early in the video, scaled to fit 640 pixels", () => {
+  assert.equal(posterTime(30), 1);
+  assert.equal(posterTime(4), 0.4);
+  assert.equal(posterTime(Infinity), 0);
+  assert.equal(posterTime(NaN), 0);
+  assert.deepEqual(posterSize(1920, 1080), { width: 640, height: 360 });
+  assert.deepEqual(posterSize(1080, 1920), { width: 360, height: 640 });
+  assert.deepEqual(posterSize(320, 240), { width: 320, height: 240 });
+  assert.equal(posterSize(0, 0), null);
+  assert.ok(posterFits(new Uint8Array(1000)));
+  assert.equal(posterFits(new Uint8Array(MAX_POSTER_BYTES + 1)), false);
+  assert.equal(posterFits(null), false);
 });

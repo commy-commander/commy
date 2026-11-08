@@ -16,7 +16,7 @@ impl Session {
             "attach_dm_bytes" => {
                 let filename = files::upload_name(args.filename.as_deref().unwrap_or(""))?;
                 let bytes = files::upload_bytes(args.data.as_deref().unwrap_or(""))?;
-                self.send_dm_file(args.user_id.as_ref(), filename, bytes).await
+                self.send_dm_file(args.user_id.as_ref(), filename, bytes, poster_bytes(&args)).await
             }
             "get_attachment_preview" => {
                 let mime = args.mime.unwrap_or_default();
@@ -36,7 +36,7 @@ impl Session {
                 let filename = files::upload_name(args.filename.as_deref().unwrap_or(""))?;
                 let bytes = files::upload_bytes(args.data.as_deref().unwrap_or(""))?;
                 let (server, channel) = server_channel(&args)?;
-                self.send_server_file(server, channel, filename, bytes).await
+                self.send_server_file(server, channel, filename, bytes, poster_bytes(&args)).await
             }
             "start_voice_recording" => self.start_recording().await.map(|_| Value::Null),
             "cancel_voice_recording" => {
@@ -64,24 +64,38 @@ impl Session {
         }
     }
 
-    pub async fn attach_server(self: &Rc<Self>, server_id: &str, channel_id: &str, filename: &str, bytes: Vec<u8>) -> Result<Value, String> {
+    pub async fn attach_server(self: &Rc<Self>, server_id: &str, channel_id: &str, filename: &str, bytes: Vec<u8>, poster: Option<Vec<u8>>) -> Result<Value, String> {
         let server: ServerId = parse(Some(&server_id.to_string()), "server")?;
         let channel: ChannelId = parse(Some(&channel_id.to_string()), "channel")?;
         let filename = files::upload_name(filename)?;
         files::check_upload(&bytes)?;
-        self.send_server_file(server, channel, filename, bytes).await
+        self.send_server_file(server, channel, filename, bytes, poster).await
     }
 
-    async fn send_server_file(self: &Rc<Self>, server: ServerId, channel: ChannelId, filename: String, bytes: Vec<u8>) -> Result<Value, String> {
+    async fn send_server_file(self: &Rc<Self>, server: ServerId, channel: ChannelId, filename: String, bytes: Vec<u8>, poster: Option<Vec<u8>>) -> Result<Value, String> {
         let size_bytes = bytes.len() as u64;
         self.client.borrow().upload_fits(server, size_bytes)?;
         let (blob, provider) = self.store_shared_blob(server, bytes).await?;
-        let attachment = files::attachment(filename, size_bytes, blob, provider);
-        self.post_attachment(server, channel, attachment, Permissions::ATTACH_FILES, "send files or images here").await
+        let mut attachments = vec![files::attachment(filename, size_bytes, blob, provider)];
+        self.add_video_poster(&mut attachments, poster).await;
+        self.post_attachments(server, channel, attachments, Permissions::ATTACH_FILES, "send files or images here").await
+    }
+
+    async fn add_video_poster(&self, attachments: &mut Vec<Attachment>, poster: Option<Vec<u8>>) {
+        let Some(bytes) = poster.filter(|b| commy_core::video_poster::is_poster_picture(b)) else { return };
+        let Some(video) = attachments.first().filter(|a| a.is_video()).cloned() else { return };
+        let size_bytes = bytes.len() as u64;
+        let Ok((blob, provider)) = self.store_blob(bytes.clone()).await else { return };
+        self.offer_picture(&blob, &bytes).await;
+        attachments.push(Attachment::video_poster(&video, blob, size_bytes, Some(provider)));
     }
 
     pub(super) async fn post_attachment(self: &Rc<Self>, server: ServerId, channel: ChannelId, attachment: Attachment, needed: Permissions, action: &str) -> Result<Value, String> {
-        let (message, view) = self.client.borrow().compose_attachment(server, channel, attachment, needed, action)?;
+        self.post_attachments(server, channel, vec![attachment], needed, action).await
+    }
+
+    async fn post_attachments(self: &Rc<Self>, server: ServerId, channel: ChannelId, attachments: Vec<Attachment>, needed: Permissions, action: &str) -> Result<Value, String> {
+        let (message, view) = self.client.borrow().compose_attachment(server, channel, attachments, needed, action)?;
         self.deliver(server, message, view).await
     }
 
@@ -127,10 +141,10 @@ impl Session {
         self.stop_recording().ok_or("no voice message is being recorded")?.finish()
     }
 
-    pub async fn attach_dm(self: &Rc<Self>, user_id: &str, filename: &str, bytes: Vec<u8>) -> Result<Value, String> {
+    pub async fn attach_dm(self: &Rc<Self>, user_id: &str, filename: &str, bytes: Vec<u8>, poster: Option<Vec<u8>>) -> Result<Value, String> {
         let filename = files::upload_name(filename)?;
         files::check_upload(&bytes)?;
-        self.send_dm_file(Some(&user_id.to_string()), filename, bytes).await
+        self.send_dm_file(Some(&user_id.to_string()), filename, bytes, poster).await
     }
 
     pub async fn file_bytes(self: &Rc<Self>, cmd: &str, args: &str) -> Result<Vec<u8>, String> {
@@ -143,12 +157,13 @@ impl Session {
         self.fetch_blob(args.blob.as_deref(), args.provider.as_deref(), args.server_id.as_deref(), max).await
     }
 
-    async fn send_dm_file(self: &Rc<Self>, user_id: Option<&String>, filename: String, bytes: Vec<u8>) -> Result<Value, String> {
+    async fn send_dm_file(self: &Rc<Self>, user_id: Option<&String>, filename: String, bytes: Vec<u8>, poster: Option<Vec<u8>>) -> Result<Value, String> {
         let (me, partner) = self.recipient(user_id)?;
         let size_bytes = bytes.len() as u64;
         let (blob, provider) = self.store_blob(bytes).await?;
         let mut message = DmMessage::new(me.id, partner, String::new());
         message.attachments.push(files::attachment(filename, size_bytes, blob, provider));
+        self.add_video_poster(&mut message.attachments, poster).await;
         to_json(&self.post_dm(&me, partner, message).await?.ok_or("file not sent")?)
     }
 
@@ -167,6 +182,10 @@ impl Session {
         };
         fetcher.fetch_among(blob, sources.iter().map(String::as_str), &members, max).await.map_err(|e| format!("{e:#}"))
     }
+}
+
+fn poster_bytes(args: &Args) -> Option<Vec<u8>> {
+    files::upload_bytes(args.poster.as_deref()?).ok()
 }
 
 fn server_channel(args: &Args) -> Result<(ServerId, ChannelId), String> {

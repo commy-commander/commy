@@ -215,6 +215,7 @@ pub struct App {
     pub dm_filter: Mutex<crate::safety::DmFilter>,
     pub mic_test: Mutex<Option<MicTest>>,
     pub voice_recorder: Mutex<Option<crate::voice_message::VoiceRecorder>>,
+    pub picked_upload: Mutex<Option<(String, crate::picker::PickedFile)>>,
     pub last_user_activity: std::sync::atomic::AtomicI64,
     pub auto_idle: std::sync::atomic::AtomicBool,
     pub overlay_visible: std::sync::atomic::AtomicBool,
@@ -278,6 +279,7 @@ impl Default for App {
             dm_filter: Mutex::new(crate::safety::DmFilter::default()),
             mic_test: Mutex::new(None),
             voice_recorder: Mutex::new(None),
+            picked_upload: Mutex::new(None),
             last_user_activity: std::sync::atomic::AtomicI64::new(
                 chrono::Utc::now().timestamp(),
             ),

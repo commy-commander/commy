@@ -121,8 +121,14 @@
     const data = new Uint8Array(await file.arrayBuffer());
     const web = await client;
     if (cmd === "drive_upload") return JSON.parse(await web.drive_upload(args.serverId, args.channelId, args.parentId || undefined, file.name, data));
-    const sent = cmd === "attach_file" ? web.attach(args.serverId, args.channelId, file.name, data) : web.attach_dm(args.userId, file.name, data);
+    const poster = await webVideoPoster(file);
+    const sent = cmd === "attach_file" ? web.attach(args.serverId, args.channelId, file.name, data, poster) : web.attach_dm(args.userId, file.name, data, poster);
     return JSON.parse(await sent);
+  }
+
+  async function webVideoPoster(file) {
+    if (typeof window.wantsPoster !== "function" || !window.wantsPoster(file.name, file.size)) return undefined;
+    return (await window.videoPosterJpeg(file)) || undefined;
   }
 
   const screen = { stream: null, reader: null, timer: null, video: null, busy: false, lastAt: 0, pick: null, canvas: null };

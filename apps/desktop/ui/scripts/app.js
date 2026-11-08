@@ -16484,6 +16484,49 @@ function videoPlayer(url) {
 }
 
 const videoWaits = new Map();
+const quietVideoLoads = new Map();
+const quietVideoFailures = new Map();
+
+function showVideoQuietly(att) {
+  let pending = quietVideoLoads.get(att.blob);
+  if (!pending) {
+    pending = fetchVideoUrl(att)
+      .then(url => {
+        quietVideoFailures.delete(att.blob);
+        for (const box of videoBoxesOf(att.blob)) {
+          if (box.querySelector("video") || box.classList.contains("loading")) continue;
+          box.title = "";
+          box.replaceChildren(stillFrame(videoPlayer(url)));
+        }
+      })
+      .catch(() => quietVideoFailures.set(att.blob, { at: Date.now() }))
+      .finally(() => quietVideoLoads.delete(att.blob));
+    quietVideoLoads.set(att.blob, pending);
+  }
+}
+
+function videoPosterImage(att) {
+  const poster = { blob: att.poster.blob, provider: att.poster.provider, mime: att.poster.mime, size_bytes: att.poster.size_bytes, shared: true, server: att.server, filename: null };
+  const img = el("img", "chat-video-poster");
+  img.alt = "";
+  const cached = imagePreviewCache.get(poster.blob);
+  if (cached) img.src = cached;
+  else if (retriesImageNow(imagePreviewFailures.get(poster.blob), Date.now())) {
+    loadImagePreview(poster, false)
+      .then(src => {
+        img.src = src;
+      })
+      .catch(() => img.remove());
+  }
+  return img;
+}
+
+function stillFrame(video) {
+  video.addEventListener("loadedmetadata", () => {
+    if (video.paused && video.currentTime === 0) video.currentTime = 0.001;
+  }, { once: true });
+  return video;
+}
 
 async function fetchVideoUrl(att) {
   const bytes = await invoke("get_attachment_video", { blob: att.blob, provider: att.provider ?? null, sizeBytes: att.size_bytes ?? null, serverId: att.server ?? null, name: att.filename ?? null });
@@ -16541,7 +16584,7 @@ function renderInlineVideo(att) {
   box.dataset.blob = att.blob;
   const cached = videoUrls.get(att.blob);
   if (cached) {
-    box.appendChild(videoPlayer(cached));
+    box.appendChild(stillFrame(videoPlayer(cached)));
     return box;
   }
   const play = el("button", "chat-video-play");
@@ -16552,6 +16595,8 @@ function renderInlineVideo(att) {
   const label = el("span", "chat-video-label", wait ? wait.text.label : `Video, ${formatSize(att.size_bytes)}`);
   if (wait) box.title = wait.text.title;
   box.append(play, label);
+  if (att.poster) box.prepend(videoPosterImage(att));
+  if (!wait && loadsVideoOnItsOwn(att) && retriesImageNow(quietVideoFailures.get(att.blob), Date.now())) showVideoQuietly(att);
   play.onclick = async () => {
     play.disabled = true;
     box.classList.add("loading");
@@ -19211,6 +19256,7 @@ async function sendVoiceRecording() {
 
 async function attachFromMenu(kind) {
   closeFloating();
+  if (IS_TAURI && !inBrowserApp()) return attachPickedUpload(kind);
   if (inDmView()) {
     try {
       const sent = await invoke("attach_dm_file", { userId: state.currentDm.user, kind });
@@ -19231,6 +19277,89 @@ async function attachFromMenu(kind) {
   } catch (e) {
     toast(String(e));
   }
+}
+
+async function attachPickedUpload(kind) {
+  const dm = inDmView() ? { user: state.currentDm.user, name: state.currentDm.name } : null;
+  const channel = dm ? null : state.currentServer && state.currentChannel ? { server: state.currentServer.id, channel: state.currentChannel } : null;
+  if (!dm && !channel) return;
+  try {
+    const picked = await invoke("pick_upload", { kind });
+    if (!picked) return;
+    const poster = picked.video ? await pickedUploadPoster(picked) : null;
+    if (dm) {
+      const sent = await invoke("send_picked_dm_upload", { token: picked.token, userId: dm.user, poster });
+      if (sent && inDmView() && state.currentDm.user === dm.user) await selectDm(dm.user, dm.name);
+      return;
+    }
+    const sent = await invoke("send_picked_upload", { token: picked.token, serverId: channel.server, channelId: channel.channel.id, poster });
+    if (sent && state.currentChannel && state.currentChannel.id === channel.channel.id) await selectChannel(channel.channel);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function pickedUploadPoster(picked) {
+  try {
+    const bytes = await invoke("picked_upload_bytes", { token: picked.token });
+    return await videoPosterBase64(new Blob([bytes]));
+  } catch {
+    return null;
+  }
+}
+
+const POSTER_WAIT_MS = 8000;
+
+function videoPosterJpeg(blob) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      video.removeAttribute("src");
+      video.load();
+      URL.revokeObjectURL(url);
+      resolve(posterFits(result) ? result : null);
+    };
+    const timer = setTimeout(() => finish(null), POSTER_WAIT_MS);
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.onerror = () => finish(null);
+    video.onloadedmetadata = () => {
+      video.currentTime = posterTime(video.duration) || 0.001;
+    };
+    video.onseeked = () => {
+      const size = posterSize(video.videoWidth, video.videoHeight);
+      if (!size) return finish(null);
+      const canvas = document.createElement("canvas");
+      canvas.width = size.width;
+      canvas.height = size.height;
+      canvas.getContext("2d").drawImage(video, 0, 0, size.width, size.height);
+      canvas.toBlob(jpeg => {
+        if (!jpeg) return finish(null);
+        jpeg.arrayBuffer().then(buffer => finish(new Uint8Array(buffer)), () => finish(null));
+      }, "image/jpeg", 0.8);
+    };
+    video.src = url;
+  });
+}
+
+async function videoPosterBase64(blob) {
+  const bytes = await videoPosterJpeg(blob);
+  return bytes ? bytesToBase64(bytes) : null;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 function closeGifPicker() {
@@ -20010,19 +20139,14 @@ async function uploadFileObject(file) {
     toast(refusal);
     return;
   }
-  const buffer = await file.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
+  const data = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
   const name = file.name && file.name !== "image.png"
     ? file.name
     : `pasted-${Date.now()}.png`;
+  const poster = wantsPoster(name, file.size) ? await videoPosterBase64(file) : null;
   try {
     if (dm) {
-      await invoke("attach_dm_bytes", { userId: state.currentDm.user, filename: name, data: btoa(binary) });
+      await invoke("attach_dm_bytes", { userId: state.currentDm.user, filename: name, data, poster });
       await selectDm(state.currentDm.user, state.currentDm.name);
       return;
     }
@@ -20030,7 +20154,8 @@ async function uploadFileObject(file) {
       serverId: state.currentServer.id,
       channelId: state.currentChannel.id,
       filename: name,
-      data: btoa(binary),
+      data,
+      poster,
     });
     await selectChannel(state.currentChannel);
   } catch (e) {

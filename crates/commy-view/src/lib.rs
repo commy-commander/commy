@@ -937,19 +937,7 @@ pub fn dm_message_view(msg: &DmMessage, me: UserId, dms: &DmStore, pending: bool
                 users: r.users.iter().map(|u| u.to_string()).collect(),
             })
             .collect(),
-        attachments: msg
-            .attachments
-            .iter()
-            .filter(|a| !a.is_card())
-            .map(|a| AttachmentView {
-                filename: a.filename.clone(),
-                size_bytes: a.size_bytes,
-                is_image: a.is_image(),
-                mime: a.mime_type.clone(),
-                blob: a.blob.clone(),
-                provider: a.provider.clone(),
-            })
-            .collect(),
+        attachments: AttachmentView::list(&msg.attachments),
         voice_invite: crate::voice_invite::dm_view_of(msg),
     }
 }
@@ -1143,6 +1131,39 @@ pub struct AttachmentView {
     pub mime: String,
     pub blob: String,
     pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poster: Option<PosterView>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PosterView {
+    pub blob: String,
+    pub size_bytes: u64,
+    pub mime: String,
+    pub provider: Option<String>,
+}
+
+impl AttachmentView {
+    pub fn list(attachments: &[commy_core::Attachment]) -> Vec<Self> {
+        attachments
+            .iter()
+            .filter(|a| !a.is_card() && !commy_core::video_poster::is_paired_poster(a, attachments))
+            .map(|a| AttachmentView {
+                filename: a.filename.clone(),
+                size_bytes: a.size_bytes,
+                is_image: a.is_image(),
+                mime: a.mime_type.clone(),
+                blob: a.blob.clone(),
+                provider: a.provider.clone(),
+                poster: commy_core::video_poster::poster_for(a, attachments).map(|p| PosterView {
+                    blob: p.blob.clone(),
+                    size_bytes: p.size_bytes,
+                    mime: p.mime_type.clone(),
+                    provider: p.provider.clone(),
+                }),
+            })
+            .collect()
+    }
 }
 
 impl MessageView {
@@ -1193,18 +1214,7 @@ impl MessageView {
                     users: r.users.iter().map(|u| u.to_string()).collect(),
                 })
                 .collect(),
-            attachments: attachments
-                .iter()
-                .filter(|a| !a.is_card())
-                .map(|a| AttachmentView {
-                    filename: a.filename.clone(),
-                    size_bytes: a.size_bytes,
-                    is_image: a.is_image(),
-                    mime: a.mime_type.clone(),
-                    blob: a.blob.clone(),
-                    provider: a.provider.clone(),
-                })
-                .collect(),
+            attachments: AttachmentView::list(attachments),
             previews: message.previews_for(author_permissions).take(1).map(|(p, a)| LinkPreviewView::build(p, a)).collect(),
             poll: (!sealed).then(|| PollView::build(message, state, keys.user())).flatten(),
             tts: !sealed && !state.server.tts_off && message.speaks_for(author_permissions),
@@ -1549,6 +1559,27 @@ mod tests {
         let badge = |id: UserId| view.members.iter().find(|m| m.id == id.to_string()).unwrap().bot;
         assert!(badge(bot_id));
         assert!(!badge(owner.id));
+    }
+
+    #[test]
+    fn a_video_carries_its_poster_and_the_poster_is_not_shown_as_a_picture() {
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let channel = server.channels[0].id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let video = commy_core::Attachment { blob: "v1".into(), filename: "clip.mp4".into(), size_bytes: 9_000_000, mime_type: "video/mp4".into(), provider: Some("n".into()) };
+        let poster = commy_core::Attachment::video_poster(&video, "p1".into(), 30_000, Some("n".into()));
+        let mut message = Message::new(channel, owner.id, "");
+        message.attachments.extend([video, poster]);
+        let shown = MessageView::build(&message, &state, &KeyHolder::default());
+        assert_eq!(shown.attachments.len(), 1);
+        assert_eq!(shown.attachments[0].filename, "clip.mp4");
+        assert_eq!(
+            shown.attachments[0].poster,
+            Some(PosterView { blob: "p1".into(), size_bytes: 30_000, mime: "image/jpeg".into(), provider: Some("n".into()) })
+        );
     }
 
     #[test]

@@ -35,3 +35,13 @@ test("the app and the network agree on which files download straight to disk", (
   const net = read("crates", "commy-net", "src", "node.rs");
   assert.equal(limit(ui, "BIG_FILE_BYTES"), limit(net, "BIG_FILE_BYTES"));
 });
+
+test("the app and the backend agree on the largest video poster", () => {
+  const limit = (source, name) => {
+    const m = new RegExp(`${name}(?::\\s*usize)?\\s*=\\s*([\\d\\s*]+);`).exec(source);
+    return m[1].split("*").reduce((product, n) => product * Number(n), 1);
+  };
+  const ui = read("apps", "desktop", "ui", "scripts", "embeds.js");
+  const core = read("crates", "commy-core", "src", "video_poster.rs");
+  assert.equal(limit(ui, "MAX_POSTER_BYTES"), limit(core, "MAX_VIDEO_POSTER_BYTES"));
+});

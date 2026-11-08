@@ -191,6 +191,7 @@ struct Args {
     height: Option<u32>,
     filename: Option<String>,
     data: Option<String>,
+    poster: Option<String>,
     which: Option<String>,
     blob: Option<String>,
     provider: Option<String>,

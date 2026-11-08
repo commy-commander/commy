@@ -231,7 +231,7 @@ impl Client {
         commy_view::moderate::upload_fits(state, size)
     }
 
-    pub fn compose_attachment(&self, server: ServerId, channel: ChannelId, attachment: Attachment, needed: Permissions, action: &str) -> Result<(Message, MessageView), String> {
+    pub fn compose_attachment(&self, server: ServerId, channel: ChannelId, attachments: Vec<Attachment>, needed: Permissions, action: &str) -> Result<(Message, MessageView), String> {
         let (profile, identity) = self.me.lock().unwrap().clone().ok_or("Your servers are not unlocked yet")?;
         let keys = KeyHolder::new(Some((profile.id, identity.clone())));
         let mut servers = self.servers.lock().unwrap();
@@ -241,7 +241,7 @@ impl Client {
             return Err(format!("you do not have permission to {action}"));
         }
         let mut message = Message::new(channel, profile.id, "");
-        message.attachments.push(attachment);
+        message.attachments = attachments;
         seal_sign_apply(state, &keys, &identity, message)
     }
 
