@@ -113,12 +113,22 @@ remove() {
 	done
 }
 
+image_of() {
+	docker compose config "$1" 2>/dev/null | awk -v want="  $1:" '
+		$0 == "services:" { in_services = 1; next }
+		in_services && /^[^ ]/ { in_services = 0 }
+		in_services && $0 == want { in_service = 1; next }
+		in_service && /^  [^ ]/ { exit }
+		in_service && /^    image: / { sub(/^    image: /, ""); print; exit }
+	'
+}
+
 update_service() {
 	svc="$1"
 	old="$(docker compose ps -q "$svc" 2>/dev/null)"
 	if [ -z "$old" ]; then
 		if verify_enabled; then
-			ref="$(docker compose config --images "$svc" 2>/dev/null | head -n 1)"
+			ref="$(image_of "$svc")"
 			if ! verified "$ref"; then
 				log "$svc: $ref failed signature verification, not starting it"
 				return 1
@@ -130,7 +140,7 @@ update_service() {
 	fi
 
 	first="$(echo "$old" | head -n 1)"
-	ref="$(docker compose config --images "$svc" 2>/dev/null | head -n 1)"
+	ref="$(image_of "$svc")"
 	[ -n "$ref" ] || ref="$(docker inspect -f '{{.Config.Image}}' "$first")"
 	running="$(docker inspect -f '{{.Image}}' "$first")"
 	latest="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null)"

@@ -11,6 +11,7 @@ SERVICES="web"
 HEALTH_TIMEOUT=6
 POLL=1
 REF="ghcr.io/commy/commy-web:dev"
+DEPENDENCY_REF="ghcr.io/commy/commy-auth:dev"
 failures=0
 
 reset() {
@@ -28,6 +29,20 @@ new_container() {
 	echo "$n" >"$FAKE/next"
 	echo "c$n $(cat "$FAKE/tag")" >>"$FAKE/containers"
 	echo "c$n" >>"$FAKE/new"
+}
+
+compose_config_with_web_depending_on_auth() {
+	cat <<EOF
+name: commy
+services:
+  auth:
+    image: $DEPENDENCY_REF
+  web:
+    depends_on:
+      auth:
+        condition: service_started
+    image: $REF
+EOF
 }
 
 docker() {
@@ -61,13 +76,17 @@ docker() {
 		*) grep "^$id " "$FAKE/containers" | cut -d' ' -f2 ;;
 		esac
 		;;
-	"compose config") echo "$REF" ;;
+	"compose config") compose_config_with_web_depending_on_auth ;;
 	"image inspect")
 		case "$4" in
 		*RepoDigests*) [ -f "$FAKE/nodigest" ] || echo "ghcr.io/commy/commy-web@$(cat "$FAKE/tag")" ;;
 		*)
-			[ -z "$5" ] || [ "$5" = "$REF" ] || return 1
-			cat "$FAKE/tag"
+			if [ -z "$5" ] || [ "$5" = "$REF" ]; then
+				cat "$FAKE/tag"
+				return 0
+			fi
+			[ "$5" = "$DEPENDENCY_REF" ] || return 1
+			echo sha256:dependency
 			;;
 		esac
 		;;
@@ -112,6 +131,9 @@ reset
 run_once
 check "unchanged image does not start containers" "$(called 'compose up')" "0"
 check "unchanged image keeps the old container" "$(images)" "sha256:old"
+check "a service follows its own image, not a dependency listed before it" "$(image_of web)" "$REF"
+check "a dependency resolves to its own image" "$(image_of auth)" "$DEPENDENCY_REF"
+check "a service missing from the compose file has no image" "$(image_of relay)" ""
 
 RUNNING_REF="old.registry.example/commy/commy-web:dev"
 reset
@@ -172,8 +194,10 @@ check "failed pull does not start containers" "$(called 'compose up')" "0"
 
 reset
 SERVICES="auth web"
+DEPENDENCY_REF="$REF"
 run_once
 check "every watched service is inspected" "$(called 'compose ps -q')" "2"
+DEPENDENCY_REF="ghcr.io/commy/commy-auth:dev"
 SERVICES="web"
 
 reset
