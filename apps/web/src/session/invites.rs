@@ -209,6 +209,12 @@ impl Session {
         knocking.await
     }
 
+    pub(super) async fn revoke_at_account_server(&self, invites: Vec<commy_core::TrackedInvite>) {
+        for invite in invites.iter().filter(|invite| invite.origin == self.origin) {
+            let _ = self.request("POST", invite::REVOKE_PATH, Some(invite::revoke_body(invite))).await;
+        }
+    }
+
     async fn revoke(&self, server: ServerId, origin: &str, code: &str) -> Result<(), String> {
         let me = self.client.borrow().profile().ok_or("Your servers are not unlocked yet")?.id;
         let invite = {

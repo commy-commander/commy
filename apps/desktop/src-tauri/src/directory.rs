@@ -113,6 +113,7 @@ async fn refresh_listings(app: &App, failed: &mut HashMap<ServerId, Instant>) {
     let origin = crate::account::effective_server();
     let Some(token) = invite_link::signed_in_token(app) else { return };
     let _serial = LISTING_CHANGES.lock().await;
+    unlist_deleted_servers(app, &origin, &token).await;
     let now = Instant::now();
     failed.retain(|_, at| now.duration_since(*at) < RETRY_AFTER);
     for (sid, listing) in outdated_listings(app, &origin) {
@@ -127,6 +128,42 @@ async fn refresh_listings(app: &App, failed: &mut HashMap<ServerId, Instant>) {
             }
         }
     }
+}
+
+async fn unlist_deleted_servers(app: &App, origin: &str, token: &str) {
+    for (sid, listing) in deleted_listings(app, origin) {
+        match send_unlist(app, &listing, token).await {
+            Ok(()) => forget_listing(app, sid),
+            Err(e) => tracing::warn!("Discover listing of a deleted server not removed: {e}"),
+        }
+    }
+}
+
+fn deleted_listings(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
+    let listings = app.listings.lock().unwrap().clone();
+    let deleted = app.deleted.lock().unwrap();
+    listings
+        .into_iter()
+        .filter(|(sid, listing)| listing.origin == origin && deleted.contains(*sid))
+        .collect()
+}
+
+fn forget_listing(app: &App, sid: ServerId) {
+    app.listings.lock().unwrap().remove(&sid);
+    app.persist_listings();
+}
+
+async fn send_unlist(app: &App, listing: &Listing, token: &str) -> Result<(), String> {
+    let request = app
+        .http
+        .post(format!("{}{}", listing.origin, shared::UNLIST_PATH))
+        .json(&serde_json::json!({ "code": listing.code }))
+        .bearer_auth(token);
+    let res = request.send().await.map_err(|_| format!("Could not reach {}", host_of(&listing.origin)))?;
+    if !res.status().is_success() && res.status() != reqwest::StatusCode::NOT_FOUND {
+        return Err(invite_link::error_message(res).await);
+    }
+    Ok(())
 }
 
 fn outdated_listings(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
@@ -157,17 +194,8 @@ pub async fn unlist_server(app: tauri::State<'_, App>, server_id: String) -> Res
     let token = signed_in_token(&app)?;
     let _serial = LISTING_CHANGES.lock().await;
     let listing = app.listings.lock().unwrap().get(&sid).cloned().ok_or("This server was not listed from this device")?;
-    let request = app
-        .http
-        .post(format!("{}{}", listing.origin, shared::UNLIST_PATH))
-        .json(&serde_json::json!({ "code": listing.code }))
-        .bearer_auth(token);
-    let res = request.send().await.map_err(|_| format!("Could not reach {}", host_of(&listing.origin)))?;
-    if !res.status().is_success() && res.status() != reqwest::StatusCode::NOT_FOUND {
-        return Err(invite_link::error_message(res).await);
-    }
-    app.listings.lock().unwrap().remove(&sid);
-    app.persist_listings();
+    send_unlist(&app, &listing, &token).await?;
+    forget_listing(&app, sid);
     Ok(())
 }
 
@@ -267,6 +295,27 @@ mod tests {
         let (sid, _) = listed(&app, "Rust Hangout", false);
         app.servers.lock().unwrap().get_mut(&sid).unwrap().server.name = "Hidden".into();
         assert!(outdated_listings(&app, "https://commy.chat").is_empty());
+    }
+
+    #[test]
+    fn listings_of_deleted_servers_are_taken_down() {
+        let app = App::default();
+        let (kept, _) = listed(&app, "Rust Hangout", true);
+        let (gone, listing) = listed(&app, "Old Crabs", true);
+        let notice = commy_core::SignedEvent::sign(
+            gone,
+            commy_core::UserId::new(),
+            1,
+            commy_core::ServerEvent::ServerDelete { server: gone },
+            &commy_core::Identity::generate(),
+        );
+        app.servers.lock().unwrap().remove(&gone);
+        app.deleted.lock().unwrap().insert(gone, crate::deleted::DeletedServer { name: "Old Crabs".into(), notice, ticket: None });
+        assert_eq!(deleted_listings(&app, "https://commy.chat"), vec![(gone, listing)]);
+        assert!(deleted_listings(&app, "https://staging.commy.chat").is_empty());
+        forget_listing(&app, gone);
+        assert!(deleted_listings(&app, "https://commy.chat").is_empty());
+        assert!(app.listings.lock().unwrap().contains_key(&kept));
     }
 
     #[test]

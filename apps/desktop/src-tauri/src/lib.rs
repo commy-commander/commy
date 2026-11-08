@@ -5597,6 +5597,7 @@ fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, no
     let kept = deleted::DeletedServer { name: name.clone(), notice, ticket };
     app.deleted.lock().unwrap().insert(sid, kept);
     app.persist_deleted();
+    directory::server_changed(app, sid);
     entry_list::record_leave(app, sid);
     entry_list::schedule(handle);
     let _ = handle.emit("servers-changed", ());
@@ -5635,7 +5636,7 @@ async fn delete_server(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let notice = {
+    let (notice, invites) = {
         let mut servers = app.servers.lock().unwrap();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         let event = view::moderate::delete(state, me.id, &confirm_name)?;
@@ -5643,7 +5644,8 @@ async fn delete_server(
             .sign_event(sid, event)
             .ok_or("your account key is still being confirmed; try again in a moment")?;
         state.apply_own(&notice).map_err(err_to_string)?;
-        notice
+        let invites = state.tracked_invites(chrono::Utc::now().timestamp_millis()).into_iter().cloned().collect::<Vec<_>>();
+        (notice, invites)
     };
     let payload = WirePayload::Signed(notice.clone());
     if !community_sync::publish_now(sid, &payload).await {
@@ -5651,6 +5653,8 @@ async fn delete_server(
     }
     broadcast(&app, sid, payload).await;
     retire_deleted_server(&app, &handle, sid, notice, true);
+    let later = handle.clone();
+    tauri::async_runtime::spawn(async move { invite_link::revoke_all(&later.state::<App>(), invites).await });
     Ok(())
 }
 

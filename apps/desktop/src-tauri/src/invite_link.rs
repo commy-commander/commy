@@ -243,6 +243,23 @@ pub async fn invite_full_link(app: tauri::State<'_, App>, server_id: String, ori
     Ok(link.url())
 }
 
+pub async fn send_revoke(app: &App, invite: &commy_core::TrackedInvite) -> Result<(), String> {
+    let request = app.http.post(format!("{}{}", invite.origin, commy_net::invite::REVOKE_PATH)).json(&commy_net::invite::revoke_body(invite));
+    let res = request.send().await.map_err(|_| format!("Could not reach {}", host_of(&invite.origin)))?;
+    if !res.status().is_success() && res.status() != reqwest::StatusCode::NOT_FOUND {
+        return Err(error_message(res).await);
+    }
+    Ok(())
+}
+
+pub async fn revoke_all(app: &App, invites: Vec<commy_core::TrackedInvite>) {
+    for invite in invites {
+        if let Err(e) = send_revoke(app, &invite).await {
+            tracing::warn!("invite of a deleted server not revoked: {e}");
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn revoke_invite(
     app: tauri::State<'_, App>,
@@ -258,11 +275,7 @@ pub async fn revoke_invite(
         let state = servers.get(&id).ok_or("unknown server")?;
         commy_net::invite::revocable(state, me, &origin, &code)?
     };
-    let request = app.http.post(format!("{}{}", invite.origin, commy_net::invite::REVOKE_PATH)).json(&commy_net::invite::revoke_body(&invite));
-    let res = request.send().await.map_err(|_| format!("Could not reach {}", host_of(&invite.origin)))?;
-    if !res.status().is_success() && res.status() != reqwest::StatusCode::NOT_FOUND {
-        return Err(error_message(res).await);
-    }
+    send_revoke(&app, &invite).await?;
     CREATED.lock().unwrap().retain(|_, (created, _)| parse(&created.url).is_none_or(|l| l.code != invite.code));
     crate::apply_and_broadcast(&app, &handle, id, commy_net::invite::revoke_event(id, invite)).await
 }

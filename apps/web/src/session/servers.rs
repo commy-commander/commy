@@ -388,6 +388,7 @@ impl Session {
     }
 
     async fn delete_server(self: &Rc<Self>, server: ServerId, confirm: &str) -> Result<Value, String> {
+        let invites = self.read_state(server, |state, _| Ok(state.tracked_invites(Utc::now().timestamp_millis()).into_iter().cloned().collect::<Vec<_>>()))?;
         let payload = self.client.borrow().act(server, |state, me, _, _| moderate::delete(state, me.user, confirm))?;
         if self.voice_here(server).is_some() {
             self.hang_up_media();
@@ -398,6 +399,11 @@ impl Session {
         self.tell_neighbors(server, &payload).await;
         self.drop_from_list(server);
         self.forget_left(server, group).await;
+        let this = self.clone();
+        spawn_local(async move {
+            this.take_down_listing(server).await;
+            this.revoke_at_account_server(invites).await;
+        });
         Ok(Value::Null)
     }
 
@@ -430,6 +436,9 @@ impl Session {
             this.client.borrow_mut().forget(server);
             this.drop_from_list(server);
             this.forget_left(server, group).await;
+            if notice == "server-deleted" {
+                this.take_down_listing(server).await;
+            }
             if notice != "left" {
                 this.emit(notice, json!({ "server": server.to_string(), "name": name }));
             }

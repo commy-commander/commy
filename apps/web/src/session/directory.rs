@@ -128,6 +128,16 @@ impl Session {
         }
     }
 
+    pub(super) async fn take_down_listing(&self, server: ServerId) {
+        let Some(listing) = self.listings().remove(&server.to_string()).filter(|l| l.origin == self.origin) else { return };
+        let Ok(reply) = self.request("POST", shared::UNLIST_PATH, Some(json!({ "code": listing.code }))).await else { return };
+        if reply.ok() || reply.status == 404 {
+            let _ = self.change_listings(|listings| {
+                listings.remove(&server.to_string());
+            });
+        }
+    }
+
     async fn unlist(&self, server: ServerId) -> Result<(), String> {
         self.need_permission(server, Permissions::MANAGE_SERVER, "change this server's Discover listing")?;
         let listing = self.listings().remove(&server.to_string()).ok_or("This server was not listed from this device")?;
