@@ -3382,11 +3382,16 @@ async fn attach_dm_bytes(
 
 fn our_permissions(app: &App, state: &ServerState, me: UserId) -> Permissions {
     let perms = state.server.permissions_for(me);
-    if app.awaits_snapshot(state.server.id) {
+    if app.awaits_snapshot(state.server.id) && !invite_names_me_owner(app, state.server.id, me) {
         perms & Permissions::default_member()
     } else {
         perms
     }
+}
+
+fn invite_names_me_owner(app: &App, sid: ServerId, me: UserId) -> bool {
+    let ours = app.identity().map(|identity| (me, identity.public()));
+    ours.is_some() && app.ticket_owner(sid) == ours
 }
 
 pub(crate) fn require_invite_permission(app: &App, sid: ServerId) -> CmdResult<()> {

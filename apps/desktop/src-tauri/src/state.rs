@@ -451,7 +451,7 @@ impl App {
         self.follow_owner(server);
         let raw = self.invites.lock().unwrap().get(&server).cloned()?;
         let mut ticket = ServerTicket::decode(&raw).ok()?;
-        if ticket.owner.is_none() {
+        if ticket.owner.is_none() && !self.awaits_snapshot(server) {
             let (owns, owner) = {
                 let servers = self.servers.lock().unwrap();
                 let state = servers.get(&server)?;

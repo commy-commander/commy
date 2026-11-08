@@ -1144,8 +1144,11 @@ fn member_of(m: commy_net::protocol::SyncMember) -> commy_core::Member {
     commy_core::Member { user: m.user, nickname: m.nickname, roles: m.roles, joined_at, timeout: None }
 }
 
-pub fn invite_nodes(raw: &str) -> Option<Vec<[u8; 32]>> {
+pub fn someone_elses_invite_nodes(raw: &str, me: UserId) -> Option<Vec<[u8; 32]>> {
     let ticket = commy_net::ServerTicket::decode(raw).ok()?;
+    if ticket.owner.is_some_and(|(owner, _)| owner == me) {
+        return None;
+    }
     Some(ticket.bootstrap.iter().map(|addr| addr.node_id).collect())
 }
 
@@ -1165,7 +1168,7 @@ pub fn mark_joined_placeholders(app: &App, invites: &HashMap<ServerId, String>, 
         .unwrap()
         .values()
         .filter(|state| {
-            let nodes = invites.get(&state.server.id).and_then(|raw| invite_nodes(raw));
+            let nodes = invites.get(&state.server.id).and_then(|raw| someone_elses_invite_nodes(raw, me));
             joined_placeholder(state, me, nodes.as_deref(), our_node)
         })
         .map(|state| state.server.id)
@@ -2758,6 +2761,41 @@ mod tests {
         assert!(app.awaits_snapshot(sid));
     }
 
+    #[test]
+    fn startup_leaves_a_server_i_own_from_another_device_editable() {
+        let me = Member::new("owner");
+        let stranger = Member::new("stranger");
+        let (ours, _) = server(&me);
+        let sid = ours.server.id;
+        let other_device = commy_net::ticket::NodeAddr { node_id: [2; 32], info: Default::default() };
+        let invite = |owner: Option<&Member>| {
+            let mut ticket = commy_net::ServerTicket::new(sid, "s", [7; 32], vec![other_device.clone()]);
+            ticket.owner = owner.map(|o| (o.id(), o.identity.public()));
+            HashMap::from([(sid, ticket.encode())])
+        };
+
+        let app = app_with(&me, ours);
+        mark_joined_placeholders(&app, &invite(Some(&me)), [1; 32]);
+        assert!(!app.awaits_snapshot(sid));
+        let perms = crate::our_permissions(&app, &app.servers.lock().unwrap()[&sid], me.id());
+        assert!(perms.allows(commy_core::Permissions::MANAGE_SERVER));
+
+        app.invites.lock().unwrap().extend(invite(Some(&me)));
+        app.set_awaiting_snapshot(sid, true);
+        let perms = crate::our_permissions(&app, &app.servers.lock().unwrap()[&sid], me.id());
+        assert!(perms.allows(commy_core::Permissions::MANAGE_SERVER), "an owner left waiting still manages");
+        app.set_awaiting_snapshot(sid, false);
+
+        mark_joined_placeholders(&app, &invite(Some(&stranger)), [1; 32]);
+        assert!(app.awaits_snapshot(sid));
+        app.invites.lock().unwrap().extend(invite(Some(&stranger)));
+        let perms = crate::our_permissions(&app, &app.servers.lock().unwrap()[&sid], me.id());
+        assert!(!perms.allows(commy_core::Permissions::MANAGE_SERVER), "a joined placeholder grants nothing");
+        app.set_awaiting_snapshot(sid, false);
+        mark_joined_placeholders(&app, &invite(None), [1; 32]);
+        assert!(app.awaits_snapshot(sid));
+    }
+
     #[tokio::test]
     async fn startup_marks_servers_joined_from_someone_elses_invite() {
         let (mut inviter, _, _, _) = commy_net::CommyNode::spawn(None).await.unwrap();
@@ -2767,8 +2805,8 @@ mod tests {
         let (sid, created_id) = (joined.server.id, created.server.id);
         let ticket = tokio::time::timeout(Duration::from_secs(30), inviter.host_server(sid, "s", None)).await.unwrap().unwrap();
         let theirs = inviter.node_id_bytes();
-        assert_eq!(invite_nodes(&ticket.encode()), Some(vec![theirs]));
-        assert_eq!(invite_nodes("not an invite"), None);
+        assert_eq!(someone_elses_invite_nodes(&ticket.encode(), me.id()), Some(vec![theirs]));
+        assert_eq!(someone_elses_invite_nodes("not an invite", me.id()), None);
 
         let app = app_with(&me, joined);
         app.servers.lock().unwrap().insert(created_id, created);
