@@ -8996,10 +8996,17 @@ async function jumpToMessage(id) {
     return;
   }
   phoneShowChat();
-  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  scrollMessageToCenter(row);
   row.classList.remove("flash");
   void row.offsetWidth;
   row.classList.add("flash");
+}
+
+function scrollMessageToCenter(row) {
+  const list = $("messages");
+  const rowTop = row.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+  const top = centeredScrollTop(rowTop, row.offsetHeight, list.clientHeight, list.scrollHeight);
+  list.scrollTo({ top, behavior: "smooth" });
 }
 
 function startReply(message) {
