@@ -7044,6 +7044,11 @@ async fn start_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
 }
 
 #[tauri::command]
+async fn ask_for_microphone() -> Option<bool> {
+    call_service::ask_for_microphone().await
+}
+
+#[tauri::command]
 async fn stop_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
     *app.mic_test.lock().unwrap() = None;
     Ok(())
@@ -8742,6 +8747,7 @@ pub fn run() {
             update_profile,
             start_mic_test,
             stop_mic_test,
+            ask_for_microphone,
             get_attachment_preview,
             get_profile_image,
             get_storage_settings,

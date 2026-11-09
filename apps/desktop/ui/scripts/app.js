@@ -19537,8 +19537,22 @@ async function sendGif(url) {
 const MIC_ASK_WAIT_MS = 4000;
 let microphoneAllowedOnPhone = false;
 
+const MIC_NEEDED_NOTE = "Commy needs the microphone for voice. You can allow it in your phone's settings.";
+
 async function askForMicrophoneOnPhones() {
-  if (microphoneAllowedOnPhone || !document.body.classList.contains("mobile-app") || !navigator.mediaDevices) return;
+  if (microphoneAllowedOnPhone || !document.body.classList.contains("mobile-app")) return true;
+  const answer = await invoke("ask_for_microphone").catch(() => null);
+  if (typeof answer === "boolean") {
+    microphoneAllowedOnPhone = answer;
+    if (!answer) toast(MIC_NEEDED_NOTE);
+    return answer;
+  }
+  await askWebViewForMicrophone();
+  return true;
+}
+
+async function askWebViewForMicrophone() {
+  if (!navigator.mediaDevices) return;
   const asked = navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
     stream.getTracks().forEach(track => track.stop());
     microphoneAllowedOnPhone = true;
@@ -19546,7 +19560,7 @@ async function askForMicrophoneOnPhones() {
   try {
     await Promise.race([asked, new Promise(done => setTimeout(done, MIC_ASK_WAIT_MS))]);
   } catch {
-    toast("Commy needs the microphone for voice. You can allow it in your phone's settings.");
+    toast(MIC_NEEDED_NOTE);
   }
 }
 
@@ -20606,7 +20620,7 @@ function wireEvents() {
       if (state.micTesting) {
         await stopMicTest();
       } else {
-        await askForMicrophoneOnPhones();
+        if (!(await askForMicrophoneOnPhones())) return;
         await invoke("start_mic_test");
         state.micTesting = true;
         $("mic-test-btn").textContent = "Stop Test";

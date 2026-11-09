@@ -1,14 +1,20 @@
 package chat.commy.mobile
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
+import app.tauri.annotation.Permission
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.Plugin
 
-@TauriPlugin
+@TauriPlugin(
+  permissions = [
+    Permission(strings = [Manifest.permission.RECORD_AUDIO], alias = "microphone"),
+  ],
+)
 class CallServicePlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun start(invoke: Invoke) {

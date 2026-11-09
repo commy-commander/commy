@@ -50,10 +50,39 @@ fn follow(changes: std::sync::mpsc::Receiver<bool>, mut apply: impl FnMut(bool) 
 }
 
 #[cfg(target_os = "android")]
+static PLUGIN: std::sync::OnceLock<tauri::plugin::PluginHandle<tauri::Wry>> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "android")]
+pub async fn ask_for_microphone() -> Option<bool> {
+    let plugin = PLUGIN.get()?;
+    let answer = plugin
+        .run_mobile_plugin_async::<std::collections::HashMap<String, String>>("requestPermissions", serde_json::json!({ "permissions": ["microphone"] }))
+        .await;
+    match answer {
+        Ok(states) => Some(microphone_granted(&states)),
+        Err(e) => {
+            tracing::warn!("could not ask Android for the microphone: {e}");
+            None
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+pub async fn ask_for_microphone() -> Option<bool> {
+    None
+}
+
+#[cfg(any(target_os = "android", test))]
+fn microphone_granted(states: &std::collections::HashMap<String, String>) -> bool {
+    states.get("microphone").is_some_and(|state| state == "granted")
+}
+
+#[cfg(target_os = "android")]
 pub fn init() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri::plugin::Builder::new("call-service")
         .setup(|_app, api| {
             let plugin = api.register_android_plugin("chat.commy.mobile", "CallServicePlugin")?;
+            let _ = PLUGIN.set(plugin.clone());
             let (tx, rx) = std::sync::mpsc::channel();
             {
                 let mut calls = CALLS.lock().unwrap();
@@ -127,5 +156,14 @@ mod tests {
         calls.change(-1);
         let seen: Vec<bool> = rx.try_iter().collect();
         assert_eq!(seen, vec![true, true, true, false, false]);
+    }
+
+    #[test]
+    fn only_a_granted_microphone_counts_as_allowed() {
+        let answer = |state: &str| std::collections::HashMap::from([("microphone".to_string(), state.to_string())]);
+        assert!(microphone_granted(&answer("granted")));
+        assert!(!microphone_granted(&answer("denied")));
+        assert!(!microphone_granted(&answer("prompt-with-rationale")));
+        assert!(!microphone_granted(&std::collections::HashMap::new()));
     }
 }
