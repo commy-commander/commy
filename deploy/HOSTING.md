@@ -387,7 +387,10 @@ server or channel a log belongs to.
   `/sync`.
 - **Waking phones (optional):** with `FCM_SERVICE_ACCOUNT` set to a Firebase
   service account key (the JSON, or its base64), the service can wake the
-  Android app with an empty push when something new arrives. A phone registers
+  Android app with an empty push when something new arrives. With `APNS_KEY`
+  (an Apple push key, the .p8 text or its base64), `APNS_KEY_ID` and
+  `APNS_TEAM_ID` set, it does the same for iPhones through Apple: the push
+  shows a fixed "New messages in Commy" line and carries nothing else readable. A phone registers
   short-lived wake tags (`POST /sync/wake/register`), each derived from a log's
   secret, the person it wakes and the day, so a tag cannot be tied to a stream
   id and changes daily. A device that writes to a log rings its members' tags

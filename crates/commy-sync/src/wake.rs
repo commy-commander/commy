@@ -112,13 +112,37 @@ pub fn preview_ok(encoded: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushService {
     Fcm,
+    Apns,
+    ApnsSandbox,
+}
+
+impl PushService {
+    pub fn prefix(self) -> &'static str {
+        match self {
+            PushService::Fcm => "fcm",
+            PushService::Apns => "apns",
+            PushService::ApnsSandbox => "apns-dev",
+        }
+    }
+
+    fn from_prefix(prefix: &str) -> Option<Self> {
+        [PushService::Fcm, PushService::Apns, PushService::ApnsSandbox].into_iter().find(|service| service.prefix() == prefix)
+    }
+
+    fn token_char_ok(self, b: u8) -> bool {
+        match self {
+            PushService::Fcm => b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-' | b'.'),
+            PushService::Apns | PushService::ApnsSandbox => b.is_ascii_hexdigit(),
+        }
+    }
 }
 
 pub fn push_target(push: &str) -> Option<(PushService, &str)> {
-    let token = push.strip_prefix("fcm:")?;
+    let (prefix, token) = push.split_once(':')?;
+    let service = PushService::from_prefix(prefix)?;
     let fits = !token.is_empty() && token.len() <= MAX_PUSH_TOKEN;
-    let plain = token.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-' | b'.'));
-    (fits && plain).then_some((PushService::Fcm, token))
+    let plain = token.bytes().all(|b| service.token_char_ok(b));
+    (fits && plain).then_some((service, token))
 }
 
 pub fn register_until_ok(until: i64, today: i64) -> bool {
@@ -156,10 +180,23 @@ mod tests {
     fn only_plain_fcm_tokens_are_accepted() {
         assert_eq!(push_target("fcm:abc-DEF_123:xyz"), Some((PushService::Fcm, "abc-DEF_123:xyz")));
         assert_eq!(push_target("fcm:"), None);
-        assert_eq!(push_target("apns:abc"), None);
         assert_eq!(push_target("fcm:a b"), None);
         assert_eq!(push_target("fcm:a/b"), None);
         assert_eq!(push_target(&format!("fcm:{}", "a".repeat(MAX_PUSH_TOKEN + 1))), None);
+    }
+
+    #[test]
+    fn apple_tokens_are_hex_and_name_their_apns_environment() {
+        assert_eq!(push_target("apns:0a1B2c"), Some((PushService::Apns, "0a1B2c")));
+        assert_eq!(push_target("apns-dev:ff00"), Some((PushService::ApnsSandbox, "ff00")));
+        assert_eq!(push_target("apns:"), None);
+        assert_eq!(push_target("apns:xyz"), None);
+        assert_eq!(push_target("apns:ab:cd"), None);
+        assert_eq!(push_target("other:abc"), None);
+        assert_eq!(push_target("abc"), None);
+        for service in [PushService::Fcm, PushService::Apns, PushService::ApnsSandbox] {
+            assert_eq!(push_target(&format!("{}:abcd", service.prefix())).map(|(s, _)| s), Some(service));
+        }
     }
 
     #[test]

@@ -121,6 +121,10 @@ services:
       DATABASE_URL: postgres://commy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/commy_sync
       SYNC_RETENTION_DAYS: ${SYNC_RETENTION_DAYS:-90}
       FCM_SERVICE_ACCOUNT: ${FCM_SERVICE_ACCOUNT:-}
+      APNS_KEY: ${APNS_KEY:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-}
       RUST_LOG: ${SYNC_LOG:-info}
     depends_on:
       postgres:

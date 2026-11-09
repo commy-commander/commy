@@ -11,6 +11,7 @@ members = [
     "apps/web",
     "crates/commy-sync",
     "crates/commy-sync-server",
+    "crates/commy-ios-push",
 ]
 
 [workspace.package]

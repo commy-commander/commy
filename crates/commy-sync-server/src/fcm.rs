@@ -149,7 +149,7 @@ pub fn message(token: &str, previews: &[String]) -> serde_json::Value {
     })
 }
 
-fn pem_body(pem: &str) -> Option<Vec<u8>> {
+pub(crate) fn pem_body(pem: &str) -> Option<Vec<u8>> {
     let pem = pem.replace("\\n", "\n");
     let body: String =
         pem.lines().map(str::trim).skip_while(|line| !line.starts_with("-----BEGIN")).skip(1).take_while(|line| !line.starts_with("-----END")).collect();

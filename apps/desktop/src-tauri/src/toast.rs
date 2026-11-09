@@ -142,15 +142,14 @@ pub fn show(_handle: &AppHandle, title: &str, body: &str, target: Option<String>
 }
 
 #[cfg(not(any(windows, target_os = "android")))]
+const IOS_DEFAULT_SOUND: &str = "default";
+
+#[cfg(not(any(windows, target_os = "android")))]
 pub fn show(handle: &AppHandle, title: &str, body: &str, _target: Option<String>) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
-    handle
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|e| e.to_string())
+    let notice = handle.notification().builder().title(title).body(body);
+    let notice = if cfg!(target_os = "ios") { notice.sound(IOS_DEFAULT_SOUND) } else { notice };
+    notice.show().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

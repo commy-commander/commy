@@ -8311,6 +8311,8 @@ pub fn run() {
     let builder = builder.plugin(commy_apple_sign_in::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(push_wake::init());
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())

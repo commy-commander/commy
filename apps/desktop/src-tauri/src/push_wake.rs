@@ -87,9 +87,9 @@ pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<St
     }
 }
 
-#[cfg(target_os = "android")]
-pub fn set_token(handle: &AppHandle, token: Option<String>) {
-    let token = token.filter(|t| commy_sync::wake::push_target(&format!("fcm:{t}")).is_some());
+#[cfg(mobile)]
+pub fn set_token(handle: &AppHandle, push: Option<String>) {
+    let token = push.filter(|push| commy_sync::wake::push_target(push).is_some());
     let changed = {
         let mut held = TOKEN.lock().unwrap();
         let changed = *held != token;
@@ -108,9 +108,9 @@ pub fn register_again() {
 }
 
 fn target() -> Option<(String, String)> {
-    let token = TOKEN.lock().unwrap().clone()?;
+    let push = TOKEN.lock().unwrap().clone()?;
     let base = sync_link::url().as_deref().and_then(wake_url)?;
-    Some((format!("fcm:{token}"), base))
+    Some((push, base))
 }
 
 pub fn register(handle: &AppHandle) {
@@ -290,7 +290,7 @@ async fn register_now(handle: &AppHandle, push: String, base: String) -> bool {
     share_previews(&app, today);
     let done = sync_tags(&app, &push, &base, today).await;
     save_kept(&app, &push, today);
-    if done && cfg!(target_os = "android") && MAY_NOTIFY.load(Ordering::SeqCst) {
+    if done && cfg!(mobile) && MAY_NOTIFY.load(Ordering::SeqCst) {
         crate::note_phone_reachable(&app, handle).await;
     }
     done
@@ -410,8 +410,8 @@ async fn forget(app: &App, http: &reqwest::Client, push: &str, base: &str, today
     true
 }
 
-#[cfg(target_os = "android")]
-mod android {
+#[cfg(mobile)]
+mod phone_push {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
@@ -423,8 +423,20 @@ mod android {
     struct TokenAnswer {
         #[serde(default)]
         token: Option<String>,
+        #[serde(default = "firebase")]
+        service: String,
         #[serde(default)]
         allowed: bool,
+    }
+
+    fn firebase() -> String {
+        commy_sync::wake::PushService::Fcm.prefix().to_string()
+    }
+
+    impl TokenAnswer {
+        fn push(&self) -> Option<String> {
+            self.token.as_ref().map(|token| format!("{}:{token}", self.service))
+        }
     }
 
     static PLUGIN: Mutex<Option<PluginHandle<Wry>>> = Mutex::new(None);
@@ -433,7 +445,10 @@ mod android {
     pub fn init() -> tauri::plugin::TauriPlugin<Wry> {
         tauri::plugin::Builder::new("push-wake")
             .setup(|app, api| {
+                #[cfg(target_os = "android")]
                 let plugin = api.register_android_plugin("chat.commy.mobile", "PushPlugin")?;
+                #[cfg(target_os = "ios")]
+                let plugin = commy_ios_push::register(&api)?;
                 *PLUGIN.lock().unwrap() = Some(plugin);
                 fetch_token(app.clone());
                 Ok(())
@@ -441,16 +456,18 @@ mod android {
             .build()
     }
 
+    fn plugin() -> Option<PluginHandle<Wry>> {
+        PLUGIN.lock().unwrap().clone()
+    }
+
+    #[cfg(target_os = "android")]
     #[derive(Deserialize, Default)]
     struct TargetAnswer {
         #[serde(default)]
         target: Option<String>,
     }
 
-    fn plugin() -> Option<PluginHandle<Wry>> {
-        PLUGIN.lock().unwrap().clone()
-    }
-
+    #[cfg(target_os = "android")]
     pub fn save_previews(previews: serde_json::Value) {
         let Some(plugin) = plugin() else { return };
         let _ = std::thread::Builder::new().name("push-previews".into()).spawn(move || {
@@ -460,11 +477,13 @@ mod android {
         });
     }
 
+    #[cfg(target_os = "android")]
     pub fn take_target() -> Option<String> {
         let plugin = plugin()?;
         plugin.run_mobile_plugin::<TargetAnswer>("takeTarget", serde_json::json!({})).ok()?.target
     }
 
+    #[cfg(target_os = "android")]
     pub fn show(title: &str, body: &str, target: Option<String>) -> Result<(), String> {
         let plugin = plugin().ok_or("notifications are not ready")?;
         let args = serde_json::json!({ "title": title, "body": body, "target": target });
@@ -480,7 +499,7 @@ mod android {
     }
 
     pub fn fetch_token(handle: AppHandle) {
-        let Some(plugin) = PLUGIN.lock().unwrap().clone() else { return };
+        let Some(plugin) = plugin() else { return };
         if ASKING.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -490,7 +509,7 @@ mod android {
             match answer {
                 Ok(answer) => {
                     super::MAY_NOTIFY.store(answer.allowed, Ordering::SeqCst);
-                    super::set_token(&handle, answer.token)
+                    super::set_token(&handle, answer.push())
                 }
                 Err(e) => tracing::info!("no push token: {e}"),
             }
@@ -501,14 +520,14 @@ mod android {
     }
 }
 
-#[cfg(target_os = "android")]
-pub use android::init;
+#[cfg(mobile)]
+pub use phone_push::init;
 
 #[cfg(target_os = "android")]
-pub use android::show;
+pub use phone_push::show;
 
 #[cfg(target_os = "android")]
-use android as phone;
+use phone_push as phone;
 
 #[cfg(not(target_os = "android"))]
 mod phone {
@@ -557,19 +576,19 @@ pub async fn take_notification_target(handle: AppHandle) -> Option<String> {
     opened(&handle, target)
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 fn ask_token(handle: &AppHandle) {
     if TOKEN.lock().unwrap().is_none() {
-        android::fetch_token(handle.clone());
+        phone_push::fetch_token(handle.clone());
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 fn ask_token(_handle: &AppHandle) {}
 
 pub fn on_resumed(handle: &AppHandle) {
-    #[cfg(target_os = "android")]
-    android::fetch_token(handle.clone());
+    #[cfg(mobile)]
+    phone_push::fetch_token(handle.clone());
     if cfg!(target_os = "android") {
         let handle = handle.clone();
         let _ = std::thread::Builder::new().name("push-tap".into()).spawn(move || tapped(&handle));

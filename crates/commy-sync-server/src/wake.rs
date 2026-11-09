@@ -7,16 +7,43 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use commy_sync::wake::{preview_ok, push_target, register_until_ok, wake_day, WakeForget, WakeRegister, WakeRing, MAX_RING_TAGS, PUSH_GAP_SECS};
+use commy_sync::wake::{
+    preview_ok, push_target, register_until_ok, wake_day, PushService, WakeForget, WakeRegister, WakeRing, MAX_RING_TAGS, PUSH_GAP_SECS,
+};
 use tokio::sync::mpsc;
 
+use crate::apns::{Apns, Environment};
 use crate::fcm::{Delivery, Fcm};
 use crate::Service;
 
 pub enum Pusher {
     Off,
-    Fcm(Box<Fcm>),
+    Live { fcm: Option<Box<Fcm>>, apns: Option<Box<Apns>> },
     Recording(mpsc::UnboundedSender<String>),
+}
+
+impl Pusher {
+    pub fn live(fcm: Option<Fcm>, apns: Option<Apns>) -> Self {
+        if fcm.is_none() && apns.is_none() {
+            return Pusher::Off;
+        }
+        Pusher::Live { fcm: fcm.map(Box::new), apns: apns.map(Box::new) }
+    }
+
+    fn offers(&self, service: PushService) -> bool {
+        match self {
+            Pusher::Off => false,
+            Pusher::Live { fcm, apns } => match service {
+                PushService::Fcm => fcm.is_some(),
+                PushService::Apns | PushService::ApnsSandbox => apns.is_some(),
+            },
+            Pusher::Recording(_) => true,
+        }
+    }
+
+    fn services(&self) -> Vec<&'static str> {
+        [PushService::Fcm, PushService::Apns, PushService::ApnsSandbox].into_iter().filter(|s| self.offers(*s)).map(PushService::prefix).collect()
+    }
 }
 
 const PUSH_GAP: Duration = Duration::from_secs(PUSH_GAP_SECS);
@@ -44,6 +71,10 @@ impl Wakes {
 
     pub fn enabled(&self) -> bool {
         !matches!(self.pusher, Pusher::Off)
+    }
+
+    fn offers(&self, push: &str) -> bool {
+        push_target(push).is_some_and(|(service, _)| self.pusher.offers(service))
     }
 
     fn plan(&self, push: &str, now: Instant, preview: Option<&str>) -> Plan {
@@ -84,25 +115,29 @@ impl Wakes {
     }
 }
 
-async fn deliver(service: &Service, push: &str, token: &str, previews: &[String]) -> Option<Delivery> {
-    match &service.wakes.pusher {
-        Pusher::Off => None,
-        Pusher::Fcm(fcm) => Some(fcm.wake(token, previews).await),
-        Pusher::Recording(sent) => {
+async fn deliver(service: &Service, push: &str, previews: &[String]) -> Option<Delivery> {
+    let (kind, token) = push_target(push)?;
+    match (&service.wakes.pusher, kind) {
+        (Pusher::Off, _) => None,
+        (Pusher::Live { fcm: Some(fcm), .. }, PushService::Fcm) => Some(fcm.wake(token, previews).await),
+        (Pusher::Live { apns: Some(apns), .. }, PushService::Apns) => Some(apns.wake(Environment::Production, token, previews).await),
+        (Pusher::Live { apns: Some(apns), .. }, PushService::ApnsSandbox) => Some(apns.wake(Environment::Sandbox, token, previews).await),
+        (Pusher::Live { .. }, _) => None,
+        (Pusher::Recording(sent), _) => {
             let _ = sent.send(push.to_string());
             Some(Delivery::Sent)
         }
     }
 }
 
-async fn deliver_with_retries(service: &Service, push: &str, token: &str, previews: &[String]) -> Option<Delivery> {
-    let mut delivery = deliver(service, push, token, previews).await?;
+async fn deliver_with_retries(service: &Service, push: &str, previews: &[String]) -> Option<Delivery> {
+    let mut delivery = deliver(service, push, previews).await?;
     for wait in RETRY_WAITS {
         if !matches!(delivery, Delivery::Failed(_)) {
             break;
         }
         tokio::time::sleep(wait).await;
-        delivery = deliver(service, push, token, previews).await?;
+        delivery = deliver(service, push, previews).await?;
     }
     Some(delivery)
 }
@@ -114,10 +149,7 @@ async fn send_after(service: Arc<Service>, push: String, wait: Duration) {
 }
 
 async fn send(service: Arc<Service>, push: String, previews: Vec<String>) {
-    let Some((_, token)) = push_target(&push) else {
-        return;
-    };
-    let Some(delivery) = deliver_with_retries(&service, &push, token, &previews).await else {
+    let Some(delivery) = deliver_with_retries(&service, &push, &previews).await else {
         return;
     };
     match delivery {
@@ -144,7 +176,7 @@ pub async fn info(State(service): State<Arc<Service>>) -> Response {
     if !service.wakes.enabled() {
         return (StatusCode::NOT_FOUND, "wake-ups are off").into_response();
     }
-    Json(serde_json::json!({ "push": ["fcm"], "days_ahead": commy_sync::wake::MAX_DAYS_AHEAD })).into_response()
+    Json(serde_json::json!({ "push": service.wakes.pusher.services(), "days_ahead": commy_sync::wake::MAX_DAYS_AHEAD })).into_response()
 }
 
 pub async fn register(
@@ -162,6 +194,9 @@ pub async fn register(
     let today = today();
     if push_target(&request.push).is_none() || !register_until_ok(request.until, today) {
         return StatusCode::BAD_REQUEST.into_response();
+    }
+    if !service.wakes.offers(&request.push) {
+        return (StatusCode::NOT_FOUND, "wake-ups are off for this kind of phone").into_response();
     }
     match service.store.register_wake(&request.tag.0, &request.push, request.until, today).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
@@ -296,12 +331,24 @@ mod tests {
         assert_eq!(held, newest);
     }
 
+    #[test]
+    fn a_service_only_takes_the_kinds_of_phones_it_can_reach() {
+        assert!(matches!(Pusher::live(None, None), Pusher::Off));
+        let (pushed, _pushes) = tokio::sync::mpsc::unbounded_channel();
+        let wakes = Wakes::new(Pusher::Recording(pushed));
+        assert!(wakes.offers("fcm:a") && wakes.offers("apns:ab") && wakes.offers("apns-dev:ab"));
+        assert!(!wakes.offers("apns:not-hex"));
+        let fcm_only = Pusher::Live { fcm: None, apns: None };
+        assert!(!fcm_only.offers(PushService::Apns));
+        assert_eq!(fcm_only.services(), Vec::<&str>::new());
+    }
+
     #[tokio::test]
     async fn a_delivered_push_is_sent_once() {
         let (pushed, mut pushes) = tokio::sync::mpsc::unbounded_channel();
         let config = crate::config::Config::from_env(|_| None).unwrap();
         let service = Service::with_pusher(crate::store::Store::memory(), &config, Pusher::Recording(pushed));
-        assert_eq!(deliver_with_retries(&service, "fcm:a", "a", &[]).await, Some(Delivery::Sent));
+        assert_eq!(deliver_with_retries(&service, "fcm:a", &[]).await, Some(Delivery::Sent));
         assert_eq!(pushes.recv().await.as_deref(), Some("fcm:a"));
         assert!(pushes.try_recv().is_err());
     }

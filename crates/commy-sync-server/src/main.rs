@@ -1,3 +1,4 @@
+use commy_sync_server::apns::{Apns, ApnsConfig};
 use commy_sync_server::config::Config;
 use commy_sync_server::fcm::Fcm;
 use commy_sync_server::store::Store;
@@ -19,10 +20,18 @@ async fn main() -> anyhow::Result<()> {
             Store::memory()
         }
     };
-    let pusher = match &config.fcm_service_account {
-        Some(account) => Pusher::Fcm(Box::new(Fcm::from_config(account).map_err(|e| anyhow::anyhow!("invalid FCM_SERVICE_ACCOUNT: {e}"))?)),
-        None => Pusher::Off,
+    let fcm = match &config.fcm_service_account {
+        Some(account) => Some(Fcm::from_config(account).map_err(|e| anyhow::anyhow!("invalid FCM_SERVICE_ACCOUNT: {e}"))?),
+        None => None,
     };
+    let apns = match &config.apns {
+        Some(s) => Some(
+            Apns::from_config(ApnsConfig { key: &s.key, key_id: &s.key_id, team_id: &s.team_id, topic: &s.topic })
+                .map_err(|e| anyhow::anyhow!("invalid Apple push settings: {e}"))?,
+        ),
+        None => None,
+    };
+    let pusher = Pusher::live(fcm, apns);
     let service = Service::with_pusher(store, &config, pusher);
     spawn_housekeeping(service.clone());
     let listener = tokio::net::TcpListener::bind(config.listen).await?;

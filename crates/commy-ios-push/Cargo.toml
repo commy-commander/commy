@@ -1,0 +1,15 @@
+[package]
+name = "commy-ios-push"
+description = "Apple push registration for the Commy iPhone app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+links = "commy-ios-push"
+
+[dependencies]
+tauri = { version = "2", default-features = false }
+serde = { workspace = true }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

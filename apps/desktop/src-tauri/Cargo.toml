@@ -52,6 +52,7 @@ tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
 
 [target.'cfg(target_os = "ios")'.dependencies]
+commy-ios-push = { path = "../../../crates/commy-ios-push" }
 commy-apple-sign-in = { path = "../apple-sign-in" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
