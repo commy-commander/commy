@@ -4,7 +4,7 @@ import { toNodeHandler } from "better-auth/node";
 import pg from "pg";
 import { sealExistingRows } from "./at-rest.js";
 import { createAuth } from "./auth.js";
-import { discoveryDocument, featureSummary, loadConfig } from "./config.js";
+import { discoveryDocument, featureSummary, loadConfig, wellKnownFiles } from "./config.js";
 import { dropDeviceNames } from "./devices.js";
 import { createRequestHandler } from "./http.js";
 import { createLinkBlocklist } from "./link-blocklist.js";
@@ -67,6 +67,7 @@ const server = http.createServer(
     redis,
     linkBlocklist,
     trustedProxies: config.trustedProxies,
+    wellKnown: wellKnownFiles(config),
   }),
 );
 

@@ -15,6 +15,11 @@ const MAX_PASSWORD: usize = 128;
 const MAX_CODE: usize = 40;
 const TOTP_DIGITS: usize = 6;
 const ACCESS_COOKIE: &str = "commy_access";
+const SHEET_PROVIDERS: [&str; 2] = ["google", "twitch"];
+const SHEET_RETURN_SCHEME: &str = "commy";
+const SHEET_RETURN_HOST: &str = "signed-in";
+const MAX_HANDOFF: usize = 64;
+const IOS_PASSKEY_SITES: [&str; 1] = ["commy.chat"];
 
 static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 
@@ -61,6 +66,9 @@ pub fn forget() {
 pub struct InAppOptions {
     password: bool,
     apple: bool,
+    google: bool,
+    twitch: bool,
+    passkey: bool,
     captcha_url: Option<String>,
 }
 
@@ -101,6 +109,20 @@ fn offers_apple(doc: &Discovery) -> bool {
     cfg!(target_os = "ios") && doc.providers.apple_app && doc.endpoints.sign_in_social.is_some()
 }
 
+fn offers_sheet(doc: &Discovery, provider: &str) -> bool {
+    let offered = match provider {
+        "google" => doc.providers.google,
+        "twitch" => doc.providers.twitch,
+        _ => false,
+    };
+    cfg!(mobile) && offered && doc.endpoints.app_sign_in_start.is_some() && doc.endpoints.app_sign_in_finish.is_some()
+}
+
+fn offers_passkey(doc: &Discovery, server: &str) -> bool {
+    let linked_site = !cfg!(target_os = "ios") || IOS_PASSKEY_SITES.contains(&host_of(server).as_str());
+    cfg!(mobile) && linked_site && doc.providers.passkey && doc.endpoints.passkey_options.is_some() && doc.endpoints.passkey_verify.is_some()
+}
+
 fn captcha_url(doc: &Discovery) -> Option<String> {
     doc.turnstile_site_key.as_ref().and(doc.endpoints.captcha.clone())
 }
@@ -134,6 +156,13 @@ fn read_reply(answer: &Answer) -> Result<Reply, String> {
         "OAUTH_LINK_ERROR" if message == "account not linked" => {
             return Err("An account already uses this email. Sign in with your email and password, then confirm your email if asked.".into())
         }
+        "SIGNUP_DISABLED" => return Err("This account server isn't taking new accounts right now.".into()),
+        "ACCOUNT_NOT_LINKED" => {
+            return Err("An account already uses this email. Sign in with your email and password, then confirm your email if asked.".into())
+        }
+        "PASSKEY_NOT_FOUND" => return Err("That passkey isn't on a Commy account here.".into()),
+        "AUTHENTICATION_FAILED" => return Err("The passkey didn't work. Try again.".into()),
+        "CHALLENGE_NOT_FOUND" => return Err("That sign-in timed out. Start again.".into()),
         "INVALID_EMAIL_OR_PASSWORD" | "INVALID_EMAIL" | "INVALID_PASSWORD" => return Err("That email and password don't match.".into()),
         "WRONG_ACCESS_CODE" => return Err("That access code isn't right.".into()),
         "INVALID_CODE" | "INVALID_BACKUP_CODE" => return Err("That code isn't right. Try the newest one.".into()),
@@ -208,7 +237,14 @@ async fn settle(handle: &AppHandle, server: &str, doc: &Discovery, mut pending: 
 pub async fn account_in_app_options(app: tauri::State<'_, App>) -> Result<InAppOptions, String> {
     let server = effective_server();
     let doc = discover(&app.http, &server).await?;
-    Ok(InAppOptions { password: offers_password(&doc), apple: offers_apple(&doc), captcha_url: captcha_url(&doc) })
+    Ok(InAppOptions {
+        password: offers_password(&doc),
+        apple: offers_apple(&doc),
+        google: offers_sheet(&doc, "google"),
+        twitch: offers_sheet(&doc, "twitch"),
+        passkey: offers_passkey(&doc, &server),
+        captcha_url: captcha_url(&doc),
+    })
 }
 
 #[tauri::command]
@@ -369,6 +405,177 @@ pub async fn account_sign_in_apple(
     Ok(step)
 }
 
+fn new_verifier() -> (String, String) {
+    let verifier = data_encoding::BASE64URL_NOPAD.encode(&rand::random::<[u8; 32]>());
+    let challenge = data_encoding::BASE64URL_NOPAD.encode(&Sha256::digest(verifier.as_bytes()));
+    (verifier, challenge)
+}
+
+fn query_value(url: &url::Url, name: &str) -> Option<String> {
+    url.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned()).filter(|v| !v.is_empty() && v.len() <= MAX_HANDOFF)
+}
+
+fn sheet_page(server: &str, answer: &Answer) -> Result<(String, String), String> {
+    let link = answer.body.get("url").and_then(Value::as_str).ok_or("The account server did not start the sign-in")?;
+    let page = url::Url::parse(link).map_err(|_| "The account server sent a broken sign-in link")?;
+    let home = url::Url::parse(server).map_err(|_| "The account server address is not valid")?;
+    if page.origin() != home.origin() {
+        return Err("The account server sent a sign-in link for another site".into());
+    }
+    let handoff = query_value(&page, "handoff").ok_or("The account server sent a broken sign-in link")?;
+    Ok((page.to_string(), handoff))
+}
+
+fn sheet_code(back: &str, handoff: &str) -> Result<String, String> {
+    let url = url::Url::parse(back).map_err(|_| "The sign-in came back broken. Try again.")?;
+    let ours = url.scheme() == SHEET_RETURN_SCHEME && url.host_str() == Some(SHEET_RETURN_HOST);
+    if !ours || query_value(&url, "handoff").as_deref() != Some(handoff) {
+        return Err("The sign-in came back for another attempt. Try again.".into());
+    }
+    query_value(&url, "code").ok_or_else(|| "The sign-in came back broken. Try again.".into())
+}
+
+fn sheet_body(provider: &str, challenge: &str, adult_confirmed: bool, access: Option<&str>) -> Value {
+    let mut body = json!({ "provider": provider, "challenge": challenge });
+    if adult_confirmed {
+        body["adultConfirmed"] = json!(true);
+    }
+    if let Some(token) = access {
+        body["accessToken"] = json!(token);
+    }
+    body
+}
+
+fn native_answer(answer: Result<Value, String>, what: &str) -> Result<Option<Value>, String> {
+    match answer {
+        Ok(value) => Ok(Some(value)),
+        Err(e) if e.contains("canceled") => Ok(None),
+        Err(e) => Err(format!("{what} didn't finish: {e}")),
+    }
+}
+
+#[cfg(target_os = "android")]
+static NATIVE: std::sync::OnceLock<tauri::plugin::PluginHandle<tauri::Wry>> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "android")]
+pub fn init() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::new("commy-sign-in")
+        .setup(|_app, api| {
+            let _ = NATIVE.set(api.register_android_plugin("chat.commy.mobile", "SignInPlugin")?);
+            Ok(())
+        })
+        .build()
+}
+
+#[cfg(target_os = "android")]
+fn run_native(_handle: &AppHandle, command: &'static str, args: Value) -> Result<Value, String> {
+    let plugin = NATIVE.get().ok_or("The sign-in helper isn't ready yet")?;
+    plugin.run_mobile_plugin::<Value>(command, args).map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "ios")]
+fn run_native(handle: &AppHandle, command: &'static str, args: Value) -> Result<Value, String> {
+    use commy_apple_sign_in::AppleSignInExt;
+    handle.apple_sign_in().run(command, args)
+}
+
+#[cfg(not(mobile))]
+fn run_native(_handle: &AppHandle, _command: &'static str, _args: Value) -> Result<Value, String> {
+    Err("This sign-in is only in the phone apps".into())
+}
+
+async fn ask_native(handle: &AppHandle, command: &'static str, args: Value, what: &str) -> Result<Option<Value>, String> {
+    let handle = handle.clone();
+    let answer = tauri::async_runtime::spawn_blocking(move || run_native(&handle, command, args))
+        .await
+        .map_err(|_| format!("{what} stopped unexpectedly"))?;
+    native_answer(answer, what)
+}
+
+#[tauri::command]
+pub async fn account_sign_in_sheet(
+    app: tauri::State<'_, App>,
+    handle: AppHandle,
+    provider: String,
+    adult_confirmed: bool,
+    access_code: Option<String>,
+) -> Result<SignInStep, String> {
+    let (server, doc) = current_server(&app).await?;
+    if !SHEET_PROVIDERS.contains(&provider.as_str()) || !offers_sheet(&doc, &provider) {
+        return Err("This account server needs your browser for that sign-in.".into());
+    }
+    let start = doc.endpoints.app_sign_in_start.clone().ok_or("This account server needs your browser for that sign-in.")?;
+    let finish = doc.endpoints.app_sign_in_finish.clone().ok_or("This account server needs your browser for that sign-in.")?;
+    let mut pending = pending_for(&server);
+    if let Some(code) = access_code {
+        pending.access = Some(check_access_code(&app, &server, &doc, &code).await?);
+    }
+    let (verifier, challenge) = new_verifier();
+    let body = sheet_body(&provider, &challenge, adult_confirmed, pending.access.as_deref());
+    let started = post(&app, &server, &start, body, None, None).await?;
+    if !(200..300).contains(&started.status) {
+        return Err(read_reply(&started).err().unwrap_or_else(|| "The account server did not start the sign-in".into()));
+    }
+    let (page, handoff) = sheet_page(&server, &started)?;
+    let Some(back) = ask_native(&handle, "openSheet", json!({ "url": page }), "The sign-in page").await? else {
+        keep(pending);
+        return Ok(SignInStep::Canceled);
+    };
+    let back = back.get("url").and_then(Value::as_str).unwrap_or_default().to_string();
+    let code = sheet_code(&back, &handoff)?;
+    let answer = post(&app, &server, &finish, json!({ "handoff": handoff, "verifier": verifier, "code": code }), None, None).await?;
+    if answer.body.get("code").and_then(Value::as_str) == Some("ACCESS_DENIED") {
+        keep(pending);
+        return Ok(SignInStep::Canceled);
+    }
+    settle(&handle, &server, &doc, pending, answer).await
+}
+
+#[tauri::command]
+pub async fn account_sign_in_passkey(app: tauri::State<'_, App>, handle: AppHandle) -> Result<SignInStep, String> {
+    let (server, doc) = current_server(&app).await?;
+    let (Some(options_url), Some(verify_url)) = (doc.endpoints.passkey_options.clone(), doc.endpoints.passkey_verify.clone()) else {
+        return Err("This account server needs your browser for passkeys.".into());
+    };
+    if !offers_passkey(&doc, &server) {
+        return Err("This account server needs your browser for passkeys.".into());
+    }
+    let res = app
+        .http
+        .get(&options_url)
+        .header(reqwest::header::ORIGIN, &server)
+        .send()
+        .await
+        .map_err(|_| format!("Could not reach {}. Check your connection.", host_of(&server)))?;
+    if !res.status().is_success() {
+        return Err("The account server refused the passkey sign-in. Try again, or use your browser instead.".into());
+    }
+    let cookies = cookie_pairs(res.headers().get_all(reqwest::header::SET_COOKIE).iter().filter_map(|v| v.to_str().ok())).join("; ");
+    let options: Value = res.json().await.map_err(|_| "The account server sent broken passkey options")?;
+    if options.get("challenge").and_then(Value::as_str).unwrap_or_default().is_empty() {
+        return Err("The account server sent broken passkey options".into());
+    }
+    let request = json!({ "request": options.to_string() });
+    let Some(credential) = ask_native(&handle, "passkey", request, "The passkey").await? else {
+        return Ok(SignInStep::Canceled);
+    };
+    let response = passkey_response(credential)?;
+    let answer = post(&app, &server, &verify_url, json!({ "response": response }), Some(&cookies), None).await?;
+    settle(&handle, &server, &doc, Pending::new(&server), answer).await
+}
+
+fn passkey_response(credential: Value) -> Result<Value, String> {
+    let parsed = match credential.get("json").and_then(Value::as_str) {
+        Some(text) => serde_json::from_str::<Value>(text).map_err(|_| "The passkey answer was broken")?,
+        None => credential,
+    };
+    let fine = parsed.get("id").and_then(Value::as_str).is_some_and(|id| !id.is_empty()) && parsed.get("response").is_some_and(Value::is_object);
+    if !fine {
+        return Err("The passkey answer was broken".into());
+    }
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +656,54 @@ mod tests {
         assert_eq!(body["additionalData"], json!({ "adultConfirmed": true }));
         assert_eq!(apple_body(&named, true, false).get("additionalData"), None);
         assert_eq!(body["idToken"]["user"]["name"]["firstName"], json!("Ada"));
+    }
+
+    #[test]
+    fn the_sheet_link_must_be_the_account_server() {
+        let mut ok = answer(200, json!({ "url": "https://commy.chat/api/auth/commy/app-sign-in/go?handoff=abc" }));
+        assert_eq!(sheet_page("https://commy.chat", &ok).unwrap().1, "abc");
+        ok.body = json!({ "url": "https://evil.example/go?handoff=abc" });
+        assert!(sheet_page("https://commy.chat", &ok).unwrap_err().contains("another site"));
+        ok.body = json!({ "url": "https://commy.chat/go" });
+        assert!(sheet_page("https://commy.chat", &ok).is_err());
+    }
+
+    #[test]
+    fn only_our_own_attempt_comes_back_from_the_sheet() {
+        assert_eq!(sheet_code("commy://signed-in?handoff=abc&code=xyz", "abc").unwrap(), "xyz");
+        assert!(sheet_code("commy://signed-in?handoff=other&code=xyz", "abc").is_err());
+        assert!(sheet_code("commy://i/commy.chat/AB?handoff=abc&code=xyz", "abc").is_err());
+        assert!(sheet_code("https://signed-in/?handoff=abc&code=xyz", "abc").is_err());
+        assert!(sheet_code("commy://signed-in?handoff=abc", "abc").is_err());
+    }
+
+    #[test]
+    fn the_sheet_asks_for_what_the_person_already_confirmed() {
+        let (verifier, challenge) = new_verifier();
+        assert_eq!(challenge.len(), 43);
+        assert_eq!(challenge, data_encoding::BASE64URL_NOPAD.encode(&Sha256::digest(verifier.as_bytes())));
+        assert_eq!(sheet_body("google", "c", false, None), json!({ "provider": "google", "challenge": "c" }));
+        let body = sheet_body("twitch", "c", true, Some("tok"));
+        assert_eq!(body["adultConfirmed"], json!(true));
+        assert_eq!(body["accessToken"], json!("tok"));
+    }
+
+    #[test]
+    fn a_closed_sheet_or_passkey_prompt_is_not_an_error() {
+        assert_eq!(native_answer(Err("canceled".into()), "x"), Ok(None));
+        assert!(native_answer(Err("boom".into()), "The passkey").unwrap_err().starts_with("The passkey"));
+        let android = json!({ "json": "{\"id\":\"cred\",\"response\":{\"signature\":\"s\"}}" });
+        assert_eq!(passkey_response(android).unwrap()["id"], json!("cred"));
+        assert_eq!(passkey_response(json!({ "id": "cred", "response": {} })).unwrap()["id"], json!("cred"));
+        assert!(passkey_response(json!({ "id": "" , "response": {} })).is_err());
+        assert!(passkey_response(json!({ "json": "nope" })).is_err());
+    }
+
+    #[test]
+    fn sheet_and_passkey_refusals_read_like_sentences() {
+        assert!(read_reply(&answer(403, json!({ "code": "SIGNUP_DISABLED" }))).unwrap_err().contains("new accounts"));
+        assert!(read_reply(&answer(403, json!({ "code": "ACCOUNT_NOT_LINKED" }))).unwrap_err().contains("already uses this email"));
+        assert!(read_reply(&answer(401, json!({ "code": "PASSKEY_NOT_FOUND" }))).unwrap_err().contains("passkey"));
     }
 
     #[test]

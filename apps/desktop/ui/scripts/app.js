@@ -1769,7 +1769,7 @@ async function mockInvoke(cmd, args = {}) {
     case "account_claim_profile": mock.account.unclaimed_profile = null; mock.account.needs_account_folder = false; return mock.account;
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
-    case "account_in_app_options": return { password: true, apple: new URLSearchParams(location.search).has("ios"), captcha_url: null };
+    case "account_in_app_options": return { password: true, apple: new URLSearchParams(location.search).has("ios"), google: true, twitch: true, passkey: true, captcha_url: null };
     case "account_sign_in_password":
       if (args.password !== "correct horse") throw "That email and password don't match.";
       return { step: /two-step/.test(args.email) ? "code" : "done" };
@@ -1781,6 +1781,12 @@ async function mockInvoke(cmd, args = {}) {
       if (!args.adultConfirmed) return { step: "confirm_adult" };
       if (!args.accessCode) return { step: "access_code" };
       return { step: "done" };
+    case "account_sign_in_sheet":
+      if (args.provider === "twitch") return { step: "canceled" };
+      if (!args.adultConfirmed) return { step: "confirm_adult" };
+      if (!args.accessCode) return { step: "access_code" };
+      return { step: "done" };
+    case "account_sign_in_passkey": return { step: "done" };
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
     case "account_delete_start": return { confirm: "email", password: true, email: mock.account.user ? mock.account.user.email : null };
     case "account_delete_finish":
@@ -20352,7 +20358,9 @@ function wireEvents() {
   $("signin-go").onclick = beginSignIn;
   $("signin-form").addEventListener("submit", submitPasswordSignIn);
   $("signin-apple").onclick = () => signInWithApple(false);
-  $("signin-apple-create").onclick = () => signInWithApple(true);
+  for (const provider of SHEET_PROVIDERS) $(`signin-${provider}`).onclick = () => signInWithSheet(provider);
+  $("signin-passkey").onclick = () => runInAppStep(() => invoke("account_sign_in_passkey"));
+  $("signin-apple-create").onclick = () => retryInApp();
   $("signin-adult").addEventListener("change", syncAdultConfirmation);
   $("signin-terms").onclick = () => invoke("open_url", { url: `${account.server}/terms` }).catch(e => toast(String(e)));
   $("signin-apple-existing").onclick = async () => {
@@ -20360,7 +20368,7 @@ function wireEvents() {
     showInAppNote(t("signin.apple.use.email"));
     $("signin-email").focus();
   };
-  $("signin-access-go").onclick = () => signInWithApple(true, $("signin-access-input").value);
+  $("signin-access-go").onclick = () => retryInApp($("signin-access-input").value);
   $("signin-code-go").onclick = () => runInAppStep(() => invoke("account_sign_in_code", { code: $("signin-code-input").value }));
   for (const [input, go] of [["signin-code-input", "signin-code-go"], ["signin-access-input", "signin-access-go"]]) {
     $(input).addEventListener("keydown", e => {
@@ -24343,7 +24351,8 @@ async function prepareInAppSignIn() {
 function renderInAppSignIn(view) {
   $("signin-form").classList.toggle("hidden", !view.form);
   $("signin-apple").classList.toggle("hidden", !view.apple);
-  $("signin-or").classList.toggle("hidden", !(view.apple && view.password));
+  for (const name of [...SHEET_PROVIDERS, "passkey"]) $(`signin-${name}`).classList.toggle("hidden", !view[name]);
+  $("signin-or").classList.toggle("hidden", !(view.buttons && view.password));
   for (const id of ["signin-email", "signin-password", "signin-submit"]) $(id).classList.toggle("hidden", !view.password);
   const browser = $("signin-go");
   browser.classList.toggle("btn-primary", !view.form);
@@ -24351,7 +24360,7 @@ function renderInAppSignIn(view) {
   browser.dataset.i18n = view.form ? "signin.browser" : "signin.go";
   browser.textContent = t(browser.dataset.i18n);
   const note = $("signin-note");
-  note.dataset.i18n = view.form ? "signin.browser.note" : "signin.note";
+  note.dataset.i18n = !view.form ? "signin.note" : view.google || view.twitch || view.passkey ? "signin.browser.note.email" : "signin.browser.note";
   note.textContent = t(note.dataset.i18n);
   showSignInCheck(view.captchaUrl);
 }
@@ -24409,7 +24418,7 @@ function showInAppNote(message) {
 async function runInAppStep(call, { resetCheck = false } = {}) {
   if (inAppBusy) return;
   inAppBusy = true;
-  const buttons = ["signin-submit", "signin-apple", "signin-code-go", "signin-apple-create", "signin-access-go"];
+  const buttons = ["signin-submit", "signin-apple", "signin-google", "signin-twitch", "signin-passkey", "signin-code-go", "signin-apple-create", "signin-access-go"];
   for (const id of buttons) $(id).disabled = true;
   $("signin-error").classList.add("hidden");
   try {
@@ -24447,9 +24456,29 @@ function submitPasswordSignIn(event) {
   runInAppStep(() => invoke("account_sign_in_password", { email, password, captcha: signInCheck.token }), { resetCheck: true });
 }
 
+let inAppMethod = { kind: "apple" };
+
+function useInAppMethod(method) {
+  inAppMethod = method;
+  const label = $("signin-new-label");
+  label.dataset.i18n = method.kind === "sheet" ? "signin.sheet.new" : "signin.apple.new";
+  label.textContent = t(label.dataset.i18n);
+}
+
 function signInWithApple(create, accessCode = null) {
+  if (!create) useInAppMethod({ kind: "apple" });
   const adultConfirmed = create && $("signin-adult").checked;
   runInAppStep(() => invoke("account_sign_in_apple", { create, adultConfirmed, accessCode }));
+}
+
+function signInWithSheet(provider) {
+  useInAppMethod({ kind: "sheet", provider });
+  runInAppStep(() => invoke("account_sign_in_sheet", { provider, adultConfirmed: false, accessCode: null }));
+}
+
+function retryInApp(accessCode = null) {
+  const { command, args } = inAppRetry(inAppMethod, { adultConfirmed: $("signin-adult").checked, accessCode });
+  runInAppStep(() => invoke(command, args));
 }
 
 function syncAdultConfirmation() {

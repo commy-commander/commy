@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, MAX_SDK } from "./android-project.mjs";
+import { withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -141,6 +141,24 @@ test("invite links open the main screen, once, through the commy scheme", () => 
   assert.ok(filter > main && filter < out.indexOf("</activity>", main));
   assert.match(INVITE_LINKS, /android.intent.category.BROWSABLE/);
   assert.match(INVITE_LINKS, /android:scheme="commy" android:host="i"/);
+});
+
+test("the sign-in page hands back to the main screen through its own link, once", () => {
+  const out = withCommyNeeds(withCommyNeeds(generated));
+  assert.equal(out.split(SIGN_IN_RETURN).length - 1, 1);
+  const main = out.indexOf('".MainActivity"');
+  const filter = out.indexOf(SIGN_IN_RETURN);
+  assert.ok(filter > main && filter < out.indexOf("</activity>", main));
+  assert.match(SIGN_IN_RETURN, /android:scheme="commy" android:host="signed-in"/);
+  const older = withCommyNeeds(generated).replace(SIGN_IN_RETURN, "");
+  assert.equal(withCommyNeeds(older).split(SIGN_IN_RETURN).length - 1, 1, "an app made before the sign-in link gets it added");
+  assert.equal(withCommyNeeds(older).split(INVITE_LINKS).length - 1, 1);
+});
+
+test("the sign-in page and passkeys have their Android libraries", () => {
+  for (const name of ["androidx.browser:browser:", "androidx.credentials:credentials:", "androidx.credentials:credentials-play-services-auth:"]) {
+    assert.ok(GRADLE_DEPENDENCIES.some(coordinate => coordinate.startsWith(name)), name);
+  }
 });
 
 test("a manifest without the main screen is refused", () => {

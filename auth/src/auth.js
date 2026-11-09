@@ -6,7 +6,7 @@ import { kyselyAdapter } from "@better-auth/kysely-adapter";
 import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
 import { commyAccountDeletion } from "./account-deletion.js";
-import { commyAppSignIn } from "./app-sign-in.js";
+import { androidOrigin, commyAppSignIn } from "./app-sign-in.js";
 import { appleClientSecret } from "./apple.js";
 import { hasAccess } from "./access.js";
 import { sealedAtRest } from "./at-rest.js";
@@ -53,6 +53,11 @@ export function appleProvider(apple, allowSignup) {
   return provider;
 }
 
+export function passkeyOrigins(config) {
+  const android = config.phones?.android?.fingerprints ?? [];
+  return android.length ? [config.baseURL, ...android.map(androidOrigin)] : config.baseURL;
+}
+
 export function postgresDatabase(pool) {
   return kyselyAdapter(new Kysely({ dialect: new PostgresDialect({ pool }) }), { type: "postgres", transaction: true });
 }
@@ -80,7 +85,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     twoFactor({ issuer: config.instanceName, allowPasswordless: true }),
     commyVerifyEmailResult({ baseURL: config.baseURL }),
     commyTwoFactorEverywhere({ baseURL: config.baseURL }),
-    passkey({ rpID: new URL(config.baseURL).hostname, rpName: config.instanceName, origin: config.baseURL }),
+    passkey({ rpID: new URL(config.baseURL).hostname, rpName: config.instanceName, origin: passkeyOrigins(config) }),
     commyPasswords(),
     commySecurityNotices({ baseURL: config.baseURL, send }),
     commyAccountDeletion({ instanceName: config.instanceName, send, emailCodes: Boolean(config.smtp) }),
@@ -232,6 +237,9 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/passkey/verify-authentication": { window: 60, max: 10 },
         "/sign-in/social": { window: 60, max: 20 },
         "/commy/access": { window: 600, max: 10 },
+        "/commy/app-sign-in/start": { window: 60, max: 20 },
+        "/commy/app-sign-in/finish": { window: 60, max: 30 },
+        "/passkey/generate-authenticate-options": { window: 60, max: 30 },
         "/commy/captcha": { window: 60, max: 30 },
         "/device/code": { window: 60, max: 10 },
         "/device": { window: 600, max: 30 },

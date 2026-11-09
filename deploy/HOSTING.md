@@ -75,6 +75,13 @@ Email and password works with no extra setup. The rest are optional:
   `APPLE_KEY_ID` and `APPLE_PRIVATE_KEY` (the .p8 text, `\n` between lines).
   To email private relay addresses, register your sending address under Sign in
   with Apple for Email Communication.
+- **Phone apps**: the Commy phone apps sign in with Google and Twitch in a
+  sign-in sheet over the app, using the same Google and Twitch settings as the
+  website. For passkeys inside the apps the server publishes
+  `/.well-known/apple-app-site-association` (the Commy iPhone app by default;
+  `IOS_APP_IDS` lists others or `off`) and, when `ANDROID_APP_CERT_SHA256` is
+  set to the Android app's signing certificate fingerprints,
+  `/.well-known/assetlinks.json`.
 - **Email** (verification, password reset, magic links): set `SMTP_HOST`,
   `SMTP_PORT` (587 for STARTTLS, 465 for TLS), `SMTP_USER`, `SMTP_PASSWORD`
   and `EMAIL_FROM`, or a single `SMTP_URL`. Many providers want an

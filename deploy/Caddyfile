@@ -16,7 +16,7 @@
 	@app_check path /api/auth/commy/captcha
 	header @app_check -X-Frame-Options
 
-	@auth path /api/auth/* /.well-known/commy-auth.json
+	@auth path /api/auth/* /.well-known/commy-auth.json /.well-known/apple-app-site-association /.well-known/assetlinks.json
 	handle @auth {
 		reverse_proxy auth:3001
 	}

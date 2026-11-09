@@ -1,1 +1,3 @@
 -keep class chat.commy.mobile.** { *; }
+-if class androidx.credentials.CredentialManager
+-keep class androidx.credentials.playservices.** { *; }

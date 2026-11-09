@@ -8310,7 +8310,7 @@ pub fn run() {
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(commy_apple_sign_in::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init());
+    let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init()).plugin(app_sign_in::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(push_wake::init());
     #[cfg(desktop)]
@@ -8443,6 +8443,8 @@ pub fn run() {
             app_sign_in::account_sign_in_password,
             app_sign_in::account_sign_in_code,
             app_sign_in::account_sign_in_apple,
+            app_sign_in::account_sign_in_sheet,
+            app_sign_in::account_sign_in_passkey,
             account::account_sign_out,
             account::account_delete_start,
             account::account_delete_finish,

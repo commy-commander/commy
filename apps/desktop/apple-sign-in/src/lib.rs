@@ -33,6 +33,16 @@ impl<R: Runtime> AppleSignIn<R> {
         let _ = Request { nonce: hashed_nonce };
         Err("Sign in with Apple is only in the iPhone app".into())
     }
+
+    #[cfg(target_os = "ios")]
+    pub fn run(&self, command: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+        self.0.run_mobile_plugin(command, args).map_err(|e| e.to_string())
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    pub fn run(&self, _command: &str, _args: serde_json::Value) -> Result<serde_json::Value, String> {
+        Err("This sign-in is only in the phone apps".into())
+    }
 }
 
 pub trait AppleSignInExt<R: Runtime> {

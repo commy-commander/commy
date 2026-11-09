@@ -46,6 +46,11 @@ const usesPermission = name => (MAX_SDK[name] ? `<uses-permission android:name="
 const usesFeature = name => `<uses-feature android:name="${name}" android:required="false" />`;
 
 export const INVITE_LINKS = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="i" /></intent-filter>`;
+export const SIGN_IN_RETURN = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="signed-in" /></intent-filter>`;
+const LINK_FILTERS = [
+  { marker: 'android:host="i"', xml: INVITE_LINKS },
+  { marker: 'android:host="signed-in"', xml: SIGN_IN_RETURN },
+];
 
 function insertBefore(xml, marker, lines, indent, from = 0) {
   const anchor = xml.indexOf(marker, from);
@@ -64,16 +69,20 @@ export function withCommyNeeds(xml) {
   if (missing.length) out = insertBefore(out, "<application", [...missing, ""], "    ");
   const components = COMPONENTS.filter(c => !out.includes(`"${c.name}"`)).map(c => c.xml);
   if (components.length) out = insertBefore(out, "</application>", components, "        ");
-  if (!out.includes('android:scheme="commy"')) {
+  const filters = LINK_FILTERS.filter(f => !out.includes(f.marker)).map(f => f.xml);
+  if (filters.length) {
     const main = out.indexOf('android:name=".MainActivity"');
     if (main < 0) throw new Error("AndroidManifest.xml has no MainActivity");
-    out = insertBefore(out, "</activity>", [INVITE_LINKS], "            ", main);
+    out = insertBefore(out, "</activity>", filters, "            ", main);
   }
   return out;
 }
 
 export const GRADLE_DEPENDENCIES = [
   "com.google.firebase:firebase-messaging:24.1.0",
+  "androidx.browser:browser:1.8.0",
+  "androidx.credentials:credentials:1.3.0",
+  "androidx.credentials:credentials-play-services-auth:1.3.0",
 ];
 
 export function withCommyDependencies(gradle) {
@@ -202,7 +211,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (withDependencies !== gradle) writeFileSync(gradlePath, withDependencies);
   console.log(debugStore ? "Debug builds sign with the kept debug key" : "ANDROID_DEBUG_KEYSTORE_FILE is not set, so debug builds sign with a new key");
   console.log(releaseStore ? `Release builds sign with the upload key, password from ${UPLOAD_KEY.passwordEnv}` : "ANDROID_UPLOAD_KEYSTORE_FILE is not set, so release builds are unsigned");
-  console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call and screen share services, relaunching and invite links");
+  console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call and screen share services, relaunching, invite links and the sign-in return link");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
   const packageName = applicationId(gradle);

@@ -3,20 +3,45 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { inAppSignIn, signInStepView, readCaptchaMessage } = require("../scripts/signin-flow.js");
+const { inAppSignIn, inAppRetry, signInStepView, readCaptchaMessage } = require("../scripts/signin-flow.js");
+
+const browserOnly = { form: false, password: false, apple: false, google: false, twitch: false, passkey: false, buttons: false, captchaUrl: null };
 
 test("the desktop app and older servers keep the browser sign-in", () => {
-  assert.deepEqual(inAppSignIn({ password: true, apple: true, captcha_url: "https://commy.chat/x" }, false), { form: false, password: false, apple: false, captchaUrl: null });
-  assert.deepEqual(inAppSignIn(null, true), { form: false, password: false, apple: false, captchaUrl: null });
+  assert.deepEqual(inAppSignIn({ password: true, apple: true, google: true, passkey: true, captcha_url: "https://commy.chat/x" }, false), browserOnly);
+  assert.deepEqual(inAppSignIn(null, true), browserOnly);
   assert.equal(inAppSignIn({ password: false, apple: false }, true).form, false);
 });
 
 test("phones sign in inside the app, with Apple only where the app offers it", () => {
   const android = inAppSignIn({ password: true, apple: false, captcha_url: null }, true);
-  assert.deepEqual(android, { form: true, password: true, apple: false, captchaUrl: null });
+  assert.deepEqual(android, { ...browserOnly, form: true, password: true });
   const iphone = inAppSignIn({ password: true, apple: true, captcha_url: "https://commy.chat/api/auth/commy/captcha" }, true);
   assert.equal(iphone.apple, true);
   assert.equal(iphone.captchaUrl, "https://commy.chat/api/auth/commy/captcha");
+});
+
+test("Google, Twitch and passkeys show up when the server and the phone offer them", () => {
+  const view = inAppSignIn({ password: true, apple: false, google: true, twitch: false, passkey: true, captcha_url: null }, true);
+  assert.equal(view.google, true);
+  assert.equal(view.twitch, false);
+  assert.equal(view.passkey, true);
+  assert.equal(view.buttons, true);
+  const buttonsOnly = inAppSignIn({ password: false, twitch: true }, true);
+  assert.equal(buttonsOnly.form, true, "the form shows even when only a social button is offered");
+  assert.equal(buttonsOnly.password, false);
+});
+
+test("confirming age or the access code retries the sign-in that asked for it", () => {
+  assert.deepEqual(inAppRetry({ kind: "sheet", provider: "google" }, { adultConfirmed: true }), {
+    command: "account_sign_in_sheet",
+    args: { provider: "google", adultConfirmed: true, accessCode: null },
+  });
+  assert.deepEqual(inAppRetry({ kind: "apple" }, { adultConfirmed: true, accessCode: "abc" }), {
+    command: "account_sign_in_apple",
+    args: { create: true, adultConfirmed: true, accessCode: "abc" },
+  });
+  assert.equal(inAppRetry({ kind: "sheet", provider: "github" }).command, "account_sign_in_apple");
 });
 
 test("each server answer opens its step", () => {

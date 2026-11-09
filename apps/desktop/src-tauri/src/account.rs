@@ -375,6 +375,12 @@ pub(crate) struct Providers {
     pub(crate) email_password: bool,
     #[serde(default, rename = "appleApp")]
     pub(crate) apple_app: bool,
+    #[serde(default)]
+    pub(crate) google: bool,
+    #[serde(default)]
+    pub(crate) twitch: bool,
+    #[serde(default)]
+    pub(crate) passkey: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -414,10 +420,18 @@ pub(crate) struct Endpoints {
     pub(crate) captcha: Option<String>,
     #[serde(default, rename = "accessCode")]
     pub(crate) access_code: Option<String>,
+    #[serde(default, rename = "appSignInStart")]
+    pub(crate) app_sign_in_start: Option<String>,
+    #[serde(default, rename = "appSignInFinish")]
+    pub(crate) app_sign_in_finish: Option<String>,
+    #[serde(default, rename = "passkeyOptions")]
+    pub(crate) passkey_options: Option<String>,
+    #[serde(default, rename = "passkeyVerify")]
+    pub(crate) passkey_verify: Option<String>,
 }
 
 impl Endpoints {
-    fn optional(&self) -> [&Option<String>; 8] {
+    fn optional(&self) -> [&Option<String>; 12] {
         [
             &self.account_delete_start,
             &self.account_delete_finish,
@@ -427,6 +441,10 @@ impl Endpoints {
             &self.two_factor_backup_code,
             &self.captcha,
             &self.access_code,
+            &self.app_sign_in_start,
+            &self.app_sign_in_finish,
+            &self.passkey_options,
+            &self.passkey_verify,
         ]
     }
 }
@@ -1550,6 +1568,10 @@ mod tests {
                 two_factor_backup_code: Some(format!("{api}/two-factor/verify-backup-code")),
                 captcha: None,
                 access_code: None,
+                app_sign_in_start: Some(format!("{api}/commy/app-sign-in/start")),
+                app_sign_in_finish: Some(format!("{api}/commy/app-sign-in/finish")),
+                passkey_options: Some(format!("{api}/passkey/generate-authenticate-options")),
+                passkey_verify: Some(format!("{api}/passkey/verify-authentication")),
             },
             features: None,
             providers: Providers::default(),
@@ -1574,6 +1596,12 @@ mod tests {
         let mut password_elsewhere = doc("https://commy.chat");
         password_elsewhere.endpoints.sign_in_email = Some("https://evil.example/api/auth/sign-in/email".into());
         assert!(!password_elsewhere.same_origin("https://commy.chat"), "a password never goes to another site");
+        let mut passkey_elsewhere = doc("https://commy.chat");
+        passkey_elsewhere.endpoints.passkey_verify = Some("https://evil.example/api/auth/passkey/verify-authentication".into());
+        assert!(!passkey_elsewhere.same_origin("https://commy.chat"));
+        let mut sheet_elsewhere = doc("https://commy.chat");
+        sheet_elsewhere.endpoints.app_sign_in_finish = Some("https://evil.example/api/auth/commy/app-sign-in/finish".into());
+        assert!(!sheet_elsewhere.same_origin("https://commy.chat"));
     }
 
     #[test]

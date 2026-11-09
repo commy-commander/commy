@@ -1,6 +1,7 @@
 import { normalizeAccessCode } from "./access.js";
 import { PRIVATE_NETWORKS, trustedProxyList } from "./client-ip.js";
 import { LINK_BLOCKLIST_PATH, linkBlocklistSources } from "./link-blocklist.js";
+import { appleAppSiteAssociation, assetLinks } from "./app-sign-in.js";
 
 export const APPLE_ORIGIN = "https://appleid.apple.com";
 export const CAPTCHA_PATH = "/commy/captcha";
@@ -35,6 +36,18 @@ function oauthClient(env, prefix, warnings, uses) {
 }
 
 const COMMY_IOS_APP = "chat.commy.mobile";
+const COMMY_IOS_APP_ID = `U5SWV4RDXH.${COMMY_IOS_APP}`;
+const CERT_FINGERPRINT = /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/;
+
+function phoneApps(env, errors) {
+  const ios = (env.IOS_APP_IDS ?? "").trim();
+  const iosAppIds = ios === "off" ? [] : ios ? list(ios) : [COMMY_IOS_APP_ID];
+  const fingerprints = list(env.ANDROID_APP_CERT_SHA256).map((f) => f.toUpperCase());
+  const bad = fingerprints.filter((f) => !CERT_FINGERPRINT.test(f));
+  if (bad.length) errors.push("ANDROID_APP_CERT_SHA256 must be SHA-256 certificate fingerprints like AB:CD:...:EF (32 pairs), comma-separated");
+  const androidPackage = (env.ANDROID_APP_PACKAGE ?? "").trim() || COMMY_IOS_APP;
+  return { iosAppIds, android: fingerprints.length ? { package: androidPackage, fingerprints } : null };
+}
 
 function applePrivateKey(value) {
   return value.replace(/\\n/g, "\n").trim();
@@ -133,6 +146,7 @@ export function loadConfig(env = process.env) {
   }
 
   const smtp = smtpConfig(env, errors);
+  const phones = phoneApps(env, errors);
   const appleWarnings = [];
   const apple = appleConfig(env, appleWarnings, errors);
   const trustedProxies = trustedProxiesConfig(env, errors);
@@ -179,12 +193,22 @@ export function loadConfig(env = process.env) {
     google,
     twitch,
     apple,
+    phones,
     smtp,
     turnstile,
     igdb,
     klipyKey,
     warnings,
   };
+}
+
+export function wellKnownFiles(config) {
+  const files = {};
+  if (config.phones.iosAppIds.length) {
+    files["/.well-known/apple-app-site-association"] = JSON.stringify(appleAppSiteAssociation(config.phones.iosAppIds));
+  }
+  if (config.phones.android) files["/.well-known/assetlinks.json"] = JSON.stringify(assetLinks(config.phones.android));
+  return files;
 }
 
 export function featureSummary(config) {
@@ -235,6 +259,10 @@ export function discoveryDocument(config) {
       session: `${api}/get-session`,
       signInEmail: `${api}/sign-in/email`,
       signInSocial: `${api}/sign-in/social`,
+      appSignInStart: `${api}/commy/app-sign-in/start`,
+      appSignInFinish: `${api}/commy/app-sign-in/finish`,
+      passkeyOptions: `${api}/passkey/generate-authenticate-options`,
+      passkeyVerify: `${api}/passkey/verify-authentication`,
       twoFactorVerify: `${api}/two-factor/verify-totp`,
       twoFactorBackupCode: `${api}/two-factor/verify-backup-code`,
       ...(config.turnstile ? { captcha: `${api}${CAPTCHA_PATH}` } : {}),

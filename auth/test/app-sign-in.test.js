@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { createHmac, generateKeyPairSync, verify } from "node:crypto";
+import { createHash, createHmac, generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { accessToken } from "../src/access.js";
 import { captchaPage } from "../src/app-sign-in.js";
 import { appleClientSecret, signAppleClientSecret } from "../src/apple.js";
 import { sealedAtRest } from "../src/at-rest.js";
-import { buildAuthOptions } from "../src/auth.js";
-import { discoveryDocument, loadConfig } from "../src/config.js";
+import { buildAuthOptions, passkeyOrigins } from "../src/auth.js";
+import { discoveryDocument, loadConfig, wellKnownFiles } from "../src/config.js";
 
 const ORIGIN = "http://localhost:3001";
 const PASSWORD = "correct horse battery";
@@ -238,4 +238,88 @@ test("the Apple client secret is a signed ES256 token that renews itself", () =>
   assert.equal(secret.current(), first);
   now += 2 * 24 * 3600;
   assert.notEqual(secret.current(), first);
+});
+
+function pkce() {
+  const verifier = randomBytes(32).toString("base64url");
+  return { verifier, challenge: createHash("sha256").update(verifier).digest("base64url") };
+}
+
+function landingFrom(page) {
+  return new URL(JSON.parse(page.match(/location\.replace\(("[^"]+")\)/)[1]));
+}
+
+async function startSheet(body) {
+  const r = await call("POST", "/commy/app-sign-in/start", { origin: null, body });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  return new URL(r.json.url).searchParams.get("handoff");
+}
+
+test("Google in the app's sign-in sheet hands the session back only to the app that started it", async () => {
+  start({ GOOGLE_CLIENT_ID: "gid", GOOGLE_CLIENT_SECRET: "gsecret" });
+  const { verifier, challenge } = pkce();
+  const handoff = await startSheet({ provider: "google", challenge, adultConfirmed: true, accessToken: "tok" });
+
+  const go = await call("GET", `/commy/app-sign-in/go?handoff=${handoff}`, { origin: null });
+  assert.equal(go.status, 200);
+  assert.match(go.text, /"provider\\":\\"google\\"/);
+  assert.match(go.text, /adultConfirmed/);
+  assert.match(go.text, new RegExp(`${ORIGIN}/api/auth/sign-in/social`));
+  assert.match(go.headers.get("set-cookie"), /^commy_access=tok;/);
+  assert.equal((await call("GET", `/commy/app-sign-in/go?handoff=${handoff}`, { origin: null })).status, 410, "the sheet link opens once");
+
+  const browser = await passwordAccount("sheet@example.test");
+  const back = await call("GET", `/commy/app-sign-in/back?handoff=${handoff}`, { origin: null, cookie: browser });
+  assert.equal(back.status, 200);
+  const landing = landingFrom(back.text);
+  assert.ok(back.text.includes(`href="${landing.toString().replace(/&/g, "&amp;")}"`), "the page has a button back to the app");
+  assert.equal(`${landing.protocol}//${landing.host}`, "commy://signed-in");
+  assert.equal(landing.searchParams.get("handoff"), handoff);
+  const code = landing.searchParams.get("code");
+  assert.match(back.setCookie, /session_token=;/, "the sheet browser is signed out again");
+  assert.equal((await call("GET", `/commy/app-sign-in/back?handoff=${handoff}`, { origin: null, cookie: browser })).status, 410);
+
+  const stolen = await call("POST", "/commy/app-sign-in/finish", { origin: null, body: { handoff, verifier: pkce().verifier, code } });
+  assert.equal(stolen.status, 404);
+  const noCode = await call("POST", "/commy/app-sign-in/finish", { origin: null, body: { handoff, verifier, code: "guess" } });
+  assert.equal(noCode.status, 404, "a phished sheet never reaches the attacker without the code");
+  const done = await call("POST", "/commy/app-sign-in/finish", { origin: null, body: { handoff, verifier, code } });
+  assert.equal(done.status, 200, JSON.stringify(done.json));
+  const session = await auth.handler(new Request(`${ORIGIN}/api/auth/get-session`, { headers: { authorization: `Bearer ${done.json.token}` } }));
+  assert.equal((await session.json()).user.email, "sheet@example.test");
+  assert.equal((await call("POST", "/commy/app-sign-in/finish", { origin: null, body: { handoff, verifier, code } })).status, 404, "used once");
+});
+
+test("a refused sheet sign-in comes back to the app as a reason", async () => {
+  start({ TWITCH_CLIENT_ID: "tid", TWITCH_CLIENT_SECRET: "tsecret" });
+  const { verifier, challenge } = pkce();
+  const handoff = await startSheet({ provider: "twitch", challenge });
+  const back = await call("GET", `/commy/app-sign-in/back?handoff=${handoff}&error=ACCESS_CODE_REQUIRED`, { origin: null });
+  const code = landingFrom(back.text).searchParams.get("code");
+  const r = await call("POST", "/commy/app-sign-in/finish", { origin: null, body: { handoff, verifier, code } });
+  assert.equal(r.status, 403);
+  assert.equal(r.json.code, "ACCESS_CODE_REQUIRED");
+});
+
+test("the sheet only offers providers this server has", async () => {
+  const r = await call("POST", "/commy/app-sign-in/start", { origin: null, body: { provider: "google", challenge: pkce().challenge } });
+  assert.equal(r.status, 404);
+  const bad = await call("POST", "/commy/app-sign-in/start", { origin: null, body: { provider: "github", challenge: pkce().challenge } });
+  assert.equal(bad.status, 400);
+});
+
+test("the phone apps are tied to the site for passkeys", () => {
+  const fingerprint = Array.from({ length: 32 }, (_, i) => i.toString(16).padStart(2, "0").toUpperCase()).join(":");
+  const config = loadConfig({ ...BASE_ENV, ANDROID_APP_CERT_SHA256: fingerprint.toLowerCase() });
+  const files = wellKnownFiles(config);
+  assert.deepEqual(JSON.parse(files["/.well-known/apple-app-site-association"]), { webcredentials: { apps: ["U5SWV4RDXH.chat.commy.mobile"] } });
+  const links = JSON.parse(files["/.well-known/assetlinks.json"]);
+  assert.deepEqual(links[0].target, { namespace: "android_app", package_name: "chat.commy.mobile", sha256_cert_fingerprints: [fingerprint] });
+  const origins = passkeyOrigins(config);
+  assert.equal(origins[0], ORIGIN);
+  assert.equal(origins[1], `android:apk-key-hash:${Buffer.from(Array.from({ length: 32 }, (_, i) => i)).toString("base64url")}`);
+
+  assert.deepEqual(wellKnownFiles(loadConfig({ ...BASE_ENV, IOS_APP_IDS: "off" })), {});
+  assert.equal(passkeyOrigins(loadConfig(BASE_ENV)), ORIGIN);
+  assert.throws(() => loadConfig({ ...BASE_ENV, ANDROID_APP_CERT_SHA256: "nope" }), /ANDROID_APP_CERT_SHA256/);
 });

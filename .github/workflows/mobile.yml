@@ -308,6 +308,7 @@ jobs:
           grep -q "SystemConfiguration.framework" gen/apple/project.yml
           ../mobile/ios-entitlements.sh
           grep -q "com.apple.developer.applesignin" gen/apple/*_iOS/*_iOS.entitlements
+          grep -q "webcredentials:commy.chat" gen/apple/*_iOS/*_iOS.entitlements
 
       - name: Build the simulator app and an unsigned device app
         if: env.IOS_MODE == 'simulator'
