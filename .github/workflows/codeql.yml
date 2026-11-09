@@ -13,6 +13,7 @@ permissions:
 jobs:
   languages:
     name: Pick languages
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     permissions:
       contents: read
