@@ -167,7 +167,9 @@ jobs:
         shell: bash
     steps:
       - name: Keep the runner's home folder out of the log
-        run: echo "::add-mask::$HOME"
+        run: |
+          echo "::add-mask::$HOME"
+          echo "::add-mask::${HOME//\//\\/}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -285,7 +287,9 @@ jobs:
         shell: bash
     steps:
       - name: Keep the runner's home folder out of the log
-        run: echo "::add-mask::$HOME"
+        run: |
+          echo "::add-mask::$HOME"
+          echo "::add-mask::${HOME//\//\\/}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -346,7 +350,7 @@ jobs:
 
       - name: Notarize the disk image
         if: steps.signing.outputs.signed == 'true'
-        working-directory: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+        working-directory: target/universal-apple-darwin/release/bundle
         env:
           API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
