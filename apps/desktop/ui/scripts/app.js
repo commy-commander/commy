@@ -5120,9 +5120,10 @@ function onMessageCreated(msg) {
     else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
   const level = levelForChannel(prefs, msg.server, msg.channel, nowSecs());
-  if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: false, mentioned, announcement })) {
+  const way = alertWay({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: false, mentioned, announcement });
+  if (way !== "none") {
     const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
-    invoke("notify", { ...notice, target: `channel:${msg.server}:${msg.channel}` }).catch(() => {});
+    alertNotice(way, notice, `channel:${msg.server}:${msg.channel}`);
     playSound("message");
   }
   speakIncoming(msg, viewing);
@@ -5481,16 +5482,27 @@ function onMessagesCaughtUp(payload) {
     }
     if (info.channel_name === undefined || isBlocked(info.author) || !isRecent(Number(info.at), now)) continue;
     const level = levelForChannel(prefs, server, channel, now);
-    if (shouldNotify({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: false, mentioned, announcement: Boolean(info.announcement) })) {
+    const way = alertWay({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: false, mentioned, announcement: Boolean(info.announcement) });
+    if (way !== "none") {
       const notice = caughtUpNotice(sensitiveNotice({ ...info, count, server_name: payload.server_name }, channel, sensitiveConfirmed()), plainText);
-      notices.push({ ...notice, target: `channel:${server}:${channel}` });
+      notices.push({ way, notice, target: `channel:${server}:${channel}` });
     }
   }
-  for (const notice of notices) invoke("notify", notice).catch(() => {});
+  for (const { way, notice, target } of notices) if (way === "system") alertNotice(way, notice, target);
+  const inApp = notices.filter(n => n.way === "in_app").pop();
+  if (inApp) alertNotice(inApp.way, inApp.notice, inApp.target);
   if (notices.length) playSound("message");
   if (!changed) return;
   syncUnreadBadge();
   if (state.currentServer && state.currentServer.id === server) renderChannels();
+}
+
+function alertNotice(way, notice, target) {
+  if (way === "system") {
+    invoke("notify", { ...notice, target }).catch(() => {});
+    return;
+  }
+  toast(inAppLine(notice), { onClick: () => openNotificationTarget(target) });
 }
 
 async function openNotificationTarget(target) {
@@ -5522,11 +5534,13 @@ function onDmReceived(dm) {
     unread.dms.set(dm.user, (unread.dms.get(dm.user) || 0) + 1);
     syncUnreadBadge();
   }
-  if (appFocused() && !viewing) showDmCard(dm);
+  const carded = appFocused() && !viewing;
+  if (carded) showDmCard(dm);
   const prefs = notifyPrefs();
-  if (shouldNotify({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: true, mentioned: true })) {
+  const way = alertWay({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: true, mentioned: true });
+  if (way !== "none") {
     const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
-    invoke("notify", { title: dm.name, body, target: `dm:${dm.user}` }).catch(() => {});
+    if (way === "system" || !carded) alertNotice(way, { title: dm.name, body }, `dm:${dm.user}`);
     playSound("dm");
   }
 }

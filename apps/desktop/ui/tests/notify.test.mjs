@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, inAppLine } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -180,10 +180,20 @@ test("a server can ignore @everyone and @here or role mentions while @you always
   assert.equal(withServerFilter(prefs, "s1", "level", true), prefs, "only the mention filters are set here");
 });
 
-test("the phone app stays quiet while it is on screen and notifies once it is not", () => {
+test("the phone app alerts inside the app while it is on screen and with a system notice once it is not", () => {
   assert.equal(phoneInFront(true, "visible"), true);
   assert.equal(phoneInFront(true, "hidden"), false);
   assert.equal(phoneInFront(false, "visible"), false);
-  assert.equal(shouldNotify({ level: "all", presence: "online", focusedOnIt: false, phoneInFront: true, isDm: true, mentioned: true }), false);
-  assert.equal(shouldNotify({ level: "all", presence: "online", focusedOnIt: false, phoneInFront: false, isDm: true, mentioned: true }), true);
+  const dm = { level: "all", presence: "online", focusedOnIt: false, isDm: true, mentioned: true };
+  assert.equal(alertWay({ ...dm, phoneInFront: true }), "in_app");
+  assert.equal(alertWay({ ...dm, phoneInFront: false }), "system");
+  assert.equal(alertWay({ ...dm, phoneInFront: true, focusedOnIt: true }), "none");
+  assert.equal(alertWay({ ...dm, phoneInFront: true, presence: "do_not_disturb" }), "none");
+  assert.equal(alertWay({ level: "mentions", presence: "online", focusedOnIt: false, phoneInFront: true, isDm: false, mentioned: false }), "none");
+  assert.equal(alertWay({ level: "mentions", presence: "online", focusedOnIt: false, phoneInFront: true, isDm: false, mentioned: true }), "in_app");
+});
+
+test("an in-app alert reads as one line", () => {
+  assert.equal(inAppLine({ title: "Ana in #general (Club)", body: "hi" }), "Ana in #general (Club): hi");
+  assert.equal(inAppLine({ title: "Ana", body: "" }), "Ana");
 });
