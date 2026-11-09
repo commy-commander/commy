@@ -3323,6 +3323,7 @@
   <div class="pop-menu ctx-menu remind-pop hidden" id="remind-pop" role="menu"></div>
   <div class="text-style-pop hidden" id="text-style-pop" role="dialog" aria-label="Text Style"></div>
   <div class="pop-menu composer-menu hidden" id="composer-menu" role="menu">
+    <button id="cm-photo" class="mobile-only" role="menuitem">Photo or Video</button>
     <button id="cm-file" role="menuitem">Upload a File</button>
     <button id="cm-video" role="menuitem">Post a Video</button>
     <button id="cm-gif" role="menuitem">GIF</button>
@@ -3389,6 +3390,7 @@
     <button id="avatar-emoji">Use an Emoji or GIF</button>
     <button id="avatar-remove" class="danger">Remove Avatar</button>
   </div>
+  <input type="file" id="photo-file" accept="image/*,video/*" multiple class="file-catcher" tabindex="-1" aria-hidden="true" />
   <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
   <input type="file" id="vrm-file" accept=".vrm" class="hidden" />
   <div class="emoji-pop hidden" id="emoji-pop">

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { isPhoneWidth, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation } = require("../scripts/phone.js");
+const { isPhoneWidth, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation, keyboardHeight } = require("../scripts/phone.js");
 
 test("phone widths stay well below the smallest desktop window", () => {
   assert.equal(isPhoneWidth(390), true);
@@ -69,4 +69,15 @@ test("wide portrait phone screens such as the iPhone Duo inner display get the t
   assert.equal(phoneAppViewport(601, true), PHONE_APP_VIEWPORT);
   assert.equal(phoneAppViewport(951, false), PHONE_APP_VIEWPORT);
   assert.match(TWO_PANE_VIEWPORT, /user-scalable=no/);
+});
+
+test("the keyboard height is the part of the layout the visible area no longer covers", () => {
+  assert.equal(keyboardHeight(852, 516, 0), 336);
+  assert.equal(keyboardHeight(852, 516, 20), 316);
+});
+
+test("small toolbar and rounding changes do not count as a keyboard", () => {
+  assert.equal(keyboardHeight(852, 852, 0), 0);
+  assert.equal(keyboardHeight(852, 800, 0), 0);
+  assert.equal(keyboardHeight(852, 860, 0), 0);
 });

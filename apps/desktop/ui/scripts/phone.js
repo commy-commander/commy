@@ -3,6 +3,8 @@ const PHONE_PANE_DEPTH = { list: 0, chat: 1, people: 2 };
 const PHONE_APP_VIEWPORT = "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content";
 const TAP_AFTER_SCROLL_MS = 350;
 const TWO_PANE_MIN_WIDTH_PX = 640;
+const KEYBOARD_MIN_PX = 80;
+const LONG_PRESS = { ms: 550, slop: 10, clickGuardMs: 700 };
 const TWO_PANE_LAYOUT_WIDTH_PX = 704;
 const TWO_PANE_VIEWPORT = `width=${TWO_PANE_LAYOUT_WIDTH_PX}, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content`;
 
@@ -36,10 +38,19 @@ function tapEndsScroll(lastScrollAt, now) {
   return now - lastScrollAt < TAP_AFTER_SCROLL_MS;
 }
 
+function keyboardHeight(layoutHeight, visibleHeight, visibleTop) {
+  const covered = Math.round(layoutHeight - visibleHeight - visibleTop);
+  return covered >= KEYBOARD_MIN_PX ? covered : 0;
+}
+
+function longPressDrifted(dx, dy) {
+  return Math.hypot(dx, dy) > LONG_PRESS.slop;
+}
+
 function headerTapLeavesPeople(pane, buttonId) {
   return pane === "people" && buttonId !== "members-btn";
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PHONE_MAX_WIDTH_PX, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT, TWO_PANE_LAYOUT_WIDTH_PX, isPhoneWidth, phoneAppViewport, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation, tapEndsScroll, headerTapLeavesPeople };
+  module.exports = { PHONE_MAX_WIDTH_PX, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT, TWO_PANE_LAYOUT_WIDTH_PX, isPhoneWidth, phoneAppViewport, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation, tapEndsScroll, keyboardHeight, LONG_PRESS, longPressDrifted, headerTapLeavesPeople };
 }

@@ -2140,6 +2140,7 @@ const ICONS = {
   pinOff: "M3.3 2 2 3.3l5.6 5.6V9c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7h1.17l6.96 6.96 1.3-1.3zM16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.44 0-.8.28-.94.67L16.7 13.3c.66-.78 1.76-1.3 2.3-1.3v-2c-1.66 0-3-1.34-3-3z",
   megaphone: "M18 11v2h4v-2h-4zm-2 6.61c.96.71 2.21 1.65 3.2 2.39.4-.53.8-1.07 1.2-1.6-.99-.74-2.24-1.68-3.2-2.4-.4.54-.8 1.08-1.2 1.61zM20.4 5.6c-.4-.53-.8-1.07-1.2-1.6-.99.74-2.24 1.68-3.2 2.4.4.53.8 1.07 1.2 1.6.96-.72 2.21-1.65 3.2-2.4zM4 9c-1.1 0-2 .9-2 2v2c0 1.1.9 2 2 2h1v4h2v-4h1l5 3V6L8 9H4zm11.5 3c0-1.33-.58-2.53-1.5-3.35v6.69c.92-.81 1.5-2.01 1.5-3.34z",
   uploadFile: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5zM8 15.01l1.41 1.41L11 14.84V19h2v-4.16l1.59 1.59L16 15.01 12.01 11z",
+  photo: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14v14zm-4.9-7.1-3 3.9-2.1-2.6L6 17h12l-3.9-5.1z",
   movie: "M4 6.47 5.76 10H20v8H4V6.47M22 4h-4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2z",
   gifBox: "M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H5V5h14zM9.5 13v-1h1v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1h-2v2zm3 1h-1v-4h1zm4-3h-2v.5H16v1h-1.5V14h-1v-4h3z",
   bellOff: "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6zM3.3 4.7l1.4-1.4 16 16-1.4 1.4z",
@@ -4210,18 +4211,43 @@ function voiceDragHoldsClick() {
 
 function armVoiceDrag(e, row, fromId, userId, name) {
   if (e.button !== 0 || voiceDrag) return;
-  voiceDrag = { pointerId: e.pointerId, kind: e.pointerType, x: e.clientX, y: e.clientY, at: Date.now(), row, fromId, userId, name, live: false, ghost: null, over: null, timer: null };
-  if (e.pointerType === "touch") voiceDrag.timer = setTimeout(() => stepVoiceDrag(voiceDrag.x, voiceDrag.y), VOICE_DRAG.touchHoldMs);
-  document.addEventListener("pointermove", onVoiceDragMove);
-  document.addEventListener("pointerup", onVoiceDragUp);
-  document.addEventListener("pointercancel", onVoiceDragCancel);
+  voiceDrag = { pointerId: e.pointerId, kind: e.pointerType, x: e.clientX, y: e.clientY, at: Date.now(), row, fromId, userId, name, live: false, ghost: null, over: null, timer: null, seen: null };
+  if (e.pointerType === "touch") voiceDrag.timer = setTimeout(holdVoiceDragStill, VOICE_DRAG.touchHoldMs);
+  for (const target of [document, row]) {
+    target.addEventListener("pointermove", onVoiceDragMove);
+    target.addEventListener("pointerup", onVoiceDragUp);
+    target.addEventListener("pointercancel", onVoiceDragCancel);
+    target.addEventListener("touchend", onVoiceDragTouchEnd);
+    target.addEventListener("touchcancel", onVoiceDragTouchEnd);
+  }
   document.addEventListener("touchmove", holdVoiceDragTouch, { passive: false });
   document.addEventListener("keydown", onVoiceDragKey);
+  document.addEventListener("visibilitychange", endVoiceDrag);
+}
+
+function holdVoiceDragStill() {
+  const drag = voiceDrag;
+  if (!drag) return;
+  if (!drag.row.isConnected) return endVoiceDrag();
+  stepVoiceDrag(drag.x, drag.y);
+}
+
+function firstSightOfVoiceDragEvent(e) {
+  if (!voiceDrag || voiceDrag.seen === e) return false;
+  voiceDrag.seen = e;
+  return true;
 }
 
 function onVoiceDragMove(e) {
-  if (!voiceDrag || e.pointerId !== voiceDrag.pointerId) return;
+  if (!voiceDrag || e.pointerId !== voiceDrag.pointerId || !firstSightOfVoiceDragEvent(e)) return;
   stepVoiceDrag(e.clientX, e.clientY);
+}
+
+function onVoiceDragTouchEnd(e) {
+  if (!voiceDrag || voiceDrag.kind !== "touch" || e.touches.length) return;
+  if (!voiceDrag.live) return endVoiceDrag();
+  const touch = e.changedTouches[0];
+  finishVoiceDrag(touch ? touch.clientX : voiceDrag.x, touch ? touch.clientY : voiceDrag.y);
 }
 
 function stepVoiceDrag(x, y) {
@@ -4273,8 +4299,12 @@ function holdVoiceDragTouch(e) {
 
 function onVoiceDragUp(e) {
   if (!voiceDrag || e.pointerId !== voiceDrag.pointerId) return;
+  finishVoiceDrag(e.clientX, e.clientY);
+}
+
+function finishVoiceDrag(x, y) {
   const drag = voiceDrag;
-  const room = drag.live ? voiceDropAt(e.clientX, e.clientY) : null;
+  const room = drag.live ? voiceDropAt(x, y) : null;
   endVoiceDrag();
   if (!room) return;
   if (state.user && drag.userId === state.user.id) {
@@ -4308,11 +4338,16 @@ function endVoiceDrag() {
   if (!drag) return;
   clearTimeout(drag.timer);
   voiceDrag = null;
-  document.removeEventListener("pointermove", onVoiceDragMove);
-  document.removeEventListener("pointerup", onVoiceDragUp);
-  document.removeEventListener("pointercancel", onVoiceDragCancel);
+  for (const target of [document, drag.row]) {
+    target.removeEventListener("pointermove", onVoiceDragMove);
+    target.removeEventListener("pointerup", onVoiceDragUp);
+    target.removeEventListener("pointercancel", onVoiceDragCancel);
+    target.removeEventListener("touchend", onVoiceDragTouchEnd);
+    target.removeEventListener("touchcancel", onVoiceDragTouchEnd);
+  }
   document.removeEventListener("touchmove", holdVoiceDragTouch);
   document.removeEventListener("keydown", onVoiceDragKey);
+  document.removeEventListener("visibilitychange", endVoiceDrag);
   if (!drag.live) return;
   voiceDragClickGuard = Date.now() + VOICE_DRAG.clickGuardMs;
   drag.ghost.remove();
@@ -6207,7 +6242,7 @@ function buildEmojiBrowser(root, { placeholder = "Find the perfect emoji" } = {}
     const btn = e.target.closest("button[data-value], button[data-token]");
     if (btn && body.contains(btn)) showEmojiFoot(b, btn);
   };
-  body.addEventListener("mouseover", hover);
+  if (!document.body.classList.contains("mobile-app")) body.addEventListener("mouseover", hover);
   body.addEventListener("focusin", hover);
   body.addEventListener("scroll", () => {
     cancelAnimationFrame(b.frame);
@@ -17794,6 +17829,46 @@ function wireTouchMessages() {
   });
 }
 
+function wireLongPressMenus() {
+  let press = null;
+  let heldOpen = false;
+  const cancel = () => {
+    if (press) clearTimeout(press.timer);
+    press = null;
+  };
+  document.addEventListener("touchstart", e => {
+    cancel();
+    heldOpen = false;
+    if (!document.body.classList.contains("mobile-app") || e.touches.length !== 1) return;
+    const target = e.target;
+    if (!target.closest || target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])")) return;
+    const touch = e.touches[0];
+    const at = { x: touch.clientX, y: touch.clientY };
+    press = { at, timer: setTimeout(() => {
+      press = null;
+      if (voiceDrag || !target.isConnected) return;
+      heldOpen = true;
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: at.x, clientY: at.y, button: 2 }));
+    }, LONG_PRESS.ms) };
+  }, { passive: true });
+  document.addEventListener("touchmove", e => {
+    const touch = e.touches[0];
+    if (press && touch && longPressDrifted(touch.clientX - press.at.x, touch.clientY - press.at.y)) cancel();
+  }, { passive: true });
+  for (const type of ["touchend", "touchcancel", "scroll"]) document.addEventListener(type, cancel, { capture: true, passive: true });
+  document.addEventListener("contextmenu", e => {
+    if (e.isTrusted) cancel();
+  }, true);
+  for (const type of ["mousedown", "click"]) {
+    document.addEventListener(type, e => {
+      if (!heldOpen) return;
+      if (type === "click") heldOpen = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+  }
+}
+
 function fitPhoneViewport() {
   const portrait = window.matchMedia("(orientation: portrait)");
   const shortSide = Math.min(screen.width, screen.height);
@@ -17809,7 +17884,11 @@ function lockPhoneViewport() {
   const view = window.visualViewport;
   if (!view) return;
   const fit = () => {
-    document.documentElement.style.setProperty("--app-height", `${Math.round(view.height)}px`);
+    const root = document.documentElement;
+    const keyboard = keyboardHeight(window.innerHeight, view.height, view.offsetTop);
+    root.style.setProperty("--app-height", `${Math.round(view.height)}px`);
+    root.style.setProperty("--keyboard-height", `${keyboard}px`);
+    root.classList.toggle("keyboard-up", keyboard > 0);
     if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
   };
   view.addEventListener("resize", fit);
@@ -18987,7 +19066,8 @@ function openGifPicker(query = "", target = null, beside = null) {
   picker.classList.remove("hidden");
   if (beside) placeBesideCard(picker, beside);
   $("gif-search").value = query;
-  $("gif-search").focus();
+  if (isPhoneWidth(window.innerWidth) && !beside) dropKeyboardOnPhone();
+  else $("gif-search").focus();
   renderGifResults(query);
 }
 
@@ -19005,8 +19085,10 @@ function toggleComposerMenu() {
   }
   closeFloating("composer-menu");
   closeGifPicker();
+  const phone = document.body.classList.contains("mobile-app");
+  $("cm-photo").classList.toggle("hidden", !files || !phone);
   $("cm-file").classList.toggle("hidden", !files);
-  $("cm-video").classList.toggle("hidden", !files);
+  $("cm-video").classList.toggle("hidden", !files || phone);
   $("cm-gif").classList.toggle("hidden", !files || (!gifSettings().key && !serverHasGifs()));
   $("cm-voice").classList.toggle("hidden", !voice || voiceRec.target !== null);
   $("cm-poll").classList.toggle("hidden", state.view !== "server" || !canSendPolls(state.currentServer));
@@ -19254,6 +19336,20 @@ async function sendVoiceRecording() {
   showVoiceRecorder(false);
 }
 
+function pickPhotosFromMenu() {
+  closeFloating();
+  const input = $("photo-file");
+  input.value = "";
+  input.click();
+}
+
+async function sendPickedPhotos() {
+  const input = $("photo-file");
+  const files = Array.from(input.files || []);
+  input.value = "";
+  for (const file of files) await uploadFileObject(file);
+}
+
 async function attachFromMenu(kind) {
   closeFloating();
   if (IS_TAURI && !inBrowserApp()) return attachPickedUpload(kind);
@@ -19411,11 +19507,17 @@ async function sendGif(url) {
   }
 }
 
+const MIC_ASK_WAIT_MS = 4000;
+let microphoneAllowedOnPhone = false;
+
 async function askForMicrophoneOnPhones() {
-  if (!document.body.classList.contains("mobile-app") || !navigator.mediaDevices) return;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  if (microphoneAllowedOnPhone || !document.body.classList.contains("mobile-app") || !navigator.mediaDevices) return;
+  const asked = navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
     stream.getTracks().forEach(track => track.stop());
+    microphoneAllowedOnPhone = true;
+  });
+  try {
+    await Promise.race([asked, new Promise(done => setTimeout(done, MIC_ASK_WAIT_MS))]);
   } catch {
     toast("Commy needs the microphone for voice. You can allow it in your phone's settings.");
   }
@@ -20489,9 +20591,11 @@ function wireEvents() {
   $("emoji-btn").onclick = () => {
     const picker = $("emoji-picker");
     const opening = picker.classList.contains("hidden");
+    if (opening) dropKeyboardOnPhone();
     picker.classList.toggle("hidden");
     if (opening) setPickerKind(pickerKind);
   };
+  $("message-input").addEventListener("focus", closeSheetsWhenTypingOnPhone);
   for (const tab of $("picker-tabs").querySelectorAll("button")) tab.onclick = () => setPickerKind(tab.dataset.kind);
   $("emoji-search").addEventListener("input", e => renderEmojiGrid(e.target.value));
   document.addEventListener("mousedown", e => {
@@ -20833,11 +20937,14 @@ function wireEvents() {
   };
 
   $("attach-btn").onclick = toggleComposerMenu;
+  $("cm-photo").prepend(svgIcon("photo", 18));
   $("cm-file").prepend(svgIcon("uploadFile", 18));
   $("cm-video").prepend(svgIcon("movie", 18));
   $("cm-gif").prepend(svgIcon("gifBox", 18));
   $("cm-poll").prepend(svgIcon("poll", 18));
   $("cm-voice").prepend(svgIcon("mic", 18));
+  $("cm-photo").onclick = pickPhotosFromMenu;
+  $("photo-file").onchange = sendPickedPhotos;
   $("cm-file").onclick = () => attachFromMenu("file");
   $("cm-video").onclick = () => attachFromMenu("video");
   $("cm-voice").onclick = startVoiceRecording;
@@ -22438,10 +22545,24 @@ function insertIntoComposer(text) {
   const input = $("message-input");
   const pos = input.selectionStart ?? input.value.length;
   input.value = input.value.slice(0, pos) + text + input.value.slice(pos);
-  input.focus();
+  if (!phoneSheetOpen()) input.focus();
   const next = pos + text.length;
   input.setSelectionRange(next, next);
   fitComposer(input);
+}
+
+function phoneSheetOpen() {
+  return isPhoneWidth(window.innerWidth) && [$("emoji-picker"), $("gif-picker")].some(sheet => !sheet.classList.contains("hidden"));
+}
+
+function dropKeyboardOnPhone() {
+  if (isPhoneWidth(window.innerWidth) && document.activeElement === $("message-input")) $("message-input").blur();
+}
+
+function closeSheetsWhenTypingOnPhone() {
+  if (!isPhoneWidth(window.innerWidth)) return;
+  $("emoji-picker").classList.add("hidden");
+  closeGifPicker();
 }
 
 function fitComposer(input) {
@@ -23965,6 +24086,7 @@ async function boot() {
   wirePhoneLayout();
   wireNarrowLayout();
   wireTouchMessages();
+  wireLongPressMenus();
   wireScrollDown();
   wireTalkButton();
   wirePhoneVoice();
