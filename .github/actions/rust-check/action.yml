@@ -21,7 +21,7 @@ runs:
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         key: ${{ runner.os }}
-        save-if: ${{ github.ref == 'refs/heads/main' }}
+        save-if: ${{ github.ref == 'refs/heads/main' && (runner.os != 'macOS' || github.server_url == 'https://github.com') }}
 
     - name: cargo check
       if: runner.os != 'Linux'
