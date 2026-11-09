@@ -166,6 +166,9 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Keep the runner's home folder out of the log
+        run: echo "::add-mask::$HOME"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Linux build dependencies
@@ -275,10 +278,15 @@ jobs:
     needs: build-macos
     if: github.server_url == 'https://github.com' || vars.MAC_BUILDS == 'true'
     runs-on: macos-15-intel
+    outputs:
+      signed: ${{ steps.signing.outputs.signed }}
     defaults:
       run:
         shell: bash
     steps:
+      - name: Keep the runner's home folder out of the log
+        run: echo "::add-mask::$HOME"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -304,12 +312,54 @@ jobs:
           chmod +x "$out/commy-desktop"
           lipo -info "$out/commy-desktop"
 
+      - name: Find the Developer ID certificate
+        id: signing
+        env:
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+        run: |
+          found="$(security find-identity -v -p codesigning | grep -m1 '"Developer ID Application: ' || true)"
+          if [ -z "$found" ]; then
+            echo "::warning::No Developer ID Application certificate on this Mac, so the app is ad hoc signed and not notarized"
+            exit 0
+          fi
+          echo "Signing with $(cut -d'"' -f2 <<< "$found")"
+          echo "identity=$(awk '{print $2}' <<< "$found")" >> "$GITHUB_OUTPUT"
+          if [ -z "$API_KEY_ID" ] || [ ! -f ~/.appstoreconnect/private_keys/"AuthKey_${API_KEY_ID}.p8" ]; then
+            echo "::error::Notarizing needs the APPLE_API_KEY_ID secret and its AuthKey .p8 file in ~/.appstoreconnect/private_keys on the Mac"
+            exit 1
+          fi
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
       - name: Bundle
         working-directory: apps/desktop/src-tauri
+        env:
+          IDENTITY: ${{ steps.signing.outputs.identity }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
+          if [ -n "$IDENTITY" ]; then
+            export APPLE_SIGNING_IDENTITY="$IDENTITY" APPLE_API_KEY="$API_KEY_ID" APPLE_API_ISSUER="$API_ISSUER"
+          fi
           npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" bundle \
             --ci --target universal-apple-darwin --bundles app,dmg \
             --config tauri.release.conf.json
+
+      - name: Notarize the disk image
+        if: steps.signing.outputs.signed == 'true'
+        working-directory: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+        env:
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          dmg="$(ls dmg/*.dmg)"
+          xcrun notarytool submit "$dmg" --wait \
+            --key ~/.appstoreconnect/private_keys/"AuthKey_${API_KEY_ID}.p8" --key-id "$API_KEY_ID" --issuer "$API_ISSUER"
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate macos/Commy.app
+          spctl --assess --type execute --verbose=2 macos/Commy.app
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          codesign -d --entitlements - --xml macos/Commy.app | grep -q com.apple.security.device.audio-input \
+            || { echo "::error::Commy.app is missing the microphone entitlement"; exit 1; }
 
       - name: Collect artifacts
         env:
@@ -434,6 +484,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           ON_GITHUB: ${{ github.server_url == 'https://github.com' }}
+          MAC_SIGNED: ${{ needs.macos-universal.outputs.signed }}
         run: |
           cat > notes.md <<EOF
           ## Downloads
@@ -453,9 +504,20 @@ jobs:
           | Stream Deck 7.1+ (Windows and macOS) | `commy-soundboard.streamDeckPlugin` |
           | Bots (`commy-bot`, see the [bot guide](https://git.commy.chat/commy/commy/src/branch/main/crates/commy-bot/README.md)) | `commy-bot-windows-x64.zip`, `commy-bot-macos-universal.tar.gz` or `commy-bot-linux-x64.tar.gz` |
 
+          EOF
+          if [ "$MAC_SIGNED" = true ]; then
+            cat >> notes.md <<'EOF'
+          The macOS app is signed with an Apple Developer ID and notarized by Apple. The Windows
+          build is not code signed yet: choose **More info > Run anyway** in SmartScreen.
+          EOF
+          else
+            cat >> notes.md <<'EOF'
           These builds are not code signed yet. On Windows choose **More info > Run anyway**
           in SmartScreen. On macOS right click Commy.app and choose **Open** the first time,
           or run `xattr -dr com.apple.quarantine /Applications/Commy.app`.
+          EOF
+          fi
+          cat >> notes.md <<'EOF'
           Verify downloads against `SHA256SUMS.txt`.
           EOF
           if [ "$ON_GITHUB" = true ]; then
