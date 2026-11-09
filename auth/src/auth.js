@@ -9,6 +9,7 @@ import { commyAccountDeletion } from "./account-deletion.js";
 import { androidOrigin, commyAppSignIn } from "./app-sign-in.js";
 import { appleClientSecret } from "./apple.js";
 import { hasAccess } from "./access.js";
+import { adultConfirmationField, commyAdultConfirmation, recordAdultConfirmation } from "./adult-confirmation.js";
 import { sealedAtRest } from "./at-rest.js";
 import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
@@ -27,6 +28,17 @@ import { redisRateLimitStorage } from "./rate-limit.js";
 const PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS = ["google"];
 
 const storeSessionWithoutIpOrUserAgent = async (session) => ({ data: { ...session, ipAddress: null, userAgent: null } });
+
+function refuseWithoutAccessCode(accessCode, ctx) {
+  if (!accessCode) return;
+  const cookie = ctx?.headers?.get("cookie") ?? ctx?.request?.headers.get("cookie");
+  if (!hasAccess(cookie, accessCode)) {
+    throw new APIError("FORBIDDEN", {
+      code: "ACCESS_CODE_REQUIRED",
+      message: "Creating an account needs the access code. Enter it on the sign-up page first.",
+    });
+  }
+}
 
 export function socialProviders(config) {
   const providers = {};
@@ -91,6 +103,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     commyAccountDeletion({ instanceName: config.instanceName, send, emailCodes: Boolean(config.smtp) }),
     commyAppSignIn({ accessCode: config.accessCode, turnstileSiteKey: config.turnstile?.siteKey ?? null }),
     commyEmailPreferences({ secret: config.secret, instanceName: config.instanceName, basePath: config.basePath }),
+    commyAdultConfirmation(),
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
@@ -170,6 +183,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     verification: { storeIdentifier: "hashed" },
     socialProviders: socialProviders(config),
     user: {
+      additionalFields: adultConfirmationField,
       changeEmail: {
         enabled: Boolean(config.smtp),
         sendChangeEmailConfirmation: ({ user, newEmail, url }) =>
@@ -195,14 +209,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
       user: {
         create: {
           before: async (user, ctx) => {
-            if (!config.accessCode) return;
-            const cookie = ctx?.headers?.get("cookie") ?? ctx?.request?.headers.get("cookie");
-            if (!hasAccess(cookie, config.accessCode)) {
-              throw new APIError("FORBIDDEN", {
-                code: "ACCESS_CODE_REQUIRED",
-                message: "Creating an account needs the access code. Enter it on the sign-up page first.",
-              });
-            }
+            refuseWithoutAccessCode(config.accessCode, ctx);
+            return { data: await recordAdultConfirmation(user, ctx, { required: config.adultsOnly, termsVersion: config.termsVersion }) };
           },
         },
       },

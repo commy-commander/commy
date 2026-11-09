@@ -183,6 +183,8 @@ export function loadConfig(env = process.env) {
     desktopClientIds: list(env.DEVICE_CLIENT_IDS).length > 0 ? list(env.DEVICE_CLIENT_IDS) : ["commy-desktop"],
     allowSignup: env.ALLOW_SIGNUP !== "false",
     accessCode: normalizeAccessCode(env.ACCESS_CODE) || null,
+    adultsOnly: env.ADULTS_ONLY === "true",
+    termsVersion: (env.TERMS_VERSION ?? "").trim() || null,
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
     doorbell: env.DOORBELL !== "false",
@@ -227,6 +229,7 @@ export function featureSummary(config) {
     `redis=${on(config.redisUrl)}`,
     `signup=${on(config.allowSignup)}`,
     `access_code=${on(config.accessCode)}`,
+    `adults_only=${on(config.adultsOnly)}`,
   ].join(" ");
 }
 
@@ -306,6 +309,7 @@ export function discoveryDocument(config) {
       changeEmail: Boolean(config.smtp),
       sync: Boolean(config.syncUrl),
       linkBlocklist: config.linkBlocklistSources.length > 0,
+      adultsOnly: config.adultsOnly,
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

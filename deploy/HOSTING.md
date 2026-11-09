@@ -117,6 +117,12 @@ before showing any page except the privacy policy, and the auth server refuses
 new accounts from anyone who has not entered it. Each browser asks once, then
 remembers it for 90 days.
 
+`ADULTS_ONLY=true` (the default) makes sign-up ask people to confirm they are
+18 or older and agree to the Terms. The auth server refuses new accounts without
+that confirmation and stores when it was given, plus `TERMS_VERSION` when set.
+Set it to `false` if your instance welcomes younger people and you handle their
+accounts yourself.
+
 The website serves the web app at `/web`. It uses the production relay unless
 `COMMY_RELAY_URLS` names another one; a staging site sets it to its staging
 relay so browsers meet the test builds there.
