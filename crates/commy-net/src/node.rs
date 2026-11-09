@@ -3,7 +3,7 @@ use crate::catchup::{
     CATCHUP_ALPN, HANDSHAKE_TIMEOUT,
 };
 use crate::dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
-use crate::media::{read_frame, read_frame_bytes, write_frame, MediaError, MediaHello, MediaPacket, MAX_MEDIA_FRAME, MEDIA_ALPN};
+use crate::media::{read_frame, read_frame_bytes, write_frame, MediaError, MediaHello, MediaPacket, VoiceDatagram, MAX_MEDIA_FRAME, MEDIA_ALPN};
 use crate::protocol::{Envelope, WirePayload};
 use crate::ticket::ServerTicket;
 use anyhow::{Context, Result};
@@ -21,6 +21,7 @@ use iroh_gossip::net::Gossip;
 use iroh_gossip::proto::TopicId;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -90,9 +91,18 @@ pub struct MediaChannel {
     pub incoming: mpsc::UnboundedReceiver<MediaPacket>,
     pub outgoing: mpsc::UnboundedSender<MediaPacket>,
     pub connection: Connection,
+    unordered_voice: Arc<AtomicBool>,
 }
 
+pub const VOICE_DATAGRAM_PROBE_INTERVAL: Duration = Duration::from_secs(1);
+
+const VOICE_DATAGRAM_SEND_BUFFER: usize = 8 * 1024;
+
 impl MediaChannel {
+    pub fn voice_is_unordered(&self) -> bool {
+        self.unordered_voice.load(Ordering::Relaxed)
+    }
+
     fn spawn(
         peer: [u8; 32],
         hello: MediaHello,
@@ -102,11 +112,22 @@ impl MediaChannel {
     ) -> Self {
         let (in_tx, in_rx) = mpsc::unbounded_channel();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<MediaPacket>();
+        let unordered_voice = Arc::new(AtomicBool::new(false));
+        let carries_voice = matches!(hello, MediaHello::Voice { .. });
 
         let stats_handle = connection.clone();
+        let unordered = unordered_voice.clone();
         n0_future::task::spawn(async move {
             let path = connection.clone();
             let _keep_connection_alive_for_both_pumps = connection;
+            let datagrams_in = in_tx.clone();
+            let datagrams = async {
+                if carries_voice {
+                    receive_voice_datagrams(&path, &datagrams_in, &unordered).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
             let reader = async {
                 loop {
                     match read_frame::<_, MediaPacket>(&mut recv).await {
@@ -123,13 +144,35 @@ impl MediaChannel {
                     }
                 }
             };
+            let receive = async {
+                tokio::select! {
+                    _ = reader => {}
+                    _ = datagrams => {}
+                }
+            };
             let writer = async {
                 let mut pace = VideoPacer::default();
-                while let Some(packet) = out_rx.recv().await {
+                let mut probe = n0_future::time::interval(VOICE_DATAGRAM_PROBE_INTERVAL);
+                loop {
+                    let next = if carries_voice {
+                        tokio::select! {
+                            packet = out_rx.recv() => packet,
+                            _ = probe.tick() => {
+                                send_voice_datagram(&path, &VoiceDatagram::Probe);
+                                continue;
+                            }
+                        }
+                    } else {
+                        out_rx.recv().await
+                    };
+                    let Some(packet) = next else { break };
                     let (packet, after) = skip_to_newest_queued_video(packet, &mut out_rx);
                     let paced = matches!(packet, MediaPacket::Video { .. }) && !pace.allow(&path);
                     let mut failed = None;
                     for frame in (!paced).then_some(packet).into_iter().chain(after) {
+                        if sent_unordered(&path, &unordered, &frame) {
+                            continue;
+                        }
                         if let Err(e) = write_frame(&mut send, &frame).await {
                             failed = Some(e);
                             break;
@@ -141,7 +184,7 @@ impl MediaChannel {
                     }
                 }
             };
-            tokio::join!(reader, writer);
+            tokio::join!(receive, writer);
         });
 
         Self {
@@ -150,8 +193,33 @@ impl MediaChannel {
             incoming: in_rx,
             outgoing: out_tx,
             connection: stats_handle,
+            unordered_voice,
         }
     }
+}
+
+async fn receive_voice_datagrams(connection: &Connection, incoming: &mpsc::UnboundedSender<MediaPacket>, unordered: &AtomicBool) {
+    while let Ok(bytes) = connection.read_datagram().await {
+        match VoiceDatagram::decode(&bytes) {
+            Some(VoiceDatagram::Probe) => unordered.store(true, Ordering::Relaxed),
+            Some(VoiceDatagram::Opus { seq, data }) => {
+                unordered.store(true, Ordering::Relaxed);
+                if incoming.send(MediaPacket::Opus { seq, data }).is_err() {
+                    return;
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+fn send_voice_datagram(connection: &Connection, datagram: &VoiceDatagram) -> bool {
+    datagram.encode().is_some_and(|bytes| connection.send_datagram(bytes.into()).is_ok())
+}
+
+fn sent_unordered(connection: &Connection, unordered: &AtomicBool, packet: &MediaPacket) -> bool {
+    let MediaPacket::Opus { seq, data } = packet else { return false };
+    unordered.load(Ordering::Relaxed) && send_voice_datagram(connection, &VoiceDatagram::Opus { seq: *seq, data: data.clone() })
 }
 
 fn skip_to_newest_queued_video(
@@ -1217,6 +1285,7 @@ impl CommyNode {
             let transport = iroh::endpoint::QuicTransportConfig::builder()
                 .default_path_max_idle_timeout(PATH_IDLE_TIMEOUT)
                 .default_path_keep_alive_interval(PATH_KEEP_ALIVE)
+                .datagram_send_buffer_size(VOICE_DATAGRAM_SEND_BUFFER)
                 .build();
             let builder = builder.address_lookup(lookup.clone()).transport_config(transport);
             let mut builder = builder.relay_mode(relay_mode.clone());
@@ -2393,6 +2462,85 @@ mod tests {
     }
 
     const MEET_WITHIN: Duration = Duration::from_secs(20);
+
+    async fn voice_call() -> (CommyNode, CommyNode, MediaChannel, MediaChannel) {
+        let host = CommyNode::spawn_with(None, Some(iroh::RelayMap::empty())).await.unwrap();
+        let (host, _, mut host_media, _) = host;
+        let guest = local_node().await;
+        guest.learn(host.endpoint().addr());
+        host.set_media_gate(Arc::new(|_, _| true));
+        let hello = MediaHello::Voice { user: commy_core::UserId::new(), channel: commy_core::ChannelId::new() };
+        let dialed = guest.media_dialer().connect(&host.node_id_hex(), hello).await.unwrap();
+        let answered = tokio::time::timeout(MEET_WITHIN, host_media.recv()).await.unwrap().unwrap();
+        (host, guest, dialed, answered)
+    }
+
+    async fn hear_opus(channel: &mut MediaChannel, talker: &MediaChannel, seq: u32) -> bool {
+        let deadline = n0_future::time::Instant::now() + MEET_WITHIN;
+        let mut next = seq;
+        while n0_future::time::Instant::now() < deadline {
+            talker.outgoing.send(MediaPacket::Opus { seq: next, data: vec![0x78, next as u8] }).unwrap();
+            next += 1;
+            if let Ok(Some(MediaPacket::Opus { .. })) = tokio::time::timeout(Duration::from_millis(50), channel.incoming.recv()).await {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn two_current_apps_switch_voice_to_unordered_packets() {
+        let (host, guest, mut dialed, mut answered) = voice_call().await;
+        let deadline = n0_future::time::Instant::now() + MEET_WITHIN;
+        while !(dialed.voice_is_unordered() && answered.voice_is_unordered()) {
+            assert!(n0_future::time::Instant::now() < deadline, "both sides learn the other takes unordered voice");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(hear_opus(&mut answered, &dialed, 0).await, "the host hears the guest");
+        assert!(hear_opus(&mut dialed, &answered, 1_000).await, "the guest hears the host");
+        dialed.outgoing.send(MediaPacket::InkReady).unwrap();
+        let ordered = tokio::time::timeout(MEET_WITHIN, async {
+            loop {
+                match answered.incoming.recv().await {
+                    Some(MediaPacket::InkReady) => return true,
+                    Some(_) => continue,
+                    None => return false,
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(ordered, "everything else still goes in order");
+        host.shutdown().await.ok();
+        guest.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn an_app_from_before_unordered_voice_still_hears_everything() {
+        let (host, mut host_media) = {
+            let (host, _, host_media, _) = CommyNode::spawn_with(None, Some(iroh::RelayMap::empty())).await.unwrap();
+            (host, host_media)
+        };
+        host.set_media_gate(Arc::new(|_, _| true));
+        let old = local_node().await;
+        old.learn(host.endpoint().addr());
+        let connection = old.endpoint().connect(host.endpoint().addr(), MEDIA_ALPN).await.unwrap();
+        let (mut send, mut recv) = connection.open_bi().await.unwrap();
+        let hello = MediaHello::Voice { user: commy_core::UserId::new(), channel: commy_core::ChannelId::new() };
+        write_frame(&mut send, &hello).await.unwrap();
+        let answered = tokio::time::timeout(MEET_WITHIN, host_media.recv()).await.unwrap().unwrap();
+        tokio::time::sleep(VOICE_DATAGRAM_PROBE_INTERVAL * 2).await;
+        assert!(!answered.voice_is_unordered(), "an old app never answers the probe");
+        for seq in 0..5u32 {
+            answered.outgoing.send(MediaPacket::Opus { seq, data: vec![0x78, seq as u8] }).unwrap();
+        }
+        for seq in 0..5u32 {
+            let got: MediaPacket = tokio::time::timeout(MEET_WITHIN, read_frame(&mut recv)).await.unwrap().unwrap().unwrap();
+            assert_eq!(got, MediaPacket::Opus { seq, data: vec![0x78, seq as u8] });
+        }
+        host.shutdown().await.ok();
+        old.shutdown().await.ok();
+    }
 
     #[tokio::test]
     async fn a_member_invite_still_reaches_the_server_while_its_owner_is_away() {

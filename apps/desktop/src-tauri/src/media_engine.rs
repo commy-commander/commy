@@ -40,6 +40,7 @@ pub struct VoiceSession {
     timeouts: HashMap<UserId, i64>,
     peer_silence: HashMap<UserId, Arc<AtomicI64>>,
     peers: HashMap<UserId, JoinHandle<()>>,
+    link_loss: LinkLoss,
     links: HashMap<UserId, (commy_net::node::Connection, Arc<Mutex<JitterMeter>>)>,
     dialing: HashSet<UserId>,
     linked_at: HashMap<UserId, std::time::Instant>,
@@ -95,11 +96,60 @@ impl JitterMeter {
 
 pub type SpeakingSink = Arc<dyn Fn(UserId, bool) + Send + Sync>;
 
+type LinkLoss = Arc<Mutex<HashMap<UserId, f32>>>;
+
+const LOSS_SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+const ENCODER_ADAPTS_EVERY_FRAMES: u32 = 100;
+
+#[derive(Debug, Default)]
+pub struct LossTracker {
+    last: Option<(u64, u64)>,
+    smoothed_pct: f32,
+}
+
+impl LossTracker {
+    const MIN_PACKETS_PER_SAMPLE: u64 = 20;
+    const RISE: f32 = 0.5;
+    const FALL: f32 = 0.1;
+
+    pub fn sample(&mut self, lost: u64, sent: u64) -> f32 {
+        match self.last {
+            Some((lost_before, sent_before)) if sent >= sent_before + Self::MIN_PACKETS_PER_SAMPLE => {
+                let pct = (lost.saturating_sub(lost_before) as f32 * 100.0 / (sent - sent_before) as f32).min(100.0);
+                let rate = if pct > self.smoothed_pct { Self::RISE } else { Self::FALL };
+                self.smoothed_pct += (pct - self.smoothed_pct) * rate;
+                self.last = Some((lost, sent));
+            }
+            Some((_, sent_before)) if sent >= sent_before => {}
+            _ => self.last = Some((lost, sent)),
+        }
+        self.smoothed_pct
+    }
+}
+
+fn worst_loss(link_loss: &LinkLoss) -> f32 {
+    link_loss.lock().unwrap().values().copied().fold(0.0, f32::max)
+}
+
 const SPEAKING_TICK: std::time::Duration = std::time::Duration::from_millis(50);
 
 const VOICE_FRAME_MS: u32 = 10;
 
 const SILENT_FRAMES_PER_TICK: u32 = (SPEAKING_TICK.as_millis() / VOICE_FRAME_MS as u128) as u32;
+
+enum Heard {
+    Opus(Vec<u8>),
+    Pcm(Vec<i16>),
+}
+
+fn adapt_encoder(encoder: &mut commy_audio::codec::VoiceEncoder, loss_pct: f32) {
+    let before = encoder.bitrate();
+    encoder.adapt_to_loss(loss_pct);
+    if encoder.bitrate() != before {
+        tracing::info!("voice bitrate {} kbps for {loss_pct:.1}% loss", encoder.bitrate() / 1000);
+    }
+}
 
 fn credit_silence(detector: &mut commy_media::SpeakingDetector) -> Option<bool> {
     let mut change = None;
@@ -127,7 +177,9 @@ impl VoiceSession {
         let last_activity = Arc::new(std::sync::atomic::AtomicI64::new(now()));
         let own_silence = Arc::new(AtomicI64::new(0));
         let mixer = Arc::new(Mutex::new(Mixer::new()));
+        let link_loss: LinkLoss = Arc::default();
         let seq_task = {
+            let link_loss = link_loss.clone();
             let mic_broadcast = mic_broadcast.clone();
             let last_activity = last_activity.clone();
             let on_speaking = on_speaking.clone();
@@ -155,6 +207,9 @@ impl VoiceSession {
                             if let Some(speaking) = detector.push(&pcm) {
                                 mixer.lock().unwrap().set_speaking(my_key, speaking);
                                 on_speaking(me, speaking);
+                            }
+                            if seq % ENCODER_ADAPTS_EVERY_FRAMES == 0 {
+                                adapt_encoder(&mut encoder, worst_loss(&link_loss));
                             }
                             if let Some(packet) = encoder.encode(&pcm) {
                                 let _ = mic_broadcast.send((seq, Arc::new(packet)));
@@ -190,6 +245,7 @@ impl VoiceSession {
             timeouts: HashMap::new(),
             peer_silence: HashMap::new(),
             peers: HashMap::new(),
+            link_loss,
             links: HashMap::new(),
             dialing: HashSet::new(),
             linked_at: HashMap::new(),
@@ -300,8 +356,8 @@ impl VoiceSession {
             None => self.link_joins.remove(&user),
         };
         self.links.insert(user, (media.connection.clone(), meter.clone()));
-        let MediaChannel { incoming, outgoing, .. } = media;
-        self.pump_peer(user, incoming, outgoing, meter);
+        let MediaChannel { incoming, outgoing, connection, .. } = media;
+        self.pump_peer(user, incoming, outgoing, meter, Some(connection));
     }
 
     fn pump_peer(
@@ -310,6 +366,7 @@ impl VoiceSession {
         mut incoming: mpsc::UnboundedReceiver<MediaPacket>,
         outgoing: mpsc::UnboundedSender<MediaPacket>,
         meter: Arc<Mutex<JitterMeter>>,
+        connection: Option<commy_net::node::Connection>,
     ) {
         self.dialing.remove(&user);
         let key = mixer_key(user);
@@ -323,15 +380,23 @@ impl VoiceSession {
         let on_speaking = self.on_speaking.clone();
         let silence = Arc::new(AtomicI64::new(self.timeouts.get(&user).copied().unwrap_or(0)));
         self.peer_silence.insert(user, silence.clone());
+        let link_loss = self.link_loss.clone();
 
         let task = tokio::spawn(async move {
             let mut decoder = commy_audio::codec::VoiceDecoder::new();
-            let mut last_seq: Option<u32> = None;
             let mut detector = commy_media::SpeakingDetector::default();
             let mut tick = tokio::time::interval(SPEAKING_TICK);
+            let mut loss_tick = tokio::time::interval(LOSS_SAMPLE_EVERY);
+            let mut loss = LossTracker::default();
             let mut heard_since_tick = false;
             loop {
                 tokio::select! {
+                    _ = loss_tick.tick(), if connection.is_some() => {
+                        if let Some(stats) = connection.as_ref().map(|c| c.stats()) {
+                            let pct = loss.sample(stats.lost_packets, stats.udp_tx.datagrams);
+                            link_loss.lock().unwrap().insert(user, pct);
+                        }
+                    }
                     _ = tick.tick() => {
                         if !std::mem::take(&mut heard_since_tick) {
                             if let Some(speaking) = credit_silence(&mut detector) {
@@ -344,38 +409,28 @@ impl VoiceSession {
                         if packet.is_some() && silenced(&silence) {
                             continue;
                         }
-                        let (seq, pcm) = match packet {
-                            Some(MediaPacket::Opus { seq, data }) => {
-                                heard_since_tick = true;
-                                meter.lock().unwrap().arrived(seq, std::time::Instant::now());
-                                if let Some(last) = last_seq {
-                                    let gap = seq.wrapping_sub(last);
-                                    if (2..=3).contains(&gap) {
-                                        for missing in 1..gap {
-                                            let pcm = decoder.decode(&[]);
-                                            if !deafened.load(Ordering::Relaxed) {
-                                                mixer.lock().unwrap().push(key, last.wrapping_add(missing), pcm);
-                                            }
-                                        }
-                                    }
-                                }
-                                last_seq = Some(seq);
-                                (seq, decoder.decode(&data))
-                            }
-                            Some(MediaPacket::Voice { seq, pcm }) => {
-                                heard_since_tick = true;
-                                meter.lock().unwrap().arrived(seq, std::time::Instant::now());
-                                (seq, pcm)
-                            }
+                        let (seq, heard) = match packet {
+                            Some(MediaPacket::Opus { seq, data }) => (seq, Heard::Opus(data)),
+                            Some(MediaPacket::Voice { seq, pcm }) => (seq, Heard::Pcm(pcm)),
                             Some(_) => continue,
                             None => break,
                         };
-                        if let Some(speaking) = detector.push(&pcm) {
+                        heard_since_tick = true;
+                        meter.lock().unwrap().arrived(seq, std::time::Instant::now());
+                        let level = match &heard {
+                            Heard::Opus(data) => decoder.decode(data),
+                            Heard::Pcm(pcm) => pcm.clone(),
+                        };
+                        if let Some(speaking) = detector.push(&level) {
                             mixer.lock().unwrap().set_speaking(key, speaking);
                             on_speaking(user, speaking);
                         }
                         if !deafened.load(Ordering::Relaxed) {
-                            mixer.lock().unwrap().push(key, seq, pcm);
+                            let mut mixer = mixer.lock().unwrap();
+                            match heard {
+                                Heard::Opus(data) => mixer.push_opus(key, seq, data),
+                                Heard::Pcm(pcm) => mixer.push(key, seq, pcm),
+                            }
                         }
                     }
                     frame = mic_rx.recv() => match frame {
@@ -390,6 +445,7 @@ impl VoiceSession {
                 }
             }
             tracing::info!("voice link with {user} ended");
+            link_loss.lock().unwrap().remove(&user);
             mixer.lock().unwrap().remove_peer(key);
             if detector.reset() {
                 mixer.lock().unwrap().set_speaking(key, false);
@@ -1041,12 +1097,16 @@ mod tests {
     fn a_stream_audio_sink_takes_its_own_volume_and_leaves_the_mixer_when_dropped() {
         let mixer = Arc::new(Mutex::new(Mixer::new()));
         let sharer = UserId::new();
-        mixer.lock().unwrap().push(mixer_key(sharer), 0, vec![100; commy_audio::FRAME_SIZE]);
+        for seq in 0..3 {
+            mixer.lock().unwrap().push(mixer_key(sharer), seq, vec![100; commy_audio::FRAME_SIZE]);
+        }
         let sink = StreamAudioSink::in_call(mixer.clone(), sharer, 0.5);
         sink.push(0, vec![1000; commy_audio::FRAME_SIZE]);
+        sink.push(1, vec![1000; commy_audio::FRAME_SIZE]);
         assert_eq!(mixer.lock().unwrap().next_frame()[0], 600);
         sink.set_gain(0.0);
-        sink.push(1, vec![1000; commy_audio::FRAME_SIZE]);
+        sink.push(2, vec![1000; commy_audio::FRAME_SIZE]);
+        mixer.lock().unwrap().set_peer_gain(mixer_key(sharer), 0.0);
         assert_eq!(mixer.lock().unwrap().next_frame()[0], 0);
         assert_eq!(mixer.lock().unwrap().peer_count(), 2);
         drop(sink);
@@ -1076,7 +1136,7 @@ mod link_tests {
         let (in_tx, in_rx) = mpsc::unbounded_channel();
         let (out_tx, out_rx) = mpsc::unbounded_channel();
         std::mem::forget(out_rx);
-        session.pump_peer(user, in_rx, out_tx, Default::default());
+        session.pump_peer(user, in_rx, out_tx, Default::default(), None);
         in_tx
     }
 
@@ -1130,11 +1190,13 @@ mod link_tests {
         assert_eq!(mixer.lock().unwrap().peer_count(), 0, "their frames are dropped");
         session.set_timeouts(HashMap::new());
         wire.send(voice(5, 200)).unwrap();
+        wire.send(voice(6, 200)).unwrap();
         until(|| mixer.lock().unwrap().peer_count() == 1).await;
-        assert_eq!(mixer.lock().unwrap().next_frame()[0], 200);
+        until(|| mixer.lock().unwrap().next_frame()[0] == 200).await;
         let past = chrono::Utc::now().timestamp_millis() - 1;
         session.set_timeouts(HashMap::from([(loud, past)]));
-        wire.send(voice(6, 150)).unwrap();
+        wire.send(voice(7, 150)).unwrap();
+        wire.send(voice(8, 150)).unwrap();
         until(|| mixer.lock().unwrap().next_frame()[0] == 150).await;
     }
 
@@ -1181,8 +1243,62 @@ mod link_tests {
         let new = link(&mut session, friend);
         assert_eq!(mixer.lock().unwrap().peer_count(), 0, "the old link's audio is gone");
         new.send(voice(0, 200)).unwrap();
+        new.send(voice(1, 200)).unwrap();
         until(|| mixer.lock().unwrap().peer_count() == 1).await;
-        assert_eq!(mixer.lock().unwrap().next_frame()[0], 200);
+        until(|| mixer.lock().unwrap().next_frame()[0] == 200).await;
+    }
+
+    #[test]
+    fn loss_rises_quickly_and_settles_slowly() {
+        let mut loss = LossTracker::default();
+        assert_eq!(loss.sample(0, 100), 0.0);
+        assert_eq!(loss.sample(5, 105), 0.0, "too few packets to judge");
+        let risen = loss.sample(20, 200);
+        assert!((risen - 10.0).abs() < 0.01, "{risen}");
+        let settled = loss.sample(20, 300);
+        assert!(settled > 8.0 && settled < risen, "{settled}");
+        assert_eq!(loss.sample(0, 0), settled, "restarted counters start a new baseline");
+        assert!(loss.sample(100, 20) <= 100.0);
+    }
+
+    #[test]
+    fn the_worst_link_sets_the_protection_for_everyone() {
+        let link_loss: LinkLoss = Arc::default();
+        assert_eq!(worst_loss(&link_loss), 0.0);
+        link_loss.lock().unwrap().insert(UserId::new(), 2.0);
+        link_loss.lock().unwrap().insert(UserId::new(), 12.0);
+        assert_eq!(worst_loss(&link_loss), 12.0);
+        let mut encoder = commy_audio::codec::VoiceEncoder::new();
+        adapt_encoder(&mut encoder, worst_loss(&link_loss));
+        assert_eq!(encoder.bitrate(), commy_audio::codec::LOSSY_VOICE_BITRATE);
+    }
+
+    #[tokio::test]
+    async fn a_lossy_friend_is_heard_through_concealment() {
+        let mut session = session();
+        let friend = UserId::new();
+        let wire = link(&mut session, friend);
+        let mut enc = commy_audio::codec::VoiceEncoder::new();
+        let tone = |seq: u32| -> Vec<i16> {
+            (0..commy_audio::FRAME_SIZE)
+                .map(|i| ((((seq as usize * commy_audio::FRAME_SIZE + i) as f32) / 48_000.0 * 220.0 * std::f32::consts::TAU).sin() * 8_000.0) as i16)
+                .collect()
+        };
+        for seq in 0..12u32 {
+            let data = enc.encode(&tone(seq)).unwrap();
+            if seq != 8 {
+                wire.send(MediaPacket::Opus { seq, data }).unwrap();
+            }
+        }
+        let mixer = session.mixer.clone();
+        until(|| mixer.lock().unwrap().peer_count() == 1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let quiet_frames = (0..11)
+            .map(|_| mixer.lock().unwrap().next_frame())
+            .skip(3)
+            .filter(|pcm| pcm.iter().map(|s| s.unsigned_abs()).max().unwrap() < 500)
+            .count();
+        assert_eq!(quiet_frames, 0, "the lost frame is filled in, not dropped to silence");
     }
 }
 

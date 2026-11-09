@@ -75,6 +75,10 @@ impl Mixer {
         self.peers.entry(peer).or_default().push(seq, pcm);
     }
 
+    pub fn push_opus(&mut self, peer: u64, seq: u32, packet: Vec<u8>) {
+        self.peers.entry(peer).or_default().push_opus(seq, packet);
+    }
+
     pub fn remove_peer(&mut self, peer: u64) {
         self.peers.remove(&peer);
         self.priority_talking.remove(&peer);
@@ -172,6 +176,12 @@ mod tests {
         vec![value; FRAME_SIZE]
     }
 
+    fn cushioned(mixer: &mut Mixer, peer: u64, pcm: Vec<i16>) {
+        for seq in 0..crate::jitter::MIN_CUSHION_FRAMES as u32 {
+            mixer.push(peer, seq, pcm.clone());
+        }
+    }
+
     #[test]
     fn empty_mixer_outputs_silence() {
         let mut mixer = Mixer::new();
@@ -181,20 +191,20 @@ mod tests {
     #[test]
     fn two_peers_are_summed() {
         let mut mixer = Mixer::new();
-        mixer.push(1, 0, frame(100));
-        mixer.push(2, 0, frame(-30));
+        cushioned(&mut mixer, 1, frame(100));
+        cushioned(&mut mixer, 2, frame(-30));
         assert_eq!(mixer.next_frame(), frame(70));
     }
 
     #[test]
     fn overflow_is_held_under_full_scale() {
         let mut mixer = Mixer::new();
-        mixer.push(1, 0, frame(i16::MAX));
-        mixer.push(2, 0, frame(i16::MAX));
+        for peer in [1, 2] {
+            mixer.push(peer, 0, frame(i16::MAX));
+            mixer.push(peer, 1, frame(i16::MIN));
+        }
         let out = mixer.next_frame();
         assert!(out.iter().all(|s| *s > 25_000), "{}", out[0]);
-        mixer.push(1, 1, frame(i16::MIN));
-        mixer.push(2, 1, frame(i16::MIN));
         let out = mixer.next_frame();
         assert!(out.iter().all(|s| *s < -25_000), "{}", out[0]);
     }
@@ -203,10 +213,10 @@ mod tests {
     fn master_volume_scales_output() {
         let mut mixer = Mixer::new();
         mixer.set_master(0.5);
-        mixer.push(1, 0, frame(1000));
+        cushioned(&mut mixer, 1, frame(1000));
         assert_eq!(mixer.next_frame(), frame(500));
         mixer.set_master(0.0);
-        mixer.push(1, 1, frame(1000));
+        mixer.push(1, 2, frame(1000));
         assert_eq!(mixer.next_frame(), frame(0));
         mixer.set_master(10.0);
         assert_eq!(mixer.master(), volume_gain(MAX_VOLUME));
@@ -260,7 +270,7 @@ mod tests {
     fn a_boosted_quiet_voice_is_really_louder() {
         let mut mixer = Mixer::new();
         mixer.set_peer_gain(1, 2.0);
-        mixer.push(1, 0, sine(0, 2_000.0));
+        cushioned(&mut mixer, 1, sine(0, 2_000.0));
         let peak = mixer.next_frame().iter().map(|s| s.unsigned_abs()).max().unwrap();
         assert!(peak > 6_000, "{peak}");
     }
@@ -287,9 +297,20 @@ mod tests {
         let mut mixer = Mixer::new();
         mixer.set_peer_gain(1, 2.0);
         mixer.set_peer_gain(2, 0.0);
-        mixer.push(1, 0, frame(100));
-        mixer.push(2, 0, frame(5000));
+        cushioned(&mut mixer, 1, frame(100));
+        cushioned(&mut mixer, 2, frame(5000));
         assert_eq!(mixer.next_frame(), frame((100.0 * volume_gain(2.0)).round() as i16));
+    }
+
+    #[test]
+    fn a_voice_packet_is_decoded_at_playout() {
+        let mut enc = commy_audio::codec::VoiceEncoder::new();
+        let mut mixer = Mixer::new();
+        for seq in 0..10u32 {
+            mixer.push_opus(1, seq, enc.encode(&sine(seq as usize, 8_000.0)).unwrap());
+        }
+        let loudest = (0..10).flat_map(|_| mixer.next_frame()).map(|s| s.unsigned_abs()).max().unwrap();
+        assert!(loudest > 4_000, "{loudest}");
     }
 
     #[test]
@@ -328,9 +349,9 @@ mod tests {
         mixer.set_speaking(1, true);
         settle(&mut mixer, 40);
         assert!((mixer.duck_level() - PRIORITY_DUCK_GAIN).abs() < 1e-6);
-        mixer.push(1, 0, frame(1000));
-        mixer.push(2, 0, frame(1000));
-        mixer.push(3, 0, frame(1000));
+        for peer in 1..=3 {
+            cushioned(&mut mixer, peer, frame(1000));
+        }
         let mixed = mixer.next_frame()[0] as f32;
         let expected = 1000.0 + 1000.0 * 0.5 * PRIORITY_DUCK_GAIN + 1000.0 * PRIORITY_DUCK_GAIN;
         assert!((mixed - expected).abs() <= 2.0, "{mixed} vs {expected}");

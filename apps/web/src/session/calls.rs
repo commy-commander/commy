@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use chrono::Utc;
-use commy_audio::codec::{VoiceDecoder, VoiceEncoder};
+use commy_audio::codec::{ArrivalOrderDecoder, VoiceEncoder};
 use commy_audio::speaking::{frame_has_signal, SpeakingDetector};
 use commy_core::dm::{CallSignal, DmAction, DmMessage};
 use commy_core::{ChannelId, ServerEvent, ServerId, UserId};
@@ -69,7 +69,7 @@ struct Link {
 
 struct Peer {
     node: String,
-    decoder: VoiceDecoder,
+    decoder: ArrivalOrderDecoder,
     generation: u64,
     out: Option<mpsc::UnboundedSender<MediaPacket>>,
     connection: Option<Connection>,
@@ -86,7 +86,7 @@ impl Peer {
     fn new(node: &str) -> Self {
         Self {
             node: node.to_string(),
-            decoder: VoiceDecoder::new(),
+            decoder: ArrivalOrderDecoder::new(),
             generation: 0,
             out: None,
             connection: None,
@@ -852,7 +852,7 @@ impl Session {
             peer.out = Some(outgoing);
             peer.linked_at = Some(web_time::Instant::now());
             peer.join = joined;
-            peer.decoder = VoiceDecoder::new();
+            peer.decoder = ArrivalOrderDecoder::new();
             generation
         };
         let this = self.clone();
@@ -878,20 +878,22 @@ impl Session {
         let deafened = voice.deafened || gated;
         let peer = voice.link.as_mut().and_then(|link| link.peers.get_mut(&user)).filter(|peer| peer.generation == generation);
         let Some(peer) = peer else { return false };
-        let pcm = match packet {
-            MediaPacket::Opus { data, .. } => peer.decoder.decode(&data),
-            MediaPacket::Voice { pcm, .. } => pcm,
+        let frames = match packet {
+            MediaPacket::Opus { seq, data } => peer.decoder.decode(seq, &data),
+            MediaPacket::Voice { pcm, .. } => vec![pcm],
             _ => return true,
         };
         peer.heard_ms = now;
         peer.frames_in += 1;
-        let change = peer.theirs.push(&pcm);
+        let change = frames.iter().filter_map(|pcm| peer.theirs.push(pcm)).last();
         drop(voice);
         if let Some(speaking) = change {
             self.speaking(user, speaking);
         }
         if !deafened {
-            self.host.play_voice(&user.to_string(), &pcm);
+            for pcm in &frames {
+                self.host.play_voice(&user.to_string(), pcm);
+            }
         }
         true
     }

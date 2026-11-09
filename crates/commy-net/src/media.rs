@@ -48,6 +48,22 @@ pub enum MediaPacket {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoiceDatagram {
+    Probe,
+    Opus { seq: u32, data: Vec<u8> },
+}
+
+impl VoiceDatagram {
+    pub fn encode(&self) -> Option<Vec<u8>> {
+        postcard::to_stdvec(self).ok()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        postcard::from_bytes(bytes).ok()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InkMark {
     Point { x: u16, y: u16 },
     Line { stroke: u32, points: Vec<[u16; 2]> },
@@ -219,6 +235,17 @@ mod tests {
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::InkAllowed { on: true }).unwrap()), 6);
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::Ink { mark: InkMark::Clear }).unwrap()), 7);
         assert_eq!(wire_tag(postcard::to_stdvec(&MediaPacket::InkFrom { user, mark: InkMark::Clear }).unwrap()), 8);
+    }
+
+    #[test]
+    fn voice_datagrams_roundtrip_and_garbage_is_ignored() {
+        assert_eq!(VoiceDatagram::Probe.encode().unwrap(), vec![0]);
+        let opus = VoiceDatagram::Opus { seq: 300, data: vec![0x78, 1, 2] };
+        let bytes = opus.encode().unwrap();
+        assert_eq!(bytes[0], 1);
+        assert_eq!(VoiceDatagram::decode(&bytes), Some(opus));
+        assert_eq!(VoiceDatagram::decode(&[9, 9, 9]), None);
+        assert_eq!(VoiceDatagram::decode(&[]), None);
     }
 
     #[test]

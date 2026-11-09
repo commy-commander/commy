@@ -3,7 +3,13 @@ use rusty_opus::{Application, OpusDecoder, OpusEncoder};
 use crate::{FRAME_SIZE, SAMPLE_RATE};
 
 pub const VOICE_BITRATE: i32 = 32_000;
+pub const LOSSY_VOICE_BITRATE: i32 = 24_000;
+pub const HEAVY_LOSS_VOICE_BITRATE: i32 = 16_000;
 pub const STREAM_AUDIO_BITRATE: i32 = 96_000;
+pub const MIN_EXPECTED_LOSS_PCT: i32 = 5;
+pub const MAX_EXPECTED_LOSS_PCT: i32 = 30;
+const LOSSY_FROM_PCT: f32 = 5.0;
+const HEAVY_LOSS_FROM_PCT: f32 = 15.0;
 const RFC6716_MAX_PACKET_BYTES: usize = 1275;
 
 pub struct VoiceEncoder {
@@ -18,7 +24,24 @@ impl VoiceEncoder {
     }
 
     pub fn with_bitrate(bitrate: i32) -> Self {
-        Self::tuned(Application::Voip, rusty_opus::SignalType::Voice, bitrate)
+        let mut voice = Self::tuned(Application::Voip, rusty_opus::SignalType::Voice, bitrate);
+        voice.encoder.use_inband_fec = true;
+        voice.encoder.packet_loss_perc = MIN_EXPECTED_LOSS_PCT;
+        voice
+    }
+
+    pub fn adapt_to_loss(&mut self, loss_pct: f32) {
+        let loss = if loss_pct.is_finite() { loss_pct.max(0.0) } else { 0.0 };
+        self.encoder.packet_loss_perc = (loss.ceil() as i32).clamp(MIN_EXPECTED_LOSS_PCT, MAX_EXPECTED_LOSS_PCT);
+        self.encoder.bitrate_bps = bitrate_for_loss(loss);
+    }
+
+    pub fn bitrate(&self) -> i32 {
+        self.encoder.bitrate_bps
+    }
+
+    pub fn expected_loss_pct(&self) -> i32 {
+        self.encoder.packet_loss_perc
     }
 
     pub fn for_stream_audio() -> Self {
@@ -43,6 +66,16 @@ impl VoiceEncoder {
         }
         let len = self.encoder.encode(&self.input, FRAME_SIZE, &mut self.output).ok()?;
         Some(self.output[..len].to_vec())
+    }
+}
+
+pub fn bitrate_for_loss(loss_pct: f32) -> i32 {
+    if loss_pct >= HEAVY_LOSS_FROM_PCT {
+        HEAVY_LOSS_VOICE_BITRATE
+    } else if loss_pct >= LOSSY_FROM_PCT {
+        LOSSY_VOICE_BITRATE
+    } else {
+        VOICE_BITRATE
     }
 }
 
@@ -75,7 +108,21 @@ impl VoiceDecoder {
     }
 
     pub fn decode(&mut self, packet: &[u8]) -> Vec<i16> {
-        match self.decoder.decode(packet, FRAME_SIZE, &mut self.output) {
+        let decoded = self.decoder.decode(packet, FRAME_SIZE, &mut self.output);
+        self.to_pcm(decoded)
+    }
+
+    pub fn conceal(&mut self) -> Vec<i16> {
+        self.decode(&[])
+    }
+
+    pub fn recover_from_next(&mut self, next_packet: &[u8]) -> Vec<i16> {
+        let decoded = self.decoder.decode_fec(next_packet, FRAME_SIZE, &mut self.output);
+        self.to_pcm(decoded)
+    }
+
+    fn to_pcm(&self, decoded: Result<usize, rusty_opus::Error>) -> Vec<i16> {
+        match decoded {
             Ok(n) => self.output[..n.min(FRAME_SIZE)]
                 .iter()
                 .map(|&s| (soft_limit(s) * 32767.0) as i16)
@@ -84,6 +131,47 @@ impl VoiceDecoder {
                 .collect(),
             Err(_) => vec![0; FRAME_SIZE],
         }
+    }
+}
+
+const MAX_FILLED_GAP: u32 = 3;
+const RESTARTED_STREAM_GAP: u32 = 50;
+
+#[derive(Debug, Default)]
+pub struct ArrivalOrderDecoder {
+    decoder: VoiceDecoder,
+    last_seq: Option<u32>,
+}
+
+impl ArrivalOrderDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn decode(&mut self, seq: u32, packet: &[u8]) -> Vec<Vec<i16>> {
+        let mut frames = Vec::new();
+        if let Some(last) = self.last_seq {
+            let ahead = seq.wrapping_sub(last);
+            let behind = last.wrapping_sub(seq);
+            if ahead == 0 || (ahead > u32::MAX / 2 && behind <= RESTARTED_STREAM_GAP) {
+                return frames;
+            }
+            if (2..=MAX_FILLED_GAP + 1).contains(&ahead) {
+                for _ in 2..ahead {
+                    frames.push(self.decoder.conceal());
+                }
+                frames.push(self.decoder.recover_from_next(packet));
+            }
+        }
+        self.last_seq = Some(seq);
+        frames.push(self.decoder.decode(packet));
+        frames
+    }
+}
+
+impl std::fmt::Debug for VoiceDecoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceDecoder").finish_non_exhaustive()
     }
 }
 
@@ -158,6 +246,86 @@ mod tests {
         let concealed = dec.decode(&[]);
         assert_eq!(concealed.len(), FRAME_SIZE);
         assert!(energy(&concealed) > 0.0, "concealment keeps the voice going");
+    }
+
+    fn speechlike(frame: usize) -> Vec<i16> {
+        (0..FRAME_SIZE)
+            .map(|i| {
+                let t = (frame * FRAME_SIZE + i) as f32 / SAMPLE_RATE as f32;
+                let syllable = 0.6 + 0.4 * (t * 4.0 * std::f32::consts::TAU).sin();
+                let voiced = (t * 180.0 * std::f32::consts::TAU).sin() + 0.5 * (t * 360.0 * std::f32::consts::TAU).sin() + 0.25 * (t * 720.0 * std::f32::consts::TAU).sin();
+                (voiced * syllable * 6000.0) as i16
+            })
+            .collect()
+    }
+
+    fn error_energy(a: &[i16], b: &[i16]) -> f64 {
+        a.iter().zip(b).map(|(x, y)| (*x as f64 - *y as f64).powi(2)).sum::<f64>() / a.len() as f64
+    }
+
+    #[test]
+    fn voice_packets_carry_a_backup_of_the_frame_before() {
+        let mut enc = VoiceEncoder::new();
+        let packets: Vec<Vec<u8>> = (0..120).map(|f| enc.encode(&speechlike(f)).unwrap()).collect();
+        let lost = 100;
+        let mut reference = VoiceDecoder::new();
+        let mut recovered = VoiceDecoder::new();
+        let mut concealed = VoiceDecoder::new();
+        for p in &packets[..lost] {
+            reference.decode(p);
+            recovered.decode(p);
+            concealed.decode(p);
+        }
+        let truth = reference.decode(&packets[lost]);
+        let rebuilt = recovered.recover_from_next(&packets[lost + 1]);
+        let guessed = concealed.conceal();
+        assert!(energy(&rebuilt) > 0.0);
+        assert!(
+            error_energy(&truth, &rebuilt) < error_energy(&truth, &guessed),
+            "the backup rebuilds the lost frame closer than a guess: {} vs {}",
+            error_energy(&truth, &rebuilt),
+            error_energy(&truth, &guessed)
+        );
+        assert_eq!(recovered.decode(&packets[lost + 1]).len(), FRAME_SIZE);
+    }
+
+    #[test]
+    fn arrival_order_decoding_fills_short_gaps_and_drops_late_packets() {
+        let mut enc = VoiceEncoder::new();
+        let packets: Vec<Vec<u8>> = (0..10).map(|f| enc.encode(&speechlike(f)).unwrap()).collect();
+        let mut dec = ArrivalOrderDecoder::new();
+        assert_eq!(dec.decode(0, &packets[0]).len(), 1);
+        assert_eq!(dec.decode(1, &packets[1]).len(), 1);
+        assert_eq!(dec.decode(3, &packets[3]).len(), 2, "one lost frame is rebuilt");
+        assert!(dec.decode(2, &packets[2]).is_empty(), "the late copy is dropped");
+        assert!(dec.decode(3, &packets[3]).is_empty(), "so is a duplicate");
+        assert_eq!(dec.decode(6, &packets[6]).len(), 3);
+        assert_eq!(dec.decode(9_000, &packets[7]).len(), 1, "a long gap is not filled");
+        assert_eq!(dec.decode(4, &packets[8]).len(), 1, "a restarted sender is heard");
+        assert!(dec.decode(u32::MAX, &packets[9]).is_empty());
+    }
+
+    #[test]
+    fn a_lossy_link_gets_more_protection_and_a_lower_bitrate() {
+        let mut enc = VoiceEncoder::new();
+        assert_eq!(enc.bitrate(), VOICE_BITRATE);
+        assert_eq!(enc.expected_loss_pct(), MIN_EXPECTED_LOSS_PCT);
+        enc.adapt_to_loss(8.2);
+        assert_eq!(enc.bitrate(), LOSSY_VOICE_BITRATE);
+        assert_eq!(enc.expected_loss_pct(), 9);
+        enc.adapt_to_loss(60.0);
+        assert_eq!(enc.bitrate(), HEAVY_LOSS_VOICE_BITRATE);
+        assert_eq!(enc.expected_loss_pct(), MAX_EXPECTED_LOSS_PCT);
+        enc.adapt_to_loss(f32::NAN);
+        assert_eq!(enc.bitrate(), VOICE_BITRATE);
+        assert_eq!(enc.expected_loss_pct(), MIN_EXPECTED_LOSS_PCT);
+        enc.adapt_to_loss(-3.0);
+        assert_eq!(enc.bitrate(), VOICE_BITRATE);
+        let mut dec = VoiceDecoder::new();
+        enc.adapt_to_loss(20.0);
+        let sizes: Vec<usize> = (0..50).map(|f| enc.encode(&speechlike(f)).unwrap()).inspect(|p| assert_eq!(dec.decode(p).len(), FRAME_SIZE)).map(|p| p.len()).collect();
+        let avg = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
+        assert!(avg < 60.0, "heavy loss packets average {avg} bytes");
     }
 
     #[test]
