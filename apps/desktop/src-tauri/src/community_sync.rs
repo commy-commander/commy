@@ -360,6 +360,7 @@ async fn tend(handle: &AppHandle) {
         });
     }
     refresh(handle);
+    crate::sync_eraser::tend(&app);
     crate::dm_sync::tend(handle);
     share_keys(&app);
     release_parked(handle);
@@ -500,7 +501,7 @@ fn stored(handle: &AppHandle, server: ServerId, message: MessageId) {
     }
 }
 
-fn given_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
+pub(crate) fn given_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
     invited_key(server).or_else(|| crate::account_log::community_key(app, server))
 }
 
@@ -803,25 +804,32 @@ fn greet(handle: &AppHandle, server: ServerId) {
     });
 }
 
-pub async fn publish_now(server: ServerId, payload: &WirePayload) -> bool {
-    let Some(lane) = streams::lane_of_payload(payload) else { return false };
+pub async fn publish_now(server: ServerId, payload: &WirePayload) -> Vec<(StreamId, u64)> {
+    let Some(lane) = streams::lane_of_payload(payload) else { return Vec::new() };
     let key_event = streams::event_of(payload).is_none_or(|(event, _)| streams::is_key_event(event));
-    let Some(plain) = streams::encode_entry(payload) else { return false };
+    let Some(plain) = streams::encode_entry(payload) else { return Vec::new() };
     let sends = {
         let mut guard = LIVE.lock().unwrap();
-        let Some(live) = guard.as_mut() else { return false };
+        let Some(live) = guard.as_mut() else { return Vec::new() };
         let sends = targets(live, server, lane, key_event);
         if !sends.is_empty() {
             live.note_echo(digest(&plain));
         }
         sends
     };
-    let mut stored = !sends.is_empty();
+    let mut stored = Vec::new();
     for (stream, client) in sends {
-        let sent = tokio::time::timeout(PUBLISH_WAIT, sync_link::append(client, stream, plain.clone())).await;
-        stored &= matches!(sent, Ok(Ok(_)));
+        if let Ok(Ok(seq)) = tokio::time::timeout(PUBLISH_WAIT, sync_link::append(client, stream, plain.clone())).await {
+            stored.push((stream, seq));
+        }
     }
     stored
+}
+
+pub fn followed_streams() -> HashMap<ServerId, Vec<commy_sync::StreamKeys>> {
+    let guard = LIVE.lock().unwrap();
+    let Some(live) = guard.as_ref() else { return HashMap::new() };
+    live.communities.iter().map(|(sid, community)| (*sid, community.wants.values().map(|want| want.keys.clone()).collect())).collect()
 }
 
 pub fn wake_keys(server: ServerId, private: Option<commy_core::ChannelId>) -> Option<commy_sync::StreamKeys> {

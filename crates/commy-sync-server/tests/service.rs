@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use commy_sync::stream::{StreamSecret, APPEND_NONCE_BYTES};
 use commy_sync::wake::{wake_day, WakeForget, WakeRegister, WakeRing, WakeTag, MAX_RING_TAGS};
-use commy_sync::wire::{Blob, Bytes, ClientFrame, ErrorCode, ServerFrame, MAX_STREAMS_PER_CONNECTION};
-use commy_sync::{SyncClient, SyncEvent};
+use commy_sync::errands::{self, Errand, Outcome, OwnerWork};
+use commy_sync::wire::{Blob, Bytes, ClientFrame, ErrorCode, ServerFrame, ERASE_EVERYTHING, MAX_STREAMS_PER_CONNECTION};
+use commy_sync::{Eraser, SyncClient, SyncEvent};
 use commy_sync_server::config::Config;
 use commy_sync_server::limits::Rate;
 use commy_sync_server::store::Store;
@@ -469,4 +470,96 @@ async fn a_last_word_is_heard_when_a_connection_drops_but_not_after_a_close() {
     assert_eq!(next_signal(&mut heard).await, b"here".to_vec(), "a closed stream left no last word behind");
     drop(speaker);
     assert_eq!(next_signal(&mut heard).await, b"later".to_vec(), "the client hands its last word over after the greeting");
+}
+
+async fn filled(url: &str, keys: &commy_sync::StreamKeys, count: u32) -> SyncClient {
+    let (writer, _events) = SyncClient::spawn(url.to_string());
+    writer.follow(keys.clone(), 0);
+    for i in 0..count {
+        writer.append(keys.id, i.to_le_bytes().to_vec()).await.unwrap();
+    }
+    writer
+}
+
+async fn history(url: &str, keys: &commy_sync::StreamKeys) -> Vec<u64> {
+    let (reader, mut events) = SyncClient::spawn(url.to_string());
+    reader.follow(keys.clone(), 0);
+    caught_up(&mut events).await.into_iter().map(|(seq, _)| seq).collect()
+}
+
+fn work(keys: &commy_sync::StreamKeys, owner: [u8; 32], errand: Errand) -> OwnerWork {
+    OwnerWork { keys: keys.clone(), eraser: Eraser::derive(&owner, &keys.id), errand }
+}
+
+#[tokio::test]
+async fn the_owner_erases_a_stream_and_nobody_else_can() {
+    let (url, _) = start().await;
+    let (owner, member) = ([1u8; 32], [2u8; 32]);
+    let channel = StreamSecret::random().keys();
+    let state = StreamSecret::random().keys();
+    let _writers = (filled(&url, &channel, 5).await, filled(&url, &state, 4).await);
+
+    let claimed = errands::run(&url, vec![work(&channel, owner, Errand::Claim), work(&state, owner, Errand::Claim)]).await.unwrap();
+    assert_eq!(claimed, vec![(channel.id, Outcome::Done), (state.id, Outcome::Done)]);
+
+    let tried = errands::run(&url, vec![work(&channel, member, Errand::Erase { through: ERASE_EVERYTHING })]).await.unwrap();
+    assert_eq!(tried, vec![(channel.id, Outcome::Theirs)], "a member holds the stream keys but not the owner's eraser");
+    assert_eq!(history(&url, &channel).await, vec![1, 2, 3, 4, 5]);
+
+    let erased = errands::run(&url, vec![
+        work(&channel, owner, Errand::Erase { through: ERASE_EVERYTHING }),
+        work(&state, owner, Errand::Erase { through: 3 }),
+    ])
+    .await
+    .unwrap();
+    assert_eq!(erased, vec![(channel.id, Outcome::Done), (state.id, Outcome::Done)]);
+    assert!(history(&url, &channel).await.is_empty(), "every message is gone from the service");
+    assert_eq!(history(&url, &state).await, vec![4], "the deletion notice stays for members who were away");
+}
+
+#[tokio::test]
+async fn an_unclaimed_stream_is_claimed_when_its_owner_erases_it() {
+    let (url, _) = start().await;
+    let keys = StreamSecret::random().keys();
+    let _writer = filled(&url, &keys, 3).await;
+    let erased = errands::run(&url, vec![work(&keys, [1; 32], Errand::Erase { through: ERASE_EVERYTHING })]).await.unwrap();
+    assert_eq!(erased, vec![(keys.id, Outcome::Done)]);
+    assert!(history(&url, &keys).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_released_stream_passes_to_the_next_owner() {
+    let (url, _) = start().await;
+    let (old, new) = ([1u8; 32], [2u8; 32]);
+    let keys = StreamSecret::random().keys();
+    assert_eq!(errands::run(&url, vec![work(&keys, old, Errand::Claim)]).await.unwrap(), vec![(keys.id, Outcome::Done)]);
+    assert_eq!(errands::run(&url, vec![work(&keys, new, Errand::Claim)]).await.unwrap(), vec![(keys.id, Outcome::Theirs)]);
+    assert_eq!(errands::run(&url, vec![work(&keys, new, Errand::Release)]).await.unwrap(), vec![(keys.id, Outcome::Theirs)], "only the holder can let go");
+    assert_eq!(errands::run(&url, vec![work(&keys, old, Errand::Release)]).await.unwrap(), vec![(keys.id, Outcome::Done)]);
+    assert_eq!(errands::run(&url, vec![work(&keys, new, Errand::Claim)]).await.unwrap(), vec![(keys.id, Outcome::Done)]);
+}
+
+#[tokio::test]
+async fn owner_requests_must_be_fresh_and_prove_the_stream() {
+    let (url, _) = start().await;
+    let keys = StreamSecret::random().keys();
+    let other = StreamSecret::random().keys();
+    let eraser = Eraser::derive(&[1; 32], &keys.id);
+    let mut socket = raw(&url).await;
+
+    let ClientFrame::Claim { eraser: public, sig, .. } = ClientFrame::claim(&keys, &eraser) else { unreachable!() };
+    let wrong = ClientFrame::Claim { stream: keys.id, write: Bytes(other.write_public()), read: Bytes(keys.read_token()), eraser: public.clone(), sig: sig.clone() };
+    send(&mut socket, &wrong).await;
+    assert_eq!(receive(&mut socket).await, ServerFrame::stream_error(ErrorCode::BadStream, keys.id), "claiming needs the stream's own keys");
+    let forged = ClientFrame::Claim { stream: keys.id, write: Bytes(keys.write_public()), read: Bytes(keys.read_token()), eraser: public, sig: Bytes([3; 64]) };
+    send(&mut socket, &forged).await;
+    assert_eq!(receive(&mut socket).await, ServerFrame::stream_error(ErrorCode::BadSignature, keys.id));
+
+    send(&mut socket, &ClientFrame::claim(&keys, &eraser)).await;
+    assert_eq!(receive(&mut socket).await, ServerFrame::Claimed { stream: keys.id, mine: true });
+    let long_ago = 1_000_000;
+    send(&mut socket, &ClientFrame::erase(keys.id, &eraser, ERASE_EVERYTHING, long_ago)).await;
+    assert_eq!(receive(&mut socket).await, ServerFrame::stream_error(ErrorCode::Expired, keys.id), "an old erase cannot be replayed");
+    send(&mut socket, &ClientFrame::release(keys.id, &eraser, long_ago)).await;
+    assert_eq!(receive(&mut socket).await, ServerFrame::stream_error(ErrorCode::Expired, keys.id));
 }

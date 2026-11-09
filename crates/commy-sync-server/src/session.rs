@@ -3,9 +3,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
-use commy_sync::stream::{verify_append, verify_signal, StreamId, MAX_SEALED, MAX_SIGNAL_SEALED, NONCE_BYTES, SIZE_BUCKETS, TAG_BYTES};
+use commy_sync::stream::{
+    verify_append, verify_claim, verify_erase, verify_release, verify_signal, StreamId, MAX_SEALED, MAX_SIGNAL_SEALED, NONCE_BYTES, SIZE_BUCKETS,
+    TAG_BYTES,
+};
 use commy_sync::wire::{
-    AppendNonce, Blob, ClientFrame, ErrorCode, ServerFrame, WireEntry, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE, PROTOCOL,
+    AppendNonce, Blob, ClientFrame, ErrorCode, ServerFrame, WireEntry, ERASE_WINDOW_MS, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE,
+    PROTOCOL,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
@@ -132,6 +136,15 @@ async fn handle(
             let follower = tokio::spawn(follow(service.clone(), session, stream, after, tail, out.clone()));
             open.insert(stream, OpenStream { write: write.0, follower, will });
         }
+        ClientFrame::Claim { stream, write, read, eraser, sig } => {
+            let _ = out.send(claim(service, key, stream, &write.0, &read.0, &eraser.0, &sig.0).await).await;
+        }
+        ClientFrame::Erase { stream, through, at, sig } => {
+            let _ = out.send(erase(service, key, stream, through, at, &sig.0).await).await;
+        }
+        ClientFrame::Release { stream, at, sig } => {
+            let _ = out.send(release(service, key, stream, at, &sig.0).await).await;
+        }
         ClientFrame::Close { stream } => {
             if let Some(opened) = open.remove(&stream) {
                 opened.follower.abort();
@@ -197,6 +210,82 @@ async fn handle(
                 }
             }
         }
+    }
+}
+
+fn owner_limited(service: &Service, key: AddressKey, stream: StreamId) -> Result<(), ServerFrame> {
+    service.limiter.open(key).map_err(|refusal| {
+        let retry_after_ms = match refusal {
+            Refusal::Wait(wait) => Some(wait.as_millis().max(100) as u64),
+            Refusal::Full => None,
+        };
+        ServerFrame::Error { code: ErrorCode::RateLimited, stream: Some(stream), nonce: None, retry_after_ms }
+    })
+}
+
+fn unavailable(stream: StreamId, e: crate::store::StoreError) -> ServerFrame {
+    tracing::warn!("sync store eraser work failed: {e}");
+    ServerFrame::Error { code: ErrorCode::Unavailable, stream: Some(stream), nonce: None, retry_after_ms: Some(2_000) }
+}
+
+pub(crate) fn is_fresh(at: i64, now: i64) -> bool {
+    at.abs_diff(now) <= ERASE_WINDOW_MS as u64
+}
+
+async fn claim(service: &Service, key: AddressKey, stream: StreamId, write: &[u8; 32], read: &[u8; 32], eraser: &[u8; 32], sig: &[u8; 64]) -> ServerFrame {
+    if StreamId::of(write, read) != stream {
+        return ServerFrame::stream_error(ErrorCode::BadStream, stream);
+    }
+    if !verify_claim(eraser, &stream, sig) {
+        return ServerFrame::stream_error(ErrorCode::BadSignature, stream);
+    }
+    if let Err(refused) = owner_limited(service, key, stream) {
+        return refused;
+    }
+    match service.store.claim(&stream, eraser, now_ms()).await {
+        Ok(mine) => ServerFrame::Claimed { stream, mine },
+        Err(e) => unavailable(stream, e),
+    }
+}
+
+async fn holder(service: &Service, stream: StreamId, at: i64) -> Result<Option<[u8; 32]>, ServerFrame> {
+    if !is_fresh(at, now_ms()) {
+        return Err(ServerFrame::stream_error(ErrorCode::Expired, stream));
+    }
+    service.store.eraser(&stream).await.map_err(|e| unavailable(stream, e))
+}
+
+async fn erase(service: &Service, key: AddressKey, stream: StreamId, through: u64, at: i64, sig: &[u8; 64]) -> ServerFrame {
+    if let Err(refused) = owner_limited(service, key, stream) {
+        return refused;
+    }
+    match holder(service, stream, at).await {
+        Ok(Some(eraser)) if verify_erase(&eraser, &stream, through, at, sig) => {}
+        Ok(_) => return ServerFrame::stream_error(ErrorCode::NotYours, stream),
+        Err(refused) => return refused,
+    }
+    match service.store.erase(&stream, through).await {
+        Ok(removed) => {
+            tracing::info!("sync: erased {removed} entries of a stream at its owner's request");
+            ServerFrame::Erased { stream, through }
+        }
+        Err(e) => unavailable(stream, e),
+    }
+}
+
+async fn release(service: &Service, key: AddressKey, stream: StreamId, at: i64, sig: &[u8; 64]) -> ServerFrame {
+    if let Err(refused) = owner_limited(service, key, stream) {
+        return refused;
+    }
+    let eraser = match holder(service, stream, at).await {
+        Ok(None) => return ServerFrame::Released { stream },
+        Ok(Some(eraser)) if verify_release(&eraser, &stream, at, sig) => eraser,
+        Ok(Some(_)) => return ServerFrame::stream_error(ErrorCode::NotYours, stream),
+        Err(refused) => return refused,
+    };
+    match service.store.release(&stream, &eraser).await {
+        Ok(()) => ServerFrame::Released { stream },
+        Err(e) => unavailable(stream, e),
     }
 }
 
@@ -324,6 +413,16 @@ mod tests {
         assert_eq!(start_after(0, Some(200), 50), 0);
         assert_eq!(start_after(420, Some(200), 500), 420, "a cursor wins over a tail");
         assert_eq!(start_after(900, None, 500), 0, "a stream that went back is read again");
+    }
+
+    #[test]
+    fn owner_requests_are_only_taken_while_fresh() {
+        let now = 1_760_000_000_000;
+        assert!(is_fresh(now, now));
+        assert!(is_fresh(now - ERASE_WINDOW_MS, now));
+        assert!(is_fresh(now + ERASE_WINDOW_MS, now), "a phone a little ahead still works");
+        assert!(!is_fresh(now - ERASE_WINDOW_MS - 1, now), "an old request cannot be replayed");
+        assert!(!is_fresh(i64::MIN, now));
     }
 
     #[test]

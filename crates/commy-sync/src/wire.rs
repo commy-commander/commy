@@ -1,11 +1,14 @@
 use data_encoding::BASE64URL_NOPAD;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::stream::{StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
+use crate::stream::{Eraser, StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
 
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 pub const SIGNALS_SINCE: u32 = 2;
 pub const WILLS_SINCE: u32 = 3;
+pub const ERASE_SINCE: u32 = 4;
+pub const ERASE_WINDOW_MS: i64 = 10 * 60 * 1000;
+pub const ERASE_EVERYTHING: u64 = i64::MAX as u64;
 pub const PAGE_SIZE: usize = 200;
 pub const MAX_STREAMS_PER_CONNECTION: usize = 16;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -82,6 +85,9 @@ pub enum ClientFrame {
     Signal { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Will { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Close { stream: StreamId },
+    Claim { stream: StreamId, write: Bytes<32>, read: Bytes<32>, eraser: Bytes<32>, sig: Bytes<64> },
+    Erase { stream: StreamId, through: u64, at: i64, sig: Bytes<64> },
+    Release { stream: StreamId, at: i64, sig: Bytes<64> },
     Ping,
 }
 
@@ -109,6 +115,24 @@ impl ClientFrame {
         let sig = keys.sign_signal(&nonce, &body);
         ClientFrame::Will { stream: keys.id, nonce: Bytes(nonce), body: Blob(body), sig: Bytes(sig) }
     }
+
+    pub fn claim(keys: &StreamKeys, eraser: &Eraser) -> Self {
+        ClientFrame::Claim {
+            stream: keys.id,
+            write: Bytes(keys.write_public()),
+            read: Bytes(keys.read_token()),
+            eraser: Bytes(eraser.public()),
+            sig: Bytes(eraser.sign_claim(&keys.id)),
+        }
+    }
+
+    pub fn erase(stream: StreamId, eraser: &Eraser, through: u64, at: i64) -> Self {
+        ClientFrame::Erase { stream, through, at, sig: Bytes(eraser.sign_erase(&stream, through, at)) }
+    }
+
+    pub fn release(stream: StreamId, eraser: &Eraser, at: i64) -> Self {
+        ClientFrame::Release { stream, at, sig: Bytes(eraser.sign_release(&stream, at)) }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +153,8 @@ pub enum ErrorCode {
     TooManyStreams,
     NotOpen,
     Unavailable,
+    NotYours,
+    Expired,
 }
 
 impl ErrorCode {
@@ -145,6 +171,9 @@ pub enum ServerFrame {
     Entries { stream: StreamId, entries: Vec<WireEntry>, caught_up: bool },
     Appended { stream: StreamId, nonce: AppendNonce, seq: u64, at: i64 },
     Signal { stream: StreamId, body: Blob },
+    Claimed { stream: StreamId, mine: bool },
+    Erased { stream: StreamId, through: u64 },
+    Released { stream: StreamId },
     Error {
         code: ErrorCode,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,6 +211,9 @@ mod tests {
             ClientFrame::signal(&keys, rand::random(), vec![4, 5]),
             ClientFrame::will(&keys, rand::random(), vec![6]),
             ClientFrame::Close { stream: keys.id },
+            ClientFrame::claim(&keys, &Eraser::derive(&[1; 32], &keys.id)),
+            ClientFrame::erase(keys.id, &Eraser::derive(&[1; 32], &keys.id), ERASE_EVERYTHING, 1_760_000_000_000),
+            ClientFrame::release(keys.id, &Eraser::derive(&[1; 32], &keys.id), 1_760_000_000_000),
             ClientFrame::Ping,
         ];
         for frame in frames {
@@ -224,6 +256,10 @@ mod tests {
             ServerFrame::Entries { stream: id, entries: vec![WireEntry { seq: 1, at: 1_760_000_000_000, body: Blob(vec![4; 40]) }], caught_up: true },
             ServerFrame::Appended { stream: id, nonce: Bytes([1; APPEND_NONCE_BYTES]), seq: 8, at: 5 },
             ServerFrame::Signal { stream: id, body: Blob(vec![2; 30]) },
+            ServerFrame::Claimed { stream: id, mine: false },
+            ServerFrame::Erased { stream: id, through: ERASE_EVERYTHING },
+            ServerFrame::Released { stream: id },
+            ServerFrame::stream_error(ErrorCode::NotYours, id),
             ServerFrame::stream_error(ErrorCode::BadSignature, id),
             ServerFrame::Error { code: ErrorCode::RateLimited, stream: None, nonce: None, retry_after_ms: Some(900) },
             ServerFrame::Pong,
@@ -233,6 +269,21 @@ mod tests {
             assert_eq!(serde_json::from_str::<ServerFrame>(&json).unwrap(), frame);
         }
         assert_eq!(serde_json::to_string(&ServerFrame::error(ErrorCode::BadFrame)).unwrap(), r#"{"t":"error","code":"bad_frame"}"#);
+    }
+
+    #[test]
+    fn a_claim_proves_the_stream_and_the_eraser() {
+        use crate::stream::{verify_claim, verify_erase, verify_release};
+        let keys = StreamSecret::random().keys();
+        let eraser = Eraser::derive(&[9; 32], &keys.id);
+        let ClientFrame::Claim { stream, write, read, eraser: public, sig } = ClientFrame::claim(&keys, &eraser) else { unreachable!() };
+        assert_eq!(crate::stream::StreamId::of(&write.0, &read.0), stream);
+        assert!(verify_claim(&public.0, &stream, &sig.0));
+        let ClientFrame::Erase { stream, through, at, sig } = ClientFrame::erase(keys.id, &eraser, 7, 99) else { unreachable!() };
+        assert!(verify_erase(&eraser.public(), &stream, through, at, &sig.0));
+        let ClientFrame::Release { stream, at, sig } = ClientFrame::release(keys.id, &eraser, 99) else { unreachable!() };
+        assert!(verify_release(&eraser.public(), &stream, at, &sig.0));
+        assert!(i64::try_from(ERASE_EVERYTHING).is_ok(), "the whole stream fits a database sequence number");
     }
 
     #[test]

@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use commy_core::action::Action;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{ChannelId, MessageId, ServerEvent, ServerId, ServerState, UserId};
-use commy_sync::{StreamKeys, StreamSecret};
+use commy_sync::wire::ERASE_EVERYTHING;
+use commy_sync::{StreamId, StreamKeys, StreamSecret};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{WirePayload, PROTOCOL_VERSION};
@@ -90,6 +91,38 @@ pub fn wanted(state: &ServerState, me: UserId, community: &Keyring, locked: impl
         out.extend(wants_of(state, scope, &[Lane::Channel(channel.id)], &locked(channel.id), now_ms));
     }
     out
+}
+
+pub fn every_stream(state: &ServerState, community: &Keyring, locked: impl Fn(ChannelId) -> Keyring) -> Vec<(Lane, StreamKeys)> {
+    let server = state.server.id;
+    let texts: Vec<&commy_core::Channel> = state.server.channels.iter().filter(|c| c.kind.holds_messages()).collect();
+    let lanes: Vec<Lane> = std::iter::once(Lane::State).chain(texts.iter().map(|c| Lane::Channel(c.id))).collect();
+    let mut out: Vec<(Lane, StreamKeys)> = Vec::new();
+    let mut add = |lane: Lane, keys: StreamKeys| {
+        if !out.iter().any(|(_, known)| known.id == keys.id) {
+            out.push((lane, keys));
+        }
+    };
+    for (_, secret) in community.held_records(state, KeyScope::Community) {
+        for lane in &lanes {
+            add(*lane, stream_for(secret, server, KeyScope::Community, *lane));
+        }
+    }
+    for channel in texts.iter().filter(|c| c.is_private()) {
+        let scope = KeyScope::Channel(channel.id);
+        let ring = locked(channel.id);
+        for (_, secret) in ring.held_records(state, scope) {
+            add(Lane::Channel(channel.id), stream_for(secret, server, scope, Lane::Channel(channel.id)));
+        }
+    }
+    out
+}
+
+pub fn erase_through(stream: StreamId, notices: &[(StreamId, u64)]) -> u64 {
+    match notices.iter().find(|(held, _)| *held == stream) {
+        Some((_, seq)) => seq.saturating_sub(1),
+        None => ERASE_EVERYTHING,
+    }
 }
 
 pub fn lane_of(event: &ServerEvent) -> Option<Lane> {
@@ -404,6 +437,43 @@ mod tests {
         assert_eq!(lane.scope, KeyScope::Channel(channel));
         let theirs = wanted(&state, member, &Keyring::unlock_community(&state, member, &identity_for(member)), |_| locked.clone(), now());
         assert!(!theirs.iter().any(|w| w.lane == Lane::Channel(channel)), "members outside the role get no stream for it");
+    }
+
+    #[test]
+    fn a_deleted_server_still_names_every_stream_its_owner_can_erase() {
+        let (mut state, channel, owner) = fixture();
+        let server = state.server.id;
+        let banned = join(&mut state, "banned");
+        settle(&mut state, owner);
+        let first = wanted(&state, owner, &Keyring::unlock_community(&state, owner, &identity_for(owner)), |_| Keyring::default(), now());
+        state.apply(ServerEvent::MemberBan { server, user: banned }).unwrap();
+        let ring = settle(&mut state, owner);
+        let later = now() + OLDER_EPOCH_MS + 1;
+        let current = wanted(&state, owner, &ring, |_| Keyring::default(), later);
+        state.apply(ServerEvent::ServerDelete { server }).unwrap();
+        assert!(wanted(&state, owner, &ring, |_| Keyring::default(), later).is_empty(), "nobody follows a deleted server");
+
+        let every = every_stream(&state, &ring, |_| Keyring::default());
+        let ids: Vec<StreamId> = every.iter().map(|(_, keys)| keys.id).collect();
+        for want in first.iter().chain(&current) {
+            assert!(ids.contains(&want.keys.id), "{:?} of every key ever used is covered", want.lane);
+        }
+        assert!(every.iter().any(|(lane, _)| *lane == Lane::Channel(channel)));
+        let voice = state.server.channels[1].id;
+        assert!(!every.iter().any(|(lane, _)| *lane == Lane::Channel(voice)));
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len());
+    }
+
+    #[test]
+    fn the_deletion_notice_survives_its_own_erase() {
+        let (a, b) = (StreamSecret::random().keys().id, StreamSecret::random().keys().id);
+        let notices = [(a, 42)];
+        assert_eq!(erase_through(a, &notices), 41, "everything before the notice goes");
+        assert_eq!(erase_through(b, &notices), ERASE_EVERYTHING);
+        assert_eq!(erase_through(a, &[(a, 0)]), 0);
     }
 
     #[test]

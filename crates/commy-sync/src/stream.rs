@@ -12,6 +12,10 @@ const SEAL_DOMAIN: &[u8] = b"commy-sync-seal/v1";
 const WAKE_DOMAIN: &[u8] = b"commy-sync-wake/v1";
 const PREVIEW_DOMAIN: &[u8] = b"commy-sync-wake-preview/v1";
 const SIGNAL_DOMAIN: &[u8] = b"commy-sync-signal/v1";
+const ERASER_DOMAIN: &[u8] = b"commy-sync-eraser/v1";
+const CLAIM_DOMAIN: &[u8] = b"commy-sync-claim/v1";
+const ERASE_DOMAIN: &[u8] = b"commy-sync-erase/v1";
+const RELEASE_DOMAIN: &[u8] = b"commy-sync-release/v1";
 
 pub const NONCE_BYTES: usize = 12;
 pub const TAG_BYTES: usize = 16;
@@ -221,6 +225,74 @@ pub fn verify_append(write: &[u8; 32], stream: &StreamId, nonce: &[u8; APPEND_NO
     key.verify(&append_message(stream, nonce, body), &ed25519_dalek::Signature::from_bytes(sig)).is_ok()
 }
 
+#[derive(Clone)]
+pub struct Eraser(SigningKey);
+
+impl fmt::Debug for Eraser {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Eraser").field(&data_encoding::HEXLOWER.encode(&self.public()[..6])).finish()
+    }
+}
+
+impl PartialEq for Eraser {
+    fn eq(&self, other: &Self) -> bool {
+        self.public() == other.public()
+    }
+}
+
+impl Eraser {
+    pub fn derive(owner_secret: &[u8; 32], stream: &StreamId) -> Self {
+        let mut info = ERASER_DOMAIN.to_vec();
+        info.extend_from_slice(&stream.0);
+        Self(SigningKey::from_bytes(&hkdf(owner_secret, DERIVE_SALT, &info)))
+    }
+
+    pub fn public(&self) -> [u8; 32] {
+        self.0.verifying_key().to_bytes()
+    }
+
+    pub fn sign_claim(&self, stream: &StreamId) -> [u8; 64] {
+        self.0.sign(&claim_message(stream, &self.public())).to_bytes()
+    }
+
+    pub fn sign_erase(&self, stream: &StreamId, through: u64, at: i64) -> [u8; 64] {
+        self.0.sign(&erase_message(stream, through, at)).to_bytes()
+    }
+
+    pub fn sign_release(&self, stream: &StreamId, at: i64) -> [u8; 64] {
+        self.0.sign(&release_message(stream, at)).to_bytes()
+    }
+}
+
+fn claim_message(stream: &StreamId, eraser: &[u8; 32]) -> Vec<u8> {
+    [CLAIM_DOMAIN, &stream.0[..], &eraser[..]].concat()
+}
+
+fn erase_message(stream: &StreamId, through: u64, at: i64) -> Vec<u8> {
+    [ERASE_DOMAIN, &stream.0[..], &through.to_be_bytes()[..], &at.to_be_bytes()[..]].concat()
+}
+
+fn release_message(stream: &StreamId, at: i64) -> Vec<u8> {
+    [RELEASE_DOMAIN, &stream.0[..], &at.to_be_bytes()[..]].concat()
+}
+
+fn verify_with(key: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
+    let Ok(key) = VerifyingKey::from_bytes(key) else { return false };
+    key.verify_strict(msg, &ed25519_dalek::Signature::from_bytes(sig)).is_ok()
+}
+
+pub fn verify_claim(eraser: &[u8; 32], stream: &StreamId, sig: &[u8; 64]) -> bool {
+    verify_with(eraser, &claim_message(stream, eraser), sig)
+}
+
+pub fn verify_erase(eraser: &[u8; 32], stream: &StreamId, through: u64, at: i64, sig: &[u8; 64]) -> bool {
+    verify_with(eraser, &erase_message(stream, through, at), sig)
+}
+
+pub fn verify_release(eraser: &[u8; 32], stream: &StreamId, at: i64, sig: &[u8; 64]) -> bool {
+    verify_with(eraser, &release_message(stream, at), sig)
+}
+
 pub fn bucket_for(len: usize) -> Option<usize> {
     SIZE_BUCKETS.iter().copied().find(|bucket| len + LENGTH_PREFIX_BYTES <= *bucket)
 }
@@ -324,6 +396,35 @@ mod tests {
         assert!(!verify_append(&write, &StreamSecret::random().keys().id, &nonce, b"body", &sig));
         assert!(!verify_append(&StreamSecret::random().keys().write_public(), &keys.id, &nonce, b"body", &sig));
         assert!(!verify_append(&[0xff; 32], &keys.id, &nonce, b"body", &sig));
+    }
+
+    #[test]
+    fn an_owner_gets_one_eraser_per_stream() {
+        let owner = [5u8; 32];
+        let (a, b) = (StreamSecret::random().keys().id, StreamSecret::random().keys().id);
+        assert_eq!(Eraser::derive(&owner, &a), Eraser::derive(&owner, &a), "every device of the owner derives the same eraser");
+        assert_ne!(Eraser::derive(&owner, &a), Eraser::derive(&owner, &b));
+        assert_ne!(Eraser::derive(&owner, &a), Eraser::derive(&[6u8; 32], &a));
+    }
+
+    #[test]
+    fn eraser_signatures_cover_the_stream_the_range_and_the_time() {
+        let stream = StreamSecret::random().keys().id;
+        let other = StreamSecret::random().keys().id;
+        let eraser = Eraser::derive(&[5u8; 32], &stream);
+        let key = eraser.public();
+        assert!(verify_claim(&key, &stream, &eraser.sign_claim(&stream)));
+        assert!(!verify_claim(&key, &other, &eraser.sign_claim(&stream)));
+        let erase = eraser.sign_erase(&stream, 41, 1_000);
+        assert!(verify_erase(&key, &stream, 41, 1_000, &erase));
+        assert!(!verify_erase(&key, &stream, 42, 1_000, &erase));
+        assert!(!verify_erase(&key, &stream, 41, 1_001, &erase));
+        assert!(!verify_erase(&key, &other, 41, 1_000, &erase));
+        assert!(!verify_erase(&Eraser::derive(&[6u8; 32], &stream).public(), &stream, 41, 1_000, &erase));
+        let release = eraser.sign_release(&stream, 1_000);
+        assert!(verify_release(&key, &stream, 1_000, &release));
+        assert!(!verify_release(&key, &stream, 1_001, &release));
+        assert!(!verify_erase(&key, &stream, 0, 1_000, &release), "a release cannot be replayed as an erase");
     }
 
     #[test]

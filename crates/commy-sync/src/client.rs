@@ -8,10 +8,10 @@ use crate::wire::{ClientFrame, ErrorCode, ServerFrame, KEEPALIVE_SECS, SIGNALS_S
 
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 #[path = "client/native.rs"]
-mod socket;
+pub(crate) mod socket;
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 #[path = "client/browser.rs"]
-mod socket;
+pub(crate) mod socket;
 
 use socket::{Incoming, Socket};
 
@@ -348,7 +348,7 @@ impl Link {
                 self.protocol = protocol;
                 self.wills_due = protocol >= WILLS_SINCE;
             }
-            ServerFrame::Pong => {}
+            ServerFrame::Pong | ServerFrame::Claimed { .. } | ServerFrame::Erased { .. } | ServerFrame::Released { .. } => {}
             ServerFrame::Opened { stream, head } => {
                 if let Some(followed) = self.streams.get_mut(&stream) {
                     if head < followed.after {

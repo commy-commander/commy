@@ -11,7 +11,8 @@ use commy_net::sync_streams::SharedKey;
 use commy_net::sealed::SealKey;
 use commy_net::server_wake::AllRings;
 use commy_net::{sync_streams, ServerTicket, WirePayload};
-use commy_sync::{Pool, StreamId, SyncClient, SyncEvent};
+use commy_sync::errands::{self, owner_work, ClaimBook, Errand, Instant};
+use commy_sync::{Pool, StreamId, StreamKeys, SyncClient, SyncEvent};
 use commy_view::liveness::{SERVICE_BEAT, SWEEP_EVERY};
 use commy_view::reads::{PrefPiece, ReadMark, ReadView};
 use commy_view::saved::{Entry, SavedOp, SavedStore};
@@ -46,6 +47,8 @@ fn chunks(marks: BTreeMap<String, ReadMark>, size: usize) -> Vec<BTreeMap<String
 
 pub(super) struct Live {
     pub(super) pool: Pool,
+    url: String,
+    claims: ClaimBook<ServerId>,
     account: StreamId,
     account_live: bool,
     pub(super) book: Book,
@@ -69,6 +72,7 @@ impl Session {
         let Ok(account) = self.account() else { return };
         let node = *iroh::SecretKey::from_bytes(&self.device_secret(&account)).public().as_bytes();
         let (mut pool, events) = Pool::new(&url);
+        let service = url.clone();
         let stream = sync_streams::account_stream(&key);
         let account = stream.id;
         pool.follow(stream, 0);
@@ -76,6 +80,8 @@ impl Session {
         let wake = commy_net::server_wake::ring_url(&url);
         *self.sync.borrow_mut() = Some(Live {
             pool,
+            url: service,
+            claims: ClaimBook::default(),
             account,
             account_live: false,
             book: Book::new(list),
@@ -142,7 +148,60 @@ impl Session {
             }
             self.refresh_sync();
             self.tend_owned();
+            self.tend_claims();
         }
+    }
+
+    fn tend_claims(self: &Rc<Self>) {
+        let Some(root) = self.client.borrow().identity_secret() else { return };
+        let owned: HashSet<ServerId> = self.client.borrow().owned_servers().into_iter().collect();
+        let (url, given, round) = {
+            let mut guard = self.sync.borrow_mut();
+            let Some(live) = guard.as_mut() else { return };
+            let followed = live.book.streams_by_server();
+            let round = live.claims.round(&live.url, root, owned, &followed, Instant::now());
+            (live.url.clone(), live.book.given(), round)
+        };
+        let mut work = Vec::new();
+        for server in round.given_up {
+            let streams = self.client.borrow().every_stream(server, &given);
+            work.extend(owner_work(&root, &streams, |_| Errand::Release));
+        }
+        work.extend(round.claims);
+        if work.is_empty() {
+            return;
+        }
+        {
+            let mut guard = self.sync.borrow_mut();
+            let Some(live) = guard.as_mut() else { return };
+            live.claims.letting_go(work.iter().filter(|w| w.errand == Errand::Release).map(|w| w.keys.id));
+            if !live.claims.start() {
+                return;
+            }
+        }
+        let this = self.clone();
+        spawn_local(async move {
+            let asked: Vec<(StreamId, Errand)> = work.iter().map(|w| (w.keys.id, w.errand)).collect();
+            let answered = errands::run(&url, work).await;
+            if let Some(live) = this.sync.borrow_mut().as_mut() {
+                live.claims.finish(&asked, answered.as_deref().unwrap_or_default(), Instant::now());
+            }
+        });
+    }
+
+    pub(super) fn erase_plan(&self, server: ServerId) -> Option<(String, [u8; 32], Vec<StreamKeys>)> {
+        let root = self.client.borrow().identity_secret()?;
+        let (url, given) = self.sync.borrow().as_ref().map(|live| (live.url.clone(), live.book.given()))?;
+        let streams = self.client.borrow().every_stream(server, &given);
+        (!streams.is_empty()).then_some((url, root, streams))
+    }
+
+    pub(super) fn erase_deleted(&self, plan: (String, [u8; 32], Vec<StreamKeys>), notices: Vec<(StreamId, u64)>) {
+        let (url, root, keys) = plan;
+        let work = owner_work(&root, &keys, |stream| Errand::Erase { through: streams::erase_through(stream, &notices) });
+        spawn_local(async move {
+            errands::keep_at(&url, work, &errands::ERASE_WAITS).await;
+        });
     }
 
     fn tend_owned(&self) {
@@ -687,12 +746,19 @@ impl Session {
         self.writers(server, lane)
     }
 
-    pub(super) async fn publish_stored(&self, server: ServerId, payload: &WirePayload) {
-        let Some(lane) = streams::lane_of_payload(payload) else { return self.publish(server, payload) };
-        let Some(plain) = streams::encode_entry(payload) else { return };
+    pub(super) async fn publish_stored(&self, server: ServerId, payload: &WirePayload) -> Vec<(StreamId, u64)> {
+        let Some(lane) = streams::lane_of_payload(payload) else {
+            self.publish(server, payload);
+            return Vec::new();
+        };
+        let Some(plain) = streams::encode_entry(payload) else { return Vec::new() };
+        let mut stored = Vec::new();
         for (stream, client) in self.store_writers(server, lane) {
-            let _ = n0_future::time::timeout(STORE_WAIT, client.append(stream, plain.clone())).await;
+            if let Ok(Ok(seq)) = n0_future::time::timeout(STORE_WAIT, client.append(stream, plain.clone())).await {
+                stored.push((stream, seq));
+            }
         }
+        stored
     }
 
     pub(super) fn publish(&self, server: ServerId, payload: &WirePayload) {

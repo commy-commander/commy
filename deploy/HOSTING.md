@@ -367,10 +367,19 @@ server or channel a log belongs to.
   the stack's Postgres): for each log, its random stream id, the number of
   entries so far and the time of the last one; for each entry, its number,
   arrival time, a random retry nonce and the sealed bytes, padded to one of a
-  few fixed sizes so lengths say little.
+  few fixed sizes so lengths say little. For the logs of a Commy server, it
+  also keeps one eraser key per log, registered by the server owner's app.
 - **How long:** `SYNC_RETENTION_DAYS` (90 by default, `0` keeps everything).
   An hourly sweep deletes older entries, and a log with no entries left is
   forgotten.
+- **Deleting a server:** when its owner deletes a Commy server, the owner's app
+  erases every log of that server at once, keeping only the deletion notice so
+  members who were away still learn of it. Every member holds a log's write
+  key, so erasing takes a separate eraser key that only the owner's account can
+  derive. The owner's app registers it the first time it opens each log (first
+  come, first kept), and the service erases entries, or lets the key go when the
+  server passes to a new owner, only for a request signed with that key in the
+  last 10 minutes.
 - **What it never sees:** what an entry says, who wrote it, which account or
   Commy server a log belongs to, or which logs one person follows. It stores no
   IP address. Addresses are used in memory for rate limits only, under a keyed

@@ -772,6 +772,22 @@ impl Client {
             .collect()
     }
 
+    pub fn identity_secret(&self) -> Option<[u8; 32]> {
+        self.me.lock().unwrap().as_ref().map(|(_, identity)| identity.to_bytes())
+    }
+
+    pub fn every_stream(&self, server: ServerId, given: &HashMap<ServerId, (KeyId, ChannelSecret)>) -> Vec<StreamKeys> {
+        let Some((me, identity)) = self.me.lock().unwrap().as_ref().map(|(profile, identity)| (profile.id, identity.clone())) else {
+            return Vec::new();
+        };
+        let holder = KeyHolder::new(Some((me, identity.clone())));
+        let servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get(&server) else { return Vec::new() };
+        let Some(community) = holder.community_ring(state, given.get(&server).cloned()) else { return Vec::new() };
+        let locked = |channel| Keyring::unlock(state, channel, me, &identity);
+        streams::every_stream(state, &community, locked).into_iter().map(|(_, keys)| keys).collect()
+    }
+
     pub fn own_inboxes(&self, given: &HashMap<ServerId, (KeyId, ChannelSecret)>, now_ms: i64) -> Vec<(Option<ServerId>, StreamKeys)> {
         let Some(me) = self.me_id() else { return Vec::new() };
         let holder = self.keys();

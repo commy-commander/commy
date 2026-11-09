@@ -65,6 +65,7 @@ mod startup;
 mod state;
 mod storage;
 mod stream_deck;
+mod sync_eraser;
 mod sync_link;
 #[cfg(windows)]
 mod taskbar;
@@ -5753,6 +5754,7 @@ async fn transfer_ownership(
     let event = managed(&app, sid, me.id, |state, _| view::moderate::transfer(state, me.id, user, &confirm_name))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     app.follow_owner(sid);
+    community_sync::refresh_soon(&handle);
     Ok(())
 }
 
@@ -5777,11 +5779,16 @@ async fn delete_server(
         (notice, invites)
     };
     let payload = WirePayload::Signed(notice.clone());
-    if !community_sync::publish_now(sid, &payload).await {
+    let erasing = sync_eraser::plan(&app, sid);
+    let notices = community_sync::publish_now(sid, &payload).await;
+    if notices.is_empty() {
         tracing::warn!("the sync service did not take the deletion notice; members hear it from each other");
     }
     broadcast(&app, sid, payload).await;
     retire_deleted_server(&app, &handle, sid, notice, true);
+    if let Some(plan) = erasing {
+        sync_eraser::erase_deleted(plan, sid, notices);
+    }
     let later = handle.clone();
     tauri::async_runtime::spawn(async move { invite_link::revoke_all(&later.state::<App>(), invites).await });
     Ok(())

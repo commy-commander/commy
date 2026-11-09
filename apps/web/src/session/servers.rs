@@ -397,8 +397,12 @@ impl Session {
             self.hang_up_media();
         }
         let group = self.client.borrow().is_group(server);
+        let erasing = self.erase_plan(server);
         self.client.borrow_mut().forget(server);
-        self.publish_stored(server, &payload).await;
+        let notices = self.publish_stored(server, &payload).await;
+        if let Some(plan) = erasing {
+            self.erase_deleted(plan, notices);
+        }
         self.tell_neighbors(server, &payload).await;
         self.drop_from_list(server);
         self.forget_left(server, group).await;

@@ -346,6 +346,14 @@ impl Book {
         plan
     }
 
+    pub fn streams_by_server(&self) -> HashMap<ServerId, Vec<StreamKeys>> {
+        let mut out: HashMap<ServerId, Vec<StreamKeys>> = HashMap::new();
+        for (server, want) in self.routes.values() {
+            out.entry(*server).or_default().push(want.keys.clone());
+        }
+        out
+    }
+
     pub fn route(&self, stream: StreamId) -> Option<(ServerId, Want)> {
         self.routes.get(&stream).cloned()
     }

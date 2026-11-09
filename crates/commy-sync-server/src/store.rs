@@ -15,6 +15,7 @@ const SCHEMA: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS sync_wakes_until ON sync_wakes (until_day)",
     "CREATE TABLE IF NOT EXISTS sync_pictures (id BYTEA PRIMARY KEY, body BYTEA NOT NULL, touched BIGINT NOT NULL)",
     "CREATE INDEX IF NOT EXISTS sync_pictures_touched ON sync_pictures (touched)",
+    "CREATE TABLE IF NOT EXISTS sync_erasers (stream BYTEA PRIMARY KEY, eraser BYTEA NOT NULL, claimed BIGINT NOT NULL)",
 ];
 
 pub const TOUCH_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -152,6 +153,37 @@ impl Store {
         }
     }
 
+    pub async fn claim(&self, stream: &StreamId, eraser: &[u8; 32], at: i64) -> Result<bool, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.claim(stream, eraser, at)),
+            Store::Postgres(p) => p.claim(stream, eraser, at).await,
+        }
+    }
+
+    pub async fn eraser(&self, stream: &StreamId) -> Result<Option<[u8; 32]>, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.erasers.lock().unwrap().get(stream).map(|(eraser, _)| *eraser)),
+            Store::Postgres(p) => p.eraser(stream).await,
+        }
+    }
+
+    pub async fn release(&self, stream: &StreamId, eraser: &[u8; 32]) -> Result<(), StoreError> {
+        match self {
+            Store::Memory(m) => {
+                m.erasers.lock().unwrap().retain(|held, (key, _)| held != stream || key != eraser);
+                Ok(())
+            }
+            Store::Postgres(p) => p.release(stream, eraser).await,
+        }
+    }
+
+    pub async fn erase(&self, stream: &StreamId, through: u64) -> Result<u64, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.erase(stream, through)),
+            Store::Postgres(p) => p.erase(stream, through).await,
+        }
+    }
+
     pub async fn ping(&self) -> bool {
         match self {
             Store::Memory(_) => true,
@@ -174,9 +206,28 @@ pub struct MemoryStore {
     streams: Mutex<HashMap<StreamId, MemoryStream>>,
     wakes: Mutex<HashMap<[u8; 32], HashMap<String, i64>>>,
     pictures: Mutex<HashMap<[u8; 32], StoredPicture>>,
+    erasers: Mutex<HashMap<StreamId, ([u8; 32], i64)>>,
 }
 
 impl MemoryStore {
+    fn claim(&self, stream: &StreamId, eraser: &[u8; 32], at: i64) -> bool {
+        let mut erasers = self.erasers.lock().unwrap();
+        let held = erasers.entry(*stream).or_insert((*eraser, at));
+        if held.0 != *eraser {
+            return false;
+        }
+        held.1 = held.1.max(at);
+        true
+    }
+
+    fn erase(&self, stream: &StreamId, through: u64) -> u64 {
+        let mut streams = self.streams.lock().unwrap();
+        let Some(s) = streams.get_mut(stream) else { return 0 };
+        let had = s.entries.len();
+        s.entries.retain(|(seq, ..)| *seq > through);
+        (had - s.entries.len()) as u64
+    }
+
     fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64) -> bool {
         let mut wakes = self.wakes.lock().unwrap();
         let pushes = wakes.entry(*tag).or_default();
@@ -267,6 +318,7 @@ impl MemoryStore {
             removed += (had - s.entries.len()) as u64;
         }
         streams.retain(|_, s| !s.entries.is_empty() || s.last_at >= before);
+        self.erasers.lock().unwrap().retain(|stream, (_, claimed)| *claimed >= before || streams.contains_key(stream));
         removed
     }
 }
@@ -454,7 +506,41 @@ impl PgStore {
             .bind(before)
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM sync_erasers e WHERE e.claimed < $1 AND NOT EXISTS (SELECT 1 FROM sync_streams s WHERE s.id = e.stream)")
+            .bind(before)
+            .execute(&self.pool)
+            .await?;
         Ok(removed)
+    }
+
+    async fn claim(&self, stream: &StreamId, eraser: &[u8; 32], at: i64) -> Result<bool, StoreError> {
+        let row = sqlx::query(
+            "INSERT INTO sync_erasers (stream, eraser, claimed) VALUES ($1, $2, $3) \
+             ON CONFLICT (stream) DO UPDATE SET claimed = GREATEST(sync_erasers.claimed, EXCLUDED.claimed) \
+             WHERE sync_erasers.eraser = EXCLUDED.eraser RETURNING eraser",
+        )
+        .bind(&stream.0[..])
+        .bind(&eraser[..])
+        .bind(at)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
+    async fn eraser(&self, stream: &StreamId) -> Result<Option<[u8; 32]>, StoreError> {
+        let row = sqlx::query("SELECT eraser FROM sync_erasers WHERE stream = $1").bind(&stream.0[..]).fetch_optional(&self.pool).await?;
+        Ok(row.and_then(|row| row.get::<Vec<u8>, _>(0).try_into().ok()))
+    }
+
+    async fn release(&self, stream: &StreamId, eraser: &[u8; 32]) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM sync_erasers WHERE stream = $1 AND eraser = $2").bind(&stream.0[..]).bind(&eraser[..]).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn erase(&self, stream: &StreamId, through: u64) -> Result<u64, StoreError> {
+        let through = through.min(i64::MAX as u64) as i64;
+        let removed = sqlx::query("DELETE FROM sync_entries WHERE stream = $1 AND seq <= $2").bind(&stream.0[..]).bind(through).execute(&self.pool).await?;
+        Ok(removed.rows_affected())
     }
 }
 
@@ -495,6 +581,40 @@ mod tests {
 
         exercise_wakes(store).await;
         exercise_pictures(store).await;
+        exercise_erasers(store).await;
+    }
+
+    async fn exercise_erasers(store: &Store) {
+        let stream = StreamSecret::random().keys().id;
+        let (owner, member) = ([7u8; 32], [8u8; 32]);
+        assert_eq!(store.eraser(&stream).await.unwrap(), None);
+        assert!(store.claim(&stream, &owner, 1_000).await.unwrap(), "the first claim wins");
+        assert!(store.claim(&stream, &owner, 2_000).await.unwrap(), "claiming again is fine");
+        assert!(!store.claim(&stream, &member, 2_000).await.unwrap(), "nobody else can take it over");
+        assert_eq!(store.eraser(&stream).await.unwrap(), Some(owner));
+
+        for (n, at) in [(1u8, 10_000), (2, 11_000), (3, 12_000)] {
+            store.append(&stream, &[n; 16], &[n], at).await.unwrap();
+        }
+        assert_eq!(store.erase(&stream, 2).await.unwrap(), 2);
+        assert_eq!(store.page(&stream, 0, 10).await.unwrap().iter().map(|e| e.seq).collect::<Vec<_>>(), vec![3], "what came after stays");
+        assert_eq!(store.erase(&stream, commy_sync::wire::ERASE_EVERYTHING).await.unwrap(), 1);
+        assert!(store.page(&stream, 0, 10).await.unwrap().is_empty());
+        assert_eq!(store.head(&stream).await.unwrap(), 3, "numbering carries on so devices notice nothing new");
+        assert_eq!(store.erase(&StreamSecret::random().keys().id, 9).await.unwrap(), 0);
+
+        store.release(&stream, &member).await.unwrap();
+        assert_eq!(store.eraser(&stream).await.unwrap(), Some(owner), "only the holder lets go");
+        store.release(&stream, &owner).await.unwrap();
+        assert_eq!(store.eraser(&stream).await.unwrap(), None);
+        assert!(store.claim(&stream, &member, 3_000).await.unwrap(), "a released stream can be claimed by the next owner");
+
+        let idle = StreamSecret::random().keys().id;
+        assert!(store.claim(&idle, &owner, 3_000).await.unwrap());
+        store.append(&stream, &[4; 16], b"after", 20_000).await.unwrap();
+        store.prune(13_000).await.unwrap();
+        assert_eq!(store.eraser(&idle).await.unwrap(), None, "a claim on a stream that never held anything goes with retention");
+        assert_eq!(store.eraser(&stream).await.unwrap(), Some(member), "a claim on a known stream stays");
     }
 
     async fn exercise_pictures(store: &Store) {
