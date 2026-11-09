@@ -240,6 +240,12 @@ jobs:
       IOS_MODE: ${{ inputs.ios || 'simulator' }}
       APP_VERSION_INPUT: ${{ inputs.version }}
     steps:
+      - name: Keep the runner's home folder out of the log
+        run: |
+          echo "::add-mask::$HOME"
+          echo "::add-mask::${HOME//\//\\/}"
+          echo "::add-mask::$(basename "$HOME")"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check Xcode is ready
