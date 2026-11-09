@@ -443,20 +443,38 @@ jobs:
             '{version: $version, notes: "Commy \($version)", pub_date: $date, platforms: $platforms}' > latest.json
           jq . latest.json
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          sparse-checkout: |
+            deploy/releases
+            deploy/agent
+
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        if: github.server_url == 'https://github.com'
         with:
           cosign-release: v2.6.1
 
       - name: Sign the checksums
-        if: github.server_url == 'https://github.com'
+        id: checksums
         working-directory: dist
         env:
+          ON_GITHUB: ${{ github.server_url == 'https://github.com' }}
           IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}
+          COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
-          cosign sign-blob --yes --output-signature SHA256SUMS.txt.sig --output-certificate SHA256SUMS.txt.pem SHA256SUMS.txt
-          cosign verify-blob --certificate SHA256SUMS.txt.pem --signature SHA256SUMS.txt.sig \
-            --certificate-identity "$IDENTITY" --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS.txt
+          if [ "$ON_GITHUB" = true ]; then
+            cosign sign-blob --yes --output-signature SHA256SUMS.txt.sig --output-certificate SHA256SUMS.txt.pem SHA256SUMS.txt
+            cosign verify-blob --certificate SHA256SUMS.txt.pem --signature SHA256SUMS.txt.sig \
+              --certificate-identity "$IDENTITY" --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS.txt
+            echo "signed=keyless" >> "$GITHUB_OUTPUT"
+          elif [ -n "$COSIGN_KEY" ]; then
+            cosign sign-blob --yes --key env://COSIGN_KEY --bundle SHA256SUMS.txt.bundle SHA256SUMS.txt
+            cosign verify-blob --key ../source/deploy/agent/cosign.pub --bundle SHA256SUMS.txt.bundle SHA256SUMS.txt
+            echo "signed=key" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::The COSIGN_PRIVATE_KEY secret is not set, so SHA256SUMS.txt is not signed"
+          fi
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: github.server_url == 'https://github.com'
@@ -466,11 +484,6 @@ jobs:
             dist/commy-soundboard.streamDeckPlugin
             dist/commy-bot-*
             dist/SHA256SUMS.txt
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: source
-          sparse-checkout: deploy/releases
 
       - name: Publish to releases.commy.chat
         env:
@@ -484,6 +497,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           ON_GITHUB: ${{ github.server_url == 'https://github.com' }}
+          CHECKSUMS_SIGNED: ${{ steps.checksums.outputs.signed }}
           MAC_SIGNED: ${{ needs.macos-universal.outputs.signed }}
         run: |
           cat > notes.md <<EOF
@@ -525,6 +539,11 @@ jobs:
           That file is signed with cosign (`SHA256SUMS.txt.sig` and `SHA256SUMS.txt.pem`), and
           every file carries a build provenance attestation:
           `gh attestation verify <file> --repo commy-commander/commy`. The README explains both checks.
+          EOF
+          elif [ "$CHECKSUMS_SIGNED" = key ]; then
+            cat >> notes.md <<'EOF'
+          That file is signed with the Commy release key (`SHA256SUMS.txt.bundle`, public key in
+          `deploy/agent/cosign.pub`). The README explains the check.
           EOF
           fi
           cat notes.md
