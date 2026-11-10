@@ -314,7 +314,27 @@ function canOfferShare({ mobileApp, canShare, iPhone }) {
 
 function roomTileStreams(streams, me = {}) {
   if (!me.sharing) return streams || [];
-  return [{ user: me.userId, name: me.name || "", title: "Your screen", own: true, watching: false }, ...(streams || [])];
+  return [{ user: me.userId, name: me.name || "", title: "Your screen", short: "You", own: true, watching: false, viewers: Math.max(0, Number(me.viewers) || 0) }, ...(streams || [])];
+}
+
+function shareViewers(text, hidden = false) {
+  return hidden ? 0 : Math.max(0, parseInt(text, 10) || 0);
+}
+
+function roomStage(channel, tiles) {
+  if (!channel || channel.kind !== "stage") return { tiles: tiles || [], audience: [] };
+  const speakers = channel.speakers || [];
+  const hands = channel.hands || [];
+  const rank = id => (hands.includes(id) ? hands.indexOf(id) : hands.length);
+  const audience = (tiles || [])
+    .filter(tile => !speakers.includes(tile.id))
+    .map((tile, index) => ({ ...tile, hand: hands.includes(tile.id), index }))
+    .sort((a, b) => rank(a.id) - rank(b.id) || a.index - b.index);
+  return { tiles: (tiles || []).filter(tile => speakers.includes(tile.id)), audience };
+}
+
+function audienceLabel(count) {
+  return `Audience ${count}`;
 }
 
 function roomSignature(tiles, streams, extra = "") {
@@ -405,6 +425,9 @@ if (typeof module !== "undefined" && module.exports) {
     roomKeyState,
     roomSignature,
     roomTileStreams,
+    shareViewers,
+    roomStage,
+    audienceLabel,
     MIRROR_FRAME_MS,
     streamBubbles,
     watchPlace,

@@ -89,6 +89,7 @@ function voiceSheetMarkup() {
 <button type="button" class="arow" data-caret="deafen-caret"><i data-i="headphones"></i><span class="l">Speaker</span><small id="pt-voice-out"></small></button>
 <button type="button" class="arow" data-caret="camera-caret"><i data-i="video"></i><span class="l">Camera</span><small id="pt-voice-cam"></small></button>
 <button type="button" class="arow" id="pt-voice-share" data-press="share-btn"><i data-i="monitor-up"></i><span class="l"></span></button>
+<button type="button" class="arow" id="pt-voice-ink" role="switch" aria-checked="false"><i data-i="pencil"></i><span class="l">Let viewers draw</span><i class="tog"></i></button>
 <button type="button" class="arow" id="pt-voice-act" data-press="vp-activities"><i data-i="gamepad-2"></i><span class="l"></span></button>`;
 }
 
@@ -98,7 +99,7 @@ function roomMarkup() {
 <div class="t"><b><span id="pt-room-name"></span><span class="live hidden" id="pt-room-live">Live</span></b><small id="pt-room-sub"></small></div>
 <button type="button" class="sig" id="pt-room-sig" aria-haspopup="dialog" aria-expanded="false">${studioDockSignalMarkup()}<span id="pt-room-sig-word"></span></button>
 </header>
-<div class="pt-room-body"><div class="pt-room-streams" id="pt-room-streams"></div><div class="pt-room-people" id="pt-room-people"></div></div>`;
+<div class="pt-room-body"><div class="pt-room-streams" id="pt-room-streams"></div><div class="pt-room-people" id="pt-room-people"></div><div class="pt-aud hidden" id="pt-room-aud"><div class="pt-aud-label" id="pt-room-aud-label"></div><div class="pt-aud-chips" id="pt-room-aud-chips"></div></div></div>`;
 }
 
 function watchMarkup() {
@@ -1486,12 +1487,16 @@ function roomTile(tile) {
 
 function roomStreamTile(stream) {
   const keys = stream.own
-    ? '<span class="stopk" role="button" tabindex="0">Stop</span>'
+    ? `<span class="eye by${stream.viewers ? "" : " hidden"}"><i data-i="eye"></i><b>${stream.viewers}</b></span><span class="stopk" role="button" tabindex="0">Stop</span>`
     : `<span class="key primary go">Watch</span><span class="max"><i data-i="maximize"></i></span>${stream.watching ? '<span class="x" role="button" tabindex="0" aria-label="Stop watching"><i data-i="x"></i></span>' : ""}`;
   const tile = studioNode("div", "pt-stream theme-dark" + (stream.own ? " own" : stream.watching ? " w" : ""), `<span class="who"><span class="live">Live</span><span class="who-name"></span></span>${keys}`);
   tile.querySelector(".who-name").textContent = stream.title;
   tile.prepend(makeAvatar(stream.user, stream.name, "avatar"));
   if (stream.own) {
+    tile.querySelector(".who-name").replaceChildren(el("span", "full", stream.title), el("span", "short", stream.short));
+    const seen = tile.querySelector(".eye").cloneNode(true);
+    seen.classList.remove("by");
+    tile.querySelector(".who").appendChild(seen);
     tile.querySelector(".stopk").onclick = () => $("vp-stop-share").click();
     return tile;
   }
@@ -1513,6 +1518,18 @@ function roomStreamTile(stream) {
     syncStreamFull();
   };
   return tile;
+}
+
+function roomAudienceChip(person) {
+  const chip = el("div", "pt-aud-chip" + (person.hand ? " hand" : ""));
+  chip.appendChild(makeAvatar(person.id || person.name, person.name, "avatar"));
+  chip.appendChild(el("b", "", person.label));
+  if (person.hand) {
+    const dot = el("i", "dot");
+    dot.setAttribute("aria-label", "Hand raised");
+    chip.appendChild(dot);
+  }
+  return chip;
 }
 
 function mirrorStream(now) {
@@ -1554,22 +1571,27 @@ function paintRoom() {
   const call = Boolean(vs.call);
   const server = call ? null : roomServer();
   const channel = server ? server.channels.find(found => found.id === state.voiceChannelId) : null;
-  const tiles = call ? duoTiles(vs.name, me) : roomTiles(channel, me);
-  const mine = tiles.find(tile => tile.you);
-  const streams = roomTileStreams(call ? [] : roomStreams(server, state.voiceChannelId, me), { userId: me.userId, name: mine ? mine.name : me.name, sharing: Boolean(state.sharing) });
+  const everyone = call ? duoTiles(vs.name, me) : roomTiles(channel, me);
+  const { tiles, audience } = roomStage(channel, everyone);
+  const mine = everyone.find(tile => tile.you);
+  const viewers = shareViewers($("vp-viewers").textContent, $("vp-viewers").classList.contains("hidden"));
+  const streams = roomTileStreams(call ? [] : roomStreams(server, state.voiceChannelId, me), { userId: me.userId, name: mine ? mine.name : me.name, sharing: Boolean(state.sharing), viewers });
   const name = call ? vs.name : vs.channelName;
   const quality = $("vp-signal").dataset.quality || "";
-  const seen = roomSignature(tiles, streams, [name, vs.name, quality].join("/"));
+  const seen = roomSignature(everyone, streams, [name, vs.name, quality, viewers, audience.map(person => `${person.id}${person.hand ? "!" : ""}`).join(",")].join("/"));
   if (seen === studioPhone.roomSeen) return;
   studioPhone.roomSeen = seen;
   $("pt-room-name").textContent = name;
   $("pt-room-live").classList.toggle("hidden", !streams.length);
-  $("pt-room-sub").textContent = roomHeading({ serverName: vs.name, count: tiles.length, call });
+  $("pt-room-sub").textContent = roomHeading({ serverName: vs.name, count: everyone.length, call });
   $("pt-room-sig").dataset.quality = quality;
   $("pt-room-sig").setAttribute("aria-label", `${studioDockQuality(quality).line}. Voice options`);
   $("pt-room-sig-word").textContent = signalWord(quality);
   $("pt-room-streams").replaceChildren(...streams.map(roomStreamTile));
   $("pt-room-people").replaceChildren(...tiles.map(roomTile));
+  $("pt-room-aud").classList.toggle("hidden", !audience.length);
+  $("pt-room-aud-label").textContent = audienceLabel(audience.length);
+  $("pt-room-aud-chips").replaceChildren(...audience.map(roomAudienceChip));
   if (!studioPhone.mirror) studioPhone.mirror = requestAnimationFrame(mirrorStream);
 }
 
@@ -1729,6 +1751,9 @@ function paintVoiceOptions() {
   const share = $("pt-voice-share");
   share.classList.toggle("hidden", !canOfferShare({ mobileApp: body.contains("mobile-app"), canShare: body.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent) }));
   share.querySelector(".l").textContent = state.sharing ? "Stop sharing" : "Share screen";
+  const ink = $("pt-voice-ink");
+  ink.classList.toggle("hidden", $("vp-ink-row").classList.contains("hidden"));
+  ink.setAttribute("aria-checked", String(Boolean(state.sharing && state.shareInk)));
   const act = $("pt-voice-act");
   act.classList.toggle("hidden", $("vp-activities").classList.contains("hidden"));
   act.querySelector(".l").textContent = $("vp-activities").textContent.trim() || "Activities";
@@ -1754,6 +1779,10 @@ function wireRoom() {
   $("pt-voice-scrim").onclick = closeVoiceOptions;
   wireTalkKeys();
   $("pt-voice-sheet").onclick = e => {
+    if (e.target.closest("#pt-voice-ink")) {
+      setStreamInk(!state.shareInk).then(paintVoiceOptions);
+      return;
+    }
     const row = e.target.closest("[data-caret], [data-press]");
     if (!row) return;
     closeVoiceOptions();

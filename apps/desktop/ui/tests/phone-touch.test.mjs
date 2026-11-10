@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -756,7 +756,7 @@ test("the stream you are watching plays in its tile and carries its own stop key
 test("your own share is a tile like any other, with your face and one Stop key, and nothing sits in rows above the keys", () => {
   const others = [{ user: "m1", name: "ferris", title: "ferris's screen", watching: false }];
   assert.deepEqual(roomTileStreams(others, { userId: "me", name: "commander", sharing: false }), others);
-  assert.deepEqual(roomTileStreams(others, { userId: "me", name: "commander", sharing: true })[0], { user: "me", name: "commander", title: "Your screen", own: true, watching: false });
+  assert.deepEqual(roomTileStreams(others, { userId: "me", name: "commander", sharing: true, viewers: 3 })[0], { user: "me", name: "commander", title: "Your screen", short: "You", own: true, watching: false, viewers: 3 });
   assert.equal(roomTileStreams(others, { userId: "me", sharing: true }).length, 2);
   assert.deepEqual(roomTileStreams(null, {}), []);
   assert.match(glue, /<span class="stopk" role="button" tabindex="0">Stop<\/span>/);
@@ -793,4 +793,44 @@ test("a pad on the tray is its name alone, and a green bar runs under it when yo
   assert.match(glue, /if \(!pad \|\| pad\.disabled \|\| Date\.now\(\) < soundboardCooldown\) return;\n\s+pad\.classList\.toggle\("playing", true\);/);
   assert.match(css, rule(' \\.pt-stream \\.max \\.i\\.i-g', 'stroke: currentColor; stroke-width: 9;'));
   assert.match(css, rule(' \\.pt-tray :is\\(\\.sb-sound, \\.pt-tray-add\\)', '[\\s\\S]*justify-content: center;'));
+});
+
+test("your own tile counts who is watching, and says You when it is small", () => {
+  assert.equal(shareViewers("3 watching"), 3);
+  assert.equal(shareViewers("1 watching"), 1);
+  assert.equal(shareViewers("3 watching", true), 0);
+  assert.equal(shareViewers(""), 0);
+  assert.equal(roomTileStreams([], { userId: "me", sharing: true })[0].viewers, 0);
+  assert.match(glue, /<span class="eye by\$\{stream\.viewers \? "" : " hidden"\}"><i data-i="eye"><\/i><b>\$\{stream\.viewers\}<\/b><\/span>/);
+  assert.match(glue, /replaceChildren\(el\("span", "full", stream\.title\), el\("span", "short", stream\.short\)\);/);
+  const small = ' \\.pt-room-streams:has\\(> :nth-child\\(2\\)\\) \\.pt-stream';
+  assert.match(css, rule(' \\.pt-stream \\.eye', '[^}]*font: 600 13px/1 var\\(--font\\); color: var\\(--video-ink\\);'));
+  assert.match(css, rule(' \\.pt-stream :is\\(\\.eye\\.by, \\.short\\)', 'display: none;'));
+  assert.match(css, rule(`${small} \\.who \\.eye`, 'display: none;'));
+  assert.match(css, rule(`${small} \\.eye\\.by:not\\(\\.hidden\\)`, 'display: flex;'));
+  assert.match(css, rule(`${small} \\.full`, 'display: none;'));
+});
+
+test("while you share, the Voice sheet carries the switch that lets viewers draw", () => {
+  assert.match(glue, /id="pt-voice-ink" role="switch" aria-checked="false"><i data-i="pencil"><\/i><span class="l">Let viewers draw<\/span><i class="tog"><\/i>/);
+  assert.ok(glue.indexOf('id="pt-voice-share"') < glue.indexOf('id="pt-voice-ink"') && glue.indexOf('id="pt-voice-ink"') < glue.indexOf('id="pt-voice-act"'));
+  assert.match(glue, /setStreamInk\(!state\.shareInk\)\.then\(paintVoiceOptions\);/);
+  assert.match(glue, /ink\.classList\.toggle\("hidden", \$\("vp-ink-row"\)\.classList\.contains\("hidden"\)\);/);
+});
+
+test("on a stage the speakers are the tiles and the audience sits under them, raised hands first", () => {
+  const tiles = [{ id: "m1", label: "ferris" }, { id: "m2", label: "juno" }, { id: "m3", label: "quill" }, { id: "me", label: "You" }];
+  const stage = roomStage({ kind: "stage", speakers: ["m1"], hands: ["me", "m3"] }, tiles);
+  assert.deepEqual(stage.tiles.map(tile => tile.id), ["m1"]);
+  assert.deepEqual(stage.audience.map(person => [person.id, person.hand]), [["me", true], ["m3", true], ["m2", false]]);
+  assert.deepEqual(roomStage({ kind: "voice" }, tiles), { tiles, audience: [] });
+  assert.deepEqual(roomStage(null, tiles), { tiles, audience: [] });
+  assert.equal(audienceLabel(14), "Audience 14");
+  assert.match(glue, /\$\("pt-room-aud"\)\.classList\.toggle\("hidden", !audience\.length\);/);
+  assert.match(glue, /roomHeading\(\{ serverName: vs\.name, count: everyone\.length, call \}\)/);
+  assert.match(css, rule(' \\.pt-aud-chip', '[^}]*height: 32px;'));
+  assert.match(css, rule(' \\.pt-aud-chip \\.avatar', 'flex: none; width: 24px; height: 24px;'));
+  assert.match(css, rule(' \\.pt-aud-chip \\.dot', '[^}]*background: var\\(--accent-2\\);'));
+  assert.match(css, rule(' \\.pt-aud-chips', 'display: flex; flex-wrap: wrap;'));
+  assert.match(css, rule(' \\.pt-tray \\.sb-sound > \\.custom-emoji', 'flex: none; width: 16px; height: 16px;'));
 });
