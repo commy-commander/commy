@@ -104,9 +104,20 @@ function liveStreams(rooms) {
   return rooms.flatMap(room => room.streams.map(stream => ({ ...stream, room })));
 }
 
+function roomFaces(people, me) {
+  return me ? people.filter(person => person.id !== me) : people;
+}
+
 function stackPeople(people, max = STACK_MAX) {
   const shown = people.slice(0, max);
   return { shown, more: Math.max(0, people.length - shown.length) };
+}
+
+const TILE_NAME = { cells: 1.5, margin: 8, gap: 2 };
+
+function tileNameWidth(cell, edgeRoom, sideRooms, limits = TILE_NAME) {
+  const spare = Math.min((limits.cells - 1) * cell / 2, edgeRoom, ...sideRooms.map(room => room - limits.gap));
+  return cell + 2 * Math.max(0, spare);
 }
 
 const SWIPE = { slop: 6, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60, sheetAt: 72, chipAfterMs: 110 };
@@ -200,7 +211,7 @@ const ROOM_KEYS = [
   { id: "camera", label: "Camera", icon: "video-off" },
   { id: "mic", label: "Mic", icon: "mic" },
   { id: "deafen", label: "Deafen", icon: "headphones" },
-  { id: "leave", label: "Leave", icon: "phone" },
+  { id: "leave", label: "Leave", icon: "phone-off" },
 ];
 const SIGNAL_WORDS = { good: "Good", ok: "Fair", bad: "Poor" };
 
@@ -289,6 +300,9 @@ if (typeof module !== "undefined" && module.exports) {
     HORIZON_SPRINGS,
     HANG_UP_FUSE_MS,
     STACK_MAX,
+    TILE_NAME,
+    tileNameWidth,
+    roomFaces,
     horizonY,
     horizonPath,
     horizonLift,

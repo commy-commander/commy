@@ -9,7 +9,7 @@ const {
   phoneTabAfter, hangUpTap, badgeText, roomLine, liveSummary, liveRooms, liveStreams, stackPeople,
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
-  ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace,
+  ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -453,4 +453,79 @@ test("over a stream every key is full size and the stream fills the screen only 
   assert.match(css, /\.pt-watch \.wbar \.hang \{[^}]*width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px;/);
   assert.match(css, /\.stage-btn \{ flex: none; width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px; \}/);
   assert.match(glue, /classList\.toggle\("theme-dark", full\)/);
+});
+
+test("the server strip and the glass slab on Home keep the design guide's measures", () => {
+  const rule = selector => {
+    const at = css.indexOf(`html[data-look="studio"][data-fit="slim"] ${selector} {`);
+    assert.ok(at >= 0, selector);
+    return css.slice(at, css.indexOf("}", at));
+  };
+  assert.match(rule('.app[data-pane="list"] > .rail'), /height: 96px;\s+padding: 10px 0 0 10px;/);
+  assert.match(rule('.app[data-pane="list"] .rail-item'), /gap: 8px;\s+width: 74px;\s+height: 86px;\s+padding-top: 3px;/);
+  assert.match(rule('.app[data-pane="list"] :is(.server-icon, .rail-btn.rail-add, .folder-head)'), /width: 52px;\s+height: 52px;/);
+  assert.match(rule('.app[data-pane="list"] .server-icon.active'), /outline: var\(--ring-on\);\s+outline-offset: 2px;/);
+  assert.match(rule('.app[data-pane="list"] .rail-item:has(> .server-icon.active) > .count-badge'), /display: none;/);
+  assert.match(rule('.app[data-pane="list"] > .sidebar'), /margin: 14px 12px calc\(var\(--hz-line\) \+ 70px\);[\s\S]*border-radius: var\(--radius-xl\);/);
+  assert.match(rule('.app[data-pane="list"] > .sidebar > .pt-find'), /right: -4px;\s+top: -16px;[\s\S]*width: 50px;\s+height: 50px;/);
+  assert.match(rule('.app[data-pane="list"] .sidebar-header > #server-name'), /font: 700 23px\/1\.45 var\(--font-display\);/);
+  assert.match(rule('.app[data-pane="list"][data-tab="home"]:not(.dm-mode) .sidebar .header-btns'), /display: none;/);
+  assert.match(rule('.app[data-pane="list"] .sidebar-game-tags'), /height: 18px;\s+margin: 2px 0 0;/);
+  assert.match(rule('.app[data-pane="list"] .channel-group.section-head .dm-group-add'), /display: none;/);
+  assert.match(rule('.app[data-pane="list"] .channel'), /height: 50px;\s+min-height: 50px;\s+margin: 0;\s+padding: 0 12px;\s+gap: 12px;/);
+  assert.match(rule('.app[data-pane="list"] .channel > .pt-count'), /min-width: 24px; height: 24px;/);
+  assert.match(rule('.app[data-pane="list"] .channel.voice-channel.pt-busy'), /height: 58px;/);
+});
+
+test("Home reads in the guide's words, and the server name opens the server's own menu", () => {
+  assert.match(glue, /const STUDIO_HOME_WORDS = \{ "Server Rules": "Rules", "Text Channels": "Text channels", "Voice Channels": "Voice channels" \};/);
+  assert.match(glue, /const openMenu = \(\) => openServerMenu\(state\.currentServer, 0, 0\);/);
+  assert.match(glue, /openCreateChannel\("text", null\);/);
+  assert.match(read("scripts", "app.js"), /function textChannelRow\([\s\S]{0,400}row\.dataset\.channel = channel\.id;/);
+});
+
+test("the faces on the room you are in leave you out, and every other room shows everyone", () => {
+  const people = [{ id: "me" }, { id: "a" }, { id: "b" }];
+  assert.deepEqual(roomFaces(people, "me").map(person => person.id), ["a", "b"]);
+  assert.deepEqual(roomFaces(people, null).map(person => person.id), ["me", "a", "b"]);
+});
+
+test("the search sheet borrows the app's own search and hands it back when it closes", () => {
+  const open = glue.slice(glue.indexOf("function openSearchSheet()"), glue.indexOf("function stowSearchSheet()"));
+  const stow = glue.slice(glue.indexOf("function stowSearchSheet()"), glue.indexOf("function wireHomeHead()"));
+  assert.match(open, /\$\("pt-search-top"\)\.appendChild\(box\);\s+\$\("pt-search-body"\)\.appendChild\(pop\);\s+openSheet\("pt-search-open"\);/);
+  assert.match(open, /\$\("search-input"\)\.focus\(\);/);
+  assert.match(stow, /resetSearch\(\);[\s\S]*home\.boxParent\.insertBefore\(\$\("search-box"\), home\.boxNext\);\s+home\.popParent\.insertBefore\(\$\("search-pop"\), home\.popNext\);/);
+  assert.match(glue, /if \(studioPhone\.searchHome && !app\.classList\.contains\("pt-search-open"\)\) stowSearchSheet\(\);/);
+});
+
+test("keys that act are drawn filled, hanging up is the same mark everywhere, and the wall carries the lamp's band", () => {
+  assert.match(css, /\.pt-acts \.act \.i \.i-on \{ display: inline; \}/);
+  assert.equal(ROOM_KEYS.find(key => key.id === "leave").icon, "phone-off");
+  assert.equal((glue.match(/aria-label="Hang up"><i data-i="phone-off"><\/i>/g) || []).length, 2);
+  assert.doesNotMatch(css, /\.hang \.i \{[^}]*rotate/);
+  assert.equal((css.match(/linear-gradient\(118deg, rgb\(var\(--lamp\) \/ 0\) 16%, rgb\(var\(--lamp\) \/ \.07\) 24%, rgb\(var\(--lamp\) \/ \.07\) 40%, rgb\(var\(--lamp\) \/ 0\) 48%\)/g) || []).length, 2);
+  assert.doesNotMatch(css, /\.(?:count-badge|badge|pt-count)[^{]*\{[^}]*tabular-nums/);
+});
+
+test("the name under your server may run past its tile, but never into a neighbour's name or the screen edge", () => {
+  assert.equal(TILE_NAME.cells, 1.5);
+  assert.equal(tileNameWidth(74, 100, [40, 40]), 111);
+  assert.equal(tileNameWidth(74, 2, [7.75]), 78);
+  assert.equal(tileNameWidth(74, 100, [0, 30]), 74);
+  assert.equal(tileNameWidth(74, -40, []), 74);
+  assert.match(glue, /name\.style\.maxWidth = cell \? `\$\{tileNameWidth\(cell, item\.offsetLeft - TILE_NAME\.margin, sides\)\}px` : "";/);
+});
+
+test("a light server colour takes dark initials on the tile you are in", () => {
+  assert.match(glue, /button\.classList\.toggle\("pt-ink", serverTintIsLight\(button\.style\.getPropertyValue\("--server-tint"\)\)\);/);
+  assert.match(css, /\.server-icon\.active\.pt-ink \{ color: var\(--ink-strong\); \}/);
+});
+
+test("the search sheet's scope keys are small glass keys with a full-size touch area, the chosen one held", () => {
+  const at = css.indexOf('.pt-search-body .search-scope-btn {');
+  const rule = css.slice(at, css.indexOf("}", at));
+  assert.match(rule, /height: 32px;\s+padding: 0 14px;[\s\S]*background: var\(--k-plain\);/);
+  assert.match(css, /\.pt-search-body \.search-scope-btn::after \{ content: ""; position: absolute; inset: -6px 0; \}/);
+  assert.match(css, /\.pt-search-body \.search-scope-btn\.active \{ background: var\(--k-latched\); box-shadow: var\(--k-latched-shadow\);/);
 });

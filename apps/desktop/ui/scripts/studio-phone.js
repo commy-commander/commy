@@ -6,6 +6,7 @@ const STUDIO_TABS = [
 ];
 const STUDIO_TITLES = { messages: "Messages", live: "Live", you: "You" };
 const STUDIO_LIVE_REFRESH_MS = 15000;
+const STUDIO_HOME_WORDS = { "Server Rules": "Rules", "Text Channels": "Text channels", "Voice Channels": "Voice channels" };
 
 const studioPhone = {
   tab: "home",
@@ -35,6 +36,8 @@ const studioPhone = {
   railTimer: 0,
   bubblesSeen: "",
   streamShown: false,
+  searchHome: null,
+  searchPick: false,
 };
 
 function studioSlim() {
@@ -62,7 +65,7 @@ function horizonMarkup() {
 <div class="hzn-tabs" role="tablist" aria-label="Places">${tabs}</div>
 <i class="hzn-tick"></i>
 <div class="hzn-voice">
-<div class="ks"><button type="button" class="key sq tap mic" aria-label="Mute"><i data-i="mic"></i><i class="led"></i></button><button type="button" class="key sq tap danger hang" aria-label="Hang up"><i data-i="phone"></i></button></div>
+<div class="ks"><button type="button" class="key sq tap mic" aria-label="Mute"><i data-i="mic"></i><i class="led"></i></button><button type="button" class="key sq tap danger hang" aria-label="Hang up"><i data-i="phone-off"></i></button></div>
 <button type="button" class="open" aria-label="Voice controls"><i data-i="bars"></i><span class="open-name"></span></button>
 <div class="ask" role="status">Tap again to leave</div>
 </div>
@@ -101,7 +104,7 @@ function watchMarkup() {
 </div>
 <div class="bubbles" id="pt-watch-bubbles"></div>
 <div class="ctl">${["sounds", "camera", "deafen", "mic"].map(key).join("")}</div>
-<div class="wbar"><button type="button" class="key sq tap danger hang" data-room-key="leave" aria-label="Hang up"><i data-i="phone"></i></button><button type="button" class="wfield" id="pt-watch-field"></button></div>`;
+<div class="wbar"><button type="button" class="key sq tap danger hang" data-room-key="leave" aria-label="Hang up"><i data-i="phone-off"></i></button><button type="button" class="wfield" id="pt-watch-field"></button></div>`;
 }
 
 function youMarkup() {
@@ -144,14 +147,31 @@ function buildStudioPhone() {
   const room = studioNode("section", "pt-room", roomMarkup());
   room.id = "pt-room";
   room.setAttribute("aria-label", "Voice room");
-  app.append(title, live, you, scrim, hold, cue, room, bar);
+  const search = studioNode("section", "pt-sheet pt-search", '<div class="pt-search-top" id="pt-search-top"></div><div class="pt-search-body" id="pt-search-body"></div>');
+  search.id = "pt-search";
+  search.setAttribute("aria-label", "Search");
+  app.append(title, live, you, scrim, hold, search, cue, room, bar);
   const watch = studioNode("div", "pt-watch", watchMarkup());
   watch.id = "pt-watch";
   $("stage-view").appendChild(watch);
   buildChatHeader();
   buildChatBar();
+  buildHomeHead();
   $("add-server-btn").dataset.ptLabel = "Add";
   $("discover-btn").dataset.ptLabel = "Discover";
+}
+
+function buildHomeHead() {
+  const find = studioNode("button", "key sq cream pt-find", '<i data-i="search"></i>');
+  find.type = "button";
+  find.id = "pt-find";
+  find.setAttribute("aria-label", "Search");
+  document.querySelector(".sidebar").appendChild(find);
+  $("server-name").after(studioNode("span", "pt-home-chev", '<i data-i="chevron-down"></i>'));
+  const add = el("button", "pt-sm-add", "Create Channel");
+  add.type = "button";
+  add.id = "pt-sm-add";
+  $("sm-settings").before(add);
 }
 
 function buildChatBar() {
@@ -401,6 +421,8 @@ function syncPhoneTab() {
     paintStudioTitle();
   }
   if (phonePane() !== "list" && app.classList.contains("pt-voice-open")) app.classList.remove("pt-voice-open");
+  if (studioPhone.searchHome && !app.classList.contains("pt-search-open")) stowSearchSheet();
+  paintHomeHead();
   if (phonePane() !== "chat" && app.classList.contains("pt-stream-full")) app.classList.remove("pt-stream-full");
   paintChatHeader();
   syncRoomMode();
@@ -435,7 +457,7 @@ function disarmHangUp() {
   }
 }
 
-const STUDIO_SHEETS = ["pt-voice-open", "pt-hold-open", "pt-chat-menu"];
+const STUDIO_SHEETS = ["pt-voice-open", "pt-hold-open", "pt-chat-menu", "pt-search-open"];
 
 function openSheet(name) {
   const app = $("app");
@@ -465,6 +487,75 @@ function closeSheets(then) {
     return;
   }
   if (then) then();
+}
+
+function openSearchSheet() {
+  const box = $("search-box");
+  const pop = $("search-pop");
+  if (studioPhone.searchHome || box.classList.contains("hidden")) return;
+  studioPhone.searchHome = { boxParent: box.parentNode, boxNext: box.nextSibling, popParent: pop.parentNode, popNext: pop.nextSibling };
+  $("pt-search-top").appendChild(box);
+  $("pt-search-body").appendChild(pop);
+  openSheet("pt-search-open");
+  if (searchScopes(searchScopeContext()).some(scope => scope.key === "server" && scope.enabled)) setSearchScope("server");
+  showChosenScope();
+  $("search-input").focus();
+}
+
+function showChosenScope() {
+  const chosen = document.querySelector("#pt-search-body .search-scope-btn.active");
+  if (!chosen) return;
+  const bar = chosen.parentNode;
+  bar.scrollLeft = Math.max(0, chosen.offsetLeft + chosen.offsetWidth - bar.clientWidth + 8);
+}
+
+function stowSearchSheet() {
+  const home = studioPhone.searchHome;
+  if (!home) return;
+  studioPhone.searchHome = null;
+  resetSearch();
+  $("search-input").blur();
+  home.boxParent.insertBefore($("search-box"), home.boxNext);
+  home.popParent.insertBefore($("search-pop"), home.popNext);
+}
+
+function wireHomeHead() {
+  $("pt-find").onclick = openSearchSheet;
+  const openMenu = () => openServerMenu(state.currentServer, 0, 0);
+  $("server-name-header").addEventListener("click", e => {
+    if (e.target.closest("button") || !paintHomeHead()) return;
+    openMenu();
+  });
+  $("server-name").addEventListener("keydown", e => {
+    if ((e.key !== "Enter" && e.key !== " ") || !paintHomeHead()) return;
+    e.preventDefault();
+    openMenu();
+  });
+  $("pt-sm-add").onclick = () => {
+    closeFloating();
+    openCreateChannel("text", null);
+  };
+  new MutationObserver(() => {
+    const server = state.currentServer;
+    const mine = Boolean(server && menuServer && menuServer.id === server.id && server.can_manage_channels);
+    $("pt-sm-add").classList.toggle("hidden", !mine);
+  }).observe($("server-menu"), { attributes: true, attributeFilter: ["class"] });
+  $("pt-search").addEventListener("click", e => {
+    const row = e.target.closest(".search-row");
+    if (!row || studioPhone.searchPick) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeSheets(() => {
+      studioPhone.searchPick = true;
+      row.click();
+      studioPhone.searchPick = false;
+      if (phonePane() === "list") phoneStep("open");
+    });
+  }, true);
+  new MutationObserver(() => {
+    if (studioPhone.searchHome && $("search-pop").classList.contains("hidden") && $("app").classList.contains("pt-search-open")) closeSheets();
+    else if (studioPhone.searchHome) showChosenScope();
+  }).observe($("search-pop"), { attributes: true, attributeFilter: ["class"], childList: true, subtree: true });
 }
 
 function closeVoiceSheet() {
@@ -517,17 +608,42 @@ function syncHorizonBadge() {
 }
 
 function decorateRail() {
+  const waiting = [...document.querySelectorAll("#server-list .server-icon.waiting")];
   for (const item of document.querySelectorAll("#server-list .rail-item")) {
     const button = item.querySelector(".server-icon");
     if (!button || item.querySelector(".pt-name")) continue;
-    const name = el("span", "pt-name", button.title);
+    const wait = joinWaits[waiting.indexOf(button)];
+    const name = el("span", "pt-name", wait ? wait.name : button.title);
     if (button.classList.contains("active")) name.classList.add("on");
     item.appendChild(name);
+    button.classList.toggle("pt-ink", serverTintIsLight(button.style.getPropertyValue("--server-tint")));
   }
   for (const head of document.querySelectorAll("#server-list .folder-head")) {
     if (head.parentNode.querySelector(":scope > .pt-name")) continue;
     head.after(el("span", "pt-name", head.title));
   }
+  placeTileName();
+}
+
+function tileLabelWidth(cell) {
+  const name = cell.querySelector(":scope > .pt-name");
+  if (name) return name.offsetWidth;
+  const drawn = getComputedStyle(cell, "::after");
+  const words = /^"(.*)"$/.exec(drawn.content);
+  if (!words) return 0;
+  const pen = document.createElement("canvas").getContext("2d");
+  pen.font = drawn.font;
+  return pen.measureText(words[1]).width;
+}
+
+function placeTileName() {
+  const name = document.querySelector("#server-list .rail-item > .pt-name.on");
+  if (!name) return;
+  const item = name.parentNode;
+  const cell = item.offsetWidth;
+  const next = item.nextElementSibling || (item.parentNode.id === "server-list" ? $("add-server-btn") : null);
+  const sides = [item.previousElementSibling, next].filter(Boolean).map(side => (cell - tileLabelWidth(side)) / 2);
+  name.style.maxWidth = cell ? `${tileNameWidth(cell, item.offsetLeft - TILE_NAME.margin, sides)}px` : "";
 }
 
 function personStack(people, className = "stack", max = STACK_MAX) {
@@ -538,6 +654,42 @@ function personStack(people, className = "stack", max = STACK_MAX) {
   return stack;
 }
 
+function paintHomeWords() {
+  const slim = studioSlim();
+  for (const node of $("channel-list").querySelectorAll(".sidebar-link .channel-label, .section-title")) {
+    const typed = node.dataset.ptTyped || node.textContent;
+    if (!Object.hasOwn(STUDIO_HOME_WORDS, typed)) continue;
+    node.dataset.ptTyped = typed;
+    const shown = slim ? STUDIO_HOME_WORDS[typed] : typed;
+    if (node.textContent !== shown) node.textContent = shown;
+  }
+}
+
+function paintHomeHead() {
+  const name = $("server-name");
+  const menu = studioSlim() && studioPhone.tab === "home" && state.view === "server" && Boolean(state.currentServer) && !state.currentServer.group;
+  if (menu) {
+    name.setAttribute("role", "button");
+    name.setAttribute("aria-haspopup", "menu");
+    name.tabIndex = 0;
+  } else if (name.getAttribute("aria-haspopup")) {
+    name.removeAttribute("role");
+    name.removeAttribute("aria-haspopup");
+    name.removeAttribute("tabindex");
+  }
+  return menu;
+}
+
+function decorateTextRows(list, server) {
+  for (const row of list.querySelectorAll(".channel[data-channel]")) {
+    const hash = row.querySelector(":scope > .hash");
+    if (hash && !hash.querySelector(".pt-hash")) hash.appendChild(studioNode("span", "pt-hash", '<i data-i="hash"></i>'));
+    row.querySelector(":scope > .pt-count")?.remove();
+    const count = server ? shownUnread(server.id, row.dataset.channel) : 0;
+    if (count) row.appendChild(el("span", "pt-count", badgeText(count)));
+  }
+}
+
 function decorateRooms() {
   if (!studioLook()) return;
   const list = $("channel-list");
@@ -545,20 +697,24 @@ function decorateRooms() {
     head.classList.toggle("pt-community", Boolean(head.nextElementSibling && head.nextElementSibling.classList.contains("sidebar-link")));
   }
   const server = state.view === "server" ? state.currentServer : null;
+  paintHomeWords();
+  paintHomeHead();
+  decorateTextRows(list, server);
   for (const row of list.querySelectorAll(".voice-channel[data-room]")) {
     row.querySelector(".pt-room-note")?.remove();
     row.querySelector(".stack")?.remove();
     const channel = server && server.channels.find(c => c.id === row.dataset.room);
     if (!channel) continue;
-    const people = roomPeople(channel);
-    const line = roomLine(people.length, state.voiceChannelId === channel.id);
+    const here = state.voiceChannelId === channel.id;
+    const people = roomFaces(roomPeople(channel), here && state.user ? state.user.id : null);
+    const line = roomLine(people.length, here);
     const sharing = liveRooms([server]).some(room => room.channelId === channel.id && room.streams.length > 0);
-    row.classList.toggle("pt-busy", people.length > 0);
+    row.classList.toggle("pt-busy", Boolean(line));
     const label = row.querySelector(".channel-label");
     label.querySelector(".live")?.remove();
     if (sharing) label.appendChild(el("span", "live", "Live"));
     if (line) {
-      const note = el("span", "pt-room-note" + (state.voiceChannelId === channel.id ? " yes" : ""), line);
+      const note = el("span", "pt-room-note" + (here ? " yes" : ""), line);
       label.after(note);
     }
     if (people.length) row.appendChild(personStack(people));
@@ -766,6 +922,9 @@ function watchStudioPhone() {
   watch($("me-status"), { childList: true, characterData: true, subtree: true }, () => studioPhone.tab === "you" && paintYouPage());
   watch(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-fit", "data-fx"] }, () => {
     paintYouPage();
+    paintHomeWords();
+    paintHomeHead();
+    placeTileName();
     layHorizon();
   });
   window.addEventListener("resize", layHorizon);
@@ -916,7 +1075,7 @@ function openRowSwipe(row) {
 
 const RAIL_UNLIT_MS = 200;
 const RAIL_FADE_MS = 140;
-const STUDIO_SHEET_NODES = "#pt-hold, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop";
+const STUDIO_SHEET_NODES = "#pt-hold, #pt-search, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop";
 
 function sheetAtTop(sheet, from) {
   for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
@@ -924,7 +1083,7 @@ function sheetAtTop(sheet, from) {
 }
 
 function closeSwipedSheet(sheet) {
-  if (sheet.id === "pt-hold") closeSheets();
+  if (sheet.id === "pt-hold" || sheet.id === "pt-search") closeSheets();
   else closeFloating();
   sheet.style.transition = "";
   sheet.style.translate = "";
@@ -1331,6 +1490,7 @@ function wireStudioPhone() {
   wireHorizon();
   wireYouPage();
   wireChatHeader();
+  wireHomeHead();
   wireHoldSheet();
   wireSwipes();
   wireRoom();

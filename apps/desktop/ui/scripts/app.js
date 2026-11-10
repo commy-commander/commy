@@ -4016,6 +4016,7 @@ function channelSensitiveMark(row, channel) {
 
 function textChannelRow(channel, canCreate, pinned = false) {
   const row = el("div", "channel");
+  row.dataset.channel = channel.id;
   if (isDriveChannel(channel)) row.classList.add("drive-channel");
   row.appendChild(channelMark(channel));
   row.appendChild(channelNameNode(channel, "channel-label"));
