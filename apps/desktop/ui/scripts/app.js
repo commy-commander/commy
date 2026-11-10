@@ -9429,8 +9429,11 @@ function dmListShown() {
   return state.view === "dm" || isGroupView();
 }
 
+const messageOfActions = new WeakMap();
+
 function messageActions(message, inThread = false, replies = 0) {
   const bar = el("div", "msg-actions");
+  messageOfActions.set(bar, message);
   const add = (icon, title, onClick, cls = "") => {
     const btn = el("button", cls);
     btn.title = title;

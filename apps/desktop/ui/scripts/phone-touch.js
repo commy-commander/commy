@@ -109,6 +109,80 @@ function stackPeople(people, max = STACK_MAX) {
   return { shown, more: Math.max(0, people.length - shown.length) };
 }
 
+const SWIPE = { slop: 12, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60 };
+const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
+const SHEET_ROWS = {
+  "Reply": { label: "Reply", icon: "reply", hint: "or swipe the message right" },
+  "Open Thread": { label: "Open thread", icon: "message-square-text" },
+  "Pin": { label: "Pin to channel", icon: "pin" },
+  "Unpin": { label: "Unpin", icon: "pin" },
+  "Edit": { label: "Edit", icon: "pencil" },
+  "Hide for Me": { label: "Hide for me", icon: "eye-off" },
+  "Save": { label: "Save message", icon: "bookmark" },
+  "Unsave": { label: "Remove from saved", icon: "bookmark" },
+  "Remind Me": { label: "Remind me", icon: "bell" },
+  "Copy text": { label: "Copy text", icon: "copy" },
+  "More": { label: "More", icon: "ellipsis" },
+  "Report Message": { label: "Report message", icon: "flag" },
+  "Delete": { label: "Delete", icon: "trash-2", danger: true },
+  "Delete (Moderator)": { label: "Delete as moderator", icon: "trash-2", danger: true },
+};
+
+function swipeAxis(dx, dy) {
+  if (Math.abs(dx) < SWIPE.slop && Math.abs(dy) < SWIPE.slop) return null;
+  return Math.abs(dx) > Math.abs(dy) * 1.5 ? "x" : "y";
+}
+
+function replyPull(dx) {
+  if (dx <= 0) return 0;
+  if (dx <= SWIPE.replyAt) return dx;
+  return Math.min(SWIPE.replyMax, SWIPE.replyAt + (dx - SWIPE.replyAt) * 0.35);
+}
+
+function replyCommits(dx) {
+  return dx >= SWIPE.replyAt;
+}
+
+function edgeBackStarts(x) {
+  return x <= SWIPE.edge;
+}
+
+function edgeBackCommits(dx) {
+  return dx >= SWIPE.backAt;
+}
+
+function rowPull(dx, wasOpen) {
+  const raw = (wasOpen ? SWIPE.rowOpen : 0) + dx;
+  if (raw <= 0) return 0;
+  if (raw <= SWIPE.rowOpen) return raw;
+  return Math.min(SWIPE.rowOpen + 18, SWIPE.rowOpen + (raw - SWIPE.rowOpen) * 0.25);
+}
+
+function rowStaysOpen(pull, wasOpen) {
+  return wasOpen ? pull > SWIPE.rowOpen - SWIPE.rowAt : pull >= SWIPE.rowAt;
+}
+
+function sheetRow(title) {
+  if (SHEET_ROWS[title]) return SHEET_ROWS[title];
+  const words = String(title || "").trim();
+  return { label: words ? words[0].toUpperCase() + words.slice(1).toLowerCase() : "", icon: null };
+}
+
+function quickReactions(frequent, limit = QUICK_REACTIONS.length) {
+  const picked = [];
+  for (const emoji of [...(frequent || []), ...QUICK_REACTIONS]) {
+    if (typeof emoji === "string" && emoji && !emoji.startsWith(":") && !picked.includes(emoji)) picked.push(emoji);
+    if (picked.length === limit) break;
+  }
+  return picked;
+}
+
+function chatSubtitle({ view, serverName, group, presence }) {
+  if (view === "dm") return presence || "Direct message";
+  if (group) return "Group chat";
+  return serverName || "";
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     PHONE_TABS,
@@ -130,5 +204,18 @@ if (typeof module !== "undefined" && module.exports) {
     liveRooms,
     liveStreams,
     stackPeople,
+    SWIPE,
+    QUICK_REACTIONS,
+    SHEET_ROWS,
+    swipeAxis,
+    replyPull,
+    replyCommits,
+    edgeBackStarts,
+    edgeBackCommits,
+    rowPull,
+    rowStaysOpen,
+    sheetRow,
+    quickReactions,
+    chatSubtitle,
   };
 }

@@ -7,8 +7,10 @@ const require = createRequire(import.meta.url);
 const {
   PHONE_TABS, HORIZON, HORIZON_SPRINGS, HANG_UP_FUSE_MS, horizonY, horizonPath, horizonLift, springStep,
   phoneTabAfter, hangUpTap, badgeText, roomLine, liveSummary, liveRooms, liveStreams, stackPeople,
+  SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
+  rowPull, rowStaysOpen, sheetRow, quickReactions, chatSubtitle,
 } = require("../scripts/phone-touch.js");
-const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8");
+const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
 const glue = read("scripts", "studio-phone.js");
 const html = read("index.html");
@@ -123,14 +125,18 @@ test("every phone rule waits for the new look and a slim window", () => {
   assert.ok(selectors.length > 150);
   for (const raw of selectors) {
     for (const selector of raw.replace(/^\}/, "").replace(/\{$/, "").replace(/\([^()]*\)/g, "").split(",")) {
-      if (selector.trim() === 'html[data-look="studio"] :is') continue;
+      if (selector.trim().startsWith('html[data-look="studio"]:not ')) continue;
       assert.match(selector.trim(), /^html\[data-look="studio"\]\[data-fit="slim"\]/, selector.trim());
     }
   }
 });
 
 test("the phone-only parts stay hidden in every wider window", () => {
-  assert.match(css, /^html\[data-look="studio"\] :is\(\.pt-title, \.pt-page, \.pt-scrim, \.hzn\) \{ display: none; \}$/m);
+  const rule = css.match(/^html\[data-look="studio"\]:not\(\[data-fit="slim"\]\) :is\(([^)]+)\) \{ display: none !important; \}$/m);
+  assert.ok(rule);
+  const hidden = rule[1].split(", ");
+  for (const built of glue.matchAll(/(?:el|studioNode)\("[a-z]+", "((?:pt-|hzn)[a-z-]*)/g)) assert.ok(hidden.includes(`.${built[1]}`), built[1]);
+  assert.ok(hidden.includes(".pt-room-chip"));
 });
 
 test("the phone stylesheet carries no colours of its own", () => {
@@ -150,4 +156,93 @@ test("nothing on the phone offers to share an iPhone screen, and the bar names n
   for (const size of css.matchAll(/\.hzn-voice \.key \{[^}]*width: (\d+)px;[^}]*height: (\d+)px/g)) {
     assert.ok(Number(size[1]) >= 44 && Number(size[2]) >= 44);
   }
+});
+
+test("a swipe is sideways only once it clearly is, so scrolling the chat never drags a message", () => {
+  assert.equal(swipeAxis(6, 4), null);
+  assert.equal(swipeAxis(30, 8), "x");
+  assert.equal(swipeAxis(-30, 8), "x");
+  assert.equal(swipeAxis(14, 14), "y");
+  assert.equal(swipeAxis(4, 40), "y");
+});
+
+test("pulling a message right follows the finger, then resists, and replies past the mark", () => {
+  assert.equal(replyPull(-20), 0);
+  assert.equal(replyPull(30), 30);
+  assert.equal(replyPull(SWIPE.replyAt), SWIPE.replyAt);
+  assert.ok(replyPull(120) > SWIPE.replyAt && replyPull(120) < 120);
+  assert.equal(replyPull(900), SWIPE.replyMax);
+  assert.equal(replyCommits(SWIPE.replyAt - 1), false);
+  assert.equal(replyCommits(SWIPE.replyAt), true);
+});
+
+test("going back starts at the left edge and needs a real pull", () => {
+  assert.equal(edgeBackStarts(0), true);
+  assert.equal(edgeBackStarts(SWIPE.edge), true);
+  assert.equal(edgeBackStarts(SWIPE.edge + 1), false);
+  assert.equal(edgeBackCommits(SWIPE.backAt - 1), false);
+  assert.equal(edgeBackCommits(SWIPE.backAt), true);
+});
+
+test("a row opens far enough for two full-size actions and snaps open or shut", () => {
+  assert.ok(SWIPE.rowOpen >= 2 * 44 + 16);
+  assert.equal(rowPull(-40, false), 0);
+  assert.equal(rowPull(50, false), 50);
+  assert.ok(rowPull(400, false) <= SWIPE.rowOpen + 18);
+  assert.equal(rowPull(-SWIPE.rowOpen, true), 0);
+  assert.equal(rowPull(0, true), SWIPE.rowOpen);
+  assert.equal(rowStaysOpen(SWIPE.rowAt - 1, false), false);
+  assert.equal(rowStaysOpen(SWIPE.rowAt, false), true);
+  assert.equal(rowStaysOpen(SWIPE.rowOpen - 10, true), true);
+  assert.equal(rowStaysOpen(SWIPE.rowOpen - SWIPE.rowAt, true), false);
+});
+
+test("the sheet names every message action in plain words and marks the ones that delete", () => {
+  for (const title of ["Reply", "Open Thread", "Pin", "Unpin", "Edit", "Hide for Me", "Save", "Unsave", "Remind Me", "More", "Report Message", "Delete", "Delete (Moderator)"]) {
+    assert.ok(SHEET_ROWS[title].label, title);
+    assert.ok(SHEET_ROWS[title].icon, title);
+  }
+  assert.equal(sheetRow("Delete").danger, true);
+  assert.equal(sheetRow("Delete (Moderator)").danger, true);
+  assert.equal(sheetRow("Reply").danger, undefined);
+  assert.deepEqual(sheetRow("Translate Message"), { label: "Translate message", icon: null });
+  assert.deepEqual(sheetRow(""), { label: "", icon: null });
+});
+
+test("the reaction row is your most used emoji first, filled up from a fixed five, never repeated", () => {
+  assert.deepEqual(quickReactions([]), QUICK_REACTIONS);
+  assert.deepEqual(quickReactions(null), QUICK_REACTIONS);
+  const mine = quickReactions(["\u{1F3C1}", QUICK_REACTIONS[0], ":custom:"]);
+  assert.equal(mine.length, QUICK_REACTIONS.length);
+  assert.equal(mine[0], "\u{1F3C1}");
+  assert.equal(mine[1], QUICK_REACTIONS[0]);
+  assert.equal(new Set(mine).size, mine.length);
+  assert.ok(!mine.includes(":custom:"));
+  assert.equal(quickReactions([], 3).length, 3);
+});
+
+test("the line under the chat title says where you are", () => {
+  assert.equal(chatSubtitle({ view: "server", serverName: "Pixel Pioneers" }), "Pixel Pioneers");
+  assert.equal(chatSubtitle({ view: "server", serverName: "Friends", group: true }), "Group chat");
+  assert.equal(chatSubtitle({ view: "dm", presence: "Online" }), "Online");
+  assert.equal(chatSubtitle({ view: "dm", presence: "" }), "Direct message");
+  assert.equal(chatSubtitle({ view: "server" }), "");
+});
+
+test("every sheet and long-press menu on the phone has full-size rows", () => {
+  const height = selector => {
+    const rule = css.match(new RegExp(`^html\\[data-look="studio"\\]\\[data-fit="slim"\\] ${selector} \\{[^}]*min-height: (\\d+)px`, "m"));
+    assert.ok(rule, selector);
+    return Number(rule[1]);
+  };
+  assert.ok(height("\\.arow") >= 44);
+  assert.ok(height(":is\\(\\.ctx-menu, \\.composer-menu\\) button") >= 44);
+  assert.match(css, /\.pt-hold \.rx-key \{ width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px;/);
+  assert.match(css, /\.pt-acts \.act \{[^}]*min-height: (4[4-9]|[5-9]\d)px/);
+});
+
+test("the hover toolbar on a message never shows on the phone, the sheet reads it instead", () => {
+  assert.match(css, /^html\[data-look="studio"\]\[data-fit="slim"\] \.msg-actions \{ display: none !important; \}$/m);
+  assert.match(glue, /messageOfActions\.get\(/);
+  assert.match(read("scripts", "app.js"), /messageOfActions\.set\(bar, message\);/);
 });

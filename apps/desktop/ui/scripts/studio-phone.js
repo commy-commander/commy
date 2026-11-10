@@ -26,6 +26,8 @@ const studioPhone = {
   liveTimer: 0,
   badge: 0,
   calm: false,
+  rowOpen: null,
+  swipedAt: 0,
 };
 
 function studioSlim() {
@@ -88,12 +90,33 @@ function buildStudioPhone() {
   you.setAttribute("aria-label", "You");
   const scrim = el("div", "pt-scrim");
   scrim.id = "pt-scrim";
+  const hold = studioNode("section", "pt-sheet pt-hold", '<div class="rx" id="pt-hold-rx"></div><div class="pt-sheet-rows" id="pt-hold-rows"></div>');
+  hold.id = "pt-hold";
+  hold.setAttribute("aria-label", "Message actions");
+  const cue = studioNode("span", "pt-reply-cue", '<i data-i="reply"></i>');
+  cue.id = "pt-reply-cue";
   const bar = studioNode("nav", "hzn", horizonMarkup());
   bar.id = "horizon";
   bar.setAttribute("aria-label", "Places");
-  app.append(title, live, you, scrim, bar);
+  app.append(title, live, you, scrim, hold, cue, bar);
+  buildChatHeader();
   $("add-server-btn").dataset.ptLabel = "Add";
   $("discover-btn").dataset.ptLabel = "Discover";
+}
+
+function buildChatHeader() {
+  const header = document.querySelector(".chat-header");
+  const sub = el("span", "pt-chat-sub");
+  sub.id = "pt-chat-sub";
+  const title = el("button", "pt-chat-title");
+  title.id = "pt-chat-title";
+  title.type = "button";
+  title.setAttribute("aria-label", "Channel options");
+  title.setAttribute("aria-haspopup", "dialog");
+  const chip = studioNode("button", "key tap pt-room-chip", '<i data-i="bars"></i><span id="pt-room-chip-name"></span>');
+  chip.id = "pt-room-chip";
+  chip.type = "button";
+  header.append(sub, title, chip);
 }
 
 function horizonParts() {
@@ -253,7 +276,8 @@ function syncPhoneTab() {
     paintHorizonTab(false);
     paintStudioTitle();
   }
-  if (phonePane() !== "list") closeVoiceSheet();
+  if (phonePane() !== "list" && app.classList.contains("pt-voice-open")) app.classList.remove("pt-voice-open");
+  paintChatHeader();
 }
 
 function armHangUp() {
@@ -276,9 +300,40 @@ function disarmHangUp() {
   h.hang.setAttribute("aria-label", "Hang up");
 }
 
-function closeVoiceSheet() {
+const STUDIO_SHEETS = ["pt-voice-open", "pt-hold-open", "pt-chat-menu"];
+
+function openSheet(name) {
   const app = $("app");
-  if (app.classList.contains("pt-voice-open")) app.classList.remove("pt-voice-open");
+  for (const other of STUDIO_SHEETS) if (other !== name && app.classList.contains(other)) app.classList.remove(other);
+  if (app.classList.contains(name)) return;
+  app.classList.add(name);
+  if (!(history.state && history.state.ptSheet)) history.pushState({ pane: phonePane(), ptSheet: true }, "");
+}
+
+function sheetOpen() {
+  const app = $("app");
+  return STUDIO_SHEETS.some(name => app.classList.contains(name));
+}
+
+function dropSheets() {
+  const app = $("app");
+  for (const name of STUDIO_SHEETS) if (app.classList.contains(name)) app.classList.remove(name);
+  for (const held of document.querySelectorAll(".msg.pt-held")) held.classList.remove("pt-held");
+}
+
+function closeSheets(then) {
+  const wasOpen = sheetOpen();
+  dropSheets();
+  if (wasOpen && history.state && history.state.ptSheet) {
+    if (then) window.addEventListener("popstate", () => then(), { once: true });
+    history.back();
+    return;
+  }
+  if (then) then();
+}
+
+function closeVoiceSheet() {
+  if ($("app").classList.contains("pt-voice-open")) closeSheets();
 }
 
 function syncHorizonVoice() {
@@ -291,6 +346,7 @@ function syncHorizonVoice() {
     $("app").classList.toggle("pt-in-voice", inVoice);
     disarmHangUp();
     if (!inVoice) closeVoiceSheet();
+    paintChatHeader();
     if (studioPhone.calm) layHorizon();
     else {
       studioPhone.followUntil = performance.now() + 900;
@@ -507,7 +563,10 @@ function wireHorizon() {
       $("mute-btn").click();
       return;
     }
-    if (e.target.closest(".open")) $("app").classList.toggle("pt-voice-open");
+    if (e.target.closest(".open")) {
+      if ($("app").classList.contains("pt-voice-open")) closeSheets();
+      else openSheet("pt-voice-open");
+    }
   });
   document.addEventListener("pointerdown", e => {
     if (studioPhone.armed && !h.hang.contains(e.target)) disarmHangUp();
@@ -515,16 +574,17 @@ function wireHorizon() {
   document.addEventListener("keydown", e => {
     if (e.key === "Escape") {
       disarmHangUp();
-      closeVoiceSheet();
+      closeSheets();
     }
   });
-  $("pt-scrim").onclick = closeVoiceSheet;
+  $("pt-scrim").onclick = () => closeSheets();
+  window.addEventListener("popstate", dropSheets);
   $("channel-list").addEventListener("click", e => {
     if (!studioSlim() || e.target.closest("button")) return;
     if (!e.target.closest(".voice-channel.connected")) return;
     e.stopPropagation();
     e.preventDefault();
-    $("app").classList.add("pt-voice-open");
+    openSheet("pt-voice-open");
   }, true);
 }
 
@@ -537,7 +597,10 @@ function watchStudioPhone() {
     decorateRail();
     refreshLiveRooms(false);
   });
+  watch($("channel-name"), { childList: true, characterData: true, subtree: true }, paintChatHeader);
+  watch($("chat-presence"), { attributes: true, attributeFilter: ["class", "title"] }, paintChatHeader);
   watch($("channel-list"), { childList: true }, () => {
+    if (studioPhone.rowOpen && !studioPhone.rowOpen.row.isConnected) studioPhone.rowOpen = null;
     decorateRooms();
     refreshLiveRooms(false);
   });
@@ -552,12 +615,261 @@ function watchStudioPhone() {
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(layHorizon);
 }
 
+function paintChatHeader() {
+  const sub = $("pt-chat-sub");
+  if (!sub) return;
+  const presence = $("chat-presence").classList.contains("hidden") ? "" : $("chat-presence").title;
+  const text = chatSubtitle({
+    view: state.view === "dm" ? "dm" : "server",
+    serverName: state.currentServer ? state.currentServer.name : "",
+    group: Boolean(state.view === "server" && state.currentServer && state.currentServer.group),
+    presence,
+  });
+  if (sub.textContent !== text) sub.textContent = text;
+  const name = $("phone-voice-name").textContent;
+  const inVoice = !$("phone-voice").classList.contains("hidden");
+  $("pt-room-chip").classList.toggle("hidden", !inVoice);
+  if ($("pt-room-chip-name").textContent !== name) $("pt-room-chip-name").textContent = name;
+}
+
+function wireChatHeader() {
+  $("pt-chat-title").onclick = () => openSheet("pt-chat-menu");
+  $("pt-room-chip").onclick = () => {
+    if (phonePane() !== "list") phoneStep("back");
+    setTimeout(() => state.voiceChannelId && openSheet("pt-voice-open"), 60);
+  };
+  document.querySelector(".chat-header .header-actions").addEventListener("click", e => {
+    if (!$("app").classList.contains("pt-chat-menu") || !e.target.closest("button")) return;
+    dropSheets();
+  });
+}
+
+function fakeAnchor() {
+  const rect = { left: 16, right: 16, top: window.innerHeight * 0.4, bottom: window.innerHeight * 0.4, width: 0, height: 0 };
+  return { getBoundingClientRect: () => rect, closest: () => null };
+}
+
+function holdRow(title, run) {
+  const spec = sheetRow(title);
+  const row = el("button", "arow" + (spec.danger ? " danger" : ""));
+  row.type = "button";
+  if (spec.icon && StudioIcons.known(spec.icon)) row.insertAdjacentHTML("beforeend", StudioIcons.markup(spec.icon));
+  row.appendChild(el("span", "l", spec.label));
+  if (spec.hint) row.appendChild(el("small", "", spec.hint));
+  row.onclick = () => closeSheets(run);
+  return row;
+}
+
+function openHoldSheet(msg) {
+  const bar = msg.querySelector(":scope > .msg-actions");
+  const message = bar && messageOfActions.get(bar);
+  if (!bar || !message) return false;
+  const buttons = [...bar.querySelectorAll("button")];
+  const rows = $("pt-hold-rows");
+  rows.replaceChildren();
+  for (const button of buttons) {
+    if (button.title === "Add Reaction") continue;
+    if (button.title === "More") {
+      if (message.content) rows.appendChild(holdRow("Copy text", () => copyText(plainText(message.content), "Text copied")));
+      rows.appendChild(holdRow("More", () => openMessageMenu(message, fakeAnchor())));
+      continue;
+    }
+    if (button.title === "Remind Me") {
+      rows.appendChild(holdRow("Remind Me", () => openRemindPop(message, fakeAnchor())));
+      continue;
+    }
+    rows.appendChild(holdRow(button.title, () => button.click()));
+  }
+  const reactions = $("pt-hold-rx");
+  reactions.replaceChildren();
+  const canReact = buttons.some(button => button.title === "Add Reaction");
+  reactions.classList.toggle("hidden", !canReact);
+  if (canReact) {
+    const mine = new Set((message.reactions || []).filter(r => state.user && r.users.includes(state.user.id)).map(r => r.emoji));
+    for (const emoji of quickReactions(frequentEmoji(frequentEmojiStore(), key => !key.startsWith("<:")))) {
+      const key = el("button", "key sq lg rx-key" + (mine.has(emoji) ? " is-down" : ""), emoji);
+      key.type = "button";
+      key.setAttribute("aria-label", `React with ${emoji}`);
+      key.onclick = () => closeSheets(() => setReaction(message, emoji, !mine.has(emoji)));
+      reactions.appendChild(key);
+    }
+    const more = studioNode("button", "key sq lg rx-key", '<i data-i="smile-plus"></i>');
+    more.type = "button";
+    more.setAttribute("aria-label", "More reactions");
+    more.onclick = () => closeSheets(() => buttons.find(button => button.title === "Add Reaction").click());
+    reactions.appendChild(more);
+  }
+  if (!rows.children.length && !canReact) return false;
+  msg.classList.add("pt-held");
+  openSheet("pt-hold-open");
+  return true;
+}
+
+function wireHoldSheet() {
+  document.addEventListener("contextmenu", e => {
+    if (!studioSlim() || !e.target.closest) return;
+    const msg = e.target.closest("#messages .msg");
+    if (!msg || e.target.closest("a, input, textarea")) return;
+    if (!openHoldSheet(msg)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+}
+
+function withChannelMenu(row, use) {
+  row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 0, clientY: 0 }));
+  const menu = $("channel-menu");
+  const result = menu.classList.contains("hidden") ? null : use(menu);
+  closeFloating();
+  return result;
+}
+
+function closeRowSwipe() {
+  const open = studioPhone.rowOpen;
+  if (!open) return;
+  studioPhone.rowOpen = null;
+  open.row.classList.remove("pt-open");
+  open.row.style.translate = "";
+  open.acts.remove();
+}
+
+function openRowSwipe(row) {
+  if (studioPhone.rowOpen && studioPhone.rowOpen.row === row) return;
+  closeRowSwipe();
+  const muted = withChannelMenu(row, menu => !menu.querySelector("#chm-unmute").classList.contains("hidden"));
+  if (muted === null) return;
+  const acts = studioNode("div", "pt-acts", `<button type="button" class="act read"><i data-i="check-check"></i>Mark read</button><button type="button" class="act mute"><i data-i="${muted ? "bell" : "bell-off"}"></i>${muted ? "Unmute" : "Mute"}</button>`);
+  acts.style.top = `${row.offsetTop}px`;
+  acts.style.height = `${row.offsetHeight}px`;
+  acts.querySelector(".read").onclick = () => {
+    closeRowSwipe();
+    withChannelMenu(row, menu => menu.querySelector("#chm-read").click());
+  };
+  acts.querySelector(".mute").onclick = () => {
+    closeRowSwipe();
+    withChannelMenu(row, menu => menu.querySelector(muted ? "#chm-unmute" : '[data-mute="forever"]').click());
+  };
+  row.before(acts);
+  row.classList.add("pt-open");
+  row.style.translate = `${SWIPE.rowOpen}px 0`;
+  studioPhone.rowOpen = { row, acts };
+}
+
+function swipeTarget(e) {
+  const target = e.target;
+  if (!target.closest || target.closest("input, textarea, select, pre, code, video, audio, .md-table")) return null;
+  const touch = e.touches[0];
+  const pane = phonePane();
+  if (pane !== "list" && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: document.querySelector("main.main") };
+  const msg = pane === "chat" && target.closest("#messages .msg");
+  if (msg && msg.querySelector(':scope > .msg-actions button[title="Reply"]')) return { kind: "reply", node: msg };
+  const row = pane === "list" && studioPhone.tab === "home" && target.closest("#channel-list .channel:not(.sidebar-link):not(.voice-channel):not(.dm-thread)");
+  if (row) return { kind: "row", node: row, wasOpen: Boolean(studioPhone.rowOpen && studioPhone.rowOpen.row === row) };
+  return null;
+}
+
+function paintSwipe(swipe, dx) {
+  if (swipe.kind === "reply") {
+    const pull = replyPull(dx);
+    swipe.node.style.translate = `${pull}px 0`;
+    const cue = $("pt-reply-cue");
+    const rect = swipe.node.getBoundingClientRect();
+    cue.style.top = `${rect.top + Math.min(rect.height, 64) / 2 - 18}px`;
+    cue.style.opacity = String(Math.min(1, pull / SWIPE.replyAt));
+    cue.classList.toggle("ready", replyCommits(dx));
+    cue.classList.add("on");
+  } else if (swipe.kind === "row") {
+    swipe.node.style.translate = `${rowPull(dx, swipe.wasOpen)}px 0`;
+  } else if (swipe.kind === "back") {
+    swipe.node.style.translate = `${Math.max(0, dx) * 0.35}px 0`;
+  }
+}
+
+function endSwipe(swipe, dx, cancelled) {
+  const node = swipe.node;
+  node.classList.remove("pt-dragging");
+  if (swipe.kind === "reply") {
+    node.style.translate = "";
+    $("pt-reply-cue").classList.remove("on", "ready");
+    $("pt-reply-cue").style.opacity = "";
+    if (!cancelled && replyCommits(dx)) node.querySelector(':scope > .msg-actions button[title="Reply"]').click();
+  } else if (swipe.kind === "row") {
+    const pull = rowPull(dx, swipe.wasOpen);
+    if (!cancelled && rowStaysOpen(pull, swipe.wasOpen)) {
+      if (swipe.wasOpen) node.style.translate = `${SWIPE.rowOpen}px 0`;
+      else {
+        node.style.translate = "";
+        openRowSwipe(node);
+      }
+    } else {
+      node.style.translate = "";
+      if (swipe.wasOpen) closeRowSwipe();
+    }
+  } else if (swipe.kind === "back") {
+    node.style.translate = "";
+    if (!cancelled && edgeBackCommits(dx)) phoneStep("back");
+  }
+}
+
+function wireSwipes() {
+  let swipe = null;
+  document.addEventListener("touchstart", e => {
+    swipe = null;
+    if (!studioSlim() || e.touches.length !== 1) return;
+    if (studioPhone.rowOpen && !e.target.closest(".pt-acts") && e.target.closest(".channel") !== studioPhone.rowOpen.row) closeRowSwipe();
+    const found = swipeTarget(e);
+    if (!found) return;
+    swipe = { ...found, x: e.touches[0].clientX, y: e.touches[0].clientY, axis: null, dx: 0 };
+  }, { passive: true });
+  document.addEventListener("touchmove", e => {
+    if (!swipe || !e.touches[0]) return;
+    const dx = e.touches[0].clientX - swipe.x;
+    const dy = e.touches[0].clientY - swipe.y;
+    if (!swipe.axis) {
+      swipe.axis = swipeAxis(dx, dy);
+      if (swipe.axis === "y" || (swipe.axis === "x" && dx < 0 && !swipe.wasOpen)) {
+        swipe = null;
+        return;
+      }
+      if (swipe.axis === "x") {
+        swipe.node.classList.add("pt-dragging");
+        studioPhone.swipedAt = Date.now();
+      }
+    }
+    if (swipe.axis !== "x") return;
+    swipe.dx = dx;
+    studioPhone.swipedAt = Date.now();
+    if (e.cancelable) e.preventDefault();
+    paintSwipe(swipe, dx);
+  }, { passive: false });
+  const finish = cancelled => () => {
+    if (swipe && swipe.axis === "x") endSwipe(swipe, swipe.dx, cancelled);
+    swipe = null;
+  };
+  document.addEventListener("touchend", finish(false), { passive: true });
+  document.addEventListener("touchcancel", finish(true), { passive: true });
+  document.addEventListener("click", e => {
+    if (!studioSlim() || !e.isTrusted) return;
+    const justSwiped = Date.now() - (studioPhone.swipedAt || 0) < 350;
+    const openRow = studioPhone.rowOpen && e.target.closest && e.target.closest(".channel") === studioPhone.rowOpen.row;
+    if (!justSwiped && !openRow) return;
+    if (e.target.closest && e.target.closest(".pt-acts")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (openRow && !justSwiped) closeRowSwipe();
+  }, true);
+  $("channel-list").addEventListener("scroll", closeRowSwipe, { passive: true });
+}
+
 function wireStudioPhone() {
   if (!studioLook() || !$("app") || typeof StudioIcons === "undefined") return;
   studioPhone.calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   buildStudioPhone();
   wireHorizon();
   wireYouPage();
+  wireChatHeader();
+  wireHoldSheet();
+  wireSwipes();
   watchStudioPhone();
   $("app").dataset.tab = studioPhone.tab;
   paintHorizonTab(false);
