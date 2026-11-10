@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -458,7 +458,7 @@ test("nothing the phone scripts name at the top level is already named by anothe
 
 test("over a stream every key is full size and the stream fills the screen only in the chat pane", () => {
   assert.match(css, /\.app\.pt-stream-full\[data-pane="chat"\] \.stage:not\(\.hidden\) \{[^}]*position: fixed;[^}]*inset: 0;/);
-  assert.match(css, /\.pt-watch \.ctl \.key\.sq \{ width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px; \}/);
+  assert.match(css, /\.pt-watch \.ctl \.key\.sq \{ width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px;/);
   assert.match(css, /\.pt-watch \.wbar \.hang \{[^}]*width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px;/);
   assert.match(css, /\.stage-btn \{ flex: none; width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px; \}/);
   assert.match(glue, /classList\.toggle\("theme-dark", full\)/);
@@ -513,7 +513,7 @@ test("keys that act are drawn filled, hanging up is the same mark everywhere, an
   assert.equal(ROOM_KEYS.find(key => key.id === "leave").icon, "phone-off");
   assert.equal((glue.match(/aria-label="Hang up"><i data-i="phone-off"><\/i>/g) || []).length, 2);
   assert.doesNotMatch(css, /\.hang \.i \{[^}]*rotate/);
-  assert.equal((css.match(/linear-gradient\(118deg, rgb\(var\(--lamp\) \/ 0\) 16%, rgb\(var\(--lamp\) \/ \.07\) 24%, rgb\(var\(--lamp\) \/ \.07\) 40%, rgb\(var\(--lamp\) \/ 0\) 48%\)/g) || []).length, 2);
+  assert.equal((css.match(/linear-gradient\(118deg, rgb\(var\(--lamp\) \/ 0\) 16%, rgb\(var\(--lamp\) \/ \.07\) 24%, rgb\(var\(--lamp\) \/ \.07\) 40%, rgb\(var\(--lamp\) \/ 0\) 48%\)/g) || []).length, 3);
   assert.doesNotMatch(css, /\.(?:count-badge|badge|pt-count)[^{]*\{[^}]*tabular-nums/);
 });
 
@@ -833,4 +833,78 @@ test("on a stage the speakers are the tiles and the audience sits under them, ra
   assert.match(css, rule(' \\.pt-aud-chip \\.dot', '[^}]*background: var\\(--accent-2\\);'));
   assert.match(css, rule(' \\.pt-aud-chips', 'display: flex; flex-wrap: wrap;'));
   assert.match(css, rule(' \\.pt-tray \\.sb-sound > \\.custom-emoji', 'flex: none; width: 16px; height: 16px;'));
+});
+
+test("over a stream the faces give way first, then the server name, and the title is cut last", () => {
+  assert.deepEqual(WATCH_STEPS, [{ faces: 4, server: true }, { faces: 3, server: true }, { faces: 1, server: true }, { faces: 1, server: false }]);
+  const people = [{ id: "a", name: "ferris" }, { id: "b", name: "quill" }, { id: "c", name: "juno" }, { id: "d", name: "sprocket" }, { id: "e", name: "nova" }];
+  assert.deepEqual(watchStack(people, WATCH_STEPS[0], "d"), { one: false, shown: people.slice(0, 4), more: 1 });
+  assert.equal(watchStack(people, WATCH_STEPS[1], "d").more, 2);
+  const one = watchStack(people, WATCH_STEPS[2], "d");
+  assert.equal(one.one, true);
+  assert.equal(one.more, 4);
+  assert.deepEqual(one.shown.filter(person => person.lead).map(person => person.id), ["d"]);
+  assert.equal(watchStack(people, WATCH_STEPS[2], "gone").shown[0].lead, true);
+  assert.deepEqual(watchStack([], WATCH_STEPS[2], "d"), { one: true, shown: [], more: 0 });
+  assert.equal(watchPlace({ channelName: "Lounge", name: "Pixel Pioneers" }, false), "Lounge");
+  assert.match(glue, /for \(const step of WATCH_STEPS\) \{[\s\S]*?if \(title\.scrollWidth <= title\.clientWidth && place\.scrollWidth <= place\.clientWidth\) break;/);
+  assert.match(css, rule(" \\.pt-watch \\.wcard \\.t", "font: 700 15px\\/1 var\\(--font-display\\);"));
+  assert.match(css, rule(" \\.pt-watch \\.stack \\.avatar\\.speaking", "width: 36px; height: 36px;"));
+  assert.match(css, rule(" \\.pt-watch \\.stack\\.one \\.avatar:not\\(\\.speaking\\):not\\(\\.lead\\)", "display: none;"));
+  assert.match(css, rule(" \\.pt-watch \\.stack\\.one:has\\(\\.avatar\\.speaking\\) \\.avatar\\.lead:not\\(\\.speaking\\)", "display: none;"));
+  assert.match(css, rule(" \\.pt-watch \\.stack \\.stack-more", "min-width: 30px; height: 30px;"));
+});
+
+test("the chevron over a stream goes back to the room, and the stream tools wait for a tap", () => {
+  assert.match(glue, /e\.target\.closest\("#pt-watch-down"\)\) \{\s+disarmHangUp\(\);\s+backToRoom\(\);/);
+  assert.match(glue, /aria-label="Back to the room"/);
+  assert.equal(STREAM_TOOLS_MS, 4000);
+  assert.equal(streamToolsStay("pen"), true);
+  assert.equal(streamToolsStay("point"), true);
+  assert.equal(streamToolsStay(""), false);
+  assert.equal(streamToolsStay(undefined), false);
+  assert.match(glue, /showStreamTools\(streamToolsStay\(\$\("stage-ink"\)\.dataset\.tool\)\);/);
+  assert.match(css, rule(" \\.app\\.pt-stream-full \\.stage-controls", "left: 14px;[^}]*justify-content: flex-start;[^}]*opacity: 0;[^}]*pointer-events: none;"));
+  assert.match(css, rule(" \\.app\\.pt-stream-full\\.pt-stream-tools \\.stage-controls", "opacity: 1; visibility: visible; pointer-events: auto;"));
+  assert.match(css, rule(" \\.app\\.pt-stream-full :is\\(#stage-focus, #stage-fullscreen, #stage-grid, #video-close\\)", "display: none;"));
+  assert.match(css, rule(' \\.app\\.pt-stream-full\\[data-pane="chat"\\] \\.stage:not\\(\\.hidden\\)', "background: var\\(--bg-darkest\\);"));
+});
+
+test("the room stands in the same lit room as Home, its line rises wide under the Mic, and a muted mark is the filled one", () => {
+  assert.equal(HORIZON.roomSpread, 35);
+  assert.equal(HORIZON.roomHot, 70);
+  assert.equal(horizonY(300, 300, 9, null, 0, HORIZON.roomSpread), 21);
+  assert.ok(horizonY(335, 300, 9, null, 0, HORIZON.roomSpread) < horizonY(335, 300, 9, null, 0));
+  assert.match(glue, /horizonPath\(width, studioPhone\.centre, studioPhone\.swell, null, 0, HORIZON\.roomSpread\)/);
+  assert.match(css, rule(' \\.app\\[data-pane="list"\\]\\.pt-voice-open > \\.pt-room', "radial-gradient\\(460px 420px at 18% 6%, var\\(--wall-lit\\), transparent 72%\\)"));
+  assert.match(css, rule(' \\.app\\[data-pane="list"\\]\\.pt-voice-open > \\.pt-room::after', "background: var\\(--grain\\);"));
+  assert.match(css, rule(" \\.ptile \\.mo \\.i \\.i-on", "display: inline;"));
+  assert.match(css, rule(" \\.pt-stream::before", "linear-gradient\\(172deg, var\\(--rim\\) 0%"));
+  assert.match(css, rule(" \\.pt-room-head \\.t b > span:first-child", "margin: -\\.2em 0; padding: \\.2em 0;"));
+});
+
+test("over a stream the pill carries the connection bars, and only the bars take the colour", () => {
+  assert.match(glue, /<span class="sg" id="pt-watch-sig">\$\{studioDockSignalMarkup\(\)\}<\/span>/);
+  assert.match(glue, /\$\("pt-watch-sig"\)\.dataset\.quality = \$\("vp-signal"\)\.dataset\.quality \|\| "good";/);
+  assert.match(css, rule(' \\.pt-watch \\.wcard \\.s \\.sg\\[data-quality="bad"\\] \\.vp-bars', "color: var\\(--signal-bad\\);"));
+  assert.doesNotMatch(css, /\.pt-voice-sheet \.conn\[data-quality[^{]*\] b \{/);
+});
+
+test("over a stream the side keys and the bar sit where the guide draws them, and only Deafen has a lamp", () => {
+  assert.match(glue, /id === "deafen" \? '<i class="led"><\/i>' : ""/);
+  assert.match(css, rule(" \\.pt-watch \\.winfo", "left: 14px;\\s+right: 14px;\\s+top: calc\\(env\\(safe-area-inset-top\\) \\+ 8px\\);"));
+  assert.match(css, rule(" \\.pt-watch \\.ctl", "bottom: calc\\(var\\(--hz-safe\\) \\+ 66px\\);"));
+  assert.match(css, rule(" \\.pt-watch \\.bubbles", "bottom: calc\\(var\\(--hz-safe\\) \\+ 66px\\);"));
+  assert.match(css, rule(" \\.pt-watch \\.wbar", "bottom: calc\\(var\\(--hz-safe\\) - 4px\\);"));
+  assert.match(css, rule(" \\.pt-watch \\.ctl \\.key \\.led", "background: var\\(--green\\);"));
+  assert.match(css, rule(" \\.pt-watch \\.ctl \\.key\\.is-off", "background: var\\(--glass-hi\\), transparent;"));
+  assert.match(css, rule(" \\.pt-watch \\.wfield", "padding: 0 22px;"));
+});
+
+test("an audience chip is flat: no line and no shadow", () => {
+  const at = css.indexOf('html[data-look="studio"][data-fit="slim"] .pt-aud-chip {');
+  assert.ok(at >= 0);
+  const body = css.slice(at, css.indexOf("}", at));
+  assert.match(body, /background: var\(--bg-active\);/);
+  assert.doesNotMatch(body, /box-shadow|border:/);
 });

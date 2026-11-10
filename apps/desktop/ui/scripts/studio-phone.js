@@ -38,6 +38,7 @@ const studioPhone = {
   railTimer: 0,
   bubblesSeen: "",
   streamShown: false,
+  toolsTimer: 0,
   searchHome: null,
   waitsOpen: false,
   groupFaces: new Map(),
@@ -105,11 +106,11 @@ function roomMarkup() {
 function watchMarkup() {
   const key = id => {
     const spec = ROOM_KEYS.find(found => found.id === id);
-    return `<button type="button" class="key sq ${id === "mic" ? "lg cream mic" : "tap"}" data-room-key="${id}" aria-label="${spec.label}"><i data-i="${spec.icon}"></i></button>`;
+    return `<button type="button" class="key sq ${id === "mic" ? "lg cream mic" : "tap"}" data-room-key="${id}" aria-label="${spec.label}"><i data-i="${spec.icon}"></i>${id === "deafen" ? '<i class="led"></i>' : ""}</button>`;
   };
   return `<div class="winfo">
-<button type="button" class="key sq tap pt-watch-down" id="pt-watch-down" aria-label="Show the chat and keep watching"><i data-i="chevron-down"></i></button>
-<div class="wcard"><div class="t"><span class="live">Live</span><span id="pt-watch-title"></span></div><div class="s"><i data-i="volume-2"></i><span id="pt-watch-room"></span></div></div>
+<button type="button" class="key sq tap pt-watch-down" id="pt-watch-down" aria-label="Back to the room"><i data-i="chevron-down"></i></button>
+<div class="wcard"><div class="t"><span class="live">Live</span><span id="pt-watch-title"></span></div><div class="s"><i data-i="volume-2"></i><span id="pt-watch-room"></span><span class="sg" id="pt-watch-sig">${studioDockSignalMarkup()}</span></div></div>
 <span class="stack" id="pt-watch-people"></span>
 </div>
 <div class="bubbles" id="pt-watch-bubbles"></div>
@@ -413,11 +414,15 @@ function drawHorizon() {
   const width = h.bar.clientWidth;
   if (!width) return;
   const pingAt = studioPhone.centres[1] ?? null;
-  const d = horizonPath(width, studioPhone.centre, studioPhone.swell, pingAt, studioPhone.ping);
+  const room = h.bar.classList.contains("rm");
+  const hot = room ? HORIZON.roomHot : HORIZON.hot;
+  const d = room
+    ? horizonPath(width, studioPhone.centre, studioPhone.swell, null, 0, HORIZON.roomSpread)
+    : horizonPath(width, studioPhone.centre, studioPhone.swell, pingAt, studioPhone.ping);
   for (const path of h.paths) path.setAttribute("d", d);
   h.grad.setAttribute("x2", width);
-  h.hot.setAttribute("x1", (studioPhone.centre - 62).toFixed(1));
-  h.hot.setAttribute("x2", (studioPhone.centre + 62).toFixed(1));
+  h.hot.setAttribute("x1", (studioPhone.centre - hot).toFixed(1));
+  h.hot.setAttribute("x2", (studioPhone.centre + hot).toFixed(1));
   h.sun.style.setProperty("--x", `${studioPhone.centre.toFixed(1)}px`);
   h.warm.style.setProperty("--x", `${(pingAt ?? 0).toFixed(1)}px`);
   h.warm.style.opacity = Math.max(0, Math.min(1, studioPhone.ping / 5)).toFixed(3);
@@ -1092,12 +1097,14 @@ function paintChatHeader() {
   if ($("pt-room-chip-name").textContent !== name) $("pt-room-chip-name").textContent = name;
 }
 
+function backToRoom() {
+  if (phonePane() !== "list") phoneStep("back");
+  setTimeout(() => state.voiceChannelId && openSheet("pt-voice-open"), 60);
+}
+
 function wireChatHeader() {
   $("pt-chat-title").onclick = () => openSheet("pt-chat-menu");
-  $("pt-room-chip").onclick = () => {
-    if (phonePane() !== "list") phoneStep("back");
-    setTimeout(() => state.voiceChannelId && openSheet("pt-voice-open"), 60);
-  };
+  $("pt-room-chip").onclick = backToRoom;
   document.querySelector(".chat-header .header-actions").addEventListener("click", e => {
     if (!$("app").classList.contains("pt-chat-menu") || !e.target.closest("button")) return;
     dropSheets();
@@ -1620,6 +1627,16 @@ function syncRoomMode() {
   }
 }
 
+function showStreamTools(on) {
+  clearTimeout(studioPhone.toolsTimer);
+  $("app").classList.toggle("pt-stream-tools", on);
+  if (on) studioPhone.toolsTimer = setTimeout(restStreamTools, STREAM_TOOLS_MS);
+}
+
+function restStreamTools() {
+  showStreamTools(streamToolsStay($("stage-ink").dataset.tool));
+}
+
 function syncStreamFull() {
   const app = $("app");
   const showing = !$("video-pane").classList.contains("hidden");
@@ -1628,6 +1645,7 @@ function syncStreamFull() {
   studioPhone.streamShown = showing;
   const full = app.classList.contains("pt-stream-full");
   if ($("video-pane").classList.contains("theme-dark") !== full) $("video-pane").classList.toggle("theme-dark", full);
+  if (!full && app.classList.contains("pt-stream-tools")) showStreamTools(false);
   syncRoomKeys();
   if (full) paintWatch();
 }
@@ -1661,19 +1679,28 @@ function watchRows() {
 function paintWatch() {
   if (!$("app").classList.contains("pt-stream-full")) return;
   $("pt-watch-title").textContent = $("video-label").textContent;
-  $("pt-watch-room").textContent = watchPlace(state.voiceServer);
   paintWatchField();
   const server = roomServer();
   const channel = server ? server.channels.find(found => found.id === state.voiceChannelId) : null;
-  const people = channel ? roomPeople(channel) : [];
-  const stack = personStack(people, "stack", 3);
-  for (const [i, face] of [...stack.querySelectorAll(".avatar")].entries()) {
-    const person = people[i];
-    if (!person || !person.id) continue;
-    face.dataset.user = person.id;
-    if (state.speaking.has(person.id)) face.classList.add("speaking");
+  const people = roomFaces(channel ? roomPeople(channel) : [], state.user && state.user.id);
+  $("pt-watch-sig").dataset.quality = $("vp-signal").dataset.quality || "good";
+  const title = $("pt-watch-title");
+  const place = $("pt-watch-room");
+  const stack = $("pt-watch-people");
+  for (const step of WATCH_STEPS) {
+    const { one, shown, more } = watchStack(people, step, state.watchingUser);
+    place.textContent = watchPlace(state.voiceServer, step.server);
+    stack.classList.toggle("one", one);
+    stack.replaceChildren(...shown.map(person => {
+      const face = makeAvatar(person.id || person.name, person.name, "avatar");
+      if (person.id) face.dataset.user = person.id;
+      if (person.lead) face.classList.add("lead");
+      if (person.id && state.speaking.has(person.id)) face.classList.add("speaking");
+      return face;
+    }));
+    if (more) stack.appendChild(el("span", "stack-more", `+${more}`));
+    if (title.scrollWidth <= title.clientWidth && place.scrollWidth <= place.clientWidth) break;
   }
-  $("pt-watch-people").replaceChildren(...stack.childNodes);
   const said = streamBubbles(watchRows());
   const seen = said.map(row => `${row.id}:${row.text}`).join("|");
   if (seen === studioPhone.bubblesSeen) return;
@@ -1793,14 +1820,23 @@ function wireRoom() {
     if (key) {
       if (key.dataset.roomKey !== "leave") disarmHangUp();
       pressRoomKey(key.dataset.roomKey);
-    } else if (e.target.closest("#pt-watch-down, #pt-watch-field")) {
-      const write = Boolean(e.target.closest("#pt-watch-field")) && !studioPhone.armed;
+    } else if (e.target.closest("#pt-watch-down")) {
+      disarmHangUp();
+      backToRoom();
+    } else if (e.target.closest("#pt-watch-field")) {
+      const write = !studioPhone.armed;
       disarmHangUp();
       $("app").classList.remove("pt-stream-full");
       syncStreamFull();
       if (write) $("message-input").focus();
     }
   });
+  $("stage-view").addEventListener("click", e => {
+    if (!studioSlim() || !$("app").classList.contains("pt-stream-full")) return;
+    if (e.target.closest(".stage-controls")) showStreamTools(true);
+    else if (!e.target.closest(".pt-watch") && !$("stage-ink").dataset.tool) showStreamTools(!$("app").classList.contains("pt-stream-tools"));
+  });
+  $("stage-volume-range").addEventListener("input", () => studioSlim() && $("app").classList.contains("pt-stream-tools") && showStreamTools(true));
   $("stage-view").addEventListener("click", e => {
     if (!studioSlim() || !e.target.closest("#stage-fullscreen")) return;
     e.preventDefault();

@@ -1,19 +1,19 @@
 const PHONE_TABS = ["home", "messages", "live", "you"];
-const HORIZON = { baseline: 30, swell: 9, spread: 25, pingSpread: 700, step: 3, overhang: 6 };
+const HORIZON = { baseline: 30, swell: 9, spread: 25, roomSpread: 35, hot: 62, roomHot: 70, pingSpread: 700, step: 3, overhang: 6 };
 const HORIZON_SPRINGS = { slide: { k: 230, c: 21 }, hop: { k: 420, c: 23 }, knock: { k: 260, c: 17 } };
 const HANG_UP_FUSE_MS = 3000;
 const STACK_MAX = 4;
 
-function horizonY(x, centre, swell, pingCentre, ping) {
-  const main = swell * Math.exp(-((x - centre) ** 2) / (2 * HORIZON.spread ** 2));
+function horizonY(x, centre, swell, pingCentre, ping, spread = HORIZON.spread) {
+  const main = swell * Math.exp(-((x - centre) ** 2) / (2 * spread ** 2));
   const knock = ping && pingCentre !== null ? ping * Math.exp(-((x - pingCentre) ** 2) / HORIZON.pingSpread) : 0;
   return HORIZON.baseline - main - knock;
 }
 
-function horizonPath(width, centre, swell = HORIZON.swell, pingCentre = null, ping = 0) {
+function horizonPath(width, centre, swell = HORIZON.swell, pingCentre = null, ping = 0, spread = HORIZON.spread) {
   const parts = [];
   for (let x = -HORIZON.overhang; x <= width + HORIZON.overhang; x += HORIZON.step) {
-    parts.push(`${parts.length ? "L" : "M"}${x} ${horizonY(x, centre, swell, pingCentre, ping).toFixed(2)}`);
+    parts.push(`${parts.length ? "L" : "M"}${x} ${horizonY(x, centre, swell, pingCentre, ping, spread).toFixed(2)}`);
   }
   return parts.join("");
 }
@@ -111,6 +111,25 @@ function roomFaces(people, me) {
 function stackPeople(people, max = STACK_MAX) {
   const shown = people.slice(0, max);
   return { shown, more: Math.max(0, people.length - shown.length) };
+}
+
+const WATCH_STEPS = [
+  { faces: 4, server: true },
+  { faces: 3, server: true },
+  { faces: 1, server: true },
+  { faces: 1, server: false },
+];
+
+function watchStack(people, step, sharer) {
+  if (step.faces > 1) return { one: false, ...stackPeople(people, step.faces) };
+  const lead = people.find(person => person.id === sharer) || people[0];
+  return { one: true, shown: people.map(person => ({ ...person, lead: person === lead })), more: Math.max(0, people.length - 1) };
+}
+
+const STREAM_TOOLS_MS = 4000;
+
+function streamToolsStay(tool) {
+  return Boolean(tool);
 }
 
 const TILE_NAME = { cells: 1.5, margin: 8, gap: 2 };
@@ -360,10 +379,10 @@ function streamBubbles(rows, limit = BUBBLE_MAX) {
   return said.slice(-limit);
 }
 
-function watchPlace(voiceServer) {
+function watchPlace(voiceServer, withServer = true) {
   if (!voiceServer) return "";
   if (voiceServer.call) return `Call with ${voiceServer.name}`;
-  return [voiceServer.channelName, voiceServer.name].filter(Boolean).join(" \u00B7 ");
+  return [voiceServer.channelName, withServer ? voiceServer.name : ""].filter(Boolean).join(" \u00B7 ");
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -424,6 +443,10 @@ if (typeof module !== "undefined" && module.exports) {
     signalWord,
     roomKeyState,
     roomSignature,
+    WATCH_STEPS,
+    watchStack,
+    STREAM_TOOLS_MS,
+    streamToolsStay,
     roomTileStreams,
     shareViewers,
     roomStage,
