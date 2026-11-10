@@ -183,6 +183,93 @@ function chatSubtitle({ view, serverName, group, presence }) {
   return serverName || "";
 }
 
+const ROOM_KEYS = [
+  { id: "sounds", label: "Sounds", icon: "music" },
+  { id: "camera", label: "Camera", icon: "video-off" },
+  { id: "mic", label: "Mic", icon: "mic" },
+  { id: "deafen", label: "Deafen", icon: "headphones" },
+  { id: "leave", label: "Leave", icon: "phone" },
+];
+const SIGNAL_WORDS = { good: "Good", ok: "Fair", bad: "Poor" };
+
+function roomTiles(channel, me = {}) {
+  if (!channel) return [];
+  const muted = channel.voice_muted || [];
+  const deafened = channel.voice_deafened || [];
+  return roomPeople(channel).map((person, i) => {
+    const you = Boolean(me.userId && person.id === me.userId);
+    return {
+      id: person.id,
+      name: person.name,
+      label: you ? "You" : person.name,
+      you,
+      muted: you ? Boolean(me.muted) : Boolean(muted[i]),
+      deafened: you ? Boolean(me.deafened) : Boolean(deafened[i]),
+    };
+  });
+}
+
+function duoTiles(name, me = {}) {
+  return [
+    { id: me.otherId || null, name: name || "Call", label: name || "Call", you: false, muted: false, deafened: false },
+    { id: me.userId || null, name: me.name || "You", label: "You", you: true, muted: Boolean(me.muted), deafened: Boolean(me.deafened) },
+  ];
+}
+
+function roomHeading({ serverName, count, call }) {
+  if (call) return "Voice call";
+  const here = count === 1 ? "1 here" : `${count} here`;
+  return serverName ? `${serverName} \u00B7 ${here}` : here;
+}
+
+function roomStreams(server, channelId, me = {}) {
+  if (!server || !channelId) return [];
+  const room = liveRooms([server], me).find(found => found.channelId === channelId);
+  if (!room) return [];
+  return room.streams
+    .filter(stream => !stream.mine && stream.userId !== me.userId)
+    .map(stream => ({ user: stream.userId, name: stream.name, title: `${stream.name}'s screen`, watching: stream.userId === me.watching }));
+}
+
+function signalWord(quality) {
+  return SIGNAL_WORDS[quality] || "";
+}
+
+function roomKeyState(id, voice = {}) {
+  if (id === "mic") return { down: Boolean(voice.muted), icon: voice.muted ? "mic-off" : "mic", label: voice.muted ? "Unmute" : "Mute" };
+  if (id === "deafen") return { down: Boolean(voice.deafened), icon: "headphones", label: voice.deafened ? "Undeafen" : "Deafen" };
+  if (id === "camera") return { down: false, off: !voice.camera, icon: voice.camera ? "video" : "video-off", label: voice.camera ? "Turn off camera" : "Turn on camera" };
+  if (id === "sounds") return { down: Boolean(voice.sounds), icon: "music", label: "Soundboard" };
+  return { down: false, icon: "phone", label: "Hang up" };
+}
+
+function roomSignature(tiles, streams, extra = "") {
+  return [
+    tiles.map(tile => `${tile.id}:${tile.name}:${tile.muted ? 1 : 0}${tile.deafened ? 1 : 0}`).join(","),
+    streams.map(stream => `${stream.user}:${stream.watching ? 1 : 0}`).join(","),
+    extra,
+  ].join("|");
+}
+
+const BUBBLE_MAX = 3;
+const BUBBLE_CHARS = 72;
+
+function streamBubbles(rows, limit = BUBBLE_MAX) {
+  const said = [];
+  for (const row of rows || []) {
+    const text = String((row && row.text) || "").replace(/\s+/g, " ").trim();
+    if (!text || !row.author) continue;
+    said.push({ id: row.id || null, author: row.author, color: row.color || "", face: row.face || null, text: text.length > BUBBLE_CHARS ? `${text.slice(0, BUBBLE_CHARS - 1).trimEnd()}\u2026` : text });
+  }
+  return said.slice(-limit);
+}
+
+function watchPlace(voiceServer) {
+  if (!voiceServer) return "";
+  if (voiceServer.call) return `Call with ${voiceServer.name}`;
+  return [voiceServer.channelName, voiceServer.name].filter(Boolean).join(" \u00B7 ");
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     PHONE_TABS,
@@ -217,5 +304,15 @@ if (typeof module !== "undefined" && module.exports) {
     sheetRow,
     quickReactions,
     chatSubtitle,
+    ROOM_KEYS,
+    roomTiles,
+    duoTiles,
+    roomHeading,
+    roomStreams,
+    signalWord,
+    roomKeyState,
+    roomSignature,
+    streamBubbles,
+    watchPlace,
   };
 }

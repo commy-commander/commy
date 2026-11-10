@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -9,6 +9,7 @@ const {
   phoneTabAfter, hangUpTap, badgeText, roomLine, liveSummary, liveRooms, liveStreams, stackPeople,
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetRow, quickReactions, chatSubtitle,
+  ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -260,4 +261,110 @@ test("swipe to reply follows the guide: the message slides on a rail and the rep
   assert.doesNotMatch(css, /\.pt-reply-cue[^{]*\{[^}]*position: fixed/);
   assert.match(glue, /node\.after\(cue\);/);
   assert.equal(SWIPE.replyAt, 56);
+});
+
+const lounge = {
+  id: "v1", name: "Lounge", kind: "voice",
+  voice_users: ["quill", "ferris", "commander"], voice_user_ids: ["m3", "m1", "me"],
+  voice_muted: [false, true, false], voice_deafened: [false, false, false],
+};
+const pioneers = { id: "s1", name: "Pixel Pioneers", channels: [lounge], screen_shares: [{ user: "m1", name: "ferris", channel: "v1" }, { user: "me", name: "commander", channel: "v1" }] };
+
+test("the room has five keys on the line with the microphone in the middle and leaving at the end", () => {
+  assert.deepEqual(ROOM_KEYS.map(key => key.id), ["sounds", "camera", "mic", "deafen", "leave"]);
+  assert.equal(ROOM_KEYS[Math.floor(ROOM_KEYS.length / 2)].id, "mic");
+  assert.match(glue, /key\.id === "leave" \? "tap danger hang"/);
+});
+
+test("the room shows everyone in it, you by the word You, and who is muted", () => {
+  const tiles = roomTiles(lounge, { userId: "me", muted: true, deafened: false });
+  assert.deepEqual(tiles.map(tile => tile.label), ["quill", "ferris", "You"]);
+  assert.equal(tiles[2].name, "commander");
+  assert.equal(tiles[2].you, true);
+  assert.equal(tiles[2].muted, true);
+  assert.equal(tiles[1].muted, true);
+  assert.equal(tiles[0].muted, false);
+  assert.deepEqual(roomTiles(null), []);
+  assert.deepEqual(duoTiles("ferris", { userId: "me", name: "commander", muted: true }).map(tile => [tile.label, tile.muted]), [["ferris", false], ["You", true]]);
+});
+
+test("the room heading counts who is here and a call says it is a call", () => {
+  assert.equal(roomHeading({ serverName: "Pixel Pioneers", count: 5 }), "Pixel Pioneers \u00B7 5 here");
+  assert.equal(roomHeading({ serverName: "Pixel Pioneers", count: 1 }), "Pixel Pioneers \u00B7 1 here");
+  assert.equal(roomHeading({ count: 2 }), "2 here");
+  assert.equal(roomHeading({ serverName: "ferris", count: 2, call: true }), "Voice call");
+  assert.equal(watchPlace({ channelName: "Lounge", name: "Pixel Pioneers" }), "Lounge \u00B7 Pixel Pioneers");
+  assert.equal(watchPlace({ name: "ferris", call: true }), "Call with ferris");
+  assert.equal(watchPlace(null), "");
+});
+
+test("the room lists other people's streams, never your own, and knows the one you are watching", () => {
+  const streams = roomStreams(pioneers, "v1", { userId: "me", watching: "m1" });
+  assert.deepEqual(streams, [{ user: "m1", name: "ferris", title: "ferris's screen", watching: true }]);
+  assert.equal(roomStreams(pioneers, "v1", { userId: "me" })[0].watching, false);
+  assert.deepEqual(roomStreams(pioneers, "nope", { userId: "me" }), []);
+  assert.deepEqual(roomStreams(null, "v1"), []);
+});
+
+test("muted and deafened are a state of the key, and the camera says when it is off", () => {
+  assert.deepEqual(roomKeyState("mic", { muted: true }), { down: true, icon: "mic-off", label: "Unmute" });
+  assert.deepEqual(roomKeyState("mic", {}), { down: false, icon: "mic", label: "Mute" });
+  assert.equal(roomKeyState("deafen", { deafened: true }).label, "Undeafen");
+  assert.equal(roomKeyState("camera", {}).off, true);
+  assert.equal(roomKeyState("camera", {}).icon, "video-off");
+  assert.equal(roomKeyState("camera", { camera: true }).off, false);
+  assert.equal(roomKeyState("sounds", { sounds: true }).down, true);
+  assert.equal(signalWord("good"), "Good");
+  assert.equal(signalWord("ok"), "Fair");
+  assert.equal(signalWord("bad"), "Poor");
+  assert.equal(signalWord("unknown"), "");
+});
+
+test("the room only redraws when who is in it, or what they share, changes", () => {
+  const tiles = roomTiles(lounge, { userId: "me" });
+  const streams = roomStreams(pioneers, "v1", { userId: "me" });
+  assert.equal(roomSignature(tiles, streams, "x"), roomSignature(roomTiles(lounge, { userId: "me" }), streams, "x"));
+  assert.notEqual(roomSignature(tiles, streams, "x"), roomSignature(roomTiles(lounge, { userId: "me", muted: true }), streams, "x"));
+  assert.notEqual(roomSignature(tiles, streams, "x"), roomSignature(tiles, [], "x"));
+  assert.notEqual(roomSignature(tiles, streams, "x"), roomSignature(tiles, streams, "y"));
+});
+
+test("the chat over a stream is the last three things said, on one line each", () => {
+  const rows = [
+    { id: "1", author: "juno", text: "first" },
+    { id: "2", author: "juno", text: "   " },
+    { id: "3", author: "quill", text: "second\n  line" },
+    { id: "4", author: "", text: "nobody" },
+    { id: "5", author: "ferris", text: "x".repeat(200) },
+    { id: "6", author: "commander", color: "red", text: "last" },
+  ];
+  const said = streamBubbles(rows);
+  assert.deepEqual(said.map(row => row.id), ["3", "5", "6"]);
+  assert.equal(said[0].text, "second line");
+  assert.equal(said[1].text.length, 72);
+  assert.ok(said[1].text.endsWith("\u2026"));
+  assert.equal(said[2].color, "red");
+  assert.deepEqual(streamBubbles(null), []);
+  assert.equal(streamBubbles(rows, 1).length, 1);
+});
+
+test("nothing the phone scripts name at the top level is already named by another script", () => {
+  const names = text => new Set([...text.matchAll(/^(?:async function|function|const|let|var|class) ([A-Za-z_$][\w$]*)/gm)].map(found => found[1]));
+  const mine = new Set([...names(read("scripts", "phone-touch.js")), ...names(glue)]);
+  const overlap = [...names(read("scripts", "phone-touch.js"))].filter(name => names(glue).has(name));
+  assert.deepEqual(overlap, []);
+  const folder = new URL("../scripts/", import.meta.url);
+  for (const file of readdirSync(folder)) {
+    if (!file.endsWith(".js") || file === "phone-touch.js" || file === "studio-phone.js") continue;
+    const theirs = names(read("scripts", file));
+    for (const name of mine) assert.ok(!theirs.has(name), `${name} is also in ${file}`);
+  }
+});
+
+test("over a stream every key is full size and the stream fills the screen only in the chat pane", () => {
+  assert.match(css, /\.app\.pt-stream-full\[data-pane="chat"\] \.stage:not\(\.hidden\) \{[^}]*position: fixed;[^}]*inset: 0;/);
+  assert.match(css, /\.pt-watch \.ctl \.key\.sq \{ width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px; \}/);
+  assert.match(css, /\.pt-watch \.wbar \.hang \{[^}]*width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px;/);
+  assert.match(css, /\.stage-btn \{ flex: none; width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px; \}/);
+  assert.match(glue, /classList\.toggle\("theme-dark", full\)/);
 });
