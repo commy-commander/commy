@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { scrollDownShown, centeredScrollTop } = require("../scripts/chat-scroll.js");
+const { scrollDownShown, centeredScrollTop, landingScrollTop } = require("../scripts/chat-scroll.js");
 
 test("the scroll down button stays hidden near the newest messages", () => {
   assert.equal(scrollDownShown(2000, 1500, 500), false);
@@ -29,4 +29,20 @@ test("a jump near either end of the history stops at the edge of the list", () =
 
 test("a short history never scrolls", () => {
   assert.equal(centeredScrollTop(200, 100, 600, 500), 0);
+});
+
+test("opening a channel with nothing new lands on the newest message", () => {
+  assert.equal(landingScrollTop(2000, 500, null), 1500);
+});
+
+test("opening a channel with new messages lands on the NEW line when it is above the newest screen", () => {
+  assert.equal(landingScrollTop(3000, 500, 1200), 1192);
+});
+
+test("a NEW line already on the newest screen keeps the view at the bottom", () => {
+  assert.equal(landingScrollTop(2000, 500, 1800), 1500);
+});
+
+test("a short channel never scrolls", () => {
+  assert.equal(landingScrollTop(400, 500, 100), 0);
 });

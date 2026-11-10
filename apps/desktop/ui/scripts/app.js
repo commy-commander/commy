@@ -7295,12 +7295,8 @@ function renderMessages(messages) {
   if (state.view === "server" && state.historyAnchor && state.currentChannel && state.historyAnchor.channel === state.currentChannel.id) {
     box.appendChild(historyPill());
   }
-  box.scrollTop = sameView && !atBottom ? prevScroll : box.scrollHeight;
-  const line = !sameView && box.querySelector(".new-divider");
-  if (line) {
-    const above = line.getBoundingClientRect().top - box.getBoundingClientRect().top;
-    if (above < 0) box.scrollTop += above - 8;
-  }
+  if (!sameView) landMessageList(box);
+  else box.scrollTop = atBottom ? box.scrollHeight : prevScroll;
   if (state.threadRoot) renderThread();
 }
 
@@ -7337,9 +7333,21 @@ function paintScrollDown() {
   $("scroll-down").classList.toggle("hidden", !scrollDownShown(box.scrollHeight, box.scrollTop, box.clientHeight));
 }
 
+function landMessageList(box) {
+  box.dataset.landing = box.clientHeight ? "" : "pending";
+  const line = box.querySelector(".new-divider");
+  const lineTop = line ? line.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop : null;
+  box.scrollTop = landingScrollTop(box.scrollHeight, box.clientHeight, lineTop);
+}
+
+function landHiddenMessageList(box) {
+  if (box.dataset.landing === "pending" && box.clientHeight) landMessageList(box);
+}
+
 function wireScrollDown() {
   setIcon($("scroll-down"), "chevronDown", 24);
   $("messages").addEventListener("scroll", paintScrollDown, { passive: true });
+  new ResizeObserver(() => landHiddenMessageList($("messages"))).observe($("messages"));
   $("scroll-down").onclick = () => {
     if (state.historyAnchor) return jumpToPresent();
     const box = $("messages");
@@ -9004,6 +9012,7 @@ async function jumpToMessage(id) {
 
 function scrollMessageToCenter(row) {
   const list = $("messages");
+  list.dataset.landing = "";
   const rowTop = row.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
   const top = centeredScrollTop(rowTop, row.offsetHeight, list.clientHeight, list.scrollHeight);
   list.scrollTo({ top, behavior: "smooth" });
