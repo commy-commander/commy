@@ -191,7 +191,46 @@ function buildChatHeader() {
   const chip = studioNode("button", "key tap pt-room-chip", '<i data-i="bars"></i><span id="pt-room-chip-name"></span>');
   chip.id = "pt-room-chip";
   chip.type = "button";
+  $("channel-name").after(studioNode("span", "pt-chev", '<i data-i="chevron-down"></i>'));
+  $("phone-back").appendChild(studioNode("span", "pt-back-i", '<i data-i="chevron-left"></i>'));
   header.append(sub, title, chip);
+}
+
+const STUDIO_TYPER_FACES = 3;
+
+function layChatPane() {
+  const main = document.querySelector(".main");
+  const box = $("messages");
+  const shown = box.offsetHeight > 0;
+  main.classList.toggle("pt-pane", shown);
+  if (!shown) return;
+  main.style.setProperty("--pt-pane-y", `${box.offsetTop}px`);
+  main.style.setProperty("--pt-pane-h", `${box.offsetHeight}px`);
+}
+
+function paintReplyNames() {
+  if (!studioSlim() || !state.currentServer) return;
+  for (const name of $("messages").querySelectorAll(".reply-ref-name:not([data-pt-ink])")) {
+    name.dataset.ptInk = "on";
+    const member = state.currentServer.members.find(found => found.name === name.textContent);
+    if (member && member.color) name.style.setProperty("--pt-ink", `#${member.color}`);
+  }
+}
+
+function paintTyper() {
+  const strip = $("typing-strip");
+  const channel = state.view === "server" && state.currentChannel ? state.currentChannel.id : null;
+  const typers = channel ? typingTracker.typers(channel) : [];
+  const faces = typers.map(id => ({ id, member: currentServerMember(id) })).filter(typer => typer.member).slice(0, STUDIO_TYPER_FACES);
+  const users = faces.map(typer => typer.id).join(" ");
+  const old = strip.querySelector(".pt-typer");
+  if (old && old.dataset.users === users) return;
+  if (old) old.remove();
+  if (!faces.length) return;
+  const stack = el("span", "pt-typer");
+  stack.dataset.users = users;
+  for (const typer of faces) stack.appendChild(makeAvatar(typer.id, typer.member.name, "avatar"));
+  strip.prepend(stack);
 }
 
 function horizonParts() {
@@ -720,6 +759,10 @@ function watchStudioPhone() {
   watch($("video-pane"), { attributes: true, attributeFilter: ["class"] }, syncStreamFull);
   watch($("video-label"), { childList: true, characterData: true, subtree: true }, paintWatch);
   watch($("messages"), { childList: true }, paintWatch);
+  watch($("messages"), { childList: true }, paintReplyNames);
+  watch($("typing-text"), { childList: true, characterData: true, subtree: true }, paintTyper);
+  new ResizeObserver(layChatPane).observe($("messages"));
+  window.addEventListener("resize", layChatPane);
   watch($("me-status"), { childList: true, characterData: true, subtree: true }, () => studioPhone.tab === "you" && paintYouPage());
   watch(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-fit", "data-fx"] }, () => {
     paintYouPage();
@@ -922,6 +965,7 @@ function paintSwipe(swipe, dx) {
     }
     node.style.translate = `${replyPull(dx)}px 0`;
     cue.classList.toggle("ready", replyCommits(dx));
+    if (replyCommits(dx)) cue.classList.add("used");
   } else if (swipe.kind === "row") {
     swipe.node.style.translate = `${rowPull(dx, swipe.wasOpen)}px 0`;
   } else if (swipe.kind === "back") {
@@ -934,7 +978,7 @@ function paintSwipe(swipe, dx) {
 function stowReplyRail(node) {
   const cue = $("pt-reply-cue");
   node.classList.remove("pt-railed", "pt-lifted");
-  cue.classList.remove("on", "ready", "out");
+  cue.classList.remove("on", "ready", "out", "used");
   if (cue.parentNode !== $("app")) $("app").appendChild(cue);
 }
 
@@ -954,7 +998,10 @@ function endSwipe(swipe, dx, cancelled) {
         studioPhone.railTimer = setTimeout(() => stowReplyRail(node), wait(RAIL_FADE_MS));
       }, wait(RAIL_FADE_MS));
     }, wait(RAIL_UNLIT_MS));
-    if (!cancelled && replyCommits(dx)) node.querySelector(':scope > .msg-actions button[title="Reply"]').click();
+    if (!cancelled && replyCommits(dx)) {
+      const reply = node.querySelector(':scope > .msg-actions button[title="Reply"]');
+      setTimeout(() => reply.click(), wait(SWIPE.chipAfterMs));
+    }
   } else if (swipe.kind === "row") {
     const pull = rowPull(dx, swipe.wasOpen);
     if (!cancelled && rowStaysOpen(pull, swipe.wasOpen)) {
@@ -989,7 +1036,7 @@ function wireSwipes() {
     if (studioPhone.rowOpen && !e.target.closest(".pt-acts") && e.target.closest(".channel") !== studioPhone.rowOpen.row) closeRowSwipe();
     const found = swipeTarget(e);
     if (!found) return;
-    swipe = { ...found, x: e.touches[0].clientX, y: e.touches[0].clientY, axis: null, dx: 0 };
+    swipe = { ...found, x: e.touches[0].clientX, y: e.touches[0].clientY, axis: null, dx: 0, from: 0 };
   }, { passive: true });
   document.addEventListener("touchmove", e => {
     if (!swipe || !e.touches[0]) return;
@@ -1004,15 +1051,16 @@ function wireSwipes() {
         return;
       }
       if (swipe.axis === along) {
+        swipe.from = swipe.wasOpen ? 0 : pull;
         swipe.node.classList.add("pt-dragging");
         studioPhone.swipedAt = Date.now();
       }
     }
     if (swipe.axis !== along) return;
-    swipe.dx = pull;
+    swipe.dx = pull - swipe.from;
     studioPhone.swipedAt = Date.now();
     if (e.cancelable) e.preventDefault();
-    paintSwipe(swipe, pull);
+    paintSwipe(swipe, swipe.dx);
   }, { passive: false });
   const finish = cancelled => () => {
     if (swipe && swipe.axis === (swipe.kind === "sheet" ? "y" : "x")) endSwipe(swipe, swipe.dx, cancelled);

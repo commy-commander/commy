@@ -160,7 +160,10 @@ test("nothing on the phone offers to share an iPhone screen, and the bar names n
 });
 
 test("a swipe is sideways only once it clearly is, so scrolling the chat never drags a message", () => {
-  assert.equal(swipeAxis(6, 4), null);
+  assert.equal(SWIPE.slop, 6);
+  assert.equal(swipeAxis(4, 3), null);
+  assert.equal(swipeAxis(6, 2), "x");
+  assert.equal(swipeAxis(6, 5), "y");
   assert.equal(swipeAxis(30, 8), "x");
   assert.equal(swipeAxis(-30, 8), "x");
   assert.equal(swipeAxis(14, 14), "y");
@@ -179,6 +182,10 @@ test("pulling a message right follows the finger to 84 px and replies past 56", 
   assert.equal(replyPull(900), SWIPE.replyMax);
   assert.equal(replyCommits(SWIPE.replyAt - 1), false);
   assert.equal(replyCommits(SWIPE.replyAt), true);
+});
+
+test("the reply chip arrives a beat after the finger lets go, as the guide plays it", () => {
+  assert.equal(SWIPE.chipAfterMs, 110);
 });
 
 test("a sheet follows the finger down and closes past the mark, never up", () => {
@@ -210,8 +217,42 @@ test("starting a reply moves nothing: the chip sits in the gap above the field",
   assert.ok(at > 0);
   const body = css.slice(at, css.indexOf("}", at));
   assert.match(body, /height: 30px;/);
-  assert.match(body, /margin: -34px 0 4px 68px;/);
-  assert.match(css, /\.app\[data-pane="chat"\] \.messages \{ margin-bottom: 38px; \}/);
+  assert.match(body, /margin: -33px 0 3px 70px;/);
+  assert.match(css, /\.app\[data-pane="chat"\] \.messages \{\s+margin: 6px 10px 51px;/);
+});
+
+test("the chat screen keeps the design guide's measures", () => {
+  const css = read("styles", "phone-touch.css");
+  const rule = selector => {
+    const at = css.indexOf(`html[data-look="studio"][data-fit="slim"] ${selector} {`);
+    assert.ok(at >= 0, selector);
+    return css.slice(at, css.indexOf("}", at));
+  };
+  assert.match(css, /--hz-safe: max\(env\(safe-area-inset-bottom\), 8px\);/);
+  assert.match(rule('.app:is([data-pane="chat"], [data-pane="people"])'), /padding: max\(env\(safe-area-inset-top\), 14px\) 0 0;/);
+  assert.match(rule('.app:is([data-pane="chat"], [data-pane="people"]) .chat-header'), /height: 60px;[\s\S]*padding: 0 14px 0 6px;/);
+  assert.match(rule('.app:is([data-pane="chat"], [data-pane="people"]) #chat-hash'), /font: 300 22px\/22px var\(--font-display\);[\s\S]*color: var\(--link\);/);
+  assert.match(rule('.app[data-pane="chat"] > .main.pt-pane::before'), /left: 10px;\s+right: 10px;[\s\S]*border-radius: var\(--radius-xl\);/);
+  assert.match(rule('.app[data-pane="chat"] .msg'), /grid-template-columns: 40px minmax\(0, 1fr\);\s+gap: 0 12px;\s+margin: 0;\s+padding: 8px 8px 10px;/);
+  assert.match(rule('.app[data-pane="chat"] .msg-author'), /font: 600 15\.5px\/1 var\(--font\);/);
+  assert.match(rule('.app[data-pane="chat"] .msg-time'), /font: 400 13px\/1 var\(--font\);/);
+  assert.match(rule('.msg .reaction'), /height: 32px;[\s\S]*padding: 0 13px 0 10px;[\s\S]*background: var\(--pillow-top\), var\(--bg-active\);/);
+  assert.match(rule('.msg .reaction.mine'), /background: var\(--pillow-top\), var\(--accent\); color: var\(--accent-ink\);/);
+  assert.match(rule('.app[data-pane="chat"] .msg.pt-railed'), /margin-inline: -4px;\s+padding-inline: 12px;\s+border-radius: 22px;/);
+  assert.match(rule('.app[data-pane="chat"] .composer'), /margin: 0 16px calc\(var\(--hz-line\) \+ 7px\);/);
+  assert.match(rule('.app[data-pane="chat"] .typing-strip'), /left: 22px;\s+bottom: calc\(var\(--hz-line\) - 30px\);/);
+  assert.match(rule('.app[data-pane="chat"] .msg .chat-image'), /max-width: 100%; max-height: 300px;[^}]*border-radius: 16px;/);
+});
+
+test("the typing line shows at most three faces, and the reply key changes colour at once", () => {
+  const js = read("scripts", "studio-phone.js");
+  assert.match(js, /const STUDIO_TYPER_FACES = 3;/);
+  assert.match(js, /\.slice\(0, STUDIO_TYPER_FACES\)/);
+  const css = read("styles", "phone-touch.css");
+  const at = css.indexOf('html[data-look="studio"][data-fit="slim"] .pt-reply-cue .rk {');
+  const body = css.slice(at, css.indexOf("}", at));
+  assert.match(body, /transition: scale 180ms var\(--ease-spring\);/);
+  assert.doesNotMatch(body, /background-color var/);
 });
 
 test("mentions are never red in the phone layout, and times read like the guide", () => {
@@ -301,8 +342,8 @@ test("swipe to reply follows the guide: the message slides on a rail and the rep
   assert.match(rule("\\.pt-reply-cue\\.on"), /position: absolute;[\s\S]*background: var\(--input-bg\)/);
   assert.match(rule("\\.pt-reply-cue \\.rk"), /background: var\(--swipe-neutral\)/);
   assert.match(css, /\.pt-reply-cue\.ready \.rk \{ background: var\(--swipe-done\)/);
-  assert.match(rule("\\.msg\\.pt-railed\\.pt-lifted"), /background: var\(--bg-raised\);\s*box-shadow: var\(--pillow-card\)/);
-  assert.match(rule("\\.msg\\.pt-railed"), /border-radius: 22px/);
+  assert.match(rule('\\.app\\[data-pane="chat"\\] \\.msg\\.pt-railed\\.pt-lifted'), /background: var\(--bg-raised\);\s*box-shadow: var\(--pillow-card\)/);
+  assert.match(rule('\\.app\\[data-pane="chat"\\] \\.msg\\.pt-railed'), /border-radius: 22px/);
   assert.doesNotMatch(css, /\.pt-reply-cue[^{]*\{[^}]*position: fixed/);
   assert.match(glue, /node\.after\(cue\);/);
   assert.equal(SWIPE.replyAt, 56);

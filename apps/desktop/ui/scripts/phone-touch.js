@@ -109,7 +109,7 @@ function stackPeople(people, max = STACK_MAX) {
   return { shown, more: Math.max(0, people.length - shown.length) };
 }
 
-const SWIPE = { slop: 12, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60, sheetAt: 72 };
+const SWIPE = { slop: 6, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60, sheetAt: 72, chipAfterMs: 110 };
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
   "Reply": { label: "Reply", icon: "reply", hint: "or swipe right" },
