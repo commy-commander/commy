@@ -52,6 +52,8 @@ const LOCALE_ES = {
   "appearance.chatSize": "Tamaño del texto del chat",
   "appearance.compact": "Modo compacto",
   "appearance.compact.sub": "Menos espacio entre mensajes.",
+  "appearance.newLook": "Nuevo aspecto",
+  "appearance.newLook.sub": "Prueba el rediseño mientras se construye. Algunas pantallas aún tienen el aspecto anterior. Commy se recarga al cambiarlo, y eso termina la llamada en la que estés.",
   "appearance.textStyles": "Colores y efectos del texto",
   "appearance.textStyles.sub": "Muestra los colores, fuentes y efectos animados que la gente añade a sus mensajes.",
   "appearance.shortcuts": "Atajos de teclado",

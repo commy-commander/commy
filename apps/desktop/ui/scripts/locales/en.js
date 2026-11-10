@@ -52,6 +52,8 @@ const LOCALE_EN = {
   "appearance.chatSize": "Chat Font Size",
   "appearance.compact": "Compact Mode",
   "appearance.compact.sub": "Tighter spacing between messages.",
+  "appearance.newLook": "New Look",
+  "appearance.newLook.sub": "Try the redesign while it is being built. Some screens still wear the old look. Commy reloads when you change this, which ends a call you are in.",
   "appearance.textStyles": "Text Colours and Effects",
   "appearance.textStyles.sub": "Show the colours, fonts and moving effects people add to their messages.",
   "appearance.shortcuts": "Keyboard Shortcuts",

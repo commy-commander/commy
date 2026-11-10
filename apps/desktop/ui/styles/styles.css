@@ -273,6 +273,8 @@ body.sidebar-resizing { cursor: col-resize; }
 }
 .rail::-webkit-scrollbar { display: none; }
 .rail-spacer { flex: 1; }
+.rail-tray { display: contents; }
+.composer-send { display: none; }
 
 .rail-btn, .server-icon {
   width: 38px;

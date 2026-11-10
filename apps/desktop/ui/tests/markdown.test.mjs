@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { parseMessage, parseInline, stripMarkdown, hasFormatting, highlightCode, normalizeLang, toggleWrap, formatShortcut, composerRows,
+const { parseMessage, parseInline, stripMarkdown, hasFormatting, highlightCode, normalizeLang, toggleWrap, formatShortcut, composerRows, composerHasText,
   TEXT_COLORS, TEXT_FONTS, TEXT_EFFECTS, readStyleNames, textStyleClasses, splitsLetters, applyTextStyle, activeTextStyles } = require("../scripts/markdown.js");
 
 const types = nodes => nodes.map(n => n.type);
@@ -116,6 +116,13 @@ test("the composer grows with its lines up to a cap", () => {
   assert.equal(composerRows(""), 1);
   assert.equal(composerRows("a\nb\nc"), 3);
   assert.equal(composerRows("x\n".repeat(20)), 8);
+});
+
+test("the composer has text once something other than blank space is typed", () => {
+  assert.equal(composerHasText(""), false);
+  assert.equal(composerHasText("  \n "), false);
+  assert.equal(composerHasText(null), false);
+  assert.equal(composerHasText(" hi "), true);
 });
 
 test("style tags colour, change the font of, or add an effect to text, nesting other formatting", () => {

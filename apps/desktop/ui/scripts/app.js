@@ -2509,6 +2509,10 @@ function wireAccessibility() {
     prefs.theme = e.target.value;
     saveAccessibility(prefs);
   });
+  $("new-look-toggle").checked = studioLook();
+  $("new-look-toggle").addEventListener("change", e => {
+    if (!chooseLook(e.target.checked ? "studio" : "classic")) e.target.checked = studioLook();
+  });
   $("language-select").addEventListener("change", e => {
     prefs.language = e.target.value;
     saveAccessibility(prefs);
@@ -2933,6 +2937,7 @@ function railServerButton(server, folderId) {
   btn.title = server.name;
   btn.draggable = true;
   btn.dataset.id = server.id;
+  btn.style.setProperty("--server-tint", serverTint(server.id));
   if (state.currentServer && server.id === state.currentServer.id) btn.classList.add("active");
   const count = serverUnreadCount(server.id);
   btn.classList.toggle("unread", count > 0);
@@ -18800,6 +18805,7 @@ async function sendMessage() {
   }
   input.value = "";
   fitComposer(input);
+  fireComposer(input);
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   typingSender.sent();
   $("messages").dataset.view = "";
@@ -20989,6 +20995,10 @@ function wireEvents() {
   };
 
   $("attach-btn").onclick = toggleComposerMenu;
+  $("send-btn").onclick = () => {
+    sendMessage();
+    $("message-input").focus();
+  };
   $("cm-photo").prepend(svgIcon("photo", 18));
   $("cm-file").prepend(svgIcon("uploadFile", 18));
   $("cm-video").prepend(svgIcon("movie", 18));
@@ -22620,6 +22630,16 @@ function closeSheetsWhenTypingOnPhone() {
 
 function fitComposer(input) {
   input.rows = composerRows(input.value);
+  const bar = input.closest(".composer");
+  if (bar) bar.classList.toggle("has-text", composerHasText(input.value));
+}
+
+function fireComposer(input) {
+  const bar = input.closest(".composer");
+  if (!bar) return;
+  bar.classList.remove("fire");
+  void bar.offsetWidth;
+  bar.classList.add("fire");
 }
 
 function wireComposerFormatting(input) {

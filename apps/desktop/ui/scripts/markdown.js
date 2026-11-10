@@ -565,9 +565,13 @@ function composerRows(value, max = 8) {
   return Math.max(1, Math.min(max, lines));
 }
 
+function composerHasText(value) {
+  return String(value || "").trim().length > 0;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    parseMessage, parseInline, stripMarkdown, hasFormatting, highlightCode, normalizeLang, toggleWrap, formatShortcut, composerRows, inlineToText, TIMESTAMP_STYLES,
+    parseMessage, parseInline, stripMarkdown, hasFormatting, highlightCode, normalizeLang, toggleWrap, formatShortcut, composerRows, composerHasText, inlineToText, TIMESTAMP_STYLES,
     TEXT_COLORS, TEXT_FONTS, TEXT_EFFECTS, LETTER_EFFECTS, MAX_TEXT_STYLES, readStyleNames, textStyleClasses, splitsLetters, applyTextStyle, activeTextStyles,
   };
 }

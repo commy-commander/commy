@@ -76,11 +76,28 @@ function setLookFx(value) {
   return root.dataset.fx === "lite" ? "lite" : "glass";
 }
 
+function lookSearch(search) {
+  const kept = String(search || "").replace(/^\?/, "").split("&").filter(part => part && !["studio", "classic"].includes(part.split("=")[0]));
+  return kept.length ? "?" + kept.join("&") : "";
+}
+
+function chooseLook(look) {
+  try {
+    window.localStorage.setItem(LOOK_KEY, look === "studio" ? "studio" : "classic");
+  } catch {
+    return false;
+  }
+  const search = lookSearch(window.location.search);
+  if (search === window.location.search) window.location.reload();
+  else window.location.search = search;
+  return true;
+}
+
 if (typeof document !== "undefined") {
   applyLook();
   window.addEventListener("resize", applyLook);
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { LOOK_KEY, LOOK_FX_KEY, LOOK_DEFAULT, LOOK_FIT, lookFromSearch, resolveLook, windowFit, resolveFx, lookAttributes };
+  module.exports = { LOOK_KEY, LOOK_FX_KEY, LOOK_DEFAULT, LOOK_FIT, lookFromSearch, resolveLook, windowFit, resolveFx, lookAttributes, lookSearch };
 }
