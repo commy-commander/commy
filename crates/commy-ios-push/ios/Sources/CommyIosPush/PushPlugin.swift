@@ -1,5 +1,6 @@
 import Foundation
 import ObjectiveC
+import Security
 import Tauri
 import UIKit
 import UserNotifications
@@ -78,7 +79,44 @@ enum ApnsEnvironment {
   }
 }
 
+struct PreviewsArgs: Decodable {
+  let json: String
+}
+
+enum SharedPreviews {
+  static let service = "chat.commy.mobile.previews"
+  static let account = "wake-previews"
+
+  static func save(_ data: Data) -> Bool {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+    ]
+    let values: [String: Any] = [
+      kSecValueData as String: data,
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+    ]
+    let status = SecItemUpdate(query as CFDictionary, values as CFDictionary)
+    if status == errSecSuccess { return true }
+    guard status == errSecItemNotFound else { return false }
+    return SecItemAdd(query.merging(values) { _, new in new } as CFDictionary, nil) == errSecSuccess
+  }
+}
+
 class PushPlugin: Plugin {
+  @objc public func previews(_ invoke: Invoke) {
+    guard let args = try? invoke.parseArgs(PreviewsArgs.self) else {
+      invoke.reject("could not read the message previews")
+      return
+    }
+    if SharedPreviews.save(Data(args.json.utf8)) {
+      invoke.resolve()
+    } else {
+      invoke.reject("could not keep the message previews")
+    }
+  }
+
   @objc public func token(_ invoke: Invoke) {
     let center = UNUserNotificationCenter.current()
     center.removeAllDeliveredNotifications()

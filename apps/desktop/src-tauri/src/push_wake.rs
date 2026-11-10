@@ -143,7 +143,7 @@ pub fn register(handle: &AppHandle) {
 }
 
 pub async fn forget_everything(app: &App) {
-    if cfg!(target_os = "android") {
+    if cfg!(mobile) {
         phone::save_previews(serde_json::json!({ "keys": [] }));
     }
     let Some((push, base)) = target() else { return };
@@ -306,7 +306,7 @@ fn phone_previews(app: &App, days: &[i64]) -> serde_json::Value {
 }
 
 fn share_previews(app: &App, today: i64) {
-    if cfg!(target_os = "android") {
+    if cfg!(mobile) {
         phone::save_previews(phone_previews(app, &days_from(today)));
     }
 }
@@ -467,9 +467,10 @@ mod phone_push {
         target: Option<String>,
     }
 
-    #[cfg(target_os = "android")]
     pub fn save_previews(previews: serde_json::Value) {
         let Some(plugin) = plugin() else { return };
+        #[cfg(target_os = "ios")]
+        let previews = serde_json::json!({ "json": previews.to_string() });
         let _ = std::thread::Builder::new().name("push-previews".into()).spawn(move || {
             if let Err(e) = plugin.run_mobile_plugin::<serde_json::Value>("previews", previews) {
                 tracing::info!("could not hand message previews to the phone: {e}");
@@ -531,6 +532,10 @@ use phone_push as phone;
 
 #[cfg(not(target_os = "android"))]
 mod phone {
+    #[cfg(target_os = "ios")]
+    pub(super) use super::phone_push::save_previews;
+
+    #[cfg(not(target_os = "ios"))]
     pub fn save_previews(_previews: serde_json::Value) {}
 
     pub fn take_target() -> Option<String> {
