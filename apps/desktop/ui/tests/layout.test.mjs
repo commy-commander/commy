@@ -15,6 +15,13 @@ test("a choice made with the toggle wins over the window width", () => {
   assert.equal(membersCollapsed("1", 2000), true);
 });
 
+test("the people panel can start open from a narrower width when the caller asks", () => {
+  assert.equal(membersCollapsed(null, 1180, 1180), false);
+  assert.equal(membersCollapsed(null, 1179, 1180), true);
+  assert.equal(membersCollapsed(null, 1180), true);
+  assert.equal(membersCollapsed("1", 1400, 1180), true);
+});
+
 test("members always give way to the chat on small windows", () => {
   assert.equal(membersCollapsed("0", 800), true);
   assert.equal(membersCollapsed("0", 1000), false);

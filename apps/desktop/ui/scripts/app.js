@@ -17544,8 +17544,12 @@ function setupSidebarResize() {
   });
 }
 
+function membersNarrowPx() {
+  return studioLook() ? LOOK_FIT.roomyWidth : NARROW_WINDOW_PX;
+}
+
 function applyMembersLayout() {
-  const collapsed = membersCollapsed(readMembersPref(), window.innerWidth);
+  const collapsed = membersCollapsed(readMembersPref(), window.innerWidth, membersNarrowPx());
   $("app").classList.toggle("members-collapsed", collapsed);
   const btn = $("members-btn");
   btn.classList.toggle("active", !collapsed);
@@ -21922,7 +21926,7 @@ function wireEvents() {
   });
   $("members-btn").onclick = () => {
     if (phoneStep("people")) return;
-    const collapsed = membersCollapsed(readMembersPref(), window.innerWidth);
+    const collapsed = membersCollapsed(readMembersPref(), window.innerWidth, membersNarrowPx());
     try {
       localStorage.setItem("commy.members.collapsed", collapsed ? "0" : "1");
     } catch {}

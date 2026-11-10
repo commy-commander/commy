@@ -13,11 +13,11 @@ function pickConnLink(links, picked) {
   return links.find(l => l.user === picked) || links[0] || null;
 }
 
-function membersCollapsed(pref, width) {
+function membersCollapsed(pref, width, narrow = NARROW_WINDOW_PX) {
   if (width < CHAT_FIRST_PX) return true;
   if (pref === "1") return true;
   if (pref === "0") return false;
-  return width < NARROW_WINDOW_PX;
+  return width < narrow;
 }
 
 const VOICE_RING_LIMIT = 4;

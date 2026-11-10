@@ -44,6 +44,28 @@ test("every desktop rule waits for the new look switch", () => {
   for (const selector of list) assert.ok(selector.startsWith(SWITCH), selector);
 });
 
+test("the roomy stage grows with the window between 1180 and 1920 wide", () => {
+  const sheet = css.replace(/\r\n/g, "\n");
+  const fluid = {
+    "--st-ml": "clamp(24px, calc(5.95vw - 46px), 68px)",
+    "--st-mr": "clamp(26px, calc(3.5vw - 15px), 52px)",
+    "--st-gap": "clamp(26px, calc(1.08vw + 13.2px), 34px)",
+    "--st-wing": "clamp(232px, calc(9.2vw + 123px), 300px)",
+    "--st-side": "clamp(228px, calc(6vw + 157px), 272px)",
+    "--st-lean": "clamp(8px, calc(var(--st-ml) - 14px), 26px)",
+  };
+  for (const [name, value] of Object.entries(fluid)) assert.ok(sheet.includes(`${name}: ${value};`), name);
+  const at = (value, width) => {
+    const [, low, slope, base, high] = value.match(/clamp\((\d+)px, calc\(([\d.]+)vw ([+-] [\d.]+)px\), (\d+)px\)/);
+    return Math.round(Math.min(Number(high), Math.max(Number(low), (Number(slope) * width) / 100 + Number(base.replace(" ", "")))));
+  };
+  assert.deepEqual([1180, 1440, 1920, 2560].map(width => at(fluid["--st-ml"], width)), [24, 40, 68, 68]);
+  assert.deepEqual([1180, 1440, 1920, 2560].map(width => at(fluid["--st-side"], width)), [228, 243, 272, 272]);
+  assert.deepEqual([1180, 1440, 1920, 2560].map(width => at(fluid["--st-wing"], width)), [232, 255, 300, 300]);
+  assert.match(sheet, /\.messages \.msg-content \{ max-width: 1000px; \}/);
+  assert.match(sheet, /@media \(min-width: 1340px\) and \(max-width: 1400px\)/);
+});
+
 test("only the chat bar and the off states of the room and the star apply in a slim window", () => {
   const anyFit = selectors(css).filter(selector => !selector.includes(NOT_SLIM) && !selector.includes('[data-fit="compact"]'));
   assert.ok(anyFit.length > 20);
