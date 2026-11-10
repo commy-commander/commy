@@ -2601,9 +2601,14 @@ function paintAvatar(node, userId, name) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE || child.classList?.contains("avatar-face")) child.remove();
   }
-  node.classList.remove("emoji-avatar", "image-avatar");
+  node.classList.remove("emoji-avatar", "image-avatar", "face-avatar");
   node.style.setProperty("--tint", personTint(userId));
   const raw = avatarFor(userId)?.avatar || "";
+  const plain = () => {
+    if (!studioLook()) return el("span", "avatar-face", initials(name || "?"));
+    node.classList.add("face-avatar");
+    return studioFaceNode(document, userId, knownBot(userId));
+  };
   let face;
   if (raw.startsWith("emoji:")) {
     face = el("span", "avatar-face", raw.slice(6));
@@ -2611,7 +2616,6 @@ function paintAvatar(node, userId, name) {
   } else if (raw.startsWith("blob:")) {
     const blob = raw.slice(5);
     const ready = avatarImages.get(blob);
-    face = el("span", "avatar-face", initials(name || "?"));
     const show = url => {
       if (!url || !node.contains(face)) return;
       const img = el("img", "avatar-face");
@@ -2619,6 +2623,7 @@ function paintAvatar(node, userId, name) {
       img.alt = "";
       img.draggable = false;
       face.replaceWith(img);
+      node.classList.remove("face-avatar");
       node.classList.add("image-avatar");
     };
     if (typeof ready === "string") {
@@ -2628,11 +2633,12 @@ function paintAvatar(node, userId, name) {
       face.draggable = false;
       node.classList.add("image-avatar");
     } else {
+      face = plain();
       const waits = state.user && userId === state.user.id ? OWN_AVATAR_RETRY_MS : [];
       loadAvatarImageUntil(blob, avatarFor(userId)?.provider, waits, () => node.isConnected && node.contains(face)).then(show);
     }
   } else {
-    face = el("span", "avatar-face", initials(name || "?"));
+    face = plain();
   }
   node.prepend(face);
   setAvatarBorder(node, avatarFor(userId)?.border);
@@ -2769,6 +2775,14 @@ function memberHover(member, channel) {
   const game = activityWithTime(member);
   if (game) lines.push(game);
   return lines.join("\n");
+}
+
+function knownBot(userId) {
+  for (const server of [state.currentServer, state.voiceServer]) {
+    const found = server && Array.isArray(server.members) ? server.members.find(member => member.id === userId) : null;
+    if (found) return Boolean(found.bot);
+  }
+  return false;
 }
 
 function makeAvatar(userId, name, className = "avatar") {

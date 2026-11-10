@@ -50,6 +50,8 @@ html[data-look="studio"] .i {
   stroke: none;
   overflow: visible;
 }
+html[data-look="studio"] .avatar.face-avatar { background: none; }
+html[data-look="studio"] .avatar > svg.avatar-face { display: block; width: 100%; height: 100%; border-radius: 50%; }
 html[data-look="studio"] .i .i-on { display: none; }
 html[data-look="studio"] .key .i .i-rest,
 html[data-look="studio"] .is-on > .i .i-rest,
