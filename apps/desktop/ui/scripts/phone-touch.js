@@ -152,6 +152,7 @@ function listLabel(typed) {
 }
 
 const SWIPE = { slop: 6, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60, sheetAt: 72, chipAfterMs: 110 };
+const TRAY_PULL = 40;
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
   "Reply": { label: "Reply", icon: "reply", hint: "or swipe right" },
@@ -207,6 +208,10 @@ function sheetPull(dy) {
   return Math.max(0, Number(dy) || 0);
 }
 
+function trayOpens(dy) {
+  return (Number(dy) || 0) <= -TRAY_PULL;
+}
+
 function sheetCloses(dy) {
   return sheetPull(dy) >= SWIPE.sheetAt;
 }
@@ -244,6 +249,7 @@ const ROOM_KEYS = [
   { id: "deafen", label: "Deafen", icon: "headphones" },
   { id: "leave", label: "Leave", icon: "phone-off" },
 ];
+const ROOM_LAMPS = ["sounds", "camera", "mic", "deafen"];
 const SIGNAL_WORDS = { good: "Good", ok: "Fair", bad: "Poor" };
 
 function roomTiles(channel, me = {}) {
@@ -290,11 +296,25 @@ function signalWord(quality) {
 }
 
 function roomKeyState(id, voice = {}) {
+  if (id === "mic" && voice.hand) {
+    const word = voice.hand.raised ? "Lower hand" : "Raise hand";
+    return { down: Boolean(voice.hand.raised), mode: "hand", icon: "hand", label: word, word };
+  }
+  if (id === "mic" && voice.talk && !voice.muted) return { down: false, mode: "talk", held: Boolean(voice.talking), icon: "mic", label: "Hold to talk", word: "Hold to talk" };
   if (id === "mic") return { down: Boolean(voice.muted), icon: voice.muted ? "mic-off" : "mic", label: voice.muted ? "Unmute" : "Mute" };
-  if (id === "deafen") return { down: Boolean(voice.deafened), icon: "headphones", label: voice.deafened ? "Undeafen" : "Deafen" };
-  if (id === "camera") return { down: false, off: !voice.camera, icon: voice.camera ? "video" : "video-off", label: voice.camera ? "Turn off camera" : "Turn on camera" };
+  if (id === "deafen") return { down: Boolean(voice.deafened), icon: voice.deafened ? "headphone-off" : "headphones", label: voice.deafened ? "Undeafen" : "Deafen" };
+  if (id === "camera") return { down: false, off: !voice.camera, on: Boolean(voice.camera), icon: voice.camera ? "video" : "video-off", label: voice.camera ? "Turn off camera" : "Turn on camera" };
   if (id === "sounds") return { down: Boolean(voice.sounds), icon: "music", label: "Soundboard" };
   return { down: false, icon: "phone", label: "Hang up" };
+}
+
+function canOfferShare({ mobileApp, canShare, iPhone }) {
+  return !iPhone && (!mobileApp || Boolean(canShare));
+}
+
+function roomTileStreams(streams, me = {}) {
+  if (!me.sharing) return streams || [];
+  return [{ user: me.userId, name: me.name || "", title: "Your screen", own: true, watching: false }, ...(streams || [])];
 }
 
 function roomSignature(tiles, streams, extra = "") {
@@ -304,6 +324,8 @@ function roomSignature(tiles, streams, extra = "") {
     extra,
   ].join("|");
 }
+
+const MIRROR_FRAME_MS = 33;
 
 const BUBBLE_MAX = 3;
 const BUBBLE_CHARS = 72;
@@ -339,6 +361,10 @@ if (typeof module !== "undefined" && module.exports) {
     listAge,
     listLabel,
     unreadChats,
+    ROOM_LAMPS,
+    TRAY_PULL,
+    trayOpens,
+    canOfferShare,
     roomFaces,
     horizonY,
     horizonPath,
@@ -378,6 +404,8 @@ if (typeof module !== "undefined" && module.exports) {
     signalWord,
     roomKeyState,
     roomSignature,
+    roomTileStreams,
+    MIRROR_FRAME_MS,
     streamBubbles,
     watchPlace,
   };

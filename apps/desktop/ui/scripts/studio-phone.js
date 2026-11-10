@@ -26,6 +26,8 @@ const studioPhone = {
   roomSeen: "",
   roomQueued: 0,
   soundsWereOpen: false,
+  trayHome: null,
+  talkHeld: false,
   roomsAt: 0,
   roomsBusy: false,
   liveTimer: 0,
@@ -76,21 +78,26 @@ function horizonMarkup() {
 
 function roomKeyMarkup(key) {
   const kind = key.id === "mic" ? "lg cream mic" : key.id === "leave" ? "tap danger hang" : "tap";
-  return `<div class="k${key.id === "mic" ? " big" : ""}"><button type="button" class="key sq ${kind}" data-room-key="${key.id}" aria-label="${key.label}"><i data-i="${key.icon}"></i></button><span class="lb">${key.label}</span></div>`;
+  const lamp = ROOM_LAMPS.includes(key.id) ? '<i class="led"></i>' : "";
+  return `<div class="k${key.id === "mic" ? " big" : ""}"><button type="button" class="key sq ${kind}" data-room-key="${key.id}" aria-label="${key.label}"><i data-i="${key.icon}"></i>${lamp}</button><span class="lb">${key.label}</span></div>`;
+}
+
+function voiceSheetMarkup() {
+  return `<h3>Voice</h3>
+<div class="arow conn" id="pt-voice-conn">${studioDockSignalMarkup()}<span class="l"><b></b><small></small></span></div>
+<button type="button" class="arow" data-caret="mute-caret"><i data-i="mic"></i><span class="l">Microphone</span><small id="pt-voice-mic"></small></button>
+<button type="button" class="arow" data-caret="deafen-caret"><i data-i="headphones"></i><span class="l">Speaker</span><small id="pt-voice-out"></small></button>
+<button type="button" class="arow" data-caret="camera-caret"><i data-i="video"></i><span class="l">Camera</span><small id="pt-voice-cam"></small></button>
+<button type="button" class="arow" id="pt-voice-share" data-press="share-btn"><i data-i="monitor-up"></i><span class="l"></span></button>
+<button type="button" class="arow" id="pt-voice-act" data-press="vp-activities"><i data-i="gamepad-2"></i><span class="l"></span></button>`;
 }
 
 function roomMarkup() {
   return `<header class="pt-room-head">
 <button type="button" class="pt-room-down" id="pt-room-down" aria-label="Back, and stay in the room"><i data-i="chevron-down"></i></button>
 <div class="t"><b><span id="pt-room-name"></span><span class="live hidden" id="pt-room-live">Live</span></b><small id="pt-room-sub"></small></div>
-<span class="sig" id="pt-room-sig"><i data-i="bars"></i><span id="pt-room-sig-word"></span></span>
-<button type="button" class="key sq tap" id="pt-room-more" aria-label="Sound and camera options" aria-expanded="false"><i data-i="sliders-horizontal"></i></button>
+<button type="button" class="sig" id="pt-room-sig" aria-haspopup="dialog" aria-expanded="false">${studioDockSignalMarkup()}<span id="pt-room-sig-word"></span></button>
 </header>
-<div class="pt-room-opts slab" id="pt-room-opts">
-<button type="button" class="arow" data-caret="mute-caret"><i data-i="mic"></i><span class="l">Microphone options</span></button>
-<button type="button" class="arow" data-caret="deafen-caret"><i data-i="headphones"></i><span class="l">Speaker options</span></button>
-<button type="button" class="arow" data-caret="camera-caret"><i data-i="video"></i><span class="l">Camera options</span></button>
-</div>
 <div class="pt-room-body"><div class="pt-room-streams" id="pt-room-streams"></div><div class="pt-room-people" id="pt-room-people"></div></div>`;
 }
 
@@ -152,7 +159,13 @@ function buildStudioPhone() {
   const search = studioNode("section", "pt-sheet pt-search", '<div class="pt-search-top" id="pt-search-top"></div><div class="pt-search-body" id="pt-search-body"></div>');
   search.id = "pt-search";
   search.setAttribute("aria-label", "Search");
-  app.append(title, live, you, scrim, hold, search, cue, room, bar);
+  const voiceScrim = el("div", "pt-voice-scrim");
+  voiceScrim.id = "pt-voice-scrim";
+  const voiceSheet = studioNode("section", "pt-voice-sheet", voiceSheetMarkup());
+  voiceSheet.id = "pt-voice-sheet";
+  voiceSheet.setAttribute("role", "dialog");
+  voiceSheet.setAttribute("aria-label", "Voice");
+  app.append(title, live, you, scrim, hold, search, cue, room, voiceScrim, voiceSheet, bar);
   const watch = studioNode("div", "pt-watch", watchMarkup());
   watch.id = "pt-watch";
   $("stage-view").appendChild(watch);
@@ -1033,7 +1046,10 @@ function watchStudioPhone() {
     refreshLiveRooms(false);
   });
   watch($("voice-panel"), { attributes: true, attributeFilter: ["class", "data-quality"], subtree: true, childList: true }, queueRoomPaint);
-  watch($("soundboard-pop"), { attributes: true, attributeFilter: ["class"] }, syncRoomKeys);
+  watch($("soundboard-pop"), { attributes: true, attributeFilter: ["class"] }, () => {
+    syncRoomKeys();
+    decorateTray();
+  });
   watch($("video-pane"), { attributes: true, attributeFilter: ["class"] }, syncStreamFull);
   watch($("video-label"), { childList: true, characterData: true, subtree: true }, paintWatch);
   watch($("messages"), { childList: true }, paintWatch);
@@ -1047,6 +1063,7 @@ function watchStudioPhone() {
     paintHomeWords();
     paintHomeHead();
     placeTileName();
+    decorateTray();
     paintMessagesWords();
     if ($("app").classList.contains("dm-mode")) renderDmThreads();
     layHorizon();
@@ -1217,7 +1234,7 @@ function swipeTarget(e) {
   const target = e.target;
   if (!target.closest) return null;
   const sheet = target.closest(STUDIO_SHEET_NODES);
-  if (sheet) return target.closest("input, textarea, select") || !sheetAtTop(sheet, target) ? null : { kind: "sheet", node: sheet };
+  if (sheet) return target.closest("input, textarea, select") || !sheetAtTop(sheet, target) ? null : { kind: "sheet", node: sheet, up: sheet.matches(".pt-tray:not(.pt-tray-full)") };
   if (target.closest("input, textarea, select, pre, code, video, audio, .md-table")) return null;
   const touch = e.touches[0];
   const pane = phonePane();
@@ -1301,6 +1318,12 @@ function endSwipe(swipe, dx, cancelled) {
     node.style.translate = "";
     if (!cancelled && edgeBackCommits(dx)) phoneStep("back");
   } else if (swipe.kind === "sheet") {
+    const full = node.classList.contains("pt-tray-full");
+    if (!cancelled && (full ? sheetCloses(dx) : swipe.up && trayOpens(dx))) {
+      node.style.translate = "";
+      node.classList.toggle("pt-tray-full", !full);
+      return;
+    }
     if (cancelled || !sheetCloses(dx)) {
       node.style.translate = "";
       return;
@@ -1329,7 +1352,7 @@ function wireSwipes() {
     const pull = along === "y" ? dy : dx;
     if (!swipe.axis) {
       swipe.axis = swipeAxis(dx, dy);
-      if ((swipe.axis && swipe.axis !== along) || (swipe.axis === along && pull < 0 && !swipe.wasOpen)) {
+      if ((swipe.axis && swipe.axis !== along) || (swipe.axis === along && pull < 0 && !swipe.wasOpen && !swipe.up)) {
         swipe = null;
         return;
       }
@@ -1370,6 +1393,9 @@ function roomVoice() {
     deafened: Boolean(state.voice && state.voice.deafened),
     camera: Boolean(state.cameraOn),
     sounds: !$("soundboard-pop").classList.contains("hidden"),
+    hand: $("voice-panel").classList.contains("in-audience") ? { raised: $("vp-hand").classList.contains("on") } : null,
+    talk: !$("vp-talk").classList.contains("hidden"),
+    talking: Boolean(state.talking),
   };
 }
 
@@ -1391,9 +1417,18 @@ function syncRoomKeys() {
     const id = key.dataset.roomKey;
     if (id === "leave") continue;
     const now = roomKeyState(id, voice);
-    key.classList.toggle("muted", (id === "mic" || id === "deafen") && now.down);
-    key.classList.toggle("is-down", (id === "sounds" || id === "deafen") && now.down);
+    const resting = now.mode === "talk" && !now.held;
+    key.classList.toggle("muted", resting || ((id === "mic" || id === "deafen") && !now.mode && now.down));
+    key.classList.toggle("is-down", id === "sounds" && now.down);
     key.classList.toggle("is-off", Boolean(now.off));
+    key.classList.toggle("is-on", Boolean(now.on) || (now.mode === "hand" && now.down));
+    if (id === "mic") {
+      key.classList.toggle("cream", now.mode !== "hand");
+      key.classList.toggle("hand", now.mode === "hand");
+      key.classList.toggle("talk", now.mode === "talk");
+      const word = key.parentNode.querySelector(".lb");
+      if (word) word.textContent = now.word || "Mic";
+    }
     key.setAttribute("aria-label", now.label);
     key.setAttribute("aria-pressed", String(Boolean(now.down)));
     if (key.dataset.shown !== now.icon) {
@@ -1404,8 +1439,28 @@ function syncRoomKeys() {
   }
 }
 
+function holdTalk(down) {
+  if (studioPhone.talkHeld === down) return;
+  studioPhone.talkHeld = down;
+  invoke("press_talk", { pressed: down }).catch(e => toast(String(e)));
+}
+
+function wireTalkKeys() {
+  for (const key of document.querySelectorAll('[data-room-key="mic"]')) {
+    key.addEventListener("pointerdown", e => {
+      if (!key.classList.contains("talk")) return;
+      key.setPointerCapture(e.pointerId);
+      holdTalk(true);
+    });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) key.addEventListener(type, () => holdTalk(false));
+  }
+}
+
 function pressRoomKey(id) {
-  if (id === "mic") $("mute-btn").click();
+  const mode = id === "mic" ? roomKeyState(id, roomVoice()).mode : "";
+  if (mode === "talk") return;
+  if (mode === "hand") $("vp-hand").click();
+  else if (id === "mic") $("mute-btn").click();
   else if (id === "deafen") $("deafen-btn").click();
   else if (id === "camera") $("vp-camera").click();
   else if (id === "sounds") {
@@ -1425,23 +1480,61 @@ function roomTile(tile) {
   if (tile.id && state.speaking.has(tile.id)) node.classList.add("speaking");
   node.appendChild(makeAvatar(tile.id || tile.name, tile.name, "avatar"));
   node.appendChild(el("b", "", tile.label));
-  if (tile.muted || tile.deafened) node.appendChild(studioNode("span", "mo", `<i data-i="${tile.deafened ? "headphones" : "mic-off"}"></i>`));
+  if (tile.muted || tile.deafened) node.appendChild(studioNode("span", "mo", `<i data-i="${tile.deafened ? "headphone-off" : "mic-off"}"></i>`));
   return node;
 }
 
 function roomStreamTile(stream) {
-  const tile = studioNode("button", "pt-stream theme-dark", `<span class="who"><span class="live">Live</span><span class="who-name"></span></span><span class="note"></span><span class="max"><i data-i="maximize"></i></span>`);
-  tile.type = "button";
+  const keys = stream.own
+    ? '<span class="stopk" role="button" tabindex="0">Stop</span>'
+    : `<span class="key primary go">Watch</span><span class="max"><i data-i="maximize"></i></span>${stream.watching ? '<span class="x" role="button" tabindex="0" aria-label="Stop watching"><i data-i="x"></i></span>' : ""}`;
+  const tile = studioNode("div", "pt-stream theme-dark" + (stream.own ? " own" : stream.watching ? " w" : ""), `<span class="who"><span class="live">Live</span><span class="who-name"></span></span>${keys}`);
   tile.querySelector(".who-name").textContent = stream.title;
-  tile.querySelector(".note").textContent = stream.watching ? "Watching now. Tap to go back to it" : "Tap to watch";
-  tile.setAttribute("aria-label", `Watch ${stream.title}`);
   tile.prepend(makeAvatar(stream.user, stream.name, "avatar"));
+  if (stream.own) {
+    tile.querySelector(".stopk").onclick = () => $("vp-stop-share").click();
+    return tile;
+  }
+  tile.setAttribute("role", "button");
+  tile.tabIndex = 0;
+  tile.setAttribute("aria-label", `Watch ${stream.title}`);
+  if (stream.watching) {
+    const pic = el("canvas", "pic");
+    pic.setAttribute("aria-hidden", "true");
+    tile.prepend(pic);
+    tile.querySelector(".x").onclick = e => {
+      e.stopPropagation();
+      stopWatching();
+    };
+  }
   tile.onclick = async () => {
     await watchScreen(stream.user, stream.name);
     if (!$("video-pane").classList.contains("hidden") && phonePane() === "chat") $("app").classList.add("pt-stream-full");
     syncStreamFull();
   };
   return tile;
+}
+
+function mirrorStream(now) {
+  studioPhone.mirror = 0;
+  const pic = document.querySelector("#pt-room-streams .pic");
+  if (!pic || !roomOpen()) return;
+  studioPhone.mirror = requestAnimationFrame(mirrorStream);
+  if (now - (studioPhone.mirrored || 0) < MIRROR_FRAME_MS) return;
+  const frame = $("video-frame");
+  const box = pic.parentNode.getBoundingClientRect();
+  const crop = frame.classList.contains("blank") ? null : coverCrop(frame.width, frame.height, box.width, box.height);
+  if (!crop) return;
+  studioPhone.mirrored = now;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.round(box.width * ratio);
+  const height = Math.round(box.height * ratio);
+  if (pic.width !== width || pic.height !== height) {
+    pic.width = width;
+    pic.height = height;
+  }
+  pic.getContext("2d").drawImage(frame, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
+  pic.parentNode.classList.toggle("on", true);
 }
 
 function paintRoom() {
@@ -1462,7 +1555,8 @@ function paintRoom() {
   const server = call ? null : roomServer();
   const channel = server ? server.channels.find(found => found.id === state.voiceChannelId) : null;
   const tiles = call ? duoTiles(vs.name, me) : roomTiles(channel, me);
-  const streams = call ? [] : roomStreams(server, state.voiceChannelId, me);
+  const mine = tiles.find(tile => tile.you);
+  const streams = roomTileStreams(call ? [] : roomStreams(server, state.voiceChannelId, me), { userId: me.userId, name: mine ? mine.name : me.name, sharing: Boolean(state.sharing) });
   const name = call ? vs.name : vs.channelName;
   const quality = $("vp-signal").dataset.quality || "";
   const seen = roomSignature(tiles, streams, [name, vs.name, quality].join("/"));
@@ -1472,9 +1566,11 @@ function paintRoom() {
   $("pt-room-live").classList.toggle("hidden", !streams.length);
   $("pt-room-sub").textContent = roomHeading({ serverName: vs.name, count: tiles.length, call });
   $("pt-room-sig").dataset.quality = quality;
+  $("pt-room-sig").setAttribute("aria-label", `${studioDockQuality(quality).line}. Voice options`);
   $("pt-room-sig-word").textContent = signalWord(quality);
   $("pt-room-streams").replaceChildren(...streams.map(roomStreamTile));
   $("pt-room-people").replaceChildren(...tiles.map(roomTile));
+  if (!studioPhone.mirror) studioPhone.mirror = requestAnimationFrame(mirrorStream);
 }
 
 function queueRoomPaint() {
@@ -1488,8 +1584,8 @@ function syncRoomMode() {
   if (h.bar.classList.contains("rm") === open) return;
   h.bar.classList.toggle("rm", open);
   disarmHangUp();
-  $("pt-room").classList.remove("opts");
-  $("pt-room-more").setAttribute("aria-expanded", "false");
+  closeVoiceOptions();
+  if (!open) $("soundboard-pop").classList.toggle("hidden", true);
   if (open) {
     studioPhone.roomSeen = "";
     paintRoom();
@@ -1572,18 +1668,96 @@ function paintWatch() {
   }));
 }
 
+function decorateTray() {
+  const pop = $("soundboard-pop");
+  const tray = studioSlim() && roomOpen() && !pop.classList.contains("hidden");
+  pop.classList.toggle("slab", tray);
+  pop.classList.toggle("pt-tray", tray);
+  $("pt-room").classList.toggle("tray", tray);
+  if (!tray) {
+    pop.classList.toggle("pt-tray-full", false);
+    if (studioPhone.trayHome && pop.parentNode !== studioPhone.trayHome.parent) studioPhone.trayHome.parent.insertBefore(pop, studioPhone.trayHome.next);
+    return;
+  }
+  if (pop.parentNode !== $("pt-room")) {
+    studioPhone.trayHome = { parent: pop.parentNode, next: pop.nextSibling };
+    $("pt-room").appendChild(pop);
+  }
+  if (!pop.querySelector(".pt-tray-grab")) {
+    const grab = el("button", "pt-tray-grab");
+    grab.type = "button";
+    grab.setAttribute("aria-label", "Show every sound");
+    grab.onclick = () => pop.classList.toggle("pt-tray-full");
+    pop.prepend(grab);
+    pop.querySelector(".sb-head > span").after(el("small", "pt-tray-line", "The whole room hears these."));
+    $("sb-grid").addEventListener("click", e => {
+      const pad = e.target.closest(".sb-sound");
+      if (!pad || pad.disabled || Date.now() < soundboardCooldown) return;
+      pad.classList.toggle("playing", true);
+      pad.addEventListener("animationend", () => pad.classList.toggle("playing", false), { once: true });
+    }, true);
+  }
+  const grid = $("sb-grid");
+  if (grid.querySelector(".pt-tray-add")) return;
+  for (const pad of grid.querySelectorAll(".sb-sound")) pad.classList.add("key");
+  const empty = grid.querySelector(".sb-empty");
+  if (empty) empty.textContent = "No sounds from this server yet.";
+  const add = studioNode("span", "key pt-tray-add", '<i data-i="plus"></i><span>Add sound</span>');
+  add.setAttribute("role", "button");
+  add.tabIndex = 0;
+  add.classList.toggle("hidden", $("sb-add").classList.contains("hidden"));
+  add.onclick = () => $("sb-add").click();
+  grid.insertBefore(add, grid.querySelectorAll(".sb-section")[1] || null);
+}
+
+function chosenDevice(select, typed) {
+  const option = select && select.selectedOptions[0];
+  return typed || (option && option.value ? option.textContent : "Default");
+}
+
+function paintVoiceOptions() {
+  const quality = $("vp-signal").dataset.quality || "good";
+  const words = studioDockQuality(quality);
+  const conn = $("pt-voice-conn");
+  conn.dataset.quality = quality;
+  conn.querySelector("b").textContent = words.line;
+  conn.querySelector("small").textContent = words.sub;
+  $("pt-voice-mic").textContent = chosenDevice(null, state.voice && state.voice.input_device);
+  $("pt-voice-out").textContent = chosenDevice(null, state.voice && state.voice.output_device);
+  $("pt-voice-cam").textContent = chosenDevice($("camera-device"), "");
+  const body = document.body.classList;
+  const share = $("pt-voice-share");
+  share.classList.toggle("hidden", !canOfferShare({ mobileApp: body.contains("mobile-app"), canShare: body.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent) }));
+  share.querySelector(".l").textContent = state.sharing ? "Stop sharing" : "Share screen";
+  const act = $("pt-voice-act");
+  act.classList.toggle("hidden", $("vp-activities").classList.contains("hidden"));
+  act.querySelector(".l").textContent = $("vp-activities").textContent.trim() || "Activities";
+}
+
+function openVoiceOptions() {
+  paintVoiceOptions();
+  $("pt-room").classList.add("opts");
+  $("pt-room-sig").setAttribute("aria-expanded", "true");
+}
+
+function closeVoiceOptions() {
+  $("pt-room").classList.remove("opts");
+  $("pt-room-sig").setAttribute("aria-expanded", "false");
+}
+
 function wireRoom() {
   $("pt-room-down").onclick = () => closeSheets();
-  $("pt-room-more").onclick = () => {
-    const shown = $("pt-room").classList.toggle("opts");
-    $("pt-room-more").setAttribute("aria-expanded", String(shown));
+  $("pt-room-sig").onclick = () => {
+    if ($("pt-room").classList.contains("opts")) closeVoiceOptions();
+    else openVoiceOptions();
   };
-  $("pt-room-opts").onclick = e => {
-    const row = e.target.closest("[data-caret]");
+  $("pt-voice-scrim").onclick = closeVoiceOptions;
+  wireTalkKeys();
+  $("pt-voice-sheet").onclick = e => {
+    const row = e.target.closest("[data-caret], [data-press]");
     if (!row) return;
-    $("pt-room").classList.remove("opts");
-    $("pt-room-more").setAttribute("aria-expanded", "false");
-    $(row.dataset.caret).click();
+    closeVoiceOptions();
+    $(row.dataset.caret || row.dataset.press).click();
   };
   $("pt-watch").addEventListener("click", e => {
     const key = e.target.closest("[data-room-key]");

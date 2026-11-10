@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -154,7 +154,15 @@ test("the phone layout builds nothing unless the new look is on", () => {
 });
 
 test("nothing on the phone offers to share an iPhone screen, and the bar names no small targets", () => {
-  assert.doesNotMatch(glue, /share screen/i);
+  assert.equal(canOfferShare({ mobileApp: true, canShare: true, iPhone: true }), false);
+  assert.equal(canOfferShare({ mobileApp: false, canShare: false, iPhone: true }), false);
+  assert.equal(canOfferShare({ mobileApp: true, canShare: false, iPhone: false }), false);
+  assert.equal(canOfferShare({ mobileApp: true, canShare: true, iPhone: false }), true);
+  assert.equal(canOfferShare({ mobileApp: false, canShare: false, iPhone: false }), true);
+  assert.equal((glue.match(/share screen/gi) || []).length, 1);
+  assert.match(glue, /share\.classList\.toggle\("hidden", !canOfferShare\(\{ mobileApp: body\.contains\("mobile-app"\), canShare: body\.contains\("can-share-screen"\), iPhone: \/iPhone\|iPod\/\.test\(navigator\.userAgent\) \}\)\);/);
+  assert.match(css, /\.app\[data-pane="list"\] \.sidebar \.voice-panel \{ display: none; \}/);
+  assert.doesNotMatch(css, /pt-voice-open [^{]*\.voice-panel/);
   for (const size of css.matchAll(/\.hzn-voice \.key \{[^}]*width: (\d+)px;[^}]*height: (\d+)px/g)) {
     assert.ok(Number(size[1]) >= 44 && Number(size[2]) >= 44);
   }
@@ -634,4 +642,155 @@ test("the Messages tab counts chats with something unread, and Saved is the firs
   assert.match(glue, /const text = badgeText\(unreadChats\(\[\.\.\.unread\.dms\.values\(\), \.\.\.state\.servers\.filter\(server => server\.group\)\.map\(server => serverUnreadCount\(server\.id\)\)\]\)\);/);
   assert.match(glue, /const first = list\.querySelector\(":scope > \.channel-group"\);\s+first\.after\(saved\);/);
   assert.match(glue, /const twice = label\.previousElementSibling === saved && label\.textContent === first\.textContent;/);
+});
+
+const slim = 'html\\[data-look="studio"\\]\\[data-fit="slim"\\]';
+const rule = (selector, body) => new RegExp(`${slim}${selector} \\{[^}]*${body}`);
+
+test("the room keys carry lamps, deafen shows a slashed headphone, and the camera key knows when it is on", () => {
+  assert.deepEqual(ROOM_LAMPS, ["sounds", "camera", "mic", "deafen"]);
+  assert.match(css, rule(' \\.hzn-room \\.key\\[data-room-key="mic"\\]:not\\(\\.hand\\.is-on\\) \\.led', 'display: none;'));
+  assert.equal(roomKeyState("deafen", { deafened: true }).icon, "headphone-off");
+  assert.equal(roomKeyState("deafen", {}).icon, "headphones");
+  assert.equal(roomKeyState("camera", { camera: true }).on, true);
+  assert.equal(roomKeyState("camera", {}).on, false);
+  assert.match(glue, /ROOM_LAMPS\.includes\(key\.id\) \? '<i class="led"><\/i>' : ""/);
+  assert.match(css, rule(' \\.hzn-room \\.key \\.led', 'background: var\\(--green\\);'));
+  assert.match(css, rule(' \\.hzn-room \\.key\\[data-room-key="sounds"\\]:not\\(\\.is-down\\) \\.led', 'background: var\\(--text-faint\\);'));
+  assert.match(css, rule(' \\.hzn-room \\.key\\[data-room-key="camera"\\]:not\\(\\.is-on\\) \\.led', 'display: none;'));
+});
+
+test("the room keys keep the guide's sizes, and nothing but leaving is red", () => {
+  assert.match(css, rule(' \\.hzn-room \\.k \\.key', 'bottom: 49px; width: 52px; height: 52px;'));
+  assert.match(css, rule(' \\.hzn-room \\.k\\.big \\.key', 'bottom: 56px; width: 62px; height: 62px;'));
+  assert.match(css, rule(' \\.hzn-room \\.key \\.i', 'width: 22px; height: 22px;'));
+  assert.match(css, rule(' \\.hzn-room \\.k\\.big \\.key \\.i', 'width: 27px; height: 27px;'));
+  assert.match(css, rule(' \\.hzn-room \\.key\\.is-down', 'background: var\\(--k-latched\\); box-shadow: var\\(--k-latched-shadow\\);'));
+  assert.match(css, rule(' \\.hzn-room \\.key\\.is-off', 'background: var\\(--glass-hi\\), transparent;'));
+  for (const found of css.matchAll(/\.hzn-room [^{]*\{[^}]*\}/g)) {
+    if (/danger|--red/.test(found[0])) assert.match(found[0], /\.hang|\.ask|\.hzn-fuse/, found[0].slice(0, 80));
+  }
+});
+
+test("the room header is the guide's: a chevron, the name, who is here, and the quality mark as one key", () => {
+  assert.match(css, rule(' \\.pt-room-head', 'gap: 4px;\\s+height: 60px;\\s+padding: 0 14px 0 6px;'));
+  assert.match(css, rule(' \\.pt-room-head \\.t small', 'font: 400 13\\.5px/1 var\\(--font\\);'));
+  assert.match(css, rule(' \\.pt-room-head \\.sig', '[\\s\\S]*height: 34px;\\s+padding: 0 6px;[\\s\\S]*font: 600 13\\.5px/1 var\\(--font\\);'));
+  assert.match(css, rule(' \\.pt-room-head \\.sig::after', 'inset: -5px 0;'));
+  assert.match(glue, /<button type="button" class="sig" id="pt-room-sig" aria-haspopup="dialog" aria-expanded="false">\$\{studioDockSignalMarkup\(\)\}<span id="pt-room-sig-word"><\/span><\/button>/);
+  assert.doesNotMatch(glue, /pt-room-more|pt-room-opts/);
+});
+
+test("the quality mark opens a Voice sheet with the connection and the app's own device choices", () => {
+  assert.match(glue, /<h3>Voice<\/h3>/);
+  for (const [caret, word] of [["mute-caret", "Microphone"], ["deafen-caret", "Speaker"], ["camera-caret", "Camera"]]) {
+    assert.match(glue, new RegExp(`data-caret="${caret}"><i data-i="[a-z-]+"></i><span class="l">${word}</span><small id="pt-voice-[a-z]+"></small>`));
+  }
+  assert.match(glue, /\$\(row\.dataset\.caret \|\| row\.dataset\.press\)\.click\(\);/);
+  assert.match(glue, /id="pt-voice-share" data-press="share-btn"/);
+  assert.match(glue, /id="pt-voice-act" data-press="vp-activities"><i data-i="gamepad-2"><\/i>/);
+  assert.match(glue, /act\.classList\.toggle\("hidden", \$\("vp-activities"\)\.classList\.contains\("hidden"\)\);/);
+  assert.match(glue, /conn\.querySelector\("b"\)\.textContent = words\.line;\n\s+conn\.querySelector\("small"\)\.textContent = words\.sub;/);
+  assert.match(css, rule(' \\.pt-voice-scrim', 'z-index: 6;'));
+  assert.match(css, rule(' \\.pt-voice-sheet', '[\\s\\S]*z-index: 7;[\\s\\S]*border-radius: var\\(--radius-sheet\\);'));
+  assert.match(css, rule(' \\.pt-room\\.opts ~ :is\\(\\.pt-voice-scrim, \\.pt-voice-sheet\\)', 'display: block;'));
+  assert.match(css, rule(' \\.pt-voice-sheet h3', '[^}]*font: 700 17px/1 var\\(--font-display\\);'));
+});
+
+test("a stream you have not opened is a dark glass tile with the sharer's face and one Watch key", () => {
+  assert.match(glue, /<span class="key primary go">Watch<\/span>/);
+  assert.doesNotMatch(glue, /Tap to watch/);
+  assert.match(css, rule(' \\.pt-stream', '[\\s\\S]*flex: 1 0 calc\\(50% - 4px\\);[\\s\\S]*height: 206px;[\\s\\S]*border-radius: 28px;'));
+  assert.match(css, rule(' \\.pt-stream \\.go', 'height: 44px;'));
+  assert.match(css, rule(' \\.pt-room-streams', 'display: flex; gap: 8px;'));
+  assert.match(css, rule(' \\.pt-room-streams:has\\(> :nth-child\\(3\\)\\)', '[^}]*overflow-x: auto;'));
+});
+
+test("people sit four across on raised tiles, and the mute mark is a small well in the corner", () => {
+  assert.match(css, rule(' \\.pt-room-people', 'display: grid; grid-template-columns: repeat\\(4, minmax\\(0, 1fr\\)\\); gap: 8px;'));
+  assert.match(css, rule(' \\.ptile', '[\\s\\S]*height: 106px;\\s+border-radius: 26px;[\\s\\S]*box-shadow: var\\(--pillow-card\\);\\s+font: 600 13\\.5px/1 var\\(--font\\);'));
+  assert.match(css, rule(' \\.ptile \\.avatar', 'width: 48px; height: 48px;'));
+  assert.match(css, rule(' \\.ptile \\.mo \\.i', 'width: 15px; height: 15px;'));
+  assert.match(css, rule(' \\.ptile\\.speaking \\.avatar', 'box-shadow: 0 0 0 2\\.5px var\\(--bg-raised\\), 0 0 0 5px var\\(--speaking\\);'));
+});
+
+test("the sound tray sits on the line with six pads, and a pull up opens every sound", () => {
+  assert.equal(TRAY_PULL, 40);
+  assert.equal(trayOpens(-40), true);
+  assert.equal(trayOpens(-39), false);
+  assert.equal(trayOpens(60), false);
+  assert.equal(trayOpens(undefined), false);
+  assert.match(css, rule(' \\.soundboard-pop\\.pt-tray:not\\(\\.hidden\\)', '[\\s\\S]*bottom: var\\(--hz-line\\);\\s+height: 296px;[\\s\\S]*padding: 0 14px;\\s+border-radius: 34px 34px 0 0;'));
+  assert.match(css, rule(' \\.pt-tray \\.sb-grid', 'display: grid; grid-template-columns: repeat\\(3, minmax\\(0, 1fr\\)\\); align-content: start; gap: 10px 8px;'));
+  assert.match(css, rule(' \\.pt-tray:not\\(\\.pt-tray-full\\) \\.sb-sound:nth-of-type\\(n\\+7\\)', 'display: none;'));
+  assert.match(css, rule(' \\.pt-tray:not\\(\\.pt-tray-full\\) :is\\(\\.sb-section, \\.sb-empty, \\.sb-muted, \\.pt-tray-add\\)', 'display: none;'));
+  assert.match(css, rule(' \\.pt-tray \\.sb-add', 'display: none;'));
+  assert.match(css, rule(' \\.pt-tray \\.pt-tray-grab::before', 'content: ""; width: 38px; height: 5px;'));
+});
+
+test("the tray is the app's own soundboard, moved into the room and put back when it closes", () => {
+  assert.match(glue, /const tray = studioSlim\(\) && roomOpen\(\) && !pop\.classList\.contains\("hidden"\);/);
+  assert.match(glue, /pop\.classList\.toggle\("pt-tray-full", false\);/);
+  assert.doesNotMatch(glue, /classList\.remove\("pt-tray-full"\)/);
+  assert.match(glue, /studioPhone\.trayHome = \{ parent: pop\.parentNode, next: pop\.nextSibling \};\n\s+\$\("pt-room"\)\.appendChild\(pop\);/);
+  assert.match(glue, /studioPhone\.trayHome\.parent\.insertBefore\(pop, studioPhone\.trayHome\.next\);/);
+  assert.match(glue, /el\("small", "pt-tray-line", "The whole room hears these\."\)/);
+  assert.match(glue, /add\.classList\.toggle\("hidden", \$\("sb-add"\)\.classList\.contains\("hidden"\)\);\n\s+add\.onclick = \(\) => \$\("sb-add"\)\.click\(\);/);
+  assert.match(glue, /if \(!open\) \$\("soundboard-pop"\)\.classList\.toggle\("hidden", true\);/);
+  assert.match(glue, /full \? sheetCloses\(dx\) : swipe\.up && trayOpens\(dx\)/);
+});
+
+test("the stream you are watching plays in its tile and carries its own stop key", () => {
+  assert.match(glue, /<span class="x" role="button" tabindex="0" aria-label="Stop watching"><i data-i="x"><\/i><\/span>/);
+  assert.match(glue, /tile\.querySelector\("\.x"\)\.onclick = e => \{\n\s+e\.stopPropagation\(\);\n\s+stopWatching\(\);/);
+  assert.match(css, rule(' \\.pt-stream\\.w \\.max', 'right: 58px;'));
+  assert.ok(MIRROR_FRAME_MS >= 16 && MIRROR_FRAME_MS <= 100);
+  assert.match(glue, /if \(stream\.watching\) \{\n\s+const pic = el\("canvas", "pic"\);/);
+  assert.match(glue, /const crop = frame\.classList\.contains\("blank"\) \? null : coverCrop\(frame\.width, frame\.height, box\.width, box\.height\);\n\s+if \(!crop\) return;/);
+  assert.match(glue, /drawImage\(frame, crop\.sx, crop\.sy, crop\.sw, crop\.sh, 0, 0, width, height\);\n\s+pic\.parentNode\.classList\.toggle\("on", true\);/);
+  assert.match(glue, /if \(!pic \|\| !roomOpen\(\)\) return;\n\s+studioPhone\.mirror = requestAnimationFrame\(mirrorStream\);/);
+  assert.match(css, rule(' \\.pt-stream\\.on :is\\(\\.avatar, \\.go\\)', 'display: none;'));
+  assert.match(css, rule(' \\.pt-stream \\.pic', 'position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; visibility: hidden;'));
+});
+
+test("your own share is a tile like any other, with your face and one Stop key, and nothing sits in rows above the keys", () => {
+  const others = [{ user: "m1", name: "ferris", title: "ferris's screen", watching: false }];
+  assert.deepEqual(roomTileStreams(others, { userId: "me", name: "commander", sharing: false }), others);
+  assert.deepEqual(roomTileStreams(others, { userId: "me", name: "commander", sharing: true })[0], { user: "me", name: "commander", title: "Your screen", own: true, watching: false });
+  assert.equal(roomTileStreams(others, { userId: "me", sharing: true }).length, 2);
+  assert.deepEqual(roomTileStreams(null, {}), []);
+  assert.match(glue, /<span class="stopk" role="button" tabindex="0">Stop<\/span>/);
+  assert.match(glue, /tile\.querySelector\("\.stopk"\)\.onclick = \(\) => \$\("vp-stop-share"\)\.click\(\);/);
+  assert.match(css, rule(' \\.pt-stream \\.stopk', '[^}]*padding: 0 16px; border-radius: 999px; font: 600 13\\.5px/1 var\\(--font\\);'));
+  for (const found of css.matchAll(/\.pt-stream[^{]*\.stopk[^{]*\{[^}]*\}/g)) assert.doesNotMatch(found[0], /danger|--red/);
+});
+
+test("with two or more streams every tile is a small sixteen by nine one", () => {
+  const small = ' \\.pt-room-streams:has\\(> :nth-child\\(2\\)\\) \\.pt-stream';
+  assert.match(css, rule(small, '[\\s\\S]*height: auto;\\s+aspect-ratio: 16 / 9;'));
+  assert.match(css, rule(`${small} \\.avatar`, 'width: 40px; height: 40px;'));
+  assert.match(css, rule(`${small} \\.go`, 'height: 32px;'));
+});
+
+test("the big key is the one you hold to talk, and in a stage audience it raises your hand", () => {
+  assert.deepEqual(roomKeyState("mic", { talk: true }), { down: false, mode: "talk", held: false, icon: "mic", label: "Hold to talk", word: "Hold to talk" });
+  assert.equal(roomKeyState("mic", { talk: true, talking: true }).held, true);
+  assert.deepEqual(roomKeyState("mic", { talk: true, muted: true }), { down: true, icon: "mic-off", label: "Unmute" });
+  assert.deepEqual(roomKeyState("mic", { hand: { raised: false }, talk: true }), { down: false, mode: "hand", icon: "hand", label: "Raise hand", word: "Raise hand" });
+  assert.deepEqual(roomKeyState("mic", { hand: { raised: true } }), { down: true, mode: "hand", icon: "hand", label: "Lower hand", word: "Lower hand" });
+  assert.match(glue, /if \(mode === "talk"\) return;\n\s+if \(mode === "hand"\) \$\("vp-hand"\)\.click\(\);\n\s+else if \(id === "mic"\) \$\("mute-btn"\)\.click\(\);/);
+  assert.match(glue, /if \(!key\.classList\.contains\("talk"\)\) return;\n\s+key\.setPointerCapture\(e\.pointerId\);\n\s+holdTalk\(true\);/);
+  assert.match(glue, /for \(const type of \["pointerup", "pointercancel", "lostpointercapture"\]\) key\.addEventListener\(type, \(\) => holdTalk\(false\)\);/);
+  assert.match(glue, /invoke\("press_talk", \{ pressed: down \}\)/);
+  assert.match(glue, /key\.classList\.toggle\("cream", now\.mode !== "hand"\);/);
+  assert.match(glue, /if \(word\) word\.textContent = now\.word \|\| "Mic";/);
+});
+
+test("a pad on the tray is its name alone, and a green bar runs under it when you play it", () => {
+  assert.match(css, rule(' \\.pt-tray \\.sb-sound > svg', 'display: none;'));
+  assert.match(css, rule(' \\.pt-tray \\.sb-sound::after', 'content: ""; position: absolute; left: 24px; right: 24px; bottom: 6px; height: 3px; border-radius: 2px; background: var\\(--green\\); transform: scaleX\\(0\\);'));
+  assert.match(css, rule(' \\.pt-tray \\.sb-sound\\.playing::after', 'animation: pt-pad 1200ms linear;'));
+  assert.match(glue, /if \(!pad \|\| pad\.disabled \|\| Date\.now\(\) < soundboardCooldown\) return;\n\s+pad\.classList\.toggle\("playing", true\);/);
+  assert.match(css, rule(' \\.pt-stream \\.max \\.i\\.i-g', 'stroke: currentColor; stroke-width: 9;'));
+  assert.match(css, rule(' \\.pt-tray :is\\(\\.sb-sound, \\.pt-tray-add\\)', '[\\s\\S]*justify-content: center;'));
 });
