@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const { lookSearch } = require("../scripts/look.js");
-const { STUDIO_ROOM_SVG, studioRoomMarkup, mountStudioRoom } = require("../scripts/studio-room.js");
+const { STUDIO_ROOM_SVG, studioRoomMarkup, mountStudioRoom, mountStudioStar, studioStarState } = require("../scripts/studio-room.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const classic = read("../styles/styles.css");
@@ -43,10 +44,10 @@ test("every desktop rule waits for the new look switch", () => {
   for (const selector of list) assert.ok(selector.startsWith(SWITCH), selector);
 });
 
-test("only the chat bar and the room's off state apply in a slim window", () => {
+test("only the chat bar and the off states of the room and the star apply in a slim window", () => {
   const anyFit = selectors(css).filter(selector => !selector.includes(NOT_SLIM) && !selector.includes('[data-fit="compact"]'));
   assert.ok(anyFit.length > 20);
-  for (const selector of anyFit) assert.match(selector, /\.composer|\.studio-room/, selector);
+  for (const selector of anyFit) assert.match(selector, /\.composer|\.studio-room|\.studio-star/, selector);
 });
 
 test("the desktop stylesheet carries no comments and no fixed colours of its own", () => {
@@ -117,4 +118,79 @@ test("the room is only built when the new look is on, and only once", () => {
   assert.equal(room.innerHTML, STUDIO_ROOM_SVG);
   assert.equal(mountStudioRoom(on), room);
   assert.equal(on.made.length, 1);
+});
+
+function fakeHeader(look, withActions = true) {
+  const placed = [];
+  const node = () => ({ className: "", attrs: {}, children: [], tabIndex: 0, setAttribute(name, value) { this.attrs[name] = value; }, appendChild(child) { this.children.push(child); } });
+  const actions = { before: key => placed.push(key) };
+  return {
+    placed,
+    documentElement: { dataset: look ? { look } : {} },
+    createElement: node,
+    querySelector: selector => {
+      if (selector === ".studio-star") return placed[0] || null;
+      if (selector === ".studio-star .star") return placed[0] ? placed[0].children[0] : null;
+      return withActions ? actions : null;
+    },
+  };
+}
+
+function loadStar() {
+  const window = { document: { currentScript: null } };
+  vm.runInNewContext(read("../scripts/star.js"), { window });
+  return window.Star;
+}
+
+test("the star stylesheet and script load switched off, ahead of the parts that place the star", () => {
+  const parts = html.indexOf('id="studio-parts"');
+  const star = html.indexOf('<link rel="stylesheet" id="studio-star" href="styles/star.css" media="not all" />');
+  const desktop = html.indexOf('id="studio-desktop"');
+  assert.ok(star > parts && desktop > star);
+  const script = html.indexOf('<script src="scripts/star.js"></script>');
+  assert.ok(script > 0 && html.indexOf('<script src="scripts/studio-room.js"></script>') > script);
+});
+
+test("the star files are the brand kit's drawing with the comments taken out", () => {
+  const source = read("../scripts/star.js");
+  assert.equal(/\/\*|^\s*\/\//m.test(source), false);
+  assert.equal(read("../styles/star.css").includes("/*"), false);
+  const star = loadStar();
+  assert.deepEqual([...star.states], ["idle", "near", "press", "sent", "waiting", "quiet", "unimpressed", "surprised", "working", "off"]);
+  const art = star.svg();
+  assert.ok(art.startsWith('<svg class="star-art" viewBox="0 0 100 100"'));
+  assert.equal((art.match(/class="star-dot /g) || []).length, 3);
+  assert.equal(art.includes("<!--"), false);
+});
+
+test("the star is placed once, in front of the header keys, only when the new look is on", () => {
+  const mounted = [];
+  const star = { mount: node => mounted.push(node) };
+  const off = fakeHeader(null);
+  assert.equal(mountStudioStar(off, star), null);
+  assert.equal(mountStudioStar(fakeHeader("studio"), null), null);
+  assert.equal(mountStudioStar(fakeHeader("studio", false), star), null);
+  assert.equal(mounted.length, 0);
+  const on = fakeHeader("studio");
+  const key = mountStudioStar(on, star);
+  assert.equal(key.className, "studio-star");
+  assert.equal(key.type, "button");
+  assert.equal(key.tabIndex, -1);
+  assert.equal(key.attrs["aria-hidden"], "true");
+  assert.equal(key.children[0].className, "star");
+  assert.equal(key.children[0].attrs["data-state"], "idle");
+  assert.deepEqual(mounted, [key.children[0]]);
+  assert.equal(mountStudioStar(on, star), key);
+  assert.equal(on.placed.length, 1);
+});
+
+test("the star takes a state only once it is on the page", () => {
+  const calls = [];
+  const star = { mount: () => {}, set: (node, state) => calls.push([node.className, state]) };
+  assert.equal(studioStarState(fakeHeader("studio"), star, "sent"), false);
+  const on = fakeHeader("studio");
+  mountStudioStar(on, star);
+  assert.equal(studioStarState(on, null, "sent"), false);
+  assert.equal(studioStarState(on, star, "sent"), true);
+  assert.deepEqual(calls, [["star", "sent"]]);
 });

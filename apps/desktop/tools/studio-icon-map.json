@@ -172,5 +172,16 @@
 "smartphone": "device-mobile",
 "speech": "user-sound",
 "terminal": "terminal-window",
-"bot-off": "shield-check"
+"bot-off": "shield-check",
+"headphone-off": "ear-slash",
+"layout-grid": "squares-four",
+"pause": "pause",
+"archive": "archive",
+"external-link": "arrow-square-out",
+"film": "film-strip",
+"pin-off": "push-pin-slash",
+"clipboard": "clipboard-text",
+"circle-plus": "plus-circle",
+"minimize-2": "arrows-in-simple",
+"gif": "gif"
 }

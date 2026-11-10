@@ -17,8 +17,39 @@ function mountStudioRoom(doc) {
   return room;
 }
 
-if (typeof document !== "undefined") mountStudioRoom(document);
+function mountStudioStar(doc, star) {
+  if (doc.documentElement.dataset.look !== "studio" || !star) return null;
+  const present = doc.querySelector(".studio-star");
+  if (present) return present;
+  const actions = doc.querySelector(".chat-header .header-actions");
+  if (!actions) return null;
+  const key = doc.createElement("button");
+  key.type = "button";
+  key.className = "studio-star";
+  key.tabIndex = -1;
+  key.setAttribute("aria-hidden", "true");
+  const art = doc.createElement("span");
+  art.className = "star";
+  art.setAttribute("data-state", "idle");
+  art.setAttribute("data-lift", "");
+  key.appendChild(art);
+  actions.before(key);
+  star.mount(art);
+  return key;
+}
+
+function studioStarState(doc, star, state) {
+  const art = star ? doc.querySelector(".studio-star .star") : null;
+  if (!art) return false;
+  star.set(art, state);
+  return true;
+}
+
+if (typeof document !== "undefined") {
+  mountStudioRoom(document);
+  mountStudioStar(document, typeof Star === "undefined" ? null : Star);
+}
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_ROOM_SVG, studioRoomMarkup, mountStudioRoom };
+  module.exports = { STUDIO_ROOM_SVG, studioRoomMarkup, mountStudioRoom, mountStudioStar, studioStarState };
 }

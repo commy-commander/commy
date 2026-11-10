@@ -2182,6 +2182,8 @@ const STROKE_ICONS = {
 };
 
 function svgIcon(name, size = 20) {
+  const studioName = studioLook() ? studioAppIconName(name) : "";
+  if (studioName) return studioIconNode(studioName, size, studioAppIconOn(name));
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -7097,21 +7099,30 @@ function clearSpeaking() {
   for (const userId of [...state.speaking]) setSpeaking(userId, false);
 }
 
+function memberGroupHeading(title, count) {
+  const heading = el("div", "member-group");
+  heading.append(el("span", "mg-name", title), el("span", "mg-sep", " - "), el("span", "mg-count", String(count)));
+  return heading;
+}
+
 function renderMembers() {
-  const list = $("member-list");
-  list.innerHTML = "";
+  const pane = $("member-list");
+  const kept = pane.querySelector(":scope > .member-scroll");
+  const scrolled = kept ? kept.scrollTop : 0;
+  pane.innerHTML = "";
   if (!state.currentServer) return;
   rememberAvatars(state.currentServer.members);
   renderCamGrid();
 
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
   const { playing, rest } = splitPlaying(state.currentServer.members);
-  if (state.currentServer.pet) list.appendChild(petHidden(state.currentServer.id) ? petRestore(state.currentServer.id) : petWidget(state.currentServer));
+  if (state.currentServer.pet) pane.appendChild(petHidden(state.currentServer.id) ? petRestore(state.currentServer.id) : petWidget(state.currentServer));
+  const list = studioLook() ? pane.appendChild(el("div", "member-scroll")) : pane;
   renderPlayingGroup(list, playing);
 
   const group = (title, members, dim, color) => {
     if (!members.length) return;
-    const heading = el("div", "member-group", `${title} - ${members.length}`);
+    const heading = memberGroupHeading(title, members.length);
     paintRole(heading, color);
     list.appendChild(heading);
     for (const member of members) {
@@ -7176,6 +7187,7 @@ function renderMembers() {
     }
   };
   for (const g of groupMembers(rest, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
+  if (list !== pane) list.scrollTop = scrolled;
 }
 
 function sensitiveConfirmed() {
@@ -10862,7 +10874,7 @@ function activityChip(member) {
 
 function renderPlayingGroup(list, playing) {
   if (!playing.length) return;
-  list.appendChild(el("div", "member-group", `Playing - ${playing.length}`));
+  list.appendChild(memberGroupHeading("Playing", playing.length));
   const group = el("div", "playing-now");
   for (const member of playing) group.appendChild(activityChip(member));
   list.appendChild(group);
@@ -22643,6 +22655,7 @@ function fireComposer(input) {
   bar.classList.remove("fire");
   void bar.offsetWidth;
   bar.classList.add("fire");
+  studioStarState(document, window.Star, "sent");
 }
 
 function wireComposerFormatting(input) {
