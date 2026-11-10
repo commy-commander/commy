@@ -219,9 +219,10 @@ test("the star takes a state only once it is on the page", () => {
 
 test("message text, code and lists take the guide's sizes from the chat text size", () => {
   const desk = `${SWITCH}${NOT_SLIM}`;
-  assert.ok(css.includes(`${desk} .msg-content { font-size: calc(var(--chat-font-size) * .9375); line-height: calc(var(--chat-font-size) * 1.375); }`));
+  assert.ok(css.includes(`${desk} .msg-content { font-size: max(12px, calc(var(--chat-font-size) * .9375)); line-height: calc(var(--chat-font-size) * 1.375); }`));
   assert.ok(css.includes(`${desk} .msg-content h2.md-heading { font-size: calc(var(--chat-font-size) * 1.125); line-height: calc(var(--chat-font-size) * 1.625); }`));
-  assert.ok(css.includes(`${desk} .msg-content .md-code code { font-size: calc(var(--chat-font-size) * .8125); }`));
+  assert.ok(css.includes(`${desk} .msg-content .md-code code { font-size: max(12px, calc(var(--chat-font-size) * .8125)); }`));
+  assert.ok(!css.includes("min-width: min(540px, 100%)"));
   assert.ok(css.includes(`${desk} .msg-content ul.md-list { padding: 0; list-style: none; }`));
   assert.ok(css.includes(`${desk} .md-quote::before {`));
 });
@@ -232,4 +233,14 @@ test("a picture in chat shows without its file card and the server strip keeps i
   assert.ok(css.includes(`${desk} .rail-add:not(.rail-discover)::before {`));
   assert.ok(css.includes(`${desk} .server-list {\n  flex: 0 1 auto;\n  gap: 8px;`));
   assert.ok(!css.includes(`${desk} .rail-tray button svg.ai .i-on`));
+});
+
+test("tags, pictures, waiting servers and room limits follow the design answers", () => {
+  const desk = `${SWITCH}${NOT_SLIM}`;
+  assert.ok(css.includes(`${desk} .server-tag { gap: 5px; background: var(--bg-active); color: var(--text-normal); }`));
+  assert.ok(css.includes(`${desk} .server-tag:not(:has(.server-tag-emoji))::before {`));
+  assert.ok(css.includes(`${desk} .msg :not(.image-grid):not(.image-grid .image-embed) > .chat-image {\n  max-width: min(100%, 1000px);\n  max-height: 300px;\n  border-radius: 18px;`));
+  assert.ok(!css.includes("dashed"));
+  assert.ok(css.includes(`${desk} .voice-channel .voice-count.limited.full {\n  order: 1;`));
+  assert.ok(css.includes(`${desk} .voice-user .vs-icon.priority { color: var(--text-muted); }`));
 });

@@ -142,3 +142,28 @@ test("in the new look the dock holds only what the guide draws", () => {
   assert.match(app, /\$\("chm-activities"\)\.onclick/);
   assert.match(app, /if \(!studioDesk\(\) \|\| studioHang\.press\(\) === "leave"\) disconnectVoice\(\);/);
 });
+
+test("the signal mark is five bars, and fair and poor light three and one", () => {
+  const dock = require("../scripts/studio-dock.js");
+  assert.equal(dock.STUDIO_DOCK_SIGNAL_BARS.length, 5);
+  assert.deepEqual(dock.STUDIO_DOCK_SIGNAL_LIT, { good: 5, ok: 3, bad: 1 });
+  const markup = dock.studioDockSignalMarkup();
+  assert.equal(markup.match(/<path /g).length, 5);
+  assert.ok(markup.startsWith('<svg class="i ai vp-bars"'));
+  const desk = 'html[data-look="studio"]:not([data-fit="slim"])';
+  assert.ok(css.includes(`${desk} .vp-signal[data-quality="ok"] .vp-bars path:nth-child(n+${dock.STUDIO_DOCK_SIGNAL_LIT.ok + 1}),`));
+  assert.ok(css.includes(`${desk} .vp-signal[data-quality="bad"] .vp-bars path:nth-child(n+${dock.STUDIO_DOCK_SIGNAL_LIT.bad + 1}),`));
+  assert.ok(app.includes('$("vp-signal").replaceChildren(studioLook() ? studioDockSignal(document, 14) : svgIcon("signal", 14));'));
+});
+
+test("a key that is on is lit glass with a green lamp, never the switched-off grey", () => {
+  const desk = 'html[data-look="studio"]:not([data-fit="slim"])';
+  const lit = css.slice(css.indexOf(`${desk} .vp-activities.vp-share.active,`));
+  const block = lit.slice(0, lit.indexOf("}") + 1);
+  assert.ok(block.includes("#vp-camera.active"));
+  assert.ok(block.includes(".vp-hand-key.on"));
+  assert.ok(block.includes("color: var(--header-primary);"));
+  assert.ok(!block.includes("--mute-k"));
+  assert.ok(css.includes(`${desk} .vp-activities.vp-share.active::after {`));
+  assert.ok(css.includes("background: var(--glass-hi), var(--glass-key-on);"));
+});

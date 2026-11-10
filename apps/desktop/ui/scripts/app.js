@@ -10562,7 +10562,7 @@ function openVoicePop() {
 
 function wireVoicePop() {
   $("vop-room-icon").replaceChildren(svgIcon("expand", 16));
-  $("vop-sig").replaceChildren(svgIcon("signal", 16));
+  $("vop-sig").replaceChildren(studioLook() ? studioDockSignal(document, 16) : svgIcon("signal", 16));
   $("vop-mic-icon").replaceChildren(svgIcon("mic", 18));
   $("vop-speakers-icon").replaceChildren(svgIcon("headset", 18));
   for (const mark of $("voice-pop").querySelectorAll(".vop-chev")) mark.replaceChildren(svgIcon("chevronDown", 18));
@@ -16924,7 +16924,7 @@ function renderVoicePanel() {
     gameBtn.replaceChildren(svgIcon("screen", 16), el("span", null, `Share ${playing}`));
     gameBtn.title = `Stream ${playing} to your voice channel at 60 fps`;
   }
-  $("vp-signal").replaceChildren(svgIcon("signal", 14));
+  $("vp-signal").replaceChildren(studioLook() ? studioDockSignal(document, 14) : svgIcon("signal", 14));
   renderTalkButton();
   setIcon($("vp-disconnect"), "hangup", 20);
 
