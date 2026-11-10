@@ -11880,7 +11880,7 @@ async function setRsvp(event, rsvp) {
 }
 
 async function deleteEvent(event) {
-  if (!confirm(`Delete the event "${event.title}"?`)) return;
+  if (!(await confirm(`Delete the event "${event.title}"?`))) return;
   try {
     await invoke("delete_event", { serverId: state.currentServer.id, eventId: event.id });
     await refreshCurrentServer();
@@ -12502,7 +12502,7 @@ function friendButton(person, onDone) {
       return;
     }
     const action = st === "incoming" ? "accept" : "remove";
-    if (action === "remove" && st === "friend" && !confirm(`Remove ${person.name} from your friends?`)) return;
+    if (action === "remove" && st === "friend" && !(await confirm(`Remove ${person.name} from your friends?`))) return;
     await friendAction(person.id, action, person.name);
     if (onDone) onDone();
   };
@@ -13121,7 +13121,7 @@ function roleForm(server, role, onClose) {
   } else {
     const del = el("button", "btn-danger btn-small", "Delete Role");
     del.onclick = async () => {
-      if (!confirm(`Delete role ${role.name}?`)) return;
+      if (!(await confirm(`Delete role ${role.name}?`))) return;
       try {
         await invoke("delete_role", { serverId: server.id, roleId: role.id });
         await refreshCurrentServer();
@@ -14052,7 +14052,7 @@ async function renderReportSettings(server) {
     if (server.can_kick && isMember) {
       const kick = el("button", "btn-danger btn-small", "Kick");
       kick.onclick = async () => {
-        if (!confirm(`Kick ${report.reported_name} from the server?`)) return;
+        if (!(await confirm(`Kick ${report.reported_name} from the server?`))) return;
         try {
           await invoke("kick_member", { serverId: server.id, userId: report.reported });
           await refreshCurrentServer();
@@ -14746,7 +14746,7 @@ async function uploadEmoji() {
   preview.src = prepared.url;
   const taken = (server.emojis || []).map(e => e.name);
   const row = pendingExpressionRow(preview, freeExpressionName("emoji", taken), async clean => {
-    if (taken.includes(clean) && !confirm(`Replace the existing :${clean}: emoji?`)) return;
+    if (taken.includes(clean) && !(await confirm(`Replace the existing :${clean}: emoji?`))) return;
     await invoke("add_emoji", { serverId: server.id, name: clean, data: prepared.data });
     await refreshExpressions();
     toast(`Added :${clean}:`);
@@ -15119,7 +15119,7 @@ async function saveSoundDraft() {
     toast(`${name} is taken, pick another name`);
     return;
   }
-  if (exists && !confirm(`Replace the existing ${name}?`)) return;
+  if (exists && !(await confirm(`Replace the existing ${name}?`))) return;
   stopSoundPreview();
   $("sound-save").disabled = true;
   try {
@@ -19340,7 +19340,7 @@ async function votePoll(message, choices) {
 
 async function closePoll(message) {
   if (!state.currentServer) return;
-  if (!confirm("Close this poll now? Nobody can vote after that.")) return;
+  if (!(await confirm("Close this poll now? Nobody can vote after that."))) return;
   try {
     await invoke("close_poll", { serverId: state.currentServer.id, messageId: message.id });
     await refreshChannelInPlace();
@@ -22034,6 +22034,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("report-received", event => onReportReceived(event.payload));
     window.__TAURI__.event.listen("account-changed", onAccountChanged);
     window.__TAURI__.event.listen("sign-in-failed", event => showSignInError(String(event.payload)));
+    window.__TAURI__.event.listen("reopen-needed", () => $("reopen").classList.remove("hidden"));
     window.__TAURI__.event.listen("friends-changed", async event => {
       await loadFriends();
       const p = event.payload || {};
@@ -22519,7 +22520,7 @@ async function addFromCatalog() {
     toast(`:${name}: is taken, pick another name`);
     return;
   }
-  if (exists && !confirm(`Replace the existing :${name}:?`)) return;
+  if (exists && !(await confirm(`Replace the existing :${name}:?`))) return;
   if (!exists && items.length >= spec.max) {
     toast(`This server already has ${spec.max} ${catalog.kind}`);
     return;
@@ -22582,7 +22583,7 @@ async function saveEmoticon() {
     toast(`:${name}: is taken, pick another name`);
     return;
   }
-  if (exists && !confirm(`Replace the existing :${name}:?`)) return;
+  if (exists && !(await confirm(`Replace the existing :${name}:?`))) return;
   try {
     await invoke("add_emoticon", { serverId: server.id, name, text });
     hideModals();
@@ -23861,7 +23862,7 @@ async function removeBot(server, member, command) {
   const question = banning
     ? `Ban ${member.name} from ${server.name}? It is removed and cannot rejoin until unbanned.`
     : `Remove ${member.name} from ${server.name}?`;
-  if (!confirm(question)) return;
+  if (!(await confirm(question))) return;
   try {
     await invoke(command, { serverId: server.id, userId: member.id });
     await refreshCurrentServer();
@@ -24669,7 +24670,7 @@ async function switchAccount(row) {
 }
 
 async function signOutOfCurrent() {
-  if (!confirm(signOutPrompt(account, t))) return;
+  if (!(await confirm(signOutPrompt(account, t)))) return;
   try {
     account = await invoke("account_sign_out");
   } catch (e) {
@@ -24765,7 +24766,7 @@ async function finishDeleteAccount() {
 }
 
 async function signOutOfOther(row) {
-  if (!confirm(t("accounts.signOut.other", { name: row.name || row.email }))) return;
+  if (!(await confirm(t("accounts.signOut.other", { name: row.name || row.email })))) return;
   setAccountsBusy(true);
   try {
     account = await invoke("account_sign_out_other", { server: row.server, id: row.id });

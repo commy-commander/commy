@@ -8665,6 +8665,8 @@ body.mobile-app .storage-parts { grid-template-columns: 1fr; }
 
 .startup { position: fixed; inset: 0; z-index: 990; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--bg-darkest); color: var(--text-normal); font-family: var(--font); transition: opacity 180ms var(--ease-out); }
 .startup.leaving { opacity: 0; pointer-events: none; }
+.reopen { z-index: 995; }
+.reopen-text { margin: 0; max-width: 320px; font-size: 15px; line-height: 22px; text-align: center; color: var(--text-muted); }
 .startup-card { width: min(400px, 100%); display: flex; flex-direction: column; align-items: center; gap: 0; }
 .startup-logo { width: 64px; height: 64px; flex: none; }
 .startup-title { margin: 14px 0 22px; height: 30px; font-family: var(--font-display); font-size: 22px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; color: var(--header-primary); white-space: nowrap; }

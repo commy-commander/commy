@@ -13,6 +13,26 @@ pub fn init() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
+#[cfg(target_os = "ios")]
+static REOPEN_NEEDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "ios")]
+pub fn restart(handle: &AppHandle) -> ! {
+    use tauri::Emitter;
+    crate::invite_link::step_aside();
+    REOPEN_NEEDED.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = handle.emit("reopen-needed", ());
+    loop {
+        std::thread::park();
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn reopen_needed() -> bool {
+    REOPEN_NEEDED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(not(target_os = "ios"))]
 pub fn restart(handle: &AppHandle) -> ! {
     crate::invite_link::step_aside();
     #[cfg(target_os = "android")]

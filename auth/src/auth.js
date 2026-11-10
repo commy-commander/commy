@@ -26,6 +26,7 @@ import { createMailer } from "./mailer.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
 
 const PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS = ["google"];
+const OAUTH_STATE_SECONDS = 600;
 
 const storeSessionWithoutIpOrUserAgent = async (session) => ({ data: { ...session, ipAddress: null, userAgent: null } });
 
@@ -272,6 +273,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     telemetry: { enabled: false },
     advanced: {
       useSecureCookies: config.baseURL.startsWith("https://"),
+      cookies: { state: { attributes: { maxAge: OAUTH_STATE_SECONDS } } },
     },
     plugins,
   };

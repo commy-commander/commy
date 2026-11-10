@@ -1,0 +1,7 @@
+{
+  "identifier": "mobile",
+  "description": "Phone apps: the in-app confirm and alert boxes",
+  "platforms": ["iOS", "android"],
+  "windows": ["main"],
+  "permissions": ["dialog:allow-message"]
+}

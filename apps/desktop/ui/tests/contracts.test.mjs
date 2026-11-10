@@ -45,3 +45,12 @@ test("the app and the backend agree on the largest video poster", () => {
   const core = read("crates", "commy-core", "src", "video_poster.rs");
   assert.equal(limit(ui, "MAX_POSTER_BYTES"), limit(core, "MAX_VIDEO_POSTER_BYTES"));
 });
+
+test("confirm boxes wait for an answer, since the phone apps answer them later and need permission to show them", () => {
+  const confirms = [...appSource.matchAll(/(await\s+)?\bconfirm\(/g)];
+  assert.ok(confirms.length > 0);
+  assert.deepEqual(confirms.filter(m => !m[1]).map(m => appSource.slice(m.index, m.index + 60)), []);
+  const mobile = JSON.parse(read("apps", "desktop", "src-tauri", "capabilities", "mobile.json"));
+  assert.deepEqual(mobile.platforms.sort(), ["android", "iOS"]);
+  assert.ok(mobile.permissions.includes("dialog:allow-message"));
+});

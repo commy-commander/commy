@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
+import { APIError, createAuthEndpoint, getSessionFromCtx, signInSocial } from "better-auth/api";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { ACCESS_COOKIE, accessToken, normalizeAccessCode } from "./access.js";
@@ -121,36 +121,13 @@ export function backPage(url) {
 </html>`;
 }
 
-export function sheetPage({ signInUrl, provider, back, adultConfirmed }) {
-  const body = JSON.stringify({
+function sheetStartBody({ provider, back, adultConfirmed }) {
+  return {
     provider,
     callbackURL: back,
     errorCallbackURL: back,
     ...(adultConfirmed ? { additionalData: { adultConfirmed: true } } : {}),
-  }).replace(/</g, "\\u003c");
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Commy</title>
-<style>html,body{margin:0;min-height:100vh;background:#0b0d17;color:#f2efe6;font:16px system-ui,sans-serif;display:grid;place-items:center}</style>
-</head>
-<body>
-<p id="status">Opening sign-in…</p>
-<script>
-fetch(${JSON.stringify(signInUrl)}, {
-  method: "POST",
-  credentials: "include",
-  headers: { "content-type": "application/json" },
-  body: ${JSON.stringify(body)},
-})
-  .then(function (res) { return res.json(); })
-  .then(function (data) { if (data && data.url) location.replace(data.url); else throw new Error(); })
-  .catch(function () { document.getElementById("status").textContent = "Sign-in could not start. Close this and try again."; });
-</script>
-</body>
-</html>`;
+  };
 }
 
 export const commyAppSignIn = ({ accessCode, turnstileSiteKey }) => ({
@@ -200,13 +177,22 @@ export const commyAppSignIn = ({ accessCode, turnstileSiteKey }) => ({
       if (!handoff || handoff.opened) return new Response("This sign-in link has expired. Close it and try again.", { status: 410 });
       await writeHandoff(ctx, ctx.query.handoff, { ...handoff, opened: true });
       const back = `${ctx.context.baseURL}/commy/app-sign-in/back?handoff=${ctx.query.handoff}`;
-      const headers = new Headers({ "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
+      const started = await signInSocial()({
+        ...ctx,
+        method: "POST",
+        body: sheetStartBody({ provider: handoff.provider, back, adultConfirmed: handoff.adultConfirmed }),
+        asResponse: false,
+        returnHeaders: true,
+      });
+      const target = started.response?.url;
+      if (!target) return new Response("Sign-in could not start. Close this and try again.", { status: 502 });
+      const headers = new Headers({ location: target, "cache-control": "no-store", "referrer-policy": "no-referrer" });
+      for (const cookie of started.headers.getSetCookie()) headers.append("set-cookie", cookie);
       if (handoff.access) {
         const secure = ctx.context.baseURL.startsWith("https://") ? "; Secure" : "";
         headers.append("set-cookie", `${ACCESS_COOKIE}=${handoff.access}; Path=/; Max-Age=${ACCESS_COOKIE_SECONDS}; HttpOnly; SameSite=Lax${secure}`);
       }
-      const page = sheetPage({ signInUrl: `${ctx.context.baseURL}/sign-in/social`, provider: handoff.provider, back, adultConfirmed: handoff.adultConfirmed });
-      return new Response(page, { status: 200, headers });
+      return new Response(null, { status: 302, headers });
     }),
     returnFromSheet: createAuthEndpoint(
       "/commy/app-sign-in/back",

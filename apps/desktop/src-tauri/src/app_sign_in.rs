@@ -166,14 +166,24 @@ fn read_reply(answer: &Answer) -> Result<Reply, String> {
         "INVALID_EMAIL_OR_PASSWORD" | "INVALID_EMAIL" | "INVALID_PASSWORD" => return Err("That email and password don't match.".into()),
         "WRONG_ACCESS_CODE" => return Err("That access code isn't right.".into()),
         "INVALID_CODE" | "INVALID_BACKUP_CODE" => return Err("That code isn't right. Try the newest one.".into()),
-        "INVALID_TWO_FACTOR_COOKIE" | "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE" => return Err("That sign-in timed out. Start again.".into()),
+        "INVALID_TWO_FACTOR_COOKIE"
+        | "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE"
+        | "STATE_MISMATCH"
+        | "STATE_NOT_FOUND"
+        | "PLEASE_RESTART_THE_PROCESS"
+        | "NO_SESSION"
+        | "HANDOFF_NOT_FOUND" => return Err("That sign-in timed out. Start again.".into()),
         "VERIFICATION_FAILED" | "MISSING_RESPONSE" => return Err("The quick safety check didn't go through. Try it again.".into()),
         _ => {}
     }
     if answer.status == 429 {
         return Err("Too many tries. Wait a minute, then try again.".into());
     }
-    Err("The account server refused the sign-in. Try again, or use your browser instead.".into())
+    let shown: String = code.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(40).collect();
+    if shown.is_empty() {
+        return Err("The account server refused the sign-in. Try again, or use your browser instead.".into());
+    }
+    Err(format!("The account server refused the sign-in ({shown}). Try again, or use your browser instead."))
 }
 
 async fn post(app: &App, server: &str, url: &str, body: Value, cookie: Option<&str>, captcha: Option<&str>) -> Result<Answer, String> {
@@ -704,6 +714,11 @@ mod tests {
         assert!(read_reply(&answer(403, json!({ "code": "SIGNUP_DISABLED" }))).unwrap_err().contains("new accounts"));
         assert!(read_reply(&answer(403, json!({ "code": "ACCOUNT_NOT_LINKED" }))).unwrap_err().contains("already uses this email"));
         assert!(read_reply(&answer(401, json!({ "code": "PASSKEY_NOT_FOUND" }))).unwrap_err().contains("passkey"));
+        for lost in ["STATE_MISMATCH", "NO_SESSION", "HANDOFF_NOT_FOUND", "PLEASE_RESTART_THE_PROCESS"] {
+            assert_eq!(read_reply(&answer(403, json!({ "code": lost }))).unwrap_err(), "That sign-in timed out. Start again.");
+        }
+        let unknown = read_reply(&answer(403, json!({ "code": "UNABLE_TO_GET_USER_INFO<script>" }))).unwrap_err();
+        assert!(unknown.contains("(UNABLE_TO_GET_USER_INFOscript)"), "{unknown}");
     }
 
     #[test]

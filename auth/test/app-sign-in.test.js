@@ -261,11 +261,13 @@ test("Google in the app's sign-in sheet hands the session back only to the app t
   const handoff = await startSheet({ provider: "google", challenge, adultConfirmed: true, accessToken: "tok" });
 
   const go = await call("GET", `/commy/app-sign-in/go?handoff=${handoff}`, { origin: null });
-  assert.equal(go.status, 200);
-  assert.match(go.text, /"provider\\":\\"google\\"/);
-  assert.match(go.text, /adultConfirmed/);
-  assert.match(go.text, new RegExp(`${ORIGIN}/api/auth/sign-in/social`));
-  assert.match(go.headers.get("set-cookie"), /^commy_access=tok;/);
+  assert.equal(go.status, 302);
+  const google = new URL(go.headers.get("location"));
+  assert.equal(google.origin, "https://accounts.google.com");
+  assert.equal(google.searchParams.get("redirect_uri"), `${ORIGIN}/api/auth/callback/google`);
+  const cookies = go.headers.getSetCookie();
+  assert.ok(cookies.some(c => /^better-auth\.state=/.test(c) && /Max-Age=600/.test(c)), "the state cookie lasts as long as the sign-in");
+  assert.ok(cookies.some(c => /^commy_access=tok;/.test(c)));
   assert.equal((await call("GET", `/commy/app-sign-in/go?handoff=${handoff}`, { origin: null })).status, 410, "the sheet link opens once");
 
   const browser = await passwordAccount("sheet@example.test");
@@ -322,4 +324,60 @@ test("the phone apps are tied to the site for passkeys", () => {
   assert.deepEqual(wellKnownFiles(loadConfig({ ...BASE_ENV, IOS_APP_IDS: "off" })), {});
   assert.equal(passkeyOrigins(loadConfig(BASE_ENV)), ORIGIN);
   assert.throws(() => loadConfig({ ...BASE_ENV, ANDROID_APP_CERT_SHA256: "nope" }), /ANDROID_APP_CERT_SHA256/);
+});
+
+async function withGoogleAnswering(user, run) {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (!url.startsWith("https://oauth2.googleapis.com/token")) return realFetch(input, init);
+    const part = (v) => Buffer.from(JSON.stringify(v)).toString("base64url");
+    const claims = { iss: "https://accounts.google.com", aud: "gid", email_verified: true, name: "Sheet User", exp: Math.floor(Date.now() / 1000) + 600, ...user };
+    const body = { access_token: "at", id_token: `${part({ alg: "RS256" })}.${part(claims)}.sig`, token_type: "Bearer", expires_in: 3600, scope: "openid email profile" };
+    return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+  };
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+async function sheetThroughGoogle(body, { keepStateCookie = true } = {}) {
+  const { verifier, challenge } = pkce();
+  const handoff = await startSheet({ provider: "google", challenge, ...body });
+  const go = await call("GET", `/commy/app-sign-in/go?handoff=${handoff}`, { origin: null });
+  const state = new URL(go.headers.get("location")).searchParams.get("state");
+  const sent = go.headers.getSetCookie().filter(c => keepStateCookie || !/^better-auth\.state=/.test(c));
+  const jar = cookieHeader(...sent);
+  const callback = await call("GET", `/callback/google?code=from-google&state=${state}`, { origin: null, cookie: jar });
+  const landing = new URL(callback.headers.get("location"));
+  assert.equal(landing.pathname, "/api/auth/commy/app-sign-in/back");
+  const back = await call("GET", `${landing.pathname.replace("/api/auth", "")}${landing.search}`, { origin: null, cookie: cookieHeader(...sent, callback.setCookie) });
+  const code = landingFrom(back.text).searchParams.get("code");
+  return call("POST", "/commy/app-sign-in/finish", { origin: null, body: { handoff, verifier, code } });
+}
+
+test("a new Google account made in the sheet goes through the provider and back to the app", async () => {
+  start({ GOOGLE_CLIENT_ID: "gid", GOOGLE_CLIENT_SECRET: "gsecret", ACCESS_CODE: "letmein", ADULTS_ONLY: "true" });
+  await withGoogleAnswering({ sub: "g-new", email: "sheet-new@example.test" }, async () => {
+    const refused = await sheetThroughGoogle({});
+    assert.equal(refused.json.code, "ACCESS_CODE_REQUIRED");
+    const done = await sheetThroughGoogle({ adultConfirmed: true, accessToken: accessToken("letmein") });
+    assert.equal(done.status, 200, JSON.stringify(done.json));
+    assert.ok(done.json.token);
+    assert.equal(db.user.length, 1);
+    assert.ok(db.user[0].adultConfirmedAt);
+  });
+});
+
+test("a sheet that lost its state cookie comes back as a timed-out sign-in", async () => {
+  start({ GOOGLE_CLIENT_ID: "gid", GOOGLE_CLIENT_SECRET: "gsecret" });
+  await passwordAccount("sheet-old@example.test");
+  await withGoogleAnswering({ sub: "g-old", email: "sheet-old@example.test" }, async () => {
+    const lost = await sheetThroughGoogle({}, { keepStateCookie: false });
+    assert.equal(lost.json.code, "STATE_MISMATCH");
+    const done = await sheetThroughGoogle({});
+    assert.equal(done.status, 200, JSON.stringify(done.json));
+  });
 });

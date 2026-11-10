@@ -131,6 +131,8 @@ const LOCALE_EN = {
   "accounts.title": "Accounts on this computer",
   "accounts.intro": "Switching restarts Commy into the other account. Only the account you are using is online.",
   "accounts.add": "Add account",
+  "reopen.title": "Open Commy again",
+  "reopen.text": "Go to your Home Screen, then open Commy to finish.",
   "accounts.signOut": "Sign out",
   "accounts.current": "Using now",
   "accounts.limit": "This computer keeps up to {count} accounts. Sign out of one to add another.",

@@ -131,6 +131,8 @@ const LOCALE_ES = {
   "accounts.title": "Cuentas en este ordenador",
   "accounts.intro": "Al cambiar, Commy se reinicia en la otra cuenta. Solo la cuenta que estás usando está conectada.",
   "accounts.add": "Añadir cuenta",
+  "reopen.title": "Vuelve a abrir Commy",
+  "reopen.text": "Ve a la pantalla de inicio y abre Commy para terminar.",
   "accounts.signOut": "Cerrar sesión",
   "accounts.current": "En uso",
   "accounts.limit": "Este ordenador guarda hasta {count} cuentas. Cierra la sesión de una para añadir otra.",
