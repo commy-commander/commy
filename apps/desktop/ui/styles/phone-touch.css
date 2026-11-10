@@ -2195,34 +2195,19 @@ html[data-look="studio"][data-fit="slim"] :is(.pt-hold, .ctx-menu, .composer-men
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel-scroll { position: relative; }
 html[data-look="studio"][data-fit="slim"] .pt-acts {
   position: absolute;
-  left: 12px;
+  left: 14px;
   z-index: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
 }
-html[data-look="studio"][data-fit="slim"] .pt-acts .act {
-  display: grid;
-  justify-items: center;
-  align-content: center;
-  gap: 3px;
-  width: 70px;
-  min-height: 46px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  font: 600 12px/1 var(--font);
-  white-space: nowrap;
-}
-html[data-look="studio"][data-fit="slim"] .pt-acts .act .i { width: 18px; height: 18px; }
-html[data-look="studio"][data-fit="slim"] .pt-acts .act .i .i-rest { display: none; }
-html[data-look="studio"][data-fit="slim"] .pt-acts .act .i .i-on { display: inline; }
-html[data-look="studio"][data-fit="slim"] .pt-acts .act .i.i-g { stroke: currentColor; stroke-width: 9px; stroke-linejoin: round; }
-html[data-look="studio"][data-fit="slim"] .pt-acts .act.read { background: var(--pillow-top), var(--swipe-done); color: var(--accent-ink); box-shadow: var(--pillow-sm); }
-html[data-look="studio"][data-fit="slim"] .pt-acts .act.mute { background: var(--swipe-neutral); color: var(--header-primary); box-shadow: var(--pillow-sm); }
-html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel.pt-open { width: calc(100% - 132px); padding-right: 11px; }
-html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel.pt-open::after { content: ""; flex: 0 9999 21px; margin-left: -12px; }
+html[data-look="studio"][data-fit="slim"] .pt-acts .act .i { width: 20px; height: 20px; }
+html[data-look="studio"][data-fit="slim"] .pt-acts .act.read { --k: var(--swipe-done); box-shadow: var(--pillow-sm); }
+html[data-look="studio"][data-fit="slim"][data-theme="light"] .pt-acts .act.mute { box-shadow: var(--pillow-sm); }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel.pt-open { width: calc(100% - 44px); padding-right: 92px; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel.pt-open .channel-label { flex: 0 1 auto; }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel-scroll:has(.channel.pt-open),
+html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel-scroll:has(.channel.pt-dragging) { overflow-x: hidden; clip-path: inset(0 12px 0 0); }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel:is(.pt-open, .pt-dragging) {
   position: relative;
   z-index: 1;

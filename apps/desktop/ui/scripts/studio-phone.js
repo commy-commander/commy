@@ -1205,7 +1205,7 @@ function openRowSwipe(row) {
   closeRowSwipe();
   const muted = withChannelMenu(row, menu => !menu.querySelector("#chm-unmute").classList.contains("hidden"));
   if (muted === null) return;
-  const acts = studioNode("div", "pt-acts", `<button type="button" class="act read"><i data-i="check-check"></i>Mark read</button><button type="button" class="act mute"><i data-i="${muted ? "bell" : "bell-off"}"></i>${muted ? "Unmute" : "Mute"}</button>`);
+  const acts = studioNode("div", "pt-acts", `<button type="button" class="key sq tap primary act read" aria-label="Mark read"><i data-i="check-check"></i></button><button type="button" class="key sq tap act mute" aria-label="${muted ? "Unmute" : "Mute"}"><i data-i="${muted ? "bell" : "bell-off"}"></i></button>`);
   acts.style.top = `${row.offsetTop}px`;
   acts.style.height = `${row.offsetHeight}px`;
   acts.querySelector(".read").onclick = () => {

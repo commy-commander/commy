@@ -280,7 +280,8 @@ test("going back starts at the left edge and needs a real pull", () => {
 });
 
 test("a row opens far enough for two full-size actions and snaps open or shut", () => {
-  assert.ok(SWIPE.rowOpen >= 2 * 44 + 16);
+  assert.equal(SWIPE.rowOpen, 112);
+  assert.ok(SWIPE.rowOpen >= 14 + 2 * 44 + 8);
   assert.equal(rowPull(-40, false), 0);
   assert.equal(rowPull(50, false), 50);
   assert.ok(rowPull(400, false) <= SWIPE.rowOpen + 18);
@@ -333,7 +334,7 @@ test("every sheet and long-press menu on the phone has full-size rows", () => {
   assert.ok(height("\\.arow") >= 44);
   assert.ok(height(":is\\(\\.ctx-menu, \\.composer-menu\\) button") >= 44);
   assert.match(css, /\.pt-hold \.rx-key \{ width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px;/);
-  assert.match(css, /\.pt-acts \.act \{[^}]*min-height: (4[4-9]|[5-9]\d)px/);
+  assert.equal((glue.match(/class="key sq tap (primary )?act (read|mute)"/g) || []).length, 2);
 });
 
 test("the hover toolbar on a message never shows on the phone, the sheet reads it instead", () => {
@@ -508,8 +509,20 @@ test("the search sheet borrows the app's own search and hands it back when it cl
   assert.match(glue, /if \(studioPhone\.searchHome && !app\.classList\.contains\("pt-search-open"\)\) stowSearchSheet\(\);/);
 });
 
+test("a swiped channel row shows two round keys with no words, and the row runs off the pane's edge", () => {
+  const acts = glue.match(/studioNode\("div", "pt-acts", `([^`]*)`\)/)[1];
+  assert.match(acts, /<button type="button" class="key sq tap primary act read" aria-label="Mark read"><i data-i="check-check"><\/i><\/button>/);
+  assert.match(acts, /<button type="button" class="key sq tap act mute" aria-label="\$\{muted \? "Unmute" : "Mute"\}"><i data-i="\$\{muted \? "bell" : "bell-off"\}"><\/i><\/button>/);
+  assert.doesNotMatch(acts.replace(/aria-label="[^"]*"/g, "").replace(/\$\{[^}]*\}/g, ""), />[^<]+</);
+  assert.match(css, /\.pt-acts \{[^}]*left: 14px;[^}]*gap: 8px;/);
+  assert.match(css, /\.pt-acts \.act \.i \{ width: 20px; height: 20px; \}/);
+  assert.match(css, /\.pt-acts \.act\.read \{ --k: var\(--swipe-done\); box-shadow: var\(--pillow-sm\); \}/);
+  assert.match(css, /\[data-theme="light"\] \.pt-acts \.act\.mute \{ box-shadow: var\(--pillow-sm\); \}/);
+  assert.match(css, /\.channel\.pt-open \{ width: calc\(100% - 44px\); padding-right: 92px; \}/);
+  assert.match(css, /\.channel-scroll:has\(\.channel\.pt-dragging\) \{ overflow-x: hidden; clip-path: inset\(0 12px 0 0\); \}/);
+});
+
 test("keys that act are drawn filled, hanging up is the same mark everywhere, and the wall carries the lamp's band", () => {
-  assert.match(css, /\.pt-acts \.act \.i \.i-on \{ display: inline; \}/);
   assert.equal(ROOM_KEYS.find(key => key.id === "leave").icon, "phone-off");
   assert.equal((glue.match(/aria-label="Hang up"><i data-i="phone-off"><\/i>/g) || []).length, 2);
   assert.doesNotMatch(css, /\.hang \.i \{[^}]*rotate/);

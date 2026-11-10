@@ -170,7 +170,7 @@ function listLabel(typed) {
   return typed.replace(/ ([A-Z])(?=[a-z])/g, (_, letter) => " " + letter.toLowerCase());
 }
 
-const SWIPE = { slop: 6, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60, sheetAt: 72, chipAfterMs: 110 };
+const SWIPE = { slop: 6, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 112, rowAt: 60, sheetAt: 72, chipAfterMs: 110 };
 const TRAY_PULL = 40;
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
