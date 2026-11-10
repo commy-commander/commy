@@ -8,7 +8,7 @@ const {
   PHONE_TABS, HORIZON, HORIZON_SPRINGS, HANG_UP_FUSE_MS, horizonY, horizonPath, horizonLift, springStep,
   phoneTabAfter, hangUpTap, badgeText, roomLine, liveSummary, liveRooms, liveStreams, stackPeople,
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
-  rowPull, rowStaysOpen, sheetRow, quickReactions, chatSubtitle,
+  rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -167,14 +167,58 @@ test("a swipe is sideways only once it clearly is, so scrolling the chat never d
   assert.equal(swipeAxis(4, 40), "y");
 });
 
-test("pulling a message right follows the finger, then resists, and replies past the mark", () => {
+test("pulling a message right follows the finger to 84 px and replies past 56", () => {
+  assert.equal(SWIPE.replyAt, 56);
+  assert.equal(SWIPE.replyMax, 84);
   assert.equal(replyPull(-20), 0);
+  assert.equal(replyPull(NaN), 0);
   assert.equal(replyPull(30), 30);
   assert.equal(replyPull(SWIPE.replyAt), SWIPE.replyAt);
-  assert.ok(replyPull(120) > SWIPE.replyAt && replyPull(120) < 120);
+  assert.equal(replyPull(70), 70);
+  assert.equal(replyPull(SWIPE.replyMax), SWIPE.replyMax);
   assert.equal(replyPull(900), SWIPE.replyMax);
   assert.equal(replyCommits(SWIPE.replyAt - 1), false);
   assert.equal(replyCommits(SWIPE.replyAt), true);
+});
+
+test("a sheet follows the finger down and closes past the mark, never up", () => {
+  assert.equal(sheetPull(-30), 0);
+  assert.equal(sheetPull(NaN), 0);
+  assert.equal(sheetPull(48), 48);
+  assert.equal(sheetCloses(SWIPE.sheetAt - 1), false);
+  assert.equal(sheetCloses(SWIPE.sheetAt), true);
+  assert.equal(sheetCloses(-200), false);
+  const glue = read("scripts", "studio-phone.js");
+  for (const sheet of ["#pt-hold", ".ctx-menu", ".composer-menu", ".audio-pop", ".soundboard-pop"]) assert.ok(glue.includes(sheet), sheet);
+});
+
+test("the phone chat bar is plus, field and Send, with the rest behind plus", () => {
+  const css = read("styles", "phone-touch.css");
+  assert.match(css, /html\[data-look="studio"\]\[data-fit="slim"\] \.composer :is\(#text-style-btn, #gif-btn, #emoji-btn\) \{ display: none; \}/);
+  const page = read("index.html");
+  for (const extra of BAR_EXTRAS) {
+    assert.ok(page.includes(`id="${extra.press}"`), extra.press);
+    assert.ok(extra.label && extra.icon && extra.id);
+  }
+  assert.ok(page.includes('id="cm-gif"'));
+  assert.ok(page.includes('id="reply-bar"') && page.includes('id="reply-bar-cancel"'));
+});
+
+test("starting a reply moves nothing: the chip sits in the gap above the field", () => {
+  const css = read("styles", "phone-touch.css");
+  const at = css.indexOf('html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .reply-bar {');
+  assert.ok(at > 0);
+  const body = css.slice(at, css.indexOf("}", at));
+  assert.match(body, /height: 30px;/);
+  assert.match(body, /margin: -34px 0 4px 68px;/);
+  assert.match(css, /\.app\[data-pane="chat"\] \.messages \{ margin-bottom: 38px; \}/);
+});
+
+test("mentions are never red in the phone layout, and times read like the guide", () => {
+  const css = read("styles", "phone-touch.css");
+  assert.match(css, /html\[data-look="studio"\]\[data-fit="slim"\] \.mention \{[^}]*var\(--accent\)/);
+  assert.match(css, /\.mention\.me \{ background: var\(--accent-2\); color: var\(--accent-2-ink\); \}/);
+  assert.match(read("scripts", "app.js"), /hour: studioLook\(\) \? "numeric" : "2-digit"/);
 });
 
 test("going back starts at the left edge and needs a real pull", () => {
@@ -256,8 +300,9 @@ test("swipe to reply follows the guide: the message slides on a rail and the rep
   };
   assert.match(rule("\\.pt-reply-cue\\.on"), /position: absolute;[\s\S]*background: var\(--input-bg\)/);
   assert.match(rule("\\.pt-reply-cue \\.rk"), /background: var\(--swipe-neutral\)/);
-  assert.match(rule("\\.pt-reply-cue\\.ready \\.rk"), /background: var\(--swipe-done\)/);
-  assert.match(rule("\\.msg\\.pt-railed"), /background: var\(--bg-raised\)/);
+  assert.match(css, /\.pt-reply-cue\.ready \.rk \{ background: var\(--swipe-done\)/);
+  assert.match(rule("\\.msg\\.pt-railed\\.pt-lifted"), /background: var\(--bg-raised\);\s*box-shadow: var\(--pillow-card\)/);
+  assert.match(rule("\\.msg\\.pt-railed"), /border-radius: 22px/);
   assert.doesNotMatch(css, /\.pt-reply-cue[^{]*\{[^}]*position: fixed/);
   assert.match(glue, /node\.after\(cue\);/);
   assert.equal(SWIPE.replyAt, 56);

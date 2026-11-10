@@ -149,8 +149,34 @@ function buildStudioPhone() {
   watch.id = "pt-watch";
   $("stage-view").appendChild(watch);
   buildChatHeader();
+  buildChatBar();
   $("add-server-btn").dataset.ptLabel = "Add";
   $("discover-btn").dataset.ptLabel = "Discover";
+}
+
+function buildChatBar() {
+  const menu = $("composer-menu");
+  for (const extra of BAR_EXTRAS) {
+    const row = studioNode("button", "pt-cm", `<i data-i="${extra.icon}"></i>${extra.label}`);
+    row.type = "button";
+    row.id = `pt-cm-${extra.id}`;
+    row.setAttribute("role", "menuitem");
+    row.onclick = () => {
+      menu.classList.add("hidden");
+      setTimeout(() => $(extra.press).click(), 0);
+    };
+    menu.appendChild(row);
+  }
+  $("reply-bar").prepend(studioNode("span", "pt-chip-i", '<i data-i="reply"></i>'));
+  document.addEventListener("click", e => {
+    if (!studioSlim() || !e.target.closest || !e.target.closest("#attach-btn")) return;
+    if (!menu.classList.contains("hidden") || state.view !== "server" || canAttachHere() || canSendVoiceHere()) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    closeFloating("composer-menu");
+    for (const item of menu.querySelectorAll('[id^="cm-"]')) item.classList.add("hidden");
+    menu.classList.remove("hidden");
+  }, true);
 }
 
 function buildChatHeader() {
@@ -845,9 +871,28 @@ function openRowSwipe(row) {
   studioPhone.rowOpen = { row, acts };
 }
 
+const RAIL_UNLIT_MS = 200;
+const RAIL_FADE_MS = 140;
+const STUDIO_SHEET_NODES = "#pt-hold, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop";
+
+function sheetAtTop(sheet, from) {
+  for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
+  return true;
+}
+
+function closeSwipedSheet(sheet) {
+  if (sheet.id === "pt-hold") closeSheets();
+  else closeFloating();
+  sheet.style.transition = "";
+  sheet.style.translate = "";
+}
+
 function swipeTarget(e) {
   const target = e.target;
-  if (!target.closest || target.closest("input, textarea, select, pre, code, video, audio, .md-table")) return null;
+  if (!target.closest) return null;
+  const sheet = target.closest(STUDIO_SHEET_NODES);
+  if (sheet) return target.closest("input, textarea, select") || !sheetAtTop(sheet, target) ? null : { kind: "sheet", node: sheet };
+  if (target.closest("input, textarea, select, pre, code, video, audio, .md-table")) return null;
   const touch = e.touches[0];
   const pane = phonePane();
   if (pane !== "list" && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: document.querySelector("main.main") };
@@ -862,16 +907,18 @@ function paintSwipe(swipe, dx) {
   if (swipe.kind === "reply") {
     const node = swipe.node;
     const cue = $("pt-reply-cue");
-    if (cue.previousElementSibling !== node) {
-      clearTimeout(studioPhone.railTimer);
-      for (const other of document.querySelectorAll(".msg.pt-railed")) other.classList.remove("pt-railed");
+    clearTimeout(studioPhone.railTimer);
+    cue.classList.remove("out");
+    node.classList.add("pt-lifted");
+    if (cue.previousElementSibling !== node || !node.classList.contains("pt-railed")) {
+      for (const other of document.querySelectorAll(".msg.pt-railed")) other.classList.remove("pt-railed", "pt-lifted");
+      node.classList.add("pt-railed", "pt-lifted");
       node.after(cue);
       cue.style.left = `${node.offsetLeft}px`;
       cue.style.top = `${node.offsetTop}px`;
       cue.style.width = `${node.offsetWidth}px`;
       cue.style.height = `${node.offsetHeight}px`;
       cue.classList.add("on");
-      node.classList.add("pt-railed");
     }
     node.style.translate = `${replyPull(dx)}px 0`;
     cue.classList.toggle("ready", replyCommits(dx));
@@ -879,13 +926,15 @@ function paintSwipe(swipe, dx) {
     swipe.node.style.translate = `${rowPull(dx, swipe.wasOpen)}px 0`;
   } else if (swipe.kind === "back") {
     swipe.node.style.translate = `${Math.max(0, dx) * 0.35}px 0`;
+  } else if (swipe.kind === "sheet") {
+    swipe.node.style.translate = `0 ${sheetPull(dx)}px`;
   }
 }
 
 function stowReplyRail(node) {
   const cue = $("pt-reply-cue");
-  node.classList.remove("pt-railed");
-  cue.classList.remove("on", "ready");
+  node.classList.remove("pt-railed", "pt-lifted");
+  cue.classList.remove("on", "ready", "out");
   if (cue.parentNode !== $("app")) $("app").appendChild(cue);
 }
 
@@ -895,7 +944,16 @@ function endSwipe(swipe, dx, cancelled) {
   if (swipe.kind === "reply") {
     node.style.translate = "";
     clearTimeout(studioPhone.railTimer);
-    studioPhone.railTimer = setTimeout(() => stowReplyRail(node), studioPhone.calm ? 0 : 280);
+    const cue = $("pt-reply-cue");
+    const wait = ms => (studioPhone.calm ? 0 : ms);
+    studioPhone.railTimer = setTimeout(() => {
+      cue.classList.remove("ready");
+      studioPhone.railTimer = setTimeout(() => {
+        node.classList.remove("pt-lifted");
+        cue.classList.add("out");
+        studioPhone.railTimer = setTimeout(() => stowReplyRail(node), wait(RAIL_FADE_MS));
+      }, wait(RAIL_FADE_MS));
+    }, wait(RAIL_UNLIT_MS));
     if (!cancelled && replyCommits(dx)) node.querySelector(':scope > .msg-actions button[title="Reply"]').click();
   } else if (swipe.kind === "row") {
     const pull = rowPull(dx, swipe.wasOpen);
@@ -912,6 +970,14 @@ function endSwipe(swipe, dx, cancelled) {
   } else if (swipe.kind === "back") {
     node.style.translate = "";
     if (!cancelled && edgeBackCommits(dx)) phoneStep("back");
+  } else if (swipe.kind === "sheet") {
+    if (cancelled || !sheetCloses(dx)) {
+      node.style.translate = "";
+      return;
+    }
+    node.style.transition = "translate 200ms var(--ease-out)";
+    node.style.translate = "0 calc(100% + 48px)";
+    setTimeout(() => closeSwipedSheet(node), studioPhone.calm ? 0 : 200);
   }
 }
 
@@ -929,25 +995,27 @@ function wireSwipes() {
     if (!swipe || !e.touches[0]) return;
     const dx = e.touches[0].clientX - swipe.x;
     const dy = e.touches[0].clientY - swipe.y;
+    const along = swipe.kind === "sheet" ? "y" : "x";
+    const pull = along === "y" ? dy : dx;
     if (!swipe.axis) {
       swipe.axis = swipeAxis(dx, dy);
-      if (swipe.axis === "y" || (swipe.axis === "x" && dx < 0 && !swipe.wasOpen)) {
+      if ((swipe.axis && swipe.axis !== along) || (swipe.axis === along && pull < 0 && !swipe.wasOpen)) {
         swipe = null;
         return;
       }
-      if (swipe.axis === "x") {
+      if (swipe.axis === along) {
         swipe.node.classList.add("pt-dragging");
         studioPhone.swipedAt = Date.now();
       }
     }
-    if (swipe.axis !== "x") return;
-    swipe.dx = dx;
+    if (swipe.axis !== along) return;
+    swipe.dx = pull;
     studioPhone.swipedAt = Date.now();
     if (e.cancelable) e.preventDefault();
-    paintSwipe(swipe, dx);
+    paintSwipe(swipe, pull);
   }, { passive: false });
   const finish = cancelled => () => {
-    if (swipe && swipe.axis === "x") endSwipe(swipe, swipe.dx, cancelled);
+    if (swipe && swipe.axis === (swipe.kind === "sheet" ? "y" : "x")) endSwipe(swipe, swipe.dx, cancelled);
     swipe = null;
   };
   document.addEventListener("touchend", finish(false), { passive: true });

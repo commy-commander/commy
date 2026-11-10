@@ -109,10 +109,10 @@ function stackPeople(people, max = STACK_MAX) {
   return { shown, more: Math.max(0, people.length - shown.length) };
 }
 
-const SWIPE = { slop: 12, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60 };
+const SWIPE = { slop: 12, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60, sheetAt: 72 };
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
-  "Reply": { label: "Reply", icon: "reply", hint: "or swipe the message right" },
+  "Reply": { label: "Reply", icon: "reply", hint: "or swipe right" },
   "Open Thread": { label: "Open thread", icon: "message-square-text" },
   "Pin": { label: "Pin to channel", icon: "pin" },
   "Unpin": { label: "Unpin", icon: "pin" },
@@ -134,9 +134,8 @@ function swipeAxis(dx, dy) {
 }
 
 function replyPull(dx) {
-  if (dx <= 0) return 0;
-  if (dx <= SWIPE.replyAt) return dx;
-  return Math.min(SWIPE.replyMax, SWIPE.replyAt + (dx - SWIPE.replyAt) * 0.35);
+  if (!(dx > 0)) return 0;
+  return Math.min(SWIPE.replyMax, dx);
 }
 
 function replyCommits(dx) {
@@ -161,6 +160,19 @@ function rowPull(dx, wasOpen) {
 function rowStaysOpen(pull, wasOpen) {
   return wasOpen ? pull > SWIPE.rowOpen - SWIPE.rowAt : pull >= SWIPE.rowAt;
 }
+
+function sheetPull(dy) {
+  return Math.max(0, Number(dy) || 0);
+}
+
+function sheetCloses(dy) {
+  return sheetPull(dy) >= SWIPE.sheetAt;
+}
+
+const BAR_EXTRAS = [
+  { id: "emoji", label: "Emoji", icon: "smile", press: "emoji-btn" },
+  { id: "style", label: "Text Style", icon: "a-large-small", press: "text-style-btn" },
+];
 
 function sheetRow(title) {
   if (SHEET_ROWS[title]) return SHEET_ROWS[title];
@@ -301,6 +313,9 @@ if (typeof module !== "undefined" && module.exports) {
     edgeBackCommits,
     rowPull,
     rowStaysOpen,
+    sheetPull,
+    sheetCloses,
+    BAR_EXTRAS,
     sheetRow,
     quickReactions,
     chatSubtitle,

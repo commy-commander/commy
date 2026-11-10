@@ -2781,7 +2781,7 @@ function initials(name) {
 
 function formatTime(iso) {
   const date = new Date(iso);
-  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const time = date.toLocaleTimeString([], { hour: studioLook() ? "numeric" : "2-digit", minute: "2-digit" });
   const day = dayLabel(date);
   return day === "Today" ? time : `${day} at ${time}`;
 }
