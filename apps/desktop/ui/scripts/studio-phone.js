@@ -28,6 +28,7 @@ const studioPhone = {
   calm: false,
   rowOpen: null,
   swipedAt: 0,
+  railTimer: 0,
 };
 
 function studioSlim() {
@@ -93,7 +94,7 @@ function buildStudioPhone() {
   const hold = studioNode("section", "pt-sheet pt-hold", '<div class="rx" id="pt-hold-rx"></div><div class="pt-sheet-rows" id="pt-hold-rows"></div>');
   hold.id = "pt-hold";
   hold.setAttribute("aria-label", "Message actions");
-  const cue = studioNode("span", "pt-reply-cue", '<i data-i="reply"></i>');
+  const cue = studioNode("span", "pt-reply-cue", '<span class="rk"><i data-i="reply"></i></span>');
   cue.id = "pt-reply-cue";
   const bar = studioNode("nav", "hzn", horizonMarkup());
   bar.id = "horizon";
@@ -770,14 +771,21 @@ function swipeTarget(e) {
 
 function paintSwipe(swipe, dx) {
   if (swipe.kind === "reply") {
-    const pull = replyPull(dx);
-    swipe.node.style.translate = `${pull}px 0`;
+    const node = swipe.node;
     const cue = $("pt-reply-cue");
-    const rect = swipe.node.getBoundingClientRect();
-    cue.style.top = `${rect.top + Math.min(rect.height, 64) / 2 - 18}px`;
-    cue.style.opacity = String(Math.min(1, pull / SWIPE.replyAt));
+    if (cue.previousElementSibling !== node) {
+      clearTimeout(studioPhone.railTimer);
+      for (const other of document.querySelectorAll(".msg.pt-railed")) other.classList.remove("pt-railed");
+      node.after(cue);
+      cue.style.left = `${node.offsetLeft}px`;
+      cue.style.top = `${node.offsetTop}px`;
+      cue.style.width = `${node.offsetWidth}px`;
+      cue.style.height = `${node.offsetHeight}px`;
+      cue.classList.add("on");
+      node.classList.add("pt-railed");
+    }
+    node.style.translate = `${replyPull(dx)}px 0`;
     cue.classList.toggle("ready", replyCommits(dx));
-    cue.classList.add("on");
   } else if (swipe.kind === "row") {
     swipe.node.style.translate = `${rowPull(dx, swipe.wasOpen)}px 0`;
   } else if (swipe.kind === "back") {
@@ -785,13 +793,20 @@ function paintSwipe(swipe, dx) {
   }
 }
 
+function stowReplyRail(node) {
+  const cue = $("pt-reply-cue");
+  node.classList.remove("pt-railed");
+  cue.classList.remove("on", "ready");
+  if (cue.parentNode !== $("app")) $("app").appendChild(cue);
+}
+
 function endSwipe(swipe, dx, cancelled) {
   const node = swipe.node;
   node.classList.remove("pt-dragging");
   if (swipe.kind === "reply") {
     node.style.translate = "";
-    $("pt-reply-cue").classList.remove("on", "ready");
-    $("pt-reply-cue").style.opacity = "";
+    clearTimeout(studioPhone.railTimer);
+    studioPhone.railTimer = setTimeout(() => stowReplyRail(node), studioPhone.calm ? 0 : 280);
     if (!cancelled && replyCommits(dx)) node.querySelector(':scope > .msg-actions button[title="Reply"]').click();
   } else if (swipe.kind === "row") {
     const pull = rowPull(dx, swipe.wasOpen);

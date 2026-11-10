@@ -246,3 +246,18 @@ test("the hover toolbar on a message never shows on the phone, the sheet reads i
   assert.match(glue, /messageOfActions\.get\(/);
   assert.match(read("scripts", "app.js"), /messageOfActions\.set\(bar, message\);/);
 });
+
+test("swipe to reply follows the guide: the message slides on a rail and the reply key lights past the mark", () => {
+  const rule = name => {
+    const found = css.match(new RegExp(`^html\\[data-look="studio"\\]\\[data-fit="slim"\\] ${name} \\{([^}]*)\\}`, "m"));
+    assert.ok(found, name);
+    return found[1];
+  };
+  assert.match(rule("\\.pt-reply-cue\\.on"), /position: absolute;[\s\S]*background: var\(--input-bg\)/);
+  assert.match(rule("\\.pt-reply-cue \\.rk"), /background: var\(--swipe-neutral\)/);
+  assert.match(rule("\\.pt-reply-cue\\.ready \\.rk"), /background: var\(--swipe-done\)/);
+  assert.match(rule("\\.msg\\.pt-railed"), /background: var\(--bg-raised\)/);
+  assert.doesNotMatch(css, /\.pt-reply-cue[^{]*\{[^}]*position: fixed/);
+  assert.match(glue, /node\.after\(cue\);/);
+  assert.equal(SWIPE.replyAt, 56);
+});

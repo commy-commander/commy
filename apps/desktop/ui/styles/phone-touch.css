@@ -1038,22 +1038,39 @@ html[data-look="studio"][data-fit="slim"] .pins-pop-head .btn-link { min-height:
 html[data-look="studio"][data-fit="slim"] .phone-back { width: 44px; height: 44px; }
 
 html[data-look="studio"][data-fit="slim"] .pt-reply-cue.on {
-  position: fixed;
-  left: 16px;
-  z-index: 3;
+  position: absolute;
+  z-index: 0;
+  display: block;
+  border-radius: 22px;
+  background: var(--input-bg);
+  box-shadow: inset 0 1px 3px rgb(var(--dark) / .9), 0 1px 0 rgb(var(--lamp) / .1);
+  pointer-events: none;
+}
+html[data-look="studio"][data-fit="slim"] .pt-reply-cue .rk {
+  position: absolute;
+  left: 8px;
+  top: 50%;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
+  margin-top: -22px;
   border-radius: 50%;
-  background: var(--bg-raised);
+  background: var(--swipe-neutral);
   color: var(--header-primary);
   box-shadow: var(--pillow-sm);
-  pointer-events: none;
-  transition: background-color var(--t-hover), scale var(--t-hover) var(--ease-spring);
+  scale: .86;
+  transition: background-color var(--t-hover), color var(--t-hover), scale var(--t-hover) var(--ease-spring);
 }
-html[data-look="studio"][data-fit="slim"] .pt-reply-cue.ready { background: var(--accent); color: var(--accent-ink); scale: 1.12; }
-html[data-look="studio"][data-fit="slim"] .pt-reply-cue .i { width: 18px; height: 18px; }
+html[data-look="studio"][data-fit="slim"] .pt-reply-cue.ready .rk { background: var(--swipe-done); color: var(--accent-ink); scale: 1; }
+html[data-look="studio"][data-fit="slim"] .pt-reply-cue .i { width: 20px; height: 20px; }
+html[data-look="studio"][data-fit="slim"] .messages { position: relative; }
+html[data-look="studio"][data-fit="slim"] .msg.pt-railed {
+  z-index: 1;
+  border-radius: 22px;
+  background: var(--bg-raised);
+  box-shadow: var(--pillow-card);
+}
 
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel-scroll { position: relative; }
 html[data-look="studio"][data-fit="slim"] .pt-acts {
