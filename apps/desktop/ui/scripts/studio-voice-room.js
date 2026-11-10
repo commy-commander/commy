@@ -15,6 +15,7 @@ const VOICE_ROOM = {
   quarterCards: 4,
   compactFrom: 13,
   compactAcross: 5,
+  compactMin: 190,
   oneRow: 6,
 };
 const VOICE_ROOM_TOOLS = [
@@ -61,13 +62,13 @@ function voiceRoomTiles(items, box, cols, limits = VOICE_ROOM) {
   return voiceRoomPlaceRows(voiceRoomChunks(sized, cols), box, w / VOICE_ROOM_TILE, limits.gap, false);
 }
 
-function voiceRoomCards(items, box, across, limits = VOICE_ROOM, exact = false) {
-  const fits = exact ? across : Math.max(1, Math.floor((box.w + limits.gap) / (limits.cardMin + limits.gap)));
+function voiceRoomCards(items, box, across, limits = VOICE_ROOM, least = limits.cardMin) {
+  const fits = Math.max(1, Math.floor((box.w + limits.gap) / (least + limits.gap)));
   const cols = Math.max(1, Math.min(across, fits, items.length));
   const rows = Math.ceil(items.length / cols);
   const byWidth = (box.w - (cols - 1) * limits.gap) / cols;
   const byHeight = ((box.h - (rows - 1) * limits.gap) / rows) * limits.cardRatio;
-  const w = Math.max(0, Math.min(byWidth, limits.cardMax, Math.max(limits.cardMin, byHeight)));
+  const w = Math.max(0, Math.min(byWidth, limits.cardMax, Math.max(least, byHeight)));
   const h = w / limits.cardRatio;
   const sized = items.map(item => (item.kind === "camera"
     ? { key: item.key, form: "small", w: h * VOICE_ROOM_TILE }
@@ -123,7 +124,7 @@ function voiceRoomLayout({ width, height, items, expanded }, limits = VOICE_ROOM
   if (!streams.length) {
     const everyone = [...cameras, ...people];
     if (everyone.length < limits.compactFrom) return { mode: "people", ...voiceRoomTiles(everyone, box, voiceRoomCols(everyone.length), limits) };
-    return { mode: "compact", ...voiceRoomCards(everyone, box, limits.compactAcross, limits, true) };
+    return { mode: "compact", ...voiceRoomCards(everyone, box, limits.compactAcross, limits, limits.compactMin) };
   }
   if (streams.length + cameras.length <= limits.quarterPictures && people.length <= limits.quarterCards) {
     return { mode: "quarters", ...voiceRoomQuarters([...streams, ...cameras], people, box, limits) };
@@ -246,10 +247,24 @@ function mountStudioVoiceRoom(doc, makeIcon) {
   return room;
 }
 
+const VOICE_ROOM_SOUNDS = { left: 262, tightLeft: 27, lift: 12, tight: 1240, edge: 8 };
+
+function voiceRoomSoundsPlace(dock, pane, view, place = VOICE_ROOM_SOUNDS) {
+  const shift = view.width <= place.tight ? place.tightLeft : place.left;
+  return {
+    left: Math.max(place.edge, Math.min(dock.left + shift, view.width - pane.width - place.edge)),
+    top: Math.max(place.edge, dock.top - place.lift - pane.height),
+  };
+}
+
+function voiceRoomHint(full, textWidth, room) {
+  return textWidth <= room ? full : "Message";
+}
+
 if (typeof document !== "undefined") {
   mountStudioVoiceRoom(document, typeof studioIconNode === "undefined" ? null : (name, size) => studioIconNode(name, size, false));
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, VOICE_ROOM_QUALITY, voiceRoomCols, voiceRoomPlaceRows, voiceRoomTiles, voiceRoomCards, voiceRoomQuarters, voiceRoomExpanded, voiceRoomLayout, voiceRoomQuality, voiceRoomPeople, voiceRoomItems, voiceRoomSub, mountStudioVoiceRoom };
+  module.exports = { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, VOICE_ROOM_QUALITY, voiceRoomCols, voiceRoomPlaceRows, voiceRoomTiles, voiceRoomCards, voiceRoomQuarters, voiceRoomExpanded, voiceRoomLayout, voiceRoomQuality, voiceRoomPeople, voiceRoomItems, voiceRoomSub, VOICE_ROOM_SOUNDS, voiceRoomSoundsPlace, voiceRoomHint, mountStudioVoiceRoom };
 }

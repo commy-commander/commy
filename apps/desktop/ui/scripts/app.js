@@ -5981,10 +5981,57 @@ function backToCallGrid() {
   renderVoicePanel();
 }
 
-const voiceRoom = { open: false, folded: true, chat: true, watcher: null, viewers: 0, fps: 0, lines: 0 };
+const voiceRoom = { open: false, folded: true, chat: true, watcher: null, viewers: 0, fps: 0, lines: 0, hint: null, ruler: null, ink: new Map(), inkRaf: 0, drawers: [], popFor: null, pen: { user: null, tool: null, stroke: 0, pending: [], last: null, timer: null, drawing: false } };
 
 function voiceRoomHasChat() {
   return Boolean(state.currentChannel) && ["forum-view", "drive-view", "discover"].every(id => $(id).classList.contains("hidden"));
+}
+
+function fitVoiceRoomHint() {
+  const input = $("message-input");
+  if (!voiceRoom.open) {
+    if (voiceRoom.hint !== null && input.placeholder === "Message") input.placeholder = voiceRoom.hint;
+    voiceRoom.hint = null;
+    return;
+  }
+  if (voiceRoom.hint === null || input.placeholder !== "Message") voiceRoom.hint = input.placeholder;
+  const style = getComputedStyle(input);
+  const room = input.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+  if (room <= 0) return;
+  if (!voiceRoom.ruler) voiceRoom.ruler = document.createElement("canvas").getContext("2d");
+  voiceRoom.ruler.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  input.placeholder = voiceRoomHint(voiceRoom.hint, voiceRoom.ruler.measureText(voiceRoom.hint).width + 2, room);
+}
+
+function dressSoundboardPop(pop) {
+  for (const node of pop.querySelectorAll(".sb-line, .sb-x")) node.remove();
+  if (!studioDesk()) return;
+  const shut = el("button", "icon-btn sb-x");
+  shut.type = "button";
+  shut.title = "Close";
+  shut.appendChild(studioIconNode("x", 14, false));
+  shut.onclick = () => pop.classList.add("hidden");
+  pop.querySelector(".sb-head").append(el("small", "sb-line", "Played to the whole room. Use wisely."), shut);
+}
+
+function soundPadMark(emoji) {
+  if (emoji) return soundEmojiNode(emoji);
+  return studioDesk() ? null : svgIcon("soundboard", 14);
+}
+
+function soundAddPad() {
+  const pad = el("button", "sb-sound sb-plus");
+  pad.type = "button";
+  pad.append(studioIconNode("plus", 16, false), el("span", null, "Add sound"));
+  pad.onclick = () => $("sb-add").click();
+  return pad;
+}
+
+function placeSoundboardPop(pop) {
+  if (!voiceRoom.open || !studioDesk()) return;
+  const spot = voiceRoomSoundsPlace($("voice-panel").getBoundingClientRect(), pop.getBoundingClientRect(), { width: window.innerWidth });
+  pop.style.left = `${spot.left}px`;
+  pop.style.top = `${spot.top}px`;
 }
 
 function openVoiceRoom() {
@@ -6007,12 +6054,17 @@ function openVoiceRoom() {
   }
   paintFocusButtons();
   renderVoicePanel();
+  fitVoiceRoomHint();
   return true;
 }
 
 function closeVoiceRoom() {
   if (!voiceRoom.open) return;
   voiceRoom.open = false;
+  dropVoiceRoomTool();
+  voiceRoom.ink.clear();
+  voiceRoom.drawers = [];
+  closeVoiceRoomPop();
   if (state.stageMode === "watch") state.watchingUser = null;
   if (state.stageMode) closeStage();
   for (const user of [...state.streamsWatched]) {
@@ -6027,6 +6079,7 @@ function closeVoiceRoom() {
   $("vr-chat-x").classList.add("hidden");
   room.classList.add("hidden");
   $("app").classList.remove("vr-open", "vr-folded", "vr-nochat");
+  fitVoiceRoomHint();
   $("video-pane").removeAttribute("style");
   for (const tile of $("cam-grid").querySelectorAll(".cam-tile")) {
     tile.removeAttribute("style");
@@ -6195,6 +6248,9 @@ function dressVoiceRoomTile(tile, t) {
     tile.appendChild(voiceRoomChip("bl", el("span", "vr-mic"), el("b", null, t.me ? "You" : t.name)));
     return;
   }
+  const sheet = el("canvas", "vr-ink");
+  sheet.setAttribute("aria-hidden", "true");
+  tile.querySelector(".cam-cover").before(sheet);
   const eye = el("i", "vr-sub vr-eye hidden");
   eye.append(studioIconNode("eye", 13, false), el("span", "vr-count"));
   tile.appendChild(voiceRoomChip("tl", el("span", "live-badge vr-live", "Live"), el("b", null, t.me ? "Your screen" : t.name), ...(t.me ? [el("i", "vr-sub vr-source"), eye] : [])));
@@ -6205,17 +6261,29 @@ function dressVoiceRoomTile(tile, t) {
     tile.appendChild(voiceRoomChip("tr vr-mode", studioIconNode("gauge", 14, false), quality));
     const left = el("div", "vr-keys l");
     left.appendChild(voiceRoomTileKey("vr-switch", "Share another screen or window", "monitor", "Switch", () => $("vp-change-source").click()));
-    const allow = voiceRoomTileKey("latch vr-allow", "Let the room draw on your screen", "pen", "Allow drawing", () => setStreamInk(!state.shareInk));
-    allow.appendChild(el("i", "led"));
+    const allow = voiceRoomTileKey("latch vr-allow", "Let the room draw on your screen", "pen", "Allow drawing", () => onVoiceRoomAllow(allow));
+    allow.append(el("b", "vr-n hidden"), el("i", "led"));
     keys.append(allow, voiceRoomTileKey("vr-stop", "Stop sharing your screen", "monitor-x", "Stop", () => toggleShare()));
     tile.append(left, keys);
     return;
   }
+  const draw = voiceRoomTileKey("latch vr-draw", `Draw on ${t.name}'s stream`, "pen", "Draw", () => setVoiceRoomTool(t.user, voiceRoomToolOn(t.user) === "pen" ? null : "pen"));
+  draw.appendChild(el("i", "led"));
+  const volume = voiceRoomTileKey("sq vr-vol", "Stream volume", "volume-2", "", () => openVoiceRoomVolume(volume));
   keys.append(
+    draw,
+    voiceRoomTileKey("sq vr-point", "Point at something", "mouse-pointer-2", "", () => setVoiceRoomTool(t.user, voiceRoomToolOn(t.user) === "point" ? null : "point")),
+    voiceRoomTileKey("sq vr-wipe", "Wipe your ink", "eraser", "", () => sendVoiceRoomInk(t.user, { kind: "clear", stroke: 0, points: [] })),
+    volume,
     voiceRoomTileKey("sq vr-big", "Expand", "maximize-2", "", () => watchScreen(t.user, t.name)),
     voiceRoomTileKey("sq vr-x", "Stop watching", "x", "", () => stopStream(t.user)),
   );
-  tile.appendChild(keys);
+  tile.append(voiceRoomChip("tr vr-allowed hidden", studioIconNode("pen", 16, false), el("span", null, "The room can draw on this")), keys);
+  const pad = tile.querySelector(".vr-ink");
+  pad.onpointerdown = e => onVoiceRoomPenDown(e, t.user, tile);
+  pad.onpointermove = e => onVoiceRoomPenMove(e, tile);
+  pad.onpointerup = finishVoiceRoomPen;
+  pad.onpointercancel = finishVoiceRoomPen;
   tile.ondblclick = () => {
     if (voiceRoom.open && state.streamsWatched.has(t.user)) watchScreen(t.user, t.name);
   };
@@ -6239,6 +6307,239 @@ function paintVoiceRoomTile(tile, t, person) {
   if (t.me) return paintVoiceRoomMine(tile);
   const live = state.streamsWatched.has(t.user);
   tile.querySelector(".vr-keys").classList.toggle("hidden", !live);
+  const allowed = live && ink.allowed.get(t.user) === true;
+  if (!allowed && voiceRoom.pen.user === t.user) dropVoiceRoomTool();
+  const tool = voiceRoomToolOn(t.user);
+  for (const part of [".vr-draw", ".vr-point", ".vr-wipe", ".vr-allowed"]) tile.querySelector(part).classList.toggle("hidden", !allowed);
+  for (const [part, name] of [[".vr-draw", "pen"], [".vr-point", "point"]]) {
+    const key = tile.querySelector(part);
+    key.classList.toggle("is-on", tool === name);
+    key.setAttribute("aria-pressed", String(tool === name));
+  }
+  tile.querySelector(".vr-ink").dataset.tool = tool || "";
+}
+
+function voiceRoomTile(user) {
+  return $("cam-grid").querySelector(`.cam-tile.screen[data-user="${CSS.escape(user)}"]`);
+}
+
+function voiceRoomToolOn(user) {
+  return voiceRoom.pen.user === user ? voiceRoom.pen.tool : null;
+}
+
+function dropVoiceRoomTool() {
+  finishVoiceRoomPen();
+  voiceRoom.pen.user = null;
+  voiceRoom.pen.tool = null;
+}
+
+function setVoiceRoomTool(user, tool) {
+  dropVoiceRoomTool();
+  if (tool) {
+    voiceRoom.pen.user = user;
+    voiceRoom.pen.tool = tool;
+  }
+  renderCamGrid();
+}
+
+function voiceRoomInkStore(user) {
+  if (!voiceRoom.ink.has(user)) voiceRoom.ink.set(user, inkStore());
+  return voiceRoom.ink.get(user);
+}
+
+function onVoiceRoomInk(news) {
+  if (!voiceRoom.open || !news || !news.sharer) return;
+  inkAdd(voiceRoomInkStore(news.sharer), news, performance.now(), news.sharer);
+  scheduleVoiceRoomInk();
+}
+
+function scheduleVoiceRoomInk() {
+  if (!voiceRoom.inkRaf) voiceRoom.inkRaf = requestAnimationFrame(paintVoiceRoomInk);
+}
+
+function voiceRoomInkRect(tile) {
+  const sheet = tile.querySelector(".vr-ink");
+  const frame = tile.querySelector(".tile-frame");
+  return inkFit(frame.width, frame.height, sheet.clientWidth, sheet.clientHeight);
+}
+
+function paintVoiceRoomInk() {
+  voiceRoom.inkRaf = 0;
+  if (!voiceRoom.open) return;
+  const now = performance.now();
+  const still = document.documentElement.hasAttribute("data-reduced-motion");
+  const ratio = window.devicePixelRatio || 1;
+  let busy = false;
+  for (const [user, store] of voiceRoom.ink) {
+    const tile = voiceRoomTile(user);
+    const sheet = tile && tile.querySelector(".vr-ink");
+    if (!sheet || !sheet.clientWidth) continue;
+    const width = Math.round(sheet.clientWidth * ratio);
+    const height = Math.round(sheet.clientHeight * ratio);
+    if (sheet.width !== width || sheet.height !== height) {
+      sheet.width = width;
+      sheet.height = height;
+    }
+    const ctx = sheet.getContext("2d");
+    if (!ctx) continue;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, sheet.clientWidth, sheet.clientHeight);
+    const frame = inkFrame(store, now, still);
+    inkPaint(ctx, frame, voiceRoomInkRect(tile));
+    busy = busy || frame.busy;
+  }
+  if (busy) scheduleVoiceRoomInk();
+}
+
+function sendVoiceRoomInk(user, mark) {
+  if (!state.user) return;
+  inkAdd(voiceRoomInkStore(user), { from: state.user.id, name: "", mark }, performance.now(), user);
+  scheduleVoiceRoomInk();
+  invoke("send_stream_ink", { userId: user, mark }).catch(() => {});
+}
+
+function flushVoiceRoomPen() {
+  const pen = voiceRoom.pen;
+  if (!pen.pending.length || !pen.user) return;
+  const points = pen.pending;
+  pen.pending = [];
+  for (const chunk of inkChunks(points)) {
+    invoke("send_stream_ink", { userId: pen.user, mark: { kind: "line", stroke: pen.stroke, points: chunk } }).catch(() => {});
+  }
+}
+
+function finishVoiceRoomPen() {
+  const pen = voiceRoom.pen;
+  if (!pen.drawing) return;
+  pen.drawing = false;
+  clearInterval(pen.timer);
+  pen.timer = null;
+  flushVoiceRoomPen();
+}
+
+function voiceRoomPenPoint(event, tile) {
+  const box = tile.querySelector(".vr-ink").getBoundingClientRect();
+  return inkToFrame(event.clientX - box.left, event.clientY - box.top, voiceRoomInkRect(tile));
+}
+
+function addVoiceRoomPenPoint(point) {
+  const pen = voiceRoom.pen;
+  pen.pending.push(point);
+  pen.last = point;
+  inkAdd(voiceRoomInkStore(pen.user), { from: state.user.id, name: "", mark: { kind: "line", stroke: pen.stroke, points: [point] } }, performance.now(), pen.user);
+  scheduleVoiceRoomInk();
+}
+
+function onVoiceRoomPenDown(event, user, tile) {
+  const pen = voiceRoom.pen;
+  if (pen.user !== user || !pen.tool || !state.user) return;
+  const point = voiceRoomPenPoint(event, tile);
+  if (!point) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (pen.tool === "point") return sendVoiceRoomInk(user, { kind: "point", stroke: 0, points: [point] });
+  finishVoiceRoomPen();
+  pen.stroke = (pen.stroke + 1) % 0xffffffff;
+  pen.drawing = true;
+  pen.pending = [];
+  try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+  addVoiceRoomPenPoint(point);
+  pen.timer = setInterval(flushVoiceRoomPen, INK_SEND_EVERY_MS);
+}
+
+function onVoiceRoomPenMove(event, tile) {
+  const pen = voiceRoom.pen;
+  if (!pen.drawing) return;
+  const point = voiceRoomPenPoint(event, tile);
+  if (point && inkFarEnough(pen.last, point)) addVoiceRoomPenPoint(point);
+}
+
+function voiceRoomPop() {
+  let pop = document.getElementById("vr-pop");
+  if (!pop) {
+    pop = el("div", "vr-pop hidden");
+    pop.id = "vr-pop";
+    document.body.appendChild(pop);
+  }
+  return pop;
+}
+
+function closeVoiceRoomPop() {
+  const pop = document.getElementById("vr-pop");
+  if (pop) pop.classList.add("hidden");
+  voiceRoom.popFor = null;
+}
+
+function showVoiceRoomPop(anchor, kind, parts) {
+  const pop = voiceRoomPop();
+  if (!pop.classList.contains("hidden") && voiceRoom.popFor === anchor) return closeVoiceRoomPop();
+  closeFloating();
+  pop.dataset.kind = kind;
+  pop.replaceChildren(...parts);
+  voiceRoom.popFor = anchor;
+  placePopup(pop, anchor, "above");
+}
+
+function openVoiceRoomVolume(anchor) {
+  const percent = streamVolumePercent(state.voice);
+  const range = el("input");
+  range.type = "range";
+  range.min = "0";
+  range.max = String(STREAM_VOLUME_MAX_PERCENT);
+  range.value = String(percent);
+  range.setAttribute("aria-label", "Stream volume");
+  const read = el("span", "vr-pop-num", `${percent}%`);
+  range.oninput = () => {
+    read.textContent = `${range.value}%`;
+  };
+  range.onchange = () => setStreamVolume(Number(range.value));
+  syncRangeFill(range);
+  const row = el("label", "vr-slider");
+  row.append(studioIconNode("volume-2", 16, false), range, read);
+  showVoiceRoomPop(anchor, "volume", [el("div", "vr-pop-title", "Stream volume"), row]);
+}
+
+function voiceRoomDrawerRow(drawer) {
+  const row = el("div", "vr-pop-row");
+  const face = el("span", "vr-pop-face");
+  face.appendChild(makeAvatar(drawer.id, drawer.name, "avatar vr-pop-av"));
+  const dot = el("i", "vr-pop-pen");
+  dot.style.background = inkColor(drawer.id);
+  const stop = el("button", "key sm sq vr-pop-x");
+  stop.type = "button";
+  stop.title = `Stop ${drawer.name} drawing on your stream`;
+  stop.setAttribute("aria-label", stop.title);
+  stop.appendChild(studioIconNode("x", 14, false));
+  stop.onclick = () => invoke("block_stream_ink", { userId: drawer.id }).catch(e => toast(String(e)));
+  row.append(face, el("b", null, drawer.name), dot, stop);
+  return row;
+}
+
+function voiceRoomDrawParts() {
+  const flip = el("input", "switch");
+  flip.type = "checkbox";
+  flip.checked = Boolean(state.shareInk);
+  flip.setAttribute("aria-label", "Allow drawing");
+  flip.onchange = () => setStreamInk(flip.checked);
+  const first = el("label", "vr-pop-row vr-pop-flip");
+  first.append(el("b", null, "Allow drawing"), flip);
+  return [first, ...voiceRoom.drawers.map(voiceRoomDrawerRow)];
+}
+
+function onVoiceRoomAllow(anchor) {
+  if (!voiceRoom.drawers.length) return setStreamInk(!state.shareInk);
+  showVoiceRoomPop(anchor, "drawing", voiceRoomDrawParts());
+}
+
+function setVoiceRoomDrawers(drawers) {
+  const list = state.sharing && state.shareInk ? (drawers || []) : [];
+  const key = list.map(d => `${d.id}:${d.name}`).join("|");
+  if (key === voiceRoom.drawers.map(d => `${d.id}:${d.name}`).join("|")) return;
+  voiceRoom.drawers = list;
+  const pop = document.getElementById("vr-pop");
+  if (!pop || pop.classList.contains("hidden") || pop.dataset.kind !== "drawing") return;
+  if (list.length) pop.replaceChildren(...voiceRoomDrawParts());
+  else closeVoiceRoomPop();
 }
 
 function paintVoiceRoomMine(tile = state.user ? $("cam-grid").querySelector(`.cam-tile.screen[data-user="${CSS.escape(state.user.id)}"]`) : null) {
@@ -6255,8 +6556,11 @@ function paintVoiceRoomMine(tile = state.user ? $("cam-grid").querySelector(`.ca
   eye.querySelector(".vr-count").textContent = String(voiceRoom.viewers);
   const allow = tile.querySelector(".vr-allow");
   allow.classList.toggle("hidden", !(streamInkSetting() || state.shareInk));
-  allow.classList.toggle("is-down", Boolean(state.shareInk));
+  allow.classList.toggle("is-on", Boolean(state.shareInk));
   allow.setAttribute("aria-pressed", String(Boolean(state.shareInk)));
+  const count = allow.querySelector(".vr-n");
+  count.textContent = String(voiceRoom.drawers.length);
+  count.classList.toggle("hidden", !voiceRoom.drawers.length);
   tile.querySelector(".vr-switch").classList.toggle("hidden", inBrowserApp());
 }
 
@@ -6294,6 +6598,7 @@ function placeVoiceRoom() {
   const limits = { ...VOICE_ROOM, gap: measure("--vr-gap", VOICE_ROOM.gap), keyGap: measure("--vr-row", VOICE_ROOM.keyGap), seatGap: measure("--vr-seat", VOICE_ROOM.seatGap) };
   const plan = voiceRoomLayout({ width, height, items, expanded: staged }, limits);
   pane.dataset.mode = plan.mode;
+  fitVoiceRoomHint();
   const nodes = new Map(cards.map(card => [card.dataset.key, card]));
   for (const tile of $("cam-grid").querySelectorAll(".cam-tile")) nodes.set(tile.dataset.key, tile);
   const stage = $("video-pane");
@@ -6338,6 +6643,23 @@ function wireVoiceRoom() {
   document.addEventListener("fullscreenchange", () => {
     if (voiceRoom.open) renderCamGrid();
   });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape" || !voiceRoom.open) return;
+    const pop = document.getElementById("vr-pop");
+    if (pop && !pop.classList.contains("hidden")) return closeVoiceRoomPop();
+    if (voiceRoom.pen.tool) setVoiceRoomTool(null, null);
+  });
+  document.addEventListener("mousedown", e => {
+    const pop = document.getElementById("vr-pop");
+    if (!pop || pop.classList.contains("hidden") || pop.contains(e.target)) return;
+    if (!(voiceRoom.popFor && voiceRoom.popFor.contains(e.target))) closeVoiceRoomPop();
+  });
+  $("sb-grid").addEventListener("click", e => {
+    const pad = e.target.closest(".sb-sound:not(.sb-plus)");
+    if (!pad || pad.disabled || !studioDesk() || Date.now() < soundboardCooldown) return;
+    pad.classList.add("hit");
+    pad.addEventListener("animationend", () => pad.classList.remove("hit"), { once: true });
+  }, true);
 }
 
 async function stopStream(user) {
@@ -15768,7 +16090,8 @@ async function toggleSoundboardPop() {
   $("sb-add").onclick = () => openSoundUpload(server, toggleSoundboardPop);
   const addButton = (name, label, emoji) => {
     const btn = el("button", "sb-sound");
-    btn.appendChild(emoji ? soundEmojiNode(emoji) : svgIcon("soundboard", 14));
+    const mark = soundPadMark(emoji);
+    if (mark) btn.appendChild(mark);
     btn.appendChild(el("span", null, label));
     btn.title = `Play ${label} for everyone in the channel`;
     btn.disabled = !server.can_use_soundboard;
@@ -15791,6 +16114,7 @@ async function toggleSoundboardPop() {
       ? "No server sounds yet. Choose Add sound to upload one."
       : "This server has no sounds of its own yet."));
   }
+  if (canAdd && studioDesk()) grid.appendChild(soundAddPad());
   let others = [];
   try {
     others = (await invoke("list_shareable_sounds")).filter(s => s.server !== server.id);
@@ -15802,7 +16126,8 @@ async function toggleSoundboardPop() {
       lastServer = sound.server;
     }
     const btn = el("button", "sb-sound");
-    btn.appendChild(sound.emoji ? soundEmojiNode(sound.emoji) : svgIcon("soundboard", 14));
+    const mark = soundPadMark(sound.emoji);
+    if (mark) btn.appendChild(mark);
     btn.appendChild(el("span", null, sound.name));
     btn.title = `Play ${sound.name} from ${sound.server_name} for everyone in the channel`;
     btn.disabled = !server.can_use_soundboard;
@@ -15821,8 +16146,10 @@ async function toggleSoundboardPop() {
   grid.appendChild(el("div", "sb-section", "Default"));
   for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
   $("sb-muted").classList.toggle("hidden", soundboardPrefs().enabled);
+  dressSoundboardPop(pop);
   pop.classList.remove("hidden");
   placePopup(pop, $("vp-soundboard"), "above");
+  placeSoundboardPop(pop);
 }
 
 const EVERYONE_CANDIDATES = [
@@ -20494,6 +20821,7 @@ function startOwnPreview() {
         renderStageInkTools();
       }
       renderStageDrawers(own.drawers);
+      setVoiceRoomDrawers(own.drawers);
       const now = performance.now();
       if (ownFpsSample && own.frames >= ownFpsSample.frames) {
         const fps = Math.round((own.frames - ownFpsSample.frames) / ((now - ownFpsSample.at) / 1000));
@@ -20660,6 +20988,7 @@ function inkStoreFor(sharer) {
 }
 
 function onStreamInk(news) {
+  onVoiceRoomInk(news);
   if (!news || !news.sharer || news.sharer !== inkStageSharer()) return;
   inkAdd(inkStoreFor(news.sharer), news, performance.now(), news.sharer);
   scheduleInkPaint();
@@ -20668,6 +20997,8 @@ function onStreamInk(news) {
 function onStreamInkAllowed(news) {
   if (!news || !news.sharer) return;
   ink.allowed.set(news.sharer, Boolean(news.on));
+  if (!news.on) voiceRoom.ink.delete(news.sharer);
+  if (voiceRoom.open) renderCamGrid();
   if (!news.on && news.sharer === inkStageSharer()) ink.store = inkStore();
   renderStageInkTools();
   scheduleInkPaint();

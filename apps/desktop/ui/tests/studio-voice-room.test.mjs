@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
+const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, voiceRoomSoundsPlace, voiceRoomHint, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
 const { callTiles } = require("../scripts/stream-view.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
@@ -80,6 +80,9 @@ test("a room with nobody streaming grows from one tile to compact cards", () => 
   assert.deepEqual(rows(crowd.placed), [5, 5, 5, 5, 5]);
   assert.ok(crowd.placed.every(spot => spot.form === "compact" && Math.round(spot.w) === 194));
   assert.ok(crowd.bottom <= 614);
+  const tight = voiceRoomLayout({ width: 904, height: 520, items: people(25) });
+  assert.equal(rows(tight.placed)[0], 4);
+  assert.ok(tight.placed.every(spot => spot.w >= VOICE_ROOM.compactMin));
   assert.ok(voiceRoomLayout({ width: 1033, height: 614, items: people(40) }).bottom > 614);
   for (const spot of [...one.placed, ...five.placed]) assert.ok(Math.abs(spot.w / spot.h - VOICE_ROOM_TILE) < 0.01);
 });
@@ -224,4 +227,58 @@ test("the room's styles stay off the phone fit and the old look", () => {
   assert.match(css, /\.vr-keys \{[^}]*bottom: -17px;/);
   assert.match(css, /\.vr-dots i \{[^}]*animation: studio-room-dot/);
   assert.equal(/\.vr-[a-z-]+[^{]*\{[^}]*spinner/.test(css), false);
+});
+
+test("the soundboard pane rises out of the wide dock where the guide draws it", () => {
+  assert.deepEqual(voiceRoomSoundsPlace({ left: 82, top: 796 }, { width: 396, height: 176 }, { width: 1440 }), { left: 344, top: 608 });
+  assert.deepEqual(voiceRoomSoundsPlace({ left: 37, top: 656 }, { width: 380, height: 176 }, { width: 1180 }), { left: 64, top: 468 });
+  assert.deepEqual(voiceRoomSoundsPlace({ left: 900, top: 100 }, { width: 396, height: 176 }, { width: 1440 }), { left: 1036, top: 8 });
+  assert.match(app, /dressSoundboardPop\(pop\);\n  pop\.classList\.remove\("hidden"\);\n  placePopup\(pop, \$\("vp-soundboard"\), "above"\);\n  placeSoundboardPop\(pop\);/);
+});
+
+test("a soundboard pad is its name, with the sound's own emoji when it has one, on the desktop fit", () => {
+  assert.match(app, /function soundPadMark\(emoji\) \{\n  if \(emoji\) return soundEmojiNode\(emoji\);\n  return studioDesk\(\) \? null : svgIcon\("soundboard", 14\);\n\}/);
+  assert.equal((app.match(/const mark = soundPadMark\(/g) || []).length, 2);
+  assert.match(app, /if \(canAdd && studioDesk\(\)\) grid\.appendChild\(soundAddPad\(\)\);/);
+  assert.match(app, /for \(const node of pop\.querySelectorAll\("\.sb-line, \.sb-x"\)\) node\.remove\(\);\n  if \(!studioDesk\(\)\) return;/);
+  for (const part of [".sb-sound", ".sb-line", ".sb-x", ".sb-section", ".sb-sound.hit::after"]) assert.ok(css.includes(`${DESK} .soundboard-pop ${part}`), part);
+  for (const part of [".pt-tray-grab", ".pt-tray-line", ".pt-tray-add"]) assert.ok(css.includes(`${DESK} .soundboard-pop ${part}`), part);
+});
+
+test("in the narrow chat the hint drops the channel name when it does not fit, and cards stack", () => {
+  assert.equal(voiceRoomHint("Message #welcome", 118, 110), "Message");
+  assert.equal(voiceRoomHint("Message #welcome", 118, 118), "Message #welcome");
+  assert.match(app, /if \(voiceRoom\.hint !== null && input\.placeholder === "Message"\) input\.placeholder = voiceRoom\.hint;/);
+  assert.ok(css.includes(`${DESK} #app.vr-open .main .invite-card { display: grid;`));
+  assert.ok(css.includes(`${DESK} #app.vr-open .main .invite-card > button { grid-column: 1 / -1;`));
+  assert.match(css, /#app\.vr-open \.main \.msg [^{]*> \.chat-image \{ max-width: 100%; max-height: 160px; border-radius: 14px; \}/);
+});
+
+test("other people's stream tiles carry Draw, Point, eraser, volume, expand and a round x, in that order", () => {
+  const keys = app.slice(app.indexOf('const draw = voiceRoomTileKey("latch vr-draw"'), app.indexOf("pad.onpointercancel = finishVoiceRoomPen;"));
+  const listed = keys.slice(keys.indexOf("keys.append("));
+  assert.ok(listed.indexOf("draw,") < listed.indexOf("vr-point") && listed.indexOf("vr-point") < listed.indexOf("vr-wipe") && listed.indexOf("vr-wipe") < listed.indexOf("volume,") && listed.indexOf("volume,") < listed.indexOf("vr-big") && listed.indexOf("vr-big") < listed.indexOf("vr-x"));
+  assert.match(app, /const allowed = live && ink\.allowed\.get\(t\.user\) === true;\n  if \(!allowed && voiceRoom\.pen\.user === t\.user\) dropVoiceRoomTool\(\);/);
+  assert.match(app, /for \(const part of \["\.vr-draw", "\.vr-point", "\.vr-wipe", "\.vr-allowed"\]\) tile\.querySelector\(part\)\.classList\.toggle\("hidden", !allowed\);/);
+  assert.match(app, /el\("span", null, "The room can draw on this"\)/);
+});
+
+test("drawings land on the stream's own tile, and a key that is on is lit, never the grey key", () => {
+  assert.match(app, /function onStreamInk\(news\) \{\n  onVoiceRoomInk\(news\);/);
+  assert.match(app, /function onVoiceRoomInk\(news\) \{\n  if \(!voiceRoom\.open \|\| !news \|\| !news\.sharer\) return;\n  inkAdd\(voiceRoomInkStore\(news\.sharer\), news, performance\.now\(\), news\.sharer\);/);
+  assert.match(app, /if \(!news\.on\) voiceRoom\.ink\.delete\(news\.sharer\);/);
+  assert.match(app, /dropVoiceRoomTool\(\);\n  voiceRoom\.ink\.clear\(\);\n  voiceRoom\.drawers = \[\];\n  closeVoiceRoomPop\(\);/);
+  assert.ok(!/classList\.toggle\("is-down"/.test(app.slice(app.indexOf("function dressVoiceRoomTile"), app.indexOf("function placeVoiceRoom"))));
+  assert.ok(css.includes(`${DESK} .vr-keys .key.latch.is-on > .led { background: var(--speaking); }`));
+  assert.ok(css.includes(`${DESK}:not([data-theme="light"]) .vr-keys .key.is-on {`));
+  assert.ok(css.includes(`${DESK} .vr-ink { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; pointer-events: none; }`));
+});
+
+test("volume opens a small glass popover with a slider, and Allow drawing lists who is drawing", () => {
+  assert.match(app, /range\.max = String\(STREAM_VOLUME_MAX_PERCENT\);/);
+  assert.match(app, /range\.onchange = \(\) => setStreamVolume\(Number\(range\.value\)\);/);
+  assert.match(app, /function onVoiceRoomAllow\(anchor\) \{\n  if \(!voiceRoom\.drawers\.length\) return setStreamInk\(!state\.shareInk\);\n  showVoiceRoomPop\(anchor, "drawing", voiceRoomDrawParts\(\)\);/);
+  assert.match(app, /stop\.onclick = \(\) => invoke\("block_stream_ink", \{ userId: drawer\.id \}\)/);
+  assert.match(app, /renderStageDrawers\(own\.drawers\);\n      setVoiceRoomDrawers\(own\.drawers\);/);
+  for (const part of [".vr-pop {", ".vr-slider input[type=\"range\"]::-webkit-slider-thumb {", ".vr-pop-row {", ".vr-pop-pen {"]) assert.ok(css.includes(`${DESK} ${part}`), part);
 });
