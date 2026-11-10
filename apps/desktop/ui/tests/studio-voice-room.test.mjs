@@ -351,3 +351,35 @@ test("the room waits thirty seconds with a Rejoin key where hang up was, and its
   assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel[data-dock="left"] .vp-meter i { background: var(--text-faint); scale: 1 .08; animation: none; }`));
   assert.ok(css.includes(`${DESK} #app.vr-open .vp-activities.vp-share:not(.active)::after {`));
 });
+
+test("an expanded stream carries the tile's chips and keys, and the old stage's own controls are gone", () => {
+  const dress = app.slice(app.indexOf("function dressVoiceRoomStage()"), app.indexOf("function stripVoiceRoomStage()"));
+  const listed = dress.slice(dress.indexOf("keys.append("));
+  const order = ["draw,", "vr-point", "vr-wipe", "volume,", "vr-big", "vr-x"].map(part => listed.indexOf(part));
+  assert.ok(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1])), String(order));
+  assert.match(dress, /voiceRoomTileKey\("sq vr-big", "Back to the grid", "minimize-2", "", \(\) => backToCallGrid\(\)\)/);
+  assert.match(dress, /voiceRoomTileKey\("sq vr-x", "Stop watching", "x", "", \(\) => closeStageButton\(\)\)/);
+  assert.match(dress, /el\("span", null, "The room can draw on this"\)/);
+  assert.match(app, /if \(!voiceRoom\.open \|\| state\.stageMode !== "watch" \|\| !state\.watchingUser\) return stripVoiceRoomStage\(\);/);
+  assert.match(app, /for \(const part of \["\.vr-draw", "\.vr-point", "\.vr-wipe", "\.vr-allowed"\]\) view\.querySelector\(part\)\.classList\.toggle\("hidden", !allowed\);/);
+  assert.match(app, /key\.classList\.toggle\("is-on", allowed && ink\.tool === tool\);/);
+  assert.match(app, /\$\("vr-cards"\)\.replaceChildren\(\);\n  stripVoiceRoomStage\(\);/);
+  assert.ok(css.includes(`${DESK} .vr-grid .stage-view:has(> .vr-big-part) > .stage-top,`));
+  assert.ok(css.includes(`${DESK} .vr-grid .stage-view:has(> .vr-big-part) > .stage-controls { display: none; }`));
+  assert.ok(css.includes(`${DESK} .vr-grid[data-mode="expanded"] .cam-tile .vr-keys,`));
+  assert.ok(css.includes(`${DESK} .vr-grid .stage-view:has(> .vr-big-part) { overflow: visible; }`));
+});
+
+test("the stream's size and frame rate show on the Live chip, a double click or Esc goes back to the grid", () => {
+  assert.match(app, /const live = el\("span", "live-badge vr-live", "Live"\);\n  live\.tabIndex = 0;/);
+  assert.match(app, /const text = \$\("stage-stats"\)\.textContent;\n  if \(readout\.textContent !== text\) readout\.textContent = text;\n  readout\.classList\.toggle\("hidden", !text\);/);
+  assert.match(app, /join\(" \\u00b7 "\);\n  paintVoiceRoomReadout\(\);/);
+  assert.ok(css.includes(`${DESK} .vr-big-who .vr-live:hover ~ .vr-readout,`));
+  assert.ok(css.includes(`${DESK} .vr-big-who .vr-live:focus-visible ~ .vr-readout { display: flex; }`));
+  assert.match(app, /\$\("stage-view"\)\.ondblclick = \(\) => \{\n    if \(!voiceRoom\.open\) return toggleStageFullscreen\(\);\n    if \(!ink\.tool && state\.stageMode === "watch"\) backToCallGrid\(\);/);
+  assert.match(app, /if \(pop && !pop\.classList\.contains\("hidden"\)\) return closeVoiceRoomPop\(\);\n    if \(voiceRoom\.pen\.tool\) return setVoiceRoomTool\(null, null\);\n    if \(state\.stageMode !== "watch"\) return;\n    if \(ink\.tool\) return setVoiceRoomStageTool\(ink\.tool\);\n    backToCallGrid\(\);/);
+  const laid = voiceRoomLayout({ width: 1032, height: 600, items: [...streams(2), ...cameras(1), ...people(3)], expanded: "screen:1" });
+  assert.equal(laid.mode, "expanded");
+  assert.deepEqual(laid.placed.map(spot => spot.key), ["screen:1", "screen:0", "camera:0", "person:0", "person:1", "person:2"]);
+  assert.deepEqual(laid.placed.map(spot => spot.form), ["big", "mini", "mini", "mini", "mini", "mini"]);
+});

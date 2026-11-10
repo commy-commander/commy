@@ -1727,8 +1727,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .cam-stop,
 html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .cam-tile.on-stage,
 html[data-look="studio"]:not([data-fit="slim"]) .vr-grid[data-mode="expanded"] .cam-cover-text,
 html[data-look="studio"]:not([data-fit="slim"]) .vr-grid[data-mode="expanded"] .cam-watch,
-html[data-look="studio"]:not([data-fit="slim"]) .vr-grid[data-mode="expanded"] .vr-chip,
-html[data-look="studio"]:not([data-fit="slim"]) .vr-grid[data-mode="expanded"] .vr-keys { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-grid[data-mode="expanded"] .cam-tile .vr-chip,
+html[data-look="studio"]:not([data-fit="slim"]) .vr-grid[data-mode="expanded"] .cam-tile .vr-keys,
+html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .stage-view:has(> .vr-big-part) > .stage-top,
+html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .stage-view:has(> .vr-big-part) > .stage-controls { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .cam-tile {
   position: absolute;
   aspect-ratio: auto;
@@ -2325,3 +2327,29 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-re
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-rejoin > svg { width: 19px !important; height: 19px !important; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-voice #vp-camera:disabled,
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-voice #vp-camera:disabled:hover { background: rgb(var(--lamp) / .06); box-shadow: inset 0 0 0 1px var(--line); }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .stage-view:has(> .vr-big-part) { overflow: visible; }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .stage-view .stage-frame,
+html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .stage-view .stage-ink,
+html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .stage-view .stage-wait { border-radius: inherit; }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-big-who { overflow: visible; }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-big-who .vr-live { cursor: default; }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-big-who .vr-live:focus-visible { outline: var(--ring-on); outline-offset: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-readout {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: none;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-active);
+  box-shadow: inset 0 1px 0 rgb(var(--lamp) / .14), 0 8px 14px -4px rgb(var(--dark) / .6);
+  color: var(--header-primary);
+  font: 600 13px/1 var(--font);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .vr-big-who .vr-live:hover ~ .vr-readout,
+html[data-look="studio"]:not([data-fit="slim"]) .vr-big-who .vr-live:focus-visible ~ .vr-readout { display: flex; }

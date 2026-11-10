@@ -6243,6 +6243,7 @@ function closeVoiceRoom() {
     delete tile.dataset.form;
   }
   $("vr-cards").replaceChildren();
+  stripVoiceRoomStage();
   renderVoicePanel();
   stickChatToEnd();
 }
@@ -6285,6 +6286,7 @@ function syncVoiceRoom(tiles) {
     meId: me,
     channelId: channel.id,
   });
+  paintVoiceRoomStage();
   if (left) {
     paintVoiceRoomCards(voiceRoomAway(people, { id: me, name: state.user.display_name || state.user.username, at: left.at, shared: left.shared }));
     return placeVoiceRoom();
@@ -6457,6 +6459,62 @@ function dressVoiceRoomTile(tile, t) {
   tile.ondblclick = () => {
     if (voiceRoom.open && state.streamsWatched.has(t.user)) watchScreen(t.user, t.name);
   };
+}
+
+function dressVoiceRoomStage() {
+  const view = $("stage-view");
+  if (view.querySelector(".vr-big-part")) return;
+  const live = el("span", "live-badge vr-live", "Live");
+  live.tabIndex = 0;
+  const readout = el("span", "vr-readout hidden");
+  readout.setAttribute("role", "status");
+  const who = voiceRoomChip("tl vr-big-part vr-big-who", live, el("b", "vr-big-name"), readout);
+  const allowed = voiceRoomChip("tr vr-allowed vr-big-part hidden", studioIconNode("pen", 16, false), el("span", null, "The room can draw on this"));
+  const keys = el("div", "vr-keys vr-big-part");
+  const draw = voiceRoomTileKey("latch vr-draw", "Draw on the stream", "pen", "Draw", () => setVoiceRoomStageTool("pen"));
+  draw.appendChild(el("i", "led"));
+  const volume = voiceRoomTileKey("sq vr-vol", "Stream volume", "volume-2", "", () => openVoiceRoomVolume(volume));
+  keys.append(
+    draw,
+    voiceRoomTileKey("sq vr-point", "Point at something", "mouse-pointer-2", "", () => setVoiceRoomStageTool("point")),
+    voiceRoomTileKey("sq vr-wipe", "Wipe your ink", "eraser", "", () => clearStageInk()),
+    volume,
+    voiceRoomTileKey("sq vr-big", "Back to the grid", "minimize-2", "", () => backToCallGrid()),
+    voiceRoomTileKey("sq vr-x", "Stop watching", "x", "", () => closeStageButton()),
+  );
+  view.append(who, allowed, keys);
+}
+
+function stripVoiceRoomStage() {
+  for (const part of $("stage-view").querySelectorAll(".vr-big-part")) part.remove();
+}
+
+function setVoiceRoomStageTool(tool) {
+  setInkTool(ink.tool === tool ? null : tool);
+  paintVoiceRoomStage();
+}
+
+function paintVoiceRoomReadout() {
+  const readout = $("stage-view").querySelector(".vr-readout");
+  if (!readout) return;
+  const text = $("stage-stats").textContent;
+  if (readout.textContent !== text) readout.textContent = text;
+  readout.classList.toggle("hidden", !text);
+}
+
+function paintVoiceRoomStage() {
+  if (!voiceRoom.open || state.stageMode !== "watch" || !state.watchingUser) return stripVoiceRoomStage();
+  dressVoiceRoomStage();
+  const view = $("stage-view");
+  view.querySelector(".vr-big-name").textContent = state.watchingName || "";
+  const allowed = ink.allowed.get(state.watchingUser) === true;
+  for (const part of [".vr-draw", ".vr-point", ".vr-wipe", ".vr-allowed"]) view.querySelector(part).classList.toggle("hidden", !allowed);
+  for (const [part, tool] of [[".vr-draw", "pen"], [".vr-point", "point"]]) {
+    const key = view.querySelector(part);
+    key.classList.toggle("is-on", allowed && ink.tool === tool);
+    key.setAttribute("aria-pressed", String(allowed && ink.tool === tool));
+  }
+  paintVoiceRoomReadout();
 }
 
 function paintVoiceRoomTile(tile, t, person) {
@@ -6819,7 +6877,10 @@ function wireVoiceRoom() {
     if (e.key !== "Escape" || !voiceRoom.open) return;
     const pop = document.getElementById("vr-pop");
     if (pop && !pop.classList.contains("hidden")) return closeVoiceRoomPop();
-    if (voiceRoom.pen.tool) setVoiceRoomTool(null, null);
+    if (voiceRoom.pen.tool) return setVoiceRoomTool(null, null);
+    if (state.stageMode !== "watch") return;
+    if (ink.tool) return setVoiceRoomStageTool(ink.tool);
+    backToCallGrid();
   });
   document.addEventListener("mousedown", e => {
     const pop = document.getElementById("vr-pop");
@@ -21109,6 +21170,7 @@ function showStageFrame(jpeg, width, height) {
   const fps = span > 0 ? Math.round((stageStats.times.length - 1) / span) : 0;
   const res = width && height ? `${width}x${height}` : "";
   $("stage-stats").textContent = [res, fps ? `${fps} fps` : ""].filter(Boolean).join(" \u00b7 ");
+  paintVoiceRoomReadout();
 }
 
 function toggleStageFocus() {
@@ -21196,6 +21258,7 @@ function renderStageInkTools() {
   $("stage-ink-pen").classList.toggle("hidden", !watching);
   $("stage-ink-clear").title = self ? "Clear all drawings" : "Clear my drawings";
   if (!watching && ink.tool) setInkTool(null);
+  paintVoiceRoomStage();
 }
 
 function setInkTool(tool) {
@@ -22147,7 +22210,10 @@ function wireEvents() {
   $("cam-grid-focus").onclick = toggleStageFocus;
   wireStageInk();
   $("stage-fullscreen").onclick = toggleStageFullscreen;
-  $("stage-view").ondblclick = toggleStageFullscreen;
+  $("stage-view").ondblclick = () => {
+    if (!voiceRoom.open) return toggleStageFullscreen();
+    if (!ink.tool && state.stageMode === "watch") backToCallGrid();
+  };
   $("vp-preview").onclick = openOwnPreview;
 
   for (const tab of $("share-tabs").querySelectorAll(".share-tab")) {
