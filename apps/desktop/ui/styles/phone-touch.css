@@ -136,11 +136,13 @@ html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .rail-folder > 
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-block: -2px;
+  padding-block: 2px;
   font: 500 12px/1 var(--font);
   letter-spacing: -.02em;
   color: var(--text-normal);
 }
-html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .rail-item .pt-name.on { margin-block: -2px; padding-block: 2px; color: var(--header-primary); font-weight: 600; }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .rail-item .pt-name.on { color: var(--header-primary); font-weight: 600; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .rail-folder > .folder-head { margin: 3px 11px 0; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .rail-folder > .pt-name { position: absolute; left: 2px; top: 63px; width: 70px; text-align: center; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .rail-item .count-badge,

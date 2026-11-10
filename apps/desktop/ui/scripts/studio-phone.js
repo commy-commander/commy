@@ -26,6 +26,8 @@ const studioPhone = {
   roomSeen: "",
   roomQueued: 0,
   soundsWereOpen: false,
+  trayWasOpen: false,
+  trayStep: false,
   trayHome: null,
   talkHeld: false,
   roomsAt: 0,
@@ -623,7 +625,10 @@ function closeSheets(then) {
   dropSheets();
   if (wasOpen && history.state && history.state.ptSheet) {
     if (then) window.addEventListener("popstate", () => then(), { once: true });
-    history.back();
+    if (history.state.ptTray) {
+      studioPhone.trayStep = false;
+      history.go(-2);
+    } else history.back();
     return;
   }
   if (then) then();
@@ -1012,7 +1017,20 @@ function wireHorizon() {
   document.addEventListener("pointerdown", e => {
     if (studioPhone.armed && !h.hangs.some(hang => hang.contains(e.target))) disarmHangUp();
     studioPhone.soundsWereOpen = !$("soundboard-pop").classList.contains("hidden");
+    studioPhone.trayWasOpen = trayShown();
   });
+  window.addEventListener("mousedown", e => {
+    if (studioSlim() && trayShown() && trayTap(true, trayPlace(e.target)) === "stay") e.stopPropagation();
+  }, true);
+  window.addEventListener("click", e => {
+    if (!e.isTrusted) return;
+    const wasOpen = studioPhone.trayWasOpen;
+    studioPhone.trayWasOpen = false;
+    if (!studioSlim() || trayTap(wasOpen, trayPlace(e.target)) !== "close") return;
+    e.preventDefault();
+    e.stopPropagation();
+    $("soundboard-pop").classList.toggle("hidden", true);
+  }, true);
   document.addEventListener("keydown", e => {
     if (e.key === "Escape") {
       disarmHangUp();
@@ -1022,6 +1040,10 @@ function wireHorizon() {
   $("pt-scrim").onclick = () => closeSheets();
   window.addEventListener("popstate", () => {
     const back = history.state && history.state.ptSheet;
+    if (!(history.state && history.state.ptTray)) {
+      studioPhone.trayStep = false;
+      if (trayShown()) $("soundboard-pop").classList.toggle("hidden", true);
+    }
     dropSheets();
     if (back === "pt-voice-open" && phonePane() === "list" && !$("phone-voice").classList.contains("hidden")) $("app").classList.add(back);
   });
@@ -1717,12 +1739,36 @@ function paintWatch() {
   }));
 }
 
+function trayShown() {
+  const pop = $("soundboard-pop");
+  return pop.classList.contains("pt-tray") && !pop.classList.contains("hidden");
+}
+
+function trayPlace(target) {
+  if (!target.closest) return "outside";
+  if (target.closest("[data-room-key]")) return "key";
+  if (target.closest(".soundboard-pop")) return "tray";
+  return target.closest("#pt-room, .hzn") ? "room" : "outside";
+}
+
+function holdTrayStep(tray) {
+  if (tray && trayNeedsStep(history.state)) {
+    history.pushState({ ...history.state, ptTray: true }, "");
+    studioPhone.trayStep = true;
+  } else if (!tray && studioPhone.trayStep) {
+    studioPhone.trayStep = false;
+    if (history.state && history.state.ptTray) history.back();
+  }
+}
+
 function decorateTray() {
   const pop = $("soundboard-pop");
   const tray = studioSlim() && roomOpen() && !pop.classList.contains("hidden");
+  const was = pop.classList.contains("pt-tray");
   pop.classList.toggle("slab", tray);
   pop.classList.toggle("pt-tray", tray);
   $("pt-room").classList.toggle("tray", tray);
+  if (tray !== was) holdTrayStep(tray);
   if (!tray) {
     pop.classList.toggle("pt-tray-full", false);
     if (studioPhone.trayHome && pop.parentNode !== studioPhone.trayHome.parent) studioPhone.trayHome.parent.insertBefore(pop, studioPhone.trayHome.next);

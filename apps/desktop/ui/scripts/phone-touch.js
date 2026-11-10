@@ -261,6 +261,15 @@ function chatSubtitle({ view, serverName, group, presence }) {
   return serverName || "";
 }
 
+function trayTap(wasOpen, place) {
+  if (!wasOpen || place === "tray" || place === "outside") return "pass";
+  return place === "key" ? "stay" : "close";
+}
+
+function trayNeedsStep(entry) {
+  return Boolean(entry && entry.ptSheet === "pt-voice-open" && !entry.ptTray);
+}
+
 const ROOM_KEYS = [
   { id: "sounds", label: "Sounds", icon: "music" },
   { id: "camera", label: "Camera", icon: "video-off" },
@@ -436,6 +445,8 @@ if (typeof module !== "undefined" && module.exports) {
     quickReactions,
     chatSubtitle,
     ROOM_KEYS,
+    trayTap,
+    trayNeedsStep,
     roomTiles,
     duoTiles,
     roomHeading,

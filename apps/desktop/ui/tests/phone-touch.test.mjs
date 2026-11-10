@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -507,6 +507,35 @@ test("the search sheet borrows the app's own search and hands it back when it cl
   assert.match(open, /\$\("search-input"\)\.focus\(\);/);
   assert.match(stow, /resetSearch\(\);[\s\S]*home\.boxParent\.insertBefore\(\$\("search-box"\), home\.boxNext\);\s+home\.popParent\.insertBefore\(\$\("search-pop"\), home\.popNext\);/);
   assert.match(glue, /if \(studioPhone\.searchHome && !app\.classList\.contains\("pt-search-open"\)\) stowSearchSheet\(\);/);
+});
+
+test("the soundboard tray stays open for the room's own keys, and any other tap in the room only closes it", () => {
+  assert.equal(trayTap(true, "key"), "stay");
+  assert.equal(trayTap(true, "room"), "close");
+  assert.equal(trayTap(true, "tray"), "pass");
+  assert.equal(trayTap(true, "outside"), "pass");
+  for (const place of ["key", "room", "tray", "outside"]) assert.equal(trayTap(false, place), "pass");
+  assert.match(glue, /function trayPlace\(target\) \{\n  if \(!target\.closest\) return "outside";\n  if \(target\.closest\("\[data-room-key\]"\)\) return "key";\n  if \(target\.closest\("\.soundboard-pop"\)\) return "tray";\n  return target\.closest\("#pt-room, \.hzn"\) \? "room" : "outside";/);
+  assert.match(glue, /window\.addEventListener\("mousedown", e => \{\n    if \(studioSlim\(\) && trayShown\(\) && trayTap\(true, trayPlace\(e\.target\)\) === "stay"\) e\.stopPropagation\(\);\n  \}, true\);/);
+  assert.match(glue, /if \(!studioSlim\(\) \|\| trayTap\(wasOpen, trayPlace\(e\.target\)\) !== "close"\) return;\n    e\.preventDefault\(\);\n    e\.stopPropagation\(\);\n    \$\("soundboard-pop"\)\.classList\.toggle\("hidden", true\);\n  \}, true\);/);
+  assert.match(glue, /function trayShown\(\) \{\n  const pop = \$\("soundboard-pop"\);\n  return pop\.classList\.contains\("pt-tray"\) && !pop\.classList\.contains\("hidden"\);/);
+});
+
+test("going back with the tray open closes only the tray, and leaving the room steps past both", () => {
+  assert.equal(trayNeedsStep({ pane: "list", ptSheet: "pt-voice-open" }), true);
+  assert.equal(trayNeedsStep({ pane: "list", ptSheet: "pt-voice-open", ptTray: true }), false);
+  assert.equal(trayNeedsStep({ pane: "list", ptSheet: "pt-hold-open" }), false);
+  assert.equal(trayNeedsStep({ pane: "list" }), false);
+  assert.equal(trayNeedsStep(null), false);
+  assert.match(glue, /history\.pushState\(\{ \.\.\.history\.state, ptTray: true \}, ""\);\n    studioPhone\.trayStep = true;/);
+  assert.match(glue, /\} else if \(!tray && studioPhone\.trayStep\) \{\n    studioPhone\.trayStep = false;\n    if \(history\.state && history\.state\.ptTray\) history\.back\(\);/);
+  assert.match(glue, /if \(tray !== was\) holdTrayStep\(tray\);/);
+  assert.match(glue, /if \(!\(history\.state && history\.state\.ptTray\)\) \{\n      studioPhone\.trayStep = false;\n      if \(trayShown\(\)\) \$\("soundboard-pop"\)\.classList\.toggle\("hidden", true\);\n    \}\n    dropSheets\(\);/);
+  assert.match(glue, /if \(history\.state\.ptTray\) \{\n      studioPhone\.trayStep = false;\n      history\.go\(-2\);\n    \} else history\.back\(\);/);
+});
+
+test("server names under the tiles keep their descenders", () => {
+  assert.match(css, /\.rail-folder > \.pt-name \{\n  max-width: 74px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  margin-block: -2px;\n  padding-block: 2px;/);
 });
 
 test("a swiped channel row shows two round keys with no words, and the row runs off the pane's edge", () => {
