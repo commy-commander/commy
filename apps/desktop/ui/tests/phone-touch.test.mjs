@@ -10,6 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -528,4 +529,109 @@ test("the search sheet's scope keys are small glass keys with a full-size touch 
   assert.match(rule, /height: 32px;\s+padding: 0 14px;[\s\S]*background: var\(--k-plain\);/);
   assert.match(css, /\.pt-search-body \.search-scope-btn::after \{ content: ""; position: absolute; inset: -6px 0; \}/);
   assert.match(css, /\.pt-search-body \.search-scope-btn\.active \{ background: var\(--k-latched\); box-shadow: var\(--k-latched-shadow\);/);
+});
+
+test("at most three friend requests show as cards, and a plain row counts the rest until it is opened", () => {
+  assert.equal(WAIT_CARDS, 3);
+  assert.deepEqual(waitCards(1, false), { shown: 1, more: 0 });
+  assert.deepEqual(waitCards(3, false), { shown: 3, more: 0 });
+  assert.deepEqual(waitCards(7, false), { shown: 3, more: 4 });
+  assert.deepEqual(waitCards(7, true), { shown: 7, more: 0 });
+  assert.equal(waitMoreWords(4), "4 more requests");
+  assert.equal(waitMoreWords(1), "1 more request");
+});
+
+test("a conversation's age reads short: minutes, hours, the weekday, then the date", () => {
+  const now = Date.parse("2026-11-10T20:00:00Z");
+  const ago = minutes => new Date(now - minutes * 60000).toISOString();
+  assert.equal(listAge(ago(0), now, "en-US"), "now");
+  assert.equal(listAge(ago(2), now, "en-US"), "2m");
+  assert.equal(listAge(ago(59), now, "en-US"), "59m");
+  assert.equal(listAge(ago(60), now, "en-US"), "1h");
+  assert.equal(listAge(ago(23 * 60 + 59), now, "en-US"), "23h");
+  assert.match(listAge(ago(3 * 1440), now, "en-US"), /^(Fri|Sat|Sun)$/);
+  assert.match(listAge(ago(30 * 1440), now, "en-US"), /^Oct 1[01]$/);
+  assert.equal(listAge(null, now, "en-US"), "");
+  assert.equal(listAge("never", now, "en-US"), "");
+});
+
+test("the list's labels read in sentence case, and Friends drops its count", () => {
+  assert.equal(listLabel("Direct Messages"), "Direct messages");
+  assert.equal(listLabel("Friends - 2"), "Friends");
+  assert.equal(listLabel("Pinned"), "Pinned");
+  assert.equal(listLabel("Message Requests - 3"), "Message requests - 3");
+  assert.equal(listLabel("Friends of ferris"), "Friends of ferris");
+});
+
+test("Messages follows the guide's measures: title, search field, compose key, rows and labels", () => {
+  const rule = selector => {
+    const at = css.indexOf(`html[data-look="studio"][data-fit="slim"] ${selector} {`);
+    assert.notEqual(at, -1, selector);
+    return css.slice(at, css.indexOf("}", at));
+  };
+  assert.match(rule('.app[data-pane="list"]:not([data-tab="home"]) > .pt-title'), /height: 62px;\s+padding: 14px 24px 0;/);
+  assert.match(rule('.app[data-pane="list"][data-tab="messages"] > .sidebar'), /margin-top: 14px;/);
+  assert.match(rule('.app[data-pane="list"][data-tab="messages"] .sidebar-header'), /padding: 14px 64px 0 12px;/);
+  assert.match(rule('.app[data-pane="list"] .dm-search'), /height: 46px;[\s\S]*padding: 0 18px 2px 47px;[\s\S]*font: 400 15\.5px\/1 var\(--font\);/);
+  assert.match(rule(".pt-dm-find .i"), /width: 19px; height: 19px;/);
+  assert.match(rule('.app.dm-mode[data-pane="list"][data-tab="messages"] > .sidebar > .pt-compose'), /right: -4px;\s+top: -16px;[\s\S]*width: 50px;\s+height: 50px;/);
+  assert.match(rule(".pt-compose .i"), /width: 21px; height: 21px;/);
+  assert.match(rule('.app[data-pane="list"] .dm-thread'), /height: 58px;\s+min-height: 58px;\s+padding: 0 10px 0 12px;\s+gap: 12px;\s+border-radius: 29px;/);
+  assert.match(rule('.app[data-pane="list"] .dm-thread .avatar'), /width: 40px; height: 40px;/);
+  assert.match(rule('.app[data-pane="list"] .dm-name'), /font: 600 16px\/1 var\(--font\);/);
+  assert.match(rule('.app[data-pane="list"] .dm-preview'), /font: 400 14px\/1\.15 var\(--font\);\s+color: var\(--text-muted\);/);
+  assert.match(rule('.app[data-pane="list"] .dm-time'), /font: 400 13px\/1 var\(--font\); color: var\(--text-faint\);/);
+  assert.match(rule('.app[data-pane="list"] .dm-thread > .pt-dm-side > .pt-count'), /min-width: 22px; height: 22px; margin: 0; font-size: 12\.5px;/);
+  assert.match(rule('.app[data-pane="list"] .dm-thread .presence-dot'), /width: 11px;\s+height: 11px;[\s\S]*box-shadow: 0 0 0 2\.5px var\(--bg-dark\);/);
+  assert.match(rule('.app[data-pane="list"] .dm-thread .pt-duo > .avatar'), /width: 28px; height: 28px;/);
+  assert.match(rule('.app[data-pane="list"] .channel-group.dm-group'), /height: 32px; padding: 14px 12px 0; align-items: center; font: 600 13px\/1 var\(--font\);/);
+  assert.match(css, /\.app\[data-pane="list"\] \.channel-group\.pt-bare,\n[^\n]*\.channel-group\.dm-group > \.dm-group-add \{ display: none; \}/);
+});
+
+test("a friend request is a tungsten card with an Accept key and a plain x, and its note takes one more line", () => {
+  const rule = selector => {
+    const at = css.indexOf(`html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] ${selector} {`);
+    assert.notEqual(at, -1, selector);
+    return css.slice(at, css.indexOf("}", at));
+  };
+  const card = rule(".dm-thread.pt-wait");
+  assert.match(card, /height: 68px;\s+min-height: 68px;\s+margin: 12px 4px 0;\s+padding: 0 6px 0 14px;\s+gap: 11px;\s+border-radius: 999px;/);
+  assert.match(card, /var\(--accent-2\);[\s\S]*color: var\(--accent-2-ink\);/);
+  assert.match(rule(".dm-thread.pt-wait + .dm-thread.pt-wait"), /margin-top: 8px;/);
+  assert.match(rule(".dm-thread.pt-wait.pt-wait-held"), /display: none;/);
+  assert.match(rule(".dm-thread.pt-wait:has(.friend-note:not(.hidden))"), /height: 84px; min-height: 84px;/);
+  assert.match(rule(".pt-wait .dm-name"), /font: 700 16px\/1 var\(--font\); color: inherit;/);
+  assert.match(rule(".pt-wait .pt-wait-line"), /font: 500 13\.5px\/1 var\(--font\);/);
+  assert.match(rule(".pt-wait .friend-note"), /font: 400 13px\/1\.15 var\(--font\); color: inherit;/);
+  assert.match(rule(".pt-wait .friend-yes"), /height: 44px;\s+padding: 0 18px;[\s\S]*background: var\(--pillow-top\), var\(--accent-2-ink\);[\s\S]*font: 600 14\.5px\/1 var\(--font\);/);
+  assert.match(rule(".pt-wait .friend-no"), /width: 44px;\s+height: 44px;[\s\S]*background: none;/);
+  assert.match(rule(".pt-wait-rest"), /height: 50px;\s+padding: 0 12px;/);
+});
+
+test("the Messages glue builds the card, the compose key and the side column from the app's own rows", () => {
+  const app = read("scripts", "app.js");
+  assert.match(glue, /const compose = studioNode\("button", "key sq cream pt-compose", '<i data-i="square-pen"><\/i>'\);/);
+  assert.match(glue, /compose\.onclick = \(\) => openNewDm\(\);/);
+  assert.match(glue, /field\.placeholder = studioSlim\(\) \? "Find a person or a chat" : field\.dataset\.ptTyped;/);
+  assert.match(glue, /note\.before\(el\("div", "pt-wait-line", "wants to be friends"\)\);\s+note\.classList\.toggle\("hidden", !note\.title\);/);
+  assert.match(glue, /if \(e\.target\.closest\("button"\)\) return;\s+openMemberCard\(\{ id: row\.dataset\.person, name: row\.querySelector\("\.dm-name"\)\.textContent \}, row\);/);
+  assert.match(glue, /const \{ shown, more \} = waitCards\(cards\.length, studioPhone\.waitsOpen\);/);
+  assert.match(glue, /if \(thread\) time\.textContent = listAge\(thread\.last_at, now\);/);
+  assert.match(glue, /if \(tab === "messages" && state\.view !== "dm"\) await enterDmMode\(false\);/);
+  assert.match(glue, /decorateRooms\(\);\s+decorateMessages\(\);/);
+  assert.match(app, /async function enterDmMode\(openFirst = true\) \{/);
+  assert.match(app, /if \(!openFirst\) state\.currentDm = null;/);
+  assert.match(app, /if \(!openFirst\) \{\s+renderDmHome\(\);\s+\} else if \(state\.currentDm\) \{/);
+  assert.equal((app.match(/row\.dataset\.dm = thread\.user;/g) || []).length, 2);
+  assert.match(app, /row\.dataset\.person = req\.id;/);
+  assert.match(app, /row\.dataset\.person = friend\.id;/);
+});
+
+test("the Messages tab counts chats with something unread, and Saved is the first row under its label", () => {
+  assert.equal(unreadChats([2, 0, 5]), 2);
+  assert.equal(unreadChats([2]), 1);
+  assert.equal(unreadChats([]), 0);
+  assert.match(glue, /const text = badgeText\(unreadChats\(\[\.\.\.unread\.dms\.values\(\), \.\.\.state\.servers\.filter\(server => server\.group\)\.map\(server => serverUnreadCount\(server\.id\)\)\]\)\);/);
+  assert.match(glue, /const first = list\.querySelector\(":scope > \.channel-group"\);\s+first\.after\(saved\);/);
+  assert.match(glue, /const twice = label\.previousElementSibling === saved && label\.textContent === first\.textContent;/);
 });

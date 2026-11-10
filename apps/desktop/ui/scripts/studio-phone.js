@@ -37,6 +37,8 @@ const studioPhone = {
   bubblesSeen: "",
   streamShown: false,
   searchHome: null,
+  waitsOpen: false,
+  groupFaces: new Map(),
   searchPick: false,
 };
 
@@ -157,6 +159,7 @@ function buildStudioPhone() {
   buildChatHeader();
   buildChatBar();
   buildHomeHead();
+  buildMessagesHead();
   $("add-server-btn").dataset.ptLabel = "Add";
   $("discover-btn").dataset.ptLabel = "Discover";
 }
@@ -172,6 +175,123 @@ function buildHomeHead() {
   add.type = "button";
   add.id = "pt-sm-add";
   $("sm-settings").before(add);
+}
+
+function buildMessagesHead() {
+  const compose = studioNode("button", "key sq cream pt-compose", '<i data-i="square-pen"></i>');
+  compose.type = "button";
+  compose.id = "pt-compose";
+  compose.setAttribute("aria-label", "New message");
+  compose.onclick = () => openNewDm();
+  document.querySelector(".sidebar").appendChild(compose);
+  $("dm-search").after(studioNode("span", "pt-dm-find", '<i data-i="search"></i>'));
+  $("dm-search").dataset.ptTyped = $("dm-search").placeholder;
+}
+
+function paintMessagesWords() {
+  const field = $("dm-search");
+  field.placeholder = studioSlim() ? "Find a person or a chat" : field.dataset.ptTyped;
+}
+
+function waitCard(row) {
+  row.classList.add("pt-wait");
+  const note = row.querySelector(".friend-note");
+  note.before(el("div", "pt-wait-line", "wants to be friends"));
+  note.classList.toggle("hidden", !note.title);
+  row.querySelector(".friend-yes").appendChild(el("span", "pt-yes-word", "Accept"));
+  row.setAttribute("role", "button");
+  row.onclick = e => {
+    if (e.target.closest("button")) return;
+    openMemberCard({ id: row.dataset.person, name: row.querySelector(".dm-name").textContent }, row);
+  };
+  return row;
+}
+
+function decorateWaits(list) {
+  const cards = [...list.querySelectorAll(".friend-request")].map(waitCard);
+  if (cards.length <= WAIT_CARDS) studioPhone.waitsOpen = false;
+  const { shown, more } = waitCards(cards.length, studioPhone.waitsOpen);
+  cards.forEach((card, at) => card.classList.toggle("pt-wait-held", at >= shown));
+  list.prepend(...cards);
+  if (!more) return;
+  const rest = el("button", "pt-wait-rest", waitMoreWords(more));
+  rest.type = "button";
+  rest.onclick = () => {
+    studioPhone.waitsOpen = true;
+    for (const card of cards) card.classList.remove("pt-wait-held");
+    rest.remove();
+  };
+  cards[cards.length - 1].after(rest);
+}
+
+function liveFriend(id) {
+  for (const room of studioPhone.rooms || []) {
+    if (room.streams.some(stream => stream.userId === id)) return room;
+  }
+  return null;
+}
+
+function decorateFriendRow(row) {
+  const room = liveFriend(row.dataset.person);
+  if (room) {
+    row.querySelector(".dm-name").appendChild(el("span", "live", "Live"));
+    row.querySelector(".dm-preview").textContent = `In ${room.channelName}, sharing a screen`;
+  }
+  row.classList.toggle("pt-off", Boolean(row.querySelector(".presence-dot.offline")));
+  row.appendChild(studioNode("span", "pt-dm-side", '<i data-i="chevron-right"></i>'));
+}
+
+async function paintGroupFaces(row) {
+  const summary = state.servers.find(server => server.id === row.dataset.dm);
+  const key = `${row.dataset.dm}:${summary ? summary.member_count : 0}`;
+  if (!studioPhone.groupFaces.has(key)) {
+    const group = await invoke("get_server", { serverId: row.dataset.dm }).catch(() => null);
+    const others = group ? group.members.filter(member => !state.user || member.id !== state.user.id) : [];
+    studioPhone.groupFaces.set(key, others.slice(0, 2));
+  }
+  const people = studioPhone.groupFaces.get(key);
+  const face = row.querySelector(".group-avatar");
+  if (!row.isConnected || !face || people.length < 2) return;
+  face.classList.add("pt-duo");
+  face.replaceChildren(...people.map(person => makeAvatar(person.id, person.name)));
+}
+
+function decorateThreadRow(row, now) {
+  const thread = (state.dmThreads || []).find(item => item.user === row.dataset.dm);
+  const side = el("span", "pt-dm-side");
+  const time = row.querySelector(".dm-time");
+  if (time) {
+    if (thread) time.textContent = listAge(thread.last_at, now);
+    side.appendChild(time);
+  }
+  const count = unread.dms.get(row.dataset.dm) || (thread && thread.kind === "group" ? serverUnreadCount(row.dataset.dm) : 0);
+  if (count) side.appendChild(el("span", "pt-count", badgeText(count)));
+  row.appendChild(side);
+  if (thread && thread.kind === "group") paintGroupFaces(row);
+}
+
+function decorateMessages() {
+  const list = $("channel-list");
+  const saved = list.querySelector(":scope > .saved-entry");
+  if (!saved || saved.dataset.ptDone || !studioSlim() || !$("app").classList.contains("dm-mode")) return;
+  saved.dataset.ptDone = "1";
+  const now = Date.now();
+  for (const label of list.querySelectorAll(":scope > .channel-group")) {
+    const words = label.querySelector("span") || label;
+    if (words.childElementCount === 0) words.textContent = listLabel(words.textContent);
+  }
+  decorateWaits(list);
+  const first = list.querySelector(":scope > .channel-group");
+  first.after(saved);
+  const friendRows = [...list.querySelectorAll(":scope > .friend-row")];
+  if (friendRows.length) list.append(friendRows[0].previousElementSibling, ...friendRows);
+  friendRows.forEach(decorateFriendRow);
+  for (const row of list.querySelectorAll(":scope > .dm-thread[data-dm]")) decorateThreadRow(row, now);
+  for (const label of list.querySelectorAll(":scope > .channel-group")) {
+    const next = label.nextElementSibling;
+    const twice = label.previousElementSibling === saved && label.textContent === first.textContent;
+    label.classList.toggle("pt-bare", twice || !next || next.classList.contains("channel-group"));
+  }
 }
 
 function buildChatBar() {
@@ -395,7 +515,7 @@ async function setPhoneTab(tab) {
     scroller.scrollTo({ top: 0, behavior: studioPhone.calm ? "auto" : "smooth" });
     return;
   }
-  if (tab === "messages" && state.view !== "dm") await enterDmMode();
+  if (tab === "messages" && state.view !== "dm") await enterDmMode(false);
   if (tab === "home" && (state.view !== "server" || (state.currentServer && state.currentServer.group))) {
     const server = studioRailServer();
     if (server) await selectServer(server.id);
@@ -423,6 +543,7 @@ function syncPhoneTab() {
   if (phonePane() !== "list" && app.classList.contains("pt-voice-open")) app.classList.remove("pt-voice-open");
   if (studioPhone.searchHome && !app.classList.contains("pt-search-open")) stowSearchSheet();
   paintHomeHead();
+  paintMessagesWords();
   if (phonePane() !== "chat" && app.classList.contains("pt-stream-full")) app.classList.remove("pt-stream-full");
   paintChatHeader();
   syncRoomMode();
@@ -595,7 +716,7 @@ function syncHorizonVoice() {
 function syncHorizonBadge() {
   const h = horizonParts();
   const count = Number(($("home-badge") && $("home-badge").textContent) || 0);
-  const text = badgeText(count);
+  const text = badgeText(unreadChats([...unread.dms.values(), ...state.servers.filter(server => server.group).map(server => serverUnreadCount(server.id))]));
   h.badge.textContent = text;
   h.badge.classList.toggle("hidden", !text);
   if (count > studioPhone.badge && studioSlim() && !studioPhone.calm) {
@@ -908,6 +1029,7 @@ function watchStudioPhone() {
   watch($("channel-list"), { childList: true }, () => {
     if (studioPhone.rowOpen && !studioPhone.rowOpen.row.isConnected) studioPhone.rowOpen = null;
     decorateRooms();
+    decorateMessages();
     refreshLiveRooms(false);
   });
   watch($("voice-panel"), { attributes: true, attributeFilter: ["class", "data-quality"], subtree: true, childList: true }, queueRoomPaint);
@@ -925,6 +1047,8 @@ function watchStudioPhone() {
     paintHomeWords();
     paintHomeHead();
     placeTileName();
+    paintMessagesWords();
+    if ($("app").classList.contains("dm-mode")) renderDmThreads();
     layHorizon();
   });
   window.addEventListener("resize", layHorizon);

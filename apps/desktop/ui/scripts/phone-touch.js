@@ -120,6 +120,37 @@ function tileNameWidth(cell, edgeRoom, sideRooms, limits = TILE_NAME) {
   return cell + 2 * Math.max(0, spare);
 }
 
+const WAIT_CARDS = 3;
+
+function waitCards(count, open, max = WAIT_CARDS) {
+  const shown = open ? count : Math.min(count, max);
+  return { shown, more: count - shown };
+}
+
+function waitMoreWords(more) {
+  return `${more} more request${more === 1 ? "" : "s"}`;
+}
+
+function listAge(iso, now, locale) {
+  const then = iso ? new Date(iso).getTime() : NaN;
+  if (Number.isNaN(then)) return "";
+  const minutes = Math.floor((now - then) / 60000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h`;
+  if (minutes < 10080) return new Date(then).toLocaleDateString(locale || [], { weekday: "short" });
+  return new Date(then).toLocaleDateString(locale || [], { month: "short", day: "numeric" });
+}
+
+function unreadChats(counts) {
+  return counts.filter(count => count > 0).length;
+}
+
+function listLabel(typed) {
+  if (/^Friends - \d+$/.test(typed)) return "Friends";
+  return typed.replace(/ ([A-Z])(?=[a-z])/g, (_, letter) => " " + letter.toLowerCase());
+}
+
 const SWIPE = { slop: 6, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 152, rowAt: 60, sheetAt: 72, chipAfterMs: 110 };
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
@@ -302,6 +333,12 @@ if (typeof module !== "undefined" && module.exports) {
     STACK_MAX,
     TILE_NAME,
     tileNameWidth,
+    WAIT_CARDS,
+    waitCards,
+    waitMoreWords,
+    listAge,
+    listLabel,
+    unreadChats,
     roomFaces,
     horizonY,
     horizonPath,

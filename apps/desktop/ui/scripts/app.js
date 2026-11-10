@@ -18345,15 +18345,18 @@ function formatShortTime(iso) {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-async function enterDmMode() {
+async function enterDmMode(openFirst = true) {
   setViewMode("dm");
   state.currentServer = null;
   state.currentChannel = null;
+  if (!openFirst) state.currentDm = null;
   syncGifButton();
   renderServerRail();
   await refreshPeople();
   const threads = await renderDmThreads();
-  if (state.currentDm) {
+  if (!openFirst) {
+    renderDmHome();
+  } else if (state.currentDm) {
     await selectDm(state.currentDm.user, state.currentDm.name);
   } else if (threads.length && threads[0].kind === "group") {
     await selectServer(threads[0].user);
@@ -18448,6 +18451,7 @@ async function renderDmThreads() {
     list.appendChild(el("div", "channel-group dm-group", `Friends - ${friends.friends.length}`));
     for (const req of friends.incoming) {
       const row = el("div", "channel dm-thread friend-request");
+      row.dataset.person = req.id;
       row.appendChild(avatarWithPresence(req.name, req.id));
       const meta = el("div", "dm-meta");
       meta.appendChild(el("div", "dm-name", req.name));
@@ -18476,6 +18480,7 @@ async function renderDmThreads() {
     const sorted = [...friends.friends].sort((a, b) => (order[personPresence(a.id)] ?? 3) - (order[personPresence(b.id)] ?? 3));
     for (const friend of sorted) {
       const row = el("div", "channel dm-thread friend-row");
+      row.dataset.person = friend.id;
       row.appendChild(avatarWithPresence(friend.name, friend.id));
       const meta = el("div", "dm-meta");
       meta.appendChild(el("div", "dm-name", friend.name));
@@ -18530,6 +18535,7 @@ async function renderDmThreads() {
 function dmThreadRow(thread, pinned) {
   if (thread.kind === "group") return groupThreadRow(thread, pinned);
   const row = el("div", "channel dm-thread");
+  row.dataset.dm = thread.user;
   if (state.currentDm && thread.user === state.currentDm.user) row.classList.add("active");
   if (unread.dms.get(thread.user)) row.classList.add("unread");
   row.appendChild(avatarWithPresence(thread.name, thread.user));
@@ -18558,6 +18564,7 @@ function groupAvatar(className = "avatar group-avatar") {
 
 function groupThreadRow(thread, pinned = false) {
   const row = el("div", "channel dm-thread");
+  row.dataset.dm = thread.user;
   if (isGroupView() && thread.user === state.currentServer.id) row.classList.add("active");
   if (serverUnreadCount(thread.user)) row.classList.add("unread");
   row.appendChild(groupAvatar());
