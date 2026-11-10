@@ -3521,6 +3521,27 @@ function voiceStatusLine(channel) {
   return line;
 }
 
+function studioVoiceMarks(node, userId, name, isMe) {
+  const server = state.currentServer;
+  const eq = el("span", "voice-eq");
+  eq.setAttribute("aria-hidden", "true");
+  eq.append(el("i"), el("i"), el("i"), el("i"));
+  node.appendChild(eq);
+  const live = Boolean(userId) && Boolean(server) && (server.screen_shares || []).some(s => s.user === userId);
+  if (live) {
+    const pill = el("span", "live-badge voice-live", "Live");
+    if (!isMe) {
+      pill.title = `Watch ${name}`;
+      pill.onclick = e => {
+        e.stopPropagation();
+        watchScreen(userId, name);
+      };
+    }
+    node.appendChild(pill);
+  }
+  if (isMe) node.appendChild(el("span", "voice-you", "You"));
+}
+
 function decorateVoiceUser(node, channel, userId) {
   const server = state.currentServer;
   if (!server || !userId) return;
@@ -3937,7 +3958,10 @@ function channelMark(channel, size = 18) {
     icon.appendChild(svgIcon("folder", size));
     return icon;
   }
-  return el("span", "hash", "#");
+  const mark = el("span", "hash", "#");
+  const drawn = studioDesk() ? studioIconNode("hash", size, false) : null;
+  if (drawn) mark.replaceChildren(drawn);
+  return mark;
 }
 
 function channelHeaderMark(channel) {
@@ -4027,7 +4051,7 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
   const full = voiceFull(channel);
   if (channel.id === state.voiceChannelId) {
     row.classList.add("active", "connected");
-    row.title = "Click to disconnect";
+    row.title = studioDesk() ? "Open the room" : "Click to disconnect";
   } else {
     row.title = full ? "This channel is full" : isStageChannel(channel) ? "Click to join the audience" : "Click to join voice";
   }
@@ -4036,6 +4060,13 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     pill.appendChild(svgIcon(activityKindInfo(channel.activity).icon, 12));
     pill.appendChild(el("span", null, activityPillLabel(channel.activity)));
     pill.title = `${activityName(channel.activity)} is running here`;
+    if (studioDesk() && channel.id === state.voiceChannelId && activityUi.run) {
+      pill.classList.add("mine");
+      pill.onclick = e => {
+        e.stopPropagation();
+        toggleActivityPanel();
+      };
+    }
     row.appendChild(pill);
   }
   const count = voiceCountLabel(channel);
@@ -4048,6 +4079,10 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
     if (voiceDragHoldsClick()) return;
     if (channel.can_view === false) {
       toast(`Only ${accessWho(state.currentServer, channel.view_roles)} can join this channel`);
+      return;
+    }
+    if (studioDesk() && channel.id === state.voiceChannelId) {
+      showCallGrid();
       return;
     }
     if (full) {
@@ -4154,6 +4189,7 @@ function voiceUserRow(channel, entry, myName, role = null) {
   }
   vu.appendChild(makeAvatar(userId, user, "avatar avatar-sm"));
   vu.appendChild(el("span", "voice-user-name", user));
+  if (studioDesk()) studioVoiceMarks(vu, userId, user, isMe);
   decorateVoiceUser(vu, channel, userId);
   if (since) vu.appendChild(liveElapsed(since, "clock", "voice-user-time"));
   if (role) {
@@ -6113,7 +6149,7 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
+  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -7093,6 +7129,7 @@ function setSpeaking(userId, speaking) {
     document.querySelector(".user-panel").classList.toggle("speaking", speaking);
   }
   paintAttenuation();
+  if (studioLook()) studioDockSound(document, state.speaking.size > 0);
 }
 
 function clearSpeaking() {
@@ -10423,6 +10460,7 @@ function paintSignal(links) {
   const quality = links ? worstLinkQuality(links) : "good";
   $("vp-signal").dataset.quality = quality;
   $("phone-voice-signal").dataset.quality = quality;
+  if (!$("voice-pop").classList.contains("hidden")) paintVoicePop();
 }
 
 let signalTimer = null;
@@ -10464,6 +10502,93 @@ function closeConnPop() {
   $("conn-pop").classList.add("hidden");
   clearInterval(connTimer);
   connTimer = null;
+}
+
+function paintVoicePop() {
+  const quality = $("vp-signal").dataset.quality || "good";
+  const words = studioDockQuality(quality);
+  $("vop-quality").dataset.quality = quality;
+  $("vop-quality-line").textContent = words.line;
+  $("vop-quality-sub").textContent = words.sub;
+  $("vop-camera-icon").replaceChildren(svgIcon(state.cameraOn ? "camera" : "cameraOff", 18));
+}
+
+function placeVoicePop() {
+  const pop = $("voice-pop");
+  const dock = $("voice-panel").getBoundingClientRect();
+  const box = pop.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(dock.right + 12, window.innerWidth - box.width - 8))}px`;
+  pop.style.top = `${Math.max(8, dock.top - 26 - box.height)}px`;
+}
+
+function fillVoicePick(select, names, current) {
+  select.replaceChildren(new Option("Default", ""), ...names.map(n => new Option(n, n)));
+  select.value = names.includes(current || "") ? current : "";
+}
+
+async function fillVoicePop() {
+  try {
+    const devices = await invoke("list_audio_devices");
+    fillVoicePick($("vop-mic"), devices.inputs, state.voice.input_device);
+    fillVoicePick($("vop-speakers"), devices.outputs, state.voice.output_device);
+  } catch {
+    for (const id of ["vop-mic", "vop-speakers"]) $(id).replaceChildren(new Option("No devices found", ""));
+  }
+  const camera = $("vop-camera");
+  let cameras = [];
+  try {
+    cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+  } catch {}
+  const chosen = savedCameraId();
+  camera.replaceChildren(new Option("Off", "off"), new Option("Default", ""), ...cameras.map((d, i) => new Option(d.label || `Camera ${i + 1}`, d.deviceId)));
+  camera.value = !state.cameraOn ? "off" : cameras.some(d => d.deviceId === chosen) ? chosen : "";
+}
+
+function openVoicePop() {
+  const vs = state.voiceServer;
+  if (!vs) return;
+  closeFloating();
+  const pop = $("voice-pop");
+  const call = Boolean(vs.call);
+  $("vop-room").classList.toggle("hidden", call);
+  $("vop-room-name").textContent = call ? "" : channelTextName(vs.channelName);
+  for (const node of pop.querySelectorAll(".vop-cam")) node.classList.toggle("hidden", call);
+  for (const id of ["vop-mic", "vop-speakers", "vop-camera"]) $(id).replaceChildren(new Option("Loading...", ""));
+  paintVoicePop();
+  pop.classList.remove("hidden");
+  placeVoicePop();
+  fillVoicePop().then(placeVoicePop);
+}
+
+function wireVoicePop() {
+  $("vop-room-icon").replaceChildren(svgIcon("expand", 16));
+  $("vop-sig").replaceChildren(svgIcon("signal", 16));
+  $("vop-mic-icon").replaceChildren(svgIcon("mic", 18));
+  $("vop-speakers-icon").replaceChildren(svgIcon("headset", 18));
+  for (const mark of $("voice-pop").querySelectorAll(".vop-chev")) mark.replaceChildren(svgIcon("chevronDown", 18));
+  $("vop-room").onclick = () => {
+    closeFloating();
+    showCallGrid();
+  };
+  $("vop-quality").onclick = openConnPop;
+  const useAudio = async (input, output, done) => {
+    try {
+      state.voice = await invoke("set_audio_devices", { input: input || null, output: output || null });
+      toast(done);
+    } catch (err) {
+      toast(String(err));
+    }
+  };
+  $("vop-mic").addEventListener("change", e => useAudio(e.target.value, state.voice.output_device, "Microphone changed"));
+  $("vop-speakers").addEventListener("change", e => useAudio(state.voice.input_device, e.target.value, "Speakers changed"));
+  $("vop-camera").addEventListener("change", async e => {
+    if (e.target.value === "off") await stopCamera();
+    else {
+      await useCameraDevice(e.target.value);
+      if (!state.cameraOn) await startCamera();
+    }
+    paintVoicePop();
+  });
 }
 
 function animateToggle(button, off) {
@@ -16737,8 +16862,42 @@ function renderShareButton() {
   const btn = $("share-btn");
   btn.classList.toggle("active", state.sharing);
   btn.title = state.sharing ? "Stop sharing your screen" : "Share your screen";
-  btn.replaceChildren(svgIcon("screen", 16), el("span", null, state.sharing ? "Stop Sharing" : "Share Screen"));
+  btn.replaceChildren(svgIcon("screen", 16), el("span", null, state.sharing ? (studioDesk() ? "Sharing" : "Stop Sharing") : "Share Screen"));
   renderVoicePanel();
+}
+
+const studioHang = createStudioDockFuse();
+
+function studioDesk() {
+  return studioDockDesk(document);
+}
+
+function paintStudioDock() {
+  if (!studioLook()) return;
+  const panel = $("voice-panel");
+  const vs = state.voiceServer;
+  const desk = studioDesk() && Boolean(state.voiceChannelId && vs);
+  if (!desk) {
+    studioHang.cancel();
+    panel.dataset.dock = "";
+    return;
+  }
+  const call = vs.call ? state.call : null;
+  const words = studioDockWords({
+    status: call && call.state !== "active" ? "Calling" : "Voice Connected",
+    where: call ? `Call with ${vs.name}` : `${channelTextName(vs.channelName)} / ${vs.name}`,
+    muted: state.voice.muted,
+    deafened: state.voice.deafened,
+    armed: studioHang.armed(),
+  });
+  panel.dataset.dock = words.state;
+  $("vp-status-text").textContent = words.line;
+  $("vp-where").textContent = words.sub;
+  $("vp-conn-meta").title = "Connection and devices";
+  $("vp-disconnect").title = words.state === "armed" ? `Press again to leave ${call ? "the call" : channelTextName(vs.channelName)}` : "Hang up";
+  const here = !call && state.view === "server" && state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
+  const invite = $("vp-invite");
+  if (invite) invite.classList.toggle("hidden", !(here && here.can_invite));
 }
 
 function renderVoicePanel() {
@@ -16747,6 +16906,7 @@ function renderVoicePanel() {
   panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
   syncSignalPolling(Boolean(state.voiceChannelId && vs));
   renderPhoneVoice();
+  paintStudioDock();
   if (!state.voiceChannelId || !vs) return renderCamGrid();
 
   const call = vs.call ? state.call : null;
@@ -16800,6 +16960,7 @@ function renderVoicePanel() {
     row.appendChild(watch);
     streams.appendChild(row);
   }
+  paintStudioDock();
 }
 
 function renderStageStrip(server) {
@@ -16807,6 +16968,19 @@ function renderStageStrip(server) {
   const channel = server && !server.group ? server.channels.find(c => c.id === state.voiceChannelId) : null;
   const hand = channel && state.user ? handState(channel, state.user.id, Boolean(server.can_manage_stage)) : null;
   strip.classList.toggle("hidden", !hand);
+  const key = $("vp-hand-key");
+  const audience = Boolean(hand) && hand.role !== "speaker";
+  $("voice-panel").classList.toggle("in-audience", audience);
+  if (key) {
+    key.classList.toggle("hidden", !audience);
+    key.classList.toggle("on", audience && hand.raised);
+    key.setAttribute("aria-pressed", String(audience && hand.raised));
+    if (audience) {
+      key.title = hand.title;
+      key.setAttribute("aria-label", hand.label);
+      key.onclick = () => toggleHand(!hand.raised);
+    }
+  }
   if (!hand) return;
   $("vp-stage-icon").replaceChildren(svgIcon(hand.role === "speaker" ? "mic" : "hand", 14));
   $("vp-stage-text").textContent = hand.text;
@@ -17463,6 +17637,7 @@ function renderUserPanel() {
   $("mute-btn").title = state.voice.muted ? "Unmute" : talkTitle || "Mute";
   $("mute-btn").classList.toggle("talking", Boolean(state.talking) && !state.voice.muted);
   $("deafen-btn").title = state.voice.deafened ? "Undeafen" : "Deafen";
+  paintStudioDock();
   renderPhoneVoice();
   if (state.currentServer && state.voiceChannelId && state.view === "server") renderChannels();
 }
@@ -21314,9 +21489,9 @@ function wireEvents() {
     applyAvatar("none");
   };
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #vp-conn-meta, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
@@ -21872,15 +22047,50 @@ function wireEvents() {
   $("vp-change-source").onclick = openSharePicker;
   $("vp-stop-watch").onclick = stopWatching;
   $("vp-watch-label").onclick = showWatchedStream;
-  $("vp-disconnect").onclick = disconnectVoice;
+  $("vp-disconnect").onclick = () => {
+    if (!studioDesk() || studioHang.press() === "leave") disconnectVoice();
+  };
+  studioHang.watch(paintStudioDock);
+  for (const type of ["pointerdown", "keydown"]) {
+    document.addEventListener(type, e => {
+      if (studioHang.armed() && !$("vp-disconnect").contains(e.target)) studioHang.cancel();
+    }, true);
+  }
+  if ($("vp-invite")) $("vp-invite").onclick = () => $("invite-btn").click();
+  for (const [id, open] of [["mute-btn", key => toggleAudioPop("input", key)], ["deafen-btn", key => toggleAudioPop("output", key)], ["vp-camera", key => toggleVideoPop(key)]]) {
+    $(id).addEventListener("contextmenu", e => {
+      if (!studioDesk()) return;
+      e.preventDefault();
+      open($(id));
+    });
+  }
+  wireVoicePop();
+  $("chm-activities").onclick = () => {
+    closeFloating();
+    if (activityUi.run) toggleActivityPanel(true);
+    else openActivityPicker();
+  };
+  let dockFit = document.documentElement.dataset.fit;
+  window.addEventListener("resize", () => {
+    const fit = document.documentElement.dataset.fit;
+    if (!studioLook() || fit === dockFit) return;
+    dockFit = fit;
+    renderShareButton();
+  });
   document.querySelector(".vp-status").title = "Connection details";
   document.querySelector(".vp-status").addEventListener("click", e => {
+    if (studioDesk()) return;
     e.stopPropagation();
     if ($("conn-pop").classList.contains("hidden")) openConnPop();
     else closeConnPop();
   });
   $("vp-conn-meta").onclick = () => {
     if (!state.voiceServer) return;
+    if (studioDesk()) {
+      if ($("voice-pop").classList.contains("hidden")) openVoicePop();
+      else closeFloating();
+      return;
+    }
     if (state.voiceServer.call) return messageUser(state.voiceServer.call, state.voiceServer.name);
     if (!state.currentServer || state.currentServer.id !== state.voiceServer.id) {
       selectServer(state.voiceServer.id);
@@ -25058,6 +25268,10 @@ function showVoiceCallMenuItems(channel) {
   $("chm-voice-join").textContent = state.voiceChannelId === channel.id ? "Disconnect" : "Join Voice";
   $("chm-voice-join").classList.toggle("hidden", !voice);
   $("chm-voice-invite").classList.toggle("hidden", !voice);
+  const run = activityUi.run;
+  const here = voice && studioDesk() && state.voiceChannelId === channel.id && (Boolean(run) || voiceServerAllowsActivities());
+  $("chm-activities").classList.toggle("hidden", !here);
+  $("chm-activities").textContent = run ? `Open ${activityName(run.activity)}` : "Activities";
 }
 
 function voiceInviteSource(serverId, channelId) {

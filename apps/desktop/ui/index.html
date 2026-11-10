@@ -3323,6 +3323,17 @@
     <div class="conn-foot" id="conn-foot"></div>
   </div>
 
+  <div class="voice-pop hidden" id="voice-pop" role="dialog" aria-label="Voice">
+    <button class="vop-room" id="vop-room" type="button"><span class="vop-icon" id="vop-room-icon"></span><span>Open room</span><small id="vop-room-name"></small></button>
+    <button class="vop-quality" id="vop-quality" type="button" data-quality="good" title="Connection details"><span class="vop-sig" id="vop-sig"></span><b id="vop-quality-line">Good connection</b><small id="vop-quality-sub">Voice is clear</small></button>
+    <label class="vop-label" for="vop-mic">Microphone</label>
+    <div class="vop-pick"><span class="vop-icon" id="vop-mic-icon"></span><select id="vop-mic"></select><span class="vop-chev"></span></div>
+    <label class="vop-label" for="vop-speakers">Speakers</label>
+    <div class="vop-pick"><span class="vop-icon" id="vop-speakers-icon"></span><select id="vop-speakers"></select><span class="vop-chev"></span></div>
+    <label class="vop-label vop-cam" for="vop-camera">Camera</label>
+    <div class="vop-pick vop-cam"><span class="vop-icon" id="vop-camera-icon"></span><select id="vop-camera"></select><span class="vop-chev"></span></div>
+  </div>
+
   <div class="audio-pop hidden" id="audio-pop">
     <div class="ap-title" id="ap-title">Input Device</div>
     <select id="ap-device" class="compact-select"></select>
@@ -3388,6 +3399,7 @@
     <button id="chm-read">Mark As Read</button>
     <button id="chm-voice-join" class="hidden">Join Voice</button>
     <button id="chm-voice-invite" class="hidden">Invite to Call</button>
+    <button id="chm-activities" class="hidden">Activities</button>
     <button id="chm-pin">Pin Channel</button>
     <div class="ctx-sep"></div>
     <div class="ctx-label">Notifications</div>
@@ -3447,6 +3459,7 @@
   <script src="scripts/studio-room.js"></script>
   <script src="vendor/phosphor/icons.js"></script>
   <script src="scripts/studio-icons.js"></script>
+  <script src="scripts/studio-dock.js"></script>
   <script src="scripts/server-tags.js"></script>
   <script src="scripts/overlay-view.js"></script>
   <script src="scripts/profile-look.js"></script>
