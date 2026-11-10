@@ -132,8 +132,10 @@ function youMarkup() {
 <div class="seg" role="group" aria-label="Theme"><button type="button" class="key tap" data-theme-choice="dark" aria-pressed="false"><i class="led"></i>Night</button><button type="button" class="key tap" data-theme-choice="light" aria-pressed="false"><i class="led"></i>Day</button></div>
 </div>
 <button type="button" class="srow" id="pt-glass" role="switch" aria-checked="false"><i data-i="layers"></i><span class="l">Glass<small>Off is lighter on the battery</small></span><i class="tog"></i></button>
-<div class="sec lbl">More</div>
-<button type="button" class="srow" id="pt-settings"><i data-i="settings"></i><span class="l">All settings</span><i data-i="chevron-right"></i></button>
+<div class="sec lbl" id="pt-notify-lbl">Notify me about</div>
+<div class="picks" role="radiogroup" aria-labelledby="pt-notify-lbl">${NOTIFY_PICKS.map(pick => `<button type="button" class="srow pick" role="radio" aria-checked="false" data-notify="${pick.level}"><i data-i="${pick.icon}"></i><span class="l">${pick.label}</span><i data-i="check" class="tick"></i></button>`).join("")}</div>
+<button type="button" class="srow go" id="pt-settings"><i data-i="settings"></i><span class="l">All settings</span><i data-i="chevron-right" class="chev"></i></button>
+<div class="about"><span class="star" id="pt-about-star" data-state="quiet" data-follow="off" role="img" aria-label="Commy"></span><span class="l" id="pt-about-words">Early build<small>Some of this will move.</small></span><button type="button" class="out" id="pt-sign-out">Sign out</button></div>
 </div>`;
 }
 
@@ -964,6 +966,9 @@ function paintYouPage() {
     key.setAttribute("aria-pressed", String(on));
   }
   $("pt-glass").setAttribute("aria-checked", String(document.documentElement.dataset.fx !== "lite"));
+  const level = notifyPrefs().level;
+  for (const row of document.querySelectorAll("#pt-you [data-notify]")) row.setAttribute("aria-checked", String(row.dataset.notify === level));
+  $("pt-about-words").classList.toggle("hidden", !earlyBuild(updateStatus && updateStatus.current));
 }
 
 function wireYouPage() {
@@ -972,6 +977,16 @@ function wireYouPage() {
     $("user-chip").click();
   };
   $("pt-settings").onclick = () => $("settings-btn").click();
+  $("pt-sign-out").onclick = () => signOutOfCurrent();
+  if (typeof Star !== "undefined") Star.mount($("pt-about-star"));
+  for (const row of document.querySelectorAll("#pt-you [data-notify]")) {
+    row.onclick = () => {
+      const select = $("notify-level");
+      select.value = row.dataset.notify;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      paintYouPage();
+    };
+  }
   $("pt-glass").onclick = () => {
     setLookFx(document.documentElement.dataset.fx === "lite" ? "glass" : "lite");
     paintYouPage();

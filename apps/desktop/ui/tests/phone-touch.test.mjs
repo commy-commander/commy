@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -949,4 +949,49 @@ test("an audience chip is flat: no line and no shadow", () => {
   const body = css.slice(at, css.indexOf("}", at));
   assert.match(body, /background: var\(--bg-active\);/);
   assert.doesNotMatch(body, /box-shadow|border:/);
+});
+
+test("the You page asks one question about notifications, with the app's own three answers", () => {
+  assert.deepEqual(NOTIFY_PICKS.map(pick => [pick.level, pick.label, pick.icon]), [["all", "All messages", "bell-ring"], ["mentions", "Mentions and DMs", "at-sign"], ["none", "Nothing", "bell-off"]]);
+  for (const pick of NOTIFY_PICKS) assert.ok(html.includes(`<option value="${pick.level}">${pick.label}</option>`));
+  assert.match(glue, /<div class="sec lbl" id="pt-notify-lbl">Notify me about<\/div>\n<div class="picks" role="radiogroup" aria-labelledby="pt-notify-lbl">\$\{NOTIFY_PICKS\.map\(pick => `<button type="button" class="srow pick" role="radio" aria-checked="false" data-notify="\$\{pick\.level\}">/);
+  assert.match(glue, /const level = notifyPrefs\(\)\.level;\n\s+for \(const row of document\.querySelectorAll\("#pt-you \[data-notify\]"\)\) row\.setAttribute\("aria-checked", String\(row\.dataset\.notify === level\)\);/);
+  assert.match(glue, /select\.value = row\.dataset\.notify;\n\s+select\.dispatchEvent\(new Event\("change", \{ bubbles: true \}\)\);\n\s+paintYouPage\(\);/);
+  assert.match(css, rule(' \\.srow\\.pick\\[aria-checked="true"\\]', "font-weight: 600;"));
+  assert.match(css, rule(" \\.srow\\.pick \\.tick", "color: var\\(--accent-lit\\); opacity: 0;"));
+  assert.match(css, rule(' \\.srow\\.pick\\[aria-checked="true"\\] \\.tick', "opacity: 1;"));
+  assert.match(css, rule(" \\.set \\.srow", "height: 52px;"));
+  assert.doesNotMatch(css, new RegExp(`${slim} \\.srow\\.pick \\{[^}]*font-size`));
+});
+
+test("the early build line shows only while the version is below one, and never when the version is unknown", () => {
+  assert.equal(earlyBuild("0.1.19"), true);
+  assert.equal(earlyBuild("v0.9.0-rc.2"), true);
+  assert.equal(earlyBuild("1.0.0"), false);
+  assert.equal(earlyBuild("12.4.1"), false);
+  assert.equal(earlyBuild(""), false);
+  assert.equal(earlyBuild(null), false);
+  assert.equal(earlyBuild("Commy"), false);
+  assert.match(glue, /<span class="l" id="pt-about-words">Early build<small>Some of this will move\.<\/small><\/span>/);
+  assert.match(glue, /\$\("pt-about-words"\)\.classList\.toggle\("hidden", !earlyBuild\(updateStatus && updateStatus\.current\)\);/);
+});
+
+test("the You page ends with All settings under a hairline, the star, and Sign out as red words that still ask first", () => {
+  assert.match(glue, /<button type="button" class="srow go" id="pt-settings"><i data-i="settings"><\/i><span class="l">All settings<\/span><i data-i="chevron-right" class="chev"><\/i><\/button>/);
+  assert.match(glue, /<button type="button" class="out" id="pt-sign-out">Sign out<\/button>/);
+  assert.match(glue, /\$\("pt-sign-out"\)\.onclick = \(\) => signOutOfCurrent\(\);/);
+  assert.match(read("scripts", "app.js"), /async function signOutOfCurrent\(\) \{[^}]*confirm\(/);
+  assert.match(css, rule(" \\.set \\.srow\\.go", "box-shadow: inset 0 1px 0 var\\(--line\\);"));
+  assert.match(css, rule(" \\.pt-you \\.about \\.out", "background: none;[^}]*color: var\\(--danger-text\\);"));
+  assert.doesNotMatch(css, new RegExp(`${slim} \\.out \\{`));
+  assert.doesNotMatch(glue, /<div class="sec lbl">More<\/div>/);
+});
+
+test("the You page keeps the design guide's measures, and the pressed Theme key is the darker one in Day", () => {
+  assert.match(css, rule(" \\.pt-page \\.sec", "align-items: center;\\s+height: 32px;\\s+padding: 14px 12px 0;"));
+  assert.match(css, rule(" \\.acct \\.avatar \\.presence-dot", "width: 13px; height: 13px; border: 0; box-shadow: 0 0 0 2\\.5px var\\(--bg-dark\\);"));
+  assert.match(css, rule(" \\.acct \\.t b", "margin: -\\.2em 0; padding: \\.2em 0;"));
+  assert.match(css, rule(" \\.set \\.seg", "gap: 2px; padding: 4px; border-radius: 999px;"));
+  assert.match(css, rule('\\[data-theme="light"\\] \\.seg \\.key\\.is-down', "background: var\\(--pillow-top\\), var\\(--bg-pressed\\); filter: none;"));
+  assert.match(css, rule(" \\.seg \\.key\\.is-down \\.led", "box-shadow: 0 0 0 1\\.5px rgb\\(var\\(--dark\\) / \\.5\\);"));
 });

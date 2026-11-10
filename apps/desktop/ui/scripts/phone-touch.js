@@ -261,6 +261,17 @@ function chatSubtitle({ view, serverName, group, presence }) {
   return serverName || "";
 }
 
+const NOTIFY_PICKS = [
+  { level: "all", label: "All messages", icon: "bell-ring" },
+  { level: "mentions", label: "Mentions and DMs", icon: "at-sign" },
+  { level: "none", label: "Nothing", icon: "bell-off" },
+];
+
+function earlyBuild(version) {
+  const major = /^\s*v?(\d+)\./.exec(String(version || ""));
+  return Boolean(major) && Number(major[1]) === 0;
+}
+
 function trayTap(wasOpen, place) {
   if (!wasOpen || place === "tray" || place === "outside") return "pass";
   return place === "key" ? "stay" : "close";
@@ -446,6 +457,8 @@ if (typeof module !== "undefined" && module.exports) {
     chatSubtitle,
     ROOM_KEYS,
     trayTap,
+    NOTIFY_PICKS,
+    earlyBuild,
     trayNeedsStep,
     roomTiles,
     duoTiles,
