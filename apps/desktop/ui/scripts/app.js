@@ -13674,6 +13674,7 @@ function inviteCard(text) {
   const m = TICKET_RE.exec(text || "");
   if (!m) return null;
   const card = el("div", "invite-card");
+  if (studioLook()) card.appendChild(inviteCardMark());
   card.appendChild(el("div", "invite-card-title", "You've been invited to join a server"));
   const join = el("button", "btn-primary btn-small", "Join");
   join.onclick = async () => {
@@ -26348,6 +26349,12 @@ function renderVoiceInvite(message) {
   const card = el("div", "voice-invite");
   card.dataset.server = invite.server;
   card.dataset.channel = invite.channel;
+  if (studioLook()) {
+    const mark = el("div", "voice-invite-mark");
+    mark.hidden = true;
+    mark.appendChild(studioIconNode("volume-2", 21, false));
+    card.appendChild(mark);
+  }
   const body = el("div", "voice-invite-body");
   body.appendChild(el("div", "voice-invite-kicker", "Voice call invite"));
   body.appendChild(el("div", "voice-invite-title"));

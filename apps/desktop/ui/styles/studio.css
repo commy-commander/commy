@@ -2129,11 +2129,6 @@ html[data-look="studio"][data-fit="compact"] #app.vr-open .voice-panel { bottom:
   html[data-look="studio"]:not([data-fit="slim"]) .vr-grid { --vr-row: 30; padding-top: 10px; }
   html[data-look="studio"]:not([data-fit="slim"]) .vr-head { height: 52px; }
 }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .invite-card { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px 12px; max-width: none; padding: 12px; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .invite-card-text { display: contents; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .invite-card-title { font-size: 13.5px; line-height: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .invite-card-sub { grid-column: 1 / -1; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .invite-card > button { grid-column: 1 / -1; justify-content: center; width: 100%; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .msg :not(.image-grid):not(.image-grid .image-embed) > .chat-image { max-width: 100%; max-height: 160px; border-radius: 14px; }
 html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop {
   position: fixed;
@@ -2353,3 +2348,117 @@ html[data-look="studio"]:not([data-fit="slim"]) .vr-readout {
 }
 html[data-look="studio"]:not([data-fit="slim"]) .vr-big-who .vr-live:hover ~ .vr-readout,
 html[data-look="studio"]:not([data-fit="slim"]) .vr-big-who .vr-live:focus-visible ~ .vr-readout { display: flex; }
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite {
+  container: icard / inline-size;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 440px;
+  max-width: 100%;
+  height: auto;
+  margin-top: 6px;
+  padding: 12px 14px 12px 12px;
+  border: 0;
+  border-radius: 24px;
+  background: radial-gradient(110% 150% at 0% 50%, color-mix(in srgb, var(--accent) 17%, transparent), transparent 64%), var(--pillow-top), var(--bg-raised);
+  box-shadow: var(--pillow-card);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card-mark,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg-raised));
+  box-shadow: inset 0 1px 1px rgb(var(--lamp) / .2), 0 6px 10px -6px rgb(var(--dark) / .6);
+  color: var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card-mark svg,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-mark svg { width: 21px !important; height: 21px !important; }
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card-text,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-body { display: grid; flex: none; gap: 5px; min-width: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card > .invite-card-title { grid-column: 2; min-width: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card-title,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-title {
+  overflow: visible;
+  color: var(--header-primary);
+  font: 600 14.5px/1.25 var(--font);
+  text-wrap: balance;
+  white-space: normal;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card-sub,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-status {
+  overflow: hidden;
+  color: var(--text-muted);
+  font: 400 13px/1.2 var(--font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-kicker { color: var(--accent-lit); font: 600 12px/1 var(--font); letter-spacing: 0; text-transform: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-row { display: flex; align-items: center; gap: 8px; min-width: 0; height: auto; margin-top: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-faces { display: flex; flex: none; width: auto; height: auto; }
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-faces:empty,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-more.empty { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-faces .avatar { width: 22px; height: 22px; margin-right: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--bg-raised); font-size: 9px; }
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-faces .avatar + .avatar { margin-left: -6px; }
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-status { display: -webkit-box; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card > button,
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card > button:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-join,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-join:hover {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 84px;
+  height: 40px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--pillow-top), var(--accent);
+  box-shadow: var(--pillow);
+  color: var(--accent-ink);
+  font: 600 14px/1 var(--font);
+  cursor: pointer;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card > button:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-join:hover { filter: brightness(1.12); }
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card > button:active,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-join:active { scale: .96 .93; box-shadow: var(--pillow-down); }
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card > button:disabled,
+html[data-look="studio"]:not([data-fit="slim"]) .invite-card > button:disabled:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-join:disabled,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-join:disabled:hover {
+  background: var(--k-off);
+  box-shadow: var(--k-off-shadow);
+  color: var(--text-faint);
+  filter: none;
+  scale: none;
+  cursor: not-allowed;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite:has(> .voice-invite-join:disabled) { background: var(--pillow-top), var(--bg-raised); }
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite:has(> .voice-invite-join:disabled) .voice-invite-mark { background: var(--bg-active); color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) .voice-invite:has(> .voice-invite-join:disabled) .voice-invite-kicker { color: var(--text-muted); }
+@container icard (max-width: 339px) {
+  html[data-look="studio"]:not([data-fit="slim"]) .invite-card-text,
+  html[data-look="studio"]:not([data-fit="slim"]) .invite-card > .invite-card-title,
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-body { grid-column: 2 / -1; }
+  html[data-look="studio"]:not([data-fit="slim"]) .invite-card > button,
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-join { grid-column: 1 / -1; width: 100%; }
+  html[data-look="studio"]:not([data-fit="slim"]) .invite-card-sub { display: -webkit-box; overflow-wrap: anywhere; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-row { align-items: flex-start; }
+}
+@container icard (max-width: 259px) {
+  html[data-look="studio"]:not([data-fit="slim"]) .invite-card-mark,
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-mark { display: none; }
+  html[data-look="studio"]:not([data-fit="slim"]) .invite-card-text,
+  html[data-look="studio"]:not([data-fit="slim"]) .invite-card > .invite-card-title,
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-body { grid-column: 1 / -1; padding: 2px 2px 0 4px; }
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-row { flex-wrap: wrap; gap: 6px 8px; }
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-invite-status { flex: 1 0 100%; }
+}

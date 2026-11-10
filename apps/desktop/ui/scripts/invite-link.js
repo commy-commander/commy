@@ -47,11 +47,16 @@ async function joinPendingInvite() {
   }
 }
 
+function inviteCardMark() {
+  const mark = el("div", "invite-card-mark");
+  const studio = document.documentElement.dataset.look === "studio" && typeof studioIconNode === "function";
+  mark.appendChild(studio ? studioIconNode("user-plus", 21, false) : svgIcon("serverAdd", 18));
+  return mark;
+}
+
 function inviteLinkCard(link) {
   const card = el("div", "invite-card");
-  const mark = el("div", "invite-card-mark");
-  mark.appendChild(svgIcon("serverAdd", 18));
-  card.appendChild(mark);
+  card.appendChild(inviteCardMark());
   const text = el("div", "invite-card-text");
   text.appendChild(el("div", "invite-card-title", "You've been invited to join a server"));
   const host = (/^commy:\/\/i\/([^/]+)\//i.exec(link) || [])[1] || (/^https?:\/\/([^/]+)/i.exec(link) || [])[1] || "";

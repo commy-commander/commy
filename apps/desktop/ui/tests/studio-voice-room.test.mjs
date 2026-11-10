@@ -252,8 +252,7 @@ test("in the narrow chat the hint drops the channel name when it does not fit, a
   assert.equal(voiceRoomHint("Message #welcome", 118, 110), "Message");
   assert.equal(voiceRoomHint("Message #welcome", 118, 118), "Message #welcome");
   assert.match(app, /if \(voiceRoom\.hint !== null && input\.placeholder === "Message"\) input\.placeholder = voiceRoom\.hint;/);
-  assert.ok(css.includes(`${DESK} #app.vr-open .main .invite-card { display: grid;`));
-  assert.ok(css.includes(`${DESK} #app.vr-open .main .invite-card > button { grid-column: 1 / -1;`));
+  assert.ok(!css.includes("#app.vr-open .main .invite-card"));
   assert.match(css, /#app\.vr-open \.main \.msg [^{]*> \.chat-image \{ max-width: 100%; max-height: 160px; border-radius: 14px; \}/);
 });
 
