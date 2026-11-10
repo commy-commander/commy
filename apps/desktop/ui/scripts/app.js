@@ -17534,7 +17534,7 @@ function applyMembersLayout() {
 }
 
 function narrowSplit() {
-  return isPhoneWidth(window.innerWidth) && !document.body.classList.contains("mobile-app") && window.matchMedia("(pointer: fine)").matches;
+  return !studioLook() && isPhoneWidth(window.innerWidth) && !document.body.classList.contains("mobile-app") && window.matchMedia("(pointer: fine)").matches;
 }
 
 function narrowViewServer() {
