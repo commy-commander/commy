@@ -1,0 +1,468 @@
+html[data-look="studio"] {
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5  0 0 0 0 .5  0 0 0 0 .5  0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+html[data-look="studio"],
+html[data-look="studio"] .theme-dark {
+  --k-plain: var(--glass-hi), var(--glass-key);
+  --k-plain-hover: var(--glass-hi), var(--glass-key-hover);
+  --k-plain-shadow: var(--glass-rim), var(--glass-pool), var(--glass-drop);
+  --k-plain-fx: var(--glass-fx);
+  --k-plain-hover-filter: none;
+  --k-latched: var(--glass-key-on);
+  --k-latched-shadow: inset 0 0 0 1px rgb(var(--lamp) / .16), inset 0 2px 4px rgb(var(--dark) / .22);
+  --k-latched-filter: none;
+  --k-off: var(--glass-key-off);
+  --k-off-shadow: inset 0 0 0 1px rgb(var(--lamp) / .07);
+  --k-mute-shadow: inset 0 0 0 1px rgb(var(--lamp) / .09), inset 0 2px 4px rgb(var(--dark) / .28);
+  --bar-field: rgb(var(--lamp) / .1);
+  --bar-field-shadow: var(--glass-rim), inset 0 -7px 10px -8px rgb(var(--lamp) / .14);
+  --bar-field-fx: var(--glass-fx);
+}
+
+html[data-look="studio"][data-theme="light"],
+html[data-look="studio"] .theme-light {
+  --k-plain: var(--pillow-top), var(--bg-raised);
+  --k-plain-hover: var(--pillow-top), var(--bg-raised);
+  --k-plain-shadow: var(--pillow);
+  --k-plain-fx: none;
+  --k-plain-hover-filter: brightness(1.12);
+  --k-latched: var(--pillow-top), var(--bg-raised);
+  --k-latched-shadow: var(--pillow-down);
+  --k-latched-filter: brightness(.94);
+  --k-off: var(--bg-mid);
+  --k-off-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px rgb(var(--dark) / .3);
+  --k-mute-shadow: inset 0 0 0 1px rgb(var(--dark) / .1), inset 0 2px 4px rgb(var(--dark) / .16);
+  --bar-field: var(--input-bg);
+  --bar-field-shadow: inset 0 0 0 1px var(--line), var(--slot);
+  --bar-field-fx: none;
+}
+
+html[data-look="studio"][data-fx="lite"]:not([data-theme="light"]) {
+  --bar-field: #272a34;
+}
+
+html[data-look="studio"] .i {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+  stroke: none;
+  overflow: visible;
+}
+html[data-look="studio"] .i .i-on { display: none; }
+html[data-look="studio"] .key .i .i-rest,
+html[data-look="studio"] .is-on > .i .i-rest,
+html[data-look="studio"] .i.on .i-rest { display: none; }
+html[data-look="studio"] .key .i .i-on,
+html[data-look="studio"] .is-on > .i .i-on,
+html[data-look="studio"] .i.on .i-on { display: inline; }
+html[data-look="studio"] .key .i.i-g,
+html[data-look="studio"] .is-on > .i.i-g,
+html[data-look="studio"] .i.i-g.on {
+  stroke: currentColor;
+  stroke-width: 9px;
+  stroke-linejoin: round;
+}
+
+html[data-look="studio"] .slab {
+  position: relative;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 96px), var(--panel);
+  -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  border-radius: var(--radius-xl);
+  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+}
+html[data-look="studio"] .slab.thin {
+  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
+}
+html[data-look="studio"] .slab::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  padding: var(--border-w);
+  border-radius: inherit;
+  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+html[data-look="studio"] .slab::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: var(--grain);
+  mix-blend-mode: overlay;
+  opacity: .35;
+  pointer-events: none;
+}
+html[data-look="studio"] .slab > * {
+  position: relative;
+  z-index: 1;
+}
+html[data-look="studio"][data-fx="lite"] .slab,
+html[data-look="studio"] .fx-lite .slab,
+html[data-look="studio"] .slab.fx-lite {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html[data-look="studio"][data-fx="lite"] .slab::after,
+html[data-look="studio"] .fx-lite .slab::after,
+html[data-look="studio"] .slab.fx-lite::after { display: none; }
+
+html[data-look="studio"] .key {
+  --k: var(--bg-raised);
+  --k-ink: var(--header-primary);
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  margin: 0;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: var(--k-plain);
+  -webkit-backdrop-filter: var(--k-plain-fx);
+  backdrop-filter: var(--k-plain-fx);
+  box-shadow: var(--k-plain-shadow);
+  color: var(--k-ink);
+  font: 600 14px/1 var(--font);
+  letter-spacing: -.005em;
+  white-space: nowrap;
+  text-decoration: none;
+  user-select: none;
+  cursor: pointer;
+  transition: scale var(--t-hover) var(--ease-spring), box-shadow var(--t-hover) var(--ease-out), background-color var(--t-hover) var(--ease-out), filter var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"] .key:hover {
+  background: var(--k-plain-hover);
+  filter: var(--k-plain-hover-filter);
+}
+html[data-look="studio"] .key:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+html[data-look="studio"] .key.primary,
+html[data-look="studio"] .key.cream,
+html[data-look="studio"] .key.danger {
+  background: var(--pillow-top), var(--k);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--pillow);
+}
+html[data-look="studio"] .key.primary {
+  --k: var(--accent);
+  --k-ink: var(--accent-ink);
+}
+html[data-look="studio"] .key.cream {
+  --k: var(--cream);
+  --k-ink: var(--cream-ink);
+}
+html[data-look="studio"] .key.danger {
+  --k: var(--danger);
+  --k-ink: var(--danger-ink);
+}
+html[data-look="studio"] .key.primary:hover,
+html[data-look="studio"] .key.cream:hover,
+html[data-look="studio"] .key.danger:hover {
+  background: var(--pillow-top), var(--k);
+  filter: brightness(1.12);
+}
+html[data-look="studio"] .key.is-down {
+  background: var(--k-latched);
+  box-shadow: var(--k-latched-shadow);
+  filter: var(--k-latched-filter);
+}
+html[data-look="studio"] .key.primary.is-down,
+html[data-look="studio"] .key.cream.is-down,
+html[data-look="studio"] .key.danger.is-down {
+  background: var(--pillow-top), var(--k);
+  box-shadow: var(--pillow-down);
+  filter: brightness(.94);
+}
+html[data-look="studio"] .key:active {
+  scale: .96 .93;
+  box-shadow: var(--pillow-down);
+  transition-duration: var(--t-press);
+  transition-timing-function: var(--ease-out);
+}
+html[data-look="studio"] .key.latch.is-down,
+html[data-look="studio"] .key.muted {
+  --k-ink: var(--text-muted);
+  background: var(--mute-k);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--k-mute-shadow);
+  filter: none;
+}
+html[data-look="studio"] .key:disabled,
+html[data-look="studio"] .key.is-off {
+  --k-ink: var(--text-faint);
+  background: var(--k-off);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--k-off-shadow);
+  filter: none;
+  scale: none;
+  cursor: not-allowed;
+}
+html[data-look="studio"] .key.sq {
+  width: 40px;
+  padding: 0;
+  border-radius: 50%;
+}
+html[data-look="studio"] .key.sm {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+html[data-look="studio"] .key.sm.sq {
+  width: 32px;
+  padding: 0;
+}
+html[data-look="studio"] .key.tap {
+  height: 44px;
+  padding: 0 20px;
+}
+html[data-look="studio"] .key.tap.sq {
+  width: 44px;
+  padding: 0;
+}
+html[data-look="studio"] .key.lg {
+  height: 54px;
+  padding: 0 26px;
+  font-size: 16px;
+}
+html[data-look="studio"] .key.lg.sq {
+  width: 54px;
+  padding: 0;
+}
+html[data-look="studio"] .key .i {
+  width: 18px;
+  height: 18px;
+}
+html[data-look="studio"] .key.lg .i {
+  width: 20px;
+  height: 20px;
+}
+
+html[data-look="studio"] .led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 2px rgb(var(--dark) / .5);
+}
+html[data-look="studio"] .key > .led {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  margin-top: -3px;
+}
+html[data-look="studio"] .key.sq > .led {
+  top: 12%;
+  right: 12%;
+  margin-top: 0;
+}
+html[data-look="studio"] .key.sm.latch:not(.sq) { padding-right: 24px; }
+html[data-look="studio"] .key.latch.is-down > .led,
+html[data-look="studio"] .key.muted > .led { display: none; }
+
+html[data-look="studio"] form.bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+}
+html[data-look="studio"] form.bar::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  right: -14px;
+  bottom: -9px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line-glow);
+  box-shadow: 0 0 14px 2px color-mix(in srgb, var(--tint-1) 50%, transparent);
+  pointer-events: none;
+}
+html[data-look="studio"] form.bar::after {
+  content: "";
+  position: absolute;
+  left: -14px;
+  bottom: -9px;
+  width: 120px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--white), transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+html[data-look="studio"] form.bar.fire::after { animation: studio-line-sweep 460ms var(--ease-out); }
+@keyframes studio-line-sweep {
+  0% { opacity: 0; left: -14px; }
+  15% { opacity: 1; }
+  100% { opacity: 0; left: calc(100% - 106px); }
+}
+html[data-look="studio"] form.bar .plus {
+  width: 46px;
+  height: 46px;
+}
+html[data-look="studio"] form.bar .plus .i {
+  width: 19px;
+  height: 19px;
+  stroke-width: 2px;
+  transition: rotate 220ms var(--ease-spring);
+}
+html[data-look="studio"] form.bar.is-open .plus .i { rotate: 45deg; }
+html[data-look="studio"] form.bar .slot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  container-type: inline-size;
+}
+html[data-look="studio"] form.bar .cfield {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 18px;
+  border-radius: var(--radius-pill);
+  background: var(--bar-field);
+  -webkit-backdrop-filter: var(--bar-field-fx);
+  backdrop-filter: var(--bar-field-fx);
+  box-shadow: var(--bar-field-shadow);
+  cursor: text;
+  transform-origin: 0 50%;
+  transition: scale 200ms var(--ease-settle), opacity 120ms var(--ease-out);
+}
+html[data-look="studio"] form.bar .cfield:focus-within { box-shadow: 0 0 0 1.5px var(--focus); }
+html[data-look="studio"] form.bar .cfield input,
+html[data-look="studio"] form.bar .cfield textarea {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--header-primary);
+  font: 400 15px/1 var(--font);
+}
+html[data-look="studio"] form.bar .cfield input::placeholder,
+html[data-look="studio"] form.bar .cfield textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+html[data-look="studio"] form.bar .cfield .right {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+html[data-look="studio"] form.bar .mini {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  font: 600 13px/1 var(--font);
+  cursor: pointer;
+  transition: background var(--t-hover), color var(--t-hover);
+}
+html[data-look="studio"] form.bar .mini.gif { font-size: 12px; }
+html[data-look="studio"] form.bar .mini:hover {
+  background: var(--bg-hover);
+  color: var(--header-primary);
+}
+html[data-look="studio"] form.bar .mini:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+html[data-look="studio"] form.bar .copts {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+html[data-look="studio"] form.bar .opt-k {
+  flex: 0 0 104px;
+  width: 104px;
+  min-width: 0;
+  height: 42px;
+  padding: 0;
+  translate: 0 10px;
+  opacity: 0;
+  transition: translate 140ms var(--ease-out), opacity 100ms var(--ease-out), box-shadow var(--t-hover), filter var(--t-hover);
+}
+@container (max-width: 470px) {
+  html[data-look="studio"] form.bar .opt-k {
+    flex: 0 0 42px;
+    width: 42px;
+    gap: 0;
+    border-radius: 50%;
+    font-size: 0;
+  }
+}
+html[data-look="studio"] form.bar.is-open .cfield {
+  scale: .05 1;
+  opacity: 0;
+  pointer-events: none;
+}
+html[data-look="studio"] form.bar.is-open .copts { pointer-events: auto; }
+html[data-look="studio"] form.bar.is-open .opt-k {
+  translate: 0 0;
+  opacity: 1;
+  transition: translate 280ms var(--ease-spring), opacity 120ms var(--ease-out), box-shadow var(--t-hover), filter var(--t-hover);
+}
+html[data-look="studio"] form.bar.is-open .opt-k:nth-child(1) { transition-delay: 40ms, 40ms, 0s, 0s; }
+html[data-look="studio"] form.bar.is-open .opt-k:nth-child(2) { transition-delay: 80ms, 80ms, 0s, 0s; }
+html[data-look="studio"] form.bar.is-open .opt-k:nth-child(3) { transition-delay: 120ms, 120ms, 0s, 0s; }
+html[data-look="studio"] form.bar.is-open .opt-k:nth-child(4) { transition-delay: 160ms, 160ms, 0s, 0s; }
+html[data-look="studio"] form.bar .send {
+  width: 48px;
+  height: 48px;
+}
+html[data-look="studio"] form.bar .send .i {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.2px;
+}
+html[data-look="studio"]:not([data-theme="light"]) form.bar.has-text .send { --k: var(--white); }
+html[data-look="studio"] form.bar:not(.has-text) .send {
+  --k-ink: var(--text-faint);
+  background: var(--k-plain);
+  -webkit-backdrop-filter: var(--k-plain-fx);
+  backdrop-filter: var(--k-plain-fx);
+  box-shadow: var(--k-plain-shadow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"] .key,
+  html[data-look="studio"] form.bar .cfield,
+  html[data-look="studio"] form.bar .opt-k,
+  html[data-look="studio"] form.bar .plus .i {
+    transition-duration: .001s;
+    transition-delay: 0s;
+  }
+  html[data-look="studio"] form.bar.fire::after { animation: none; }
+}
