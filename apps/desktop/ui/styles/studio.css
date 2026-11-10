@@ -2147,6 +2147,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop .sb-muted { marg
 html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop .sb-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 8px -6px -8px; padding: 0 6px 8px; }
 html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop .sb-section { padding: 6px 2px 0; color: var(--text-muted); font: 600 12.5px/1 var(--font); letter-spacing: 0; text-transform: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop .sb-section:first-child { padding-top: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop .sb-grid.sb-one .sb-section,
+html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop .sb-grid.sb-one .sb-empty { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop .sb-empty { padding: 0 2px; color: var(--text-muted); font-size: 13px; line-height: 18px; }
 html[data-look="studio"]:not([data-fit="slim"]) .soundboard-pop .sb-sound {
   position: relative;

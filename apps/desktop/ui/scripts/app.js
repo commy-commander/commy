@@ -6011,12 +6011,25 @@ function dressSoundboardPop(pop) {
   shut.title = "Close";
   shut.appendChild(studioIconNode("x", 14, false));
   shut.onclick = () => pop.classList.add("hidden");
-  pop.querySelector(".sb-head").append(el("small", "sb-line", "Played to the whole room. Use wisely."), shut);
+  pop.querySelector(".sb-head").append(el("small", "sb-line", "Played to the whole room."), shut);
 }
 
 function soundPadMark(emoji) {
   if (emoji) return soundEmojiNode(emoji);
   return studioDesk() ? null : svgIcon("soundboard", 14);
+}
+
+function soundGroupsAlone(grid) {
+  let groups = 0;
+  let open = false;
+  for (const node of grid.children) {
+    if (node.classList.contains("sb-section")) open = true;
+    else if (open && node.classList.contains("sb-sound") && !node.classList.contains("sb-plus")) {
+      groups += 1;
+      open = false;
+    }
+  }
+  return groups <= 1;
 }
 
 function soundAddPad() {
@@ -16114,7 +16127,8 @@ async function toggleSoundboardPop() {
       ? "No server sounds yet. Choose Add sound to upload one."
       : "This server has no sounds of its own yet."));
   }
-  if (canAdd && studioDesk()) grid.appendChild(soundAddPad());
+  const addPad = canAdd && studioDesk() ? soundAddPad() : null;
+  if (addPad) grid.appendChild(addPad);
   let others = [];
   try {
     others = (await invoke("list_shareable_sounds")).filter(s => s.server !== server.id);
@@ -16145,6 +16159,9 @@ async function toggleSoundboardPop() {
   }
   grid.appendChild(el("div", "sb-section", "Default"));
   for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
+  const alone = soundGroupsAlone(grid);
+  grid.classList.toggle("sb-one", alone);
+  if (alone && addPad) grid.appendChild(addPad);
   $("sb-muted").classList.toggle("hidden", soundboardPrefs().enabled);
   dressSoundboardPop(pop);
   pop.classList.remove("hidden");

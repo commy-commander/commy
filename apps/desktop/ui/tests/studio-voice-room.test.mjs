@@ -239,10 +239,13 @@ test("the soundboard pane rises out of the wide dock where the guide draws it", 
 test("a soundboard pad is its name, with the sound's own emoji when it has one, on the desktop fit", () => {
   assert.match(app, /function soundPadMark\(emoji\) \{\n  if \(emoji\) return soundEmojiNode\(emoji\);\n  return studioDesk\(\) \? null : svgIcon\("soundboard", 14\);\n\}/);
   assert.equal((app.match(/const mark = soundPadMark\(/g) || []).length, 2);
-  assert.match(app, /if \(canAdd && studioDesk\(\)\) grid\.appendChild\(soundAddPad\(\)\);/);
+  assert.match(app, /const addPad = canAdd && studioDesk\(\) \? soundAddPad\(\) : null;/);
   assert.match(app, /for \(const node of pop\.querySelectorAll\("\.sb-line, \.sb-x"\)\) node\.remove\(\);\n  if \(!studioDesk\(\)\) return;/);
   for (const part of [".sb-sound", ".sb-line", ".sb-x", ".sb-section", ".sb-sound.hit::after"]) assert.ok(css.includes(`${DESK} .soundboard-pop ${part}`), part);
   for (const part of [".pt-tray-grab", ".pt-tray-line", ".pt-tray-add"]) assert.ok(css.includes(`${DESK} .soundboard-pop ${part}`), part);
+  assert.match(app, /el\("small", "sb-line", "Played to the whole room\."\)/);
+  assert.match(app, /const alone = soundGroupsAlone\(grid\);\n  grid\.classList\.toggle\("sb-one", alone\);\n  if \(alone && addPad\) grid\.appendChild\(addPad\);/);
+  assert.ok(css.includes(`${DESK} .soundboard-pop .sb-grid.sb-one .sb-section,`));
 });
 
 test("in the narrow chat the hint drops the channel name when it does not fit, and cards stack", () => {
