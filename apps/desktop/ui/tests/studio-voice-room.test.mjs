@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, voiceRoomSoundsPlace, voiceRoomHint, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
+const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
 const { callTiles } = require("../scripts/stream-view.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
@@ -284,4 +284,70 @@ test("volume opens a small glass popover with a slider, and Allow drawing lists 
   assert.match(app, /stop\.onclick = \(\) => invoke\("block_stream_ink", \{ userId: drawer\.id \}\)/);
   assert.match(app, /renderStageDrawers\(own\.drawers\);\n      setVoiceRoomDrawers\(own\.drawers\);/);
   for (const part of [".vr-pop {", ".vr-slider input[type=\"range\"]::-webkit-slider-thumb {", ".vr-pop-row {", ".vr-pop-pen {"]) assert.ok(css.includes(`${DESK} ${part}`), part);
+});
+
+test("after hang up the dock says you left, in one line that is never cut", () => {
+  assert.deepEqual(voiceRoomLeftWords("General", () => true), { line: "Not in voice", sub: "You left General. It noticed." });
+  assert.deepEqual(voiceRoomLeftWords("General", () => false), { line: "Not in voice", sub: "You left General." });
+  assert.equal(voiceRoomLeftWords(" Late night games ").sub, "You left Late night games. It noticed.");
+  const asked = [];
+  voiceRoomLeftWords("General", text => asked.push(text) > 0);
+  assert.deepEqual(asked, ["You left General. It noticed."]);
+  assert.equal(VOICE_ROOM_REST.left, 30000);
+  assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel[data-dock="left"] .vp-where { overflow: hidden; text-overflow: clip; white-space: nowrap; }`));
+});
+
+test("while you are out everyone is a card, yours is marked, and nobody's picture plays", () => {
+  const inside = voiceRoomPeople({ userIds: ["a", "b", "c"], names: ["ash", "bo", "cy"], muted: [false, true, false], deafened: [], speaking: [], shares: [{ user: "a" }], cameras: ["c"], meId: "me" });
+  const out = voiceRoomAway(inside, { id: "me", name: "Me", at: 1, shared: false });
+  assert.deepEqual(out.map(person => person.id), ["a", "me", "b", "c"]);
+  assert.deepEqual(out.map(person => person.live), [true, false, false, true]);
+  assert.ok(out.every(person => !person.camera));
+  assert.deepEqual(out[1], { id: "me", name: "Me", me: true, away: true, live: false, camera: false, state: "left" });
+  assert.equal(out[2].state, "muted");
+  assert.equal(voiceRoomAway(inside, { id: "me", name: "Me", at: 1, shared: true })[1].state, "");
+  assert.deepEqual(voiceRoomAway(inside, { id: "me", name: "Me", at: -1 }).map(person => person.id), ["a", "b", "c", "me"]);
+  assert.deepEqual(voiceRoomAway(inside, { id: "me", name: "Me", at: 9 }).map(person => person.id), ["a", "b", "c", "me"]);
+  assert.deepEqual(voiceRoomAway([...inside, { id: "me", name: "Me", me: true }], { id: "me", name: "Me", at: 0 }).map(person => person.id), ["me", "a", "b", "c"]);
+  assert.match(app, /const word = person\.state === "left" \? "left the room" : quiet;\n    card\.classList\.toggle\("away", Boolean\(person\.away\)\);/);
+  assert.match(app, /if \(card\.classList\.contains\("away"\)\) return;/);
+  assert.ok(css.includes(`${DESK} .vr-card.away { opacity: .5; cursor: default; }`));
+  assert.match(app, /\$\("vr-invite"\)\.classList\.toggle\("hidden", !server\.can_invite \|\| Boolean\(left\)\);/);
+  assert.match(app, /\$\("vr-activities"\)\.classList\.toggle\("hidden", Boolean\(left\) \|\| /);
+});
+
+test("your stream's tile stays as dark glass when you leave or stop, in the place it had", () => {
+  assert.deepEqual(VOICE_ROOM_ENDED.left, ["You left the room.", "Your screen stopped with you."]);
+  assert.deepEqual(VOICE_ROOM_ENDED.stopped, ["You stopped sharing.", "Share Screen brings it back."]);
+  assert.equal(VOICE_ROOM_REST.stopped, 4000);
+  const tiles = [{ key: "screen:a", kind: "screen" }, { key: "camera:b", kind: "camera" }];
+  assert.deepEqual(voiceRoomGhostTiles(tiles, "screen:me").map(tile => tile.key), ["screen:a", "screen:me", "camera:b"]);
+  assert.equal(voiceRoomGhostTiles(tiles, "screen:me")[1].kind, "screen");
+  assert.equal(voiceRoomGhostTiles(tiles, "screen:a"), tiles);
+  assert.equal(voiceRoomGhostTiles(tiles, ""), tiles);
+  assert.deepEqual(voiceRoomGhostTiles([], "screen:me").map(tile => tile.key), ["screen:me"]);
+  const laid = voiceRoomLayout({ width: 1032, height: 600, items: voiceRoomItems(voiceRoomGhostTiles([], "screen:me"), [{ id: "a" }, { id: "me" }]) });
+  assert.equal(laid.mode, "quarters");
+  assert.equal(laid.placed[0].key, "screen:me");
+  assert.match(app, /if \(wanted\.has\(tile\.dataset\.key\)\) continue;\n    keepVoiceRoomGhost\(tile\);\n    tilePainter\(tile\)\.clear\(\);/);
+  assert.match(app, /if \(ghost && tiles\.some\(t => t\.key === ghost\.key\)\) dropVoiceRoomGhost\(\);/);
+  assert.match(app, /\}, VOICE_ROOM_REST\.stopped\);/);
+  for (const part of [".vr-ghost {", ".vr-ghost .vr-still {", ".vr-ended {", ".vr-ended b { font: 700 17px/1.2 var(--font-display); letter-spacing: -.01em; }"]) assert.ok(css.includes(`${DESK} ${part}`), part);
+});
+
+test("the room waits thirty seconds with a Rejoin key where hang up was, and its keys rest", () => {
+  assert.match(app, /timer: setTimeout\(\(\) => closeVoiceRoom\(\), VOICE_ROOM_REST\.left\),/);
+  assert.match(app, /await invoke\("set_voice_channel", \{ serverId: state\.voiceServer\.id, channelId: null \}\);\n    restVoiceRoom\(room, shared\);\n    state\.voiceChannelId = null;/);
+  assert.match(app, /panel\.classList\.toggle\("hidden", !\(state\.voiceChannelId && vs\) && !voiceRoomLeft\(\)\);/);
+  assert.match(app, /return left && voiceRoom\.open && studioDesk\(\) && state\.view === "server" && state\.currentServer && state\.currentServer\.id === left\.server \? left : null;/);
+  assert.match(app, /if \(voiceRoom\.left && callChannelHere\(\)\) dropVoiceRoomLeft\(\);/);
+  assert.match(app, /voiceRoom\.open = false;\n  dropVoiceRoomLeft\(\);\n  dropVoiceRoomGhost\(\);/);
+  assert.match(app, /for \(const id of \["mute-btn", "deafen-btn", "vp-camera", "share-btn", "vp-soundboard", "vp-hand-key"\]\) \{\n    const key = document\.getElementById\(id\);\n    if \(key\) key\.disabled = resting;/);
+  assert.match(app, /key = el\("button", "key primary vp-rejoin hidden"\);/);
+  assert.match(app, /await toggleVoice\(channel, true\);/);
+  assert.match(app, /back \? `Back in \$\{channelTextName\(channel\.name\)\}\.` :/);
+  assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel .vp-rejoin {`));
+  assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel[data-dock="left"] .vp-hangup,`));
+  assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel[data-dock="left"] .vp-meter i { background: var(--text-faint); scale: 1 .08; animation: none; }`));
+  assert.ok(css.includes(`${DESK} #app.vr-open .vp-activities.vp-share:not(.active)::after {`));
 });

@@ -2016,7 +2016,19 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-voice > .icon-b
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-actions { display: flex; flex: none; order: 3; gap: 8px; margin: 0; padding: 0 16px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities { flex: none; gap: 7px; height: 40px; padding: 0 16px; font-size: 14px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities > svg { width: 17px !important; height: 17px !important; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share.active { padding-right: 26px; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share { position: relative; padding-right: 26px; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share:not(.active)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  box-shadow: 0 0 0 2px rgb(var(--dark) / .5);
+}
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-meter { position: absolute; top: 20px; right: 48px; height: 24px; margin: 0; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn .vp-hangup,
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn .vp-hangup:hover { top: 10px; right: -18px; width: 46px; height: 46px; }
@@ -2105,8 +2117,8 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .awaited-ba
 @media (max-width: 1040px) {
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities > span { display: none; }
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities,
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share.active { width: 46px; padding: 0; }
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share.active::after { top: 6px; right: 6px; margin-top: 0; }
+  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share { width: 46px; padding: 0; }
+  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share::after { top: 6px; right: 6px; margin-top: 0; }
 }
 html[data-look="studio"][data-fit="compact"] #app.vr-open .vp-signal { display: grid; }
 html[data-look="studio"][data-fit="compact"] #app.vr-open .vp-meter { display: flex; }
@@ -2246,3 +2258,70 @@ html[data-look="studio"]:not([data-fit="slim"]):not([data-theme="light"]) .vr-ke
   backdrop-filter: var(--glass-fx);
   box-shadow: var(--glass-rim), var(--glass-pool), var(--glass-drop);
 }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-ghost {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 24px;
+  background: #000;
+  box-shadow: 0 0 0 1px var(--rim-soft), 0 2px 3px rgb(var(--dark) / .45), 0 18px 24px -10px rgb(var(--dark) / .65);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .vr-ghost .vr-still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  filter: saturate(.2) brightness(.6);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .vr-ended {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: inherit;
+  background: var(--video-scrim);
+  color: var(--video-ink);
+  text-align: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .vr-ended b { font: 700 17px/1.2 var(--font-display); letter-spacing: -.01em; }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-ended span { color: var(--text-muted); font: 400 13.5px/1.3 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-card.away { opacity: .5; cursor: default; }
+html[data-look="studio"]:not([data-fit="slim"]) .vr-card.away .vr-word { color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-status { color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-signal { color: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-conn-meta { cursor: default; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-where { overflow: hidden; text-overflow: clip; white-space: nowrap; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-meter i { background: var(--text-faint); scale: 1 .08; animation: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-hangup,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-voice .icon-btn::after,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-activities::after { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-voice .icon-btn:disabled,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-voice .icon-btn:disabled:hover,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-activities:disabled,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-activities:disabled:hover {
+  background: var(--bg-mid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px rgb(var(--dark) / .3);
+  color: var(--text-faint);
+  filter: none;
+  scale: none;
+  cursor: not-allowed;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-rejoin {
+  position: absolute;
+  top: 11px;
+  right: -24px;
+  z-index: 4;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px 0 14px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-rejoin.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-rejoin > svg { width: 19px !important; height: 19px !important; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-voice #vp-camera:disabled,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-dock="left"] .vp-voice #vp-camera:disabled:hover { background: rgb(var(--lamp) / .06); box-shadow: inset 0 0 0 1px var(--line); }

@@ -153,6 +153,32 @@ function voiceRoomPeople({ userIds, names, muted, deafened, speaking, shares, ca
   });
 }
 
+const VOICE_ROOM_REST = { left: 30000, stopped: 4000 };
+const VOICE_ROOM_ENDED = {
+  left: ["You left the room.", "Your screen stopped with you."],
+  stopped: ["You stopped sharing.", "Share Screen brings it back."],
+};
+
+function voiceRoomLeftWords(room, fits) {
+  const name = String(room || "").trim();
+  const whole = `You left ${name}. It noticed.`;
+  return { line: "Not in voice", sub: !fits || fits(whole) ? whole : `You left ${name}.` };
+}
+
+function voiceRoomAway(people, me) {
+  const rest = (people || []).filter(person => person.id !== me.id).map(person => ({ ...person, me: false, live: Boolean(person.live || person.camera), camera: false }));
+  const at = Number.isInteger(me.at) && me.at >= 0 ? Math.min(me.at, rest.length) : rest.length;
+  rest.splice(at, 0, { id: me.id, name: me.name || "", me: true, away: true, live: false, camera: false, state: me.shared ? "" : "left" });
+  return rest;
+}
+
+function voiceRoomGhostTiles(tiles, key) {
+  const list = tiles || [];
+  if (!key || list.some(tile => tile.key === key)) return list;
+  const at = list.filter(tile => tile.kind === "screen").length;
+  return [...list.slice(0, at), { key, kind: "screen", ghost: true }, ...list.slice(at)];
+}
+
 function voiceRoomItems(tiles, people) {
   const streams = (tiles || []).filter(tile => tile.kind === "screen").map(tile => ({ key: tile.key, kind: "stream" }));
   const cameras = (tiles || []).filter(tile => tile.kind === "camera").map(tile => ({ key: tile.key, kind: "camera" }));
@@ -266,5 +292,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, VOICE_ROOM_QUALITY, voiceRoomCols, voiceRoomPlaceRows, voiceRoomTiles, voiceRoomCards, voiceRoomQuarters, voiceRoomExpanded, voiceRoomLayout, voiceRoomQuality, voiceRoomPeople, voiceRoomItems, voiceRoomSub, VOICE_ROOM_SOUNDS, voiceRoomSoundsPlace, voiceRoomHint, mountStudioVoiceRoom };
+  module.exports = { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, VOICE_ROOM_QUALITY, voiceRoomCols, voiceRoomPlaceRows, voiceRoomTiles, voiceRoomCards, voiceRoomQuarters, voiceRoomExpanded, voiceRoomLayout, voiceRoomQuality, voiceRoomPeople, voiceRoomItems, voiceRoomSub, VOICE_ROOM_SOUNDS, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, mountStudioVoiceRoom };
 }

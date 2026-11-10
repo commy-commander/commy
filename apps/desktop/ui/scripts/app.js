@@ -5716,6 +5716,7 @@ function renderCamGrid() {
   const wanted = new Set(tiles.map(t => t.key));
   for (const tile of [...grid.querySelectorAll(".cam-tile")]) {
     if (wanted.has(tile.dataset.key)) continue;
+    keepVoiceRoomGhost(tile);
     tilePainter(tile).clear();
     tile.remove();
   }
@@ -5981,7 +5982,7 @@ function backToCallGrid() {
   renderVoicePanel();
 }
 
-const voiceRoom = { open: false, folded: true, chat: true, watcher: null, viewers: 0, fps: 0, lines: 0, hint: null, ruler: null, ink: new Map(), inkRaf: 0, drawers: [], popFor: null, pen: { user: null, tool: null, stroke: 0, pending: [], last: null, timer: null, drawing: false } };
+const voiceRoom = { open: false, folded: true, chat: true, watcher: null, viewers: 0, fps: 0, lines: 0, hint: null, ruler: null, left: null, ghost: null, ink: new Map(), inkRaf: 0, drawers: [], popFor: null, pen: { user: null, tool: null, stroke: 0, pending: [], last: null, timer: null, drawing: false } };
 
 function voiceRoomHasChat() {
   return Boolean(state.currentChannel) && ["forum-view", "drive-view", "discover"].every(id => $(id).classList.contains("hidden"));
@@ -6047,6 +6048,147 @@ function placeSoundboardPop(pop) {
   pop.style.top = `${spot.top}px`;
 }
 
+function voiceRoomLeft() {
+  const left = voiceRoom.left;
+  return left && voiceRoom.open && studioDesk() && state.view === "server" && state.currentServer && state.currentServer.id === left.server ? left : null;
+}
+
+function voiceRoomChannel() {
+  const here = callChannelHere();
+  if (here) return here;
+  const left = voiceRoomLeft();
+  return left ? state.currentServer.channels.find(c => c.id === left.channel) || null : null;
+}
+
+function dropVoiceRoomLeft() {
+  const left = voiceRoom.left;
+  if (!left) return;
+  clearTimeout(left.timer);
+  voiceRoom.left = null;
+  if (voiceRoom.ghost && voiceRoom.ghost.kind === "left") dropVoiceRoomGhost();
+}
+
+function dropVoiceRoomGhost() {
+  const ghost = voiceRoom.ghost;
+  if (!ghost) return;
+  clearTimeout(ghost.timer);
+  ghost.node.remove();
+  voiceRoom.ghost = null;
+}
+
+function paintVoiceRoomGhost() {
+  const ghost = voiceRoom.ghost;
+  if (!ghost) return;
+  const words = VOICE_ROOM_ENDED[ghost.kind];
+  ghost.node.querySelector(".vr-ended b").textContent = words[0];
+  ghost.node.querySelector(".vr-ended span").textContent = words[1];
+}
+
+function makeVoiceRoomGhost(key, frame, kind) {
+  dropVoiceRoomGhost();
+  const node = el("div", "vr-ghost theme-dark");
+  node.dataset.key = key;
+  if (frame && frame.width && frame.height) {
+    const still = el("canvas", "vr-still");
+    still.width = frame.width;
+    still.height = frame.height;
+    try {
+      still.getContext("2d").drawImage(frame, 0, 0);
+      node.appendChild(still);
+    } catch {}
+  }
+  const words = el("div", "vr-ended");
+  words.append(el("b"), el("span"));
+  node.appendChild(words);
+  $("vr-grid").appendChild(node);
+  voiceRoom.ghost = { node, key, kind, timer: null };
+  if (kind === "stopped") {
+    voiceRoom.ghost.timer = setTimeout(() => {
+      dropVoiceRoomGhost();
+      renderCamGrid();
+    }, VOICE_ROOM_REST.stopped);
+  }
+  paintVoiceRoomGhost();
+}
+
+function keepVoiceRoomGhost(tile) {
+  if (!voiceRoom.open || !studioDesk() || !state.user) return;
+  if (!tile.classList.contains("screen") || tile.dataset.user !== state.user.id) return;
+  const frame = tile.querySelector(".tile-frame");
+  const gone = Boolean(voiceRoom.left) || !callChannelHere();
+  if (voiceRoom.left) voiceRoom.left.shared = true;
+  makeVoiceRoomGhost(tile.dataset.key, tileHasFrame(tile) ? frame : null, gone ? "left" : "stopped");
+}
+
+function restVoiceRoom(channel, shared) {
+  if (!voiceRoom.open || !channel || !studioDesk() || !state.currentServer || !state.user) return;
+  dropVoiceRoomLeft();
+  voiceRoom.left = {
+    server: state.currentServer.id,
+    channel: channel.id,
+    at: (channel.voice_user_ids || []).indexOf(state.user.id),
+    shared,
+    timer: setTimeout(() => closeVoiceRoom(), VOICE_ROOM_REST.left),
+  };
+  const ghost = voiceRoom.ghost;
+  if (ghost && shared) {
+    clearTimeout(ghost.timer);
+    ghost.timer = null;
+    ghost.kind = "left";
+    paintVoiceRoomGhost();
+  }
+  dropVoiceRoomTool();
+  closeVoiceRoomPop();
+  closeFloating();
+}
+
+async function rejoinVoiceRoom() {
+  const left = voiceRoomLeft();
+  const channel = left ? state.currentServer.channels.find(c => c.id === left.channel) : null;
+  if (!channel) return closeVoiceRoom();
+  await toggleVoice(channel, true);
+}
+
+function voiceRoomRejoinKey() {
+  let key = document.getElementById("vp-rejoin");
+  if (key) return key;
+  key = el("button", "key primary vp-rejoin hidden");
+  key.type = "button";
+  key.id = "vp-rejoin";
+  key.append(studioIconNode("phone", 19, false), el("span", null, "Rejoin"));
+  key.onclick = () => rejoinVoiceRoom();
+  $("vp-disconnect").after(key);
+  return key;
+}
+
+function paintVoiceRoomDock(left) {
+  const panel = $("voice-panel");
+  const resting = Boolean(left);
+  if (!resting && !document.getElementById("vp-rejoin")) return;
+  const rejoin = voiceRoomRejoinKey();
+  rejoin.classList.toggle("hidden", !resting);
+  for (const id of ["mute-btn", "deafen-btn", "vp-camera", "share-btn", "vp-soundboard", "vp-hand-key"]) {
+    const key = document.getElementById(id);
+    if (key) key.disabled = resting;
+  }
+  if (!resting) return;
+  const channel = state.currentServer.channels.find(c => c.id === left.channel);
+  const room = channel ? channelTextName(channel.name) : "";
+  rejoin.title = `Rejoin ${room}`;
+  const sub = $("vp-where");
+  const style = getComputedStyle(sub);
+  if (!voiceRoom.ruler) voiceRoom.ruler = document.createElement("canvas").getContext("2d");
+  voiceRoom.ruler.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  const wide = sub.clientWidth;
+  const words = voiceRoomLeftWords(room, text => !wide || voiceRoom.ruler.measureText(text).width + 1 <= wide);
+  panel.dataset.dock = "left";
+  $("vp-status-text").textContent = words.line;
+  sub.textContent = words.sub;
+  $("vp-conn-meta").title = "";
+  $("vp-camera-icon").replaceChildren(svgIcon("cameraOff", 18));
+  $("vp-camera").classList.remove("active");
+}
+
 function openVoiceRoom() {
   const room = document.getElementById("voice-room");
   if (!room || !studioDesk() || !callChannelHere()) return false;
@@ -6074,6 +6216,8 @@ function openVoiceRoom() {
 function closeVoiceRoom() {
   if (!voiceRoom.open) return;
   voiceRoom.open = false;
+  dropVoiceRoomLeft();
+  dropVoiceRoomGhost();
   dropVoiceRoomTool();
   voiceRoom.ink.clear();
   voiceRoom.drawers = [];
@@ -6110,8 +6254,13 @@ function stickChatToEnd() {
 
 function syncVoiceRoom(tiles) {
   if (!voiceRoom.open) return;
-  const channel = callChannelHere();
+  if (voiceRoom.left && callChannelHere()) dropVoiceRoomLeft();
+  const channel = voiceRoomChannel();
   if (!channel || state.view !== "server" || !studioDesk()) return closeVoiceRoom();
+  const left = voiceRoomLeft();
+  const ghost = voiceRoom.ghost;
+  if (ghost && tiles.some(t => t.key === ghost.key)) dropVoiceRoomGhost();
+  if (left && left.shared && !voiceRoom.ghost) makeVoiceRoomGhost(callTileKey("screen", state.user.id), null, "left");
   const app = $("app");
   const chat = voiceRoom.chat && voiceRoomHasChat();
   const fresh = !app.classList.contains("vr-open") || (chat && app.classList.contains("vr-nochat"));
@@ -6120,7 +6269,7 @@ function syncVoiceRoom(tiles) {
   app.classList.toggle("vr-nochat", !chat);
   if (fresh) stickChatToEnd();
   if (state.stageMode) $("stage-grid").classList.remove("hidden");
-  paintVoiceRoomHead(channel);
+  paintVoiceRoomHead(channel, left);
   const me = state.user && state.user.id;
   const ids = channel.voice_user_ids || [];
   const mine = ids.indexOf(me);
@@ -6132,10 +6281,14 @@ function syncVoiceRoom(tiles) {
     deafened: own(channel.voice_deafened || ids.map(() => false), Boolean(state.voice.deafened)),
     speaking: [...state.speaking],
     shares: state.currentServer.screen_shares || [],
-    cameras: tiles.filter(t => t.kind === "camera").map(t => t.user),
+    cameras: left ? state.currentServer.cameras || [] : tiles.filter(t => t.kind === "camera").map(t => t.user),
     meId: me,
     channelId: channel.id,
   });
+  if (left) {
+    paintVoiceRoomCards(voiceRoomAway(people, { id: me, name: state.user.display_name || state.user.username, at: left.at, shared: left.shared }));
+    return placeVoiceRoom();
+  }
   paintVoiceRoomCards(people.filter(person => !person.camera));
   for (const t of tiles) {
     const tile = $("cam-grid").querySelector(`.cam-tile[data-key="${CSS.escape(t.key)}"]`);
@@ -6144,7 +6297,7 @@ function syncVoiceRoom(tiles) {
   placeVoiceRoom();
 }
 
-function paintVoiceRoomHead(channel) {
+function paintVoiceRoomHead(channel, left) {
   const server = state.currentServer;
   $("vr-name").textContent = channelPlainName(channel);
   const sub = voiceRoomSub({ status: channel.voice_status, server: server.name });
@@ -6167,8 +6320,8 @@ function paintVoiceRoomHead(channel) {
   fold.setAttribute("aria-pressed", String(!voiceRoom.folded));
   fold.title = voiceRoom.folded ? "Show channels" : "Hide channels";
   fold.setAttribute("aria-label", fold.title);
-  $("vr-invite").classList.toggle("hidden", !server.can_invite);
-  $("vr-activities").classList.toggle("hidden", !activityUi.run && !voiceServerAllowsActivities());
+  $("vr-invite").classList.toggle("hidden", !server.can_invite || Boolean(left));
+  $("vr-activities").classList.toggle("hidden", Boolean(left) || (!activityUi.run && !voiceServerAllowsActivities()));
   $("vr-activities").classList.toggle("is-on", Boolean(activityUi.run));
   const whole = Boolean(document.fullscreenElement);
   const full = $("vr-full");
@@ -6202,6 +6355,7 @@ function voiceRoomCardNode(person) {
   card.onclick = card.oncontextmenu = e => {
     e.preventDefault();
     e.stopPropagation();
+    if (card.classList.contains("away")) return;
     if (person.me) return openSelfVoiceMenu(e.clientX, e.clientY);
     const server = state.currentServer;
     const member = server && server.members.find(m => m.id === person.id);
@@ -6221,10 +6375,13 @@ function paintVoiceRoomCards(people) {
     card.classList.toggle("live", person.live);
     card.classList.toggle("speaking", state.speaking.has(person.id));
     const quiet = person.state === "muted" || person.state === "deafened" ? person.state : "";
-    if (card.dataset.quiet !== quiet) {
+    const word = person.state === "left" ? "left the room" : quiet;
+    card.classList.toggle("away", Boolean(person.away));
+    if (card.dataset.quiet !== quiet || card.dataset.word !== word) {
       card.dataset.quiet = quiet;
+      card.dataset.word = word;
       card.querySelector(".vr-mark").replaceChildren(...(quiet ? [studioIconNode(quiet === "deafened" ? "headphone-off" : "mic-off", 14, false)] : []));
-      card.querySelector(".vr-word").textContent = quiet;
+      card.querySelector(".vr-word").textContent = word;
     }
     if (holder.children[i] !== card) holder.insertBefore(card, holder.children[i] || null);
   });
@@ -6594,7 +6751,7 @@ async function watchVoiceRoomTile(t) {
 function placeVoiceRoom() {
   if (!voiceRoom.open) return;
   const pane = $("vr-grid");
-  const channel = callChannelHere();
+  const channel = voiceRoomChannel();
   if (!channel || !pane.clientWidth) return;
   const style = getComputedStyle(pane);
   const left = parseFloat(style.paddingLeft) || 0;
@@ -6603,7 +6760,8 @@ function placeVoiceRoom() {
   const dock = $("voice-panel").getBoundingClientRect();
   const floor = dock.height ? Math.max(0, pane.getBoundingClientRect().bottom - dock.top + 2) : parseFloat(style.paddingBottom) || 0;
   const height = pane.clientHeight - top - floor;
-  const tiles = callTilesHere();
+  const ghost = voiceRoom.ghost;
+  const tiles = voiceRoomGhostTiles(callTilesHere(), ghost && ghost.key);
   const cards = [...$("vr-cards").children];
   const items = voiceRoomItems(tiles, cards.map(card => ({ id: card.dataset.user, camera: false })));
   const staged = state.stageMode === "watch" && state.watchingUser ? callTileKey("screen", state.watchingUser) : state.stageMode === "self" && state.user ? callTileKey("screen", state.user.id) : "";
@@ -6614,6 +6772,7 @@ function placeVoiceRoom() {
   fitVoiceRoomHint();
   const nodes = new Map(cards.map(card => [card.dataset.key, card]));
   for (const tile of $("cam-grid").querySelectorAll(".cam-tile")) nodes.set(tile.dataset.key, tile);
+  if (ghost) nodes.set(ghost.key, ghost.node);
   const stage = $("video-pane");
   for (const spot of plan.placed) {
     const node = spot.form === "big" ? stage : nodes.get(spot.key);
@@ -17605,8 +17764,10 @@ function paintStudioDock() {
   if (!desk) {
     studioHang.cancel();
     panel.dataset.dock = "";
+    paintVoiceRoomDock(voiceRoomLeft());
     return;
   }
+  paintVoiceRoomDock(null);
   const call = vs.call ? state.call : null;
   const words = studioDockWords({
     status: call && call.state !== "active" ? "Calling" : "Voice Connected",
@@ -17628,7 +17789,7 @@ function paintStudioDock() {
 function renderVoicePanel() {
   const panel = $("voice-panel");
   const vs = state.voiceServer;
-  panel.classList.toggle("hidden", !(state.voiceChannelId && vs));
+  panel.classList.toggle("hidden", !(state.voiceChannelId && vs) && !voiceRoomLeft());
   syncSignalPolling(Boolean(state.voiceChannelId && vs));
   renderPhoneVoice();
   paintStudioDock();
@@ -18320,8 +18481,11 @@ function initActivityUi() {
 async function disconnectVoice() {
   if (!state.voiceServer) return;
   if (state.voiceServer.call) return endDmCall();
+  const room = voiceRoom.open ? callChannelHere() : null;
+  const shared = Boolean(state.sharing);
   try {
     await invoke("set_voice_channel", { serverId: state.voiceServer.id, channelId: null });
+    restVoiceRoom(room, shared);
     state.voiceChannelId = null;
     clearSpeaking();
     stopCameraTracks();
@@ -18332,7 +18496,7 @@ async function disconnectVoice() {
     state.shareSource = null;
     if (state.watchingUser) await stopWatching();
     if (state.stageMode === "self") closeStage();
-    toast("Disconnected from voice");
+    if (!voiceRoom.left) toast("Disconnected from voice");
     playSound("leave");
     renderShareButton();
     if (state.currentServer) await refreshCurrentServer();
@@ -20539,9 +20703,11 @@ function paintVoiceGate() {
   }
 }
 
-async function toggleVoice(channel) {
+async function toggleVoice(channel, back = false) {
   if (!state.currentServer) return;
   const leaving = state.voiceChannelId === channel.id;
+  const room = leaving && voiceRoom.open ? callChannelHere() : null;
+  const shared = Boolean(state.sharing);
   const wait = leaving ? null : currentVoiceWait();
   if (wait) {
     toast(voiceGateRefusal(wait));
@@ -20553,6 +20719,7 @@ async function toggleVoice(channel) {
       serverId: state.currentServer.id,
       channelId: leaving ? null : channel.id,
     });
+    restVoiceRoom(room, shared);
     state.voiceChannelId = leaving ? null : channel.id;
     clearSpeaking();
     if (!state.voiceChannelId) {
@@ -20567,7 +20734,7 @@ async function toggleVoice(channel) {
       state.sharing = false;
       state.shareSource = null;
     }
-    toast(leaving ? "Disconnected from voice" : isStageChannel(channel) ? `Joined the stage: ${channel.name}` : `Joined voice: ${channel.name}`);
+    if (!leaving || !voiceRoom.left) toast(leaving ? "Disconnected from voice" : back ? `Back in ${channelTextName(channel.name)}.` : isStageChannel(channel) ? `Joined the stage: ${channel.name}` : `Joined voice: ${channel.name}`);
     if (leaving) playSound("leave");
     else playJoinCue(state.currentServer, [state.user.id]);
     renderShareButton();
@@ -20587,7 +20754,7 @@ async function stopSharing() {
     state.sharing = false;
     state.shareSource = null;
     if (state.stageMode === "self") closeStage();
-    toast("Stopped sharing");
+    if (!voiceRoom.open || !studioDesk()) toast("Stopped sharing");
     renderShareButton();
   } catch (e) {
     toast(String(e));
