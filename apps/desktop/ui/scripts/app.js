@@ -4028,6 +4028,7 @@ function textChannelRow(channel, canCreate, pinned = false) {
   if (shownUnread(state.currentServer.id, channel.id)) row.classList.add("unread");
   row.onclick = () => {
     state.historyAnchor = null;
+    closeVoiceRoom();
     selectChannel(channel);
   };
   row.oncontextmenu = e => {
@@ -5718,6 +5719,7 @@ function renderCamGrid() {
   sizeCallGrid(grid, tiles.length, layout);
   paintCallDots(grid, scroller, pages.length);
   paintPhoneGridButton();
+  syncVoiceRoom(tiles);
 }
 
 function callPagesNode(grid) {
@@ -5902,6 +5904,10 @@ function showCallStreamFrame(tile, jpeg) {
 }
 
 async function openCallTile(t) {
+  if (voiceRoom.open) {
+    if (t.kind === "screen" && !t.me) await watchVoiceRoomTile(t);
+    return;
+  }
   if (t.kind === "camera") {
     cam.bigTile = cam.bigTile === t.key ? null : t.key;
     renderCamGrid();
@@ -5943,6 +5949,7 @@ async function showCallGrid() {
   if (state.stageMode === "watch") backToCallGrid();
   else if (state.stageMode === "self") closeStage({ keepFocus: true });
   phoneShowChat();
+  if (openVoiceRoom()) return;
   if (!callTilesHere().length) {
     renderCamGrid();
     return toast("Nobody in your voice channel is streaming or on camera yet");
@@ -5958,6 +5965,365 @@ function backToCallGrid() {
   state.watchingName = null;
   closeStage({ keepFocus: true });
   renderVoicePanel();
+}
+
+const voiceRoom = { open: false, folded: true, chat: true, watcher: null, viewers: 0, fps: 0, lines: 0 };
+
+function voiceRoomHasChat() {
+  return Boolean(state.currentChannel) && ["forum-view", "drive-view", "discover"].every(id => $(id).classList.contains("hidden"));
+}
+
+function openVoiceRoom() {
+  const room = document.getElementById("voice-room");
+  if (!room || !studioDesk() || !callChannelHere()) return false;
+  if (voiceRoom.open) return true;
+  voiceRoom.open = true;
+  voiceRoom.folded = true;
+  voiceRoom.chat = true;
+  document.querySelector(".main").classList.remove("stage-focus");
+  $("vr-grid").prepend($("video-pane"), $("cam-grid"));
+  room.appendChild($("activity-panel"));
+  const star = document.querySelector(".chat-header .studio-star");
+  if (star) room.querySelector(".vr-tools").before(star);
+  $("vr-chat-x").classList.remove("hidden");
+  room.classList.remove("hidden");
+  if (!voiceRoom.watcher) {
+    voiceRoom.watcher = new ResizeObserver(() => placeVoiceRoom());
+    voiceRoom.watcher.observe($("vr-grid"));
+  }
+  paintFocusButtons();
+  renderVoicePanel();
+  return true;
+}
+
+function closeVoiceRoom() {
+  if (!voiceRoom.open) return;
+  voiceRoom.open = false;
+  if (state.stageMode === "watch") state.watchingUser = null;
+  if (state.stageMode) closeStage();
+  for (const user of [...state.streamsWatched]) {
+    state.streamsWatched.delete(user);
+    invoke("stop_watching", { userId: user }).catch(() => {});
+    ink.allowed.delete(user);
+  }
+  $("messages").before($("video-pane"), $("cam-grid"), $("activity-panel"));
+  const room = document.getElementById("voice-room");
+  const star = room.querySelector(".studio-star");
+  if (star) document.querySelector(".chat-header .header-actions").before(star);
+  $("vr-chat-x").classList.add("hidden");
+  room.classList.add("hidden");
+  $("app").classList.remove("vr-open", "vr-folded", "vr-nochat");
+  $("video-pane").removeAttribute("style");
+  for (const tile of $("cam-grid").querySelectorAll(".cam-tile")) {
+    tile.removeAttribute("style");
+    delete tile.dataset.form;
+  }
+  $("vr-cards").replaceChildren();
+  renderVoicePanel();
+  stickChatToEnd();
+}
+
+function stickChatToEnd() {
+  const log = $("messages");
+  if (!state.historyAnchor) log.scrollTop = log.scrollHeight;
+}
+
+function syncVoiceRoom(tiles) {
+  if (!voiceRoom.open) return;
+  const channel = callChannelHere();
+  if (!channel || state.view !== "server" || !studioDesk()) return closeVoiceRoom();
+  const app = $("app");
+  const chat = voiceRoom.chat && voiceRoomHasChat();
+  const fresh = !app.classList.contains("vr-open") || (chat && app.classList.contains("vr-nochat"));
+  app.classList.add("vr-open");
+  app.classList.toggle("vr-folded", voiceRoom.folded);
+  app.classList.toggle("vr-nochat", !chat);
+  if (fresh) stickChatToEnd();
+  if (state.stageMode) $("stage-grid").classList.remove("hidden");
+  paintVoiceRoomHead(channel);
+  const me = state.user && state.user.id;
+  const ids = channel.voice_user_ids || [];
+  const mine = ids.indexOf(me);
+  const own = (list, value) => (list || []).map((flag, i) => (i === mine ? value : flag));
+  const people = voiceRoomPeople({
+    userIds: ids,
+    names: channel.voice_users || [],
+    muted: own(channel.voice_muted || ids.map(() => false), Boolean(state.voice.muted)),
+    deafened: own(channel.voice_deafened || ids.map(() => false), Boolean(state.voice.deafened)),
+    speaking: [...state.speaking],
+    shares: state.currentServer.screen_shares || [],
+    cameras: tiles.filter(t => t.kind === "camera").map(t => t.user),
+    meId: me,
+    channelId: channel.id,
+  });
+  paintVoiceRoomCards(people.filter(person => !person.camera));
+  for (const t of tiles) {
+    const tile = $("cam-grid").querySelector(`.cam-tile[data-key="${CSS.escape(t.key)}"]`);
+    if (tile) paintVoiceRoomTile(tile, t, people.find(person => person.id === t.user));
+  }
+  placeVoiceRoom();
+}
+
+function paintVoiceRoomHead(channel) {
+  const server = state.currentServer;
+  $("vr-name").textContent = channelPlainName(channel);
+  const sub = voiceRoomSub({ status: channel.voice_status, server: server.name });
+  const may = canSetVoiceStatus({ channel, server, me: state.user && state.user.id });
+  const line = $("vr-sub");
+  line.textContent = sub.text;
+  line.dataset.kind = sub.kind;
+  line.disabled = !may;
+  line.title = may ? (channel.voice_status ? "Change the room status" : "Set a room status") : "";
+  const at = (channel.voice_user_ids || []).indexOf(state.user && state.user.id);
+  const since = at >= 0 ? Number((channel.voice_since || [])[at]) || 0 : 0;
+  const clock = $("vr-clock");
+  clock.classList.toggle("hidden", !since);
+  if (clock.dataset.since !== String(since)) {
+    clock.dataset.since = String(since);
+    clock.dataset.fmt = "clock";
+    clock.textContent = since ? elapsedClock(since) : "";
+  }
+  const fold = $("vr-fold");
+  fold.setAttribute("aria-pressed", String(!voiceRoom.folded));
+  fold.title = voiceRoom.folded ? "Show channels" : "Hide channels";
+  fold.setAttribute("aria-label", fold.title);
+  $("vr-invite").classList.toggle("hidden", !server.can_invite);
+  $("vr-activities").classList.toggle("hidden", !activityUi.run && !voiceServerAllowsActivities());
+  $("vr-activities").classList.toggle("is-on", Boolean(activityUi.run));
+  const whole = Boolean(document.fullscreenElement);
+  const full = $("vr-full");
+  if (full.dataset.whole !== String(whole)) {
+    full.dataset.whole = String(whole);
+    full.title = whole ? "Leave full screen" : "Full screen";
+    full.setAttribute("aria-label", full.title);
+    full.replaceChildren(studioIconNode(whole ? "minimize-2" : "maximize-2", 18, false));
+  }
+  const chat = $("vr-chat");
+  const shown = voiceRoom.chat && voiceRoomHasChat();
+  chat.classList.toggle("hidden", !voiceRoomHasChat());
+  chat.classList.toggle("is-on", shown);
+  chat.setAttribute("aria-pressed", String(shown));
+  chat.title = shown ? "Hide chat" : "Show chat";
+  chat.setAttribute("aria-label", chat.title);
+}
+
+function voiceRoomCardNode(person) {
+  const card = el("div", "vr-card");
+  card.dataset.key = `person:${person.id}`;
+  card.dataset.user = person.id;
+  const face = el("span", "vr-face");
+  face.appendChild(makeAvatar(person.id, person.name, "avatar vr-av"));
+  const eq = el("span", "voice-eq vr-eq");
+  eq.setAttribute("aria-hidden", "true");
+  eq.append(el("i"), el("i"), el("i"), el("i"));
+  const line = el("span", "vr-st");
+  line.append(el("span", "live-badge vr-live", "Live"), eq, el("span", "vr-talk", "speaking"), el("span", "vr-mark"), el("span", "vr-word"), el("span", "vr-you", "You"));
+  card.append(face, el("b", "vr-who", person.name), line);
+  card.onclick = card.oncontextmenu = e => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (person.me) return openSelfVoiceMenu(e.clientX, e.clientY);
+    const server = state.currentServer;
+    const member = server && server.members.find(m => m.id === person.id);
+    openMemberMenu(member || { id: person.id, name: person.name }, e.clientX, e.clientY);
+  };
+  return card;
+}
+
+function paintVoiceRoomCards(people) {
+  const holder = $("vr-cards");
+  const wanted = new Set(people.map(person => `person:${person.id}`));
+  for (const card of [...holder.children]) if (!wanted.has(card.dataset.key)) card.remove();
+  people.forEach((person, i) => {
+    const card = holder.querySelector(`.vr-card[data-key="${CSS.escape(`person:${person.id}`)}"]`) || voiceRoomCardNode(person);
+    card.querySelector(".vr-who").textContent = person.name;
+    card.classList.toggle("me", person.me);
+    card.classList.toggle("live", person.live);
+    card.classList.toggle("speaking", state.speaking.has(person.id));
+    const quiet = person.state === "muted" || person.state === "deafened" ? person.state : "";
+    if (card.dataset.quiet !== quiet) {
+      card.dataset.quiet = quiet;
+      card.querySelector(".vr-mark").replaceChildren(...(quiet ? [studioIconNode(quiet === "deafened" ? "headphone-off" : "mic-off", 14, false)] : []));
+      card.querySelector(".vr-word").textContent = quiet;
+    }
+    if (holder.children[i] !== card) holder.insertBefore(card, holder.children[i] || null);
+  });
+}
+
+function voiceRoomChip(place, ...parts) {
+  const chip = el("span", `vr-chip ${place}`);
+  chip.append(...parts);
+  return chip;
+}
+
+function voiceRoomTileKey(cls, title, icon, label, run) {
+  const key = el("button", `key sm ${cls}`);
+  key.type = "button";
+  key.title = title;
+  key.setAttribute("aria-label", title);
+  key.appendChild(studioIconNode(icon, 15, false));
+  if (label) key.appendChild(el("span", "vr-lab", label));
+  key.onclick = e => {
+    e.stopPropagation();
+    run();
+  };
+  key.ondblclick = e => e.stopPropagation();
+  return key;
+}
+
+function dressVoiceRoomTile(tile, t) {
+  if (tile.querySelector(".vr-chip")) return;
+  const dots = el("span", "vr-dots");
+  dots.setAttribute("aria-hidden", "true");
+  dots.append(el("i"), el("i"), el("i"));
+  tile.querySelector(".cam-cover").appendChild(dots);
+  if (t.kind === "camera") {
+    tile.appendChild(voiceRoomChip("bl", el("span", "vr-mic"), el("b", null, t.me ? "You" : t.name)));
+    return;
+  }
+  const eye = el("i", "vr-sub vr-eye hidden");
+  eye.append(studioIconNode("eye", 13, false), el("span", "vr-count"));
+  tile.appendChild(voiceRoomChip("tl", el("span", "live-badge vr-live", "Live"), el("b", null, t.me ? "Your screen" : t.name), ...(t.me ? [el("i", "vr-sub vr-source"), eye] : [])));
+  const keys = el("div", "vr-keys");
+  if (t.me) {
+    const quality = el("span", "vr-quality");
+    quality.append(el("span", "vr-word"), el("span", "vr-rest"));
+    tile.appendChild(voiceRoomChip("tr vr-mode", studioIconNode("gauge", 14, false), quality));
+    const left = el("div", "vr-keys l");
+    left.appendChild(voiceRoomTileKey("vr-switch", "Share another screen or window", "monitor", "Switch", () => $("vp-change-source").click()));
+    const allow = voiceRoomTileKey("latch vr-allow", "Let the room draw on your screen", "pen", "Allow drawing", () => setStreamInk(!state.shareInk));
+    allow.appendChild(el("i", "led"));
+    keys.append(allow, voiceRoomTileKey("vr-stop", "Stop sharing your screen", "monitor-x", "Stop", () => toggleShare()));
+    tile.append(left, keys);
+    return;
+  }
+  keys.append(
+    voiceRoomTileKey("sq vr-big", "Expand", "maximize-2", "", () => watchScreen(t.user, t.name)),
+    voiceRoomTileKey("sq vr-x", "Stop watching", "x", "", () => stopStream(t.user)),
+  );
+  tile.appendChild(keys);
+  tile.ondblclick = () => {
+    if (voiceRoom.open && state.streamsWatched.has(t.user)) watchScreen(t.user, t.name);
+  };
+}
+
+function paintVoiceRoomTile(tile, t, person) {
+  dressVoiceRoomTile(tile, t);
+  const cover = tile.querySelector(".cam-cover");
+  const text = tile.querySelector(".cam-cover-text");
+  const joining = text.textContent.startsWith("Connecting");
+  cover.classList.toggle("vr-joining", joining);
+  if (t.kind === "camera") {
+    const quiet = person && (person.state === "muted" || person.state === "deafened") ? person.state : "";
+    const mic = tile.querySelector(".vr-mic");
+    if (mic.dataset.quiet !== quiet || !mic.firstChild) {
+      mic.dataset.quiet = quiet;
+      mic.replaceChildren(studioIconNode(quiet === "deafened" ? "headphone-off" : quiet ? "mic-off" : "mic", 14, false));
+    }
+    return;
+  }
+  if (t.me) return paintVoiceRoomMine(tile);
+  const live = state.streamsWatched.has(t.user);
+  tile.querySelector(".vr-keys").classList.toggle("hidden", !live);
+}
+
+function paintVoiceRoomMine(tile = state.user ? $("cam-grid").querySelector(`.cam-tile.screen[data-user="${CSS.escape(state.user.id)}"]`) : null) {
+  if (!voiceRoom.open || !tile || !tile.querySelector(".vr-mode")) return;
+  const words = voiceRoomQuality({ quality: state.shareQuality, lines: voiceRoom.lines, fps: voiceRoom.fps });
+  tile.querySelector(".vr-quality .vr-word").textContent = words.word;
+  tile.querySelector(".vr-quality .vr-rest").textContent = words.rest;
+  tile.querySelector(".vr-mode").title = words.readout;
+  tile.querySelector(".vr-source").textContent = state.shareSource || "";
+  tile.querySelector(".vr-source").classList.toggle("hidden", !state.shareSource);
+  const eye = tile.querySelector(".vr-eye");
+  eye.classList.toggle("hidden", !voiceRoom.viewers);
+  eye.title = voiceRoom.viewers === 1 ? "1 person is watching" : `${voiceRoom.viewers} people are watching`;
+  eye.querySelector(".vr-count").textContent = String(voiceRoom.viewers);
+  const allow = tile.querySelector(".vr-allow");
+  allow.classList.toggle("hidden", !(streamInkSetting() || state.shareInk));
+  allow.classList.toggle("is-down", Boolean(state.shareInk));
+  allow.setAttribute("aria-pressed", String(Boolean(state.shareInk)));
+  tile.querySelector(".vr-switch").classList.toggle("hidden", inBrowserApp());
+}
+
+async function watchVoiceRoomTile(t) {
+  const server = state.currentServer;
+  if (!server || state.streamsWatched.has(t.user)) return;
+  state.streamsWatched.add(t.user);
+  renderCamGrid();
+  try {
+    await invoke("watch_screen", { serverId: server.id, userId: t.user });
+  } catch (e) {
+    state.streamsWatched.delete(t.user);
+    renderCamGrid();
+    toast(String(e));
+  }
+}
+
+function placeVoiceRoom() {
+  if (!voiceRoom.open) return;
+  const pane = $("vr-grid");
+  const channel = callChannelHere();
+  if (!channel || !pane.clientWidth) return;
+  const style = getComputedStyle(pane);
+  const left = parseFloat(style.paddingLeft) || 0;
+  const top = parseFloat(style.paddingTop) || 0;
+  const width = pane.clientWidth - left - (parseFloat(style.paddingRight) || 0);
+  const dock = $("voice-panel").getBoundingClientRect();
+  const floor = dock.height ? Math.max(0, pane.getBoundingClientRect().bottom - dock.top + 2) : parseFloat(style.paddingBottom) || 0;
+  const height = pane.clientHeight - top - floor;
+  const tiles = callTilesHere();
+  const cards = [...$("vr-cards").children];
+  const items = voiceRoomItems(tiles, cards.map(card => ({ id: card.dataset.user, camera: false })));
+  const staged = state.stageMode === "watch" && state.watchingUser ? callTileKey("screen", state.watchingUser) : state.stageMode === "self" && state.user ? callTileKey("screen", state.user.id) : "";
+  const measure = (name, fallback) => Number(style.getPropertyValue(name)) || fallback;
+  const limits = { ...VOICE_ROOM, gap: measure("--vr-gap", VOICE_ROOM.gap), keyGap: measure("--vr-row", VOICE_ROOM.keyGap), seatGap: measure("--vr-seat", VOICE_ROOM.seatGap) };
+  const plan = voiceRoomLayout({ width, height, items, expanded: staged }, limits);
+  pane.dataset.mode = plan.mode;
+  const nodes = new Map(cards.map(card => [card.dataset.key, card]));
+  for (const tile of $("cam-grid").querySelectorAll(".cam-tile")) nodes.set(tile.dataset.key, tile);
+  const stage = $("video-pane");
+  for (const spot of plan.placed) {
+    const node = spot.form === "big" ? stage : nodes.get(spot.key);
+    if (!node) continue;
+    node.style.left = `${Math.round(left + spot.x)}px`;
+    node.style.top = `${Math.round(top + spot.y)}px`;
+    node.style.width = `${Math.round(spot.w)}px`;
+    node.style.height = `${Math.round(spot.h)}px`;
+    if (spot.form !== "big") node.dataset.form = spot.form;
+  }
+  if (plan.mode !== "expanded") stage.removeAttribute("style");
+  $("vr-cards").style.height = `${Math.round(plan.bottom + 18)}px`;
+}
+
+function toggleVoiceRoomFull() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(e => toast(String(e)));
+}
+
+function wireVoiceRoom() {
+  if (!document.getElementById("voice-room")) return;
+  $("vr-fold").onclick = () => {
+    voiceRoom.folded = !voiceRoom.folded;
+    renderCamGrid();
+  };
+  $("vr-sub").onclick = () => {
+    const channel = callChannelHere();
+    if (channel && canSetVoiceStatus({ channel, server: state.currentServer, me: state.user && state.user.id })) openVoiceStatusModal(channel);
+  };
+  $("vr-invite").onclick = () => $("invite-btn").click();
+  $("vr-activities").onclick = () => {
+    if (activityUi.run) toggleActivityPanel(true);
+    else openActivityPicker();
+  };
+  $("vr-full").onclick = toggleVoiceRoomFull;
+  $("vr-chat").onclick = $("vr-chat-x").onclick = () => {
+    voiceRoom.chat = !voiceRoom.chat;
+    renderCamGrid();
+  };
+  document.addEventListener("fullscreenchange", () => {
+    if (voiceRoom.open) renderCamGrid();
+  });
 }
 
 async function stopStream(user) {
@@ -18955,6 +19321,7 @@ async function sendDm() {
 async function selectChannel(channel) {
   closeContextMenus();
   const switched = Boolean(channel) && (!state.currentChannel || channel.id !== state.currentChannel.id);
+  if (switched) closeVoiceRoom();
   if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
   if (switched && state.currentServer) await invoke("open_channel", { serverId: state.currentServer.id, channelId: channel.id }).catch(() => {});
@@ -20073,6 +20440,7 @@ const ownFrames = createLatestOnly(async frame => {
   ownFrameAt = performance.now();
   $("vp-preview-img").src = frameUrls.from("own", bytes);
   $("vp-preview-empty").classList.add("hidden");
+  if (frame.height) voiceRoom.lines = frame.height;
   if (state.stageMode === "self") showStageFrame(bytes, frame.width, frame.height);
   else if (state.user && callStreamTile(state.user.id)) showCallStreamFrame(callStreamTile(state.user.id), bytes);
 });
@@ -20100,6 +20468,8 @@ function startOwnPreview() {
       }
       $("vp-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
       $("vp-viewers").classList.toggle("hidden", !own.viewers);
+      voiceRoom.viewers = Number(own.viewers) || 0;
+      paintVoiceRoomMine();
       if (state.stageMode === "self") {
         $("stage-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
         $("stage-viewers").classList.toggle("hidden", !own.viewers);
@@ -20114,6 +20484,7 @@ function startOwnPreview() {
       if (ownFpsSample && own.frames >= ownFpsSample.frames) {
         const fps = Math.round((own.frames - ownFpsSample.frames) / ((now - ownFpsSample.at) / 1000));
         $("vp-live-source").textContent = liveSourceText(state.shareSource, own.audio, fps);
+        voiceRoom.fps = fps;
       }
       ownFpsSample = { frames: own.frames, at: now };
     } catch {}
@@ -20531,6 +20902,7 @@ async function watchScreen(userId, name, { retry = false } = {}) {
       sharing: Boolean(state.sharing),
       watchingUser: state.watchingUser,
     });
+    if (callTilesHere().some(t => t.kind === "screen" && t.user === userId)) openVoiceRoom();
     if (action === "preview") return openOwnPreview();
     if (action === "already") return showWatchedStream();
   }
@@ -22085,6 +22457,7 @@ function wireEvents() {
     dockFit = fit;
     renderShareButton();
   });
+  wireVoiceRoom();
   document.querySelector(".vp-status").title = "Connection details";
   document.querySelector(".vp-status").addEventListener("click", e => {
     if (studioDesk()) return;
