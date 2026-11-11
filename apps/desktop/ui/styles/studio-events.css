@@ -1,0 +1,316 @@
+html[data-look="studio"]:not([data-fit="slim"]) .events-layer { background: var(--scrim); }
+html[data-look="studio"]:not([data-fit="slim"]) .events-panel {
+  width: min(640px, 100%);
+  padding: 18px 18px 14px;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-panel:not(.slab) {
+  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 96px), var(--panel);
+  -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-head {
+  flex: none;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-head h2 {
+  min-width: 0;
+  font: 700 20px/1.2 var(--font-display);
+  letter-spacing: -.015em;
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-tabs {
+  flex: none;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-tab {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-muted);
+  font: 600 13px/1 var(--font);
+  transition: background var(--t-hover), color var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-tab:hover {
+  background: rgb(var(--lamp) / .06);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-tab.active,
+html[data-look="studio"]:not([data-fit="slim"]) .events-tab.active:hover {
+  background: var(--bg-active);
+  color: var(--header-primary);
+  outline: var(--ring-on);
+  outline-offset: -2px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #event-create.key.sm {
+  gap: 6px;
+  padding: 0 14px 0 11px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #event-create.key.sm > svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #events-close.key.sq,
+html[data-look="studio"]:not([data-fit="slim"]) .events-panel .cal-head > .key.sq {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--k-ink);
+}
+html[data-look="studio"]:not([data-fit="slim"]) #events-close.key.sq > svg,
+html[data-look="studio"]:not([data-fit="slim"]) .events-panel .cal-head > .key.sq > svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-body {
+  gap: 10px;
+  margin-top: 16px;
+  padding: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-body:has(> .events-empty) { margin-top: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .events-body > .event-card {
+  flex: none;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-card > .event-date {
+  gap: 3px;
+  width: 52px;
+  height: 58px;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-date-month {
+  font: 700 12px/1 var(--font);
+  letter-spacing: .06em;
+  color: var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-date-day {
+  font: 700 22px/1 var(--font-display);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-card > .event-main { gap: 5px; }
+html[data-look="studio"]:not([data-fit="slim"]) .event-when {
+  display: flex;
+  align-items: center;
+  font: 600 13px/1.2 var(--font);
+  color: var(--text-muted);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-when.live {
+  align-self: flex-start;
+  display: inline-flex;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: var(--live);
+  color: var(--live-ink);
+  font: 700 12px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-when.live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-main > .event-title {
+  font: 700 17px/1.25 var(--font-display);
+  letter-spacing: -.01em;
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-where {
+  gap: 6px;
+  font: 500 13px/1.2 var(--font);
+  color: var(--text-muted);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-where > svg {
+  flex: none;
+  width: 15px !important;
+  height: 15px !important;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-main > .md {
+  font: 400 14px/1.45 var(--font);
+  color: var(--text-normal);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-main > .md > .md-para { margin: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .event-main > .event-foot {
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-counts {
+  flex: 1;
+  min-width: 0;
+  font: 500 12.5px/1.2 var(--font);
+  color: var(--text-faint);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-actions {
+  flex: none;
+  gap: 6px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-actions > .key.sm {
+  gap: 6px;
+  padding: 0 14px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-actions > .key.sm.mine {
+  background: var(--glass-key-on, var(--bg-active));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+  color: var(--header-primary);
+  filter: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-actions > .key.sm > svg {
+  width: 14px !important;
+  height: 14px !important;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-actions > .icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  transition: background var(--t-hover), color var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-actions > .icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .event-actions > .icon-btn > svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-body > .cal { margin-bottom: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .cal-head {
+  gap: 10px;
+  margin-bottom: 10px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-month {
+  flex: 1;
+  text-align: center;
+  font: 700 17px/1 var(--font-display);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-panel .cal-grid {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-dow {
+  padding: 4px 0 6px;
+  font: 600 12px/1 var(--font);
+  color: var(--text-faint);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-day {
+  gap: 3px;
+  height: 78px;
+  min-height: 0;
+  min-width: 0;
+  padding: 6px;
+  border: 0;
+  border-radius: 12px;
+  background: rgb(var(--lamp) / .025);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-day:hover { background: var(--bg-hover); }
+html[data-look="studio"]:not([data-fit="slim"]) .cal-day.other {
+  opacity: 1;
+  background: none;
+  box-shadow: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-day.selected,
+html[data-look="studio"]:not([data-fit="slim"]) .cal-day.selected:hover {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-num {
+  flex: none;
+  padding: 0;
+  border-radius: 0;
+  font: 600 13px/1 var(--font);
+  color: var(--text-normal);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-day.other .cal-num { color: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .cal-day.today .cal-num {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-event {
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--accent) 34%, transparent);
+  font: 600 12px/18px var(--font);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .cal-more {
+  font: 600 12px/1 var(--font);
+  color: var(--text-muted);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-day-title {
+  margin: 0;
+  font: 600 13px/1 var(--font);
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-body > .manage-empty {
+  padding: 8px 0;
+  font: 400 13.5px/1.45 var(--font);
+  color: var(--text-muted);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-empty {
+  gap: 8px;
+  padding: 34px 18px 26px;
+  text-align: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-empty > svg {
+  box-sizing: content-box;
+  width: 28px !important;
+  height: 28px !important;
+  margin-bottom: 6px;
+  padding: 18px;
+  border-radius: 50%;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--text-faint);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-empty > h3 {
+  margin: 0;
+  font: 700 17px/1.2 var(--font-display);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .events-empty > p {
+  max-width: 340px;
+  margin: 0;
+  font: 400 13.5px/1.45 var(--font);
+  color: var(--text-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"]:not([data-fit="slim"]) .events-tab,
+  html[data-look="studio"]:not([data-fit="slim"]) .cal-day,
+  html[data-look="studio"]:not([data-fit="slim"]) .event-actions > .icon-btn { transition: none; }
+}
