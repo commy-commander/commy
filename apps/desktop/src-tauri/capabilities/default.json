@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default capability for the main window",
   "windows": ["main", "overlay", "overlay-chat", "stream-ink"],
-  "permissions": ["core:default", "core:event:default", "notification:default"]
+  "permissions": ["core:default", "core:event:default", "core:webview:allow-set-webview-zoom", "notification:default"]
 }

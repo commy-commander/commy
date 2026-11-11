@@ -19399,7 +19399,7 @@ function fitPhoneViewport() {
   const portrait = window.matchMedia("(orientation: portrait)");
   const shortSide = Math.min(screen.width, screen.height);
   const longSide = Math.max(screen.width, screen.height);
-  const content = phoneAppViewport(portrait.matches ? shortSide : longSide, portrait.matches);
+  const content = phoneAppViewport(portrait.matches ? shortSide : longSide, portrait.matches, studioLook());
   const meta = document.querySelector('meta[name="viewport"]');
   if (meta.getAttribute("content") !== content) meta.setAttribute("content", content);
 }
@@ -23484,6 +23484,7 @@ function wireEvents() {
   if (studioLook()) studioPops();
   if (studioLook()) studioCompact();
   if (studioLook()) studioMinors();
+  if (studioLook()) studioStrip();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;

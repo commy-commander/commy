@@ -7,6 +7,8 @@ const KEYBOARD_MIN_PX = 80;
 const LONG_PRESS = { ms: 550, slop: 10, clickGuardMs: 700 };
 const TWO_PANE_LAYOUT_WIDTH_PX = 704;
 const TWO_PANE_VIEWPORT = `width=${TWO_PANE_LAYOUT_WIDTH_PX}, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content`;
+const SLIM_LAYOUT_WIDTH_PX = 550;
+const SLIM_VIEWPORT = `width=${SLIM_LAYOUT_WIDTH_PX}, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content`;
 
 function isPhoneWidth(width) {
   return width <= PHONE_MAX_WIDTH_PX;
@@ -29,7 +31,8 @@ function rowOpensConversation(rowClasses, tappedButton) {
   return classes.has("channel") && !classes.has("sidebar-link") && !classes.has("friend-request");
 }
 
-function phoneAppViewport(screenWidth, portrait) {
+function phoneAppViewport(screenWidth, portrait, studio = false) {
+  if (studio && portrait && screenWidth > SLIM_LAYOUT_WIDTH_PX) return SLIM_VIEWPORT;
   const twoPane = portrait && screenWidth >= TWO_PANE_MIN_WIDTH_PX && screenWidth <= PHONE_MAX_WIDTH_PX;
   return twoPane ? TWO_PANE_VIEWPORT : PHONE_APP_VIEWPORT;
 }
@@ -52,5 +55,5 @@ function headerTapLeavesPeople(pane, buttonId) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PHONE_MAX_WIDTH_PX, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT, TWO_PANE_LAYOUT_WIDTH_PX, isPhoneWidth, phoneAppViewport, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation, tapEndsScroll, keyboardHeight, LONG_PRESS, longPressDrifted, headerTapLeavesPeople };
+  module.exports = { PHONE_MAX_WIDTH_PX, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT, TWO_PANE_LAYOUT_WIDTH_PX, SLIM_VIEWPORT, SLIM_LAYOUT_WIDTH_PX, isPhoneWidth, phoneAppViewport, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation, tapEndsScroll, keyboardHeight, LONG_PRESS, longPressDrifted, headerTapLeavesPeople };
 }
