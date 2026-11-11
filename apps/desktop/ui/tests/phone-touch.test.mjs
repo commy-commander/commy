@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner, layerStep, inviteWarningParts,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -1110,4 +1110,42 @@ test("the pencil on You opens the profile editor, which saves name and status on
   assert.match(css, rule(" \\.pt-profile \\.in", "height: 52px; padding: 0 5px 0 18px;[^}]*box-shadow: var\\(--slot\\);"));
   assert.match(css, rule(" \\.pt-profile \\.looks", "grid-template-columns: repeat\\(3, minmax\\(0, 1fr\\)\\); gap: 8px;"));
   assert.doesNotMatch(css, new RegExp(`${slim} \\.set \\{`));
+});
+
+test("tapping a face or a name in chat opens that person's card as a sheet with its own back step", () => {
+  assert.deepEqual(faceTapAuthor({ author_id: "u1", author_name: "nova" }), { id: "u1", name: "nova" });
+  assert.deepEqual(faceTapAuthor({ author_id: "u1" }), { id: "u1", name: "" });
+  assert.equal(faceTapAuthor({ author_name: "nova" }), null);
+  assert.equal(faceTapAuthor(null), null);
+  assert.match(glue, /const hit = e\.target\.closest\("\.msg > \.avatar:not\(\.spacer\), \.msg-head > \.msg-author"\);/);
+  assert.match(glue, /openMemberCard\(fullMember\(author\), hit\);/);
+  assert.match(glue, /const card = layerStep\("ptCard", open, studioPhone\.cardStep, entry\);/);
+  assert.match(glue, /const more = layerStep\("ptCardMenu", menu, studioPhone\.cardMenuStep, entry\);/);
+  assert.match(glue, /const steps = card === "back" \? \(entry\.ptCardMenu \? 2 : 1\) : more === "back" \? 1 : 0;/);
+  assert.match(glue, /watch\(\$\("fp-menu"\), \{ attributes: true, attributeFilter: \["class"\] \}, syncCardSheet\);/);
+  assert.match(glue, /const STUDIO_SHEET_NODES = "[^"]*\.member-card, /);
+  assert.match(css, rule(" \\.app\\.pt-card-open > \\.pt-scrim", "background: var\\(--scrim\\);"));
+  assert.match(css, rule(" \\.member-card", "inset: auto 0 var\\(--keyboard-height, 0px\\) 0 !important;"));
+  assert.match(css, rule(" \\.member-card", "max-height: calc\\(var\\(--app-height, 100dvh\\) - env\\(safe-area-inset-top\\) - 56px\\);"));
+  assert.match(css, rule(" \\.member-card > \\.mc-body", "overflow-y: auto;"));
+});
+
+test("the card sheet wears the design guide's phone sizes on top of the shared card", () => {
+  assert.match(css, rule(" \\.member-card \\.mc-banner", "height: 128px;"));
+  assert.match(css, rule(" \\.member-card \\.mc-head", "margin-top: -54px;"));
+  assert.match(css, rule(" \\.member-card \\.mc-head \\.avatar", "width: 88px; height: 88px;"));
+  assert.match(css, rule(" \\.member-card \\.mc-actions \\.key", "height: 44px; padding: 0 18px 0 15px; font-size: 15px;"));
+  assert.match(css, rule(" \\.member-card > \\.mc-more", "top: 14px; right: 14px; width: 44px; height: 44px;"));
+  assert.match(css, rule(" \\.member-card \\.mc-name", "font-size: 25px; line-height: 28px;"));
+  assert.match(css, rule(" \\.member-card \\.mc-about", "font: 400 16px/23px var\\(--font\\);"));
+  assert.match(css, rule(" \\.member-card \\.mc-role", "height: 30px;"));
+  assert.match(css, rule(" \\.member-card \\.mc-field", "height: 52px;"));
+  assert.match(css, rule(" \\.member-card\\.slab::after", "inset: 9px auto auto 50%; opacity: 1; mix-blend-mode: normal;"));
+});
+
+test("Edit profile on your own card opens the phone's profile editor once the card has stepped back", () => {
+  assert.match(glue, /\$\("mc-actions"\)\.addEventListener\("click", editFromCard, true\);/);
+  assert.match(glue, /if \(!studioSlim\(\) \|\| !e\.target\.closest\("\.key\.sm:not\(\.primary\)"\)\) return;/);
+  assert.match(glue, /window\.addEventListener\("popstate", \(\) => openProfileEditor\(\), \{ once: true \}\);\n  closeFloating\(\);/);
+  assert.match(glue, /\$\("pt-profile"\)\.style\.setProperty\("--pc", personTint\(user\.id\)\);/);
 });

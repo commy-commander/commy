@@ -276,6 +276,10 @@ function chatBanner({ view, channel }) {
   return view === "server" && channel && channel.banner ? String(channel.banner) : "";
 }
 
+function faceTapAuthor(message) {
+  return message && message.author_id ? { id: message.author_id, name: message.author_name || "" } : null;
+}
+
 function layerStep(key, open, held, entry) {
   const onStep = Boolean(entry && entry[key]);
   if (open) return onStep ? "keep" : "push";
@@ -476,6 +480,7 @@ if (typeof module !== "undefined" && module.exports) {
     NOTIFY_PICKS,
     chatBanner,
     layerStep,
+    faceTapAuthor,
     inviteWarningParts,
     earlyBuild,
     trayNeedsStep,

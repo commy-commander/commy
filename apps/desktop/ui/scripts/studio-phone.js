@@ -29,6 +29,8 @@ const studioPhone = {
   trayWasOpen: false,
   trayStep: false,
   inviteStep: false,
+  cardStep: false,
+  cardMenuStep: false,
   inviteBusy: false,
   trayHome: null,
   talkHeld: false,
@@ -1237,6 +1239,7 @@ function profileName() {
 function paintProfileTop() {
   const user = state.user;
   const ban = $("pt-prof-ban");
+  $("pt-profile").style.setProperty("--pc", personTint(user.id));
   ban.dataset.banner = "";
   ban.classList.toggle("wash", !user.banner);
   if (user.banner) paintProfileBanner(ban, user.banner, user.node, null, bannerColor(user.id));
@@ -1628,6 +1631,14 @@ function wireHorizon() {
       if (trayShown()) $("soundboard-pop").classList.toggle("hidden", true);
     }
     dropSheets();
+    if (!(history.state && history.state.ptCard) && cardShown()) {
+      studioPhone.cardStep = false;
+      studioPhone.cardMenuStep = false;
+      closeFloating();
+    } else if (!(history.state && history.state.ptCardMenu) && studioPhone.cardMenuStep) {
+      studioPhone.cardMenuStep = false;
+      $("fp-menu").classList.add("hidden");
+    }
     if (back === "pt-voice-open" && phonePane() === "list" && !$("phone-voice").classList.contains("hidden")) $("app").classList.add(back);
   });
   $("channel-list").addEventListener("click", e => {
@@ -1649,6 +1660,8 @@ function watchStudioPhone() {
     refreshLiveRooms(false);
   });
   watch($("channel-name"), { childList: true, characterData: true, subtree: true }, paintChatHeader);
+  watch($("member-card"), { attributes: true, attributeFilter: ["class"] }, syncCardSheet);
+  watch($("fp-menu"), { attributes: true, attributeFilter: ["class"] }, syncCardSheet);
   watch($("chat-presence"), { attributes: true, attributeFilter: ["class", "title"] }, paintChatHeader);
   watch($("channel-list"), { childList: true }, () => {
     if (studioPhone.rowOpen && !studioPhone.rowOpen.row.isConnected) studioPhone.rowOpen = null;
@@ -1830,7 +1843,7 @@ function openRowSwipe(row) {
 
 const RAIL_UNLIT_MS = 200;
 const RAIL_FADE_MS = 140;
-const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop";
+const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop";
 
 function sheetAtTop(sheet, from) {
   for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
@@ -2555,6 +2568,53 @@ function wireInvite() {
   });
 }
 
+function cardShown() {
+  return studioSlim() && !$("member-card").classList.contains("hidden");
+}
+
+function syncCardSheet() {
+  const open = cardShown();
+  const menu = open && !$("fp-menu").classList.contains("hidden");
+  $("app").classList.toggle("pt-card-open", open);
+  const entry = history.state;
+  const card = layerStep("ptCard", open, studioPhone.cardStep, entry);
+  const more = layerStep("ptCardMenu", menu, studioPhone.cardMenuStep, entry);
+  if (card === "push") history.pushState({ ...(entry || { pane: phonePane() }), ptCard: true }, "");
+  if (more === "push") history.pushState({ ...(history.state || { pane: phonePane() }), ptCard: true, ptCardMenu: true }, "");
+  const steps = card === "back" ? (entry.ptCardMenu ? 2 : 1) : more === "back" ? 1 : 0;
+  studioPhone.cardStep = open;
+  studioPhone.cardMenuStep = menu;
+  if (steps) history.go(-steps);
+}
+
+function editFromCard(e) {
+  if (!studioSlim() || !e.target.closest(".key.sm:not(.primary)")) return;
+  e.stopPropagation();
+  e.preventDefault();
+  if (!studioPhone.cardStep) {
+    closeFloating();
+    openProfileEditor();
+    return;
+  }
+  window.addEventListener("popstate", () => openProfileEditor(), { once: true });
+  closeFloating();
+}
+
+function wireFaceTaps() {
+  $("mc-actions").addEventListener("click", editFromCard, true);
+  for (const feed of [$("messages"), $("thread-messages")]) {
+    feed.addEventListener("click", e => {
+      if (!studioSlim()) return;
+      const hit = e.target.closest(".msg > .avatar:not(.spacer), .msg-head > .msg-author");
+      const bar = hit && hit.closest(".msg").querySelector(":scope > .msg-actions");
+      const author = faceTapAuthor(bar && messageOfActions.get(bar));
+      if (!author) return;
+      e.stopPropagation();
+      openMemberCard(fullMember(author), hit);
+    });
+  }
+}
+
 function wireStudioPhone() {
   if (!studioLook() || !$("app") || typeof StudioIcons === "undefined") return;
   studioPhone.calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -2565,6 +2625,7 @@ function wireStudioPhone() {
   wireHomeHead();
   wireHoldSheet();
   wireSwipes();
+  wireFaceTaps();
   wireInvite();
   wireRoom();
   watchStudioPhone();
