@@ -23472,6 +23472,7 @@ function wireEvents() {
   if (studioLook()) studioAccountsWindow();
   if (studioLook()) studioProfileEditor();
   if (studioLook()) studioDialogs();
+  if (studioLook()) studioFloat();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;

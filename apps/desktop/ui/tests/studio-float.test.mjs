@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { STAGE_KEYS, stageLiveWord } = require("../scripts/studio-float.js");
 
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
@@ -47,4 +51,24 @@ test("toasts are a capsule that rises once, and stay put for less motion", () =>
   assert.match(rule(`${R} .toast`), /font: 600 14\.5px\/1\.2 var\(--font\);/);
   assert.ok(css.includes("@keyframes float-toast-in { from { opacity: 0; translate: 0 80px; } }"));
   assert.ok(css.includes(`@media (prefers-reduced-motion: reduce) {\n  ${R} .pop-menu,\n  ${R} .toast { animation: none; }\n}`));
+});
+
+test("a stream watched from the chat is the guide's stream card with its keys across the bottom edge", () => {
+  const C = `${R} .stage:not(.vr-grid .stage)`;
+  const glue = read("../scripts/studio-float.js");
+  const app = read("../scripts/app.js");
+  for (const id of STAGE_KEYS) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.indexOf('<script src="scripts/studio-float.js"></script>') > html.indexOf('<script src="scripts/studio-dialogs.js"></script>'));
+  assert.ok(app.includes("  if (studioLook()) studioDialogs();\n  if (studioLook()) studioFloat();\n"));
+  assert.equal(stageLiveWord(true), "Live");
+  assert.equal(stageLiveWord(false), "LIVE");
+  assert.ok(glue.includes('studioKeyDress(key, "key sm sq", roomy)'));
+  assert.ok(glue.includes('close.classList.toggle("danger", !roomy)'));
+  assert.match(rule(`${C} > .stage-view`), /border-radius: 24px;/);
+  assert.match(rule(`${C} > .stage-view > .stage-controls`), /bottom: -17px;/);
+  assert.match(rule(`${C} > .stage-view > .stage-controls`), /opacity: 1;/);
+  assert.match(rule(`${C} > .stage-view .stage-who > .live-badge`), /background: var\(--red\);/);
+  assert.match(rule(`${C} > .stage-view .stage-chip`), /background: var\(--video-scrim\);/);
+  assert.match(rule(`${C} > .stage-view .stage-ink-tools > .stage-btn.key.active`), /outline: var\(--ring-on\);/);
+  assert.match(rule(`${C} > .stage-view .stage-ink-tools > .stage-btn.key.active`), /color: var\(--accent-lit\);/);
 });
