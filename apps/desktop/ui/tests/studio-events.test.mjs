@@ -92,3 +92,11 @@ test("no events shows the 64 well with the app's words", () => {
   assert.match(rule(`${R} .events-empty > p`), /max-width: 340px;/);
   assert.match(app, /"Schedule one so people know when to show up\." : "Check back later\."/);
 });
+
+test("the events glue leaves the phone layout to the phone's own dressing", () => {
+  assert.ok(glue.includes('if (!body.querySelector("[data-studio-event]")) return;'));
+  assert.ok(glue.includes("renderEvents();"));
+  assert.ok(glue.includes('if (!key.dataset.studioEvent) return;'));
+  assert.ok(glue.includes('if (phone) key.classList.add("key");'));
+  assert.ok(glue.includes('observe(create, { attributes: true, attributeFilter: ["class"] })'));
+});
