@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, dialogAnswerClasses } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -83,4 +83,13 @@ test("the four undrawn parts follow the guide's reading", () => {
   assert.match(rule(`${R} .modal.dialog > .delete-preview`), /border-radius: 14px;\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);/);
   assert.match(rule(`${R} .modal.dialog > .delete-preview > .avatar`), /width: 32px;\n  height: 32px;/);
   assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .danger-callout > .i,\nhtml[data-look="studio"][data-fit="slim"] .report-reasons > label > .tick { display: none; }'));
+});
+
+test("reporting is a blue action with a switch row to also block", () => {
+  assert.deepEqual(DIALOG_BLUE_ACTIONS, ["report-go"]);
+  assert.ok(glue.includes('if (DIALOG_BLUE_ACTIONS.includes(button.id)) return "primary";'));
+  assert.ok(glue.includes(`box.classList.toggle("switch", roomy)`));
+  assert.match(rule(`${R} .modal.dialog > .report-also-block`), /min-height: 44px;/);
+  assert.match(rule(`${R} .modal.dialog > .report-reasons > label:has(> input:checked)`), /background: var\(--bg-active\);/);
+  assert.ok(css.includes("resize: none;"));
 });

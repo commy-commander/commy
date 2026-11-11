@@ -182,10 +182,24 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons 
   opacity: 0;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:has(> input:checked) {
+  background: var(--bg-active);
   color: var(--header-primary);
   font-weight: 600;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:has(> input:checked) > .tick { opacity: 1; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-also-block {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  margin: 0;
+  color: var(--header-primary);
+  font: 600 14.5px/1.2 var(--font);
+  cursor: pointer;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-also-block > span { flex: 1; min-width: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-also-block > input { flex: none; order: 1; margin: 0; }
 
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview {
   display: flex;

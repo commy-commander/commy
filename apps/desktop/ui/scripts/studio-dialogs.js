@@ -22,7 +22,10 @@ const STUDIO_DIALOGS = [
   "modal-delete-channel",
 ];
 
+const DIALOG_BLUE_ACTIONS = ["report-go"];
+
 function answerKind(button) {
+  if (DIALOG_BLUE_ACTIONS.includes(button.id)) return "primary";
   if (button.classList.contains("btn-danger")) return "danger";
   if (button.classList.contains("btn-primary")) return "primary";
   return "plain";
@@ -48,6 +51,7 @@ function studioDialogDress(modal) {
   const roomy = document.documentElement.dataset.fit !== "slim";
   modal.classList.toggle("dialog", roomy);
   modal.classList.toggle("slab", roomy);
+  for (const box of modal.querySelectorAll(":scope > .report-also-block > input[type='checkbox']")) box.classList.toggle("switch", roomy);
   const actions = modal.querySelector(":scope > .modal-actions");
   if (!actions) return;
   actions.classList.toggle("answers", roomy);
@@ -80,5 +84,5 @@ function studioDialogs() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DIALOGS, dialogAnswerClasses };
+  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses };
 }
