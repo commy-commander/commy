@@ -478,3 +478,31 @@ html[data-look="studio"] form.bar:not(.has-text) .send {
 }
 html[data-look="studio"][data-theme="light"] { --role-ink-mix: 55%; }
 html[data-look="studio"][data-theme="light"] .theme-dark { --role-ink-mix: 100%; }
+html[data-look="studio"] .attachment.filecard {
+  gap: 12px;
+  width: 340px;
+  max-width: 100%;
+  height: 64px;
+  margin-top: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 60%), var(--bg-raised);
+  box-shadow: var(--pillow-card);
+}
+html[data-look="studio"] .filecard .plate {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: var(--input-bg);
+  color: var(--accent-lit);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"][data-theme="light"] .filecard .plate { background: var(--bg-hover); box-shadow: inset 0 1px 2px rgb(var(--dark) / .3); }
+html[data-look="studio"] .filecard .file-meta { display: grid; gap: 5px; }
+html[data-look="studio"] .filecard .file-name { font: 600 14.5px/1 var(--font); }
+html[data-look="studio"] .filecard .file-size { font: 400 13px/1 var(--font); }
+html[data-look="studio"] .filecard .file-size.file-failed { color: var(--danger); }
+html[data-look="studio"] .filecard .key.file-save { flex: none; width: 38px; height: 38px; }

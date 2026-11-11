@@ -10742,25 +10742,42 @@ function attachmentHere(att) {
 
 function renderAttachment(att) {
   if (isVoiceMessage(att) && voicePlaybackSupported()) return renderVoiceMessage(att);
-  const box = el("div", "attachment");
-  const icon = el("span", "file-icon");
-  icon.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5z"/></svg>';
+  const studio = studioLook();
+  const name = isVoiceMessage(att) ? voiceMessageText(null) : att.filename;
+  const box = el("div", studio ? "attachment filecard" : "attachment");
+  const icon = el("span", studio ? "file-icon plate" : "file-icon");
+  if (studio) icon.appendChild(studioIconNode("file-text", 21, true));
+  else icon.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm4 18H6V4h7v5h5z"/></svg>';
   box.appendChild(icon);
   const meta = el("div", "file-meta");
-  meta.appendChild(el("div", "file-name", isVoiceMessage(att) ? voiceMessageText(null) : att.filename));
-  meta.appendChild(el("div", "file-size", formatSize(att.size_bytes)));
+  meta.appendChild(el("div", "file-name", name));
+  const size = meta.appendChild(el("div", "file-size", formatSize(att.size_bytes)));
   box.appendChild(meta);
-  const btn = el("button", "btn-secondary btn-small", "Download");
+  const btn = studio ? el("button", "key sm sq file-save") : el("button", "btn-secondary btn-small", "Download");
+  if (studio) {
+    btn.type = "button";
+    btn.title = `Save ${name}`;
+    btn.setAttribute("aria-label", `Save ${name}`);
+    btn.appendChild(studioIconNode("download", 18));
+  }
+  const words = studio ? size : btn;
+  const rest = words.textContent;
   btn.onclick = async () => {
     btn.disabled = true;
-    btn.textContent = isBigFile(att.size_bytes) ? "Choose where" : "Fetching";
-    const watching = (downloadButtons.get(att.blob) || new Set()).add(btn);
+    words.textContent = isBigFile(att.size_bytes) ? "Choose where" : "Fetching";
+    const watching = (downloadButtons.get(att.blob) || new Set()).add(words);
     downloadButtons.set(att.blob, watching);
-    await saveAttachment(att);
-    watching.delete(btn);
+    const saved = await saveAttachment(att);
+    watching.delete(words);
     if (!watching.size) downloadButtons.delete(att.blob);
     btn.disabled = false;
-    btn.textContent = "Download";
+    const failed = studio && !saved;
+    words.textContent = failed ? "Couldn't save" : rest;
+    words.classList.toggle("file-failed", failed);
+    if (studio) {
+      btn.title = failed ? "Retry" : `Save ${name}`;
+      btn.setAttribute("aria-label", btn.title);
+    }
   };
   box.appendChild(btn);
   return box;
@@ -10782,8 +10799,10 @@ async function saveAttachment(att) {
       serverId: att.server ?? null,
     });
     toast(path ? `Saved to ${path}` : "Download cancelled");
+    return true;
   } catch (e) {
     toast(String(e));
+    return false;
   }
 }
 

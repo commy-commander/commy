@@ -2128,6 +2128,7 @@ html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .reply-ref .ava
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .reply-ref-name { flex: none; font: 600 13px/1 var(--font); color: var(--pt-ink, var(--header-primary)); }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .reply-ref-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 13px/1 var(--font); color: var(--text-muted); }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .msg .attachment:has(+ img.chat-image) { display: none; }
+html[data-look="studio"][data-fit="slim"] .filecard .key.file-save::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .msg .chat-image { max-width: 100%; max-height: 300px; margin-top: 7px; border-radius: 16px; box-shadow: 0 0 0 1px var(--rim-soft), 0 2px 3px rgb(var(--dark) / .4), 0 14px 18px -8px rgb(var(--dark) / .6); }
 html[data-look="studio"][data-fit="slim"] .msg-actions { display: none !important; }
 html[data-look="studio"][data-fit="slim"] .msg,
