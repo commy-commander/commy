@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync, statSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const {
   MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND,
-  isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, joinSoundToPlay,
+  isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
   voiceRosterChange, monoSamples, soundLevel,
 } = require("../scripts/alert-sounds.js");
 
@@ -74,4 +75,19 @@ test("sound levels stay between silent and full", () => {
   assert.equal(soundLevel(3), 1);
   assert.equal(soundLevel(-1), 0);
   assert.equal(soundLevel(undefined), 1);
+});
+
+test("the new look has its own sounds for a new message and a direct message, and every other sound stays", () => {
+  const app = readFileSync(new URL("../scripts/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const files = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", ring: "sounds/ring.wav" };
+  const studio = { notification: "sounds/studio/notification.mp3", ding: "sounds/studio/ding.mp3" };
+  assert.equal(builtInSoundFile("notification", files, studio, true), "sounds/studio/notification.mp3");
+  assert.equal(builtInSoundFile("ding", files, studio, true), "sounds/studio/ding.mp3");
+  assert.equal(builtInSoundFile("ring", files, studio, true), "sounds/ring.wav");
+  assert.equal(builtInSoundFile("notification", files, studio, false), "sounds/notification.mp3");
+  assert.equal(builtInSoundFile("ding", files, studio, false), "sounds/ding.mp3");
+  assert.equal(builtInSoundFile("nothing", files, studio, true), null);
+  assert.match(app, /const STUDIO_SOUND_FILES = \{ notification: "sounds\/studio\/notification\.mp3", ding: "sounds\/studio\/ding\.mp3" \};/);
+  assert.match(app, /return builtInSoundFile\(name, SOUND_FILES, STUDIO_SOUND_FILES, studioLook\(\)\);/);
+  for (const name of ["notification", "ding"]) assert.ok(statSync(new URL(`../sounds/studio/${name}.mp3`, import.meta.url)).size > 10000);
 });

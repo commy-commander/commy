@@ -4533,6 +4533,7 @@ async function setServerImage(which, data) {
 }
 
 const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", ring: "sounds/ring.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
+const STUDIO_SOUND_FILES = { notification: "sounds/studio/notification.mp3", ding: "sounds/studio/ding.mp3" };
 const SOUND_EVENTS = [
   { id: "message", label: "New message or mention", fallback: "notification" },
   { id: "dm", label: "Direct message", fallback: "ding" },
@@ -4562,7 +4563,7 @@ function soundFor(eventId) {
 
 function alertSoundUrl(name) {
   if (isAlertSound(name)) return alertSounds.urls.get(name) || null;
-  return SOUND_FILES[name] || null;
+  return builtInSoundFile(name, SOUND_FILES, STUDIO_SOUND_FILES, studioLook());
 }
 
 const appSounds = { native: null, decoded: new Map(), next: 1 };

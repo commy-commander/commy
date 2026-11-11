@@ -36,6 +36,10 @@ function resolveAlertSound(chosen, fallback, custom) {
   return chosen;
 }
 
+function builtInSoundFile(name, files, studioFiles, studio) {
+  return (studio && studioFiles[name]) || files[name] || null;
+}
+
 function joinSoundToPlay({ joined, joinSounds, allowed, hearJoinSounds }) {
   if (!allowed || !hearJoinSounds || joined.length !== 1) return null;
   return (joinSounds || {})[joined[0]] || null;
@@ -64,7 +68,7 @@ function soundLevel(volume) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     ALERT_SOUND_PREFIX, MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND, RING_GAP_MS,
-    isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, joinSoundToPlay,
+    isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
     voiceRosterChange, monoSamples, soundLevel,
   };
 }
