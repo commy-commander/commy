@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, SETTINGS_FILTER_ICONS, METER_BARS, settingsPageIcon, settingsPaneGroups, meterBarClass, meterLit } = require("../scripts/studio-settings.js");
+const { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, SETTINGS_FILTER_ICONS, METER_BARS, settingsPageIcon, settingsPaneGroups, meterBarClass, meterLit, hotkeyCaps, themeCardClass } = require("../scripts/studio-settings.js");
 const { VOICE_FILTERS } = require("../scripts/voice-filters.js");
 const { STUDIO_ICON_PATHS } = require("../vendor/phosphor/icons.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -54,7 +54,7 @@ test("the settings window's new look stays off until the switch is on", () => {
 });
 
 test("Slim keeps the phone's settings: the panes, picks and icons step aside", () => {
-  assert.match(css, /html\[data-look="studio"\]\[data-fit="slim"\] \.set-pane,\nhtml\[data-look="studio"\]\[data-fit="slim"\] \.set-pick \{ display: contents; \}/);
+  assert.match(css, /html\[data-look="studio"\]\[data-fit="slim"\] \.set-pane,\nhtml\[data-look="studio"\]\[data-fit="slim"\] \.set-pick,\nhtml\[data-look="studio"\]\[data-fit="slim"\] \.set-keys \{ display: contents; \}/);
   for (const part of [".set-pick > .i", ".settings-tab > .i", "#user-settings .settings-nav-title"]) assert.ok(css.includes(`html[data-look="studio"][data-fit="slim"] ${part}`), part);
   for (const selector of selectors(css).filter(s => !s.includes('[data-fit="slim"]') && !s.startsWith('html[data-look="studio"] .user-actions'))) {
     assert.ok(selector.includes(':not([data-fit="slim"])'), selector);
@@ -161,4 +161,33 @@ test("the Voice page: no extra lines, a 40-bar meter whose gate is the threshold
   for (const filter of VOICE_FILTERS) assert.ok(STUDIO_ICON_PATHS[SETTINGS_FILTER_ICONS[filter.key]], filter.key);
   assert.match(rule(`${ROOMY} .settings-layer .segmented.voice-filters`), /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);\n  gap: 9px 8px;/);
   assert.match(rule(`${ROOMY} .settings-layer .segmented.voice-filters > .key`), /height: 40px;/);
+});
+
+test("keybinds show as key caps, and pressing new keys still goes through the app's own field", () => {
+  assert.deepEqual(hotkeyCaps("Ctrl+Shift+Space"), ["Ctrl", "Shift", "Space"]);
+  assert.deepEqual(hotkeyCaps("Ctrl++"), ["Ctrl", "+"]);
+  assert.deepEqual(hotkeyCaps(""), []);
+  const cap = rule(`${ROOMY} .settings-layer .set-caps > .kbd`);
+  for (const line of ["min-width: 26px;", "height: 24px;", "padding: 0 7px;", "border-radius: 8px;", "font: 500 12px/1 var(--font-mono);"]) assert.ok(cap.includes(line), line);
+  assert.match(rule(`${ROOMY} .settings-layer .set-keys > .hotkey-input`), /position: absolute;\n  inset: 0;/);
+  assert.match(rule(`${ROOMY} .settings-layer .set-keys > .hotkey-input:focus`), /box-shadow: 0 0 0 2px var\(--accent\);/);
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .set-caps,'));
+});
+
+test("Theme is three theme cards, each an island of its own theme, and Delete Account wears the danger card", () => {
+  assert.equal(themeCardClass("dark"), "set-theme theme-dark");
+  assert.equal(themeCardClass("light"), "set-theme theme-light");
+  assert.equal(themeCardClass("system"), "set-theme follow");
+  for (const value of ["dark", "light", "system"]) assert.ok(html.includes(`<option value="${value}"`), value);
+  assert.match(rule(`${ROOMY} .settings-layer .set-themes`), /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);\n  gap: 10px;/);
+  assert.match(rule(`${ROOMY} .settings-layer .set-theme`), /border-radius: 24px;/);
+  assert.match(rule(`${ROOMY} .settings-layer .set-theme[aria-checked="true"]`), /0 0 0 2px var\(--accent-lit\)/);
+  assert.match(rule(`${ROOMY} .settings-layer .set-theme .tmini.split > .tm.theme-light`), /clip-path: polygon\(58% 0, 100% 0, 100% 100%, 42% 100%\);/);
+  assert.match(rule(`${ROOMY} .settings-layer .set-theme .lab > b`), /white-space: nowrap;/);
+  assert.match(rule(`${ROOMY} .settings-layer .set-danger #acct-delete`), /right: 24px;\n  bottom: -20px;/);
+  assert.match(rule(`${ROOMY} .settings-layer .set-danger > .settings-subhead > .i`), /color: var\(--danger-text\);/);
+  const shell = read("../scripts/studio-settings.js");
+  assert.match(shell, /studioIconMarkup\("triangle-alert"\)/);
+  assert.match(shell, /key\.insertAdjacentHTML\("afterbegin", studioIconMarkup\("trash-2"\)\);/);
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .set-themes,'));
 });

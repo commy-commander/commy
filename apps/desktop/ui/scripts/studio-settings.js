@@ -86,6 +86,21 @@ function meterLit(percent, count = METER_BARS) {
   return Math.round(share * count);
 }
 
+function hotkeyCaps(combo) {
+  const parts = [];
+  let part = "";
+  for (const ch of String(combo || "")) {
+    if (ch === "+" && part) {
+      parts.push(part);
+      part = "";
+    } else {
+      part += ch;
+    }
+  }
+  if (part) parts.push(part);
+  return parts.map(name => name.trim()).filter(Boolean);
+}
+
 function settingsChildKind(node) {
   if (node.matches("h1, .settings-intro")) return "title";
   if (node.matches(".settings-subhead")) return "head";
@@ -192,6 +207,136 @@ function studioSettingsFilters() {
   new MutationObserver(dress).observe(document.documentElement, { attributes: true, attributeFilter: ["data-fit"] });
 }
 
+function studioCapsPaint(caps, text, empty) {
+  const parts = hotkeyCaps(text);
+  const nodes = parts.map(name => {
+    const cap = document.createElement("kbd");
+    cap.className = name === "Space" ? "kbd wide" : "kbd";
+    cap.textContent = name;
+    return cap;
+  });
+  if (!nodes.length && empty) {
+    const none = document.createElement("span");
+    none.className = "set-caps-none";
+    none.textContent = empty;
+    nodes.push(none);
+  }
+  caps.replaceChildren(...nodes);
+}
+
+function studioHotkeyCaps(input) {
+  if (input.parentNode && input.parentNode.classList.contains("set-keys")) return;
+  const wrap = document.createElement("span");
+  wrap.className = "set-keys";
+  input.before(wrap);
+  const caps = document.createElement("span");
+  caps.className = "set-caps";
+  caps.setAttribute("aria-hidden", "true");
+  wrap.append(caps, input);
+  const field = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  const paint = () => studioCapsPaint(caps, field.get.call(input), input.placeholder);
+  Object.defineProperty(input, "value", {
+    configurable: true,
+    get() { return field.get.call(this); },
+    set(next) {
+      field.set.call(this, next);
+      paint();
+    },
+  });
+  input.addEventListener("blur", paint);
+  paint();
+}
+
+function studioShortcutCaps(key) {
+  if (key.nextElementSibling && key.nextElementSibling.classList.contains("set-caps")) return;
+  const caps = document.createElement("span");
+  caps.className = "set-caps";
+  caps.setAttribute("aria-hidden", "true");
+  key.after(caps);
+  const paint = () => studioCapsPaint(caps, key.textContent, "");
+  new MutationObserver(paint).observe(key, { childList: true, characterData: true, subtree: true });
+  paint();
+}
+
+function studioSettingsCaps(layer) {
+  for (const input of layer.querySelectorAll("input.hotkey-input")) studioHotkeyCaps(input);
+  for (const key of layer.querySelectorAll("kbd.shortcut-key")) studioShortcutCaps(key);
+}
+
+const THEME_CARD_MINI = '<i class="mw"></i><i class="mb"></i><i class="mk"></i>';
+
+function themeCardClass(value) {
+  if (value === "dark") return "set-theme theme-dark";
+  if (value === "light") return "set-theme theme-light";
+  return "set-theme follow";
+}
+
+function studioThemeCards() {
+  const select = document.getElementById("theme-select");
+  if (!select || select.dataset.cards) return;
+  const row = select.closest(".setting-row");
+  if (!row) return;
+  select.dataset.cards = "on";
+  const group = document.createElement("div");
+  group.className = "set-themes";
+  group.setAttribute("role", "radiogroup");
+  group.setAttribute("aria-label", row.querySelector(".setting-title")?.textContent || "Theme");
+  const tick = typeof studioIconMarkup === "function" ? studioIconMarkup("check", "tick") : "";
+  for (const option of select.options) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = themeCardClass(option.value);
+    card.value = option.value;
+    card.setAttribute("role", "radio");
+    const mini = option.value === "system"
+      ? `<span class="tmini split"><span class="tm theme-dark">${THEME_CARD_MINI}</span><span class="tm theme-light">${THEME_CARD_MINI}</span></span>`
+      : `<span class="tmini">${THEME_CARD_MINI}</span>`;
+    card.innerHTML = `${mini}<span class="lab"><b></b>${tick}</span>`;
+    const name = card.querySelector("b");
+    name.textContent = option.textContent;
+    if (option.dataset.i18n) name.dataset.i18n = option.dataset.i18n;
+    card.onclick = () => {
+      if (select.value === option.value) return;
+      select.value = option.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    group.appendChild(card);
+  }
+  row.appendChild(group);
+  const field = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+  const paint = () => {
+    const value = field.get.call(select);
+    for (const card of group.children) card.setAttribute("aria-checked", String(card.value === value));
+  };
+  Object.defineProperty(select, "value", {
+    configurable: true,
+    get() { return field.get.call(this); },
+    set(next) {
+      field.set.call(this, next);
+      paint();
+    },
+  });
+  select.addEventListener("change", paint);
+  paint();
+}
+
+function studioDangerCard() {
+  const key = document.getElementById("acct-delete");
+  const pane = key && key.closest(".set-pane");
+  if (!pane || pane.classList.contains("set-danger")) return;
+  pane.classList.add("set-danger");
+  if (typeof studioIconMarkup !== "function") return;
+  const head = pane.querySelector(":scope > .settings-subhead");
+  if (head) {
+    const words = document.createElement("span");
+    words.className = "set-head-words";
+    words.append(...head.childNodes);
+    head.append(words);
+    head.insertAdjacentHTML("afterbegin", studioIconMarkup("triangle-alert"));
+  }
+  key.insertAdjacentHTML("afterbegin", studioIconMarkup("trash-2"));
+}
+
 function studioSettingsSide(layer) {
   const app = document.querySelector(".app");
   const paint = () => {
@@ -220,10 +365,13 @@ function studioSettingsShell(close) {
     studioSettingsNav(layer);
     for (const page of layer.querySelectorAll(".settings-page")) studioSettingsPanes(page);
     studioSettingsPicks(layer);
+    studioSettingsCaps(layer);
     studioSettingsSide(layer);
   }
   studioSettingsMeterBars();
   studioSettingsFilters();
+  studioThemeCards();
+  studioDangerCard();
   studioSettingsDone(close);
   const rail = document.querySelector(".app > .rail");
   if (rail) {
@@ -236,5 +384,5 @@ function studioSettingsShell(close) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, SETTINGS_FILTER_ICONS, METER_BARS, settingsPageIcon, settingsPaneGroups, meterBarClass, meterLit };
+  module.exports = { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, SETTINGS_FILTER_ICONS, METER_BARS, settingsPageIcon, settingsPaneGroups, meterBarClass, meterLit, hotkeyCaps, themeCardClass };
 }

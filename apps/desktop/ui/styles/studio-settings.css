@@ -518,6 +518,197 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice
 html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice-filters > .key.is-down > .i { color: var(--header-primary); }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice-filters > .key > strong { overflow: hidden; color: inherit; font: inherit; text-overflow: ellipsis; white-space: nowrap; }
 
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .setting-row > .set-pick:has(> #theme-select) { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .setting-row:has(> .set-themes) { flex-wrap: wrap; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-themes {
+  flex: 1 0 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 4px 0 8px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme {
+  position: relative;
+  display: grid;
+  padding: 6px 6px 0;
+  border: 0;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .06), rgb(var(--lamp) / 0) 70%), var(--bg-raised);
+  box-shadow: var(--pillow-card);
+  color: var(--text-normal);
+  text-align: left;
+  cursor: pointer;
+  transition: translate var(--t-hover) var(--ease-spring), box-shadow var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme:active { translate: 0 2px; transition-duration: var(--t-press); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme[aria-checked="true"] { box-shadow: inset 0 1px 0 rgb(var(--lamp) / .2), 0 0 0 2px var(--accent-lit), 0 2px 0 2px var(--accent-deep), 0 12px 14px -5px rgb(var(--dark) / .5); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .tmini {
+  position: relative;
+  display: block;
+  height: 70px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: linear-gradient(180deg, var(--bg-dark) 0%, var(--wall-lit) 62%, var(--tint-1) 62.5%, var(--tint-1) 64%, var(--bg-dark) 64.5%, var(--bg-darkest) 100%);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .tmini.split { background: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .tmini.split > .tm {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, var(--bg-dark) 0%, var(--wall-lit) 62%, var(--tint-1) 62.5%, var(--tint-1) 64%, var(--bg-dark) 64.5%, var(--bg-darkest) 100%);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .tmini.split > .tm.theme-light { clip-path: polygon(58% 0, 100% 0, 100% 100%, 42% 100%); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .mw {
+  position: absolute;
+  top: 12px;
+  right: 34px;
+  bottom: 18px;
+  left: 14px;
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: inset 0 1px 0 var(--rim), inset 0 0 0 1px var(--rim-soft), 0 8px 10px -4px rgb(var(--dark) / .6);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .mw::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 9px;
+  width: 46%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--header-primary);
+  opacity: .85;
+  box-shadow: 0 10px 0 0 var(--text-faint), 26px 20px 0 -1px var(--text-faint);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .mb {
+  position: absolute;
+  right: 22px;
+  bottom: 10px;
+  left: 40px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--accent);
+  box-shadow: inset 0 1px 0 rgb(var(--lamp) / .4), 0 2px 0 var(--accent-deep), 0 6px 6px -2px rgb(var(--dark) / .6);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .mk {
+  position: absolute;
+  right: 15px;
+  bottom: 9px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--cream);
+  box-shadow: 0 2px 0 var(--cream-deep), 0 4px 4px -1px rgb(var(--dark) / .5);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .lab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  height: 36px;
+  padding: 0 6px 1px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .lab > b {
+  overflow: hidden;
+  color: var(--header-primary);
+  font: 600 13px/1 var(--font-display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme .tick {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--accent-lit);
+  opacity: 0;
+  scale: .5;
+  transition: opacity var(--t-hover), scale 200ms var(--ease-spring);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-theme[aria-checked="true"] .tick { opacity: 1; scale: 1; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-danger { position: relative; margin-bottom: 20px; padding-bottom: 38px; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-danger :is(.settings-card, .account-line) { position: static; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-danger > .settings-subhead > .set-head-words { display: inline-block; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-danger > .settings-subhead > .set-head-words::first-letter { text-transform: uppercase; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-danger > .settings-subhead > .i {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-right: 9px;
+  color: var(--danger-text);
+  vertical-align: -2px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-danger #acct-delete {
+  position: absolute;
+  right: 24px;
+  bottom: -20px;
+  z-index: 2;
+  height: 40px;
+  padding: 0 18px;
+  font: 600 14px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-danger #acct-delete > .i { width: 18px; height: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-keys {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 34px;
+  margin: -4px -4px -6px;
+  padding: 4px 4px 6px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-keys:hover { background: var(--bg-hover); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-keys:has(> .hotkey-input:focus) { min-width: 140px; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-keys > .hotkey-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  color: transparent;
+  caret-color: transparent;
+  font: 500 12.5px/1 var(--font);
+  text-align: center;
+  cursor: pointer;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-keys > .hotkey-input::placeholder { color: transparent; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-keys > .hotkey-input:focus {
+  background: var(--input-bg);
+  box-shadow: 0 0 0 2px var(--accent);
+  color: var(--header-primary);
+  outline: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-keys:has(> .hotkey-input:focus) > .set-caps { visibility: hidden; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-caps {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer kbd.shortcut-key { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-caps > .kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .08), rgb(var(--lamp) / 0) 70%), var(--bg-raised);
+  box-shadow: inset 0 1px 0 rgb(var(--lamp) / .18), 0 1px 2px rgb(var(--dark) / .5), 0 2px 4px -1px rgb(var(--dark) / .4);
+  color: var(--header-primary);
+  font: 500 12px/1 var(--font-mono);
+  letter-spacing: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-caps > .kbd.wide { min-width: 72px; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-caps-none { color: var(--text-muted); font: 500 13px/24px var(--font); }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-layer :is(.btn-primary, .btn-secondary, .btn-danger) {
   --k-ink: var(--header-primary);
   display: inline-flex;
@@ -602,10 +793,17 @@ html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-la
 html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer .mic-meter { background: var(--bg-hover); }
 html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer #sensitivity-db::-webkit-slider-thumb { background: var(--cream); }
 
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer .set-caps > .kbd { box-shadow: inset 0 0 0 1px rgb(var(--dark) / .1), 0 2px 0 var(--key-edge), 0 3px 1px rgb(var(--dark) / .18); }
+
 html[data-look="studio"][data-fit="slim"] .set-pane,
-html[data-look="studio"][data-fit="slim"] .set-pick { display: contents; }
+html[data-look="studio"][data-fit="slim"] .set-pick,
+html[data-look="studio"][data-fit="slim"] .set-keys { display: contents; }
 html[data-look="studio"][data-fit="slim"] .set-pick > .i,
 html[data-look="studio"][data-fit="slim"] #voice-filter > button > :is(.i, .led),
 html[data-look="studio"][data-fit="slim"] #mic-meter > i,
+html[data-look="studio"][data-fit="slim"] .set-caps,
+html[data-look="studio"][data-fit="slim"] .set-themes,
+html[data-look="studio"][data-fit="slim"] .set-danger > .settings-subhead > .i,
+html[data-look="studio"][data-fit="slim"] #acct-delete > .i,
 html[data-look="studio"][data-fit="slim"] .settings-tab > .i,
 html[data-look="studio"][data-fit="slim"] #user-settings .settings-nav-title { display: none; }
