@@ -70,6 +70,7 @@ html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-actions > * {
 }
 html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-actions:not(:has(> :not(.hidden))) { display: none; }
 html[data-look="studio"][data-fit="slim"] #lightbox-source {
+  position: relative;
   display: inline-flex;
   flex: 0 1 auto;
   align-items: center;
@@ -87,6 +88,11 @@ html[data-look="studio"][data-fit="slim"] #lightbox-source.linked:hover {
   color: var(--link);
   text-decoration: none;
   cursor: pointer;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox-source::after {
+  content: "";
+  position: absolute;
+  inset: -15px -10px;
 }
 html[data-look="studio"][data-fit="slim"] #lightbox-source > svg {
   flex: none;

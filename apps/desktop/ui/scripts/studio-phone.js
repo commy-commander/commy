@@ -1326,6 +1326,7 @@ function fillProfileEditor() {
   const user = state.user;
   const saved = savedStatus();
   $("pt-prof-dn").value = saved.name;
+  $("pt-prof-dn").placeholder = (user && user.username) || "";
   $("pt-prof-pro").value = (state.voice && state.voice.pronouns) || "";
   $("pt-prof-status").value = saved.status;
   $("pt-prof-about").value = decodeCustomEmojis(user.about);
