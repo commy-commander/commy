@@ -523,7 +523,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .setting-row:has
 html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .set-themes {
   flex: 1 0 100%;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 180px));
   gap: 10px;
   padding: 4px 0 8px;
 }

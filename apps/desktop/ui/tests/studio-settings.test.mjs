@@ -179,7 +179,7 @@ test("Theme is three theme cards, each an island of its own theme, and Delete Ac
   assert.equal(themeCardClass("light"), "set-theme theme-light");
   assert.equal(themeCardClass("system"), "set-theme follow");
   for (const value of ["dark", "light", "system"]) assert.ok(html.includes(`<option value="${value}"`), value);
-  assert.match(rule(`${ROOMY} .settings-layer .set-themes`), /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);\n  gap: 10px;/);
+  assert.match(rule(`${ROOMY} .settings-layer .set-themes`), /grid-template-columns: repeat\(3, minmax\(0, 180px\)\);\n  gap: 10px;/);
   assert.match(rule(`${ROOMY} .settings-layer .set-theme`), /border-radius: 24px;/);
   assert.match(rule(`${ROOMY} .settings-layer .set-theme[aria-checked="true"]`), /0 0 0 2px var\(--accent-lit\)/);
   assert.match(rule(`${ROOMY} .settings-layer .set-theme .tmini.split > .tm.theme-light`), /clip-path: polygon\(58% 0, 100% 0, 100% 100%, 42% 100%\);/);

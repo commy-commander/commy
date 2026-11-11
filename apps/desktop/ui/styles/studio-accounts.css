@@ -1,0 +1,158 @@
+html[data-look="studio"] .modal-backdrop:has(> #modal-accounts:not(.hidden)) { background: var(--scrim); }
+html[data-look="studio"] .modal.slab#modal-accounts {
+  gap: 0;
+  width: min(440px, calc(100vw - 32px));
+  padding: 26px 28px 24px;
+  border: 0;
+  border-radius: var(--radius-xl);
+  color: var(--text-normal);
+}
+html[data-look="studio"] #modal-accounts > * { position: relative; z-index: 1; }
+html[data-look="studio"] #modal-accounts > .set-grab { display: none; }
+html[data-look="studio"] #modal-accounts > h2 {
+  margin: 0;
+  color: var(--header-primary);
+  font: 700 21px/1.2 var(--font-display);
+  letter-spacing: -.015em;
+}
+html[data-look="studio"] #modal-accounts > p {
+  margin: 8px 0 0;
+  color: var(--text-normal);
+  font: 400 15px/1.45 var(--font);
+}
+html[data-look="studio"] #modal-accounts .account-list { gap: 6px; margin: 18px 0 0; }
+html[data-look="studio"] #modal-accounts .account-row {
+  gap: 12px;
+  height: 60px;
+  padding: 0 6px 0 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  transition: background var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"] #modal-accounts .account-row:not(.current):hover { background: rgb(var(--lamp) / .06); }
+html[data-look="studio"] #modal-accounts .account-row.current {
+  background: rgb(var(--lamp) / .04);
+  outline: var(--ring-on);
+  outline-offset: -2px;
+}
+html[data-look="studio"] #modal-accounts .account-row:has(> .account-pick:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+html[data-look="studio"] #modal-accounts .account-pick {
+  gap: 12px;
+  padding: 0 0 0 12px;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  color: inherit;
+  outline: 0;
+}
+html[data-look="studio"] #modal-accounts .account-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+html[data-look="studio"] #modal-accounts .account-row:not(.current) .account-avatar {
+  background: var(--bg-active);
+  color: var(--header-primary);
+  font: 600 13px/1 var(--font);
+  letter-spacing: .02em;
+}
+html[data-look="studio"] #modal-accounts .account-text { display: grid; gap: 4px; }
+html[data-look="studio"] #modal-accounts .account-name {
+  overflow: hidden;
+  color: var(--header-primary);
+  font: 600 15px/1.15 var(--font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-look="studio"] #modal-accounts .account-email {
+  overflow: hidden;
+  color: var(--text-muted);
+  font: 400 13px/1.15 var(--font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-look="studio"] #modal-accounts .account-check { width: 20px; height: 20px; color: var(--accent-lit); }
+html[data-look="studio"] #modal-accounts .account-check svg { width: 20px; height: 20px; }
+html[data-look="studio"] #modal-accounts .account-sign-out {
+  flex: none;
+  width: auto;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--danger-text);
+  font: 600 14px/1 var(--font);
+  text-align: center;
+  text-decoration: none;
+  transition: background var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"] #modal-accounts .account-sign-out:hover { background: var(--bg-active); text-decoration: none; }
+html[data-look="studio"] #modal-accounts .account-sign-out:disabled { background: none; opacity: .5; cursor: not-allowed; }
+html[data-look="studio"] #modal-accounts #account-add.key {
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 48px;
+  margin-top: 14px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  font: 600 14px/1 var(--font);
+}
+html[data-look="studio"] #modal-accounts #account-add.key:disabled { opacity: 1; }
+html[data-look="studio"]:not([data-theme="light"]) #modal-accounts #account-add.key:disabled {
+  --k-ink: var(--text-muted);
+  background: var(--glass-key-off);
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .1);
+}
+html[data-look="studio"] #modal-accounts .account-add-icon { display: contents; color: inherit; }
+html[data-look="studio"] #modal-accounts .account-add-icon svg { width: 18px; height: 18px; }
+html[data-look="studio"] #modal-accounts .account-note {
+  min-height: 0;
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font: 400 13.5px/1.4 var(--font);
+  text-align: center;
+}
+html[data-look="studio"] #modal-accounts .account-note:empty { display: none; }
+html[data-look="studio"] #modal-accounts .account-note.error { color: var(--danger-text); }
+
+html[data-look="studio"][data-fit="slim"] .modal-backdrop:has(> #modal-accounts:not(.hidden)) {
+  align-items: flex-end;
+  justify-content: stretch;
+  padding: 0;
+}
+html[data-look="studio"][data-fit="slim"] .modal.slab#modal-accounts {
+  width: 100%;
+  max-width: none;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  padding: 34px 16px calc(var(--hz-safe, 8px) + 10px);
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 120px), var(--sheet-bg);
+  box-shadow: inset 0 0 0 1px var(--rim-soft), 0 -24px 40px -10px rgb(var(--dark) / .8);
+  scrollbar-width: none;
+}
+html[data-look="studio"][data-fit="slim"] #modal-accounts > .set-grab {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  display: block;
+  width: 40px;
+  height: 5px;
+  margin-left: -20px;
+  border-radius: 3px;
+  background: var(--text-faint);
+  opacity: .6;
+}
+html[data-look="studio"][data-fit="slim"] #modal-accounts > h2,
+html[data-look="studio"][data-fit="slim"] #modal-accounts > p { padding: 0 4px; }
+html[data-look="studio"][data-fit="slim"] #modal-accounts > p { font-size: 14.5px; }
+html[data-look="studio"][data-fit="slim"] #modal-accounts .account-list { margin-top: 16px; }
+html[data-look="studio"][data-fit="slim"] #modal-accounts .account-row { padding-right: 4px; }
+html[data-look="studio"][data-fit="slim"] #modal-accounts .account-row:not(.current):hover { background: none; }
+html[data-look="studio"][data-fit="slim"] #modal-accounts .account-row:not(.current):active { background: var(--bg-active); }
+html[data-look="studio"][data-fit="slim"] #modal-accounts .account-name { font-size: 16px; }
+html[data-look="studio"][data-fit="slim"] #modal-accounts #account-add.key { height: 50px; }
