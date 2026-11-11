@@ -1558,7 +1558,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim {
   background: var(--input-bg);
   box-shadow: var(--slot);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave { inset: 12px 14px; gap: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave { inset: 12px 0; gap: 2px; }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave > span,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave > span.on {
   border-radius: 2px;

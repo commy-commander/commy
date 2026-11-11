@@ -10,6 +10,7 @@ const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
 const app = read("../scripts/app.js");
 const glue = read("../scripts/studio-dialogs.js");
+const parts = read("../styles/studio-parts.css");
 
 const R = 'html[data-look="studio"]:not([data-fit="slim"])';
 const selectors = [...css.matchAll(/(^|\})\s*([^{}@]+)\{/g)].flatMap(match => match[2].split(/,\n/).map(part => part.trim()).filter(Boolean));
@@ -257,4 +258,14 @@ test("making things: bot steps, the trim bar and the catalog follow the drawing"
   assert.match(rule(`${M} .catalog-grid`), /grid-template-columns: repeat\(8, minmax\(0, 1fr\)\);/);
   assert.match(rule(`${M} .catalog-tile`), /border-radius: 16px;/);
   assert.match(rule(`${M} .catalog-pick`), /border-radius: 999px;/);
+});
+
+test("making things: wave bars run edge to edge, selected text is ultramarine, observers start once", () => {
+  assert.match(rule(`${R} .modal.dialog.make .sound-wave`), /inset: 12px 0;/);
+  assert.ok(parts.includes('html[data-look="studio"] ::selection { background: var(--accent); color: var(--accent-ink); }'));
+  const invite = glue.slice(glue.indexOf("function studioInviteParts()"), glue.indexOf("function studioLeavingTitle("));
+  assert.equal(invite.includes("MutationObserver"), false);
+  assert.equal(invite.includes("studioMakingParts"), false);
+  const start = glue.slice(glue.indexOf("function studioDialogs()"));
+  assert.ok(start.includes("new MutationObserver(studioMakingKeys)"));
 });

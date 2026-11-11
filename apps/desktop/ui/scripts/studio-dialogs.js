@@ -279,10 +279,6 @@ function studioMakingParts() {
 
 function studioInviteParts() {
   const roomy = document.documentElement.dataset.fit !== "slim";
-  studioMakingParts();
-  const keyLists = MAKING_ROW_KEYS.map(([id]) => document.getElementById(id)).filter(Boolean);
-  const making = new MutationObserver(studioMakingKeys);
-  for (const list of keyLists) making.observe(list, { childList: true, subtree: true });
   const expiry = document.getElementById("invite-expiry");
   if (expiry) {
     for (const choice of expiry.querySelectorAll(":scope > button")) {
@@ -356,6 +352,10 @@ function studioDialogs() {
   const lists = PEOPLE_LISTS.map(id => document.getElementById(id)).filter(Boolean);
   const rows = new MutationObserver(() => { for (const list of lists) studioPeopleRows(list); });
   for (const list of lists) rows.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "disabled"] });
+  studioMakingParts();
+  const keyLists = MAKING_ROW_KEYS.map(([id]) => document.getElementById(id)).filter(Boolean);
+  const making = new MutationObserver(studioMakingKeys);
+  for (const list of keyLists) making.observe(list, { childList: true, subtree: true });
   const expiry = document.getElementById("invite-expiry");
   if (expiry) new MutationObserver(studioInviteParts).observe(expiry, { subtree: true, attributes: true, attributeFilter: ["class"] });
   dress();
