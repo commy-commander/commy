@@ -1,0 +1,59 @@
+html[data-look="studio"][data-fit="compact"] .app {
+  grid-template-rows: 48px minmax(0, 1fr);
+  gap: 6px 0;
+  padding-top: 6px;
+  --sidebar-w: 248px;
+}
+html[data-look="studio"][data-fit="compact"] .rail-tray,
+html[data-look="studio"][data-fit="compact"] .user-panel { height: 46px; }
+html[data-look="studio"][data-fit="compact"] .user-panel { padding-right: 52px; }
+html[data-look="studio"][data-fit="compact"] .user-actions { right: 6px; }
+html[data-look="studio"][data-fit="compact"] .settings-layer { top: 60px; }
+html[data-look="studio"][data-fit="compact"] body:has(.settings-layer:not(.hidden)) .user-actions { top: 7px; }
+html[data-look="studio"][data-fit="compact"] .main > .typing-strip { margin-right: 20px; margin-left: 20px; }
+html[data-look="studio"][data-fit="compact"] .main > .composer { margin: 0 20px 18px; }
+@media (min-width: 1180px) {
+  html[data-look="studio"][data-fit="compact"] { --st-wing: clamp(232px, calc(9.2vw + 123px), 300px); }
+}
+@media (max-width: 1179px) {
+  html[data-look="studio"][data-fit="compact"] .user-chip .user-meta { display: none; }
+  html[data-look="studio"][data-fit="compact"] .main > .composer #text-style-btn,
+  html[data-look="studio"][data-fit="compact"] .main > .composer #gif-btn { display: none; }
+  html[data-look="studio"][data-fit="compact"] .chat-header .header-actions { position: relative; }
+  html[data-look="studio"][data-fit="compact"] .chat-header .search-box:not(:focus-within, .open) {
+    flex: 0 0 38px;
+    width: 38px;
+    min-width: 0;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+  }
+  html[data-look="studio"][data-fit="compact"] .chat-header .search-box:not(:focus-within, .open) input {
+    flex: 0 0 0;
+    width: 0;
+    min-width: 0;
+    padding: 0;
+    opacity: 0;
+  }
+  html[data-look="studio"][data-fit="compact"] .chat-header .search-box:not(:focus-within, .open) .search-clear { display: none; }
+  html[data-look="studio"][data-fit="compact"] .chat-header .search-box:is(:focus-within, .open) {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 1;
+    width: max(100%, 118px);
+    min-width: 0;
+    margin: 0;
+  }
+  html[data-look="studio"][data-fit="compact"] .chat-header .header-actions:has(> .search-box:is(:focus-within, .open))::after {
+    content: "";
+    flex: 0 0 38px;
+    height: 38px;
+    margin-left: 8px;
+  }
+  html[data-look="studio"][data-fit="compact"] .chat-header .header-actions:has(> .search-box:is(:focus-within, .open)) > .icon-btn { visibility: hidden; }
+}
+@media (max-width: 1040px) {
+  html[data-look="studio"][data-fit="compact"] .header-actions > #threads-btn,
+  html[data-look="studio"][data-fit="compact"] .header-actions > #saved-btn { display: none; }
+}
