@@ -9,9 +9,9 @@ html[data-look="studio"][data-fit="slim"] body {
   background: var(--bg-darkest);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) :is(.pt-title, .pt-aud-chip, .pt-voice-scrim, .pt-voice-sheet, .pt-tray-grab, .pt-tray-line, .pt-tray-add, .pt-page, .pt-scrim, .pt-sheet, .pt-reply-cue, .pt-chat-sub, .pt-chat-ban, .pt-chat-title, .pt-room-chip, .pt-name, .pt-room-note, .pt-acts, .pt-room, .pt-stream, .pt-watch, .pt-cm, .pt-chip-i, .pt-chev, .pt-back-i, .pt-typer, .pt-find, .pt-home-chev, .pt-hash, .pt-count, .pt-sm-add, .pt-search, .pt-compose, .pt-dm-find, .pt-wait-line, .pt-yes-word, .pt-wait-rest, .pt-dm-side, .hzn) { display: none !important; }
+html[data-look="studio"]:not([data-fit="slim"]) :is(.pt-title, .pt-aud-chip, .pt-voice-scrim, .pt-voice-sheet, .pt-tray-grab, .pt-tray-line, .pt-tray-add, .pt-page, .pt-scrim, .pt-sheet, .pt-reply-cue, .pt-chat-sub, .pt-chat-ban, .pt-invite, .pt-chat-title, .pt-room-chip, .pt-name, .pt-room-note, .pt-acts, .pt-room, .pt-stream, .pt-watch, .pt-cm, .pt-chip-i, .pt-chev, .pt-back-i, .pt-typer, .pt-find, .pt-home-chev, .pt-hash, .pt-count, .pt-sm-add, .pt-search, .pt-compose, .pt-dm-find, .pt-wait-line, .pt-yes-word, .pt-wait-rest, .pt-dm-side, .hzn) { display: none !important; }
 html[data-look="studio"]:not([data-fit="slim"]) .channel-scroll :is(.voice-channel > .stack, .channel-label > .live) { display: none !important; }
-html[data-look="studio"][data-fit="slim"] :is(.pt-title, .pt-page, .pt-scrim, .pt-sheet, .pt-reply-cue, .pt-chat-sub, .pt-chat-ban, .pt-chat-title, .pt-room-chip, .pt-room, .pt-watch, .pt-find, .pt-compose, .pt-dm-find, .hzn) { display: none; }
+html[data-look="studio"][data-fit="slim"] :is(.pt-title, .pt-page, .pt-scrim, .pt-sheet, .pt-reply-cue, .pt-chat-sub, .pt-chat-ban, .pt-invite, .pt-chat-title, .pt-room-chip, .pt-room, .pt-watch, .pt-find, .pt-compose, .pt-dm-find, .hzn) { display: none; }
 html[data-look="studio"][data-fit="slim"] :where(.hzn, .pt-acts, .pt-sheet, .pt-page, .pt-room, .pt-watch, .pt-title, .sidebar, .rail) :where(button:not(.key)) { letter-spacing: inherit; }
 html[data-look="studio"][data-fit="slim"] :where(.hzn, .pt-acts, .pt-sheet, .pt-page, .pt-room, .pt-watch, .pt-title, .sidebar, .rail) :where(button) { text-rendering: inherit; }
 
@@ -1121,6 +1121,54 @@ html[data-look="studio"][data-fit="slim"] .app:is(.pt-hold-open, .pt-chat-menu, 
   background: rgb(var(--dark) / .5);
 }
 html[data-look="studio"][data-fit="slim"] .app.pt-search-open > .pt-scrim { background: var(--scrim); }
+html[data-look="studio"][data-fit="slim"] .pt-invite.on { --c: var(--accent); position: fixed; inset: 0; z-index: 170; display: block; background: var(--bg-dark); }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwall { position: absolute; inset: 0; background-size: cover; background-position: center; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwall::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, color-mix(in srgb, var(--video-scrim) 74%, transparent)); }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwall.wash { background: radial-gradient(120% 70% at 50% 0%, color-mix(in srgb, var(--c) 58%, var(--bg-dark)), var(--bg-dark) 78%); }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwall.wash::after { display: none; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .isheet {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: var(--hz-safe);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - env(safe-area-inset-top) - var(--hz-safe) - 56px);
+  padding: 28px 20px 20px;
+  border-radius: var(--radius-sheet);
+  background: linear-gradient(180deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 120px), var(--sheet-bg);
+  -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  box-shadow: inset 0 0 0 1px var(--rim-soft), 0 24px 40px -10px rgb(var(--dark) / .8);
+}
+html[data-look="studio"][data-fit="slim"][data-fx="lite"] .pt-invite .isheet { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .isheet::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: var(--border-w);
+  border-radius: inherit;
+  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+html[data-look="studio"][data-fit="slim"] .pt-invite .ibody { flex: 0 1 auto; display: grid; justify-items: center; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .sico { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 22px; background: var(--c); box-shadow: var(--pillow); font: 700 24px/1 var(--font); letter-spacing: normal; color: var(--white); }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ibody > small { margin-top: 18px; font: 400 14.5px/1.2 var(--font); color: var(--text-muted); text-align: center; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ibody > b { margin-top: 8px; font: 700 27px/1.1 var(--font-display); letter-spacing: -.015em; color: var(--header-primary); text-align: center; overflow-wrap: anywhere; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ifrom { margin-top: 8px; font: 400 14px/1.35 var(--font); color: var(--text-muted); text-align: center; text-wrap: balance; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwarn { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; width: 100%; margin-top: 18px; padding: 12px 14px 12px 12px; border-radius: 18px; background: color-mix(in srgb, var(--accent-2) 13%, var(--bg-active)); text-align: left; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwarn .iw { display: grid; place-items: center; width: 24px; height: 24px; margin-top: 1px; border-radius: 50%; background: var(--accent-2); color: var(--accent-2-ink); }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwarn .iw .i { width: 14px; height: 14px; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwarn p { margin: 0; font: 400 14px/1.4 var(--font); color: var(--text-normal); }
+html[data-look="studio"][data-fit="slim"] .pt-invite .iwarn b { font: 600 14px/1.4 var(--font); color: var(--header-primary); }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ierr { margin: 16px 0 0; font: 400 14px/1.4 var(--font); color: var(--danger-text); text-align: center; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ikeys { flex: none; display: grid; gap: 8px; margin-top: 24px; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ibody:has(> .iwarn:not(.hidden)) + .ikeys { margin-top: 16px; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ibody:has(> .ierr:not(.hidden)) + .ikeys { margin-top: 16px; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ikeys .key { width: 100%; justify-content: center; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"].pt-voice-open > .pt-room {
   position: fixed;
   inset: 0;

@@ -276,6 +276,18 @@ function chatBanner({ view, channel }) {
   return view === "server" && channel && channel.banner ? String(channel.banner) : "";
 }
 
+function layerStep(key, open, held, entry) {
+  const onStep = Boolean(entry && entry[key]);
+  if (open) return onStep ? "keep" : "push";
+  return held && onStep ? "back" : "none";
+}
+
+function inviteWarningParts(text) {
+  const words = String(text || "").trim();
+  const cut = words.indexOf(". ");
+  return cut < 0 ? { lead: words, rest: "" } : { lead: words.slice(0, cut + 1), rest: words.slice(cut + 1) };
+}
+
 function trayTap(wasOpen, place) {
   if (!wasOpen || place === "tray" || place === "outside") return "pass";
   return place === "key" ? "stay" : "close";
@@ -463,6 +475,8 @@ if (typeof module !== "undefined" && module.exports) {
     trayTap,
     NOTIFY_PICKS,
     chatBanner,
+    layerStep,
+    inviteWarningParts,
     earlyBuild,
     trayNeedsStep,
     roomTiles,

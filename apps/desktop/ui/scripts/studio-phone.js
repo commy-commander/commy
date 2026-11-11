@@ -28,6 +28,8 @@ const studioPhone = {
   soundsWereOpen: false,
   trayWasOpen: false,
   trayStep: false,
+  inviteStep: false,
+  inviteBusy: false,
   trayHome: null,
   talkHeld: false,
   roomsAt: 0,
@@ -139,6 +141,21 @@ function youMarkup() {
 </div>`;
 }
 
+function inviteMarkup() {
+  return `<div class="iwall" id="pt-invite-wall"></div>
+<section class="isheet" role="dialog" aria-labelledby="pt-invite-name">
+<div class="ibody">
+<div class="sico" id="pt-invite-tile" aria-hidden="true"></div>
+<small>You've been invited to join a server</small>
+<b id="pt-invite-name"></b>
+<span class="ifrom" id="pt-invite-from"></span>
+<div class="iwarn hidden" id="pt-invite-warn" role="alert"><span class="iw"><i data-i="triangle-alert"></i></span><p><b id="pt-invite-warn-lead"></b><span id="pt-invite-warn-rest"></span></p></div>
+<p class="ierr hidden" id="pt-invite-error" role="alert"></p>
+</div>
+<div class="ikeys"><button type="button" class="key lg primary" id="pt-invite-join">Join</button><button type="button" class="key lg" id="pt-invite-later">Not now</button></div>
+</section>`;
+}
+
 function buildStudioPhone() {
   const app = $("app");
   const title = studioNode("header", "pt-title", '<h2 id="pt-title-text"></h2><small id="pt-title-note"></small>');
@@ -175,6 +192,9 @@ function buildStudioPhone() {
   const watch = studioNode("div", "pt-watch", watchMarkup());
   watch.id = "pt-watch";
   $("stage-view").appendChild(watch);
+  const invite = studioNode("div", "pt-invite", inviteMarkup());
+  invite.id = "pt-invite";
+  document.body.appendChild(invite);
   buildChatHeader();
   buildChatBar();
   buildHomeHead();
@@ -1924,6 +1944,81 @@ function wireRoom() {
   }, true);
 }
 
+function inviteShown() {
+  return studioSlim() && !$("modal-backdrop").classList.contains("hidden") && !$("modal-invite-link").classList.contains("hidden");
+}
+
+function fillInvite() {
+  const picture = $("invite-link-hero").style.backgroundImage;
+  const wall = $("pt-invite-wall");
+  wall.style.backgroundImage = picture;
+  wall.classList.toggle("wash", !picture);
+  $("pt-invite-tile").textContent = $("invite-link-icon").textContent;
+  $("pt-invite-name").textContent = $("invite-link-name").textContent;
+  $("pt-invite-from").textContent = $("invite-link-host").textContent;
+  const warning = $("invite-link-warning");
+  const parts = inviteWarningParts(warning.classList.contains("hidden") ? "" : warning.textContent);
+  $("pt-invite-warn").classList.toggle("hidden", !parts.lead);
+  $("pt-invite-warn-lead").textContent = parts.lead;
+  $("pt-invite-warn-rest").textContent = parts.rest;
+  $("pt-invite-error").classList.toggle("hidden", true);
+}
+
+function paintInviteKeys() {
+  const busy = studioPhone.inviteBusy;
+  $("pt-invite-join").disabled = busy;
+  $("pt-invite-later").disabled = busy;
+  $("pt-invite-join").textContent = busy ? "Joining\u2026" : "Join";
+}
+
+function syncInvite() {
+  const open = inviteShown();
+  const page = $("pt-invite");
+  if (open && !page.classList.contains("on")) fillInvite();
+  page.classList.toggle("on", open);
+  const step = layerStep("ptInvite", open, studioPhone.inviteStep, history.state);
+  if (step === "push") history.pushState({ ...(history.state || { pane: phonePane() }), ptInvite: true }, "");
+  studioPhone.inviteStep = open;
+  if (step === "back") history.back();
+}
+
+async function joinInviteHere() {
+  const invite = pendingInvite;
+  if (!invite || studioPhone.inviteBusy) return;
+  studioPhone.inviteBusy = true;
+  $("pt-invite-error").classList.toggle("hidden", true);
+  paintInviteKeys();
+  try {
+    const summary = await invoke("join_server", { ticket: invite.ticket });
+    pendingInvite = null;
+    hideModals();
+    await enterJoinedServer(summary);
+  } catch (e) {
+    $("pt-invite-error").textContent = String(e);
+    $("pt-invite-error").classList.toggle("hidden", false);
+  } finally {
+    studioPhone.inviteBusy = false;
+    paintInviteKeys();
+  }
+}
+
+function wireInvite() {
+  $("pt-invite-join").onclick = joinInviteHere;
+  $("pt-invite-later").onclick = () => $("invite-link-cancel").click();
+  const watch = node => new MutationObserver(syncInvite).observe(node, { attributes: true, attributeFilter: ["class"] });
+  watch($("modal-backdrop"));
+  watch($("modal-invite-link"));
+  window.addEventListener("popstate", () => {
+    if ((history.state && history.state.ptInvite) || !inviteShown()) return;
+    if (studioPhone.inviteBusy) {
+      history.pushState({ ...(history.state || { pane: phonePane() }), ptInvite: true }, "");
+      return;
+    }
+    studioPhone.inviteStep = false;
+    $("invite-link-cancel").click();
+  });
+}
+
 function wireStudioPhone() {
   if (!studioLook() || !$("app") || typeof StudioIcons === "undefined") return;
   studioPhone.calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1934,6 +2029,7 @@ function wireStudioPhone() {
   wireHomeHead();
   wireHoldSheet();
   wireSwipes();
+  wireInvite();
   wireRoom();
   watchStudioPhone();
   $("app").dataset.tab = studioPhone.tab;

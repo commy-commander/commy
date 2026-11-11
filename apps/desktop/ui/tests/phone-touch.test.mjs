@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner, layerStep, inviteWarningParts,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -1024,4 +1024,56 @@ test("a channel banner is the top of the chat pane, and messages are gone before
   assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "mask-image: linear-gradient\\(#000 20%, transparent\\);"));
   assert.match(css, rule(`${pane} \\.messages`, "mask-image: linear-gradient\\(180deg, transparent 0, transparent 70px, #000 118px\\);"));
   assert.match(css, rule(" \\.channel-intro-banner", "display: none;"));
+});
+
+test("the invite screen is a sheet over the server's wall, with the app's own words and two keys", () => {
+  assert.match(glue, /<small>You've been invited to join a server<\/small>\n<b id="pt-invite-name"><\/b>\n<span class="ifrom" id="pt-invite-from"><\/span>/);
+  assert.ok(read("scripts", "invite-link.js").includes(`"invite-card-title", "You've been invited to join a server"`));
+  assert.match(glue, /<div class="ikeys"><button type="button" class="key lg primary" id="pt-invite-join">Join<\/button><button type="button" class="key lg" id="pt-invite-later">Not now<\/button><\/div>/);
+  assert.match(glue, /const invite = studioNode\("div", "pt-invite", inviteMarkup\(\)\);\n\s+invite\.id = "pt-invite";\n\s+document\.body\.appendChild\(invite\);/);
+  assert.match(glue, /return studioSlim\(\) && !\$\("modal-backdrop"\)\.classList\.contains\("hidden"\) && !\$\("modal-invite-link"\)\.classList\.contains\("hidden"\);/);
+  assert.match(glue, /\$\("pt-invite-name"\)\.textContent = \$\("invite-link-name"\)\.textContent;\n\s+\$\("pt-invite-from"\)\.textContent = \$\("invite-link-host"\)\.textContent;/);
+  assert.match(glue, /wall\.style\.backgroundImage = picture;\n\s+wall\.classList\.toggle\("wash", !picture\);/);
+  assert.match(css, rule(" \\.pt-invite\\.on", "position: fixed; inset: 0; z-index: 170; display: block;"));
+  assert.match(css, rule(" \\.pt-invite \\.iwall\\.wash", "radial-gradient\\(120% 70% at 50% 0%, color-mix\\(in srgb, var\\(--c\\) 58%, var\\(--bg-dark\\)\\), var\\(--bg-dark\\) 78%\\);"));
+  assert.match(css, rule(" \\.pt-invite \\.isheet", "bottom: var\\(--hz-safe\\);\\s+display: flex;\\s+flex-direction: column;\\s+max-height: calc\\(100% - env\\(safe-area-inset-top\\) - var\\(--hz-safe\\) - 56px\\);"));
+  assert.match(css, rule(" \\.pt-invite \\.ibody", "min-height: 0; overflow-y: auto;"));
+  assert.match(css, rule(" \\.pt-invite \\.ikeys", "flex: none; display: grid; gap: 8px; margin-top: 24px;"));
+  assert.match(css, rule(" \\.pt-invite \\.sico", "width: 72px; height: 72px; border-radius: 22px; background: var\\(--c\\);"));
+});
+
+test("the warning on an invite from another server keeps its words, on a quiet tungsten block that is never red", () => {
+  const words = "This invite comes from tide.example, not your account server (commy.example). Anyone can run a Commy server, so only join if you trust the person who sent this link. Your account stays on your own server either way.";
+  const parts = inviteWarningParts(words);
+  assert.equal(parts.lead, "This invite comes from tide.example, not your account server (commy.example).");
+  assert.equal(parts.lead + parts.rest, words);
+  assert.deepEqual(inviteWarningParts(""), { lead: "", rest: "" });
+  assert.deepEqual(inviteWarningParts("One sentence only."), { lead: "One sentence only.", rest: "" });
+  assert.match(glue, /<div class="iwarn hidden" id="pt-invite-warn" role="alert"><span class="iw"><i data-i="triangle-alert"><\/i><\/span>/);
+  assert.match(glue, /const parts = inviteWarningParts\(warning\.classList\.contains\("hidden"\) \? "" : warning\.textContent\);\n\s+\$\("pt-invite-warn"\)\.classList\.toggle\("hidden", !parts\.lead\);/);
+  assert.match(css, rule(" \\.pt-invite \\.iwarn", "border-radius: 18px; background: color-mix\\(in srgb, var\\(--accent-2\\) 13%, var\\(--bg-active\\)\\);"));
+  assert.match(css, rule(" \\.pt-invite \\.iwarn \\.iw", "background: var\\(--accent-2\\); color: var\\(--accent-2-ink\\);"));
+  const block = css.slice(css.indexOf(`html[data-look="studio"][data-fit="slim"] .pt-invite .iwarn {`), css.indexOf(`html[data-look="studio"][data-fit="slim"] .pt-invite .ierr`));
+  assert.doesNotMatch(block, /danger|--red|--live/);
+});
+
+test("leaving an invite: Not now and back close it, and nothing closes it while it is joining", () => {
+  assert.equal(layerStep("ptInvite", true, false, { pane: "list" }), "push");
+  assert.equal(layerStep("ptInvite", true, false, null), "push");
+  assert.equal(layerStep("ptInvite", true, true, { pane: "list", ptInvite: true }), "keep");
+  assert.equal(layerStep("ptInvite", false, true, { pane: "list", ptInvite: true }), "back");
+  assert.equal(layerStep("ptInvite", false, true, { pane: "list" }), "none");
+  assert.equal(layerStep("ptInvite", false, false, { pane: "list", ptInvite: true }), "none");
+  assert.match(glue, /\$\("pt-invite-later"\)\.onclick = \(\) => \$\("invite-link-cancel"\)\.click\(\);/);
+  assert.match(glue, /if \(\(history\.state && history\.state\.ptInvite\) \|\| !inviteShown\(\)\) return;\n\s+if \(studioPhone\.inviteBusy\) \{\n\s+history\.pushState\(\{ \.\.\.\(history\.state \|\| \{ pane: phonePane\(\) \}\), ptInvite: true \}, ""\);\n\s+return;\n\s+\}\n\s+studioPhone\.inviteStep = false;\n\s+\$\("invite-link-cancel"\)\.click\(\);/);
+  assert.doesNotMatch(glue, /\$\("pt-invite-wall"\)\.onclick/);
+});
+
+test("joining from the invite screen says Joining, and a failure shows the app's words in red text above the keys", () => {
+  assert.match(glue, /\$\("pt-invite-join"\)\.disabled = busy;\n\s+\$\("pt-invite-later"\)\.disabled = busy;\n\s+\$\("pt-invite-join"\)\.textContent = busy \? "Joining\\u2026" : "Join";/);
+  const calls = /const summary = await invoke\("join_server", \{ ticket: invite\.ticket \}\);\n\s+pendingInvite = null;\n\s+hideModals\(\);\n\s+await enterJoinedServer\(summary\);/;
+  assert.match(glue, calls);
+  assert.match(read("scripts", "invite-link.js"), calls);
+  assert.match(glue, /\} catch \(e\) \{\n\s+\$\("pt-invite-error"\)\.textContent = String\(e\);\n\s+\$\("pt-invite-error"\)\.classList\.toggle\("hidden", false\);\n\s+\} finally \{\n\s+studioPhone\.inviteBusy = false;\n\s+paintInviteKeys\(\);/);
+  assert.match(css, rule(" \\.pt-invite \\.ierr", "color: var\\(--danger-text\\);"));
 });
