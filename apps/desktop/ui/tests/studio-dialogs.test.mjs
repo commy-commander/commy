@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -92,4 +92,54 @@ test("reporting is a blue action with a switch row to also block", () => {
   assert.match(rule(`${R} .modal.dialog > .report-also-block`), /min-height: 44px;/);
   assert.match(rule(`${R} .modal.dialog > .report-reasons > label:has(> input:checked)`), /background: var\(--bg-active\);/);
   assert.ok(css.includes("resize: none;"));
+});
+
+const J = `${R} .modal.dialog.join`;
+
+test("joining a server: six dialogs, each answer named, red words on the left", () => {
+  assert.deepEqual(JOIN_DIALOGS, ["modal-invite-link", "modal-join-wait", "modal-server-welcome", "modal-onboarding", "modal-rules", "modal-server-info"]);
+  for (const id of JOIN_DIALOGS) assert.ok(html.includes(`id="${id}"`), id);
+  for (const id of Object.keys(JOIN_ANSWERS)) assert.ok(html.includes(`id="${id}"`), id);
+  assert.deepEqual(joinAnswerClasses(["join-wait-cancel", "join-wait-send", "join-wait-close"]), ["key out-k", "key", "key primary"]);
+  assert.deepEqual(joinAnswerClasses(["si-leave", "si-answers", "si-close"]), ["key out-k", "key", "key primary"]);
+  assert.deepEqual(joinAnswerClasses(["invite-link-cancel", "invite-link-join"]), ["key", "key primary"]);
+  for (const id of Object.keys(JOIN_ANSWERS)) assert.ok(JOIN_ANSWERS[id].split(" ").filter(name => name === "primary").length <= 1, id);
+  assert.match(rule(`${J} > .modal-actions.answers.spread`), /left: 24px;/);
+  assert.match(rule(`${J} > .answers > .key.out-k`), /margin-right: auto;\n  color: var\(--danger-text\);/);
+  assert.match(rule(`${J}`), /width: min\(440px, calc\(100vw - 48px\)\);/);
+  assert.match(rule(`${R} .modal.modal-wide.dialog.join`), /width: min\(560px, calc\(100vw - 48px\)\);/);
+});
+
+test("the head row's tile takes the strip's colour, with no id before you join", () => {
+  assert.equal(joinTileServer("modal-invite-link", "s1", "w1"), null);
+  assert.equal(joinTileServer("modal-join-wait", "s1", "w1"), "w1");
+  assert.equal(joinTileServer("modal-server-info", "s1", "w1"), "s1");
+  assert.equal(joinTileServer("modal-rules", null, null), null);
+  assert.match(rule(`${J} .sw-icon`), /width: 48px;\n  height: 48px;/);
+  assert.ok(rule(`${J} .sw-icon::before`).includes("color-mix(in srgb, var(--server-tint, var(--accent)) 26%, var(--bg-raised))"));
+  assert.ok(css.includes(`${J}#modal-join-wait:has(#join-wait-send:not(.hidden)) #join-wait-icon::after {`));
+  assert.ok(glue.includes('icon.style.setProperty("--server-tint", serverTint(id));'));
+});
+
+test("hero, warning slot, rules slot and steps follow the joining drawing", () => {
+  assert.ok(css.includes(`${J}.has-hero > .invite-link-hero,\n${J} > .si-banner:not(.hidden) {\n  position: relative;\n  display: block;\n  height: 112px;`));
+  assert.ok(css.includes("margin-top: -48px;"));
+  assert.ok(css.includes("box-shadow: 0 0 0 4px var(--bg-dark), var(--pillow-sm);"));
+  assert.match(rule(`${J} > .invite-link-warning > .i`), /color: var\(--danger-text\);/);
+  assert.ok(glue.includes('warning.insertAdjacentHTML("afterbegin", studioIconMarkup("triangle-alert"))'));
+  assert.ok(css.includes(`${J} .join-wait-rules-text,\n${J} #si-rules { max-height: 132px; }`));
+  assert.match(rule(`${J} #sw-steps > .sw-step.active`), /outline: var\(--ring-on\);/);
+  assert.match(rule(`${J} #sw-steps > .sw-step.active > b`), /background: var\(--accent\);/);
+  assert.match(rule(`${J} #sw-steps > .sw-step.done > .i`), /display: block;/);
+  assert.match(rule(`${J} #ob-steps > .sw-step.active`), /width: 20px;/);
+  assert.match(rule(`${J} #ob-steps`), /order: 1;/);
+});
+
+test("roles and answers are pick rows, banner roles grow into cards", () => {
+  assert.ok(css.includes(`${J} .ob-answer,\n${J} .role-pick {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  width: 100%;\n  height: 46px;`));
+  assert.ok(css.includes(`${J} .ob-answer.picked,\n${J} .role-pick.held {\n  background: var(--bg-active);\n  box-shadow: inset 0 0 0 1.5px var(--accent-lit);`));
+  assert.match(rule(`${J} .role-pick.has-banner`), /border-radius: 18px;/);
+  assert.match(rule(`${J} .role-pick.has-banner > .role-pick-banner`), /height: 38px;/);
+  assert.ok(css.includes(`${J} .ob-check,\n${J} .role-pick > .role-pick-check {\n  order: 1;`));
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .invite-link-warning > .i,'));
 });

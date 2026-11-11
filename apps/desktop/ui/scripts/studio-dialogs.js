@@ -24,6 +24,43 @@ const STUDIO_DIALOGS = [
 
 const DIALOG_BLUE_ACTIONS = ["report-go"];
 
+const JOIN_DIALOGS = [
+  "modal-invite-link",
+  "modal-join-wait",
+  "modal-server-welcome",
+  "modal-onboarding",
+  "modal-rules",
+  "modal-server-info",
+];
+
+const JOIN_ANSWERS = {
+  "invite-link-cancel": "key",
+  "invite-link-join": "key primary",
+  "join-wait-cancel": "key out-k",
+  "join-wait-send": "key",
+  "join-wait-close": "key primary",
+  "sw-later": "key",
+  "sw-next": "key primary",
+  "ob-later": "key",
+  "ob-back": "key",
+  "ob-next": "key primary",
+  "rules-close": "key",
+  "rules-accept": "key primary",
+  "si-leave": "key out-k",
+  "si-answers": "key",
+  "si-close": "key primary",
+};
+
+function joinAnswerClasses(ids) {
+  return ids.map(id => JOIN_ANSWERS[id] || "key");
+}
+
+function joinTileServer(modalId, current, waiting) {
+  if (modalId === "modal-invite-link") return null;
+  if (modalId === "modal-join-wait") return waiting || null;
+  return current || null;
+}
+
 function answerKind(button) {
   if (DIALOG_BLUE_ACTIONS.includes(button.id)) return "primary";
   if (button.classList.contains("btn-danger")) return "danger";
@@ -45,18 +82,21 @@ function dialogAnswerClasses(kinds) {
   });
 }
 
-const DIALOG_KEY_CLASSES = ["key", "cream", "danger", "primary", "third"];
+const DIALOG_KEY_CLASSES = ["key", "cream", "danger", "primary", "third", "out-k"];
 
 function studioDialogDress(modal) {
   const roomy = document.documentElement.dataset.fit !== "slim";
+  const join = JOIN_DIALOGS.includes(modal.id);
   modal.classList.toggle("dialog", roomy);
   modal.classList.toggle("slab", roomy);
+  modal.classList.toggle("join", roomy && join);
   for (const box of modal.querySelectorAll(":scope > .report-also-block > input[type='checkbox']")) box.classList.toggle("switch", roomy);
   const actions = modal.querySelector(":scope > .modal-actions");
   if (!actions) return;
   actions.classList.toggle("answers", roomy);
   const buttons = [...actions.querySelectorAll(":scope > button")];
-  const classes = dialogAnswerClasses(buttons.map(answerKind));
+  const classes = join ? joinAnswerClasses(buttons.map(button => button.id)) : dialogAnswerClasses(buttons.map(answerKind));
+  actions.classList.toggle("spread", roomy && classes.some(name => name.includes("out-k")));
   buttons.forEach((button, index) => {
     const wanted = roomy ? classes[index].split(" ") : [];
     for (const name of DIALOG_KEY_CLASSES) {
@@ -75,14 +115,41 @@ function studioDialogParts() {
   }
 }
 
+function studioJoinParts(modal) {
+  if (modal.classList.contains("hidden") || document.documentElement.dataset.fit === "slim") return;
+  const icon = modal.querySelector(".sw-icon");
+  if (icon) {
+    const current = typeof state !== "undefined" && state.currentServer ? state.currentServer.id : null;
+    const waiting = typeof joinWaitShown !== "undefined" ? joinWaitShown : null;
+    const id = joinTileServer(modal.id, current, waiting);
+    if (id) icon.style.setProperty("--server-tint", serverTint(id));
+    else icon.style.removeProperty("--server-tint");
+  }
+  if (typeof studioIconMarkup !== "function") return;
+  const warning = modal.querySelector(":scope > .invite-link-warning");
+  if (warning && !warning.querySelector(":scope > .i")) warning.insertAdjacentHTML("afterbegin", studioIconMarkup("triangle-alert"));
+  [...modal.querySelectorAll("#sw-steps > .sw-step")].forEach((step, index) => {
+    if (step.querySelector(":scope > b")) return;
+    step.insertAdjacentHTML("afterbegin", `<b>${index + 1}</b>${studioIconMarkup("check")}`);
+  });
+}
+
 function studioDialogs() {
   studioDialogParts();
-  const modals = STUDIO_DIALOGS.map(id => document.getElementById(id)).filter(Boolean);
-  const dress = () => { for (const modal of modals) studioDialogDress(modal); };
+  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
+  const joins = modals.filter(modal => JOIN_DIALOGS.includes(modal.id));
+  const dress = () => {
+    for (const modal of modals) studioDialogDress(modal);
+    for (const modal of joins) studioJoinParts(modal);
+  };
   dress();
   new MutationObserver(dress).observe(document.documentElement, { attributes: true, attributeFilter: ["data-fit"] });
+  const shown = new MutationObserver(records => {
+    for (const modal of new Set(records.map(record => record.target))) studioJoinParts(modal);
+  });
+  for (const modal of joins) shown.observe(modal, { attributes: true, attributeFilter: ["class"] });
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses };
+  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer };
 }

@@ -249,3 +249,414 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview 
 
 html[data-look="studio"][data-fit="slim"] .danger-callout > .i,
 html[data-look="studio"][data-fit="slim"] .report-reasons > label > .tick { display: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join { width: min(440px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.modal-wide.dialog.join { width: min(560px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > p { font-size: 14.5px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .modal-actions.answers.spread { left: 24px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .answers > .key.out-k {
+  margin-right: auto;
+  color: var(--danger-text);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles > h2 {
+  margin: 0;
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  color: var(--header-primary);
+  font: 700 21px/1.2 var(--font-display);
+  letter-spacing: -.015em;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles > p {
+  margin: 0;
+  color: var(--text-muted);
+  font: 400 14px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles > p:empty { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon {
+  position: relative;
+  isolation: isolate;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  border: 0;
+  border-radius: 50%;
+  outline: 0;
+  box-shadow: var(--pillow-sm);
+  color: color-mix(in srgb, var(--server-tint, var(--accent)) 45%, var(--white));
+  font: 700 15px/1 var(--font);
+  letter-spacing: 0;
+  cursor: default;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 50%;
+  background: var(--pillow-top), color-mix(in srgb, var(--server-tint, var(--accent)) 26%, var(--bg-raised));
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon:hover { color: color-mix(in srgb, var(--server-tint, var(--accent)) 45%, var(--white)); filter: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon.has-image::before { background: var(--bg-raised); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon.has-image img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog.join .sw-icon,
+html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog.join .sw-icon:hover { color: color-mix(in srgb, var(--server-tint, var(--accent)) 50%, var(--ink-strong)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-join-wait:has(#join-wait-send:not(.hidden)) #join-wait-icon::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 0 3px var(--bg-dark);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero { padding-top: 26px; overflow: visible; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero > .invite-link-hero,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) {
+  position: relative;
+  display: block;
+  height: 112px;
+  margin: -26px -28px 6px;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background-color: var(--bg-dark);
+  background-size: cover;
+  background-position: center;
+  -webkit-mask-image: linear-gradient(rgb(0 0 0) 60%, transparent);
+  mask-image: linear-gradient(rgb(0 0 0) 60%, transparent);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero > .invite-link-hero::after { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero > .invite-link-hero + .sw-head,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) + .sw-head {
+  position: relative;
+  margin-top: -48px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero .sw-icon,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) + .sw-head .sw-icon {
+  width: 64px;
+  height: 64px;
+  margin-top: 0;
+  box-shadow: 0 0 0 4px var(--bg-dark), var(--pillow-sm);
+  font-size: 19px;
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .invite-link-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 4px 0 0;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--text-normal);
+  font: 400 14px/1.5 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .invite-link-warning.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .invite-link-warning > .i {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  color: var(--danger-text);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules-text {
+  max-height: 220px;
+  margin: 0;
+  padding: 14px 16px;
+  overflow: auto;
+  border: 0;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--text-normal);
+  font: 400 14px/1.5 var(--font);
+  white-space: pre-wrap;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body { white-space: normal; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules-text,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #si-rules { max-height: 132px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body :where(h1, h2, h3, h4) {
+  margin: 0 0 6px;
+  color: var(--header-primary);
+  font: 700 16px/1.3 var(--font-display);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body :where(ol, ul) { margin: 0; padding-left: 20px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body li + li { margin-top: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body strong { color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body a { color: var(--link); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-note-wrap,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 4px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules.hidden,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-note-wrap.hidden,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-section.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules > .field-label,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-note-wrap > .field-label,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-label {
+  margin: 0;
+  color: var(--text-muted);
+  font: 600 13px/13px var(--font);
+  letter-spacing: 0;
+  text-transform: none;
+  text-indent: 16px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #join-wait-note {
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 22px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font: 400 14.5px/20px var(--font);
+  resize: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #join-wait-note:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 14px 0 6px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-active);
+  color: var(--text-muted);
+  font: 600 13px/1 var(--font);
+  letter-spacing: 0;
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step > b {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgb(var(--lamp) / .08);
+  font: 600 11.5px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step > .i { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.active {
+  color: var(--header-primary);
+  outline: var(--ring-on);
+  outline-offset: -2px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.active > b {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.done { padding-left: 10px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.done > b { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.done > .i {
+  display: block;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps {
+  order: 1;
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+  margin: 4px 0 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps > .sw-step {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text-faint);
+  color: transparent;
+  font-size: 0;
+  opacity: .6;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps > .sw-step.active {
+  width: 20px;
+  border-radius: 4px;
+  background: var(--accent-lit);
+  opacity: 1;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .ob-questions {
+  gap: 18px;
+  margin-top: 4px;
+  padding: 2px;
+  margin-inline: -2px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-question { gap: 10px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-question-title {
+  color: var(--header-primary);
+  font: 600 15px/1.3 var(--font);
+  letter-spacing: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-question-sub {
+  margin-top: -6px;
+  color: var(--text-muted);
+  font: 400 13px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answers,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-roles {
+  display: grid;
+  gap: 14px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-roles.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-roles-hint {
+  margin: 0;
+  color: var(--text-normal);
+  font: 400 14.5px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 46px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-normal);
+  font: 500 14.5px/1 var(--font);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick:hover { background: rgb(var(--lamp) / .06); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer.picked,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick.held {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick.has-banner {
+  height: auto;
+  padding: 48px 16px 13px;
+  border-radius: 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick.has-banner > .role-pick-banner {
+  height: 38px;
+  -webkit-mask-image: linear-gradient(rgb(0 0 0) 45%, transparent);
+  mask-image: linear-gradient(rgb(0 0 0) 45%, transparent);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer-label,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick > .role-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0;
+  border-radius: 50%;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-check,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick > .role-pick-check {
+  order: 1;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--accent-lit);
+  opacity: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-check > svg,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick > .role-pick-check > svg {
+  width: 18px;
+  height: 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer.picked > .ob-check,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick.held > .role-pick-check {
+  background: none;
+  color: var(--accent-lit);
+  opacity: 1;
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-games,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-games.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-games > .game-chip,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg-active);
+  color: var(--text-normal);
+  font: 500 13px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-role > .role-dot {
+  width: 9px;
+  height: 9px;
+  margin: 0;
+  border-radius: 50%;
+}
+
+html[data-look="studio"][data-fit="slim"] .invite-link-warning > .i,
+html[data-look="studio"][data-fit="slim"] #sw-steps > .sw-step > b,
+html[data-look="studio"][data-fit="slim"] #sw-steps > .sw-step > .i { display: none; }
