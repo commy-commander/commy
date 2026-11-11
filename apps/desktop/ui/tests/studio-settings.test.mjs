@@ -56,7 +56,8 @@ test("the settings window's new look stays off until the switch is on", () => {
 
 test("the settings pages wear the guide's cards in every fit, while the window's shell stays Roomy only", () => {
   assert.equal(css.includes('html[data-look="studio"][data-fit="slim"] .set-pane,'), false);
-  for (const part of [".settings-tab > .i", "#user-settings .settings-nav-title"]) assert.ok(css.includes(`html[data-look="studio"][data-fit="slim"] ${part}`), part);
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] #user-settings .settings-nav-title { display: none; }'));
+  assert.equal(css.includes('html[data-look="studio"][data-fit="slim"] .settings-tab > .i'), false);
   const shell = /\.settings-(nav|search|tab|content|close-wrap)|\.settings-layer(::after)?$|body:has\(|#channel-settings-title|#leave-server-btn/;
   for (const selector of selectors(css).filter(s => !s.includes('[data-fit="slim"]') && !s.startsWith('html[data-look="studio"] .user-actions'))) {
     assert.equal(selector.includes(':not([data-fit="slim"])'), shell.test(selector), selector);

@@ -796,5 +796,4 @@ html[data-look="studio"][data-theme="light"] .settings-layer #sensitivity-db::-w
 
 html[data-look="studio"][data-theme="light"] .settings-layer .set-caps > .kbd { box-shadow: inset 0 0 0 1px rgb(var(--dark) / .1), 0 2px 0 var(--key-edge), 0 3px 1px rgb(var(--dark) / .18); }
 
-html[data-look="studio"][data-fit="slim"] .settings-tab > .i,
 html[data-look="studio"][data-fit="slim"] #user-settings .settings-nav-title { display: none; }
