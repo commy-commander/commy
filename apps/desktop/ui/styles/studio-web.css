@@ -1,0 +1,99 @@
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > p {
+  margin: 14px 0 0;
+  color: var(--text-normal);
+  font: 400 14.5px/1.45 var(--font);
+  text-wrap: pretty;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-ask-row { margin-top: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-ask-row > #web-unlock-ask.key {
+  width: 100%;
+  height: 46px;
+  justify-content: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-wait:not(.hidden) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 14px;
+  color: var(--text-muted);
+  font: 500 13.5px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-wait > .signin-spinner {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 0 4px rgb(var(--lamp) / .05);
+  animation: web-wait 1.6s ease-in-out infinite;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-detail:empty { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-detail { margin-top: 8px; text-wrap: pretty; }
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-code-row:not(.hidden) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-code-row > #web-unlock-code {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font: 400 15px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-code-row > #web-unlock-code::placeholder { color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-code-row > #web-unlock-code:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-code-row > #web-unlock-code-use.key {
+  flex: none;
+  height: 44px;
+  padding: 0 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-error:not(.hidden) { margin-top: 14px; }
+@keyframes web-wait { 50% { opacity: .35; } }
+
+html[data-look="studio"]:not([data-fit="slim"]) .cam-grid:not(.vr-grid .cam-grid) { background: transparent; }
+html[data-look="studio"]:not([data-fit="slim"]) #cam-grid > #cam-grid-focus.key {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  border: 0;
+  color: var(--k-ink);
+  transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #cam-grid > #cam-grid-focus.key svg { width: 16px; height: 16px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) #toast.toast {
+  min-height: 48px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-radius: 24px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #toast.toast > .toast-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  white-space: normal;
+  text-overflow: clip;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .voice-user:has(> .voice-live) { container-type: inline-size; }
+@container (max-width: 280px) {
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-user > .voice-live ~ .voice-you { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"]:not([data-fit="slim"]) #modal-web-unlock.modal.dialog.dc > #web-unlock-wait > .signin-spinner { animation: none; }
+}

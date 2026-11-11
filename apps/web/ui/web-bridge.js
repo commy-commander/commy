@@ -488,6 +488,10 @@
   }
   setWebText(document.getElementById("signin-go"), `Sign in on ${window.location.host}`);
   setWebText(document.querySelector("#signin-start .signin-note"), "Sign in or create your account, then come back to the web app.");
+  setWebText(document.getElementById("signin-intro"), "A free Commy account keeps servers free of spam bots. Your messages and calls stay between you and the people you talk to; the account proves you are a real person.");
+  setWebText(document.querySelector('[data-i18n="settings.intro.appearance"]'), "Theme, language and chat text.");
+  setWebText(document.querySelector('[data-i18n="settings.intro.diagnostics"]'), "Check your connection when something goes wrong.");
+  setWebText(document.querySelector(".conn-test-intro .setting-sub"), "Checks how well calls and streams can run on this network. You don't need anyone else online.");
   const settingNote = id => document.getElementById(id)?.closest(".setting-row")?.querySelector(".setting-sub");
   setWebText(settingNote("nc-toggle"), "Removes keyboards, fans and other background noise using your browser's noise suppression.");
   setWebText(settingNote("mic-test-btn"), "Plays your mic back to you, with the noise and echo handling you chose.");

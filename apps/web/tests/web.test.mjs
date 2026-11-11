@@ -11,7 +11,7 @@ const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const read = (...path) => readFileSync(join(repo, ...path), "utf8");
+const read = (...path) => readFileSync(join(repo, ...path), "utf8").replace(/\r\n/g, "\n");
 const rustCommands = new Set([...read("apps", "web", "src", "session.rs").matchAll(/^\s+"([a-z_]+)" =>/gm)].map(m => m[1]));
 
 test("every command the app calls while starting up has an answer in the browser", () => {
@@ -522,4 +522,35 @@ test("the browser waits for a current server before joining voice, like the desk
   const join = calls.indexOf('"set_voice_channel" =>');
   assert.ok(join > 0 && calls.indexOf("self.voice_wait(server)", join) > join);
   assert.match(read("apps", "web", "src", "session", "voice_gate.rs"), /use commy_net::voice_gate::\{wait_for/);
+});
+
+test("the browser keeps its own sign-in words each time the dialog shows", () => {
+  const app = read("apps", "desktop", "ui", "scripts", "app.js");
+  const render = /function renderInAppSignIn\(view\) \{([\s\S]*?)\n\}/.exec(app)[1];
+  assert.ok(render.indexOf("if (inBrowserApp()) return showSignInCheck(view.captchaUrl);") < render.indexOf('browser.dataset.i18n ='));
+  assert.ok(app.includes('if (id === "signin-intro" && inBrowserApp() && !account.signed_in) continue;'));
+  const bridge = read("apps", "web", "ui", "web-bridge.js");
+  assert.ok(bridge.includes('setWebText(document.getElementById("signin-go"), `Sign in on ${window.location.host}`);'));
+  assert.ok(bridge.includes('setWebText(document.getElementById("signin-intro"), '));
+});
+
+test("the browser promises nothing it hides or cannot do", () => {
+  const bridge = read("apps", "web", "ui", "web-bridge.js");
+  const said = [...bridge.matchAll(/setWebText\([^\n]*?, "([^"]+)"\);/g)].map(m => m[1]).join(" ");
+  assert.match(said, /Theme, language and chat text\./);
+  assert.match(said, /Check your connection when something goes wrong\./);
+  assert.doesNotMatch(said, /straight|directly|relay|logs|icon/i);
+  const app = read("apps", "desktop", "ui", "scripts", "app.js");
+  assert.ok(app.includes('Messages and calls ${inBrowserApp() ? "stay" : "go straight"} between the people in it.'));
+  assert.ok(app.includes('inBrowserApp() ? "Private chats stay between you and the other person." : '));
+  assert.ok(app.includes('inBrowserApp() ? "Servers are where your friends gather: text channels, voice and screen sharing. Start one, or join a friend\'s with an invite." : '));
+  assert.ok(app.includes('account.server_from_env && !inBrowserApp() ? " (set by COMMY_AUTH_URL)" : ""'));
+  const index = read("apps", "desktop", "ui", "index.html");
+  assert.ok(index.includes('<span class="native-only"> To use a different account server, sign out and choose it on the sign-in screen.</span>'));
+});
+
+test("Switch while sharing is hidden in the browser, like the room's Switch", () => {
+  const index = read("apps", "desktop", "ui", "index.html");
+  assert.match(/<button [^>]*id="vp-change-source"[^>]*>/.exec(index)[0], /\bnative-only\b/);
+  assert.ok(read("apps", "desktop", "ui", "scripts", "app.js").includes('tile.querySelector(".vr-switch").classList.toggle("hidden", inBrowserApp());'));
 });

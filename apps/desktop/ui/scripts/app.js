@@ -9001,7 +9001,7 @@ function buildGroupIntro(server) {
   intro.appendChild(el("h2", null, server.name));
   const others = server.members.filter(m => !state.user || m.id !== state.user.id).map(m => m.name);
   const who = others.length > 1 ? `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]}` : others[0] || "just you so far";
-  intro.appendChild(el("p", null, `This is the start of your group with ${who}. Messages and calls go straight between the people in it.`));
+  intro.appendChild(el("p", null, `This is the start of your group with ${who}. Messages and calls ${inBrowserApp() ? "stay" : "go straight"} between the people in it.`));
   return intro;
 }
 
@@ -19676,7 +19676,7 @@ function renderDmHome() {
   art.appendChild(svgIcon("chat", 56));
   empty.appendChild(art);
   empty.appendChild(el("h3", null, "No direct messages yet"));
-  empty.appendChild(el("p", null, "Private chats go straight to the other person over P2P. Nothing is stored on a server."));
+  empty.appendChild(el("p", null, inBrowserApp() ? "Private chats stay between you and the other person." : "Private chats go straight to the other person over P2P. Nothing is stored on a server."));
   const start = el("button", "btn-primary", "Start a Conversation");
   start.onclick = openNewDm;
   empty.appendChild(start);
@@ -19692,7 +19692,7 @@ function buildWelcomeHome() {
   home.appendChild(mark);
   const name = state.user ? state.user.username : "";
   home.appendChild(el("h3", null, name ? `Welcome, ${name}` : "Welcome to Commy"));
-  home.appendChild(el("p", null, "Servers are where your friends gather: text channels, voice and screen sharing, all connected directly between members. Start one, or join a friend's with an invite."));
+  home.appendChild(el("p", null, inBrowserApp() ? "Servers are where your friends gather: text channels, voice and screen sharing. Start one, or join a friend's with an invite." : "Servers are where your friends gather: text channels, voice and screen sharing, all connected directly between members. Start one, or join a friend's with an invite."));
   const actions = el("div", "welcome-actions");
   const create = el("button", "btn-primary", "Create a Server");
   create.onclick = () => { showModal("modal-add-server"); $("create-name-input").focus(); };
@@ -23485,6 +23485,7 @@ function wireEvents() {
   if (studioLook()) studioCompact();
   if (studioLook()) studioMinors();
   if (studioLook()) studioStrip();
+  if (studioLook()) studioWeb();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;
@@ -25948,6 +25949,7 @@ function showSignIn() {
   select.title = account.server_from_env ? "Set by COMMY_AUTH_URL" : "";
   $("signin-back").classList.toggle("hidden", !account.signed_in);
   for (const [id, key] of [["signin-title", "signin.title"], ["signin-intro", "signin.intro"]]) {
+    if (id === "signin-intro" && inBrowserApp() && !account.signed_in) continue;
     const node = $(id);
     node.dataset.i18n = account.signed_in ? key.replace("signin.", "signin.add.") : key;
     node.textContent = t(node.dataset.i18n);
@@ -25993,6 +25995,7 @@ function renderInAppSignIn(view) {
   const browser = $("signin-go");
   browser.classList.toggle("btn-primary", !view.form);
   browser.classList.toggle("btn-secondary", view.form);
+  if (inBrowserApp()) return showSignInCheck(view.captchaUrl);
   browser.dataset.i18n = view.form ? "signin.browser" : "signin.go";
   browser.textContent = t(browser.dataset.i18n);
   const note = $("signin-note");
@@ -26375,7 +26378,7 @@ function renderAccountSettings() {
   const u = account.user || {};
   $("acct-name").textContent = u.name || "Signed out";
   $("acct-email").textContent = u.email || "";
-  $("acct-server-line").textContent = `Account server: ${account.server_host}${account.server_from_env ? " (set by COMMY_AUTH_URL)" : ""}`;
+  $("acct-server-line").textContent = `Account server: ${account.server_host}${account.server_from_env && !inBrowserApp() ? " (set by COMMY_AUTH_URL)" : ""}`;
   $("acct-device-line").textContent = account.device_linked
     ? "This device is linked to your account."
     : "This device is not linked yet; it links automatically on sign-in.";

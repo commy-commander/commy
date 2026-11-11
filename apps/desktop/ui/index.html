@@ -15,6 +15,7 @@
   <link rel="stylesheet" id="studio-profile" href="styles/studio-profile.css" media="not all" />
   <link rel="stylesheet" id="studio-settings" href="styles/studio-settings.css" media="not all" />
   <link rel="stylesheet" id="studio-saved" href="styles/studio-saved.css" media="not all" />
+  <link rel="stylesheet" id="studio-web" href="styles/studio-web.css" media="not all" />
   <link rel="stylesheet" id="studio-accounts" href="styles/studio-accounts.css" media="not all" />
   <link rel="stylesheet" id="studio-profile-editor" href="styles/studio-profile-editor.css" media="not all" />
   <link rel="stylesheet" id="studio-forum" href="styles/studio-forum.css" media="not all" />
@@ -154,7 +155,7 @@
             <input type="checkbox" id="vp-ink" class="switch" aria-label="Let viewers draw" />
           </label>
           <div class="vp-live-actions">
-            <button class="vp-pill desktop-only" id="vp-change-source" title="Pick a different monitor or window">Switch</button>
+            <button class="vp-pill desktop-only native-only" id="vp-change-source" title="Pick a different monitor or window">Switch</button>
             <button class="vp-pill danger" id="vp-stop-share">End Stream</button>
           </div>
         </div>
@@ -1671,7 +1672,7 @@
             <div class="setting-sub" id="acct-server-line"></div>
             <div class="setting-sub" id="acct-device-line"></div>
           </div>
-          <div class="setting-sub">Signing out keeps your chats on this device, but you need to sign in again to join or create servers. To use a different account server, sign out and choose it on the sign-in screen.</div>
+          <div class="setting-sub">Signing out keeps your chats on this device, but you need to sign in again to join or create servers.<span class="native-only"> To use a different account server, sign out and choose it on the sign-in screen.</span></div>
 
           <h2 class="settings-subhead">Your servers on every device</h2>
           <div class="settings-card entry-card">
@@ -3492,6 +3493,7 @@
   <script src="scripts/studio-icons.js"></script>
   <script src="scripts/studio-dock.js"></script>
   <script src="scripts/studio-saved.js"></script>
+  <script src="scripts/studio-web.js"></script>
   <script src="scripts/studio-voice-room.js"></script>
   <script src="scripts/studio-faces.js"></script>
   <script src="scripts/studio-forum.js"></script>
