@@ -3923,6 +3923,8 @@ function paintChannelBand(row, channel) {
   } else if (channel.color) {
     row.classList.add("has-band");
     row.style.setProperty("--channel-band", roleGradient(channel.color));
+    const tint = String(channel.color).replace(/^#/, "");
+    if (/^([0-9a-f]{3}|[0-9a-f]{6})$/i.test(tint)) row.style.setProperty("--channel-tint", `#${tint}`);
   }
 }
 

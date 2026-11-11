@@ -244,3 +244,23 @@ test("tags, pictures, waiting servers and room limits follow the design answers"
   assert.ok(css.includes(`${desk} .voice-channel .voice-count.limited.full {\n  order: 1;`));
   assert.ok(css.includes(`${desk} .voice-user .vs-icon.priority { color: var(--text-muted); }`));
 });
+
+test("a channel banner leaves its row plain and a channel colour tints its icon", () => {
+  const R = `${SWITCH}${NOT_SLIM}`;
+  const D = `${SWITCH}[data-theme="light"]${NOT_SLIM}`;
+  assert.ok(css.includes(`${R} .channel.has-banner:not(.unread)::before,\n${R} .channel.has-banner::after { display: none; }`));
+  assert.ok(css.includes(`${R} .channel.has-banner .hash,\n${R} .channel.has-banner .channel-label,\n${R} .channel.has-band .hash,\n${R} .channel.has-band .channel-label { text-shadow: none; }`));
+  assert.ok(css.includes(`${R} .channel.unread::before {\n  inset: 50% auto auto -8px;`));
+  assert.doesNotMatch(css, /color-mix\([^;]*var\(--channel-band\)/);
+  assert.ok(css.includes(`${R} .channel.has-band .channel-icon { color: color-mix(in srgb, var(--channel-tint, var(--text-muted)) 62%, var(--white)); }`));
+  assert.ok(css.includes(`${D} .channel.has-band .channel-icon { color: color-mix(in srgb, var(--channel-tint, var(--text-muted)) 70%, var(--header-primary)); }`));
+  const app = read("../scripts/app.js");
+  const paint = app.slice(app.indexOf("function paintChannelBand("), app.indexOf("\n}\n", app.indexOf("function paintChannelBand(")));
+  assert.match(paint, /row\.style\.setProperty\("--channel-tint", `#\$\{tint\}`\)/);
+  assert.match(paint, /\/\^\(\[0-9a-f\]\{3\}\|\[0-9a-f\]\{6\}\)\$\/i\.test\(tint\)/);
+});
+
+test("in Day the current server tile's initials are dark ink", () => {
+  const D = `${SWITCH}[data-theme="light"]${NOT_SLIM}`;
+  assert.ok(css.includes(`${D} .server-icon.active,\n${D} .server-icon.active:hover { color: var(--ink-strong); }`));
+});

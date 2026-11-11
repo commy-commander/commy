@@ -291,6 +291,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .server-icon.active:hover {
 }
 html[data-look="studio"]:not([data-fit="slim"]) .rail-item:has(> .server-icon.active) { margin: 0 3px; }
 html[data-look="studio"]:not([data-fit="slim"]) .server-icon.active::before { display: none; }
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .server-icon.active,
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .server-icon.active:hover { color: var(--ink-strong); }
 html[data-look="studio"]:not([data-fit="slim"]) .server-icon.has-image,
 html[data-look="studio"]:not([data-fit="slim"]) .server-icon.has-image:hover,
 html[data-look="studio"]:not([data-fit="slim"]) .server-icon.has-image.active { background: var(--bg-raised); }
@@ -483,13 +485,15 @@ html[data-look="studio"]:not([data-fit="slim"]) .channel.active .channel-pin,
 html[data-look="studio"]:not([data-fit="slim"]) .channel.active .channel-lock,
 html[data-look="studio"]:not([data-fit="slim"]) .channel.active .channel-bell { color: var(--accent-ink); }
 html[data-look="studio"]:not([data-fit="slim"]) .channel.unread { color: var(--header-primary); font-weight: 600; }
-html[data-look="studio"]:not([data-fit="slim"]) .channel.unread:not(.has-banner)::before {
-  left: -8px;
+html[data-look="studio"]:not([data-fit="slim"]) .channel.unread::before {
+  inset: 50% auto auto -8px;
+  z-index: auto;
   width: 4px;
   height: 12px;
   margin-top: -6px;
   border-radius: 0 4px 4px 0;
   background: var(--accent-2);
+  opacity: 1;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .sidebar-sep { margin: 4px 10px 0; background: none; }
 
@@ -1164,7 +1168,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band,
 html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band:hover { background: none; box-shadow: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band:hover { background: var(--bg-hover); }
 html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band .hash,
-html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band .channel-icon { color: color-mix(in srgb, var(--channel-band) 62%, var(--white)); }
+html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band .channel-icon { color: color-mix(in srgb, var(--channel-tint, var(--text-muted)) 62%, var(--white)); }
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .channel.has-band .hash,
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .channel.has-band .channel-icon { color: color-mix(in srgb, var(--channel-tint, var(--text-muted)) 70%, var(--header-primary)); }
 html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band.active,
 html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band.active:hover { background: var(--pillow-top), var(--accent); }
 html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band.active .hash,
@@ -1201,11 +1207,12 @@ html[data-look="studio"]:not([data-fit="slim"]) .live-badge {
   color: var(--live-ink);
   font: 700 12px/18px var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner { color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner.active { color: var(--accent-ink); }
-html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner::after { background: linear-gradient(90deg, var(--bg-dark) 0%, color-mix(in srgb, var(--bg-dark) 90%, transparent) 45%, color-mix(in srgb, var(--bg-dark) 30%, transparent) 100%); }
-html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner:hover::after { background: linear-gradient(90deg, var(--bg-hover) 0%, color-mix(in srgb, var(--bg-hover) 90%, transparent) 45%, color-mix(in srgb, var(--bg-hover) 30%, transparent) 100%); }
-html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner.active::after { background: var(--pillow-top), var(--accent); }
+html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner:not(.unread)::before,
+html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner::after { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner .hash,
+html[data-look="studio"]:not([data-fit="slim"]) .channel.has-banner .channel-label,
+html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band .hash,
+html[data-look="studio"]:not([data-fit="slim"]) .channel.has-band .channel-label { text-shadow: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .channel-intro-mark { border-radius: var(--radius-lg); box-shadow: var(--pillow-card); }
 html[data-look="studio"]:not([data-fit="slim"]) .voice-channel { gap: 6px; }
 html[data-look="studio"]:not([data-fit="slim"]) .voice-activity-pill {
