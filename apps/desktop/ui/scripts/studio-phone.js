@@ -124,9 +124,9 @@ function watchMarkup() {
 
 function youMarkup() {
   return `<div class="acct slab">
-<button type="button" class="key sq tap edit" id="pt-edit" aria-label="Set status"><i data-i="pencil"></i></button>
+<button type="button" class="key sq tap edit" id="pt-edit" aria-label="Edit profile"><i data-i="pencil"></i></button>
 <span class="avatar" id="pt-me-avatar"></span>
-<div class="t"><b id="pt-me-name"></b><span id="pt-me-status"></span></div>
+<div class="t"><b id="pt-me-name"></b><button type="button" class="presence" id="pt-presence"><span class="pw" id="pt-me-status"></span><span class="pend" id="pt-me-until"></span><i data-i="chevron-down" class="pchev"></i></button></div>
 </div>
 <div class="set slab">
 <div class="sec lbl">Appearance</div>
@@ -137,8 +137,29 @@ function youMarkup() {
 <div class="sec lbl" id="pt-notify-lbl">Notify me about</div>
 <div class="picks" role="radiogroup" aria-labelledby="pt-notify-lbl">${NOTIFY_PICKS.map(pick => `<button type="button" class="srow pick" role="radio" aria-checked="false" data-notify="${pick.level}"><i data-i="${pick.icon}"></i><span class="l">${pick.label}</span><i data-i="check" class="tick"></i></button>`).join("")}</div>
 <button type="button" class="srow go" id="pt-settings"><i data-i="settings"></i><span class="l">All settings</span><i data-i="chevron-right" class="chev"></i></button>
+<button type="button" class="srow go hidden" id="pt-switch-account"><i data-i="users"></i><span class="l">Switch Account</span><i data-i="chevron-right" class="chev"></i></button>
 <div class="about"><span class="star" id="pt-about-star" data-state="quiet" data-follow="off" role="img" aria-label="Commy"></span><span class="l" id="pt-about-words">Early build<small>Some of this will move.</small></span><button type="button" class="out" id="pt-sign-out">Sign out</button></div>
 </div>`;
+}
+
+function profileMarkup() {
+  const field = (label, id, max) => `<label class="fld"><span class="lbl">${label}</span><span class="in"><input type="text" id="${id}" maxlength="${max}" autocomplete="off" aria-label="${label}"></span></label>`;
+  return `<header class="phd"><button type="button" class="back" id="pt-prof-back" aria-label="Back"><i data-i="chevron-left"></i></button><h2>Profile</h2><button type="button" class="key primary save" id="pt-prof-save" disabled>Save</button></header>
+<div class="pedit slab"><div class="escroll" id="pt-prof-scroll">
+<div class="eban"><div class="art" id="pt-prof-ban"></div><button type="button" class="key sq" id="pt-prof-ban-rm" aria-label="Remove banner"><i data-i="x"></i></button></div>
+<div class="eid"><span class="eav" id="pt-prof-av"></span><div class="t"><b id="pt-prof-name"></b><small id="pt-prof-sub"></small></div></div>
+<div class="epair"><button type="button" class="key" id="pt-prof-avatar"><i data-i="user"></i>Change avatar</button><button type="button" class="key" id="pt-prof-banner"><i data-i="image"></i><span id="pt-prof-banner-words">Change banner</span></button></div>
+${field("Display name", "pt-prof-dn", 64)}
+${field("Pronouns", "pt-prof-pro", 24)}
+<div class="fld"><span class="lbl" id="pt-prof-status-lbl">Status</span><span class="in"><button type="button" class="e" id="pt-prof-emoji" aria-label="Status emoji"></button><input type="text" id="pt-prof-status" maxlength="64" autocomplete="off" aria-labelledby="pt-prof-status-lbl"></span></div>
+<div class="fld" id="pt-prof-clear-fld"><span class="lbl">Clear after</span><button type="button" class="in pick" id="pt-prof-clear"><span class="v" id="pt-prof-clear-v"></span><i data-i="chevron-down"></i></button></div>
+<label class="fld"><span class="lbl">About me</span><span class="in area"><textarea id="pt-prof-about" maxlength="190" rows="3" aria-label="About me"></textarea><span class="afoot"><small id="pt-prof-count"></small><button type="button" class="key sq" id="pt-prof-about-emoji" aria-label="Emoji"><i data-i="smile"></i></button></span></span></label>
+<div class="fld"><span class="lbl">Server tag</span><button type="button" class="in pick" id="pt-prof-tag"><span class="v" id="pt-prof-tag-v"></span><i data-i="chevron-down"></i></button><small class="hint" id="pt-prof-tag-hint"></small></div>
+<span class="lbl g" id="pt-prof-borders-lbl">Avatar border</span>
+<div class="looks" id="pt-prof-borders" role="radiogroup" aria-labelledby="pt-prof-borders-lbl"></div>
+<span class="lbl g" id="pt-prof-effects-lbl">Profile effect</span>
+<div class="looks" id="pt-prof-effects" role="radiogroup" aria-labelledby="pt-prof-effects-lbl"></div>
+</div></div>`;
 }
 
 function inviteMarkup() {
@@ -166,11 +187,17 @@ function buildStudioPhone() {
   const you = studioNode("section", "pt-page pt-you", youMarkup());
   you.id = "pt-you";
   you.setAttribute("aria-label", "You");
+  const profile = studioNode("section", "pt-profile", profileMarkup());
+  profile.id = "pt-profile";
+  profile.setAttribute("aria-label", "Edit profile");
   const scrim = el("div", "pt-scrim");
   scrim.id = "pt-scrim";
   const hold = studioNode("section", "pt-sheet pt-hold", '<div class="rx" id="pt-hold-rx"></div><div class="pt-sheet-rows" id="pt-hold-rows"></div>');
   hold.id = "pt-hold";
   hold.setAttribute("aria-label", "Message actions");
+  const pick = studioNode("section", "pt-sheet pt-pick", '<div class="pt-pick-step" id="pt-pick-step"></div><input type="datetime-local" class="pt-pick-time" id="pt-pick-time" tabindex="-1" aria-hidden="true">');
+  pick.id = "pt-pick";
+  pick.setAttribute("role", "dialog");
   const cue = studioNode("span", "pt-reply-cue", '<span class="rk"><i data-i="reply"></i></span>');
   cue.id = "pt-reply-cue";
   const bar = studioNode("nav", "hzn", horizonMarkup());
@@ -188,7 +215,7 @@ function buildStudioPhone() {
   voiceSheet.id = "pt-voice-sheet";
   voiceSheet.setAttribute("role", "dialog");
   voiceSheet.setAttribute("aria-label", "Voice");
-  app.append(title, live, you, scrim, hold, search, cue, room, voiceScrim, voiceSheet, bar);
+  app.append(title, live, you, profile, scrim, hold, pick, search, cue, room, voiceScrim, voiceSheet, bar);
   const watch = studioNode("div", "pt-watch", watchMarkup());
   watch.id = "pt-watch";
   $("stage-view").appendChild(watch);
@@ -637,7 +664,7 @@ function disarmHangUp() {
   }
 }
 
-const STUDIO_SHEETS = ["pt-voice-open", "pt-hold-open", "pt-chat-menu", "pt-search-open"];
+const STUDIO_SHEETS = ["pt-voice-open", "pt-hold-open", "pt-pick-open", "pt-chat-menu", "pt-search-open"];
 
 function openSheet(name) {
   const app = $("app");
@@ -994,7 +1021,7 @@ function paintYouPage() {
   paintAvatar(avatar, state.user.id, name);
   avatar.appendChild(el("span", "presence-dot " + (state.user.presence || "online")));
   $("pt-me-name").textContent = name;
-  $("pt-me-status").textContent = $("me-status").textContent;
+  paintPresenceLine();
   const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
   for (const key of document.querySelectorAll("#pt-you [data-theme-choice]")) {
     const on = key.dataset.themeChoice === theme;
@@ -1005,14 +1032,519 @@ function paintYouPage() {
   const level = notifyPrefs().level;
   for (const row of document.querySelectorAll("#pt-you [data-notify]")) row.setAttribute("aria-checked", String(row.dataset.notify === level));
   $("pt-about-words").classList.toggle("hidden", !earlyBuild(updateStatus && updateStatus.current));
+  $("pt-switch-account").classList.toggle("hidden", !accountRows(account).length);
+}
+
+function ownPresence() {
+  return (state.user && state.user.presence) || "online";
+}
+
+function ownPresenceUntil() {
+  const until = Number((state.voice && state.voice.presence_until) || (state.user && state.user.presence_until));
+  return ownPresence() !== "online" && until && until * 1000 > Date.now() ? until : 0;
+}
+
+function paintPresenceLine() {
+  const presence = ownPresence();
+  const words = $("me-status").textContent;
+  const until = ownPresenceUntil();
+  const key = $("pt-presence");
+  key.dataset.presence = presence;
+  $("pt-me-status").textContent = presence === "do_not_disturb" && until ? PRESENCE_LABELS.do_not_disturb : words;
+  const end = $("pt-me-until");
+  end.textContent = until ? `\u00a0· until ${formatUntil(until)}` : "";
+  end.classList.remove("hidden");
+  if (until && key.scrollWidth > key.parentNode.clientWidth) end.classList.add("hidden");
+  key.setAttribute("aria-label", `Presence: ${$("pt-me-status").textContent}${end.classList.contains("hidden") ? "" : end.textContent}. Change`);
+}
+
+function presenceChoices() {
+  return [...document.querySelectorAll("#pp-presence button[data-presence]")].map(button => {
+    const small = button.querySelector("small");
+    return {
+      presence: button.dataset.presence,
+      label: button.querySelector("span:not(.presence-dot)").firstChild.textContent.trim(),
+      hint: small ? small.dataset.text || small.textContent : "",
+    };
+  });
+}
+
+function presencePip(presence) {
+  return `<span class="pdot ${presence}" aria-hidden="true"></span>`;
+}
+
+function presenceRow(choice, current, until) {
+  const row = studioNode("button", "srow pick", `${presencePip(choice.presence)}<span class="l"></span><i data-i="check" class="tick"></i>`);
+  row.type = "button";
+  row.setAttribute("role", "radio");
+  row.setAttribute("aria-checked", String(choice.presence === current));
+  const label = row.querySelector(".l");
+  label.textContent = choice.label;
+  const hint = choice.presence === current && until ? `Until ${formatUntil(until)}` : choice.hint;
+  if (hint) label.appendChild(el("small", "", hint));
+  row.onclick = () => choice.presence === "online" ? closeSheets(() => setOwnPresence("online", null)) : showDurationStep(choice.presence);
+  return row;
+}
+
+function durationChoices(presence) {
+  openDurations({ kind: "presence", presence }, $("pt-presence"));
+  const choices = [...document.querySelectorAll("#pp-durations button[data-mins]")].map(button => ({ mins: button.dataset.mins, label: button.textContent }));
+  const note = $("pp-durations-note").textContent;
+  closeDurations();
+  return { choices, note };
+}
+
+function durationRow(icon, label, run, trailing = "") {
+  const row = studioNode("button", "srow", `${icon}<span class="l"></span>${trailing}`);
+  row.type = "button";
+  row.querySelector(".l").textContent = label;
+  row.onclick = run;
+  return row;
+}
+
+async function setOwnPresence(presence, until) {
+  await saveOwnProfile({ presence });
+  await setStatusExpiry({ presence: until });
+  paintYouPage();
+}
+
+function pickStep(build, direction) {
+  const sheet = $("pt-pick");
+  const step = $("pt-pick-step");
+  const from = sheet.offsetHeight;
+  step.replaceChildren(...build());
+  StudioIcons.paint(step);
+  if (!direction || !from) return;
+  step.classList.remove("pt-step-in", "pt-step-back");
+  void step.offsetWidth;
+  step.classList.add(direction === "back" ? "pt-step-back" : "pt-step-in");
+  const to = sheet.offsetHeight;
+  if (to === from) return;
+  sheet.style.height = `${from}px`;
+  void sheet.offsetHeight;
+  sheet.classList.add("pt-sizing");
+  sheet.style.height = `${to}px`;
+  const done = () => {
+    sheet.classList.remove("pt-sizing");
+    sheet.style.height = "";
+  };
+  sheet.addEventListener("transitionend", done, { once: true });
+  setTimeout(done, 400);
+}
+
+function presenceRows() {
+  const current = ownPresence();
+  const until = ownPresenceUntil();
+  return presenceChoices().map(choice => presenceRow(choice, current, until));
+}
+
+function showPresenceRows(direction) {
+  pickStep(presenceRows, direction);
+}
+
+function showDurationStep(presence) {
+  pickStep(() => {
+    const { choices, note } = durationChoices(presence);
+    const head = studioNode("div", "phead", `<button type="button" class="key sq tap back" aria-label="Back"><i data-i="chevron-left"></i></button><span class="sec">For how long</span><span class="who">${presencePip(presence)}<span></span></span>`);
+    head.querySelector(".who > span:last-child").textContent = (presenceChoices().find(choice => choice.presence === presence) || {}).label || "";
+    head.querySelector(".back").onclick = () => showPresenceRows("back");
+    const clock = '<i data-i="clock"></i>';
+    const rows = [];
+    for (const choice of choices) {
+      if (choice.mins === "never") {
+        rows.push(durationRow('<i data-i="calendar-days"></i>', "Pick a time", () => pickPresenceTime(presence), '<i data-i="chevron-right" class="chev"></i>'));
+        rows.push(durationRow(presencePip(presence), choice.label, () => closeSheets(() => setOwnPresence(presence, null))));
+        continue;
+      }
+      rows.push(durationRow(clock, choice.label, () => closeSheets(() => setOwnPresence(presence, untilFromChoice(choice.mins)))));
+    }
+    const out = [head, ...rows];
+    if (note) out.push(el("p", "hint", note));
+    return out;
+  }, "in");
+}
+
+function pickPresenceTime(presence) {
+  pickTime(until => closeSheets(() => setOwnPresence(presence, until)));
+}
+
+function pickTime(use) {
+  const input = $("pt-pick-time");
+  input.value = toLocalInput(new Date(Date.now() + 2 * 3600e3));
+  input.onchange = () => {
+    const when = new Date(input.value).getTime();
+    if (!when || when <= Date.now()) {
+      toast("Pick a time in the future");
+      return;
+    }
+    use(Math.floor(when / 1000));
+  };
+  try {
+    input.showPicker();
+  } catch {
+    input.focus();
+    input.click();
+  }
+}
+
+function openPickSheet(label, build) {
+  $("pt-pick").setAttribute("aria-label", label);
+  pickStep(build);
+  openSheet("pt-pick-open");
+}
+
+function openPresenceSheet() {
+  openPickSheet("Presence", presenceRows);
+}
+
+function profileOpen() {
+  return $("pt-profile").classList.contains("on");
+}
+
+function savedStatus() {
+  const user = state.user || {};
+  return { name: user.display_name || "", status: decodeCustomEmojis(user.custom_status), emoji: user.status_emoji || "" };
+}
+
+function profileDirty() {
+  if (!profileOpen() || !state.user) return false;
+  const saved = savedStatus();
+  return $("pt-prof-dn").value !== saved.name
+    || $("pt-prof-status").value !== saved.status
+    || studioPhone.profileEmoji !== saved.emoji
+    || studioPhone.profileClear !== undefined;
+}
+
+function paintProfileSave() {
+  $("pt-prof-save").disabled = !profileDirty();
+  const hasStatus = Boolean($("pt-prof-status").value.trim() || studioPhone.profileEmoji);
+  $("pt-prof-clear-fld").classList.toggle("hidden", !hasStatus);
+  const until = studioPhone.profileClear !== undefined ? studioPhone.profileClear : (state.voice && state.voice.status_until) || null;
+  $("pt-prof-clear-v").textContent = until ? `Clears at ${formatUntil(until)}` : "Never";
+}
+
+function paintProfileEmoji() {
+  const slot = $("pt-prof-emoji");
+  const value = studioPhone.profileEmoji;
+  paintEmojiSlot(slot, value);
+  if (!value) slot.replaceChildren(studioNode("span", "none", '<i data-i="smile"></i>'));
+}
+
+function profileName() {
+  return $("pt-prof-dn").value || (state.user && state.user.username) || "";
+}
+
+function paintProfileTop() {
+  const user = state.user;
+  const ban = $("pt-prof-ban");
+  ban.dataset.banner = "";
+  ban.classList.toggle("wash", !user.banner);
+  if (user.banner) paintProfileBanner(ban, user.banner, user.node, null, bannerColor(user.id));
+  else ban.style.background = "";
+  paintCardEffect(ban, user.card_effect, user.id);
+  $("pt-prof-ban-rm").classList.toggle("hidden", !user.banner);
+  $("pt-prof-banner-words").textContent = user.banner ? "Change banner" : "Add banner";
+  const avatar = $("pt-prof-av");
+  avatar.replaceChildren();
+  const face = makeAvatar(user.id, profileName(), "avatar");
+  setAvatarBorder(face, user.avatar_border);
+  face.appendChild(el("span", "presence-dot " + ownPresence()));
+  avatar.appendChild(face);
+  $("pt-prof-name").textContent = profileName();
+  const sub = $("pt-prof-sub");
+  sub.replaceChildren(document.createTextNode(user.username || ""));
+  const pronouns = $("pt-prof-pro").value.trim();
+  if (pronouns) sub.append(el("i"), document.createTextNode(pronouns));
+}
+
+function lookTile(label, preview, on, pick) {
+  const tile = el("button", "look" + (on ? " on" : ""));
+  tile.type = "button";
+  tile.setAttribute("role", "radio");
+  tile.setAttribute("aria-checked", String(on));
+  tile.append(preview, el("small", "", label));
+  tile.onclick = async () => {
+    await pick();
+    paintProfileLooks();
+    paintProfileTop();
+  };
+  return tile;
+}
+
+function paintProfileLooks() {
+  const user = state.user;
+  const border = id => {
+    const box = el("span", "avw");
+    const face = makeAvatar(user.id, profileName(), "avatar");
+    setAvatarBorder(face, id);
+    box.appendChild(face);
+    return box;
+  };
+  const effect = id => {
+    const mini = el("span", "mini");
+    if (user.banner) paintProfileBanner(mini, user.banner, user.node, null, bannerColor(user.id));
+    else mini.classList.add("wash");
+    paintCardEffect(mini, id, user.id);
+    return mini;
+  };
+  $("pt-prof-borders").replaceChildren(
+    lookTile("None", border(null), !user.avatar_border, () => saveProfileLook(null, user.card_effect || null)),
+    ...AVATAR_BORDERS.map(b => lookTile(b.label, border(b.id), user.avatar_border === b.id, () => saveProfileLook(b.id, user.card_effect || null))),
+  );
+  const effects = [lookTile("None", effect(null), !user.card_effect, () => saveProfileLook(user.avatar_border || null, null)),
+    ...CARD_EFFECTS.map(e => lookTile(e.label, effect(e.id), user.card_effect === e.id, () => saveProfileLook(user.avatar_border || null, e.id)))];
+  for (const tile of effects) tile.classList.add("fxl");
+  $("pt-prof-effects").replaceChildren(...effects);
+}
+
+function wornTag() {
+  const worn = wornServerId(state.user);
+  const server = (state.servers || []).find(s => s.id === worn && s.tag);
+  return server ? { server, tag: server.tag } : null;
+}
+
+function paintProfileTag() {
+  const value = $("pt-prof-tag-v");
+  const worn = wornTag();
+  const button = $("pt-prof-tag");
+  button.querySelector(":scope > .server-tag")?.remove();
+  value.textContent = worn ? worn.server.name : "None";
+  if (worn) value.before(serverTagChip(worn.tag));
+  const options = wearableTags(state.servers);
+  button.disabled = !options.length && !worn;
+}
+
+function fillProfileEditor() {
+  const user = state.user;
+  const saved = savedStatus();
+  $("pt-prof-dn").value = saved.name;
+  $("pt-prof-pro").value = (state.voice && state.voice.pronouns) || "";
+  $("pt-prof-status").value = saved.status;
+  $("pt-prof-about").value = decodeCustomEmojis(user.about);
+  $("pt-prof-tag-hint").textContent = $("account-server-tag").parentNode.querySelector(".setting-sub").textContent;
+  studioPhone.profileEmoji = saved.emoji;
+  studioPhone.profileClear = undefined;
+  paintProfileAbout();
+  paintProfileEmoji();
+  paintProfileTop();
+  paintProfileTag();
+  paintProfileLooks();
+  paintProfileSave();
+}
+
+function paintProfileAbout() {
+  const about = $("pt-prof-about");
+  $("pt-prof-count").textContent = `${about.value.length} / ${about.maxLength}`;
+}
+
+function paintProfileFades() {
+  const scroll = $("pt-prof-scroll");
+  scroll.classList.toggle("down", scroll.scrollTop > 2);
+  scroll.classList.toggle("more", scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 2);
+}
+
+function syncProfileStep(open) {
+  const step = layerStep("ptProfile", open, studioPhone.profileStep, history.state);
+  if (step === "push") history.pushState({ ...(history.state || { pane: phonePane() }), ptProfile: true }, "");
+  studioPhone.profileStep = open;
+  if (step === "back") history.back();
+}
+
+function openProfileEditor() {
+  if (!state.user) return;
+  fillProfileEditor();
+  const page = $("pt-profile");
+  page.classList.add("on");
+  $("pt-prof-scroll").scrollTop = 0;
+  paintProfileFades();
+  syncProfileStep(true);
+}
+
+function closeProfileEditor() {
+  $("pt-profile").classList.remove("on");
+  studioPhone.profileClear = undefined;
+  syncProfileStep(false);
+}
+
+function leaveProfileEditor() {
+  if (!profileDirty()) return closeProfileEditor();
+  openPickSheet("Save your changes?", () => {
+    const ask = studioNode("div", "pt-ask", '<b>Save your changes?</b><div class="ks"><button type="button" class="key lg primary">Save</button><button type="button" class="key lg">Discard</button></div>');
+    const [save, discard] = ask.querySelectorAll(".key");
+    save.onclick = () => closeSheets(async () => {
+      if (await saveProfileEditor()) closeProfileEditor();
+    });
+    discard.onclick = () => closeSheets(() => closeProfileEditor());
+    return [ask];
+  });
+}
+
+async function saveProfileEditor() {
+  if (!profileDirty()) return true;
+  const save = $("pt-prof-save");
+  save.disabled = true;
+  try {
+    state.user = await invoke("update_profile", {
+      displayName: $("pt-prof-dn").value || null,
+      customStatus: encodeCustomEmojis($("pt-prof-status").value) || null,
+      presence: ownPresence(),
+      statusEmoji: studioPhone.profileEmoji,
+    });
+    if (studioPhone.profileClear !== undefined) await setStatusExpiry({ status: studioPhone.profileClear });
+    studioPhone.profileClear = undefined;
+    renderUserPanel();
+    if (state.currentServer) await refreshCurrentServer();
+    toast("Profile updated");
+    fillProfileEditor();
+    paintYouPage();
+    return true;
+  } catch (e) {
+    toast(String(e));
+    paintProfileSave();
+    return false;
+  }
+}
+
+function clearAfterRows() {
+  openDurations({ kind: "status" }, $("pt-prof-clear"));
+  const choices = [...document.querySelectorAll("#pp-durations button[data-mins]")].map(button => ({ mins: button.dataset.mins, label: button.textContent }));
+  closeDurations();
+  const current = studioPhone.profileClear !== undefined ? studioPhone.profileClear : (state.voice && state.voice.status_until) || null;
+  const set = until => closeSheets(() => {
+    studioPhone.profileClear = until;
+    paintProfileSave();
+  });
+  const head = studioNode("div", "phead solo", '<span class="sec">Clear after</span>');
+  const rows = [head];
+  for (const choice of choices) {
+    if (choice.mins === "never") {
+      rows.push(durationRow('<i data-i="calendar-days"></i>', "Pick a time", () => pickTime(set), '<i data-i="chevron-right" class="chev"></i>'));
+      const slot = el("span", "eslot");
+      paintEmojiSlot(slot, studioPhone.profileEmoji);
+      if (!studioPhone.profileEmoji) slot.replaceChildren(studioNode("span", "none", '<i data-i="smile"></i>'));
+      const never = durationRow("", choice.label, () => set(null), '<i data-i="check" class="tick"></i>');
+      never.prepend(slot);
+      never.classList.add("pick");
+      never.setAttribute("aria-checked", String(!current));
+      rows.push(never);
+      continue;
+    }
+    rows.push(durationRow('<i data-i="clock"></i>', choice.label, () => set(untilFromChoice(choice.mins))));
+  }
+  return rows;
+}
+
+function serverTagRows() {
+  const worn = wornServerId(state.user);
+  const row = (value, chip, label) => {
+    const pick = studioNode("button", "srow pick", '<span class="l"></span><i data-i="check" class="tick"></i>');
+    pick.type = "button";
+    pick.setAttribute("role", "radio");
+    pick.setAttribute("aria-checked", String(value === worn));
+    pick.querySelector(".l").textContent = label;
+    if (chip) pick.prepend(chip);
+    pick.onclick = () => closeSheets(() => wearTag(value));
+    return pick;
+  };
+  const servers = (state.servers || []).filter(s => s && s.tag && !s.group).sort((a, b) => a.name.localeCompare(b.name));
+  return [row(NO_SERVER_TAG, null, "None"), ...servers.map(s => row(s.id, serverTagChip(s.tag), s.name))];
+}
+
+async function wearTag(value) {
+  try {
+    state.user = await invoke("wear_server_tag", { serverId: value || null });
+    toast(value ? "You are wearing that tag" : "Server tag hidden");
+    if (state.currentServer) await refreshCurrentServer();
+  } catch (err) {
+    toast(String(err));
+  }
+  paintProfileTag();
+}
+
+async function chooseProfileBanner() {
+  try {
+    const src = await chooseImage("Choose a profile banner", $("server-image-file"));
+    if (src) await saveAccountBanner(await cropImageFile(src, 600, 240));
+  } catch (err) {
+    toast(String(err));
+  }
+  paintProfileTop();
+  paintProfileLooks();
+}
+
+function wireProfileEditor() {
+  $("pt-prof-back").onclick = leaveProfileEditor;
+  $("pt-prof-scroll").addEventListener("scroll", paintProfileFades, { passive: true });
+  $("pt-prof-save").onclick = () => saveProfileEditor();
+  $("pt-prof-dn").addEventListener("input", () => {
+    $("pt-prof-name").textContent = profileName();
+    paintProfileSave();
+  });
+  $("pt-prof-status").addEventListener("input", paintProfileSave);
+  $("pt-prof-pro").addEventListener("change", async e => {
+    try {
+      state.voice = await invoke("set_pronouns", { pronouns: e.target.value });
+      e.target.value = state.voice.pronouns || "";
+      toast(state.voice.pronouns ? "Pronouns saved" : "Pronouns removed");
+    } catch (err) {
+      toast(String(err));
+    }
+    paintProfileTop();
+  });
+  $("pt-prof-about").addEventListener("input", paintProfileAbout);
+  $("pt-prof-about").addEventListener("change", async e => {
+    try {
+      state.user = await invoke("set_about", { about: encodeCustomEmojis(e.target.value) });
+      toast("About Me saved");
+    } catch (err) {
+      toast(String(err));
+    }
+  });
+  $("pt-prof-about-emoji").onclick = e => openEmojiPop(e.currentTarget, picked => {
+    insertEmojiInName($("pt-prof-about"), picked);
+    $("pt-prof-about").dispatchEvent(new Event("change", { bubbles: true }));
+  }, { custom: true });
+  $("pt-prof-emoji").onclick = e => {
+    const set = emoji => {
+      studioPhone.profileEmoji = emoji;
+      paintProfileEmoji();
+      paintProfileSave();
+    };
+    openEmojiPop(e.currentTarget, set, { custom: true, onClear: studioPhone.profileEmoji ? () => set("") : null });
+  };
+  $("pt-prof-clear").onclick = () => openPickSheet("Clear after", clearAfterRows);
+  $("pt-prof-tag").onclick = () => openPickSheet("Server tag", serverTagRows);
+  $("pt-prof-avatar").onclick = e => {
+    e.stopPropagation();
+    openAvatarMenu(e.currentTarget);
+  };
+  $("pt-prof-banner").onclick = chooseProfileBanner;
+  $("pt-prof-ban-rm").onclick = async () => {
+    await saveAccountBanner(null);
+    paintProfileTop();
+    paintProfileLooks();
+  };
+  window.addEventListener("popstate", () => {
+    if (!profileOpen() || (history.state && (history.state.ptProfile || history.state.ptSheet))) return;
+    if (profileDirty()) {
+      history.pushState({ ...(history.state || { pane: phonePane() }), ptProfile: true }, "");
+      leaveProfileEditor();
+      return;
+    }
+    studioPhone.profileStep = false;
+    closeProfileEditor();
+  });
 }
 
 function wireYouPage() {
+  wireProfileEditor();
   $("pt-edit").onclick = e => {
     e.stopPropagation();
-    $("user-chip").click();
+    openProfileEditor();
   };
   $("pt-settings").onclick = () => $("settings-btn").click();
+  $("pt-presence").onclick = openPresenceSheet;
+  $("pt-switch-account").onclick = () => openAccounts();
   $("pt-sign-out").onclick = () => signOutOfCurrent();
   if (typeof Star !== "undefined") Star.mount($("pt-about-star"));
   for (const row of document.querySelectorAll("#pt-you [data-notify]")) {
@@ -1298,7 +1830,7 @@ function openRowSwipe(row) {
 
 const RAIL_UNLIT_MS = 200;
 const RAIL_FADE_MS = 140;
-const STUDIO_SHEET_NODES = "#pt-hold, #pt-search, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop";
+const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop";
 
 function sheetAtTop(sheet, from) {
   for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
@@ -1306,7 +1838,7 @@ function sheetAtTop(sheet, from) {
 }
 
 function closeSwipedSheet(sheet) {
-  if (sheet.id === "pt-hold" || sheet.id === "pt-search") closeSheets();
+  if (["pt-hold", "pt-pick", "pt-search"].includes(sheet.id)) closeSheets();
   else closeFloating();
   sheet.style.transition = "";
   sheet.style.translate = "";
@@ -1320,6 +1852,7 @@ function swipeTarget(e) {
   if (target.closest("input, textarea, select, pre, code, video, audio, .md-table")) return null;
   const touch = e.touches[0];
   const pane = phonePane();
+  if (profileOpen()) return edgeBackStarts(touch.clientX) && !sheetOpen() ? { kind: "back", node: $("pt-profile"), profile: true } : null;
   if (pane !== "list" && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: document.querySelector("main.main") };
   const msg = pane === "chat" && target.closest("#messages .msg");
   if (msg && msg.querySelector(':scope > .msg-actions button[title="Reply"]')) return { kind: "reply", node: msg };
@@ -1398,7 +1931,10 @@ function endSwipe(swipe, dx, cancelled) {
     }
   } else if (swipe.kind === "back") {
     node.style.translate = "";
-    if (!cancelled && edgeBackCommits(dx)) phoneStep("back");
+    if (!cancelled && edgeBackCommits(dx)) {
+      if (swipe.profile) leaveProfileEditor();
+      else phoneStep("back");
+    }
   } else if (swipe.kind === "sheet") {
     const full = node.classList.contains("pt-tray-full");
     if (!cancelled && (full ? sheetCloses(dx) : swipe.up && trayOpens(dx))) {

@@ -555,7 +555,7 @@ test("keys that act are drawn filled, hanging up is the same mark everywhere, an
   assert.equal(ROOM_KEYS.find(key => key.id === "leave").icon, "phone-off");
   assert.equal((glue.match(/aria-label="Hang up"><i data-i="phone-off"><\/i>/g) || []).length, 2);
   assert.doesNotMatch(css, /\.hang \.i \{[^}]*rotate/);
-  assert.equal((css.match(/linear-gradient\(118deg, rgb\(var\(--lamp\) \/ 0\) 16%, rgb\(var\(--lamp\) \/ \.07\) 24%, rgb\(var\(--lamp\) \/ \.07\) 40%, rgb\(var\(--lamp\) \/ 0\) 48%\)/g) || []).length, 3);
+  assert.equal((css.match(/linear-gradient\(118deg, rgb\(var\(--lamp\) \/ 0\) 16%, rgb\(var\(--lamp\) \/ \.07\) 24%, rgb\(var\(--lamp\) \/ \.07\) 40%, rgb\(var\(--lamp\) \/ 0\) 48%\)/g) || []).length, 4);
   assert.doesNotMatch(css, /\.(?:count-badge|badge|pt-count)[^{]*\{[^}]*tabular-nums/);
 });
 
@@ -960,7 +960,7 @@ test("the You page asks one question about notifications, with the app's own thr
   assert.match(css, rule(' \\.srow\\.pick\\[aria-checked="true"\\]', "font-weight: 600;"));
   assert.match(css, rule(" \\.srow\\.pick \\.tick", "color: var\\(--accent-lit\\); opacity: 0;"));
   assert.match(css, rule(' \\.srow\\.pick\\[aria-checked="true"\\] \\.tick', "opacity: 1;"));
-  assert.match(css, rule(" \\.set \\.srow", "height: 52px;"));
+  assert.match(css, rule(" \\.pt-you \\.set \\.srow", "height: 52px;"));
   assert.doesNotMatch(css, new RegExp(`${slim} \\.srow\\.pick \\{[^}]*font-size`));
 });
 
@@ -981,7 +981,7 @@ test("the You page ends with All settings under a hairline, the star, and Sign o
   assert.match(glue, /<button type="button" class="out" id="pt-sign-out">Sign out<\/button>/);
   assert.match(glue, /\$\("pt-sign-out"\)\.onclick = \(\) => signOutOfCurrent\(\);/);
   assert.match(read("scripts", "app.js"), /async function signOutOfCurrent\(\) \{[^}]*confirm\(/);
-  assert.match(css, rule(" \\.set \\.srow\\.go", "box-shadow: inset 0 1px 0 var\\(--line\\);"));
+  assert.match(css, rule(" \\.pt-you \\.set \\.srow\\.go", "box-shadow: inset 0 1px 0 var\\(--line\\);"));
   assert.match(css, rule(" \\.pt-you \\.about \\.out", "background: none;[^}]*color: var\\(--danger-text\\);"));
   assert.doesNotMatch(css, new RegExp(`${slim} \\.out \\{`));
   assert.doesNotMatch(glue, /<div class="sec lbl">More<\/div>/);
@@ -991,7 +991,7 @@ test("the You page keeps the design guide's measures, and the pressed Theme key 
   assert.match(css, rule(" \\.pt-page \\.sec", "align-items: center;\\s+height: 32px;\\s+padding: 14px 12px 0;"));
   assert.match(css, rule(" \\.acct \\.avatar \\.presence-dot", "width: 13px; height: 13px; border: 0; box-shadow: 0 0 0 2\\.5px var\\(--bg-dark\\);"));
   assert.match(css, rule(" \\.acct \\.t b", "margin: -\\.2em 0; padding: \\.2em 0;"));
-  assert.match(css, rule(" \\.set \\.seg", "gap: 2px; padding: 4px; border-radius: 999px;"));
+  assert.match(css, rule(" \\.pt-you \\.set \\.seg", "gap: 2px; padding: 4px; border-radius: 999px;"));
   assert.match(css, rule('\\[data-theme="light"\\] \\.seg \\.key\\.is-down', "background: var\\(--pillow-top\\), var\\(--bg-pressed\\); filter: none;"));
   assert.match(css, rule(" \\.seg \\.key\\.is-down \\.led", "box-shadow: 0 0 0 1\\.5px rgb\\(var\\(--dark\\) / \\.5\\);"));
 });
@@ -1076,4 +1076,38 @@ test("joining from the invite screen says Joining, and a failure shows the app's
   assert.match(read("scripts", "invite-link.js"), calls);
   assert.match(glue, /\} catch \(e\) \{\n\s+\$\("pt-invite-error"\)\.textContent = String\(e\);\n\s+\$\("pt-invite-error"\)\.classList\.toggle\("hidden", false\);\n\s+\} finally \{\n\s+studioPhone\.inviteBusy = false;\n\s+paintInviteKeys\(\);/);
   assert.match(css, rule(" \\.pt-invite \\.ierr", "color: var\\(--danger-text\\);"));
+});
+
+test("the line under your name on You is the presence key, and it opens a sheet that asks for how long", () => {
+  assert.match(glue, /<button type="button" class="presence" id="pt-presence"><span class="pw" id="pt-me-status"><\/span><span class="pend" id="pt-me-until"><\/span><i data-i="chevron-down" class="pchev"><\/i><\/button>/);
+  assert.match(glue, /\$\("pt-presence"\)\.onclick = openPresenceSheet;/);
+  assert.match(glue, /row\.onclick = \(\) => choice\.presence === "online" \? closeSheets\(\(\) => setOwnPresence\("online", null\)\) : showDurationStep\(choice\.presence\);/);
+  assert.match(glue, /await saveOwnProfile\(\{ presence \}\);\n\s+await setStatusExpiry\(\{ presence: until \}\);/);
+  assert.match(glue, /if \(until && key\.scrollWidth > key\.parentNode\.clientWidth\) end\.classList\.add\("hidden"\);/);
+  assert.match(glue, /const STUDIO_SHEETS = \[[^\]]*"pt-pick-open"/);
+  assert.match(css, rule(' \\.acct \\.t \\.presence:not\\(\\[data-presence="online"\\]\\) \\.pw,\\n[^{]*\\.acct \\.t \\.presence \\.pend', "color: var\\(--text-muted\\);"));
+  assert.match(css, /\.pt-pick\.pt-sizing \{ overflow: hidden; transition: height 320ms var\(--ease-settle\); \}/);
+  assert.match(css, /\.presence-dot\.do_not_disturb::after \{ content: ""; position: absolute; left: 22%; right: 22%;/);
+});
+
+test("Switch Account sits under All settings whenever there is an account to switch from", () => {
+  assert.match(glue, /<button type="button" class="srow go hidden" id="pt-switch-account"><i data-i="users"><\/i><span class="l">Switch Account<\/span>/);
+  assert.match(glue, /\$\("pt-switch-account"\)\.classList\.toggle\("hidden", !accountRows\(account\)\.length\);/);
+  assert.match(glue, /\$\("pt-switch-account"\)\.onclick = \(\) => openAccounts\(\);/);
+});
+
+test("the pencil on You opens the profile editor, which saves name and status on Save and asks before dropping them", () => {
+  assert.match(glue, /\$\("pt-edit"\)\.onclick = e => \{\n\s+e\.stopPropagation\(\);\n\s+openProfileEditor\(\);/);
+  assert.match(glue, /return \$\("pt-prof-dn"\)\.value !== saved\.name\n\s+\|\| \$\("pt-prof-status"\)\.value !== saved\.status\n\s+\|\| studioPhone\.profileEmoji !== saved\.emoji\n\s+\|\| studioPhone\.profileClear !== undefined;/);
+  assert.match(glue, /\$\("pt-prof-save"\)\.disabled = !profileDirty\(\);/);
+  assert.match(glue, /function leaveProfileEditor\(\) \{\n\s+if \(!profileDirty\(\)\) return closeProfileEditor\(\);\n\s+openPickSheet\("Save your changes\?"/);
+  assert.match(glue, /if \(studioPhone\.profileClear !== undefined\) await setStatusExpiry\(\{ status: studioPhone\.profileClear \}\);/);
+  assert.match(glue, /if \(profileOpen\(\)\) return edgeBackStarts\(touch\.clientX\) && !sheetOpen\(\) \? \{ kind: "back", node: \$\("pt-profile"\), profile: true \} : null;/);
+  assert.ok(glue.includes('${field("Display name", "pt-prof-dn", 64)}') && glue.includes('${field("Pronouns", "pt-prof-pro", 24)}'));
+  assert.match(glue, /<input type="text" id="pt-prof-status" maxlength="64"/);
+  assert.match(glue, /<textarea id="pt-prof-about" maxlength="190"/);
+  assert.match(css, rule(" \\.pt-profile \\.eban", "height: 124px; margin: 0 -16px;"));
+  assert.match(css, rule(" \\.pt-profile \\.in", "height: 52px; padding: 0 5px 0 18px;[^}]*box-shadow: var\\(--slot\\);"));
+  assert.match(css, rule(" \\.pt-profile \\.looks", "grid-template-columns: repeat\\(3, minmax\\(0, 1fr\\)\\); gap: 8px;"));
+  assert.doesNotMatch(css, new RegExp(`${slim} \\.set \\{`));
 });
