@@ -662,3 +662,155 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-role > .r
 html[data-look="studio"][data-fit="slim"] .invite-link-warning > .i,
 html[data-look="studio"][data-fit="slim"] #sw-steps > .sw-step > b,
 html[data-look="studio"][data-fit="slim"] #sw-steps > .sw-step > .i { display: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-moderate,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving { width: min(440px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .mod-who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font: 600 15px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .mod-who > .avatar {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices > .key.latch {
+  position: relative;
+  justify-content: center;
+  height: 40px;
+  padding: 0 24px;
+  border: 0;
+  font-size: 13.5px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices > .key.latch > .led { background: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices > .key.latch:not(.is-down) { color: var(--k-ink, var(--text-normal)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-moderate > p {
+  margin: 0;
+  color: var(--text-normal);
+  font: 400 14.5px/1.45 var(--font);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch {
+  width: 48px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: inset 0 1px 2px rgb(var(--dark) / .9), 0 1px 0 rgb(var(--lamp) / .14);
+  transition: background var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch::after {
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--pillow-top), var(--bg-active);
+  box-shadow: inset 0 1px 1px rgb(var(--lamp) / .25), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .5);
+  transition: translate 180ms var(--ease-spring), background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch:checked {
+  background: var(--accent);
+  box-shadow: inset 0 1px 2px rgb(var(--dark) / .5), 0 1px 0 rgb(var(--lamp) / .14);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch:checked::after {
+  left: 3px;
+  translate: 20px 0;
+  background: linear-gradient(180deg, var(--white), var(--star));
+  box-shadow: inset 0 -3px 4px -2px rgb(var(--dark) / .2), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .45);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving { border: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving > h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving > h2 > .i {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--danger-text);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving > p {
+  margin: 0;
+  color: var(--text-normal);
+  font: 400 14.5px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-host {
+  margin: 0;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--text-muted);
+  font: 400 15px/1.2 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-host > strong {
+  color: var(--header-primary);
+  font-weight: 700;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-spelled {
+  margin: -4px 0 0 18px;
+  color: var(--text-muted);
+  font: 400 12.5px/1.3 var(--font-mono);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-spelled.hidden,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes.hidden,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes {
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes > li {
+  position: relative;
+  padding-left: 20px;
+  color: var(--text-normal);
+  font: 400 14px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes > li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger-text);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  margin: 0;
+  color: var(--text-normal);
+  font: 500 14px/1.2 var(--font);
+  cursor: pointer;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust > span { flex: 1; min-width: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust > input { flex: none; order: 1; margin: 0; }
+
+html[data-look="studio"][data-fit="slim"] .modal-leaving > h2 > .i,
+html[data-look="studio"][data-fit="slim"] .timeout-choice > .led { display: none; }

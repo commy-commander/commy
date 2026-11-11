@@ -51,6 +51,17 @@ const JOIN_ANSWERS = {
   "si-close": "key primary",
 };
 
+const MODERATE_DIALOGS = ["modal-moderate", "modal-timeout", "modal-leaving"];
+
+const LEAVING_TITLE_ICONS = { warn: "triangle-alert", block: "ban" };
+
+function leavingTitleIcon(classes) {
+  const list = [...(classes || [])];
+  if (list.includes("block")) return LEAVING_TITLE_ICONS.block;
+  if (list.includes("warn")) return LEAVING_TITLE_ICONS.warn;
+  return null;
+}
+
 function joinAnswerClasses(ids) {
   return ids.map(id => JOIN_ANSWERS[id] || "key");
 }
@@ -90,7 +101,7 @@ function studioDialogDress(modal) {
   modal.classList.toggle("dialog", roomy);
   modal.classList.toggle("slab", roomy);
   modal.classList.toggle("join", roomy && join);
-  for (const box of modal.querySelectorAll(":scope > .report-also-block > input[type='checkbox']")) box.classList.toggle("switch", roomy);
+  for (const box of modal.querySelectorAll(":scope > .report-also-block > input[type='checkbox'], :scope > .leaving-trust > input[type='checkbox']")) box.classList.toggle("switch", roomy);
   const actions = modal.querySelector(":scope > .modal-actions");
   if (!actions) return;
   actions.classList.toggle("answers", roomy);
@@ -113,6 +124,32 @@ function studioDialogParts() {
   for (const reason of document.querySelectorAll("#report-reasons > label")) {
     if (!reason.querySelector(":scope > .tick")) reason.insertAdjacentHTML("beforeend", studioIconMarkup("check", "tick"));
   }
+}
+
+function studioLengthKeys(grid) {
+  const roomy = document.documentElement.dataset.fit !== "slim";
+  for (const choice of grid.querySelectorAll(":scope > .timeout-choice")) {
+    const down = roomy && choice.classList.contains("active");
+    for (const name of ["key", "latch"]) {
+      if (choice.classList.contains(name) !== roomy) choice.classList.toggle(name, roomy);
+    }
+    if (choice.classList.contains("is-down") !== down) choice.classList.toggle("is-down", down);
+    if (!choice.querySelector(":scope > .led")) {
+      const led = document.createElement("i");
+      led.className = "led";
+      choice.appendChild(led);
+    }
+  }
+}
+
+function studioLeavingTitle(modal) {
+  const title = modal.querySelector(":scope > h2");
+  if (!title) return;
+  const roomy = document.documentElement.dataset.fit !== "slim";
+  const name = roomy ? leavingTitleIcon(modal.classList) : null;
+  const icon = title.querySelector(":scope > .i");
+  if (icon && (!name || icon.dataset.icon !== name)) icon.remove();
+  if (name && typeof studioIconMarkup === "function" && !title.querySelector(":scope > .i")) title.insertAdjacentHTML("afterbegin", studioIconMarkup(name));
 }
 
 function dialogJustOpened(oldClasses, hiddenNow) {
@@ -140,12 +177,18 @@ function studioJoinParts(modal) {
 
 function studioDialogs() {
   studioDialogParts();
-  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
+  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
   const joins = modals.filter(modal => JOIN_DIALOGS.includes(modal.id));
+  const grids = ["moderate-lengths", "timeout-choices"].map(id => document.getElementById(id)).filter(Boolean);
+  const leaving = document.getElementById("modal-leaving");
   const dress = () => {
     for (const modal of modals) studioDialogDress(modal);
     for (const modal of joins) studioJoinParts(modal);
+    for (const grid of grids) studioLengthKeys(grid);
+    if (leaving) studioLeavingTitle(leaving);
   };
+  const keys = new MutationObserver(() => { for (const grid of grids) studioLengthKeys(grid); });
+  for (const grid of grids) keys.observe(grid, { childList: true });
   dress();
   new MutationObserver(dress).observe(document.documentElement, { attributes: true, attributeFilter: ["data-fit"] });
   const shown = new MutationObserver(records => {
@@ -154,6 +197,8 @@ function studioDialogs() {
     }
     for (const modal of new Set(records.map(record => record.target))) {
       if (joins.includes(modal)) studioJoinParts(modal);
+      if (MODERATE_DIALOGS.includes(modal.id)) studioDialogDress(modal);
+      if (modal === leaving) studioLeavingTitle(modal);
     }
   });
   for (const modal of modals) shown.observe(modal, { attributes: true, attributeFilter: ["class"], attributeOldValue: true });
@@ -163,5 +208,5 @@ function studioDialogs() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened };
+  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon };
 }

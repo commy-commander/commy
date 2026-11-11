@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -152,4 +152,35 @@ test("a dialog opens without the focus ring until a key is pressed", () => {
   assert.ok(css.includes(`${R} .modal.dialog.quiet > .answers > .key:focus-visible { outline: 0; }`));
   assert.ok(glue.includes("attributeOldValue: true"));
   assert.ok(glue.includes('modal.classList.remove("quiet")'));
+});
+
+const D = `${R} .modal.dialog`;
+
+test("moderating: who slot, latch keys for lengths, cream way out beside red", () => {
+  assert.deepEqual(MODERATE_DIALOGS, ["modal-moderate", "modal-timeout", "modal-leaving"]);
+  assert.ok(css.includes(`${D}.modal-moderate,\n${D}.modal-leaving { width: min(440px, calc(100vw - 48px)); }`));
+  for (const id of MODERATE_DIALOGS) assert.ok(html.includes(`id="${id}"`), id);
+  assert.match(rule(`${D} > .mod-who`), /padding: 10px 14px;\n  border-radius: var\(--radius-pill\);\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);/);
+  assert.match(rule(`${D} > .mod-who > .avatar`), /width: 32px;\n  height: 32px;/);
+  assert.match(rule(`${D} > .timeout-choices`), /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);\n  gap: 8px;/);
+  assert.match(rule(`${D} > .timeout-choices > .key.latch`), /height: 40px;/);
+  assert.ok(glue.includes('const down = roomy && choice.classList.contains("active");'));
+  assert.ok(glue.includes("keys.observe(grid, { childList: true })"));
+  assert.deepEqual(dialogAnswerClasses(["plain", "danger"]), ["key cream", "key danger"]);
+});
+
+test("leaving Commy: icon in the title, address capsule, red dots, trust switch", () => {
+  assert.equal(leavingTitleIcon(["modal", "modal-leaving"]), null);
+  assert.equal(leavingTitleIcon(["modal", "modal-leaving", "warn"]), "triangle-alert");
+  assert.equal(leavingTitleIcon(["modal", "modal-leaving", "block"]), "ban");
+  assert.match(rule(`${D}.modal-leaving > h2 > .i`), /color: var\(--danger-text\);/);
+  assert.match(rule(`${D} > .leaving-host`), /border-radius: var\(--radius-pill\);/);
+  assert.match(rule(`${D} > .leaving-host`), /font: 400 15px\/1\.2 var\(--font-mono\);/);
+  assert.match(rule(`${D} > .leaving-spelled`), /font: 400 12\.5px\/1\.3 var\(--font-mono\);/);
+  assert.match(rule(`${D} > .leaving-notes > li::before`), /background: var\(--danger-text\);/);
+  assert.match(rule(`${D} > .leaving-notes`), /list-style: none;/);
+  assert.ok(css.includes(`${D}.modal-leaving { border: 0; }`));
+  assert.match(rule(`${D} > .leaving-trust`), /min-height: 44px;/);
+  assert.ok(glue.includes(":scope > .leaving-trust > input[type='checkbox']"));
+  assert.match(rule(`${D} input.switch:checked`), /background: var\(--accent\);/);
 });
