@@ -1,0 +1,141 @@
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu {
+  gap: 0;
+  padding: 7px;
+  border: 0;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .06), rgb(var(--lamp) / 0) 60%), var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--rim-soft), inset 0 1px 0 rgb(var(--lamp) / .12), var(--shadow-3);
+  color: var(--text-normal);
+  transform-origin: 50% 0;
+  animation: float-menu-in var(--t-enter) var(--ease-spring);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button {
+  flex: none;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 15px;
+  color: var(--text-normal);
+  font: 500 14px/1.2 var(--font);
+  white-space: nowrap;
+  transition: background var(--t-hover) var(--ease-out), color var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button:focus-visible {
+  background: var(--bg-hover);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button:active { background: var(--bg-active); }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button.danger { color: var(--danger-text); }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button.danger:hover {
+  background: var(--bg-hover);
+  color: var(--danger-text);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  color: var(--text-muted);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button.ctx-hand svg { color: var(--yellow); }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu > .ctx-title,
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu > .ctx-label {
+  padding: 8px 12px 6px;
+  color: var(--text-muted);
+  font: 600 13px/1.2 var(--font);
+  letter-spacing: 0;
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu > .ctx-title { color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu > .ctx-sep {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--line);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu > .ctx-empty {
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font: 400 13px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button:is(.ctx-radio, .ctx-check) { justify-content: space-between; }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button:is(.ctx-radio, .ctx-check)::after,
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button:hover:is(.ctx-radio, .ctx-check)::after {
+  width: 17px;
+  height: 17px;
+  margin-left: 18px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent-lit);
+  box-shadow: none;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z'/></svg>") center / contain no-repeat;
+  opacity: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button:is(.ctx-radio, .ctx-check).checked {
+  color: var(--header-primary);
+  font-weight: 600;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button:is(.ctx-radio, .ctx-check).checked::after { opacity: 1; }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu > .ctx-slider { padding: 6px 12px 10px; }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .ctx-slider-label {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font: 600 13px/1.2 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .ctx-slider-label > span:last-child { color: var(--header-primary); font-variant-numeric: tabular-nums; }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .ctx-slider input[type="range"] {
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .ctx-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(var(--accent), var(--accent)) 0 0 / var(--fill, 50%) 100% no-repeat, var(--input-bg);
+  box-shadow: inset 0 1px 2px rgb(var(--dark) / .9), 0 1px 0 rgb(var(--lamp) / .14);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .ctx-slider input[type="range"]::-webkit-slider-thumb {
+  width: 22px;
+  height: 22px;
+  margin-top: -7px;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--white), var(--star));
+  box-shadow: inset 0 -4px 5px -3px rgb(var(--dark) / .22), 0 1px 2px rgb(var(--dark) / .5), 0 5px 8px -2px rgb(var(--dark) / .55);
+  -webkit-appearance: none;
+  appearance: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .ctx-slider input[type="range"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 6px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .toast {
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 22px 0 16px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(180deg, rgb(var(--lamp) / .08), rgb(var(--lamp) / 0) 70%), var(--bg-raised);
+  box-shadow: inset 0 1px 1px rgb(var(--lamp) / .22), 0 2px 3px rgb(var(--dark) / .5), 0 20px 28px -8px rgb(var(--dark) / .7);
+  color: var(--header-primary);
+  font: 600 14.5px/1.2 var(--font);
+  bottom: 26px;
+  animation: float-toast-in var(--t-enter) var(--ease-spring);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .toast:not(:has(> .toast-avatar)) { padding-left: 22px; }
+html[data-look="studio"]:not([data-fit="slim"]) .toast.toast-click { border: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .toast.toast-click:hover {
+  background: linear-gradient(180deg, rgb(var(--lamp) / .08), rgb(var(--lamp) / 0) 70%), var(--bg-active);
+  border: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .toast > .toast-avatar { flex: none; width: 28px; height: 28px; }
+html[data-look="studio"]:not([data-fit="slim"]) .toast > .toast-avatar .presence-dot { border-color: var(--bg-raised); }
+
+@keyframes float-menu-in { from { opacity: 0; scale: .97; translate: 0 -4px; } }
+@keyframes float-toast-in { from { opacity: 0; translate: 0 80px; } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"]:not([data-fit="slim"]) .pop-menu,
+  html[data-look="studio"]:not([data-fit="slim"]) .toast { animation: none; }
+}
