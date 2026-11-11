@@ -125,9 +125,20 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-tab.active:hover {
   font-weight: 600;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-tab.active > .i { color: var(--accent-ink); }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-tab.danger,
-html[data-look="studio"]:not([data-fit="slim"]) .settings-tab.danger > .i { color: var(--danger-text); }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-tab.danger:hover { background: var(--bg-hover); }
+html[data-look="studio"]:not([data-fit="slim"]) #leave-server-btn,
+html[data-look="studio"]:not([data-fit="slim"]) #leave-server-btn > .i,
+html[data-look="studio"]:not([data-fit="slim"]) #leave-server-btn:hover { color: var(--danger-text); }
+html[data-look="studio"]:not([data-fit="slim"]) body:has(#user-settings:not(.hidden)) .rail-home.active {
+  background: var(--k-plain);
+  box-shadow: var(--k-plain-shadow);
+  outline: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) body:has(#user-settings:not(.hidden)) .server-icon.active:not(.has-image) {
+  background: var(--pillow-top), color-mix(in srgb, var(--server-tint, var(--accent)) 26%, var(--bg-raised));
+  color: color-mix(in srgb, var(--server-tint, var(--accent)) 45%, var(--white));
+}
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) body:has(#user-settings:not(.hidden)) .server-icon.active:not(.has-image) { color: color-mix(in srgb, var(--server-tint, var(--accent)) 70%, var(--header-primary)); }
+html[data-look="studio"]:not([data-fit="slim"]) body:has(#user-settings:not(.hidden)) .server-icon.active { outline: 0; }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-nav-sep {
   height: 1px;
   margin: 9px 10px;
@@ -415,7 +426,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented {
   background: var(--input-bg);
   box-shadow: inset 0 1px 2px rgb(var(--dark) / .9), 0 1px 0 rgb(var(--lamp) / .14);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button {
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:not(.key) {
   justify-content: center;
   gap: 5px;
   min-height: 34px;
@@ -425,17 +436,87 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > but
   font: 600 13.5px/1 var(--font);
   transition: color var(--t-hover) var(--ease-out), background var(--t-hover) var(--ease-out);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:hover { color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button.active {
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:not(.key):hover { color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:not(.key).active {
   background: var(--pillow-top), var(--bg-raised);
   box-shadow: var(--pillow-sm);
   color: var(--header-primary);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:has(> strong) { height: 52px; }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button > strong { color: var(--header-primary); font: 600 14px/1 var(--font-display); }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:not(.active) > strong { color: inherit; }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button > span { color: var(--text-muted); font: 400 12px/1 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:not(.key):has(> strong) { height: 52px; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:not(.key) > strong { color: var(--header-primary); font: 600 14px/1 var(--font-display); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:not(.key):not(.active) > strong { color: inherit; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented > button:not(.key) > span { color: var(--text-muted); font: 400 12px/1 var(--font); }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.input-mode { margin-bottom: 8px; }
+html[data-look="studio"]:not([data-fit="slim"]) #input-mode-note,
+html[data-look="studio"]:not([data-fit="slim"]) #sensitivity-label { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #sensitivity-block { gap: 8px; margin-top: -14px; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .mic-meter {
+  position: relative;
+  display: flex;
+  gap: 3px;
+  height: 30px;
+  padding: 7px 13px;
+  overflow: visible;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .mic-meter > i {
+  flex: 1;
+  border-radius: 1.5px;
+  background: var(--bg-active);
+  transition: background 60ms linear;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .mic-meter > i.on { background: var(--speaking); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .mic-meter > i.on.warm { background: var(--yellow); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .mic-meter > i.on.hot { background: var(--red); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .mic-meter[data-state="quiet"] > i.on { background: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .mic-meter > :is(.mic-meter-fill, .mic-meter-mark) { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer #sensitivity-db {
+  position: relative;
+  width: auto;
+  height: 30px;
+  margin: -38px 11.5px 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer #sensitivity-db::-webkit-slider-runnable-track {
+  height: 30px;
+  background: none;
+  box-shadow: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer #sensitivity-db::-webkit-slider-thumb {
+  width: 3px;
+  height: 24px;
+  margin-top: 3px;
+  border-radius: 1.5px;
+  background: var(--white);
+  box-shadow: 0 0 0 1px rgb(var(--dark) / .5);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer #sensitivity-db:focus-visible { outline-offset: 2px; border-radius: var(--radius-pill); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px 8px;
+  margin: 12px 0 10px;
+  padding: 0 0 4px;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice-filters > .key {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 24px 0 11px;
+  border-radius: var(--radius-pill);
+  font: 600 13px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice-filters > .key > .i { flex: none; width: 16px; height: 16px; color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice-filters > .key > .led { background: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice-filters > .key.is-down > .i { color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .segmented.voice-filters > .key > strong { overflow: hidden; color: inherit; font: inherit; text-overflow: ellipsis; white-space: nowrap; }
 
 html[data-look="studio"]:not([data-fit="slim"]) .settings-layer :is(.btn-primary, .btn-secondary, .btn-danger) {
   --k-ink: var(--header-primary);
@@ -503,7 +584,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .btn-small {
 
 html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-search,
 html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer :where(input[type="text"], input[type="password"], input[type="search"]:not(.settings-search), input[type="number"], input[type="email"], input[type="url"], select, textarea):not(:hover, :focus, :disabled) { box-shadow: inset 0 1px 2px rgb(var(--dark) / .5), inset 0 0 0 1px rgb(var(--dark) / .12); }
-html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer .segmented {
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer .segmented:not(.voice-filters) {
   background: var(--bg-active);
   box-shadow: inset 0 1px 2px rgb(var(--dark) / .4);
 }
@@ -512,14 +593,19 @@ html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-la
   box-shadow: inset 0 1px 2px rgb(var(--dark) / .45);
 }
 html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer input.switch:not(:checked, :disabled)::after { background: var(--bg-raised); }
-html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer input[type="range"]::-webkit-slider-runnable-track {
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer input[type="range"]:not(#sensitivity-db)::-webkit-slider-runnable-track {
   background: linear-gradient(var(--accent), var(--accent)) 0 0 / var(--fill, 50%) 100% no-repeat, var(--bg-active);
   box-shadow: inset 0 1px 2px rgb(var(--dark) / .45);
 }
-html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer input[type="range"]::-webkit-slider-thumb { box-shadow: inset 0 1px 1px rgb(var(--lamp) / .2), 0 1px 2px rgb(var(--dark) / .4), 0 5px 8px -2px rgb(var(--dark) / .4); }
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer input[type="range"]:not(#sensitivity-db)::-webkit-slider-thumb { box-shadow: inset 0 1px 1px rgb(var(--lamp) / .2), 0 1px 2px rgb(var(--dark) / .4), 0 5px 8px -2px rgb(var(--dark) / .4); }
+
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer .mic-meter { background: var(--bg-hover); }
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer #sensitivity-db::-webkit-slider-thumb { background: var(--cream); }
 
 html[data-look="studio"][data-fit="slim"] .set-pane,
 html[data-look="studio"][data-fit="slim"] .set-pick { display: contents; }
 html[data-look="studio"][data-fit="slim"] .set-pick > .i,
+html[data-look="studio"][data-fit="slim"] #voice-filter > button > :is(.i, .led),
+html[data-look="studio"][data-fit="slim"] #mic-meter > i,
 html[data-look="studio"][data-fit="slim"] .settings-tab > .i,
 html[data-look="studio"][data-fit="slim"] #user-settings .settings-nav-title { display: none; }

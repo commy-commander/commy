@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, settingsPageIcon, settingsPaneGroups } = require("../scripts/studio-settings.js");
+const { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, SETTINGS_FILTER_ICONS, METER_BARS, settingsPageIcon, settingsPaneGroups, meterBarClass, meterLit } = require("../scripts/studio-settings.js");
+const { VOICE_FILTERS } = require("../scripts/voice-filters.js");
 const { STUDIO_ICON_PATHS } = require("../vendor/phosphor/icons.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
@@ -76,6 +77,7 @@ test("every page in the three lists has an icon from the app's set", () => {
   assert.equal(settingsPageIcon("user-settings", "voice"), "mic");
   assert.equal(settingsPageIcon("server-settings", "overview"), "info");
   assert.equal(settingsPageIcon("user-settings", "constructor"), "");
+  assert.equal(settingsPageIcon("server-settings", "file-storage"), "folder");
 });
 
 test("a page's sections become cards: a heading starts one, the title and intro stay out", () => {
@@ -127,7 +129,36 @@ test("fields, picks, sliders, switches and keys are the guide's parts", () => {
   assert.match(rule(`${ROOMY} .settings-layer input[type="range"]::-webkit-slider-thumb`), /width: 22px;\n  height: 22px;/);
   assert.match(rule(`${ROOMY} .settings-layer input.switch`), /width: 48px;\n  height: 28px;/);
   assert.match(rule(`${ROOMY} .settings-layer input.switch:checked::after`), /translate: 20px 0;/);
-  assert.match(rule(`${ROOMY} .settings-layer .segmented > button.active`), /box-shadow: var\(--pillow-sm\);/);
+  assert.match(rule(`${ROOMY} .settings-layer .segmented > button:not(.key).active`), /box-shadow: var\(--pillow-sm\);/);
   assert.match(rule(`${ROOMY} .settings-layer .btn-danger`), /--k-ink: var\(--danger-text\);/);
   assert.match(rule(`${ROOMY} .settings-layer .btn-small`), /height: 32px;/);
+});
+
+test("in the list only Leave server is red, and your own settings ring no server on the strip", () => {
+  assert.equal(css.includes(".settings-tab.danger"), false);
+  assert.match(rule(`${ROOMY} #leave-server-btn,\n${ROOMY} #leave-server-btn > .i,\n${ROOMY} #leave-server-btn:hover`), /color: var\(--danger-text\);/);
+  const ring = `${ROOMY} body:has(#user-settings:not(.hidden))`;
+  assert.match(rule(`${ring} .rail-home.active`), /outline: 0;/);
+  assert.ok(css.includes(`${ring} .server-icon.active { outline: 0; }`));
+});
+
+test("the Voice page: no extra lines, a 40-bar meter whose gate is the threshold, and the filters as latch keys", () => {
+  assert.match(rule(`${ROOMY} #input-mode-note,\n${ROOMY} #sensitivity-label`), /display: none;/);
+  assert.equal(METER_BARS, 40);
+  assert.equal(meterLit(0), 0);
+  assert.equal(meterLit(50), 20);
+  assert.equal(meterLit(140), 40);
+  assert.equal(meterLit(NaN), 0);
+  assert.equal(meterBarClass(5, 20), "on");
+  assert.equal(meterBarClass(30, 40), "on warm");
+  assert.equal(meterBarClass(36, 40), "on hot");
+  assert.equal(meterBarClass(20, 20), "");
+  const meter = rule(`${ROOMY} .settings-layer .mic-meter`);
+  for (const line of ["display: flex;", "gap: 3px;", "height: 30px;", "padding: 7px 13px;", "border-radius: var(--radius-pill);", "box-shadow: var(--slot);"]) assert.ok(meter.includes(line), line);
+  assert.match(rule(`${ROOMY} .settings-layer #sensitivity-db`), /margin: -38px 11\.5px 0;/);
+  assert.match(rule(`${ROOMY} .settings-layer #sensitivity-db::-webkit-slider-thumb`), /width: 3px;\n  height: 24px;/);
+  assert.match(app, /if \(studioLook\(\)\) studioSettingsMeter\(listening \? meterPercent\(db\) : 0\);/);
+  for (const filter of VOICE_FILTERS) assert.ok(STUDIO_ICON_PATHS[SETTINGS_FILTER_ICONS[filter.key]], filter.key);
+  assert.match(rule(`${ROOMY} .settings-layer .segmented.voice-filters`), /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);\n  gap: 9px 8px;/);
+  assert.match(rule(`${ROOMY} .settings-layer .segmented.voice-filters > .key`), /height: 40px;/);
 });

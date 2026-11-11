@@ -11266,6 +11266,7 @@ function startMicMeter() {
     $("mic-meter-fill").style.width = `${listening ? meterPercent(db) : 0}%`;
     $("mic-meter").dataset.state = meterState(db, v.auto, v.thresholdDb, listening);
     $("mic-meter-note").classList.toggle("hidden", listening);
+    if (studioLook()) studioSettingsMeter(listening ? meterPercent(db) : 0);
   }, MIC_METER_INTERVAL_MS);
 }
 

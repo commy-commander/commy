@@ -36,7 +36,7 @@ const SETTINGS_PAGE_ICONS = {
     reports: "flag",
     audit: "file-text",
     bots: "bot",
-    "file-storage": "archive",
+    "file-storage": "folder",
     "gif-search": "gif",
     "game-database": "gamepad-2",
     "leave-server-btn": "log-out",
@@ -49,6 +49,8 @@ const SETTINGS_PAGE_ICONS = {
 };
 
 const SETTINGS_PICK_ICONS = { "input-device": "mic", "output-device": "headphones" };
+const SETTINGS_FILTER_ICONS = { off: "x", higher: "arrow-up", lower: "arrow-down", robot: "bot", radio: "radio", cave: "mountain", whisper: "wind" };
+const METER_BARS = 40;
 
 function settingsPageIcon(layerId, tab) {
   const icons = SETTINGS_PAGE_ICONS[layerId] || {};
@@ -70,6 +72,18 @@ function settingsPaneGroups(kinds) {
     open.push(index);
   });
   return groups;
+}
+
+function meterBarClass(index, lit, count = METER_BARS) {
+  if (index >= lit) return "";
+  if (index >= count * 0.9) return "on hot";
+  if (index >= count * 0.74) return "on warm";
+  return "on";
+}
+
+function meterLit(percent, count = METER_BARS) {
+  const share = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) / 100 : 0;
+  return Math.round(share * count);
 }
 
 function settingsChildKind(node) {
@@ -137,6 +151,47 @@ function studioSettingsPicks(layer) {
   }).observe(layer.querySelector(".settings-content") || layer, { childList: true, subtree: true });
 }
 
+function studioSettingsMeterBars() {
+  const meter = document.getElementById("mic-meter");
+  if (!meter || meter.querySelector(":scope > i")) return;
+  for (let index = 0; index < METER_BARS; index += 1) meter.appendChild(document.createElement("i"));
+}
+
+function studioSettingsMeter(percent) {
+  const meter = document.getElementById("mic-meter");
+  if (!meter) return;
+  const lit = meterLit(percent);
+  meter.querySelectorAll(":scope > i").forEach((bar, index) => {
+    const name = meterBarClass(index, lit);
+    if (bar.className !== name) bar.className = name;
+  });
+}
+
+function studioSettingsFilterKey(button) {
+  if (!button.querySelector(":scope > .led")) {
+    const name = SETTINGS_FILTER_ICONS[button.dataset.filter];
+    if (name && typeof studioIconMarkup === "function") button.insertAdjacentHTML("afterbegin", studioIconMarkup(name));
+    const led = document.createElement("i");
+    led.className = "led";
+    button.appendChild(led);
+    new MutationObserver(() => studioSettingsFilterKey(button)).observe(button, { attributes: true, attributeFilter: ["class"] });
+  }
+  const roomy = document.documentElement.dataset.fit !== "slim";
+  const down = roomy && button.classList.contains("active");
+  if (button.classList.contains("key") !== roomy) button.classList.toggle("key", roomy);
+  if (button.classList.contains("latch") !== roomy) button.classList.toggle("latch", roomy);
+  if (button.classList.contains("is-down") !== down) button.classList.toggle("is-down", down);
+}
+
+function studioSettingsFilters() {
+  const group = document.getElementById("voice-filter");
+  if (!group) return;
+  const dress = () => { for (const button of group.querySelectorAll(":scope > button")) studioSettingsFilterKey(button); };
+  dress();
+  new MutationObserver(dress).observe(group, { childList: true });
+  new MutationObserver(dress).observe(document.documentElement, { attributes: true, attributeFilter: ["data-fit"] });
+}
+
 function studioSettingsSide(layer) {
   const app = document.querySelector(".app");
   const paint = () => {
@@ -167,6 +222,8 @@ function studioSettingsShell(close) {
     studioSettingsPicks(layer);
     studioSettingsSide(layer);
   }
+  studioSettingsMeterBars();
+  studioSettingsFilters();
   studioSettingsDone(close);
   const rail = document.querySelector(".app > .rail");
   if (rail) {
@@ -179,5 +236,5 @@ function studioSettingsShell(close) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, settingsPageIcon, settingsPaneGroups };
+  module.exports = { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, SETTINGS_FILTER_ICONS, METER_BARS, settingsPageIcon, settingsPaneGroups, meterBarClass, meterLit };
 }
