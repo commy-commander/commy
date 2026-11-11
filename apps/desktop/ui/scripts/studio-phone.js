@@ -2613,6 +2613,15 @@ function syncAccountsSheet() {
   if (step === "back") history.back();
 }
 
+function wireSettingsProfile() {
+  $("user-settings").addEventListener("click", e => {
+    if (!studioSlim() || !e.target.closest('.settings-tab[data-tab="account"]')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openProfileEditor();
+  }, true);
+}
+
 function wireAccountsSheet() {
   const watch = node => new MutationObserver(syncAccountsSheet).observe(node, { attributes: true, attributeFilter: ["class"] });
   watch($("modal-backdrop"));
@@ -2714,6 +2723,7 @@ function wireStudioPhone() {
   wireThreadScreen();
   wireInvite();
   wireAccountsSheet();
+  wireSettingsProfile();
   wireRoom();
   watchStudioPhone();
   $("app").dataset.tab = studioPhone.tab;

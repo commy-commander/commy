@@ -471,6 +471,17 @@ test("the phone's chat shows no stream or camera tiles above it; streams play in
   assert.ok(css.includes(`${P} .app[data-pane="chat"] .main > .cam-grid { display: none; }`));
 });
 
+test("phone settings pages stack the guide's cards, and Profile opens the phone's own editor", () => {
+  const P = 'html[data-look="studio"][data-fit="slim"]';
+  assert.ok(css.includes(`${P} .settings-layer .setting-row:has(> .set-pick) > div:first-child { flex: 1 0 100%; }`));
+  assert.ok(css.includes(`${P} .settings-layer .sound-row > .sound-label { flex: 1 0 100%; }`));
+  assert.ok(css.includes(`${P} .settings-layer .set-themes { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }`));
+  assert.ok(css.includes(`${P} .settings-layer .invite-row { flex-wrap: wrap; height: auto; padding: 10px 12px; row-gap: 10px; }`));
+  assert.ok(css.includes(`${P} body:has(.settings-layer:not(.hidden)) .app:has(> .pt-profile.on) { position: relative; z-index: 151; }`));
+  assert.match(glue, /if \(!studioSlim\(\) \|\| !e\.target\.closest\('\.settings-tab\[data-tab="account"\]'\)\) return;\n\s+e\.preventDefault\(\);\n\s+e\.stopPropagation\(\);\n\s+openProfileEditor\(\);\n\s+\}, true\);/);
+  assert.match(glue, /\n  wireSettingsProfile\(\);\n/);
+});
+
 test("the server strip and the glass slab on Home keep the design guide's measures", () => {
   const rule = selector => {
     const at = css.indexOf(`html[data-look="studio"][data-fit="slim"] ${selector} {`);
