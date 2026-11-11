@@ -1,0 +1,147 @@
+html[data-look="studio"][data-fit="slim"] #lightbox {
+  --lb-room: calc((50dvh - 26px - env(safe-area-inset-top)) / .6);
+  display: block;
+  background: var(--scrim);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  cursor: default;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox-img {
+  position: absolute;
+  left: 50%;
+  top: calc(50% - 12px);
+  translate: -50% -60%;
+  width: min(calc(100vw - 28px), calc(var(--lb-room) * var(--lb-ratio, 1.5)));
+  height: auto;
+  max-width: none;
+  max-height: none;
+  border-radius: 16px;
+  box-shadow: var(--shadow-3), 0 0 0 1px rgb(var(--lamp) / .08);
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-actions {
+  position: absolute;
+  left: 50%;
+  bottom: calc(38px + env(safe-area-inset-bottom));
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 28px);
+  min-height: 0;
+  padding: 6px 6px 6px 16px;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
+  -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-actions::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  padding: var(--border-w);
+  border-radius: inherit;
+  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-actions::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: var(--grain);
+  mix-blend-mode: overlay;
+  opacity: .35;
+  pointer-events: none;
+}
+html[data-look="studio"][data-fit="slim"][data-fx="lite"] #lightbox .lightbox-actions {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html[data-look="studio"][data-fit="slim"][data-fx="lite"] #lightbox .lightbox-actions::after { display: none; }
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-actions > * {
+  position: relative;
+  z-index: 1;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-actions:not(:has(> :not(.hidden))) { display: none; }
+html[data-look="studio"][data-fit="slim"] #lightbox-source {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 260px;
+  margin-right: 6px;
+  font: 500 14.5px/1 var(--font);
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: default;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox-source.linked,
+html[data-look="studio"][data-fit="slim"] #lightbox-source.linked:hover {
+  color: var(--link);
+  text-decoration: none;
+  cursor: pointer;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox-source > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox-source > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 44px;
+  margin: 0;
+  padding: 0 16px 0 13px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--k-plain);
+  -webkit-backdrop-filter: var(--k-plain-fx);
+  backdrop-filter: var(--k-plain-fx);
+  box-shadow: var(--k-plain-shadow);
+  color: var(--header-primary);
+  font: 600 14.5px/1 var(--font);
+  letter-spacing: -.005em;
+  white-space: nowrap;
+  transition: scale var(--t-hover) var(--ease-spring), box-shadow var(--t-hover) var(--ease-out), background-color var(--t-hover) var(--ease-out), filter var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-action:hover {
+  background: var(--k-plain-hover);
+  filter: var(--k-plain-hover-filter);
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-action:active {
+  scale: .96 .93;
+  box-shadow: var(--pillow-down);
+  transition-duration: var(--t-press);
+  transition-timing-function: var(--ease-out);
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-action:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-action > svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+html[data-look="studio"][data-fit="slim"] #lightbox-open > svg { rotate: 45deg; }
+html[data-look="studio"][data-fit="slim"] #lightbox .lightbox-action > .i.i-g {
+  stroke: currentColor;
+  stroke-width: 9px;
+  stroke-linejoin: round;
+}
