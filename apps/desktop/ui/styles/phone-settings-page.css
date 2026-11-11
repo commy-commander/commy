@@ -188,6 +188,7 @@ html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content inpu
   translate: 0 0;
   transition: translate 220ms var(--ease-spring);
 }
+html[data-look="studio"][data-fit="slim"][data-theme="light"] .settings-layer .settings-content input.switch:not(:checked) { background: var(--bg-active); box-shadow: inset 0 1px 2px rgb(var(--dark) / .45), 0 1px 0 rgb(var(--lamp) / .5); }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch:checked { background: var(--input-bg); box-shadow: var(--slot); }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch:checked::before { opacity: 1; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch:checked::after {
