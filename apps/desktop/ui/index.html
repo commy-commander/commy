@@ -10,6 +10,7 @@
   <link rel="stylesheet" id="studio-parts" href="styles/studio-parts.css" media="not all" />
   <link rel="stylesheet" id="studio-star" href="styles/star.css" media="not all" />
   <link rel="stylesheet" id="studio-desktop" href="styles/studio.css" media="not all" />
+  <link rel="stylesheet" id="studio-profile" href="styles/studio-profile.css" media="not all" />
   <link rel="stylesheet" id="studio-phone" href="styles/phone-touch.css" media="not all" />
 </head>
 <body>
@@ -3299,10 +3300,11 @@
       <div class="mc-status" id="mc-status"></div>
       <div class="play-box hidden" id="mc-activity"></div>
       <div class="mc-actions" id="mc-actions"></div>
+      <div class="mc-label hidden" id="mc-about-label">About me</div>
       <div class="mc-about hidden" id="mc-about"></div>
       <div class="mc-label hidden" id="mc-roles-label">Roles</div>
       <div class="mc-roles" id="mc-roles"></div>
-      <div class="composer mc-composer" id="mc-composer">
+      <div class="composer mc-composer mc-field" id="mc-composer">
         <input id="mc-input" type="text" autocomplete="off" maxlength="2000" />
         <button class="icon-btn" id="mc-gif" title="Send a GIF">GIF</button>
         <button class="icon-btn" id="mc-emoji" title="Emoji"></button>
@@ -3465,6 +3467,7 @@
   <script src="scripts/server-tags.js"></script>
   <script src="scripts/overlay-view.js"></script>
   <script src="scripts/profile-look.js"></script>
+  <script src="scripts/studio-profile.js"></script>
   <script src="scripts/join-requests.js"></script>
   <script src="scripts/tip-jar.js"></script>
   <script src="scripts/file-store.js"></script>

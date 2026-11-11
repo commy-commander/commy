@@ -2658,11 +2658,30 @@ function setAvatarBorder(node, border) {
   if (shown) node.appendChild(avatarBorderNode(border));
 }
 
+function profileShape(box, d) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", box);
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d);
+  svg.appendChild(path);
+  return svg;
+}
+
 function avatarBorderNode(id) {
   const ring = el("span", `avatar-border ab-${id}`);
   ring.setAttribute("aria-hidden", "true");
   const ornament = BORDER_ORNAMENTS[id];
-  if (ornament) {
+  if (studioLook()) {
+    for (const point of studioOrnaments(id)) {
+      const mark = el("i", point.odd && id === "leaves" ? "ab-o b" : "ab-o");
+      mark.style.setProperty("--x", `${point.x}%`);
+      mark.style.setProperty("--y", `${point.y}%`);
+      mark.style.setProperty("--r", `${point.turn}deg`);
+      mark.appendChild(profileShape("0 0 10 10", point.path));
+      ring.appendChild(mark);
+    }
+  } else if (ornament) {
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("class", "ab-ornaments");
     svg.setAttribute("viewBox", "0 0 100 100");
@@ -2678,10 +2697,60 @@ function avatarBorderNode(id) {
   return ring;
 }
 
+let studioAuroras = 0;
+
+function studioAuroraNode() {
+  const n = ++studioAuroras;
+  const make = (tag, attrs) => {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
+    return node;
+  };
+  const svg = make("svg", { viewBox: "0 0 100 40", preserveAspectRatio: "none", "aria-hidden": "true" });
+  const defs = make("defs", {});
+  for (const curtain of STUDIO_CURTAINS) {
+    const grad = make("linearGradient", { id: `au-${curtain.cls}-${n}`, x1: 0, y1: 0, x2: 0, y2: 1 });
+    const stops = [[0, curtain.ink, 0], [0.55, curtain.ink, Math.round(curtain.peak * 32) / 100], [0.93, curtain.ink, curtain.peak], [1, "--cream", Math.round(curtain.peak * 80) / 100]];
+    for (const [offset, ink, opacity] of stops) {
+      const stop = make("stop", { offset, "stop-opacity": opacity });
+      stop.style.stopColor = `var(${ink})`;
+      grad.appendChild(stop);
+    }
+    defs.appendChild(grad);
+  }
+  const blur = make("filter", { id: `au-s-${n}`, x: "-10%", y: "-20%", width: "120%", height: "140%" });
+  blur.appendChild(make("feGaussianBlur", { stdDeviation: ".55 .5" }));
+  defs.appendChild(blur);
+  svg.appendChild(defs);
+  for (const curtain of STUDIO_CURTAINS) {
+    const group = make("g", { class: curtain.cls, fill: `url(#au-${curtain.cls}-${n})`, filter: `url(#au-s-${n})` });
+    for (const ray of studioCurtain(curtain)) group.appendChild(make("rect", { x: ray.x, y: ray.y, width: 1.5, height: ray.h, opacity: ray.o }));
+    svg.appendChild(group);
+  }
+  return svg;
+}
+
+function studioEffectNode(id) {
+  const layer = el("div", `card-effect fx theme-dark ${id}`);
+  layer.setAttribute("aria-hidden", "true");
+  if (id === "aurora") layer.appendChild(studioAuroraNode());
+  for (const part of studioEffect(id)) {
+    const dot = el("i", part.cls);
+    for (const [name, value] of Object.entries(part.vars)) dot.style.setProperty(`--${name}`, String(value));
+    if (part.path) dot.appendChild(profileShape("0 0 20 20", part.path));
+    layer.appendChild(dot);
+  }
+  return layer;
+}
+
 function paintCardEffect(banner, effect, seed) {
   banner.querySelector(":scope > .card-effect")?.remove();
   const kind = CARD_EFFECTS.find(e => e.id === effect);
   if (!kind) return;
+  if (studioLook()) {
+    banner.appendChild(studioEffectNode(kind.id));
+    return;
+  }
   const layer = el("div", `card-effect ce-${kind.id}`);
   layer.setAttribute("aria-hidden", "true");
   for (const p of particleSeeds(kind.particles, seed)) {
@@ -13761,7 +13830,7 @@ async function openFullProfile(member) {
   showModal("modal-profile");
 }
 
-function openProfileMenu(person, x, y, keepOpen) {
+function openProfileMenu(person, x, y, keepOpen, card = null) {
   closeFloating(keepOpen);
   const menu = $("fp-menu");
   menu.replaceChildren(el("div", "ctx-title", person.name));
@@ -13775,25 +13844,45 @@ function openProfileMenu(person, x, y, keepOpen) {
     };
     menu.appendChild(btn);
   };
-  if (friendState(person.id) === "friend") {
-    const wants = wantsFriendOnline(notifyPrefs(), person.id);
-    item("Notify when online", "signal", () => toggleFriendOnlinePick(person.id), "ctx-check" + (wants ? " checked" : ""));
-  }
   const blocked = isBlocked(person.id);
-  item(blocked ? "Unblock" : "Block", "block", () => {
-    if (blocked) setBlocked(person.id, person.name, false);
-    else {
-      hideModals();
-      openBlock(person.id, person.name);
-    }
-  });
   const targets = reportTargetsFor(person.id);
-  if (targets.length) {
-    item("Report", "flag", () => {
+  const rows = {
+    profile: () => item("Full Profile", "person", () => openFullProfile(person)),
+    invite: () => {
+      const btn = el("button");
+      btn.append(svgIcon("serverAdd", 18), document.createTextNode("Invite to a server"));
+      btn.onclick = () => {
+        menu.classList.add("hidden");
+        openInviteMenu(person, card.anchor);
+      };
+      menu.appendChild(btn);
+    },
+    nickname: () => item("Nickname", "pencil", () => openNicknameModal(currentServerMember(person.id))),
+    notify: () => {
+      const wants = wantsFriendOnline(notifyPrefs(), person.id);
+      item("Notify when online", "signal", () => toggleFriendOnlinePick(person.id), "ctx-check" + (wants ? " checked" : ""));
+    },
+    unfriend: () => item("Remove friend", "close", async () => {
+      if (await confirm(`Remove ${person.name} from your friends?`)) await friendAction(person.id, "remove", person.name);
+    }),
+    block: () => item(blocked ? "Unblock" : "Block", "block", () => {
+      if (blocked) setBlocked(person.id, person.name, false);
+      else {
+        hideModals();
+        openBlock(person.id, person.name);
+      }
+    }, card ? "danger" : ""),
+    report: () => item("Report", "flag", () => {
       hideModals();
       openReport({ serverId: targets[0].id, servers: targets, userId: person.id, name: person.name });
-    }, "danger");
-  }
+    }, "danger"),
+    timeout: () => {
+      const active = timeoutActive(currentTimeoutOf(person));
+      item(timeoutActionLabel(person), "clock", () => (active ? clearMemberTimeout(person) : openTimeoutPicker(person)), active ? "" : "danger");
+    },
+  };
+  const shown = card ? card.rows : [friendState(person.id) === "friend" ? "notify" : "", "block", targets.length ? "report" : ""];
+  for (const row of shown) if (rows[row]) rows[row]();
   placeMenuAt(menu, x, y);
 }
 
@@ -13803,9 +13892,22 @@ function openMemberCard(member, anchor) {
   const server = state.currentServer || { roles: [] };
   closeFloating();
   const card = $("member-card");
-  $("mc-banner").dataset.banner = "";
-  paintProfileBanner($("mc-banner"), member.banner, member.avatar_provider, member.role_banner, member.color ? roleGradient(member.color) : bannerColor(member.id));
-  paintCardEffect($("mc-banner"), member.card_effect, member.id);
+  const studio = studioLook();
+  const isMe = state.user && member.id === state.user.id;
+  card.classList.toggle("slab", studio);
+  const banner = $("mc-banner");
+  const bare = studio && !profileHasBanner(member);
+  banner.dataset.banner = "";
+  banner.classList.toggle("wash", bare);
+  if (studio) banner.style.setProperty("--pc", member.color ? `#${member.color}` : personTint(member.id));
+  else banner.style.removeProperty("--pc");
+  if (bare) {
+    banner.style.background = "";
+    banner.style.backgroundImage = "";
+  } else {
+    paintProfileBanner(banner, member.banner, member.avatar_provider, member.role_banner, studio ? PROFILE_WASH : member.color ? roleGradient(member.color) : bannerColor(member.id));
+  }
+  paintCardEffect(banner, member.card_effect, member.id);
   const av = $("mc-avatar");
   av.replaceChildren();
   paintAvatar(av, member.id, member.name);
@@ -13814,18 +13916,39 @@ function openMemberCard(member, anchor) {
   name.textContent = member.name;
   paintRole(name, member.color);
   name.parentElement.querySelectorAll(".role-tag, .server-tag, .bot-tag, .mc-pronouns, .timeout-badge").forEach(n => n.remove());
-  if (timeoutActive(member.timeout_until)) name.after(timeoutBadge(member.timeout_until));
-  if (member.server_tag) name.after(serverTagChip(member.server_tag));
-  if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
-  if (member.bot) name.after(botTag());
-  if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
-  const accountLine = nicknameAccountLine(member);
-  $("mc-username").textContent = accountLine || "";
-  $("mc-username").classList.toggle("hidden", !accountLine);
+  const sub = $("mc-username");
+  if (studio) {
+    const tags = name.parentElement;
+    if (member.server_tag) tags.appendChild(serverTagChip(member.server_tag));
+    if (member.bot) tags.appendChild(botTag());
+    if (member.tag) tags.appendChild(roleTagChip(member.tag, member.tag_color));
+    if (timeoutActive(member.timeout_until)) tags.appendChild(timeoutBadge(member.timeout_until));
+    const parts = profileSubParts(member);
+    sub.replaceChildren();
+    parts.forEach((part, i) => {
+      if (i) sub.appendChild(el("i", "mc-dot"));
+      sub.appendChild(document.createTextNode(part));
+    });
+    sub.classList.toggle("hidden", !parts.length);
+  } else {
+    if (timeoutActive(member.timeout_until)) name.after(timeoutBadge(member.timeout_until));
+    if (member.server_tag) name.after(serverTagChip(member.server_tag));
+    if (member.tag) name.after(roleTagChip(member.tag, member.tag_color));
+    if (member.bot) name.after(botTag());
+    if (member.pronouns) name.after(el("span", "mc-pronouns", member.pronouns));
+    const accountLine = nicknameAccountLine(member);
+    sub.textContent = accountLine || "";
+    sub.classList.toggle("hidden", !accountLine);
+  }
   const status = $("mc-status");
   status.replaceChildren();
   const playing = isShowingActivity(member);
-  if (playing) {
+  const said = profileStatusParts(member, backLine(member));
+  status.classList.toggle("hidden", studio && !said.shown);
+  if (studio) {
+    if (said.emoji) setEmojiText(status.appendChild(el("span", "mc-emoji")), said.emoji);
+    if (said.words) setEmojiText(status.appendChild(el("span", "mc-words")), said.words);
+  } else if (playing) {
     setEmojiText(status, statusBesideGame(member) || presenceLabel(member));
   } else {
     const line = subLine(member);
@@ -13853,19 +13976,65 @@ function openMemberCard(member, anchor) {
     roles.appendChild(chip);
   }
   $("mc-roles-label").classList.toggle("hidden", !held.length);
-  const isMe = state.user && member.id === state.user.id;
+  $("mc-about-label").classList.toggle("hidden", !studio || !member.about);
   $("mc-about").classList.toggle("hidden", !member.about);
   setEmojiText($("mc-about"), member.about);
   const actions = $("mc-actions");
   actions.replaceChildren();
+  if (studio) card.querySelector(".mc-head").appendChild(actions);
+  else $("mc-activity").after(actions);
+  const moderates = state.view === "server" && canTimeOut(state.currentServer, member, state.user && state.user.id);
+  const rows = profileMenuRows({
+    me: isMe,
+    bot: Boolean(member.bot),
+    friend: friendState(member.id) === "friend",
+    reportable: reportTargetsFor(member.id).length > 0,
+    canTimeOut: moderates,
+    canNickname: isMe && canChangeOwnNickname(),
+  });
   const more = $("mc-more");
-  more.classList.toggle("hidden", isMe);
-  more.replaceChildren(svgIcon("more", 18));
+  more.className = studio ? "key sq mc-more theme-dark" : "icon-btn mc-more";
+  more.classList.toggle("hidden", studio ? !rows.length : isMe);
+  more.replaceChildren(studio ? studioIconNode("ellipsis", 17, false) : svgIcon("more", 18));
   more.onclick = e => {
     e.stopPropagation();
     const r = more.getBoundingClientRect();
-    openProfileMenu(member, r.right - 220, r.bottom + 6, "member-card");
+    openProfileMenu(member, r.right - 220, r.bottom + 6, "member-card", studio ? { rows, anchor: more } : null);
   };
+  if (studio) {
+    const key = (cls, icon, label, title, onClick) => {
+      const btn = el("button", cls);
+      btn.type = "button";
+      btn.appendChild(studioIconNode(icon, 18, cls.includes("primary")));
+      if (label) btn.appendChild(document.createTextNode(label));
+      if (title) {
+        btn.title = title;
+        btn.setAttribute("aria-label", title);
+      }
+      btn.onclick = onClick;
+      actions.appendChild(btn);
+    };
+    if (isMe) {
+      key("key sm", "pencil", "Edit profile", "", () => {
+        closeFloating();
+        openUserSettings("account");
+      });
+    } else if (!member.bot && !isBlocked(member.id)) {
+      key("key sm primary", "message-circle", "Message", "", () => {
+        closeFloating();
+        messageUser(member.id, member.name);
+      });
+    }
+    const st = friendState(member.id);
+    const friend = profileFriendKey(st, { me: isMe, bot: Boolean(member.bot) });
+    if (friend) {
+      key(friend.cls, friend.icon, "", friend.title, async () => {
+        if (st === "none") return openAddFriend(member, () => openMemberCard(member, anchor));
+        await friendAction(member.id, st === "incoming" ? "accept" : "remove", member.name);
+        openMemberCard(member, anchor);
+      });
+    }
+  }
   const action = (icon, label, onClick, cls = "") => {
     const btn = el("button", "mc-action " + cls);
     btn.appendChild(svgIcon(icon, 16));
@@ -13874,16 +14043,16 @@ function openMemberCard(member, anchor) {
     actions.appendChild(btn);
     return btn;
   };
-  if (!isMe && !member.bot) {
+  if (!studio && !isMe && !member.bot) {
     actions.appendChild(friendButton(member, () => openMemberCard(member, anchor)));
     action("serverAdd", "Invite", e => openInviteMenu(member, e.currentTarget));
   }
-  action("person", "Full Profile", () => openFullProfile(member));
-  if (state.view === "server" && canTimeOut(state.currentServer, member, state.user && state.user.id)) {
+  if (!studio) action("person", "Full Profile", () => openFullProfile(member));
+  if (!studio && moderates) {
     const active = timeoutActive(currentTimeoutOf(member));
     action("clock", timeoutActionLabel(member), () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
   }
-  if (isMe && canChangeOwnNickname()) action("pencil", "Nickname", () => openNicknameModal(currentServerMember(member.id)));
+  if (!studio && isMe && canChangeOwnNickname()) action("pencil", "Nickname", () => openNicknameModal(currentServerMember(member.id)));
   $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
