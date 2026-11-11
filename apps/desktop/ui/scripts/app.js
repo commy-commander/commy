@@ -17477,6 +17477,7 @@ function renderForwardList() {
   const targets = forwardTargets({ ...forwarding.targets, query: $("forward-search").value });
   for (const target of targets) {
     const row = el("button", "person-row forward-row");
+    if (target.server) row.dataset.server = target.server;
     if (target.kind === "dm") row.appendChild(avatarWithPresence(target.name, target.user));
     else if (target.kind === "group") row.appendChild(groupAvatar());
     else row.appendChild(el("span", "server-chip", initials(target.sub)));
@@ -26646,6 +26647,7 @@ function renderVoiceInviteList() {
   const targets = forwardTargets({ ...voiceInviting.targets, query: $("voice-invite-search").value });
   for (const target of targets) {
     const row = el("button", "person-row forward-row");
+    if (target.server) row.dataset.server = target.server;
     if (target.kind === "dm") row.appendChild(avatarWithPresence(target.name, target.user));
     else if (target.kind === "group") row.appendChild(groupAvatar());
     else row.appendChild(el("span", "server-chip", initials(target.sub)));

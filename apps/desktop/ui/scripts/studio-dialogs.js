@@ -53,6 +53,18 @@ const JOIN_ANSWERS = {
 
 const MODERATE_DIALOGS = ["modal-moderate", "modal-timeout", "modal-leaving"];
 
+const PEOPLE_DIALOGS = ["modal-invite", "modal-forward", "modal-voice-invite", "modal-new-dm", "modal-group"];
+
+const PEOPLE_LISTS = ["invite-people", "forward-list", "voice-invite-list", "new-dm-list", "group-list"];
+
+const PEOPLE_SEARCHES = ["invite-friend-search", "forward-search", "voice-invite-search", "new-dm-search", "group-search"];
+
+const INVITE_KEYS = { "invite-link-copy": "key primary", "invite-copy": "key" };
+
+function inviteRowKey(text, disabled) {
+  return String(text || "").trim() === "Sent" && disabled ? "sent" : "key sm";
+}
+
 const LEAVING_TITLE_ICONS = { warn: "triangle-alert", block: "ban" };
 
 function leavingTitleIcon(classes) {
@@ -142,6 +154,60 @@ function studioLengthKeys(grid) {
   }
 }
 
+function studioToggle(node, name, on) {
+  if (node.classList.contains(name) !== on) node.classList.toggle(name, on);
+}
+
+function studioPeopleRows(list) {
+  const roomy = document.documentElement.dataset.fit !== "slim";
+  for (const row of list.querySelectorAll(":scope > .person-row")) {
+    const chip = row.querySelector(":scope > .server-chip");
+    if (chip && row.dataset.server && typeof serverTint === "function") chip.style.setProperty("--server-tint", serverTint(row.dataset.server));
+    if (row.classList.contains("new-group") && roomy && typeof studioIconMarkup === "function" && !row.querySelector(":scope > .go")) row.insertAdjacentHTML("beforeend", studioIconMarkup("chevron-right", "go"));
+    const pick = row.querySelector(":scope > .pick");
+    if (pick && roomy && typeof studioIconMarkup === "function" && !pick.querySelector(".i")) pick.insertAdjacentHTML("afterbegin", studioIconMarkup("check", "tick"));
+    for (const button of row.querySelectorAll(":scope > button")) {
+      const kind = roomy ? inviteRowKey(button.textContent, button.disabled) : "";
+      studioToggle(button, "key", kind === "key sm");
+      studioToggle(button, "sm", kind === "key sm");
+      studioToggle(button, "sent", kind === "sent");
+      if (kind === "sent" && typeof studioIconMarkup === "function" && !button.querySelector(":scope > .i")) button.insertAdjacentHTML("afterbegin", studioIconMarkup("check"));
+    }
+  }
+}
+
+function studioPeopleSearch(input) {
+  if (input.parentElement && input.parentElement.classList.contains("dfind")) return;
+  const wrap = document.createElement("span");
+  wrap.className = "dfind";
+  input.before(wrap);
+  if (typeof studioIconMarkup === "function") wrap.insertAdjacentHTML("afterbegin", studioIconMarkup("search"));
+  wrap.appendChild(input);
+}
+
+function studioInviteParts() {
+  const roomy = document.documentElement.dataset.fit !== "slim";
+  const expiry = document.getElementById("invite-expiry");
+  if (expiry) {
+    for (const choice of expiry.querySelectorAll(":scope > button")) {
+      studioToggle(choice, "key", roomy);
+      studioToggle(choice, "latch", roomy);
+      studioToggle(choice, "is-down", roomy && choice.classList.contains("active"));
+      if (!choice.querySelector(":scope > .led")) {
+        const led = document.createElement("i");
+        led.className = "led";
+        choice.appendChild(led);
+      }
+    }
+  }
+  for (const [id, classes] of Object.entries(INVITE_KEYS)) {
+    const key = document.getElementById(id);
+    if (!key) continue;
+    const wanted = roomy ? classes.split(" ") : [];
+    for (const name of ["key", "primary"]) studioToggle(key, name, wanted.includes(name));
+  }
+}
+
 function studioLeavingTitle(modal) {
   const title = modal.querySelector(":scope > h2");
   if (!title) return;
@@ -177,7 +243,7 @@ function studioJoinParts(modal) {
 
 function studioDialogs() {
   studioDialogParts();
-  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
+  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS, ...PEOPLE_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
   const joins = modals.filter(modal => JOIN_DIALOGS.includes(modal.id));
   const grids = ["moderate-lengths", "timeout-choices"].map(id => document.getElementById(id)).filter(Boolean);
   const leaving = document.getElementById("modal-leaving");
@@ -186,9 +252,17 @@ function studioDialogs() {
     for (const modal of joins) studioJoinParts(modal);
     for (const grid of grids) studioLengthKeys(grid);
     if (leaving) studioLeavingTitle(leaving);
+    for (const list of PEOPLE_LISTS.map(id => document.getElementById(id)).filter(Boolean)) studioPeopleRows(list);
+    studioInviteParts();
   };
   const keys = new MutationObserver(() => { for (const grid of grids) studioLengthKeys(grid); });
   for (const grid of grids) keys.observe(grid, { childList: true });
+  for (const input of PEOPLE_SEARCHES.map(id => document.getElementById(id)).filter(Boolean)) studioPeopleSearch(input);
+  const lists = PEOPLE_LISTS.map(id => document.getElementById(id)).filter(Boolean);
+  const rows = new MutationObserver(() => { for (const list of lists) studioPeopleRows(list); });
+  for (const list of lists) rows.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "disabled"] });
+  const expiry = document.getElementById("invite-expiry");
+  if (expiry) new MutationObserver(studioInviteParts).observe(expiry, { subtree: true, attributes: true, attributeFilter: ["class"] });
   dress();
   new MutationObserver(dress).observe(document.documentElement, { attributes: true, attributeFilter: ["data-fit"] });
   const shown = new MutationObserver(records => {
@@ -208,5 +282,5 @@ function studioDialogs() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon };
+  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey };
 }

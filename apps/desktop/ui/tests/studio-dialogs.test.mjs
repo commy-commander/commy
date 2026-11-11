@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -183,4 +183,32 @@ test("leaving Commy: icon in the title, address capsule, red dots, trust switch"
   assert.match(rule(`${D} > .leaving-trust`), /min-height: 44px;/);
   assert.ok(glue.includes(":scope > .leaving-trust > input[type='checkbox']"));
   assert.match(rule(`${D} input.switch:checked`), /background: var\(--accent\);/);
+});
+
+test("picking people: rows on the slab, search with its icon, glass invite keys", () => {
+  assert.deepEqual(PEOPLE_DIALOGS, ["modal-invite", "modal-forward", "modal-voice-invite", "modal-new-dm", "modal-group"]);
+  for (const id of [...PEOPLE_DIALOGS, ...PEOPLE_LISTS, ...PEOPLE_SEARCHES, ...Object.keys(INVITE_KEYS)]) assert.ok(html.includes(`id="${id}"`), id);
+  assert.equal(inviteRowKey("Invite", false), "key sm");
+  assert.equal(inviteRowKey("Sent", true), "sent");
+  assert.equal(inviteRowKey("Sent", false), "key sm");
+  assert.deepEqual(INVITE_KEYS, { "invite-link-copy": "key primary", "invite-copy": "key" });
+  assert.ok(css.includes(`${D}#modal-invite { width: min(560px, calc(100vw - 48px)); }`));
+  assert.match(rule(`${D} > .people-list > .person-row`), /min-height: 54px;/);
+  assert.match(rule(`${D} > .people-list > .person-row`), /border-radius: var\(--radius-pill\);/);
+  assert.match(rule(`${D} > .people-list > .person-row > .sent > .i`), /color: var\(--green\);/);
+  assert.match(rule(`${D} > .dfind > .i`), /left: 18px;/);
+  assert.match(rule(`${D} > .dfind > input`), /padding-left: 44px;/);
+  assert.ok(glue.includes('wrap.appendChild(input);'));
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .dfind { display: contents; }'));
+});
+
+test("invite box, lengths and the group picker follow the people drawing", () => {
+  assert.match(rule(`${D} > #invite-text`), /font: 400 13\.5px\/1\.5 var\(--font-mono\);/);
+  assert.match(rule(`${D} > #invite-text`), /word-break: break-all;/);
+  assert.match(rule(`${D} > .invite-actions`), /grid-template-columns: 1fr 1fr;/);
+  assert.match(rule(`${D} > .invite-expiry > .segmented > .key.latch`), /height: 40px;/);
+  assert.match(rule(`${D}#modal-group > .people-list > .person-row.picked`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\);/);
+  assert.match(rule(`${D}#modal-group > .people-list > .person-row.in-group`), /opacity: \.45;/);
+  assert.ok(app.includes("if (target.server) row.dataset.server = target.server;"));
+  assert.ok(glue.includes('studioIconMarkup("chevron-right", "go")'));
 });

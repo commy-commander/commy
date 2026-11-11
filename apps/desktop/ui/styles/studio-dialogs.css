@@ -814,3 +814,266 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust >
 
 html[data-look="studio"][data-fit="slim"] .modal-leaving > h2 > .i,
 html[data-look="studio"][data-fit="slim"] .timeout-choice > .led { display: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-invite { width: min(560px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-forward,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-voice-invite,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-new-dm,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group { width: min(440px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-invite,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-new-dm { padding-bottom: 26px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > p,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .setting-sub { margin: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-voice-invite > .setting-sub,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-new-dm > p,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > p {
+  color: var(--text-normal);
+  font: 400 14.5px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-invite > p {
+  margin-top: -6px;
+  color: var(--text-muted);
+  font: 400 14px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .voice-invite-where {
+  margin-top: -6px;
+  color: var(--header-primary);
+  font: 600 14px/1.35 var(--font);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .dfind {
+  position: relative;
+  display: block;
+  margin-top: 4px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .dfind > .i {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .dfind > input { padding-left: 44px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list {
+  display: grid;
+  gap: 2px;
+  max-height: 284px;
+  margin: -2px -10px 0;
+  padding: 0 2px;
+  overflow: auto;
+  background: none;
+  border: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list.invite-people { max-height: 168px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 54px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-normal);
+  text-align: left;
+  transition: background var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > button.person-row:hover { background: rgb(var(--lamp) / .06); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .invite-person:hover { background: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .avatar,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .server-chip {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  font-size: 12px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row .presence-dot { border-color: var(--bg-dark); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .server-chip {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pillow-top), color-mix(in srgb, var(--server-tint, var(--accent)) 26%, var(--bg-raised));
+  box-shadow: var(--pillow-sm);
+  color: color-mix(in srgb, var(--server-tint, var(--accent)) 45%, var(--white));
+  font: 700 12px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog > .people-list > .person-row > .server-chip { color: color-mix(in srgb, var(--server-tint, var(--accent)) 50%, var(--ink-strong)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .group-avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .group-avatar > svg {
+  width: 18px;
+  height: 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .dm-meta {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row .dm-name {
+  overflow: hidden;
+  color: var(--header-primary);
+  font: 600 15px/1.2 var(--font);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row .dm-preview {
+  overflow: hidden;
+  color: var(--text-muted);
+  font: 400 13px/1.2 var(--font);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row .dm-preview:empty { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .go {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .key.sm { flex: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .sent {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  font: 600 13px/1 var(--font);
+  opacity: 1;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .sent > .i {
+  width: 15px;
+  height: 15px;
+  color: var(--green);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .dm-list-empty {
+  padding: 14px 10px;
+  color: var(--text-muted);
+  font: 400 14px/1.4 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row { padding-right: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row > .pick {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--accent-lit);
+  opacity: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row > .pick > svg:not(.i) { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row > .pick > .i {
+  width: 18px;
+  height: 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row.picked {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row.picked > .pick { opacity: 1; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row.in-group {
+  opacity: .45;
+  cursor: default;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row.in-group:hover { background: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#forward-preview {
+  padding: 12px 16px;
+  border-radius: 18px;
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 4px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .share-quality-label {
+  margin: 0;
+  color: var(--text-muted);
+  font: 600 13px/13px var(--font);
+  letter-spacing: 0;
+  text-transform: none;
+  text-indent: 16px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 8px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch {
+  position: relative;
+  justify-content: center;
+  height: 40px;
+  padding: 0 22px 0 10px;
+  border: 0;
+  font-size: 13.5px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch:not(.is-down) { color: var(--k-ink, var(--text-normal)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch > strong { font: inherit; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch > .led { background: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > #invite-text {
+  min-height: 72px;
+  height: auto;
+  margin-top: 2px;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font: 400 13.5px/1.5 var(--font-mono);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  resize: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry-note {
+  margin: -4px 0 0 16px;
+  color: var(--text-muted);
+  font: 400 13px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 6px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-actions > .key {
+  width: 100%;
+  justify-content: center;
+}
+
+html[data-look="studio"][data-fit="slim"] .dfind { display: contents; }
+html[data-look="studio"][data-fit="slim"] .dfind > .i,
+html[data-look="studio"][data-fit="slim"] .person-row > .go,
+html[data-look="studio"][data-fit="slim"] .person-row > .pick > .i,
+html[data-look="studio"][data-fit="slim"] .person-row > .sent > .i,
+html[data-look="studio"][data-fit="slim"] #invite-expiry > button > .led { display: none; }
