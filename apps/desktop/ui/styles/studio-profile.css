@@ -8,7 +8,8 @@ html[data-look="studio"] .member-card {
   font: 400 15px/1.45 var(--font);
   overflow: hidden;
 }
-html[data-look="studio"] .member-card > .mc-more {
+html[data-look="studio"] .member-card > .mc-more,
+html[data-look="studio"] .profile-pane > .mc-more {
   position: absolute;
   z-index: 3;
   top: 10px;
@@ -22,8 +23,10 @@ html[data-look="studio"] .member-card > .mc-more {
   box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .16), 0 6px 12px -6px rgb(var(--dark) / .6);
   filter: none;
 }
-html[data-look="studio"] .member-card > .mc-more:hover { background: color-mix(in srgb, var(--bg-darkest) 62%, transparent); }
-html[data-look="studio"] .member-card > .mc-more svg { width: 17px !important; height: 17px !important; }
+html[data-look="studio"] .member-card > .mc-more:hover,
+html[data-look="studio"] .profile-pane > .mc-more:hover { background: color-mix(in srgb, var(--bg-darkest) 62%, transparent); }
+html[data-look="studio"] .member-card > .mc-more svg,
+html[data-look="studio"] .profile-pane > .mc-more svg { width: 17px !important; height: 17px !important; }
 html[data-look="studio"] .mc-banner {
   position: relative;
   height: 108px;
@@ -68,6 +71,9 @@ html[data-look="studio"] .mc-head .presence-dot {
   box-shadow: 0 0 0 3.5px var(--bg-dark);
 }
 html[data-look="studio"] .mc-head .avatar.has-border .presence-dot { right: -2px; bottom: -2px; }
+html[data-look="studio"] .mc-head .presence-dot.idle { background: var(--bg-dark); box-shadow: 0 0 0 3.5px var(--bg-dark), inset 5px -4.5px 0 .5px var(--yellow); }
+html[data-look="studio"] .mc-head .presence-dot.offline,
+html[data-look="studio"] .mc-head .presence-dot.invisible { background: var(--bg-dark); box-shadow: 0 0 0 3.5px var(--bg-dark), inset 0 0 0 3px var(--text-faint); }
 html[data-look="studio"] .mc-head .mc-actions {
   display: flex;
   flex-wrap: nowrap;
@@ -175,7 +181,8 @@ html[data-look="studio"] .mc-status {
 }
 html[data-look="studio"] .mc-status .mc-emoji { flex: none; font-size: 16px; line-height: 1; }
 html[data-look="studio"] .mc-status .mc-words { min-width: 0; overflow-wrap: anywhere; }
-html[data-look="studio"] .member-card .play-box {
+html[data-look="studio"] .member-card .play-box,
+html[data-look="studio"] .profile-pane .play-box {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;
   grid-template-rows: 12px 14px;
@@ -190,12 +197,19 @@ html[data-look="studio"] .member-card .play-box {
   box-shadow: var(--glass-rim, inset 0 0 0 1px var(--line));
 }
 html[data-look="studio"] .member-card .play-box .play-card,
+html[data-look="studio"] .profile-pane .play-box .play-card,
 html[data-look="studio"] .member-card .play-box .ac-main,
-html[data-look="studio"] .member-card .play-box .ac-info { display: contents; }
+html[data-look="studio"] .profile-pane .play-box .ac-main,
+html[data-look="studio"] .member-card .play-box .ac-info,
+html[data-look="studio"] .profile-pane .play-box .ac-info { display: contents; }
 html[data-look="studio"] .member-card .play-box .ac-glow,
+html[data-look="studio"] .profile-pane .play-box .ac-glow,
 html[data-look="studio"] .member-card .play-box .ac-steam,
-html[data-look="studio"] .member-card .play-box .ac-time svg { display: none; }
-html[data-look="studio"] .member-card .play-box .ac-cover {
+html[data-look="studio"] .profile-pane .play-box .ac-steam,
+html[data-look="studio"] .member-card .play-box .ac-time svg,
+html[data-look="studio"] .profile-pane .play-box .ac-time svg { display: none; }
+html[data-look="studio"] .member-card .play-box .ac-cover,
+html[data-look="studio"] .profile-pane .play-box .ac-cover {
   grid-area: 1 / 1 / 3 / 2;
   width: 40px;
   height: 40px;
@@ -205,14 +219,16 @@ html[data-look="studio"] .member-card .play-box .ac-cover {
   box-shadow: 0 0 0 1px var(--rim-soft), 0 2px 3px rgb(var(--dark) / .4), 0 6px 8px -3px rgb(var(--dark) / .6);
   color: var(--text-muted);
 }
-html[data-look="studio"] .member-card .play-box .ac-label {
+html[data-look="studio"] .member-card .play-box .ac-label,
+html[data-look="studio"] .profile-pane .play-box .ac-label {
   grid-area: 1 / 2;
   color: var(--text-muted);
   font: 400 12px/1 var(--font);
   letter-spacing: 0;
   text-transform: none;
 }
-html[data-look="studio"] .member-card .play-box .ac-game {
+html[data-look="studio"] .member-card .play-box .ac-game,
+html[data-look="studio"] .profile-pane .play-box .ac-game {
   display: block;
   grid-area: 2 / 2;
   height: auto;
@@ -222,7 +238,8 @@ html[data-look="studio"] .member-card .play-box .ac-game {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-html[data-look="studio"] .member-card .play-box .ac-time {
+html[data-look="studio"] .member-card .play-box .ac-time,
+html[data-look="studio"] .profile-pane .play-box .ac-time {
   grid-area: 1 / 3 / 3 / 4;
   height: auto;
   color: var(--text-muted);
@@ -480,3 +497,59 @@ html[data-look="studio"][data-reduced-motion] .card-effect.fx g { animation: non
 html[data-look="studio"] .voice-invite-faces .avatar-border { display: none; }
 html[data-look="studio"] .member-card .mc-field::before,
 html[data-look="studio"] .member-card .mc-field::after { content: none; }
+html[data-look="studio"] #modal-profile > :not(.profile-pane),
+html[data-look="studio"] #dm-profile > :not(.profile-pane) { display: none; }
+html[data-look="studio"] .modal.modal-profile.slab {
+  width: min(600px, calc(100vw - 32px));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+html[data-look="studio"] .profile-pane {
+  position: relative;
+  z-index: 1;
+  padding: 0 0 18px;
+  color: var(--text-normal);
+  font: 400 15px/1.45 var(--font);
+}
+html[data-look="studio"] #modal-profile > .profile-pane {
+  max-height: min(760px, calc(100vh - 64px));
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+html[data-look="studio"] .prof-servers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 12px 0;
+}
+html[data-look="studio"] .prof-server {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 14px;
+  background: none;
+  color: var(--text-normal);
+  font: 500 14px/1.2 var(--font);
+  text-align: left;
+  cursor: pointer;
+}
+html[data-look="studio"] .prof-server:hover { background: var(--bg-hover); color: var(--header-primary); }
+html[data-look="studio"] .prof-server:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+html[data-look="studio"] .prof-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: 50%;
+  color: var(--white);
+  font: 600 12px/1 var(--font);
+}
+html[data-look="studio"] .prof-tile img { width: 100%; height: 100%; object-fit: cover; }
+html[data-look="studio"] .prof-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

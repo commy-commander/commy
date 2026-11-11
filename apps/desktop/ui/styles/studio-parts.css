@@ -476,3 +476,5 @@ html[data-look="studio"] form.bar:not(.has-text) .send {
   }
   html[data-look="studio"] form.bar.fire::after { animation: none; }
 }
+html[data-look="studio"][data-theme="light"] { --role-ink-mix: 55%; }
+html[data-look="studio"][data-theme="light"] .theme-dark { --role-ink-mix: 100%; }

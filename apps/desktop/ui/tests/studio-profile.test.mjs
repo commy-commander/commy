@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows } = require("../scripts/studio-profile.js");
+const { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows, profilePaneRows } = require("../scripts/studio-profile.js");
 const { STUDIO_SPARKLES, STUDIO_DUST, STUDIO_SNOW, STUDIO_BUBBLES, STUDIO_CURTAINS, studioOrnaments, studioSnow, studioCurtain, studioEffect } = require("../scripts/profile-look.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
@@ -15,7 +15,8 @@ const SWITCH = 'html[data-look="studio"]';
 const FRAMES = /@keyframes[^{]+\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g;
 const selectors = sheet => [...sheet.replace(FRAMES, "").replace(/@(media|container)[^{]+\{/g, "").matchAll(/(^|\})\s*([^{}@]+)\{/g)].flatMap(match => match[2].split(",").map(part => part.trim())).filter(Boolean);
 const rule = selector => {
-  const start = css.indexOf(`${SWITCH} ${selector} {`);
+  const alone = css.indexOf(`${SWITCH} ${selector} {`);
+  const start = alone >= 0 ? alone : css.indexOf(`${SWITCH} ${selector},\n`);
   assert.ok(start >= 0, selector);
   return css.slice(start, css.indexOf("}", start));
 };
@@ -163,4 +164,53 @@ test("each profile effect is one fixed drawing, the same on every card", () => {
   assert.ok(rule(".card-effect.fx").includes("container-type: size;"));
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\n  html\[data-look="studio"\] \.card-effect\.fx i,\n  html\[data-look="studio"\] \.card-effect\.fx g \{ animation: none !important; \}/);
   assert.ok(css.includes(`${SWITCH} .look-option .card-effect.fx g { animation-play-state: paused; }`));
+});
+
+test("the full profile and the DM side pane are built from the card's parts", () => {
+  const rows = profileMenuRows({ friend: true, reportable: true, canTimeOut: true });
+  assert.deepEqual(profilePaneRows(rows, "card"), rows);
+  assert.deepEqual(profilePaneRows(rows, "full"), ["invite", "notify", "unfriend", "block", "report", "timeout"]);
+  assert.deepEqual(profilePaneRows(rows, "dm"), ["invite", "notify", "unfriend", "block", "report", "timeout"]);
+  assert.deepEqual(profilePaneRows(profileMenuRows({ me: true }), "full"), []);
+  assert.deepEqual(profilePaneRows(rows, "phone"), ["invite", "notify", "unfriend", "block", "report", "timeout"]);
+  assert.match(app, /\}\), studio && document\.documentElement\.dataset\.fit === "slim" \? "phone" : "card"\);/);
+  assert.match(app, /openUserSettings\("account"\);\n      \}\)\.id = "mc-edit";/);
+  const start = app.indexOf("function studioProfilePane(");
+  const pane = app.slice(start, app.indexOf("\n}\n", start));
+  for (const part of ['"mc-banner"', '"key sq mc-more theme-dark"', '"mc-head"', '"mc-actions"', '"mc-body"', '"mc-name-row"', '"mc-username"', '"mc-status"', '"play-box hidden"', '"mc-label", "About me"', '"mc-label", "Roles"', '"mc-label", "Mutual servers"', "mutualServerRows(servers, leave)"]) {
+    assert.ok(pane.includes(part), part);
+  }
+  assert.match(pane, /place === "full" && !person\.bot && !isBlocked\(person\.id\)/);
+  assert.doesNotMatch(pane, /Friendship|No servers in common|mc-field|composer/);
+  const rowsStart = app.indexOf("function mutualServerRows(");
+  const rowsFn = app.slice(rowsStart, app.indexOf("\n}\n", rowsStart));
+  for (const part of ['"prof-server"', '"prof-tile"', "paintNarrowServerIcon(tile", '"prof-name"', "leave();"]) assert.ok(rowsFn.includes(part), part);
+  assert.match(app, /modal\.appendChild\(studioProfilePane\(person, "full", \(\) => openFullProfile\(member\)\)\);/);
+  assert.match(app, /\$\("dm-profile"\)\.appendChild\(studioProfilePane\(/);
+  assert.match(css, /html\[data-look="studio"\] #modal-profile > :not\(\.profile-pane\),\nhtml\[data-look="studio"\] #dm-profile > :not\(\.profile-pane\) \{ display: none; \}/);
+  assert.match(rule(".profile-pane > .mc-more"), /top: 10px;\n  right: 10px;\n  width: 32px;\n  height: 32px;/);
+  assert.match(rule(".prof-tile"), /width: 32px;\n  height: 32px;[\s\S]*border-radius: 50%;/);
+  assert.match(rule(".prof-server"), /font: 500 14px\/1\.2 var\(--font\);/);
+});
+
+test("on the card and the profile panes an idle dot is the moon and an offline dot is a ring", () => {
+  assert.match(rule(".mc-head .presence-dot.idle"), /background: var\(--bg-dark\); box-shadow: 0 0 0 3\.5px var\(--bg-dark\), inset 5px -4\.5px 0 \.5px var\(--yellow\);/);
+  assert.match(css, /html\[data-look="studio"\] \.mc-head \.presence-dot\.invisible \{ background: var\(--bg-dark\); box-shadow: 0 0 0 3\.5px var\(--bg-dark\), inset 0 0 0 3px var\(--text-faint\); \}/);
+});
+
+test("the card lists mutual servers after Roles in the new look", () => {
+  assert.match(html, /<div class="mc-roles" id="mc-roles"><\/div>\n\s*<div class="mc-label hidden" id="mc-servers-label">Mutual servers<\/div>\n\s*<div class="prof-servers hidden" id="mc-servers"><\/div>/);
+  assert.match(app, /const mutual = studio && !isMe \? mutualServersOf\(member\.id\) : \[\];/);
+  assert.match(app, /\$\("mc-servers"\)\.replaceChildren\(\.\.\.mutualServerRows\(mutual, closeFloating\)\);/);
+});
+
+test("role coloured words keep the raw colour at Night and a deeper mix in Day", () => {
+  const { roleInk } = require("../scripts/studio-profile.js");
+  assert.equal(roleInk("", true), "");
+  assert.equal(roleInk("6f9fe6", false), "#6f9fe6");
+  assert.equal(roleInk("6f9fe6", true), "color-mix(in oklab, #6f9fe6 var(--role-ink-mix, 100%), var(--header-primary))");
+  const parts = read("../styles/studio-parts.css");
+  assert.match(parts, /html\[data-look="studio"\]\[data-theme="light"\] \{ --role-ink-mix: 55%; \}/);
+  assert.match(parts, /html\[data-look="studio"\]\[data-theme="light"\] \.theme-dark \{ --role-ink-mix: 100%; \}/);
+  assert.match(app, /node\.style\.color = color \? roleInk\(color, studioLook\(\)\) : "";/);
 });

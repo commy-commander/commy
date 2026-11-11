@@ -2522,7 +2522,7 @@ function wireAccessibility() {
 }
 
 function paintRole(node, color) {
-  node.style.color = color ? `#${color}` : "";
+  node.style.color = color ? roleInk(color, studioLook()) : "";
   node.classList.toggle("role-ink", Boolean(color));
 }
 
@@ -13759,10 +13759,151 @@ function inviteCard(text) {
   return card;
 }
 
+function studioProfilePane(person, place, reopen) {
+  const pane = el("div", `profile-pane prof-${place}`);
+  const isMe = Boolean(state.user && person.id === state.user.id);
+  const leave = place === "full" ? hideModals : closeFloating;
+  const banner = pane.appendChild(el("div", "mc-banner"));
+  const bare = !profileHasBanner(person);
+  banner.classList.toggle("wash", bare);
+  banner.style.setProperty("--pc", person.color ? `#${person.color}` : personTint(person.id));
+  if (!bare) paintProfileBanner(banner, person.banner, person.avatar_provider, person.role_banner, PROFILE_WASH);
+  paintCardEffect(banner, person.card_effect, person.id);
+  const member = state.view === "server" ? currentServerMember(person.id) : null;
+  const rows = profilePaneRows(profileMenuRows({
+    me: isMe,
+    bot: Boolean(person.bot),
+    friend: friendState(person.id) === "friend",
+    reportable: reportTargetsFor(person.id).length > 0,
+    canTimeOut: Boolean(member) && canTimeOut(state.currentServer, member, state.user && state.user.id),
+    canNickname: isMe && Boolean(member) && canChangeOwnNickname(),
+  }), place);
+  if (rows.length) {
+    const more = pane.appendChild(el("button", "key sq mc-more theme-dark"));
+    more.type = "button";
+    more.title = "More";
+    more.setAttribute("aria-label", "More options");
+    more.appendChild(studioIconNode("ellipsis", 17, false));
+    more.onclick = e => {
+      e.stopPropagation();
+      const r = more.getBoundingClientRect();
+      openProfileMenu(person, r.right - 220, r.bottom + 6, undefined, { rows, anchor: more });
+    };
+  }
+  const head = pane.appendChild(el("div", "mc-head"));
+  const av = head.appendChild(el("div", "avatar avatar-lg av-live"));
+  paintAvatar(av, person.id, person.name);
+  av.appendChild(el("span", "presence-dot " + presenceDot(person)));
+  const actions = head.appendChild(el("div", "mc-actions"));
+  const key = (cls, icon, label, title, onClick) => {
+    const btn = actions.appendChild(el("button", cls));
+    btn.type = "button";
+    btn.appendChild(studioIconNode(icon, 18, cls.includes("primary")));
+    if (label) btn.appendChild(document.createTextNode(label));
+    if (title) {
+      btn.title = title;
+      btn.setAttribute("aria-label", title);
+    }
+    btn.onclick = onClick;
+  };
+  if (isMe) {
+    key("key sm", "pencil", "Edit profile", "", () => {
+      leave();
+      openUserSettings("account");
+    });
+  } else if (place === "full" && !person.bot && !isBlocked(person.id)) {
+    key("key sm primary", "message-circle", "Message", "", () => {
+      leave();
+      messageUser(person.id, person.name);
+    });
+  }
+  const st = friendState(person.id);
+  const friend = profileFriendKey(st, { me: isMe, bot: Boolean(person.bot) });
+  if (friend) {
+    key(friend.cls, friend.icon, "", friend.title, async () => {
+      if (st === "none") return openAddFriend(person, reopen);
+      await friendAction(person.id, st === "incoming" ? "accept" : "remove", person.name);
+      reopen();
+    });
+  }
+  const body = pane.appendChild(el("div", "mc-body"));
+  const nameRow = body.appendChild(el("div", "mc-name-row"));
+  const name = nameRow.appendChild(el("span", "mc-name", person.name));
+  paintRole(name, person.color);
+  if (person.server_tag) nameRow.appendChild(serverTagChip(person.server_tag));
+  if (person.bot) nameRow.appendChild(botTag());
+  if (person.tag) nameRow.appendChild(roleTagChip(person.tag, person.tag_color));
+  if (timeoutActive(person.timeout_until)) nameRow.appendChild(timeoutBadge(person.timeout_until));
+  const parts = profileSubParts(person);
+  if (parts.length) {
+    const sub = body.appendChild(el("div", "mc-username"));
+    parts.forEach((part, i) => {
+      if (i) sub.appendChild(el("i", "mc-dot"));
+      sub.appendChild(document.createTextNode(part));
+    });
+  }
+  const said = profileStatusParts(person, backLine(person));
+  if (said.shown) {
+    const status = body.appendChild(el("div", "mc-status"));
+    if (said.emoji) setEmojiText(status.appendChild(el("span", "mc-emoji")), said.emoji);
+    if (said.words) setEmojiText(status.appendChild(el("span", "mc-words")), said.words);
+  }
+  showActivityIn(body.appendChild(el("div", "play-box hidden")), person);
+  if (person.about) {
+    body.appendChild(el("div", "mc-label", "About me"));
+    setEmojiText(body.appendChild(el("div", "mc-about")), person.about);
+  }
+  const held = member ? (state.currentServer.roles || []).filter(r => (member.roles || []).includes(r.id)) : [];
+  if (held.length) {
+    body.appendChild(el("div", "mc-label", "Roles"));
+    const roles = body.appendChild(el("div", "mc-roles"));
+    for (const role of held) {
+      const chip = roles.appendChild(el("span", "mc-role"));
+      const dot = chip.appendChild(el("span", "role-dot"));
+      if (role.color) dot.style.background = `#${role.color}`;
+      chip.appendChild(document.createTextNode(role.name));
+    }
+  }
+  const servers = isMe ? [] : mutualServersOf(person.id);
+  if (servers.length) {
+    body.appendChild(el("div", "mc-label", "Mutual servers"));
+    body.appendChild(el("div", "prof-servers")).append(...mutualServerRows(servers, leave));
+  }
+  return pane;
+}
+
+function mutualServersOf(userId) {
+  return (state.people.get(userId) || {}).servers || [];
+}
+
+function mutualServerRows(servers, leave) {
+  return servers.map(s => {
+    const row = el("button", "prof-server");
+    row.type = "button";
+    const tile = row.appendChild(el("span", "prof-tile"));
+    paintNarrowServerIcon(tile, state.servers.find(x => x.id === s.id) || s);
+    row.appendChild(el("span", "prof-name", s.name));
+    row.onclick = () => {
+      leave();
+      selectServer(s.id).then(phoneShowChat);
+    };
+    return row;
+  });
+}
+
 async function openFullProfile(member) {
   closeFloating();
   await refreshPeople();
   const person = { ...(state.people.get(member.id) || {}), ...member };
+  const modal = $("modal-profile");
+  modal.querySelector(":scope > .profile-pane")?.remove();
+  modal.classList.toggle("slab", studioLook());
+  if (studioLook()) {
+    modal.appendChild(studioProfilePane(person, "full", () => openFullProfile(member)));
+    modal.oncontextmenu = null;
+    showModal("modal-profile");
+    return;
+  }
   $("fp-banner").dataset.banner = "";
   paintProfileBanner($("fp-banner"), person.banner, person.avatar_provider, person.role_banner, person.color ? roleGradient(person.color) : bannerColor(person.id));
   paintCardEffect($("fp-banner"), person.card_effect, person.id);
@@ -13820,7 +13961,6 @@ async function openFullProfile(member) {
     };
     buttons.append(friendButton(person, () => openFullProfile(member)), msg, more);
   }
-  const modal = $("modal-profile");
   modal.oncontextmenu = isMe ? null : e => {
     e.preventDefault();
     openProfileMenu(person, e.clientX, e.clientY);
@@ -13974,6 +14114,10 @@ function openMemberCard(member, anchor) {
     roles.appendChild(chip);
   }
   $("mc-roles-label").classList.toggle("hidden", !held.length);
+  const mutual = studio && !isMe ? mutualServersOf(member.id) : [];
+  $("mc-servers-label").classList.toggle("hidden", !mutual.length);
+  $("mc-servers").classList.toggle("hidden", !mutual.length);
+  $("mc-servers").replaceChildren(...mutualServerRows(mutual, closeFloating));
   $("mc-about-label").classList.toggle("hidden", !studio || !member.about);
   $("mc-about").classList.toggle("hidden", !member.about);
   setEmojiText($("mc-about"), member.about);
@@ -13982,14 +14126,14 @@ function openMemberCard(member, anchor) {
   if (studio) card.querySelector(".mc-head").appendChild(actions);
   else $("mc-activity").after(actions);
   const moderates = state.view === "server" && canTimeOut(state.currentServer, member, state.user && state.user.id);
-  const rows = profileMenuRows({
+  const rows = profilePaneRows(profileMenuRows({
     me: isMe,
     bot: Boolean(member.bot),
     friend: friendState(member.id) === "friend",
     reportable: reportTargetsFor(member.id).length > 0,
     canTimeOut: moderates,
     canNickname: isMe && canChangeOwnNickname(),
-  });
+  }), studio && document.documentElement.dataset.fit === "slim" ? "phone" : "card");
   const more = $("mc-more");
   more.className = studio ? "key sq mc-more theme-dark" : "icon-btn mc-more";
   more.classList.toggle("hidden", studio ? !rows.length : isMe);
@@ -14011,12 +14155,13 @@ function openMemberCard(member, anchor) {
       }
       btn.onclick = onClick;
       actions.appendChild(btn);
+      return btn;
     };
     if (isMe) {
       key("key sm", "pencil", "Edit profile", "", () => {
         closeFloating();
         openUserSettings("account");
-      });
+      }).id = "mc-edit";
     } else if (!member.bot && !isBlocked(member.id)) {
       key("key sm primary", "message-circle", "Message", "", () => {
         closeFloating();
@@ -19872,6 +20017,13 @@ function renderDmProfile(userId, name) {
   const person = state.people.get(userId);
   const presence = personPresence(userId);
   $("dm-profile").classList.toggle("hidden", !state.showDmProfile);
+  $("dm-profile").querySelector(":scope > .profile-pane")?.remove();
+  if (studioLook()) {
+    $("dm-profile-btn").classList.toggle("active", state.showDmProfile);
+    $("dm-profile-btn").title = state.showDmProfile ? "Hide User Profile" : "Show User Profile";
+    $("dm-profile").appendChild(studioProfilePane({ ...(person || {}), id: userId, name: (person && person.name) || name, presence }, "dm", () => renderDmProfile(userId, name)));
+    return;
+  }
   $("dm-profile-btn").classList.toggle("active", state.showDmProfile);
   $("dm-profile-btn").title = state.showDmProfile ? "Hide User Profile" : "Show User Profile";
   paintAvatar($("dm-profile-avatar"), userId, name);

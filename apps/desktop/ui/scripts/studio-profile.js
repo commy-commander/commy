@@ -36,6 +36,17 @@ function profileMenuRows({ me = false, bot = false, friend = false, reportable =
   return rows;
 }
 
+function roleInk(color, studio) {
+  if (!color) return "";
+  if (!studio) return `#${color}`;
+  return `color-mix(in oklab, #${color} var(--role-ink-mix, 100%), var(--header-primary))`;
+}
+
+function profilePaneRows(rows, place) {
+  if (place === "card") return rows;
+  return rows.filter(row => row !== "profile");
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows };
+  module.exports = { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows, profilePaneRows, roleInk };
 }
