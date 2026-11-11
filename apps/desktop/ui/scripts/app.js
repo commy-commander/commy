@@ -5233,7 +5233,7 @@ function onMessageCreated(msg) {
   if (state.user && msg.author === state.user.id) return;
   if (isBlocked(msg.author)) return;
   const viewing = state.view === "server" && state.currentChannel && state.currentChannel.id === msg.channel;
-  const focusedOnIt = viewing && appFocused();
+  const focusedOnIt = viewing && appFocused() && chatPaneShowing();
   const announcement = Boolean(msg.announcement);
   const prefs = notifyPrefs();
   const mentioned = typeof msg.mentioned === "boolean" ? mentionReaches(prefs, msg.server, msg) : messageMentionsMeIn(msg.server, msg.author, msg.content);
@@ -5657,7 +5657,7 @@ function onDmReceived(dm) {
     if (!dm.spam) toast(`Message request from ${dm.name}`);
     return;
   }
-  const viewing = state.view === "dm" && state.currentDm && state.currentDm.user === dm.user;
+  const viewing = state.view === "dm" && state.currentDm && state.currentDm.user === dm.user && chatPaneShowing();
   const focusedOnIt = viewing && appFocused();
   if (!focusedOnIt) {
     unread.dms.set(dm.user, (unread.dms.get(dm.user) || 0) + 1);
@@ -19218,6 +19218,10 @@ function phonePane() {
   return $("app").dataset.pane || "list";
 }
 
+function chatPaneShowing() {
+  return !isPhoneWidth(window.innerWidth) || narrowSplit() || phonePane() !== "list";
+}
+
 function setPhonePane(pane, { fromHistory = false } = {}) {
   if (narrowSplit()) return;
   const was = phonePane();
@@ -23201,6 +23205,7 @@ function wireEvents() {
   $("notify-test").onclick = () =>
     invoke("notify", { title: "Commy", body: "Notifications are working." }).then(() => playSound("message")).catch(e => toast(String(e)));
   window.addEventListener("focus", () => {
+    if (!chatPaneShowing()) return;
     if (state.view === "server" && state.currentChannel) {
       if (readState.held === state.currentChannel.id) return;
       clearChannelUnread(state.currentChannel.id);
