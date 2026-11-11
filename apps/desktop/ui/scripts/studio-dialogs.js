@@ -131,7 +131,13 @@ function dialogStarState(modalId, waiting, problem) {
 
 const STUDIO_KEY_NAMES = ["key", "sm", "sq", "primary"];
 
-function studioKeyNames(classes, roomy) {
+const SLIM_OWN_SHEETS = ["modal-invite-link", "modal-event", "modal-forum-post"];
+
+function dialogDressed(modalId, fit) {
+  return fit !== "slim" || !SLIM_OWN_SHEETS.includes(modalId);
+}
+
+function studioKeyNames(classes, roomy = true) {
   const wanted = roomy ? String(classes || "").split(" ") : [];
   return Object.fromEntries(STUDIO_KEY_NAMES.map(name => [name, wanted.includes(name)]));
 }
@@ -183,7 +189,7 @@ function dialogAnswerClasses(kinds) {
 const DIALOG_KEY_CLASSES = ["key", "cream", "danger", "primary", "third", "out-k"];
 
 function studioDialogDress(modal) {
-  const roomy = document.documentElement.dataset.fit !== "slim";
+  const roomy = dialogDressed(modal.id, document.documentElement.dataset.fit);
   const join = JOIN_DIALOGS.includes(modal.id);
   modal.classList.toggle("dialog", roomy);
   modal.classList.toggle("slab", roomy);
@@ -217,12 +223,9 @@ function studioDialogParts() {
 }
 
 function studioLengthKeys(grid) {
-  const roomy = document.documentElement.dataset.fit !== "slim";
   for (const choice of grid.querySelectorAll(":scope > .timeout-choice")) {
-    const down = roomy && choice.classList.contains("active");
-    for (const name of ["key", "latch"]) {
-      if (choice.classList.contains(name) !== roomy) choice.classList.toggle(name, roomy);
-    }
+    const down = choice.classList.contains("active");
+    for (const name of ["key", "latch"]) studioToggle(choice, name, true);
     if (choice.classList.contains("is-down") !== down) choice.classList.toggle("is-down", down);
     if (!choice.querySelector(":scope > .led")) {
       const led = document.createElement("i");
@@ -237,15 +240,14 @@ function studioToggle(node, name, on) {
 }
 
 function studioPeopleRows(list) {
-  const roomy = document.documentElement.dataset.fit !== "slim";
   for (const row of list.querySelectorAll(":scope > .person-row")) {
     const chip = row.querySelector(":scope > .server-chip");
     if (chip && row.dataset.server && typeof serverTint === "function") chip.style.setProperty("--server-tint", serverTint(row.dataset.server));
-    if (row.classList.contains("new-group") && roomy && typeof studioIconMarkup === "function" && !row.querySelector(":scope > .go")) row.insertAdjacentHTML("beforeend", studioIconMarkup("chevron-right", "go"));
+    if (row.classList.contains("new-group") && typeof studioIconMarkup === "function" && !row.querySelector(":scope > .go")) row.insertAdjacentHTML("beforeend", studioIconMarkup("chevron-right", "go"));
     const pick = row.querySelector(":scope > .pick");
-    if (pick && roomy && typeof studioIconMarkup === "function" && !pick.querySelector(".i")) pick.insertAdjacentHTML("afterbegin", studioIconMarkup("check", "tick"));
+    if (pick && typeof studioIconMarkup === "function" && !pick.querySelector(".i")) pick.insertAdjacentHTML("afterbegin", studioIconMarkup("check", "tick"));
     for (const button of row.querySelectorAll(":scope > button")) {
-      const kind = roomy ? inviteRowKey(button.textContent, button.disabled) : "";
+      const kind = inviteRowKey(button.textContent, button.disabled);
       studioToggle(button, "key", kind === "key sm");
       studioToggle(button, "sm", kind === "key sm");
       studioToggle(button, "sent", kind === "sent");
@@ -263,20 +265,19 @@ function studioFieldIcon(input, icon = "search", kind = "dfind") {
   wrap.appendChild(input);
 }
 
-function studioKeyDress(button, classes, roomy) {
+function studioKeyDress(button, classes, roomy = true) {
   for (const [name, on] of Object.entries(studioKeyNames(classes, roomy))) studioToggle(button, name, on);
 }
 
 function studioMakingKeys() {
-  const roomy = document.documentElement.dataset.fit !== "slim";
   for (const [id, classes] of Object.entries(MAKING_KEYS)) {
     const key = document.getElementById(id);
-    if (key) studioKeyDress(key, classes, roomy);
+    if (key) studioKeyDress(key, classes);
   }
   for (const [id, selector, classes] of MAKING_ROW_KEYS) {
     const list = document.getElementById(id);
     if (!list) continue;
-    for (const key of list.querySelectorAll(selector)) studioKeyDress(key, classes, roomy);
+    for (const key of list.querySelectorAll(selector)) studioKeyDress(key, classes);
   }
 }
 
@@ -306,11 +307,10 @@ function studioMakingParts() {
 }
 
 function studioLatchRow(row) {
-  const roomy = document.documentElement.dataset.fit !== "slim";
   for (const choice of row.querySelectorAll(":scope > button")) {
-    studioToggle(choice, "key", roomy);
-    studioToggle(choice, "latch", roomy);
-    studioToggle(choice, "is-down", roomy && choice.classList.contains("active"));
+    studioToggle(choice, "key", true);
+    studioToggle(choice, "latch", true);
+    studioToggle(choice, "is-down", choice.classList.contains("active"));
     if (!choice.querySelector(":scope > .led")) {
       const led = document.createElement("i");
       led.className = "led";
@@ -320,7 +320,7 @@ function studioLatchRow(row) {
 }
 
 function studioServerParts() {
-  if (document.documentElement.dataset.fit === "slim" || typeof studioIconMarkup !== "function") return;
+  if (typeof studioIconMarkup !== "function") return;
   for (const row of document.querySelectorAll("#server-notify-levels > .notify-level, #join-sound-list > .notify-level")) {
     if (!row.querySelector(":scope > .tick")) row.insertAdjacentHTML("beforeend", studioIconMarkup("check", "tick"));
   }
@@ -330,7 +330,7 @@ function studioServerParts() {
 }
 
 function studioSigninStar(modal) {
-  if (document.documentElement.dataset.fit === "slim" || !["modal-signin", "modal-claim"].includes(modal.id)) return;
+  if (!["modal-signin", "modal-claim"].includes(modal.id)) return;
   let art = modal.querySelector(":scope > .dstar");
   if (!art) {
     art = document.createElement("span");
@@ -352,32 +352,29 @@ function studioSigninStar(modal) {
 }
 
 function studioSigninParts() {
-  const roomy = document.documentElement.dataset.fit !== "slim";
   for (const [id, classes] of Object.entries(SIGNIN_KEYS)) {
     const key = document.getElementById(id);
-    if (key) studioKeyDress(key, classes, roomy);
+    if (key) studioKeyDress(key, classes);
   }
   for (const modal of ["modal-signin", "modal-claim"].map(id => document.getElementById(id)).filter(Boolean)) studioSigninStar(modal);
-  if (!roomy || typeof studioIconMarkup !== "function") return;
+  if (typeof studioIconMarkup !== "function") return;
   for (const box of SIGNIN_ERRORS.map(id => document.getElementById(id)).filter(Boolean)) {
     if (box.textContent.trim() && !box.querySelector(":scope > .i")) box.insertAdjacentHTML("afterbegin", studioIconMarkup("circle-alert"));
   }
 }
 
 function studioInviteParts() {
-  const roomy = document.documentElement.dataset.fit !== "slim";
   for (const row of LATCH_ROWS.map(id => document.getElementById(id)).filter(Boolean)) studioLatchRow(row);
   for (const [id, classes] of Object.entries(INVITE_KEYS)) {
     const key = document.getElementById(id);
-    if (key) studioKeyDress(key, classes, roomy);
+    if (key) studioKeyDress(key, classes);
   }
 }
 
 function studioLeavingTitle(modal) {
   const title = modal.querySelector(":scope > h2");
   if (!title) return;
-  const roomy = document.documentElement.dataset.fit !== "slim";
-  const name = roomy ? leavingTitleIcon(modal.classList) : null;
+  const name = leavingTitleIcon(modal.classList);
   const icon = title.querySelector(":scope > .i");
   if (icon && (!name || icon.dataset.icon !== name)) icon.remove();
   if (name && typeof studioIconMarkup === "function" && !title.querySelector(":scope > .i")) title.insertAdjacentHTML("afterbegin", studioIconMarkup(name));
@@ -388,7 +385,7 @@ function dialogJustOpened(oldClasses, hiddenNow) {
 }
 
 function studioJoinParts(modal) {
-  if (modal.classList.contains("hidden") || document.documentElement.dataset.fit === "slim") return;
+  if (modal.classList.contains("hidden")) return;
   const icon = modal.querySelector(".sw-icon");
   if (icon) {
     const current = typeof state !== "undefined" && state.currentServer ? state.currentServer.id : null;
@@ -472,4 +469,5 @@ function studioDialogs() {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS, SIGNIN_DIALOGS, SIGNIN_KEYS, SIGNIN_ERRORS, dialogStarState };
+  Object.assign(module.exports, { SLIM_OWN_SHEETS, dialogDressed });
 }

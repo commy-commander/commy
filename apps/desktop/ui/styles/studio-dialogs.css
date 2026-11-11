@@ -8,35 +8,35 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog {
   color: var(--text-normal);
   overflow: visible;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > h2 {
+html[data-look="studio"] .modal.dialog > h2 {
   margin: 0;
   color: var(--header-primary);
   font: 700 21px/1.2 var(--font-display);
   letter-spacing: -.015em;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > h2 + * { margin-top: -4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > p,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-account-step > p,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-lines,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-list {
+html[data-look="studio"] .modal.dialog > h2 + * { margin-top: -4px; }
+html[data-look="studio"] .modal.dialog > p,
+html[data-look="studio"] .modal.dialog > .delete-account-step > p,
+html[data-look="studio"] .modal.dialog > .danger-callout,
+html[data-look="studio"] .modal.dialog > .modal-lines,
+html[data-look="studio"] .modal.dialog > .modal-list {
   color: var(--text-normal);
   font: 400 15px/1.45 var(--font);
   text-wrap: pretty;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > p:empty { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-account-step {
+html[data-look="studio"] .modal.dialog > p:empty { display: none; }
+html[data-look="studio"] .modal.dialog > .delete-account-step {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-account-step.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .setting-sub {
+html[data-look="studio"] .modal.dialog > .delete-account-step.hidden { display: none; }
+html[data-look="studio"] .modal.dialog .setting-sub {
   margin: 0;
   color: var(--text-muted);
   font: 400 13px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .field-label {
+html[data-look="studio"] .modal.dialog .field-label {
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -47,8 +47,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .field-label {
   text-transform: none;
   text-indent: 16px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .field-label > * { text-indent: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea) {
+html[data-look="studio"] .modal.dialog .field-label > * { text-indent: 0; }
+html[data-look="studio"] .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea) {
   width: 100%;
   height: 46px;
   padding: 0 18px;
@@ -61,8 +61,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input[type=
   font: 400 15px/1 var(--font);
   transition: box-shadow var(--t-hover) var(--ease-out);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog textarea,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > #report-note {
+html[data-look="studio"] .modal.dialog textarea,
+html[data-look="studio"] .modal.dialog > #report-note {
   width: 100%;
   min-height: 0;
   border: 0;
@@ -76,9 +76,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > #report-note {
   border-radius: var(--radius-lg);
   line-height: 1.45;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input, textarea)::placeholder { color: var(--text-muted); opacity: 1; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea):hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea):focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"] .modal.dialog :where(input, textarea)::placeholder { color: var(--text-muted); opacity: 1; }
+html[data-look="studio"] .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea):hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
+html[data-look="studio"] .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea):focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
 
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-actions.answers {
   position: absolute;
@@ -90,9 +90,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-actions.a
   margin: 0;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .answers > .key.third { order: -1; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .answers > .key:disabled { opacity: 1; }
+html[data-look="studio"] .modal.dialog > .answers > .key:disabled { opacity: 1; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout {
+html[data-look="studio"] .modal.dialog > .danger-callout {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: start;
@@ -104,20 +104,20 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout 
   box-shadow: var(--slot);
   font: 400 14px/1.4 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout > .i {
+html[data-look="studio"] .modal.dialog > .danger-callout > .i {
   grid-row: 1 / span 2;
   width: 18px;
   height: 18px;
   margin-top: 1px;
   color: var(--danger-text);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout > strong {
+html[data-look="studio"] .modal.dialog > .danger-callout > strong {
   color: var(--header-primary);
   font-weight: 600;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .confirm-name { color: var(--header-primary); }
+html[data-look="studio"] .modal.dialog .confirm-name { color: var(--header-primary); }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt {
+html[data-look="studio"] .modal.dialog > .tray-opt {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -128,27 +128,27 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt {
   border-radius: 0;
   background: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt + .tray-opt {
+html[data-look="studio"] .modal.dialog > .tray-opt + .tray-opt {
   margin-top: -12px;
   box-shadow: inset 0 1px 0 var(--line);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt > div {
+html[data-look="studio"] .modal.dialog > .tray-opt > div {
   display: grid;
   flex: 1;
   min-width: 0;
   gap: 4px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt .setting-title {
+html[data-look="studio"] .modal.dialog > .tray-opt .setting-title {
   color: var(--header-primary);
   font: 600 14.5px/1.2 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt .setting-sub { font: 400 12.5px/1.35 var(--font); }
+html[data-look="studio"] .modal.dialog > .tray-opt .setting-sub { font: 400 12.5px/1.35 var(--font); }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons {
+html[data-look="studio"] .modal.dialog > .report-reasons {
   gap: 0;
   margin: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label {
+html[data-look="studio"] .modal.dialog > .report-reasons > label {
   position: relative;
   display: flex;
   align-items: center;
@@ -164,7 +164,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons 
   transition: background var(--t-hover) var(--ease-out);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:hover { background: var(--bg-hover); color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label > input {
+html[data-look="studio"] .modal.dialog > .report-reasons > label > input {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -173,22 +173,22 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons 
   opacity: 0;
   cursor: pointer;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:has(> input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label > .tick {
+html[data-look="studio"] .modal.dialog > .report-reasons > label:has(> input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 0; }
+html[data-look="studio"] .modal.dialog > .report-reasons > label > .tick {
   width: 15px;
   height: 15px;
   margin-left: auto;
   color: var(--accent-lit);
   opacity: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:has(> input:checked) {
+html[data-look="studio"] .modal.dialog > .report-reasons > label:has(> input:checked) {
   background: var(--bg-active);
   color: var(--header-primary);
   font-weight: 600;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:has(> input:checked) > .tick { opacity: 1; }
+html[data-look="studio"] .modal.dialog > .report-reasons > label:has(> input:checked) > .tick { opacity: 1; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-also-block {
+html[data-look="studio"] .modal.dialog > .report-also-block {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -198,10 +198,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-also-blo
   font: 600 14.5px/1.2 var(--font);
   cursor: pointer;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-also-block > span { flex: 1; min-width: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-also-block > input { flex: none; order: 1; margin: 0; }
+html[data-look="studio"] .modal.dialog > .report-also-block > span { flex: 1; min-width: 0; }
+html[data-look="studio"] .modal.dialog > .report-also-block > input { flex: none; order: 1; margin: 0; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview {
+html[data-look="studio"] .modal.dialog > .delete-preview {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -211,34 +211,34 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview 
   background: var(--input-bg);
   box-shadow: var(--slot);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview:empty { display: none; }
+html[data-look="studio"] .modal.dialog > .delete-preview:empty { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview:hover { background: var(--input-bg); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview > .avatar {
+html[data-look="studio"] .modal.dialog > .delete-preview > .avatar {
   flex: none;
   width: 32px;
   height: 32px;
   font-size: 12px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-body {
+html[data-look="studio"] .modal.dialog > .delete-preview .msg-body {
   display: grid;
   flex: 1;
   min-width: 0;
   gap: 3px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-head {
+html[data-look="studio"] .modal.dialog > .delete-preview .msg-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-author {
+html[data-look="studio"] .modal.dialog > .delete-preview .msg-author {
   color: var(--header-primary);
   font: 600 14px/1.2 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-time {
+html[data-look="studio"] .modal.dialog > .delete-preview .msg-time {
   color: var(--text-muted);
   font: 400 12px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-content {
+html[data-look="studio"] .modal.dialog > .delete-preview .msg-content {
   overflow: hidden;
   color: var(--text-normal);
   font: 400 14px/1.4 var(--font);
@@ -247,32 +247,29 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview 
   -webkit-box-orient: vertical;
 }
 
-html[data-look="studio"][data-fit="slim"] .danger-callout > .i,
-html[data-look="studio"][data-fit="slim"] .report-reasons > label > .tick { display: none; }
-
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join { width: min(440px, calc(100vw - 48px)); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.modal-wide.dialog.join { width: min(560px, calc(100vw - 48px)); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > p { font-size: 14.5px; }
+html[data-look="studio"] .modal.dialog.join > p { font-size: 14.5px; }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .modal-actions.answers.spread { left: 24px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.quiet > .answers > .key:focus-visible { outline: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .answers > .key.out-k {
+html[data-look="studio"] .modal.dialog.quiet > .answers > .key:focus-visible { outline: 0; }
+html[data-look="studio"] .modal.dialog.join > .answers > .key.out-k {
   margin-right: auto;
   color: var(--danger-text);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-head {
+html[data-look="studio"] .modal.dialog.join .sw-head {
   display: flex;
   align-items: center;
   gap: 14px;
   margin: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles {
+html[data-look="studio"] .modal.dialog.join .sw-titles {
   display: grid;
   flex: 1;
   min-width: 0;
   gap: 6px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles > h2 {
+html[data-look="studio"] .modal.dialog.join .sw-titles > h2 {
   margin: 0;
   overflow: visible;
   white-space: normal;
@@ -281,13 +278,13 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles > 
   font: 700 21px/1.2 var(--font-display);
   letter-spacing: -.015em;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles > p {
+html[data-look="studio"] .modal.dialog.join .sw-titles > p {
   margin: 0;
   color: var(--text-muted);
   font: 400 14px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-titles > p:empty { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon {
+html[data-look="studio"] .modal.dialog.join .sw-titles > p:empty { display: none; }
+html[data-look="studio"] .modal.dialog.join .sw-icon {
   position: relative;
   isolation: isolate;
   flex: none;
@@ -305,7 +302,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon {
   letter-spacing: 0;
   cursor: default;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon::before {
+html[data-look="studio"] .modal.dialog.join .sw-icon::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -314,16 +311,16 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon::bef
   background: var(--pillow-top), color-mix(in srgb, var(--server-tint, var(--accent)) 26%, var(--bg-raised));
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon:hover { color: color-mix(in srgb, var(--server-tint, var(--accent)) 45%, var(--white)); filter: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon.has-image::before { background: var(--bg-raised); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-icon.has-image img {
+html[data-look="studio"] .modal.dialog.join .sw-icon.has-image::before { background: var(--bg-raised); }
+html[data-look="studio"] .modal.dialog.join .sw-icon.has-image img {
   width: 100%;
   height: 100%;
   border-radius: 50%;
   object-fit: cover;
 }
-html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog.join .sw-icon,
-html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog.join .sw-icon:hover { color: color-mix(in srgb, var(--server-tint, var(--accent)) 50%, var(--ink-strong)); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-join-wait:has(#join-wait-send:not(.hidden)) #join-wait-icon::after {
+html[data-look="studio"][data-theme="light"] .modal.dialog.join .sw-icon,
+html[data-look="studio"][data-theme="light"] .modal.dialog.join .sw-icon:hover { color: color-mix(in srgb, var(--server-tint, var(--accent)) 50%, var(--ink-strong)); }
+html[data-look="studio"] .modal.dialog.join#modal-join-wait:has(#join-wait-send:not(.hidden)) #join-wait-icon::after {
   content: "";
   position: absolute;
   right: -3px;
@@ -336,9 +333,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-join-wa
 }
 
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero { padding-top: 26px; overflow: visible; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link .sw-head { margin-bottom: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) {
+html[data-look="studio"] .modal.dialog.join#modal-invite-link .sw-head { margin-bottom: 0; }
+html[data-look="studio"] .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero,
+html[data-look="studio"] .modal.dialog.join > .si-banner:not(.hidden) {
   position: relative;
   display: block;
   height: 112px;
@@ -350,14 +347,14 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:
   -webkit-mask-image: linear-gradient(rgb(0 0 0) 60%, transparent);
   mask-image: linear-gradient(rgb(0 0 0) 60%, transparent);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero::after { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero + .sw-head,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) + .sw-head {
+html[data-look="studio"] .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero::after { display: none; }
+html[data-look="studio"] .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero + .sw-head,
+html[data-look="studio"] .modal.dialog.join > .si-banner:not(.hidden) + .sw-head {
   position: relative;
   margin-top: -48px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero .sw-icon,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) + .sw-head .sw-icon {
+html[data-look="studio"] .modal.dialog.join#modal-invite-link.has-hero .sw-icon,
+html[data-look="studio"] .modal.dialog.join > .si-banner:not(.hidden) + .sw-head .sw-icon {
   width: 64px;
   height: 64px;
   margin-top: 0;
@@ -365,7 +362,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:
   font-size: 19px;
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .invite-link-warning {
+html[data-look="studio"] .modal.dialog.join > .invite-link-warning {
   display: flex;
   align-items: flex-start;
   gap: 12px;
@@ -378,8 +375,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .invite-lin
   color: var(--text-normal);
   font: 400 14px/1.5 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .invite-link-warning.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .invite-link-warning > .i {
+html[data-look="studio"] .modal.dialog.join > .invite-link-warning.hidden { display: none; }
+html[data-look="studio"] .modal.dialog.join > .invite-link-warning > .i {
   flex: none;
   width: 18px;
   height: 18px;
@@ -387,8 +384,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .invite-lin
   color: var(--danger-text);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules-text {
+html[data-look="studio"] .modal.dialog.join .rules-body,
+html[data-look="studio"] .modal.dialog.join .join-wait-rules-text {
   max-height: 220px;
   margin: 0;
   padding: 14px 16px;
@@ -401,32 +398,32 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-ru
   font: 400 14px/1.5 var(--font);
   white-space: pre-wrap;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body { white-space: normal; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules-text,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #si-rules { max-height: 132px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body :where(h1, h2, h3, h4) {
+html[data-look="studio"] .modal.dialog.join .rules-body { white-space: normal; }
+html[data-look="studio"] .modal.dialog.join .join-wait-rules-text,
+html[data-look="studio"] .modal.dialog.join #si-rules { max-height: 132px; }
+html[data-look="studio"] .modal.dialog.join .rules-body :where(h1, h2, h3, h4) {
   margin: 0 0 6px;
   color: var(--header-primary);
   font: 700 16px/1.3 var(--font-display);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body :where(ol, ul) { margin: 0; padding-left: 20px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body li + li { margin-top: 2px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body strong { color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .rules-body a { color: var(--link); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-note-wrap,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-section {
+html[data-look="studio"] .modal.dialog.join .rules-body :where(ol, ul) { margin: 0; padding-left: 20px; }
+html[data-look="studio"] .modal.dialog.join .rules-body li + li { margin-top: 2px; }
+html[data-look="studio"] .modal.dialog.join .rules-body strong { color: var(--header-primary); }
+html[data-look="studio"] .modal.dialog.join .rules-body a { color: var(--link); }
+html[data-look="studio"] .modal.dialog.join .join-wait-rules,
+html[data-look="studio"] .modal.dialog.join .join-wait-note-wrap,
+html[data-look="studio"] .modal.dialog.join .si-section {
   display: flex;
   flex-direction: column;
   gap: 7px;
   margin-top: 4px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules.hidden,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-note-wrap.hidden,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-section.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-rules > .field-label,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .join-wait-note-wrap > .field-label,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-label {
+html[data-look="studio"] .modal.dialog.join .join-wait-rules.hidden,
+html[data-look="studio"] .modal.dialog.join .join-wait-note-wrap.hidden,
+html[data-look="studio"] .modal.dialog.join .si-section.hidden { display: none; }
+html[data-look="studio"] .modal.dialog.join .join-wait-rules > .field-label,
+html[data-look="studio"] .modal.dialog.join .join-wait-note-wrap > .field-label,
+html[data-look="studio"] .modal.dialog.join .si-label {
   margin: 0;
   color: var(--text-muted);
   font: 600 13px/13px var(--font);
@@ -434,7 +431,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-label {
   text-transform: none;
   text-indent: 16px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #join-wait-note {
+html[data-look="studio"] .modal.dialog.join #join-wait-note {
   width: 100%;
   min-height: 0;
   height: auto;
@@ -447,15 +444,15 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #join-wait-no
   font: 400 14.5px/20px var(--font);
   resize: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #join-wait-note:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"] .modal.dialog.join #join-wait-note:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps {
+html[data-look="studio"] .modal.dialog.join #sw-steps {
   display: flex;
   gap: 8px;
   margin: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step {
+html[data-look="studio"] .modal.dialog.join #sw-steps.hidden { display: none; }
+html[data-look="studio"] .modal.dialog.join #sw-steps > .sw-step {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -469,7 +466,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .
   letter-spacing: 0;
   text-transform: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step > b {
+html[data-look="studio"] .modal.dialog.join #sw-steps > .sw-step > b {
   display: grid;
   place-items: center;
   width: 20px;
@@ -478,34 +475,34 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .
   background: rgb(var(--lamp) / .08);
   font: 600 11.5px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step > .i { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.active {
+html[data-look="studio"] .modal.dialog.join #sw-steps > .sw-step > .i { display: none; }
+html[data-look="studio"] .modal.dialog.join #sw-steps > .sw-step.active {
   color: var(--header-primary);
   outline: var(--ring-on);
   outline-offset: -2px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.active > b {
+html[data-look="studio"] .modal.dialog.join #sw-steps > .sw-step.active > b {
   background: var(--accent);
   color: var(--accent-ink);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.done { padding-left: 10px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.done > b { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #sw-steps > .sw-step.done > .i {
+html[data-look="studio"] .modal.dialog.join #sw-steps > .sw-step.done { padding-left: 10px; }
+html[data-look="studio"] .modal.dialog.join #sw-steps > .sw-step.done > b { display: none; }
+html[data-look="studio"] .modal.dialog.join #sw-steps > .sw-step.done > .i {
   display: block;
   width: 16px;
   height: 16px;
   color: var(--text-muted);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps {
+html[data-look="studio"] .modal.dialog.join #ob-steps {
   order: 1;
   display: flex;
   justify-content: center;
   gap: 7px;
   margin: 4px 0 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps > .sw-step {
+html[data-look="studio"] .modal.dialog.join #ob-steps.hidden { display: none; }
+html[data-look="studio"] .modal.dialog.join #ob-steps > .sw-step {
   width: 7px;
   height: 7px;
   padding: 0;
@@ -517,47 +514,47 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps > .
   font-size: 0;
   opacity: .6;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join #ob-steps > .sw-step.active {
+html[data-look="studio"] .modal.dialog.join #ob-steps > .sw-step.active {
   width: 20px;
   border-radius: 4px;
   background: var(--accent-lit);
   opacity: 1;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .ob-questions {
+html[data-look="studio"] .modal.dialog.join > .ob-questions {
   gap: 18px;
   margin-top: 4px;
   padding: 2px;
   margin-inline: -2px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-question { gap: 10px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-question-title {
+html[data-look="studio"] .modal.dialog.join .ob-question { gap: 10px; }
+html[data-look="studio"] .modal.dialog.join .ob-question-title {
   color: var(--header-primary);
   font: 600 15px/1.3 var(--font);
   letter-spacing: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-question-sub {
+html[data-look="studio"] .modal.dialog.join .ob-question-sub {
   margin-top: -6px;
   color: var(--text-muted);
   font: 400 13px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answers,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick-list {
+html[data-look="studio"] .modal.dialog.join .ob-answers,
+html[data-look="studio"] .modal.dialog.join .role-pick-list {
   display: grid;
   gap: 6px;
   margin: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-roles {
+html[data-look="studio"] .modal.dialog.join .sw-roles {
   display: grid;
   gap: 14px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-roles.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .sw-roles-hint {
+html[data-look="studio"] .modal.dialog.join .sw-roles.hidden { display: none; }
+html[data-look="studio"] .modal.dialog.join .sw-roles-hint {
   margin: 0;
   color: var(--text-normal);
   font: 400 14.5px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick {
+html[data-look="studio"] .modal.dialog.join .ob-answer,
+html[data-look="studio"] .modal.dialog.join .role-pick {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -576,37 +573,37 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick {
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer:hover,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick:hover { background: rgb(var(--lamp) / .06); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer.picked,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick.held {
+html[data-look="studio"] .modal.dialog.join .ob-answer.picked,
+html[data-look="studio"] .modal.dialog.join .role-pick.held {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 1.5px var(--accent-lit);
   color: var(--header-primary);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick.has-banner {
+html[data-look="studio"] .modal.dialog.join .role-pick.has-banner {
   height: auto;
   padding: 48px 16px 13px;
   border-radius: 18px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick.has-banner > .role-pick-banner {
+html[data-look="studio"] .modal.dialog.join .role-pick.has-banner > .role-pick-banner {
   height: 38px;
   -webkit-mask-image: linear-gradient(rgb(0 0 0) 45%, transparent);
   mask-image: linear-gradient(rgb(0 0 0) 45%, transparent);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer-label,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick-name {
+html[data-look="studio"] .modal.dialog.join .ob-answer-label,
+html[data-look="studio"] .modal.dialog.join .role-pick-name {
   flex: 1;
   min-width: 0;
   font-weight: 500;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick > .role-dot {
+html[data-look="studio"] .modal.dialog.join .role-pick > .role-dot {
   flex: none;
   width: 10px;
   height: 10px;
   margin: 0;
   border-radius: 50%;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-check,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick > .role-pick-check {
+html[data-look="studio"] .modal.dialog.join .ob-check,
+html[data-look="studio"] .modal.dialog.join .role-pick > .role-pick-check {
   order: 1;
   display: grid;
   place-items: center;
@@ -619,28 +616,28 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick > 
   color: var(--accent-lit);
   opacity: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-check > svg,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick > .role-pick-check > svg {
+html[data-look="studio"] .modal.dialog.join .ob-check > svg,
+html[data-look="studio"] .modal.dialog.join .role-pick > .role-pick-check > svg {
   width: 18px;
   height: 18px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .ob-answer.picked > .ob-check,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .role-pick.held > .role-pick-check {
+html[data-look="studio"] .modal.dialog.join .ob-answer.picked > .ob-check,
+html[data-look="studio"] .modal.dialog.join .role-pick.held > .role-pick-check {
   background: none;
   color: var(--accent-lit);
   opacity: 1;
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-games,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-roles {
+html[data-look="studio"] .modal.dialog.join > .si-games,
+html[data-look="studio"] .modal.dialog.join .si-roles {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-games.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-games > .game-chip,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-role {
+html[data-look="studio"] .modal.dialog.join > .si-games.hidden { display: none; }
+html[data-look="studio"] .modal.dialog.join > .si-games > .game-chip,
+html[data-look="studio"] .modal.dialog.join .si-role {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -652,20 +649,16 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-role {
   color: var(--text-normal);
   font: 500 13px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join .si-role > .role-dot {
+html[data-look="studio"] .modal.dialog.join .si-role > .role-dot {
   width: 9px;
   height: 9px;
   margin: 0;
   border-radius: 50%;
 }
 
-html[data-look="studio"][data-fit="slim"] .invite-link-warning > .i,
-html[data-look="studio"][data-fit="slim"] #sw-steps > .sw-step > b,
-html[data-look="studio"][data-fit="slim"] #sw-steps > .sw-step > .i { display: none; }
-
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-moderate,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving { width: min(440px, calc(100vw - 48px)); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .mod-who {
+html[data-look="studio"] .modal.dialog > .mod-who {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -677,20 +670,20 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .mod-who {
   color: var(--header-primary);
   font: 600 15px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .mod-who > .avatar {
+html[data-look="studio"] .modal.dialog > .mod-who > .avatar {
   flex: none;
   width: 32px;
   height: 32px;
   font-size: 12px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices {
+html[data-look="studio"] .modal.dialog > .timeout-choices {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices > .key.latch {
+html[data-look="studio"] .modal.dialog > .timeout-choices.hidden { display: none; }
+html[data-look="studio"] .modal.dialog > .timeout-choices > .key.latch {
   position: relative;
   justify-content: center;
   height: 40px;
@@ -698,15 +691,15 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices
   border: 0;
   font-size: 13.5px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices > .key.latch > .led { background: var(--text-faint); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .timeout-choices > .key.latch:not(.is-down) { color: var(--k-ink, var(--text-normal)); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-moderate > p {
+html[data-look="studio"] .modal.dialog > .timeout-choices > .key.latch > .led { background: var(--text-faint); }
+html[data-look="studio"] .modal.dialog > .timeout-choices > .key.latch:not(.is-down) { color: var(--k-ink, var(--text-normal)); }
+html[data-look="studio"] .modal.dialog.modal-moderate > p {
   margin: 0;
   color: var(--text-normal);
   font: 400 14.5px/1.45 var(--font);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch {
+html[data-look="studio"] .modal.dialog input.switch {
   width: 48px;
   height: 28px;
   border-radius: var(--radius-pill);
@@ -714,7 +707,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch {
   box-shadow: inset 0 1px 2px rgb(var(--dark) / .9), 0 1px 0 rgb(var(--lamp) / .14);
   transition: background var(--t-hover) var(--ease-out);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch::after {
+html[data-look="studio"] .modal.dialog input.switch::after {
   top: 3px;
   left: 3px;
   width: 22px;
@@ -724,36 +717,36 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch::afte
   box-shadow: inset 0 1px 1px rgb(var(--lamp) / .25), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .5);
   transition: translate 180ms var(--ease-spring), background var(--t-hover);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch:checked {
+html[data-look="studio"] .modal.dialog input.switch:checked {
   background: var(--accent);
   box-shadow: inset 0 1px 2px rgb(var(--dark) / .5), 0 1px 0 rgb(var(--lamp) / .14);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch:checked::after {
+html[data-look="studio"] .modal.dialog input.switch:checked::after {
   left: 3px;
   translate: 20px 0;
   background: linear-gradient(180deg, var(--white), var(--star));
   box-shadow: inset 0 -3px 4px -2px rgb(var(--dark) / .2), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .45);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog input.switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+html[data-look="studio"] .modal.dialog input.switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving { border: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving > h2 {
+html[data-look="studio"] .modal.dialog.modal-leaving { border: 0; }
+html[data-look="studio"] .modal.dialog.modal-leaving > h2 {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving > h2 > .i {
+html[data-look="studio"] .modal.dialog.modal-leaving > h2 > .i {
   flex: none;
   width: 20px;
   height: 20px;
   color: var(--danger-text);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.modal-leaving > p {
+html[data-look="studio"] .modal.dialog.modal-leaving > p {
   margin: 0;
   color: var(--text-normal);
   font: 400 14.5px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-host {
+html[data-look="studio"] .modal.dialog > .leaving-host {
   margin: 0;
   padding: 12px 18px;
   border: 0;
@@ -764,32 +757,32 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-host {
   font: 400 15px/1.2 var(--font-mono);
   overflow-wrap: anywhere;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-host > strong {
+html[data-look="studio"] .modal.dialog > .leaving-host > strong {
   color: var(--header-primary);
   font-weight: 700;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-spelled {
+html[data-look="studio"] .modal.dialog > .leaving-spelled {
   margin: -4px 0 0 18px;
   color: var(--text-muted);
   font: 400 12.5px/1.3 var(--font-mono);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-spelled.hidden,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes.hidden,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes {
+html[data-look="studio"] .modal.dialog > .leaving-spelled.hidden,
+html[data-look="studio"] .modal.dialog > .leaving-notes.hidden,
+html[data-look="studio"] .modal.dialog > .leaving-trust.hidden { display: none; }
+html[data-look="studio"] .modal.dialog > .leaving-notes {
   display: grid;
   gap: 8px;
   margin: 2px 0 0;
   padding: 0;
   list-style: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes > li {
+html[data-look="studio"] .modal.dialog > .leaving-notes > li {
   position: relative;
   padding-left: 20px;
   color: var(--text-normal);
   font: 400 14px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes > li::before {
+html[data-look="studio"] .modal.dialog > .leaving-notes > li::before {
   content: "";
   position: absolute;
   left: 4px;
@@ -799,7 +792,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-notes >
   border-radius: 50%;
   background: var(--danger-text);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust {
+html[data-look="studio"] .modal.dialog > .leaving-trust {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -809,11 +802,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust {
   font: 500 14px/1.2 var(--font);
   cursor: pointer;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust > span { flex: 1; min-width: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .leaving-trust > input { flex: none; order: 1; margin: 0; }
-
-html[data-look="studio"][data-fit="slim"] .modal-leaving > h2 > .i,
-html[data-look="studio"][data-fit="slim"] .timeout-choice > .led { display: none; }
+html[data-look="studio"] .modal.dialog > .leaving-trust > span { flex: 1; min-width: 0; }
+html[data-look="studio"] .modal.dialog > .leaving-trust > input { flex: none; order: 1; margin: 0; }
 
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-invite { width: min(560px, calc(100vw - 48px)); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-forward,
@@ -822,31 +812,31 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-new-dm,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group { width: min(440px, calc(100vw - 48px)); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-invite,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-new-dm { padding-bottom: 26px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > p,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .setting-sub { margin: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-voice-invite > .setting-sub,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-new-dm > p,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > p {
+html[data-look="studio"] .modal.dialog > p,
+html[data-look="studio"] .modal.dialog > .setting-sub { margin: 0; }
+html[data-look="studio"] .modal.dialog#modal-voice-invite > .setting-sub,
+html[data-look="studio"] .modal.dialog#modal-new-dm > p,
+html[data-look="studio"] .modal.dialog#modal-group > p {
   color: var(--text-normal);
   font: 400 14.5px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-invite > p {
+html[data-look="studio"] .modal.dialog#modal-invite > p {
   margin-top: -6px;
   color: var(--text-muted);
   font: 400 14px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .voice-invite-where {
+html[data-look="studio"] .modal.dialog > .voice-invite-where {
   margin-top: -6px;
   color: var(--header-primary);
   font: 600 14px/1.35 var(--font);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .dfind {
+html[data-look="studio"] .modal.dialog > .dfind {
   position: relative;
   display: block;
   margin-top: 4px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .dfind > .i {
+html[data-look="studio"] .modal.dialog > .dfind > .i {
   position: absolute;
   top: 50%;
   left: 18px;
@@ -857,9 +847,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .dfind > .i {
   color: var(--text-muted);
   pointer-events: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .dfind > input { padding-left: 44px; }
+html[data-look="studio"] .modal.dialog > .dfind > input { padding-left: 44px; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list {
+html[data-look="studio"] .modal.dialog > .people-list {
   display: grid;
   gap: 2px;
   max-height: 284px;
@@ -869,8 +859,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list {
   background: none;
   border: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list.invite-people { max-height: 168px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row {
+html[data-look="studio"] .modal.dialog > .people-list.invite-people { max-height: 168px; }
+html[data-look="studio"] .modal.dialog > .people-list > .person-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -887,16 +877,16 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > button.person-row:hover { background: rgb(var(--lamp) / .06); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .invite-person:hover { background: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .avatar,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .server-chip {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .avatar,
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .server-chip {
   flex: none;
   width: 36px;
   height: 36px;
   margin: 0;
   font-size: 12px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row .presence-dot { border-color: var(--bg-dark); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .server-chip {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row .presence-dot { border-color: var(--bg-dark); }
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .server-chip {
   display: grid;
   place-items: center;
   border: 0;
@@ -906,47 +896,47 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .
   color: color-mix(in srgb, var(--server-tint, var(--accent)) 45%, var(--white));
   font: 700 12px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog > .people-list > .person-row > .server-chip { color: color-mix(in srgb, var(--server-tint, var(--accent)) 50%, var(--ink-strong)); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .group-avatar {
+html[data-look="studio"][data-theme="light"] .modal.dialog > .people-list > .person-row > .server-chip { color: color-mix(in srgb, var(--server-tint, var(--accent)) 50%, var(--ink-strong)); }
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .group-avatar {
   display: grid;
   place-items: center;
   border-radius: 50%;
   background: var(--bg-active);
   color: var(--header-primary);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .group-avatar > svg {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .group-avatar > svg {
   width: 18px;
   height: 18px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .dm-meta {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .dm-meta {
   display: grid;
   flex: 1;
   min-width: 0;
   gap: 3px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row .dm-name {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row .dm-name {
   overflow: hidden;
   color: var(--header-primary);
   font: 600 15px/1.2 var(--font);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row .dm-preview {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row .dm-preview {
   overflow: hidden;
   color: var(--text-muted);
   font: 400 13px/1.2 var(--font);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row .dm-preview:empty { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .go {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row .dm-preview:empty { display: none; }
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .go {
   flex: none;
   width: 16px;
   height: 16px;
   color: var(--text-muted);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .key.sm { flex: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .sent {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .key.sm { flex: none; }
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .sent {
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -960,18 +950,18 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .
   font: 600 13px/1 var(--font);
   opacity: 1;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .person-row > .sent > .i {
+html[data-look="studio"] .modal.dialog > .people-list > .person-row > .sent > .i {
   width: 15px;
   height: 15px;
   color: var(--green);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .people-list > .dm-list-empty {
+html[data-look="studio"] .modal.dialog > .people-list > .dm-list-empty {
   padding: 14px 10px;
   color: var(--text-muted);
   font: 400 14px/1.4 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row { padding-right: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row > .pick {
+html[data-look="studio"] .modal.dialog#modal-group > .people-list > .person-row { padding-right: 18px; }
+html[data-look="studio"] .modal.dialog#modal-group > .people-list > .person-row > .pick {
   display: grid;
   place-items: center;
   flex: none;
@@ -984,34 +974,34 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .peo
   color: var(--accent-lit);
   opacity: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row > .pick > svg:not(.i) { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row > .pick > .i {
+html[data-look="studio"] .modal.dialog#modal-group > .people-list > .person-row > .pick > svg:not(.i) { display: none; }
+html[data-look="studio"] .modal.dialog#modal-group > .people-list > .person-row > .pick > .i {
   width: 18px;
   height: 18px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row.picked {
+html[data-look="studio"] .modal.dialog#modal-group > .people-list > .person-row.picked {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 1.5px var(--accent-lit);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row.picked > .pick { opacity: 1; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row.in-group {
+html[data-look="studio"] .modal.dialog#modal-group > .people-list > .person-row.picked > .pick { opacity: 1; }
+html[data-look="studio"] .modal.dialog#modal-group > .people-list > .person-row.in-group {
   opacity: .45;
   cursor: default;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#modal-group > .people-list > .person-row.in-group:hover { background: none; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog#forward-preview {
+html[data-look="studio"] .modal.dialog#forward-preview {
   padding: 12px 16px;
   border-radius: 18px;
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry {
+html[data-look="studio"] .modal.dialog > .invite-expiry {
   display: flex;
   flex-direction: column;
   gap: 7px;
   margin-top: 4px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .share-quality-label {
+html[data-look="studio"] .modal.dialog > .invite-expiry > .share-quality-label {
   margin: 0;
   color: var(--text-muted);
   font: 600 13px/13px var(--font);
@@ -1019,7 +1009,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry >
   text-transform: none;
   text-indent: 16px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented {
+html[data-look="studio"] .modal.dialog > .invite-expiry > .segmented {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
@@ -1028,7 +1018,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry >
   border-radius: 0;
   background: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch {
+html[data-look="studio"] .modal.dialog > .invite-expiry > .segmented > .key.latch {
   position: relative;
   justify-content: center;
   height: 40px;
@@ -1036,11 +1026,11 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry >
   border: 0;
   font-size: 13.5px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch:not(.is-down) { color: var(--k-ink, var(--text-normal)); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch > strong { font: inherit; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry > .segmented > .key.latch > .led { background: var(--text-faint); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > #invite-text {
+html[data-look="studio"] .modal.dialog > .invite-expiry > .segmented > .key.latch.hidden { display: none; }
+html[data-look="studio"] .modal.dialog > .invite-expiry > .segmented > .key.latch:not(.is-down) { color: var(--k-ink, var(--text-normal)); }
+html[data-look="studio"] .modal.dialog > .invite-expiry > .segmented > .key.latch > strong { font: inherit; }
+html[data-look="studio"] .modal.dialog > .invite-expiry > .segmented > .key.latch > .led { background: var(--text-faint); }
+html[data-look="studio"] .modal.dialog > #invite-text {
   min-height: 72px;
   height: auto;
   margin-top: 2px;
@@ -1055,31 +1045,24 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > #invite-text {
   word-break: break-all;
   resize: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-expiry-note {
+html[data-look="studio"] .modal.dialog > .invite-expiry-note {
   margin: -4px 0 0 16px;
   color: var(--text-muted);
   font: 400 13px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-actions {
+html[data-look="studio"] .modal.dialog > .invite-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 6px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .invite-actions > .key {
+html[data-look="studio"] .modal.dialog > .invite-actions > .key {
   width: 100%;
   justify-content: center;
 }
 
-html[data-look="studio"][data-fit="slim"] .dfind { display: contents; }
-html[data-look="studio"][data-fit="slim"] .dfind > .i,
-html[data-look="studio"][data-fit="slim"] .person-row > .go,
-html[data-look="studio"][data-fit="slim"] .person-row > .pick > .i,
-html[data-look="studio"][data-fit="slim"] .person-row > .sent > .i,
-html[data-look="studio"][data-fit="slim"] #invite-expiry > button > .led { display: none; }
-
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make { width: min(440px, calc(100vw - 48px)); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make > h2 + p {
+html[data-look="studio"] .modal.dialog.make > h2 + p {
   color: var(--text-muted);
   font: 400 14px/1.35 var(--font);
 }
@@ -1089,18 +1072,18 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-catalog
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-catalog { padding-bottom: 26px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label + .dfind,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label + .dsel { margin-top: -4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dfind,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dsel,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make > .dsel {
+html[data-look="studio"] .modal.dialog.make .field-label + .dfind,
+html[data-look="studio"] .modal.dialog.make .field-label + .dsel { margin-top: -4px; }
+html[data-look="studio"] .modal.dialog.make .field-label > .dfind,
+html[data-look="studio"] .modal.dialog.make .field-label > .dsel,
+html[data-look="studio"] .modal.dialog.make > .dsel {
   position: relative;
   display: block;
   text-indent: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dfind > .i,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dsel > .i,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make > .dsel > .i {
+html[data-look="studio"] .modal.dialog.make .field-label > .dfind > .i,
+html[data-look="studio"] .modal.dialog.make .field-label > .dsel > .i,
+html[data-look="studio"] .modal.dialog.make > .dsel > .i {
   position: absolute;
   top: 50%;
   z-index: 1;
@@ -1110,10 +1093,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make > .dsel > .i 
   color: var(--text-muted);
   pointer-events: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dfind > .i { left: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dfind > input { padding-left: 44px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dsel > .i { right: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dsel > select {
+html[data-look="studio"] .modal.dialog.make .field-label > .dfind > .i { left: 18px; }
+html[data-look="studio"] .modal.dialog.make .field-label > .dfind > input { padding-left: 44px; }
+html[data-look="studio"] .modal.dialog.make .dsel > .i { right: 18px; }
+html[data-look="studio"] .modal.dialog.make .dsel > select {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 46px;
@@ -1121,8 +1104,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dsel > selec
   font: 400 15px/1 var(--font);
   color: var(--header-primary);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dsel > select option { background: var(--bg-raised); color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > input[type="datetime-local"] {
+html[data-look="studio"] .modal.dialog.make .dsel > select option { background: var(--bg-raised); color: var(--header-primary); }
+html[data-look="studio"] .modal.dialog.make .dfind > input[type="datetime-local"] {
   position: relative;
   width: 100%;
   height: 46px;
@@ -1138,8 +1121,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > inpu
   color: var(--header-primary);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > input[type="datetime-local"]:hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > input[type="datetime-local"]:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+html[data-look="studio"] .modal.dialog.make .dfind > input[type="datetime-local"]:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"] .modal.dialog.make .dfind > input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   position: absolute;
   top: 0;
   left: 0;
@@ -1150,8 +1133,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > inpu
   opacity: 0;
   cursor: pointer;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make textarea,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make textarea:is(#event-description) {
+html[data-look="studio"] .modal.dialog.make textarea,
+html[data-look="studio"] .modal.dialog.make textarea:is(#event-description) {
   border: 0;
   background: var(--input-bg);
   box-shadow: var(--slot);
@@ -1162,8 +1145,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make textarea:is(#
   resize: none;
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-picker { gap: 6px; margin-top: -4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option {
+html[data-look="studio"] .modal.dialog.make .kind-picker { gap: 6px; margin-top: -4px; }
+html[data-look="studio"] .modal.dialog.make .kind-option {
   gap: 12px;
   min-height: 58px;
   padding: 9px 18px 9px 10px;
@@ -1175,11 +1158,11 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option 
   transition: background var(--t-hover);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option:hover { background: rgb(var(--lamp) / .06); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option.active {
+html[data-look="studio"] .modal.dialog.make .kind-option.active {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 1.5px var(--accent-lit);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-icon {
+html[data-look="studio"] .modal.dialog.make .kind-icon {
   display: grid;
   place-items: center;
   width: 38px;
@@ -1189,21 +1172,21 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-icon {
   color: var(--text-normal);
   font: 500 19px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-icon svg { width: 18px; height: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option.active .kind-icon { background: var(--accent); color: var(--accent-ink); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text { min-width: 0; display: grid; gap: 3px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text strong {
+html[data-look="studio"] .modal.dialog.make .kind-icon svg { width: 18px; height: 18px; }
+html[data-look="studio"] .modal.dialog.make .kind-option.active .kind-icon { background: var(--accent); color: var(--accent-ink); }
+html[data-look="studio"] .modal.dialog.make .kind-text { min-width: 0; display: grid; gap: 3px; }
+html[data-look="studio"] .modal.dialog.make .kind-text strong {
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--header-primary);
   font: 600 14.5px/1.2 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text > span {
+html[data-look="studio"] .modal.dialog.make .kind-text > span {
   color: var(--text-muted);
   font: 400 12.5px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text .beta-tag {
+html[data-look="studio"] .modal.dialog.make .kind-text .beta-tag {
   margin: 0;
   padding: 4px 7px;
   border: 0;
@@ -1214,16 +1197,16 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text .b
   letter-spacing: .06em;
   text-transform: uppercase;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-radio { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option > .tick {
+html[data-look="studio"] .modal.dialog.make .kind-radio { display: none; }
+html[data-look="studio"] .modal.dialog.make .kind-option > .tick {
   flex: none;
   width: 18px;
   height: 18px;
   color: var(--accent-lit);
   opacity: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option.active > .tick { opacity: 1; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input {
+html[data-look="studio"] .modal.dialog.make .kind-option.active > .tick { opacity: 1; }
+html[data-look="studio"] .modal.dialog.make .prefixed-input {
   gap: 9px;
   height: 46px;
   padding: 0 18px;
@@ -1235,10 +1218,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-inp
   transition: box-shadow var(--t-hover) var(--ease-out);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input:hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input:focus-within { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .input-prefix { color: var(--text-muted); font: 500 17px/1 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .input-prefix svg { width: 16px; height: 16px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > .emoji-slot {
+html[data-look="studio"] .modal.dialog.make .prefixed-input:focus-within { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"] .modal.dialog.make .input-prefix { color: var(--text-muted); font: 500 17px/1 var(--font); }
+html[data-look="studio"] .modal.dialog.make .input-prefix svg { width: 16px; height: 16px; }
+html[data-look="studio"] .modal.dialog.make .prefixed-input > .emoji-slot {
   flex: none;
   display: grid;
   place-items: center;
@@ -1253,8 +1236,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-inp
   cursor: pointer;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > .emoji-slot:hover { background: rgb(var(--lamp) / .08); color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > .emoji-slot svg { width: 17px; height: 17px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > input[type="text"] {
+html[data-look="studio"] .modal.dialog.make .prefixed-input > .emoji-slot svg { width: 17px; height: 17px; }
+html[data-look="studio"] .modal.dialog.make .prefixed-input > input[type="text"] {
   height: 100%;
   padding: 0;
   border: 0;
@@ -1262,19 +1245,19 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-inp
   background: none;
   box-shadow: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > input[type="text"]:hover,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > input[type="text"]:focus { box-shadow: none; }
+html[data-look="studio"] .modal.dialog.make .prefixed-input > input[type="text"]:hover,
+html[data-look="studio"] .modal.dialog.make .prefixed-input > input[type="text"]:focus { box-shadow: none; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > #create-server-open,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > #join-server-save,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username > #username-save {
+html[data-look="studio"] .modal.dialog.make#modal-add-server > #create-server-open,
+html[data-look="studio"] .modal.dialog.make#modal-add-server > #join-server-save,
+html[data-look="studio"] .modal.dialog.make#modal-username > #username-save {
   width: 100%;
   height: 46px;
   justify-content: center;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > #create-server-open,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username > #username-save { margin-top: 6px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > .modal-divider {
+html[data-look="studio"] .modal.dialog.make#modal-add-server > #create-server-open,
+html[data-look="studio"] .modal.dialog.make#modal-username > #username-save { margin-top: 6px; }
+html[data-look="studio"] .modal.dialog.make#modal-add-server > .modal-divider {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1283,19 +1266,19 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-ser
   font: 600 11.5px/1 var(--font);
   letter-spacing: .1em;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > .modal-divider::before,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > .modal-divider::after {
+html[data-look="studio"] .modal.dialog.make#modal-add-server > .modal-divider::before,
+html[data-look="studio"] .modal.dialog.make#modal-add-server > .modal-divider::after {
   content: "";
   flex: 1;
   height: 1px;
   background: var(--line);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > #join-server-save { margin-top: -2px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username > .dlabel { margin-top: 4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username > .dlabel + .dfind { margin-top: -4px; }
+html[data-look="studio"] .modal.dialog.make#modal-add-server > #join-server-save { margin-top: -2px; }
+html[data-look="studio"] .modal.dialog.make#modal-username > .dlabel { margin-top: 4px; }
+html[data-look="studio"] .modal.dialog.make#modal-username > .dlabel + .dfind { margin-top: -4px; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-grid { gap: 8px; margin-top: 6px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile {
+html[data-look="studio"] .modal.dialog.make .template-grid { gap: 8px; margin-top: 6px; }
+html[data-look="studio"] .modal.dialog.make .template-tile {
   height: auto;
   min-height: 60px;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1312,11 +1295,11 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-til
   transition: background var(--t-hover);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile:hover { background: rgb(var(--lamp) / .06); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile[aria-checked="true"] {
+html[data-look="studio"] .modal.dialog.make .template-tile[aria-checked="true"] {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 1.5px var(--accent-lit);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile-icon {
+html[data-look="studio"] .modal.dialog.make .template-tile-icon {
   grid-row: 1 / 3;
   display: grid;
   place-items: center;
@@ -1326,46 +1309,46 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-til
   background: var(--bg-active);
   color: var(--text-normal);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile-icon svg { width: 18px; height: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile[aria-checked="true"] .template-tile-icon { background: var(--accent); color: var(--accent-ink); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile-title {
+html[data-look="studio"] .modal.dialog.make .template-tile-icon svg { width: 18px; height: 18px; }
+html[data-look="studio"] .modal.dialog.make .template-tile[aria-checked="true"] .template-tile-icon { background: var(--accent); color: var(--accent-ink); }
+html[data-look="studio"] .modal.dialog.make .template-tile-title {
   align-self: end;
   color: var(--header-primary);
   font: 600 14px/1.2 var(--font);
   white-space: normal;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile-blurb {
+html[data-look="studio"] .modal.dialog.make .template-tile-blurb {
   align-self: start;
   color: var(--text-muted);
   font: 400 12px/1.3 var(--font);
   white-space: normal;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview {
+html[data-look="studio"] .modal.dialog.make .template-preview {
   margin-top: 2px;
   padding: 14px 16px;
   border-radius: 14px;
   background: var(--input-bg);
   box-shadow: var(--slot);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview-view { gap: 10px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview-head { height: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview-summary {
+html[data-look="studio"] .modal.dialog.make .template-preview-view { gap: 10px; }
+html[data-look="studio"] .modal.dialog.make .template-preview-head { height: 18px; }
+html[data-look="studio"] .modal.dialog.make .template-preview-summary {
   color: var(--header-primary);
   font: 600 13.5px/1.2 var(--font);
   letter-spacing: 0;
   text-transform: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview-body { gap: 10px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-group { grid-template-columns: 112px minmax(0, 1fr); align-items: center; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-group-name {
+html[data-look="studio"] .modal.dialog.make .template-preview-body { gap: 10px; }
+html[data-look="studio"] .modal.dialog.make .template-group { grid-template-columns: 112px minmax(0, 1fr); align-items: center; }
+html[data-look="studio"] .modal.dialog.make .template-group-name {
   height: auto;
   color: var(--text-muted);
   font: 400 12.5px/1 var(--font);
   letter-spacing: 0;
   text-transform: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-group-chips { gap: 6px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-chip {
+html[data-look="studio"] .modal.dialog.make .template-group-chips { gap: 6px; }
+html[data-look="studio"] .modal.dialog.make .template-chip {
   gap: 5px;
   height: 26px;
   padding: 0 11px 0 8px;
@@ -1374,21 +1357,21 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-chi
   color: var(--text-normal);
   font: 500 13px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-chip svg,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-chip .template-hash { color: var(--text-muted); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-code-entry textarea {
+html[data-look="studio"] .modal.dialog.make .template-chip svg,
+html[data-look="studio"] .modal.dialog.make .template-chip .template-hash { color: var(--text-muted); }
+html[data-look="studio"] .modal.dialog.make .template-code-entry textarea {
   flex: 1;
   min-height: 0;
   font: 400 13px/1.45 var(--font-mono);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-code-note { margin-left: 16px; }
+html[data-look="studio"] .modal.dialog.make .template-code-note { margin-left: 16px; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-row { gap: 12px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-row > .field-label { min-width: 0; margin-top: 4px; }
+html[data-look="studio"] .modal.dialog.make .field-row { gap: 12px; }
+html[data-look="studio"] .modal.dialog.make .field-row > .field-label { min-width: 0; margin-top: 4px; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-steps { gap: 18px; margin-top: 6px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step { gap: 0; padding-left: 38px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step::before {
+html[data-look="studio"] .modal.dialog.make .bot-steps { gap: 18px; margin-top: 6px; }
+html[data-look="studio"] .modal.dialog.make .bot-step { gap: 0; padding-left: 38px; }
+html[data-look="studio"] .modal.dialog.make .bot-step::before {
   top: 0;
   left: 0;
   width: 26px;
@@ -1398,26 +1381,26 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step::be
   color: var(--accent-ink);
   font: 700 12.5px/26px var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step-title {
+html[data-look="studio"] .modal.dialog.make .bot-step-title {
   margin-top: 4px;
   color: var(--header-primary);
   font: 600 15px/1.2 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step > .setting-sub {
+html[data-look="studio"] .modal.dialog.make .bot-step > .setting-sub {
   margin-top: 6px;
   color: var(--text-muted);
   font: 400 13.5px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step .setting-sub code {
+html[data-look="studio"] .modal.dialog.make .bot-step .setting-sub code {
   padding: 1px 6px;
   border-radius: 6px;
   background: rgb(var(--lamp) / .07);
   color: var(--header-primary);
   font: 400 12.5px/1 var(--font-mono);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step .btn-link { color: var(--link); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code-row,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-commands > .bot-code-row {
+html[data-look="studio"] .modal.dialog.make .bot-step .btn-link { color: var(--link); }
+html[data-look="studio"] .modal.dialog.make .bot-code-row,
+html[data-look="studio"] .modal.dialog.make .bot-commands > .bot-code-row {
   gap: 10px;
   height: 44px;
   margin-top: 8px;
@@ -1426,8 +1409,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-commands
   background: var(--input-bg);
   box-shadow: var(--slot);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-commands { gap: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code {
+html[data-look="studio"] .modal.dialog.make .bot-commands { gap: 0; }
+html[data-look="studio"] .modal.dialog.make .bot-code {
   flex: 1;
   min-width: 0;
   height: auto;
@@ -1440,16 +1423,16 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code.muted { color: var(--text-muted); font-family: var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code-row > .key.sm { flex: none; width: auto; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-name-field { width: 220px; max-width: none; margin-top: 16px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port {
+html[data-look="studio"] .modal.dialog.make .bot-code.muted { color: var(--text-muted); font-family: var(--font); }
+html[data-look="studio"] .modal.dialog.make .bot-code-row > .key.sm { flex: none; width: auto; }
+html[data-look="studio"] .modal.dialog.make .bot-name-field { width: 220px; max-width: none; margin-top: 16px; }
+html[data-look="studio"] .modal.dialog.make .bot-port {
   margin-top: 10px;
   padding: 0;
   border-radius: 0;
   background: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > summary {
+html[data-look="studio"] .modal.dialog.make .bot-port > summary {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1460,20 +1443,20 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > s
   list-style: none;
   cursor: pointer;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > summary::-webkit-details-marker { display: none; }
+html[data-look="studio"] .modal.dialog.make .bot-port > summary::-webkit-details-marker { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > summary:hover { color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > summary > .i { width: 15px; height: 15px; transition: transform var(--t-hover); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port[open] > summary > .i { transform: rotate(90deg); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port[open] > .setting-sub { margin: 6px 0 0 23px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port[open] > .bot-commands { margin: 0 0 0 23px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port[open] > .btn-link { margin: 10px 0 0 23px; font: 500 13.5px/1 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-waiting {
+html[data-look="studio"] .modal.dialog.make .bot-port > summary > .i { width: 15px; height: 15px; transition: transform var(--t-hover); }
+html[data-look="studio"] .modal.dialog.make .bot-port[open] > summary > .i { transform: rotate(90deg); }
+html[data-look="studio"] .modal.dialog.make .bot-port[open] > .setting-sub { margin: 6px 0 0 23px; }
+html[data-look="studio"] .modal.dialog.make .bot-port[open] > .bot-commands { margin: 0 0 0 23px; }
+html[data-look="studio"] .modal.dialog.make .bot-port[open] > .btn-link { margin: 10px 0 0 23px; font: 500 13.5px/1 var(--font); }
+html[data-look="studio"] .modal.dialog.make .bot-waiting {
   align-items: flex-start;
   margin-top: 6px;
   color: var(--text-normal);
   font: 400 13.5px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-waiting-dot {
+html[data-look="studio"] .modal.dialog.make .bot-waiting-dot {
   margin-top: 5px;
   width: 9px;
   height: 9px;
@@ -1481,22 +1464,22 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-waiting-
   box-shadow: 0 0 0 4px rgb(var(--lamp) / .05);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-rows { gap: 8px; margin-top: -4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-row { gap: 8px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-row > .poll-row-remove.key.sq {
+html[data-look="studio"] .modal.dialog.make .poll-rows { gap: 8px; margin-top: -4px; }
+html[data-look="studio"] .modal.dialog.make .poll-row { gap: 8px; }
+html[data-look="studio"] .modal.dialog.make .poll-row > .poll-row-remove.key.sq {
   width: 44px;
   height: 44px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-row > .poll-row-remove.key.sq:disabled { opacity: .45; cursor: default; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-row > .poll-row-remove svg { width: 17px; height: 17px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make #poll-add.key {
+html[data-look="studio"] .modal.dialog.make .poll-row > .poll-row-remove.key.sq:disabled { opacity: .45; cursor: default; }
+html[data-look="studio"] .modal.dialog.make .poll-row > .poll-row-remove svg { width: 17px; height: 17px; }
+html[data-look="studio"] .modal.dialog.make #poll-add.key {
   align-self: flex-start;
   gap: 6px;
   margin-top: -2px;
   border: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make #poll-add.key > .i { width: 15px; height: 15px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch {
+html[data-look="studio"] .modal.dialog.make #poll-add.key > .i { width: 15px; height: 15px; }
+html[data-look="studio"] .modal.dialog.make .poll-switch {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -1505,24 +1488,24 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch 
   border: 0;
   background: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch > div { flex: 1; min-width: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch .setting-title { color: var(--text-normal); font: 500 14px/1.2 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch .setting-sub { margin-top: 4px; font: 400 12.5px/1.35 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch > input.switch { flex: none; margin: 0; }
+html[data-look="studio"] .modal.dialog.make .poll-switch > div { flex: 1; min-width: 0; }
+html[data-look="studio"] .modal.dialog.make .poll-switch .setting-title { color: var(--text-normal); font: 500 14px/1.2 var(--font); }
+html[data-look="studio"] .modal.dialog.make .poll-switch .setting-sub { margin-top: 4px; font: 400 12.5px/1.35 var(--font); }
+html[data-look="studio"] .modal.dialog.make .poll-switch > input.switch { flex: none; margin: 0; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-tags-label {
+html[data-look="studio"] .modal.dialog.make .forum-tags-label {
   flex-direction: row;
   align-items: baseline;
   gap: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-post-tags-left {
+html[data-look="studio"] .modal.dialog.make .forum-post-tags-left {
   margin-left: 6px;
   color: var(--text-muted);
   font-weight: 400;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-pick-tags { gap: 6px; margin-top: -4px; min-height: 32px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-pick-tags > .access-chip,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips > .catalog-chip {
+html[data-look="studio"] .modal.dialog.make .forum-pick-tags { gap: 6px; margin-top: -4px; min-height: 32px; }
+html[data-look="studio"] .modal.dialog.make .forum-pick-tags > .access-chip,
+html[data-look="studio"] .modal.dialog.make .catalog-chips > .catalog-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1539,48 +1522,48 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chip
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-pick-tags > .access-chip:hover,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips > .catalog-chip:hover { background: rgb(var(--lamp) / .07); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-pick-tags > .access-chip.picked,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips > .catalog-chip.active {
+html[data-look="studio"] .modal.dialog.make .forum-pick-tags > .access-chip.picked,
+html[data-look="studio"] .modal.dialog.make .catalog-chips > .catalog-chip.active {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 1.5px var(--accent-lit);
   color: var(--header-primary);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-sound p.sound-hint {
+html[data-look="studio"] .modal.dialog.make#modal-sound p.sound-hint {
   min-height: 0;
   color: var(--text-muted);
   font: 400 14px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim {
+html[data-look="studio"] .modal.dialog.make .sound-trim {
   height: 76px;
   margin-top: 4px;
   border-radius: 18px;
   background: var(--input-bg);
   box-shadow: var(--slot);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave { inset: 12px 0; gap: 2px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave > span,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave > span.on {
+html[data-look="studio"] .modal.dialog.make .sound-wave { inset: 12px 0; gap: 2px; }
+html[data-look="studio"] .modal.dialog.make .sound-wave > span,
+html[data-look="studio"] .modal.dialog.make .sound-wave > span.on {
   border-radius: 2px;
   background: var(--accent-lit);
   opacity: .85;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-shade { background: rgb(var(--dark) / .55); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-shade-start { border-radius: 18px 0 0 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-shade-end { border-radius: 0 18px 18px 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-window {
+html[data-look="studio"] .modal.dialog.make .sound-shade { background: rgb(var(--dark) / .55); }
+html[data-look="studio"] .modal.dialog.make .sound-shade-start { border-radius: 18px 0 0 18px; }
+html[data-look="studio"] .modal.dialog.make .sound-shade-end { border-radius: 0 18px 18px 0; }
+html[data-look="studio"] .modal.dialog.make .sound-window {
   border: 0;
   border-radius: 6px;
   box-shadow: inset 0 0 0 2px var(--accent-lit);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-playhead {
+html[data-look="studio"] .modal.dialog.make .sound-playhead {
   top: 6px;
   bottom: 6px;
   border-radius: 1px;
   background: var(--white);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-handle::before { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-handle::after {
+html[data-look="studio"] .modal.dialog.make .sound-handle::before { display: none; }
+html[data-look="studio"] .modal.dialog.make .sound-handle::after {
   left: 7px;
   width: 10px;
   height: 30px;
@@ -1589,32 +1572,32 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-handle
   background: var(--white);
   box-shadow: 0 1px 3px rgb(var(--dark) / .5);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim-bar { gap: 12px; margin-top: -2px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim-bar > .key.sq { width: 36px; height: 36px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim-bar > .key.sq svg { width: 16px; height: 16px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim-times { color: var(--text-muted); font: 400 13px/1 var(--font-mono); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-identity { gap: 8px; margin-top: 4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-identity > .key.sq { width: 44px; height: 44px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-identity > .key.sq svg { width: 18px; height: 18px; }
+html[data-look="studio"] .modal.dialog.make .sound-trim-bar { gap: 12px; margin-top: -2px; }
+html[data-look="studio"] .modal.dialog.make .sound-trim-bar > .key.sq { width: 36px; height: 36px; }
+html[data-look="studio"] .modal.dialog.make .sound-trim-bar > .key.sq svg { width: 16px; height: 16px; }
+html[data-look="studio"] .modal.dialog.make .sound-trim-times { color: var(--text-muted); font: 400 13px/1 var(--font-mono); }
+html[data-look="studio"] .modal.dialog.make .sound-identity { gap: 8px; margin-top: 4px; }
+html[data-look="studio"] .modal.dialog.make .sound-identity > .key.sq { width: 44px; height: 44px; }
+html[data-look="studio"] .modal.dialog.make .sound-identity > .key.sq svg { width: 18px; height: 18px; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-head { gap: 14px; align-items: flex-start; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-head > h2 {
+html[data-look="studio"] .modal.dialog.make .catalog-head { gap: 14px; align-items: flex-start; }
+html[data-look="studio"] .modal.dialog.make .catalog-head > h2 {
   margin: 0;
   color: var(--header-primary);
   font: 700 21px/1.2 var(--font-display);
   letter-spacing: -.015em;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-head > .key.sq { width: 36px; height: 36px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-head > .key.sq svg { width: 16px; height: 16px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-catalog > .dfind { margin-top: 2px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips {
+html[data-look="studio"] .modal.dialog.make .catalog-head > .key.sq { width: 36px; height: 36px; }
+html[data-look="studio"] .modal.dialog.make .catalog-head > .key.sq svg { width: 16px; height: 16px; }
+html[data-look="studio"] .modal.dialog.make#modal-catalog > .dfind { margin-top: 2px; }
+html[data-look="studio"] .modal.dialog.make .catalog-chips {
   gap: 6px;
   height: 32px;
   -webkit-mask-image: linear-gradient(90deg, rgb(0 0 0) 88%, transparent);
   mask-image: linear-gradient(90deg, rgb(0 0 0) 88%, transparent);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips > .catalog-chip { flex: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-grid {
+html[data-look="studio"] .modal.dialog.make .catalog-chips > .catalog-chip { flex: none; }
+html[data-look="studio"] .modal.dialog.make .catalog-grid {
   flex: none;
   grid-template-columns: repeat(8, minmax(0, 1fr));
   grid-auto-rows: auto;
@@ -1625,7 +1608,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-grid
   border: 0;
   background: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-tile {
+html[data-look="studio"] .modal.dialog.make .catalog-tile {
   aspect-ratio: 1;
   height: auto;
   padding: 14px;
@@ -1635,12 +1618,12 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-tile
   transition: background var(--t-hover);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-tile:hover { background: rgb(var(--lamp) / .09); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-tile.picked {
+html[data-look="studio"] .modal.dialog.make .catalog-tile.picked {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 2px var(--accent-lit);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-note { color: var(--text-muted); font: 400 14px/1.4 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick {
+html[data-look="studio"] .modal.dialog.make .catalog-note { color: var(--text-muted); font: 400 14px/1.4 var(--font); }
+html[data-look="studio"] .modal.dialog.make .catalog-pick {
   gap: 10px;
   margin-top: 2px;
   padding: 8px;
@@ -1649,7 +1632,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick
   background: var(--input-bg);
   box-shadow: var(--slot);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick-preview {
+html[data-look="studio"] .modal.dialog.make .catalog-pick-preview {
   display: grid;
   place-items: center;
   width: 40px;
@@ -1658,53 +1641,46 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick
   background: rgb(var(--lamp) / .05);
   overflow: hidden;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick-preview img,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick-preview.sticker img { width: 26px; height: 26px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick-preview svg { width: 18px; height: 18px; color: var(--text-muted); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick > input[type="text"] { height: 36px; padding: 0 16px; font-size: 14px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick > .key.sm { height: 36px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-attrib {
+html[data-look="studio"] .modal.dialog.make .catalog-pick-preview img,
+html[data-look="studio"] .modal.dialog.make .catalog-pick-preview.sticker img { width: 26px; height: 26px; }
+html[data-look="studio"] .modal.dialog.make .catalog-pick-preview svg { width: 18px; height: 18px; color: var(--text-muted); }
+html[data-look="studio"] .modal.dialog.make .catalog-pick > input[type="text"] { height: 36px; padding: 0 16px; font-size: 14px; }
+html[data-look="studio"] .modal.dialog.make .catalog-pick > .key.sm { height: 36px; }
+html[data-look="studio"] .modal.dialog.make .catalog-attrib {
   margin: -4px 0 0 16px;
   color: var(--text-muted);
   font: 400 13px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-attrib strong { color: var(--text-muted); font-weight: 400; }
+html[data-look="studio"] .modal.dialog.make .catalog-attrib strong { color: var(--text-muted); font-weight: 400; }
 
-html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog.make .sound-shade { background: rgb(var(--lamp) / .55); }
-html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog.make .dfind > input[type="datetime-local"]:is(#event-start, #event-end) { color-scheme: light; }
-
-html[data-look="studio"][data-fit="slim"] .dsel { display: contents; }
-html[data-look="studio"][data-fit="slim"] .dsel > .i,
-html[data-look="studio"][data-fit="slim"] #modal-username > .dlabel,
-html[data-look="studio"][data-fit="slim"] .kind-option > .tick,
-html[data-look="studio"][data-fit="slim"] #poll-add > .i,
-html[data-look="studio"][data-fit="slim"] .bot-port > summary > .i { display: none; }
+html[data-look="studio"][data-theme="light"] .modal.dialog.make .sound-shade { background: rgb(var(--lamp) / .55); }
+html[data-look="studio"][data-theme="light"] .modal.dialog.make .dfind > input[type="datetime-local"]:is(#event-start, #event-end) { color-scheme: light; }
 
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve { width: min(440px, calc(100vw - 48px)); gap: 12px; }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve#modal-pins { width: min(560px, calc(100vw - 48px)); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve#modal-share { width: min(640px, calc(100vw - 48px)); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > h2 + p {
+html[data-look="studio"] .modal.dialog.serve > h2 + p {
   color: var(--text-muted);
   font: 400 14px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-head { display: grid; gap: 6px; margin: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-head > h2 {
+html[data-look="studio"] .modal.dialog.serve > .notify-head { display: grid; gap: 6px; margin: 0; }
+html[data-look="studio"] .modal.dialog.serve > .notify-head > h2 {
   margin: 0;
   color: var(--header-primary);
   font: 700 21px/1.2 var(--font-display);
   letter-spacing: -.015em;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-head > p {
+html[data-look="studio"] .modal.dialog.serve > .notify-head > p {
   color: var(--text-muted);
   font: 400 14px/1.35 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve#modal-join-sound > .setting-sub {
+html[data-look="studio"] .modal.dialog.serve#modal-join-sound > .setting-sub {
   margin-top: 2px;
   color: var(--text-normal);
   font: 400 14.5px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-label,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality-label {
+html[data-look="studio"] .modal.dialog.serve > .notify-label,
+html[data-look="studio"] .modal.dialog.serve .share-quality-label {
   margin: 4px 0 -4px;
   color: var(--text-muted);
   font: 600 13px/13px var(--font);
@@ -1712,8 +1688,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quali
   text-transform: none;
   text-indent: 16px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row {
+html[data-look="studio"] .modal.dialog.serve > .notify-row,
+html[data-look="studio"] .modal.dialog.serve > .setting-row {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -1724,25 +1700,25 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-r
   background: none;
   box-shadow: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-label + .notify-row { margin-top: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row.hidden { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row > div,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row > div { flex: 1; min-width: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row .setting-title,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row .setting-title { color: var(--text-normal); font: 500 14px/1.2 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row .setting-sub,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row .setting-sub { margin-top: 4px; font: 400 12.5px/1.35 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row > input.switch,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row > input.switch { flex: none; margin: 0; }
+html[data-look="studio"] .modal.dialog.serve > .notify-label + .notify-row { margin-top: 0; }
+html[data-look="studio"] .modal.dialog.serve > .setting-row.hidden { display: none; }
+html[data-look="studio"] .modal.dialog.serve > .notify-row > div,
+html[data-look="studio"] .modal.dialog.serve > .setting-row > div { flex: 1; min-width: 0; }
+html[data-look="studio"] .modal.dialog.serve > .notify-row .setting-title,
+html[data-look="studio"] .modal.dialog.serve > .setting-row .setting-title { color: var(--text-normal); font: 500 14px/1.2 var(--font); }
+html[data-look="studio"] .modal.dialog.serve > .notify-row .setting-sub,
+html[data-look="studio"] .modal.dialog.serve > .setting-row .setting-sub { margin-top: 4px; font: 400 12.5px/1.35 var(--font); }
+html[data-look="studio"] .modal.dialog.serve > .notify-row > input.switch,
+html[data-look="studio"] .modal.dialog.serve > .setting-row > input.switch { flex: none; margin: 0; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-levels {
+html[data-look="studio"] .modal.dialog.serve .notify-levels {
   display: grid;
   gap: 6px;
   padding: 0;
   border-radius: 0;
   background: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level {
+html[data-look="studio"] .modal.dialog.serve .notify-level {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1757,25 +1733,25 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-leve
   transition: background var(--t-hover);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level:hover:not(:disabled) { background: rgb(var(--lamp) / .06); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level.picked {
+html[data-look="studio"] .modal.dialog.serve .notify-level.picked {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 1.5px var(--accent-lit);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level > .notify-mark { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level > span:not(.notify-mark, .sound-emoji) { flex: 1; min-width: 0; display: grid; gap: 3px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level-name { color: var(--header-primary); font: 600 14.5px/1.2 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level-sub { color: var(--text-muted); font: 400 12.5px/1.35 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level > .tick {
+html[data-look="studio"] .modal.dialog.serve .notify-level > .notify-mark { display: none; }
+html[data-look="studio"] .modal.dialog.serve .notify-level > span:not(.notify-mark, .sound-emoji) { flex: 1; min-width: 0; display: grid; gap: 3px; }
+html[data-look="studio"] .modal.dialog.serve .notify-level-name { color: var(--header-primary); font: 600 14.5px/1.2 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .notify-level-sub { color: var(--text-muted); font: 400 12.5px/1.35 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .notify-level > .tick {
   flex: none;
   width: 18px;
   height: 18px;
   color: var(--accent-lit);
   opacity: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level.picked > .tick { opacity: 1; }
+html[data-look="studio"] .modal.dialog.serve .notify-level.picked > .tick { opacity: 1; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-cards { gap: 8px; margin-top: 4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card {
+html[data-look="studio"] .modal.dialog.serve .activity-cards { gap: 8px; margin-top: 4px; }
+html[data-look="studio"] .modal.dialog.serve .activity-card {
   display: grid;
   grid-template-columns: 1fr;
   align-content: start;
@@ -1790,11 +1766,11 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-ca
   transition: background var(--t-hover);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card:hover { background: rgb(var(--lamp) / .06); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card[aria-checked="true"] {
+html[data-look="studio"] .modal.dialog.serve .activity-card[aria-checked="true"] {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 1.5px var(--accent-lit);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card-icon {
+html[data-look="studio"] .modal.dialog.serve .activity-card-icon {
   display: grid;
   place-items: center;
   width: 38px;
@@ -1804,12 +1780,12 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-ca
   background: var(--bg-active);
   color: var(--text-normal);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card-icon svg { width: 18px; height: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card[aria-checked="true"] .activity-card-icon { background: var(--accent); color: var(--accent-ink); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card-name { color: var(--header-primary); font: 600 14px/1.2 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card-blurb { max-height: none; color: var(--text-muted); font: 400 12px/1.3 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup { margin-top: 4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-game {
+html[data-look="studio"] .modal.dialog.serve .activity-card-icon svg { width: 18px; height: 18px; }
+html[data-look="studio"] .modal.dialog.serve .activity-card[aria-checked="true"] .activity-card-icon { background: var(--accent); color: var(--accent-ink); }
+html[data-look="studio"] .modal.dialog.serve .activity-card-name { color: var(--header-primary); font: 600 14px/1.2 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .activity-card-blurb { max-height: none; color: var(--text-muted); font: 400 12px/1.3 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .activity-setup { margin-top: 4px; }
+html[data-look="studio"] .modal.dialog.serve .activity-setup-game {
   gap: 6px;
   height: auto;
   padding: 14px 16px;
@@ -1817,15 +1793,15 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-se
   background: var(--input-bg);
   box-shadow: var(--slot);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-title { color: var(--header-primary); font: 600 15px/1.2 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-game > .setting-sub { color: var(--text-muted); font: 400 13.5px/1.45 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-watch { gap: 8px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .field-label > .dfind {
+html[data-look="studio"] .modal.dialog.serve .activity-setup-title { color: var(--header-primary); font: 600 15px/1.2 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .activity-setup-game > .setting-sub { color: var(--text-muted); font: 400 13.5px/1.45 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .activity-setup-watch { gap: 8px; }
+html[data-look="studio"] .modal.dialog.serve .field-label > .dfind {
   position: relative;
   display: block;
   text-indent: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .field-label > .dfind > .i {
+html[data-look="studio"] .modal.dialog.serve .field-label > .dfind > .i {
   position: absolute;
   top: 50%;
   left: 18px;
@@ -1836,10 +1812,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .field-label
   color: var(--text-muted);
   pointer-events: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .field-label > .dfind > input { padding-left: 44px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-watch > .setting-sub { margin-left: 16px; color: var(--text-muted); font: 400 13px/1.35 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .field-label > .dfind > input { padding-left: 44px; }
+html[data-look="studio"] .modal.dialog.serve .activity-setup-watch > .setting-sub { margin-left: 16px; color: var(--text-muted); font: 400 13px/1.35 var(--font); }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pins-list-wide {
+html[data-look="studio"] .modal.dialog.serve .pins-list-wide {
   display: grid;
   align-content: start;
   gap: 8px;
@@ -1847,14 +1823,14 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pins-list-w
   margin: 0;
   overflow: auto;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pins-group-head {
+html[data-look="studio"] .modal.dialog.serve .pins-group-head {
   margin: 8px 0 0 6px;
   padding: 0;
   color: var(--text-muted);
   font: 600 13px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pins-group-head svg { width: 15px; height: 15px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row {
+html[data-look="studio"] .modal.dialog.serve .pins-group-head svg { width: 15px; height: 15px; }
+html[data-look="studio"] .modal.dialog.serve .pin-row {
   align-items: flex-start;
   gap: 12px;
   padding: 12px 16px 12px 12px;
@@ -1862,24 +1838,24 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row {
   background: rgb(var(--lamp) / .03);
   box-shadow: inset 0 0 0 1px var(--line);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row:hover,
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row:focus-visible { background: rgb(var(--lamp) / .07); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row > .avatar { width: 36px; height: 36px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-body { gap: 4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-author { color: var(--header-primary); font: 600 14.5px/1.2 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-time { margin-left: 6px; color: var(--text-muted); font: 400 12px/1 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-text { color: var(--text-normal); font: 400 14px/1.45 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-by {
+html[data-look="studio"] .modal.dialog.serve .pin-row:hover,
+html[data-look="studio"] .modal.dialog.serve .pin-row:focus-visible { background: rgb(var(--lamp) / .07); }
+html[data-look="studio"] .modal.dialog.serve .pin-row > .avatar { width: 36px; height: 36px; }
+html[data-look="studio"] .modal.dialog.serve .pin-body { gap: 4px; }
+html[data-look="studio"] .modal.dialog.serve .pin-author { color: var(--header-primary); font: 600 14.5px/1.2 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .pin-time { margin-left: 6px; color: var(--text-muted); font: 400 12px/1 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .pin-text { color: var(--text-normal); font: 400 14px/1.45 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .pin-by {
   display: flex;
   align-items: center;
   gap: 5px;
   color: var(--text-muted);
   font: 400 12.5px/1.2 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-by > .i { width: 13px; height: 13px; }
+html[data-look="studio"] .modal.dialog.serve .pin-by > .i { width: 13px; height: 13px; }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tabs { gap: 6px; margin-top: 4px; border: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tab {
+html[data-look="studio"] .modal.dialog.serve .share-tabs { gap: 6px; margin-top: 4px; border: 0; }
+html[data-look="studio"] .modal.dialog.serve .share-tab {
   height: 34px;
   margin: 0;
   padding: 0 16px;
@@ -1890,19 +1866,19 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tab {
   transition: background var(--t-hover), color var(--t-hover);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tab:hover { background: rgb(var(--lamp) / .06); color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tab.active {
+html[data-look="studio"] .modal.dialog.serve .share-tab.active {
   background: var(--bg-active);
   color: var(--header-primary);
   outline: var(--ring-on);
   outline-offset: -2px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-grid {
+html[data-look="studio"] .modal.dialog.serve .share-grid {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-top: 2px;
   padding: 2px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card {
+html[data-look="studio"] .modal.dialog.serve .share-card {
   display: grid;
   gap: 8px;
   padding: 8px 8px 10px;
@@ -1913,14 +1889,14 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card 
   transition: background var(--t-hover);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card:hover { background: rgb(var(--lamp) / .07); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card.picked {
+html[data-look="studio"] .modal.dialog.serve .share-card.picked {
   background: var(--bg-active);
   box-shadow: inset 0 0 0 2px var(--accent-lit);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-thumb { border-radius: 13px; background: var(--input-bg); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card-label { gap: 8px; padding: 0 6px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card-name { flex: 0 1 auto; color: var(--header-primary); font: 600 13.5px/1.2 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card .kind {
+html[data-look="studio"] .modal.dialog.serve .share-thumb { border-radius: 13px; background: var(--input-bg); }
+html[data-look="studio"] .modal.dialog.serve .share-card-label { gap: 8px; padding: 0 6px; }
+html[data-look="studio"] .modal.dialog.serve .share-card-name { flex: 0 1 auto; color: var(--header-primary); font: 600 13.5px/1.2 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .share-card .kind {
   padding: 4px 7px;
   border-radius: 999px;
   background: rgb(var(--lamp) / .08);
@@ -1929,10 +1905,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card 
   letter-spacing: .06em;
   text-transform: uppercase;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card .kind.playing { color: var(--green); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-loading { color: var(--text-muted); font: 400 14px/1.4 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality { gap: 12px; margin-top: 4px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented {
+html[data-look="studio"] .modal.dialog.serve .share-card .kind.playing { color: var(--green); }
+html[data-look="studio"] .modal.dialog.serve .share-loading { color: var(--text-muted); font: 400 14px/1.4 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .share-quality { gap: 12px; margin-top: 4px; }
+html[data-look="studio"] .modal.dialog.serve .share-quality > .segmented {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
@@ -1940,7 +1916,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quali
   border-radius: 0;
   background: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented > .key.latch {
+html[data-look="studio"] .modal.dialog.serve .share-quality > .segmented > .key.latch {
   flex-direction: column;
   gap: 4px;
   height: auto;
@@ -1949,14 +1925,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quali
   text-align: center;
   white-space: normal;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented > .key.latch > strong { font: 600 14px/1.1 var(--font); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented > .key.latch > .led { background: var(--text-faint); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented > .key.latch > span { font: 400 11.5px/1.3 var(--font); opacity: .75; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .setting-sub { margin: -4px 0 0 16px; color: var(--text-muted); font: 400 13px/1.35 var(--font); }
-
-html[data-look="studio"][data-fit="slim"] .notify-level > .tick,
-html[data-look="studio"][data-fit="slim"] #pins-modal-list .pin-by > .i,
-html[data-look="studio"][data-fit="slim"] #share-quality > button > .led { display: none; }
+html[data-look="studio"] .modal.dialog.serve .share-quality > .segmented > .key.latch > strong { font: 600 14px/1.1 var(--font); }
+html[data-look="studio"] .modal.dialog.serve .share-quality > .segmented > .key.latch > .led { background: var(--text-faint); }
+html[data-look="studio"] .modal.dialog.serve .share-quality > .segmented > .key.latch > span { font: 400 11.5px/1.3 var(--font); opacity: .75; }
+html[data-look="studio"] .modal.dialog.serve .share-quality > .setting-sub { margin: -4px 0 0 16px; color: var(--text-muted); font: 400 13px/1.35 var(--font); }
 
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc {
   gap: 0;
@@ -1964,46 +1936,46 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc {
   padding: 30px 28px 26px;
   text-align: center;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .dstar {
+html[data-look="studio"] .modal.dialog.dc > .dstar {
   --star-size: 64px;
   display: block;
   margin: 0 auto 14px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-logo { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > h2 { margin: 0; text-wrap: balance; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > h2 + * { margin-top: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > p:is(#signin-intro, #claim-intro),
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-wait > .signin-label {
+html[data-look="studio"] .modal.dialog.dc > .signin-logo { display: none; }
+html[data-look="studio"] .modal.dialog.dc > h2 { margin: 0; text-wrap: balance; }
+html[data-look="studio"] .modal.dialog.dc > h2 + * { margin-top: 0; }
+html[data-look="studio"] .modal.dialog.dc > p:is(#signin-intro, #claim-intro),
+html[data-look="studio"] .modal.dialog.dc .signin-wait > .signin-label {
   margin: 14px 0 0;
   color: var(--text-normal);
   font: 400 14.5px/1.45 var(--font);
   text-wrap: pretty;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start { margin-top: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > p#signin-intro:has(~ .signin-wait:not(.hidden)) { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start > .signin-go:is(#signin-go) {
+html[data-look="studio"] .modal.dialog.dc > .signin-start { margin-top: 18px; }
+html[data-look="studio"] .modal.dialog.dc > p#signin-intro:has(~ .signin-wait:not(.hidden)) { display: none; }
+html[data-look="studio"] .modal.dialog.dc > .signin-start > .signin-go:is(#signin-go) {
   width: 100%;
   height: 46px;
   justify-content: center;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-note {
+html[data-look="studio"] .modal.dialog.dc .signin-note {
   margin: 8px 0 0;
   color: var(--text-muted);
   font: 400 13px/1.35 var(--font);
   text-align: center;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start > .signin-form:not(.hidden),
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start > .signin-step:not(.hidden) {
+html[data-look="studio"] .modal.dialog.dc > .signin-start > .signin-form:not(.hidden),
+html[data-look="studio"] .modal.dialog.dc > .signin-start > .signin-step:not(.hidden) {
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin-bottom: 10px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start .signin-label {
+html[data-look="studio"] .modal.dialog.dc > .signin-start .signin-label {
   color: var(--text-normal);
   font: 400 14px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start .signin-field {
+html[data-look="studio"] .modal.dialog.dc > .signin-start .signin-field {
   width: 100%;
   height: 46px;
   padding: 0 18px;
@@ -2015,9 +1987,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start
   color: var(--header-primary);
   font: 400 15px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start .signin-field:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start .signin-go:not(#signin-go) { height: 46px; border-radius: var(--radius-pill); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-code {
+html[data-look="studio"] .modal.dialog.dc > .signin-start .signin-field:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"] .modal.dialog.dc > .signin-start .signin-go:not(#signin-go) { height: 46px; border-radius: var(--radius-pill); }
+html[data-look="studio"] .modal.dialog.dc > .signin-wait > .signin-code {
   width: fit-content;
   margin: 16px auto 0;
   padding: 14px 26px;
@@ -2028,13 +2000,13 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait 
   font: 600 26px/1 var(--font-mono);
   letter-spacing: .14em;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-status {
+html[data-look="studio"] .modal.dialog.dc > .signin-wait > .signin-status {
   gap: 10px;
   margin-top: 14px;
   color: var(--text-muted);
   font: 500 13.5px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait .signin-spinner {
+html[data-look="studio"] .modal.dialog.dc > .signin-wait .signin-spinner {
   width: 9px;
   height: 9px;
   border: 0;
@@ -2043,15 +2015,15 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait 
   box-shadow: 0 0 0 4px rgb(var(--lamp) / .05);
   animation: dc-wait 1.6s ease-in-out infinite;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-links { gap: 18px; margin-top: 12px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-links > .btn-link {
+html[data-look="studio"] .modal.dialog.dc > .signin-wait > .signin-links { gap: 18px; margin-top: 12px; }
+html[data-look="studio"] .modal.dialog.dc > .signin-wait > .signin-links > .btn-link {
   padding: 0;
   color: var(--link);
   font: 500 14px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-links > .btn-link:last-child { color: var(--text-muted); }
+html[data-look="studio"] .modal.dialog.dc > .signin-wait > .signin-links > .btn-link:last-child { color: var(--text-muted); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-links > .btn-link:hover { text-decoration: underline; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-error:not(.hidden) {
+html[data-look="studio"] .modal.dialog.dc > .signin-error:not(.hidden) {
   display: flex;
   align-items: flex-start;
   gap: 12px;
@@ -2065,14 +2037,14 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-error
   font: 500 14px/1.45 var(--font);
   text-align: left;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-error > .i {
+html[data-look="studio"] .modal.dialog.dc > .signin-error > .i {
   flex: none;
   width: 18px;
   height: 18px;
   margin-top: 2px;
   color: var(--danger-text);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-back {
+html[data-look="studio"] .modal.dialog.dc > .signin-back {
   align-self: center;
   margin-top: 12px;
   padding: 0;
@@ -2080,8 +2052,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-back 
   font: 500 14px/1 var(--font);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-back:hover { text-decoration: underline; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start > .signin-back { margin-top: 12px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server {
+html[data-look="studio"] .modal.dialog.dc > .signin-start > .signin-back { margin-top: 12px; }
+html[data-look="studio"] .modal.dialog.dc > .signin-server {
   gap: 8px;
   margin-top: 22px;
   padding-top: 18px;
@@ -2092,13 +2064,13 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-serve
   text-align: left;
   text-transform: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server > span { padding-left: 16px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field { min-height: 46px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel {
+html[data-look="studio"] .modal.dialog.dc > .signin-server > span { padding-left: 16px; }
+html[data-look="studio"] .modal.dialog.dc .signin-server-field { min-height: 46px; }
+html[data-look="studio"] .modal.dialog.dc .signin-server-field > .dsel {
   position: relative;
   display: block;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > .i {
+html[data-look="studio"] .modal.dialog.dc .signin-server-field > .dsel > .i {
   position: absolute;
   top: 50%;
   right: 18px;
@@ -2109,9 +2081,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-
   color: var(--text-muted);
   pointer-events: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > .i.lead { right: auto; left: 18px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel:has(> select.hidden) { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > select:is(#signin-server-select) {
+html[data-look="studio"] .modal.dialog.dc .signin-server-field > .dsel > .i.lead { right: auto; left: 18px; }
+html[data-look="studio"] .modal.dialog.dc .signin-server-field > .dsel:has(> select.hidden) { display: none; }
+html[data-look="studio"] .modal.dialog.dc .signin-server-field > .dsel > select:is(#signin-server-select) {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
@@ -2127,19 +2099,19 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-
   font: 400 15px/1 var(--font);
   text-overflow: ellipsis;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > select:is(#signin-server-select):focus-visible { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > select option { background: var(--bg-raised); color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit:not(.hidden) {
+html[data-look="studio"] .modal.dialog.dc .signin-server-field > .dsel > select:is(#signin-server-select):focus-visible { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"] .modal.dialog.dc .signin-server-field > .dsel > select option { background: var(--bg-raised); color: var(--header-primary); }
+html[data-look="studio"] .modal.dialog.dc .signin-server-edit:not(.hidden) {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .dfind {
+html[data-look="studio"] .modal.dialog.dc .signin-server-edit > .dfind {
   position: relative;
   flex: 1;
   min-width: 0;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .dfind > .i {
+html[data-look="studio"] .modal.dialog.dc .signin-server-edit > .dfind > .i {
   position: absolute;
   top: 50%;
   left: 18px;
@@ -2150,7 +2122,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-
   color: var(--text-muted);
   pointer-events: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .dfind > input:is(#signin-server-input) {
+html[data-look="studio"] .modal.dialog.dc .signin-server-edit > .dfind > input:is(#signin-server-input) {
   width: 100%;
   height: 46px;
   padding: 0 18px 0 44px;
@@ -2162,29 +2134,29 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-
   color: var(--header-primary);
   font: 400 15px/1 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .dfind > input:is(#signin-server-input)[aria-invalid="true"] { box-shadow: var(--slot), 0 0 0 2px var(--danger-text); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .key:is(#signin-server-save) {
+html[data-look="studio"] .modal.dialog.dc .signin-server-edit > .dfind > input:is(#signin-server-input)[aria-invalid="true"] { box-shadow: var(--slot), 0 0 0 2px var(--danger-text); }
+html[data-look="studio"] .modal.dialog.dc .signin-server-edit > .key:is(#signin-server-save) {
   flex: none;
   height: 44px;
   padding: 0 18px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .btn-link {
+html[data-look="studio"] .modal.dialog.dc .signin-server-edit > .btn-link {
   flex: none;
   padding: 0 4px;
   color: var(--text-muted);
   font: 500 14px/1 var(--font);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .btn-link:hover { color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server-note {
+html[data-look="studio"] .modal.dialog.dc > .signin-server-note {
   margin: 10px 0 0 16px;
   color: var(--text-muted);
   font: 400 13px/1.35 var(--font);
   text-align: left;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server-note.warn { color: var(--text-normal); }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server-note.error { color: var(--danger-text); }
+html[data-look="studio"] .modal.dialog.dc > .signin-server-note.warn { color: var(--text-normal); }
+html[data-look="studio"] .modal.dialog.dc > .signin-server-note.error { color: var(--danger-text); }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-profile {
+html[data-look="studio"] .modal.dialog.dc > .claim-profile {
   margin: 16px 0 0;
   padding: 12px 18px;
   border: 0;
@@ -2196,26 +2168,26 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-profil
   text-align: center;
   overflow-wrap: anywhere;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-actions:not(.hidden) {
+html[data-look="studio"] .modal.dialog.dc > .claim-actions:not(.hidden) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 18px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-actions#claim-retry-row { grid-template-columns: 1fr; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-actions > .key {
+html[data-look="studio"] .modal.dialog.dc > .claim-actions#claim-retry-row { grid-template-columns: 1fr; }
+html[data-look="studio"] .modal.dialog.dc > .claim-actions > .key {
   width: 100%;
   height: 44px;
   justify-content: center;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-actions#claim-retry-row > .key { height: 46px; }
+html[data-look="studio"] .modal.dialog.dc > .claim-actions#claim-retry-row > .key { height: 46px; }
 
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc.call-modal {
   align-items: center;
   width: min(320px, calc(100vw - 48px));
   padding: 30px 24px 28px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-avatar {
+html[data-look="studio"] .modal.dialog.dc > .call-avatar {
   display: grid;
   place-items: center;
   width: 112px;
@@ -2225,37 +2197,30 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-avatar 
   box-shadow: 0 0 0 6px rgb(var(--lamp) / .05), 0 0 0 12px rgb(var(--lamp) / .025);
   animation: dc-ring 1.8s ease-in-out infinite;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-avatar > :is(.avatar-xl, .av) { width: 96px; height: 96px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > h2#call-name { font-size: 22px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-sub {
+html[data-look="studio"] .modal.dialog.dc > .call-avatar > :is(.avatar-xl, .av) { width: 96px; height: 96px; }
+html[data-look="studio"] .modal.dialog.dc > h2#call-name { font-size: 22px; }
+html[data-look="studio"] .modal.dialog.dc > .call-sub {
   margin: 6px 0 0;
   color: var(--text-muted);
   font: 400 14.5px/1.45 var(--font);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions {
+html[data-look="studio"] .modal.dialog.dc > .call-actions {
   justify-content: center;
   gap: 28px;
   margin-top: 22px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions > .call-btn.key.sq {
+html[data-look="studio"] .modal.dialog.dc > .call-actions > .call-btn.key.sq {
   width: 56px;
   height: 56px;
   border-radius: 50%;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions > .call-btn.key.sq svg { width: 22px; height: 22px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions > .call-btn.decline.key.sq { color: var(--danger-text); }
+html[data-look="studio"] .modal.dialog.dc > .call-actions > .call-btn.key.sq svg { width: 22px; height: 22px; }
+html[data-look="studio"] .modal.dialog.dc > .call-actions > .call-btn.decline.key.sq { color: var(--danger-text); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions > .call-btn.key.sq:hover { filter: none; }
 
 @keyframes dc-wait { 50% { opacity: .35; } }
 @keyframes dc-ring { 50% { box-shadow: 0 0 0 9px rgb(var(--lamp) / .07), 0 0 0 18px rgb(var(--lamp) / .03); } }
 @media (prefers-reduced-motion: reduce) {
-  html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-avatar,
-  html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait .signin-spinner { animation: none; }
+  html[data-look="studio"] .modal.dialog.dc > .call-avatar,
+  html[data-look="studio"] .modal.dialog.dc > .signin-wait .signin-spinner { animation: none; }
 }
-
-html[data-look="studio"][data-fit="slim"] .modal > .dstar,
-html[data-look="studio"][data-fit="slim"] .signin-server-field > .dsel > .i,
-html[data-look="studio"][data-fit="slim"] .signin-error > .i,
-html[data-look="studio"][data-fit="slim"] .signin-server-edit > .dfind > .i { display: none; }
-html[data-look="studio"][data-fit="slim"] .signin-server-field > .dsel,
-html[data-look="studio"][data-fit="slim"] .signin-server-edit > .dfind { display: contents; }

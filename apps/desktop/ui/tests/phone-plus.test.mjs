@@ -24,11 +24,11 @@ test("every plus rule is for the phone app in the new look, with tokens and no c
   assert.equal(/\/\/|\/\*/.test(glue.replace(/https?:\/\//g, "")), false);
 });
 
-test("the plus file is the last phone file before the off look", () => {
-  assert.match(html, /<link rel="stylesheet" id="studio-phone-plus" href="styles\/phone-plus\.css" media="not all" \/>\n\s*<link rel="stylesheet" id="studio-phone-off" href="styles\/phone-off\.css" media="not all" \/>/);
+test("the plus file sits with the other phone files and the off look stays last", () => {
+  assert.match(html, /id="studio-phone" href="styles\/phone-touch\.css" media="not all" \/>\n(\s*<link rel="stylesheet" id="studio-phone-[a-z-]+" href="styles\/phone-[a-z-]+\.css" media="not all" \/>\n)*\s*<link rel="stylesheet" id="studio-phone-plus" href="styles\/phone-plus\.css" media="not all" \/>/);
   const links = [...html.matchAll(/id="(studio-phone[a-z-]*)"/g)].map(m => m[1]);
   assert.equal(links.at(-1), "studio-phone-off");
-  assert.equal(links.at(-2), "studio-phone-plus");
+  assert.ok(links.includes("studio-phone-plus"));
   assert.match(html, /<script src="scripts\/studio-phone\.js"><\/script>\n(\s*<script src="scripts\/phone-[a-z-]+\.js"><\/script>\n)*\s*<script src="scripts\/phone-plus\.js"><\/script>/);
   assert.equal(read("scripts", "studio-phone.js").includes("BAR_EXTRAS"), false);
 });

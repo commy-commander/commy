@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS, SIGNIN_DIALOGS, SIGNIN_KEYS, SIGNIN_ERRORS, dialogStarState } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS, SIGNIN_DIALOGS, SIGNIN_KEYS, SIGNIN_ERRORS, dialogStarState, SLIM_OWN_SHEETS, dialogDressed } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -13,6 +13,7 @@ const glue = read("../scripts/studio-dialogs.js");
 const parts = read("../styles/studio-parts.css");
 
 const R = 'html[data-look="studio"]:not([data-fit="slim"])';
+const P = 'html[data-look="studio"]';
 const selectors = [...css.matchAll(/(^|\})\s*([^{}@]+)\{/g)].flatMap(match => match[2].split(/,\n/).map(part => part.trim()).filter(Boolean));
 const rule = selector => {
   const start = css.indexOf(`${selector} {`);
@@ -20,9 +21,9 @@ const rule = selector => {
   return css.slice(start, css.indexOf("}", start));
 };
 
-test("the dialogs' new look stays off until the switch is on and off on the phone", () => {
+test("the dialogs' new look stays off until the switch is on, and its parts also dress the phone", () => {
   assert.ok(selectors.length > 20);
-  for (const selector of selectors) assert.ok(selector.startsWith(R) || selector.startsWith('html[data-look="studio"][data-fit="slim"]'), selector);
+  for (const selector of selectors) assert.ok(selector.startsWith(R) || selector.startsWith(`${P} `) || selector.startsWith(`${P}[data-theme="light"] `), selector);
   assert.equal(css.includes("/*"), false);
   assert.deepEqual(css.match(/#[0-9a-fA-F]{3,8}\b/g), null);
   const sheet = html.indexOf('<link rel="stylesheet" id="studio-dialogs" href="styles/studio-dialogs.css" media="not all" />');
@@ -32,8 +33,19 @@ test("the dialogs' new look stays off until the switch is on and off on the phon
   assert.ok(script > html.indexOf('<script src="scripts/studio-accounts.js"></script>'));
   assert.ok(script < html.indexOf('<script src="scripts/app.js"></script>'));
   assert.match(app, /\n  if \(studioLook\(\)\) studioDialogs\(\);\n/);
-  assert.ok(glue.includes('const roomy = document.documentElement.dataset.fit !== "slim";'));
+  assert.ok(glue.includes('const roomy = dialogDressed(modal.id, document.documentElement.dataset.fit);'));
+  assert.equal(css.includes('[data-fit="slim"] '), false);
   assert.ok(glue.includes('attributeFilter: ["data-fit"]'));
+});
+
+test("only the sheets the phone draws itself skip the dialog dress on the phone", () => {
+  assert.deepEqual(SLIM_OWN_SHEETS, ["modal-invite-link", "modal-event", "modal-forum-post"]);
+  for (const id of SLIM_OWN_SHEETS) {
+    assert.equal(dialogDressed(id, "slim"), false, id);
+    assert.equal(dialogDressed(id, "wide"), true, id);
+    assert.equal(dialogDressed(id, undefined), true, id);
+  }
+  for (const id of ["modal-signin", "modal-rules", "modal-server-notify", "modal-create-channel"]) assert.equal(dialogDressed(id, "slim"), true, id);
 });
 
 test("step one covers the plain confirms and small forms, each with its answers row", () => {
@@ -65,37 +77,38 @@ test("a dialog gets one bright key: cream beside red, plain glass beside blue", 
 
 test("the dialog is the guide's slab with its answers on the bottom edge", () => {
   assert.match(rule(`${R} .modal.dialog`), /width: min\(400px, calc\(100vw - 48px\)\);\n  padding: 26px 28px 48px;\n  border: 0;\n  border-radius: var\(--radius-xl\);/);
-  assert.match(rule(`${R} .modal.dialog > h2`), /font: 700 21px\/1\.2 var\(--font-display\);/);
+  assert.match(rule(`${P} .modal.dialog > h2`), /font: 700 21px\/1\.2 var\(--font-display\);/);
   assert.match(rule(`${R} .modal.dialog > .modal-actions.answers`), /position: absolute;\n  right: 24px;\n  bottom: -20px;/);
   assert.match(rule(`${R} .modal-backdrop:has(> .modal.dialog:not(.hidden))`), /background: var\(--scrim\);/);
-  assert.match(rule(`${R} .modal.dialog > .answers > .key:disabled`), /opacity: 1;/);
+  assert.match(rule(`${P} .modal.dialog > .answers > .key:disabled`), /opacity: 1;/);
 });
 
 test("the four undrawn parts follow the guide's reading", () => {
   assert.ok(glue.includes('studioIconMarkup("triangle-alert")'));
   assert.ok(glue.includes('studioIconMarkup("check", "tick")'));
-  assert.match(rule(`${R} .modal.dialog > .danger-callout`), /border: 0;\n  border-radius: 14px;\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);\n  font: 400 14px\/1\.4 var\(--font\);/);
-  assert.match(rule(`${R} .modal.dialog > .danger-callout > .i`), /color: var\(--danger-text\);/);
-  assert.match(rule(`${R} .modal.dialog > .tray-opt + .tray-opt`), /box-shadow: inset 0 1px 0 var\(--line\);/);
-  assert.match(rule(`${R} .modal.dialog > .tray-opt`), /background: none;/);
-  assert.match(rule(`${R} .modal.dialog > .report-reasons > label`), /height: 32px;\n  padding: 0 10px;\n  border-radius: 7px;/);
-  assert.match(rule(`${R} .modal.dialog > .report-reasons > label > input`), /opacity: 0;/);
-  assert.ok(css.includes(`${R} .modal.dialog > .report-reasons > label:has(> input:checked) > .tick { opacity: 1; }`));
-  assert.match(rule(`${R} .modal.dialog > .delete-preview`), /border-radius: 14px;\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);/);
-  assert.match(rule(`${R} .modal.dialog > .delete-preview > .avatar`), /width: 32px;\n  height: 32px;/);
-  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .danger-callout > .i,\nhtml[data-look="studio"][data-fit="slim"] .report-reasons > label > .tick { display: none; }'));
+  assert.match(rule(`${P} .modal.dialog > .danger-callout`), /border: 0;\n  border-radius: 14px;\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);\n  font: 400 14px\/1\.4 var\(--font\);/);
+  assert.match(rule(`${P} .modal.dialog > .danger-callout > .i`), /color: var\(--danger-text\);/);
+  assert.match(rule(`${P} .modal.dialog > .tray-opt + .tray-opt`), /box-shadow: inset 0 1px 0 var\(--line\);/);
+  assert.match(rule(`${P} .modal.dialog > .tray-opt`), /background: none;/);
+  assert.match(rule(`${P} .modal.dialog > .report-reasons > label`), /height: 32px;\n  padding: 0 10px;\n  border-radius: 7px;/);
+  assert.match(rule(`${P} .modal.dialog > .report-reasons > label > input`), /opacity: 0;/);
+  assert.ok(css.includes(`${P} .modal.dialog > .report-reasons > label:has(> input:checked) > .tick { opacity: 1; }`));
+  assert.match(rule(`${P} .modal.dialog > .delete-preview`), /border-radius: 14px;\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);/);
+  assert.match(rule(`${P} .modal.dialog > .delete-preview > .avatar`), /width: 32px;\n  height: 32px;/);
+  assert.equal(css.includes(".danger-callout > .i,\n"), false);
 });
 
 test("reporting is a blue action with a switch row to also block", () => {
   assert.deepEqual(DIALOG_BLUE_ACTIONS, ["report-go"]);
   assert.ok(glue.includes('if (DIALOG_BLUE_ACTIONS.includes(button.id)) return "primary";'));
   assert.ok(glue.includes(`box.classList.toggle("switch", roomy)`));
-  assert.match(rule(`${R} .modal.dialog > .report-also-block`), /min-height: 44px;/);
-  assert.match(rule(`${R} .modal.dialog > .report-reasons > label:has(> input:checked)`), /background: var\(--bg-active\);/);
+  assert.match(rule(`${P} .modal.dialog > .report-also-block`), /min-height: 44px;/);
+  assert.match(rule(`${P} .modal.dialog > .report-reasons > label:has(> input:checked)`), /background: var\(--bg-active\);/);
   assert.ok(css.includes("resize: none;"));
 });
 
-const J = `${R} .modal.dialog.join`;
+const J = `${P} .modal.dialog.join`;
+const JR = `${R} .modal.dialog.join`;
 
 test("joining a server: six dialogs, each answer named, red words on the left", () => {
   assert.deepEqual(JOIN_DIALOGS, ["modal-invite-link", "modal-join-wait", "modal-server-welcome", "modal-onboarding", "modal-rules", "modal-server-info"]);
@@ -105,9 +118,9 @@ test("joining a server: six dialogs, each answer named, red words on the left", 
   assert.deepEqual(joinAnswerClasses(["si-leave", "si-answers", "si-close"]), ["key out-k", "key", "key primary"]);
   assert.deepEqual(joinAnswerClasses(["invite-link-cancel", "invite-link-join"]), ["key", "key primary"]);
   for (const id of Object.keys(JOIN_ANSWERS)) assert.ok(JOIN_ANSWERS[id].split(" ").filter(name => name === "primary").length <= 1, id);
-  assert.match(rule(`${J} > .modal-actions.answers.spread`), /left: 24px;/);
+  assert.match(rule(`${JR} > .modal-actions.answers.spread`), /left: 24px;/);
   assert.match(rule(`${J} > .answers > .key.out-k`), /margin-right: auto;\n  color: var\(--danger-text\);/);
-  assert.match(rule(`${J}`), /width: min\(440px, calc\(100vw - 48px\)\);/);
+  assert.match(rule(`${JR}`), /width: min\(440px, calc\(100vw - 48px\)\);/);
   assert.match(rule(`${R} .modal.modal-wide.dialog.join`), /width: min\(560px, calc\(100vw - 48px\)\);/);
 });
 
@@ -142,7 +155,7 @@ test("roles and answers are pick rows, banner roles grow into cards", () => {
   assert.match(rule(`${J} .role-pick.has-banner`), /border-radius: 18px;/);
   assert.match(rule(`${J} .role-pick.has-banner > .role-pick-banner`), /height: 38px;/);
   assert.ok(css.includes(`${J} .ob-check,\n${J} .role-pick > .role-pick-check {\n  order: 1;`));
-  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .invite-link-warning > .i,'));
+  assert.equal(css.includes(".invite-link-warning > .i,"), false);
 });
 
 test("a dialog opens without the focus ring until a key is pressed", () => {
@@ -150,22 +163,23 @@ test("a dialog opens without the focus ring until a key is pressed", () => {
   assert.equal(dialogJustOpened("modal dialog slab", false), false);
   assert.equal(dialogJustOpened("modal hidden", true), false);
   assert.equal(dialogJustOpened(null, false), false);
-  assert.ok(css.includes(`${R} .modal.dialog.quiet > .answers > .key:focus-visible { outline: 0; }`));
+  assert.ok(css.includes(`${P} .modal.dialog.quiet > .answers > .key:focus-visible { outline: 0; }`));
   assert.ok(glue.includes("attributeOldValue: true"));
   assert.ok(glue.includes('modal.classList.remove("quiet")'));
 });
 
-const D = `${R} .modal.dialog`;
+const D = `${P} .modal.dialog`;
+const DR = `${R} .modal.dialog`;
 
 test("moderating: who slot, latch keys for lengths, cream way out beside red", () => {
   assert.deepEqual(MODERATE_DIALOGS, ["modal-moderate", "modal-timeout", "modal-leaving"]);
-  assert.ok(css.includes(`${D}.modal-moderate,\n${D}.modal-leaving { width: min(440px, calc(100vw - 48px)); }`));
+  assert.ok(css.includes(`${DR}.modal-moderate,\n${DR}.modal-leaving { width: min(440px, calc(100vw - 48px)); }`));
   for (const id of MODERATE_DIALOGS) assert.ok(html.includes(`id="${id}"`), id);
   assert.match(rule(`${D} > .mod-who`), /padding: 10px 14px;\n  border-radius: var\(--radius-pill\);\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);/);
   assert.match(rule(`${D} > .mod-who > .avatar`), /width: 32px;\n  height: 32px;/);
   assert.match(rule(`${D} > .timeout-choices`), /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);\n  gap: 8px;/);
   assert.match(rule(`${D} > .timeout-choices > .key.latch`), /height: 40px;/);
-  assert.ok(glue.includes('const down = roomy && choice.classList.contains("active");'));
+  assert.ok(glue.includes('const down = choice.classList.contains("active");'));
   assert.ok(glue.includes("keys.observe(grid, { childList: true })"));
   assert.deepEqual(dialogAnswerClasses(["plain", "danger"]), ["key cream", "key danger"]);
 });
@@ -193,14 +207,14 @@ test("picking people: rows on the slab, search with its icon, glass invite keys"
   assert.equal(inviteRowKey("Sent", true), "sent");
   assert.equal(inviteRowKey("Sent", false), "key sm");
   assert.deepEqual(INVITE_KEYS, { "invite-link-copy": "key primary", "invite-copy": "key" });
-  assert.ok(css.includes(`${D}#modal-invite { width: min(560px, calc(100vw - 48px)); }`));
+  assert.ok(css.includes(`${DR}#modal-invite { width: min(560px, calc(100vw - 48px)); }`));
   assert.match(rule(`${D} > .people-list > .person-row`), /min-height: 54px;/);
   assert.match(rule(`${D} > .people-list > .person-row`), /border-radius: var\(--radius-pill\);/);
   assert.match(rule(`${D} > .people-list > .person-row > .sent > .i`), /color: var\(--green\);/);
   assert.match(rule(`${D} > .dfind > .i`), /left: 18px;/);
   assert.match(rule(`${D} > .dfind > input`), /padding-left: 44px;/);
   assert.ok(glue.includes('wrap.appendChild(input);'));
-  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .dfind { display: contents; }'));
+  assert.equal(css.includes(".dfind { display: contents; }"), false);
 });
 
 test("invite box, lengths and the group picker follow the people drawing", () => {
@@ -225,8 +239,10 @@ test("making things: ten dialogs on the slab at their widths", () => {
 });
 
 test("making things: keys, fields with icons and selects with a chevron", () => {
-  assert.deepEqual(studioKeyNames("key sm primary", true), { key: true, sm: true, sq: false, primary: true });
+  assert.deepEqual(studioKeyNames("key sm primary"), { key: true, sm: true, sq: false, primary: true });
+  assert.deepEqual(studioKeyNames(""), { key: false, sm: false, sq: false, primary: false });
   assert.deepEqual(studioKeyNames("key sm primary", false), { key: false, sm: false, sq: false, primary: false });
+  assert.ok(glue.includes("function studioKeyDress(button, classes, roomy = true) {"));
   assert.equal(MAKING_KEYS["create-server-open"], "key primary");
   assert.equal(MAKING_KEYS["join-server-save"], "key");
   assert.equal(MAKING_KEYS["catalog-add"], "key sm primary");
@@ -235,11 +251,11 @@ test("making things: keys, fields with icons and selects with a chevron", () => 
   assert.equal(MAKING_FIELD_ICONS["event-start"], "calendar-days");
   assert.deepEqual(MAKING_SELECTS, ["event-channel", "poll-duration"]);
   assert.ok(glue.includes('studioFieldIcon(select, "chevron-down", "dsel")'));
-  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .dsel { display: contents; }'));
+  assert.equal(css.includes(".dsel { display: contents; }"), false);
 });
 
 test("making things: kinds and starting points light like pick rows", () => {
-  const M = `${R} .modal.dialog.make`;
+  const M = `${P} .modal.dialog.make`;
   assert.match(rule(`${M} .kind-option`), /border-radius: 22px;/);
   assert.match(rule(`${M} .kind-option.active`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\);/);
   assert.match(rule(`${M} .kind-option.active .kind-icon`), /background: var\(--accent\);/);
@@ -250,7 +266,7 @@ test("making things: kinds and starting points light like pick rows", () => {
 });
 
 test("making things: bot steps, the trim bar and the catalog follow the drawing", () => {
-  const M = `${R} .modal.dialog.make`;
+  const M = `${P} .modal.dialog.make`;
   assert.match(rule(`${M} .bot-step::before`), /width: 26px;/);
   assert.match(rule(`${M} .bot-code-row,\n${M} .bot-commands > .bot-code-row`), /height: 44px;/);
   assert.match(rule(`${M} .sound-trim`), /border-radius: 18px;/);
@@ -261,7 +277,7 @@ test("making things: bot steps, the trim bar and the catalog follow the drawing"
 });
 
 test("making things: wave bars run edge to edge, selected text is ultramarine, observers start once", () => {
-  assert.match(rule(`${R} .modal.dialog.make .sound-wave`), /inset: 12px 0;/);
+  assert.match(rule(`${P} .modal.dialog.make .sound-wave`), /inset: 12px 0;/);
   assert.ok(parts.includes('html[data-look="studio"] ::selection { background: var(--accent); color: var(--accent-ink); }'));
   const invite = glue.slice(glue.indexOf("function studioInviteParts()"), glue.indexOf("function studioLeavingTitle("));
   assert.equal(invite.includes("MutationObserver"), false);
@@ -271,13 +287,14 @@ test("making things: wave bars run edge to edge, selected text is ultramarine, o
 });
 
 test("a server's settings, pins, activities and sharing follow the drawing", () => {
-  const E = `${R} .modal.dialog.serve`;
+  const E = `${P} .modal.dialog.serve`;
+  const ER = `${R} .modal.dialog.serve`;
   assert.deepEqual(SERVER_DIALOGS, ["modal-server-notify", "modal-join-sound", "modal-activities", "modal-pins", "modal-share"]);
   for (const id of [...SERVER_DIALOGS, ...SERVER_LISTS, ...LATCH_ROWS]) assert.ok(html.includes(`id="${id}"`), id);
   assert.ok(glue.includes('modal.classList.toggle("serve", roomy && SERVER_DIALOGS.includes(modal.id));'));
-  assert.ok(css.includes(`${E} { width: min(440px, calc(100vw - 48px)); gap: 12px; }`));
-  assert.ok(css.includes(`${E}#modal-pins { width: min(560px, calc(100vw - 48px)); }`));
-  assert.ok(css.includes(`${E}#modal-share { width: min(640px, calc(100vw - 48px)); }`));
+  assert.ok(css.includes(`${ER} { width: min(440px, calc(100vw - 48px)); gap: 12px; }`));
+  assert.ok(css.includes(`${ER}#modal-pins { width: min(560px, calc(100vw - 48px)); }`));
+  assert.ok(css.includes(`${ER}#modal-share { width: min(640px, calc(100vw - 48px)); }`));
   assert.match(rule(`${E} .notify-level`), /border-radius: 22px;/);
   assert.match(rule(`${E} .notify-level.picked`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\);/);
   assert.match(rule(`${E} .notify-level > .notify-mark`), /display: none;/);
@@ -290,7 +307,8 @@ test("a server's settings, pins, activities and sharing follow the drawing", () 
 });
 
 test("sign in, claim and the incoming call follow the drawing", () => {
-  const F = `${R} .modal.dialog.dc`;
+  const F = `${P} .modal.dialog.dc`;
+  const FR = `${R} .modal.dialog.dc`;
   assert.deepEqual(SIGNIN_DIALOGS, ["modal-signin", "modal-claim", "modal-call"]);
   for (const id of [...SIGNIN_DIALOGS, ...Object.keys(SIGNIN_KEYS), ...SIGNIN_ERRORS, "signin-server-select", "signin-server-input", "signin-wait", "claim-retry-row", "call-avatar"]) assert.ok(html.includes(`id="${id}"`), id);
   assert.ok(glue.includes('modal.classList.toggle("dc", roomy && SIGNIN_DIALOGS.includes(modal.id));'));
@@ -302,15 +320,15 @@ test("sign in, claim and the incoming call follow the drawing", () => {
   assert.equal(dialogStarState("modal-claim", false, false), "idle");
   assert.equal(dialogStarState("modal-claim", false, true), "unimpressed");
   assert.equal(dialogStarState("modal-call", false, false), null);
-  assert.match(rule(F), /width: min\(440px, calc\(100vw - 48px\)\);/);
-  assert.match(rule(F), /padding: 30px 28px 26px;/);
+  assert.match(rule(FR), /width: min\(440px, calc\(100vw - 48px\)\);/);
+  assert.match(rule(FR), /padding: 30px 28px 26px;/);
   assert.match(rule(`${F} > .dstar`), /--star-size: 64px;/);
   assert.match(rule(`${F} > .signin-logo`), /display: none;/);
   assert.match(rule(`${F} > .signin-wait > .signin-code`), /font: 600 26px\/1 var\(--font-mono\);/);
   assert.match(rule(`${F} > .signin-wait .signin-spinner`), /background: var\(--yellow\);/);
   assert.match(rule(`${F} > .signin-error:not(.hidden)`), /color: var\(--danger-text\);/);
   assert.match(rule(`${F} > .signin-server`), /border-top: 1px solid var\(--line\);/);
-  assert.match(rule(`${F}.call-modal`), /padding: 30px 24px 28px;/);
+  assert.match(rule(`${FR}.call-modal`), /padding: 30px 24px 28px;/);
   assert.match(rule(`${F} > .call-avatar`), /width: 112px;/);
   assert.match(rule(`${F} > .call-actions > .call-btn.decline.key.sq`), /color: var\(--danger-text\);/);
   assert.ok(css.includes("@media (prefers-reduced-motion: reduce) {\n  " + F + " > .call-avatar,"));
