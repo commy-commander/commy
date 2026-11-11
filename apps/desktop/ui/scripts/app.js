@@ -9632,7 +9632,7 @@ function searchTerms(query) {
 function renderSearchResults(query, results, scope, ctx) {
   const hits = results.hits.filter(h => !isBlocked(h.message.author_id));
   const total = results.total - (results.hits.length - hits.length);
-  setSearchHead(pageCount(total), searchScopeLine(scope, query, ctx));
+  setSearchHead(total || !studioLook() ? pageCount(total) : searchScopeTitle(scope, ctx), searchScopeLine(scope, query, ctx));
   setSearchPager(pageWindow(total, results.offset));
   if (!hits.length) {
     setSearchItems([searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]);
@@ -9644,7 +9644,7 @@ function renderSearchResults(query, results, scope, ctx) {
 function renderDmSearchResults(query, results, scope, ctx) {
   const hits = results.hits.filter(h => !isBlocked(searchHitMessage(h).author_id));
   const total = results.total - (results.hits.length - hits.length);
-  setSearchHead(pageCount(total), searchScopeLine(scope, query, ctx));
+  setSearchHead(total || !studioLook() ? pageCount(total) : searchScopeTitle(scope, ctx), searchScopeLine(scope, query, ctx));
   setSearchPager(pageWindow(total, results.offset));
   if (!hits.length) {
     setSearchItems([searchNote("No messages found", "Search covers the direct messages and groups this device keeps.")]);

@@ -109,6 +109,7 @@ test("GIFs are two soft columns that fade out, and no GIF search is a quiet well
   assert.match(rule(`${R} :is(.gif-picker, .pop-gifs) .gif-note::before`), /width: 56px;\n  height: 56px;\n  border-radius: 50%;\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);/);
   assert.match(rule(`${R} :is(.gif-picker, .pop-gifs) .gif-note > .btn-link`), /color: var\(--link\); font: 600 13\.5px\/1 var\(--font\);/);
   assert.match(rule(`${R} :is(.gif-picker, .pop-gifs) > .gif-attrib`), /color: var\(--text-faint\); font: 600 12px\/1 var\(--font\);/);
+  assert.ok(css.includes(`${R} :is(.gif-picker, .pop-gifs):has(> .gif-grid > .gif-note) > .gif-attrib { visibility: hidden; }`));
 });
 
 test("search results are a 460 slab with ringed scopes, accent-lit marks, a hairline pager and the quiet star", () => {
@@ -121,6 +122,9 @@ test("search results are a 460 slab with ringed scopes, accent-lit marks, a hair
   assert.match(rule(`${R} .search-pop .search-row .pin-text`), /-webkit-line-clamp: 2;/);
   assert.match(rule(`${R} .search-pop .search-hit`), /background: color-mix\(in oklab, var\(--accent\) 38%, transparent\);\n  color: var\(--header-primary\);/);
   assert.match(rule(`${R} .search-pop > .search-pager`), /border-top: 1px solid var\(--line\);/);
+  assert.ok(css.includes(`${R} .search-pop > .search-pager:is(.idle, :has(> #search-newer:disabled):has(> #search-older:disabled)) { display: none; }`));
+  assert.ok(css.includes(`${R} .search-pop:has(> .search-list > .search-empty) { height: auto; }`));
+  assert.equal(read("../scripts/app.js").split("setSearchHead(total || !studioLook() ? pageCount(total) : searchScopeTitle(scope, ctx), searchScopeLine(scope, query, ctx));").length, 3);
   assert.match(rule(`${R} .search-pop .search-empty > .pins-empty-mark > .sstar`), /--star-size: 48px;/);
   assert.deepEqual(PICKER_KEYS, ["lightbox-open", "lightbox-save", "search-newer", "search-older"]);
   for (const id of PICKER_KEYS) assert.ok(html.includes(`id="${id}"`), id);
