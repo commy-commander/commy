@@ -1077,3 +1077,605 @@ html[data-look="studio"][data-fit="slim"] .person-row > .go,
 html[data-look="studio"][data-fit="slim"] .person-row > .pick > .i,
 html[data-look="studio"][data-fit="slim"] .person-row > .sent > .i,
 html[data-look="studio"][data-fit="slim"] #invite-expiry > button > .led { display: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make { width: min(440px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make > h2 + p {
+  color: var(--text-muted);
+  font: 400 14px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-event,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-bot { width: min(560px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-catalog { width: min(640px, calc(100vw - 48px)); height: auto; gap: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-catalog { padding-bottom: 26px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label + .dfind,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label + .dsel { margin-top: -4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dfind,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dsel,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make > .dsel {
+  position: relative;
+  display: block;
+  text-indent: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dfind > .i,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dsel > .i,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make > .dsel > .i {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dfind > .i { left: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-label > .dfind > input { padding-left: 44px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dsel > .i { right: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dsel > select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 46px;
+  cursor: pointer;
+  font: 400 15px/1 var(--font);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dsel > select option { background: var(--bg-raised); color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > input[type="datetime-local"] {
+  position: relative;
+  width: 100%;
+  height: 46px;
+  padding: 0 18px 0 44px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  transition: box-shadow var(--t-hover) var(--ease-out);
+  color-scheme: dark;
+  font: 400 15px/1 var(--font);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > input[type="datetime-local"]:hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > input[type="datetime-local"]:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .dfind > input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 44px;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make textarea,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make textarea:is(#event-description) {
+  border: 0;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  padding: 12px 18px;
+  border-radius: 22px;
+  font: 400 14.5px/20px var(--font);
+  resize: none;
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-picker { gap: 6px; margin-top: -4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option {
+  gap: 12px;
+  min-height: 58px;
+  padding: 9px 18px 9px 10px;
+  border: 0;
+  border-radius: 22px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-normal);
+  transition: background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option:hover { background: rgb(var(--lamp) / .06); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option.active {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--text-normal);
+  font: 500 19px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-icon svg { width: 18px; height: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option.active .kind-icon { background: var(--accent); color: var(--accent-ink); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text { min-width: 0; display: grid; gap: 3px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--header-primary);
+  font: 600 14.5px/1.2 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text > span {
+  color: var(--text-muted);
+  font: 400 12.5px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text .beta-tag {
+  margin: 0;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(var(--lamp) / .08);
+  color: var(--text-muted);
+  font: 600 10.5px/1 var(--font);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-radio { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option > .tick {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--accent-lit);
+  opacity: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-option.active > .tick { opacity: 1; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input {
+  gap: 9px;
+  height: 46px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  text-indent: 0;
+  transition: box-shadow var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input:hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input:focus-within { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .input-prefix { color: var(--text-muted); font: 500 17px/1 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .input-prefix svg { width: 16px; height: 16px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > .emoji-slot {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 2px 0 -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > .emoji-slot:hover { background: rgb(var(--lamp) / .08); color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > .emoji-slot svg { width: 17px; height: 17px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > input[type="text"] {
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > input[type="text"]:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .prefixed-input > input[type="text"]:focus { box-shadow: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > #create-server-open,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > #join-server-save,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username > #username-save {
+  width: 100%;
+  height: 46px;
+  justify-content: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > #create-server-open,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username > #username-save { margin-top: 6px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > .modal-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 2px;
+  color: var(--text-muted);
+  font: 600 11.5px/1 var(--font);
+  letter-spacing: .1em;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > .modal-divider::before,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > .modal-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > #join-server-save { margin-top: -2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username > .dlabel { margin-top: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-username > .dlabel + .dfind { margin-top: -4px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-grid { gap: 8px; margin-top: 6px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile {
+  height: auto;
+  min-height: 60px;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 3px;
+  padding: 12px 14px 12px 12px;
+  border: 0;
+  border-radius: 20px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  text-align: left;
+  transition: background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile:hover { background: rgb(var(--lamp) / .06); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile[aria-checked="true"] {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile-icon {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--text-normal);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile-icon svg { width: 18px; height: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile[aria-checked="true"] .template-tile-icon { background: var(--accent); color: var(--accent-ink); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile-title {
+  align-self: end;
+  color: var(--header-primary);
+  font: 600 14px/1.2 var(--font);
+  white-space: normal;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-tile-blurb {
+  align-self: start;
+  color: var(--text-muted);
+  font: 400 12px/1.3 var(--font);
+  white-space: normal;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview {
+  margin-top: 2px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview-view { gap: 10px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview-head { height: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview-summary {
+  color: var(--header-primary);
+  font: 600 13.5px/1.2 var(--font);
+  letter-spacing: 0;
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-preview-body { gap: 10px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-group { grid-template-columns: 112px minmax(0, 1fr); align-items: center; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-group-name {
+  height: auto;
+  color: var(--text-muted);
+  font: 400 12.5px/1 var(--font);
+  letter-spacing: 0;
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-group-chips { gap: 6px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-chip {
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px 0 8px;
+  border-radius: 999px;
+  background: var(--bg-active);
+  color: var(--text-normal);
+  font: 500 13px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-chip svg,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-chip .template-hash { color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-code-entry textarea {
+  flex: 1;
+  min-height: 0;
+  font: 400 13px/1.45 var(--font-mono);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .template-code-note { margin-left: 16px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-row { gap: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .field-row > .field-label { min-width: 0; margin-top: 4px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-steps { gap: 18px; margin-top: 6px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step { gap: 0; padding-left: 38px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step::before {
+  top: 0;
+  left: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 12.5px/26px var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step-title {
+  margin-top: 4px;
+  color: var(--header-primary);
+  font: 600 15px/1.2 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step > .setting-sub {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font: 400 13.5px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step .setting-sub code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgb(var(--lamp) / .07);
+  color: var(--header-primary);
+  font: 400 12.5px/1 var(--font-mono);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-step .btn-link { color: var(--link); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code-row,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-commands > .bot-code-row {
+  gap: 10px;
+  height: 44px;
+  margin-top: 8px;
+  padding: 0 6px 0 16px;
+  border-radius: 999px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-commands { gap: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--header-primary);
+  font: 400 13px/1 var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code.muted { color: var(--text-muted); font-family: var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-code-row > .key.sm { flex: none; width: auto; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-name-field { width: 220px; max-width: none; margin-top: 16px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port {
+  margin-top: 10px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: auto;
+  padding: 6px 0;
+  color: var(--text-muted);
+  font: 500 13.5px/1 var(--font);
+  list-style: none;
+  cursor: pointer;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > summary::-webkit-details-marker { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > summary:hover { color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port > summary > .i { width: 15px; height: 15px; transition: transform var(--t-hover); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port[open] > summary > .i { transform: rotate(90deg); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port[open] > .setting-sub { margin: 6px 0 0 23px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port[open] > .bot-commands { margin: 0 0 0 23px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-port[open] > .btn-link { margin: 10px 0 0 23px; font: 500 13.5px/1 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-waiting {
+  align-items: flex-start;
+  margin-top: 6px;
+  color: var(--text-normal);
+  font: 400 13.5px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .bot-waiting-dot {
+  margin-top: 5px;
+  width: 9px;
+  height: 9px;
+  background: var(--yellow);
+  box-shadow: 0 0 0 4px rgb(var(--lamp) / .05);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-rows { gap: 8px; margin-top: -4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-row { gap: 8px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-row > .poll-row-remove.key.sq {
+  width: 44px;
+  height: 44px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-row > .poll-row-remove.key.sq:disabled { opacity: .45; cursor: default; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-row > .poll-row-remove svg { width: 17px; height: 17px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make #poll-add.key {
+  align-self: flex-start;
+  gap: 6px;
+  margin-top: -2px;
+  border: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make #poll-add.key > .i { width: 15px; height: 15px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch > div { flex: 1; min-width: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch .setting-title { color: var(--text-normal); font: 500 14px/1.2 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch .setting-sub { margin-top: 4px; font: 400 12.5px/1.35 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-switch > input.switch { flex: none; margin: 0; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-tags-label {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-post-tags-left {
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-pick-tags { gap: 6px; margin-top: -4px; min-height: 32px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-pick-tags > .access-chip,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips > .catalog-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-normal);
+  font: 500 13.5px/1 var(--font);
+  cursor: pointer;
+  transition: background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-pick-tags > .access-chip:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips > .catalog-chip:hover { background: rgb(var(--lamp) / .07); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .forum-pick-tags > .access-chip.picked,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips > .catalog-chip.active {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+  color: var(--header-primary);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-sound p.sound-hint {
+  min-height: 0;
+  color: var(--text-muted);
+  font: 400 14px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim {
+  height: 76px;
+  margin-top: 4px;
+  border-radius: 18px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave { inset: 12px 14px; gap: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave > span,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-wave > span.on {
+  border-radius: 2px;
+  background: var(--accent-lit);
+  opacity: .85;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-shade { background: rgb(var(--dark) / .55); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-shade-start { border-radius: 18px 0 0 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-shade-end { border-radius: 0 18px 18px 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-window {
+  border: 0;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 2px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-playhead {
+  top: 6px;
+  bottom: 6px;
+  border-radius: 1px;
+  background: var(--white);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-handle::before { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-handle::after {
+  left: 7px;
+  width: 10px;
+  height: 30px;
+  margin-top: -15px;
+  border-radius: 5px;
+  background: var(--white);
+  box-shadow: 0 1px 3px rgb(var(--dark) / .5);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim-bar { gap: 12px; margin-top: -2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim-bar > .key.sq { width: 36px; height: 36px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim-bar > .key.sq svg { width: 16px; height: 16px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-trim-times { color: var(--text-muted); font: 400 13px/1 var(--font-mono); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-identity { gap: 8px; margin-top: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-identity > .key.sq { width: 44px; height: 44px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .sound-identity > .key.sq svg { width: 18px; height: 18px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-head { gap: 14px; align-items: flex-start; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-head > h2 {
+  margin: 0;
+  color: var(--header-primary);
+  font: 700 21px/1.2 var(--font-display);
+  letter-spacing: -.015em;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-head > .key.sq { width: 36px; height: 36px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-head > .key.sq svg { width: 16px; height: 16px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-catalog > .dfind { margin-top: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips {
+  gap: 6px;
+  height: 32px;
+  -webkit-mask-image: linear-gradient(90deg, rgb(0 0 0) 88%, transparent);
+  mask-image: linear-gradient(90deg, rgb(0 0 0) 88%, transparent);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-chips > .catalog-chip { flex: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-grid {
+  flex: none;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-auto-rows: auto;
+  gap: 8px;
+  height: 214px;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-tile {
+  aspect-ratio: 1;
+  height: auto;
+  padding: 14px;
+  border: 0;
+  border-radius: 16px;
+  background: rgb(var(--lamp) / .04);
+  transition: background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-tile:hover { background: rgb(var(--lamp) / .09); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-tile.picked {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 2px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-note { color: var(--text-muted); font: 400 14px/1.4 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick {
+  gap: 10px;
+  margin-top: 2px;
+  padding: 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick-preview {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgb(var(--lamp) / .05);
+  overflow: hidden;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick-preview img,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick-preview.sticker img { width: 26px; height: 26px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick-preview svg { width: 18px; height: 18px; color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick > input[type="text"] { height: 36px; padding: 0 16px; font-size: 14px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-pick > .key.sm { height: 36px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-attrib {
+  margin: -4px 0 0 16px;
+  color: var(--text-muted);
+  font: 400 13px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .catalog-attrib strong { color: var(--text-muted); font-weight: 400; }
+
+html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog.make .sound-shade { background: rgb(var(--lamp) / .55); }
+html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .modal.dialog.make .dfind > input[type="datetime-local"]:is(#event-start, #event-end) { color-scheme: light; }
+
+html[data-look="studio"][data-fit="slim"] .dsel { display: contents; }
+html[data-look="studio"][data-fit="slim"] .dsel > .i,
+html[data-look="studio"][data-fit="slim"] #modal-username > .dlabel,
+html[data-look="studio"][data-fit="slim"] .kind-option > .tick,
+html[data-look="studio"][data-fit="slim"] #poll-add > .i,
+html[data-look="studio"][data-fit="slim"] .bot-port > summary > .i { display: none; }

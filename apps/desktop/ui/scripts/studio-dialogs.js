@@ -61,6 +61,55 @@ const PEOPLE_SEARCHES = ["invite-friend-search", "forward-search", "voice-invite
 
 const INVITE_KEYS = { "invite-link-copy": "key primary", "invite-copy": "key" };
 
+const MAKING_DIALOGS = [
+  "modal-create-channel",
+  "modal-add-server",
+  "modal-username",
+  "modal-create-server",
+  "modal-event",
+  "modal-add-bot",
+  "modal-poll",
+  "modal-forum-post",
+  "modal-sound",
+  "modal-catalog",
+];
+
+const MAKING_KEYS = {
+  "create-server-open": "key primary",
+  "join-server-save": "key",
+  "username-save": "key primary",
+  "add-bot-invite-copy": "key sm",
+  "poll-add": "key sm",
+  "sound-trim-play": "key sq",
+  "sound-emoji": "key sq",
+  "catalog-close": "key sq",
+  "catalog-upload": "key sm",
+  "catalog-add": "key sm primary",
+};
+
+const MAKING_ROW_KEYS = [
+  ["add-bot-commands", ".bot-code-row > .bot-copy", "key sm"],
+  ["add-bot-bridge", ".bot-code-row > .bot-copy", "key sm"],
+  ["poll-rows", ".poll-row > .poll-row-remove", "key sq"],
+];
+
+const MAKING_FIELD_ICONS = {
+  "join-ticket-input": "link",
+  "username-input": "at-sign",
+  "event-start": "calendar-days",
+  "event-end": "calendar-days",
+  "catalog-search": "search",
+};
+
+const MAKING_SELECTS = ["event-channel", "poll-duration"];
+
+const STUDIO_KEY_NAMES = ["key", "sm", "sq", "primary"];
+
+function studioKeyNames(classes, roomy) {
+  const wanted = roomy ? String(classes || "").split(" ") : [];
+  return Object.fromEntries(STUDIO_KEY_NAMES.map(name => [name, wanted.includes(name)]));
+}
+
 function inviteRowKey(text, disabled) {
   return String(text || "").trim() === "Sent" && disabled ? "sent" : "key sm";
 }
@@ -113,6 +162,7 @@ function studioDialogDress(modal) {
   modal.classList.toggle("dialog", roomy);
   modal.classList.toggle("slab", roomy);
   modal.classList.toggle("join", roomy && join);
+  modal.classList.toggle("make", roomy && MAKING_DIALOGS.includes(modal.id));
   for (const box of modal.querySelectorAll(":scope > .report-also-block > input[type='checkbox'], :scope > .leaving-trust > input[type='checkbox']")) box.classList.toggle("switch", roomy);
   const actions = modal.querySelector(":scope > .modal-actions");
   if (!actions) return;
@@ -176,17 +226,63 @@ function studioPeopleRows(list) {
   }
 }
 
-function studioPeopleSearch(input) {
-  if (input.parentElement && input.parentElement.classList.contains("dfind")) return;
+function studioFieldIcon(input, icon = "search", kind = "dfind") {
+  if (input.parentElement && input.parentElement.classList.contains(kind)) return;
   const wrap = document.createElement("span");
-  wrap.className = "dfind";
+  wrap.className = kind;
   input.before(wrap);
-  if (typeof studioIconMarkup === "function") wrap.insertAdjacentHTML("afterbegin", studioIconMarkup("search"));
+  if (typeof studioIconMarkup === "function") wrap.insertAdjacentHTML("afterbegin", studioIconMarkup(icon));
   wrap.appendChild(input);
+}
+
+function studioKeyDress(button, classes, roomy) {
+  for (const [name, on] of Object.entries(studioKeyNames(classes, roomy))) studioToggle(button, name, on);
+}
+
+function studioMakingKeys() {
+  const roomy = document.documentElement.dataset.fit !== "slim";
+  for (const [id, classes] of Object.entries(MAKING_KEYS)) {
+    const key = document.getElementById(id);
+    if (key) studioKeyDress(key, classes, roomy);
+  }
+  for (const [id, selector, classes] of MAKING_ROW_KEYS) {
+    const list = document.getElementById(id);
+    if (!list) continue;
+    for (const key of list.querySelectorAll(selector)) studioKeyDress(key, classes, roomy);
+  }
+}
+
+function studioMakingParts() {
+  for (const [id, icon] of Object.entries(MAKING_FIELD_ICONS)) {
+    const input = document.getElementById(id);
+    if (input) studioFieldIcon(input, icon);
+  }
+  for (const select of MAKING_SELECTS.map(id => document.getElementById(id)).filter(Boolean)) studioFieldIcon(select, "chevron-down", "dsel");
+  const username = document.getElementById("username-input");
+  const wrap = username && username.parentElement;
+  if (wrap && wrap.classList.contains("dfind") && !wrap.previousElementSibling?.classList.contains("dlabel")) {
+    const label = document.createElement("label");
+    label.className = "field-label dlabel";
+    label.htmlFor = username.id;
+    label.textContent = username.placeholder;
+    wrap.before(label);
+  }
+  if (typeof studioIconMarkup !== "function") return;
+  for (const kind of document.querySelectorAll("#create-channel-kinds > .kind-option")) {
+    if (!kind.querySelector(":scope > .tick")) kind.insertAdjacentHTML("beforeend", studioIconMarkup("check", "tick"));
+  }
+  const add = document.getElementById("poll-add");
+  if (add && !add.querySelector(":scope > .i")) add.insertAdjacentHTML("afterbegin", studioIconMarkup("plus"));
+  const fold = document.querySelector("#add-bot-port > summary");
+  if (fold && !fold.querySelector(":scope > .i")) fold.insertAdjacentHTML("afterbegin", studioIconMarkup("chevron-right"));
 }
 
 function studioInviteParts() {
   const roomy = document.documentElement.dataset.fit !== "slim";
+  studioMakingParts();
+  const keyLists = MAKING_ROW_KEYS.map(([id]) => document.getElementById(id)).filter(Boolean);
+  const making = new MutationObserver(studioMakingKeys);
+  for (const list of keyLists) making.observe(list, { childList: true, subtree: true });
   const expiry = document.getElementById("invite-expiry");
   if (expiry) {
     for (const choice of expiry.querySelectorAll(":scope > button")) {
@@ -202,9 +298,7 @@ function studioInviteParts() {
   }
   for (const [id, classes] of Object.entries(INVITE_KEYS)) {
     const key = document.getElementById(id);
-    if (!key) continue;
-    const wanted = roomy ? classes.split(" ") : [];
-    for (const name of ["key", "primary"]) studioToggle(key, name, wanted.includes(name));
+    if (key) studioKeyDress(key, classes, roomy);
   }
 }
 
@@ -243,7 +337,7 @@ function studioJoinParts(modal) {
 
 function studioDialogs() {
   studioDialogParts();
-  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS, ...PEOPLE_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
+  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS, ...PEOPLE_DIALOGS, ...MAKING_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
   const joins = modals.filter(modal => JOIN_DIALOGS.includes(modal.id));
   const grids = ["moderate-lengths", "timeout-choices"].map(id => document.getElementById(id)).filter(Boolean);
   const leaving = document.getElementById("modal-leaving");
@@ -254,10 +348,11 @@ function studioDialogs() {
     if (leaving) studioLeavingTitle(leaving);
     for (const list of PEOPLE_LISTS.map(id => document.getElementById(id)).filter(Boolean)) studioPeopleRows(list);
     studioInviteParts();
+    studioMakingKeys();
   };
   const keys = new MutationObserver(() => { for (const grid of grids) studioLengthKeys(grid); });
   for (const grid of grids) keys.observe(grid, { childList: true });
-  for (const input of PEOPLE_SEARCHES.map(id => document.getElementById(id)).filter(Boolean)) studioPeopleSearch(input);
+  for (const input of PEOPLE_SEARCHES.map(id => document.getElementById(id)).filter(Boolean)) studioFieldIcon(input);
   const lists = PEOPLE_LISTS.map(id => document.getElementById(id)).filter(Boolean);
   const rows = new MutationObserver(() => { for (const list of lists) studioPeopleRows(list); });
   for (const list of lists) rows.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "disabled"] });
@@ -282,5 +377,5 @@ function studioDialogs() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey };
+  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames };
 }

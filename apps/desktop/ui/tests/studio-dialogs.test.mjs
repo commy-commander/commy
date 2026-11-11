@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -211,4 +211,50 @@ test("invite box, lengths and the group picker follow the people drawing", () =>
   assert.match(rule(`${D}#modal-group > .people-list > .person-row.in-group`), /opacity: \.45;/);
   assert.ok(app.includes("if (target.server) row.dataset.server = target.server;"));
   assert.ok(glue.includes('studioIconMarkup("chevron-right", "go")'));
+});
+
+test("making things: ten dialogs on the slab at their widths", () => {
+  assert.equal(MAKING_DIALOGS.length, 10);
+  for (const id of [...MAKING_DIALOGS, ...Object.keys(MAKING_KEYS), ...MAKING_ROW_KEYS.map(([id]) => id), ...Object.keys(MAKING_FIELD_ICONS), ...MAKING_SELECTS]) assert.ok(html.includes(`id="${id}"`), id);
+  const M = `${R} .modal.dialog.make`;
+  assert.ok(css.includes(`${M} { width: min(440px, calc(100vw - 48px)); }`));
+  assert.ok(css.includes(`${M}#modal-event,\n${M}#modal-add-bot { width: min(560px, calc(100vw - 48px)); }`));
+  assert.match(rule(`${M}#modal-catalog`), /width: min\(640px, calc\(100vw - 48px\)\);/);
+  assert.ok(glue.includes('modal.classList.toggle("make", roomy && MAKING_DIALOGS.includes(modal.id));'));
+});
+
+test("making things: keys, fields with icons and selects with a chevron", () => {
+  assert.deepEqual(studioKeyNames("key sm primary", true), { key: true, sm: true, sq: false, primary: true });
+  assert.deepEqual(studioKeyNames("key sm primary", false), { key: false, sm: false, sq: false, primary: false });
+  assert.equal(MAKING_KEYS["create-server-open"], "key primary");
+  assert.equal(MAKING_KEYS["join-server-save"], "key");
+  assert.equal(MAKING_KEYS["catalog-add"], "key sm primary");
+  assert.equal(MAKING_FIELD_ICONS["join-ticket-input"], "link");
+  assert.equal(MAKING_FIELD_ICONS["username-input"], "at-sign");
+  assert.equal(MAKING_FIELD_ICONS["event-start"], "calendar-days");
+  assert.deepEqual(MAKING_SELECTS, ["event-channel", "poll-duration"]);
+  assert.ok(glue.includes('studioFieldIcon(select, "chevron-down", "dsel")'));
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .dsel { display: contents; }'));
+});
+
+test("making things: kinds and starting points light like pick rows", () => {
+  const M = `${R} .modal.dialog.make`;
+  assert.match(rule(`${M} .kind-option`), /border-radius: 22px;/);
+  assert.match(rule(`${M} .kind-option.active`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\);/);
+  assert.match(rule(`${M} .kind-option.active .kind-icon`), /background: var\(--accent\);/);
+  assert.match(rule(`${M} .kind-radio`), /display: none;/);
+  assert.match(rule(`${M} .template-tile`), /border-radius: 20px;/);
+  assert.match(rule(`${M} .template-tile[aria-checked="true"]`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\);/);
+  assert.match(rule(`${M} .forum-pick-tags > .access-chip.picked,\n${M} .catalog-chips > .catalog-chip.active`), /background: var\(--bg-active\);/);
+});
+
+test("making things: bot steps, the trim bar and the catalog follow the drawing", () => {
+  const M = `${R} .modal.dialog.make`;
+  assert.match(rule(`${M} .bot-step::before`), /width: 26px;/);
+  assert.match(rule(`${M} .bot-code-row,\n${M} .bot-commands > .bot-code-row`), /height: 44px;/);
+  assert.match(rule(`${M} .sound-trim`), /border-radius: 18px;/);
+  assert.match(rule(`${M} .sound-window`), /box-shadow: inset 0 0 0 2px var\(--accent-lit\);/);
+  assert.match(rule(`${M} .catalog-grid`), /grid-template-columns: repeat\(8, minmax\(0, 1fr\)\);/);
+  assert.match(rule(`${M} .catalog-tile`), /border-radius: 16px;/);
+  assert.match(rule(`${M} .catalog-pick`), /border-radius: 999px;/);
 });
