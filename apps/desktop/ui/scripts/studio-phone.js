@@ -29,6 +29,7 @@ const studioPhone = {
   trayWasOpen: false,
   trayStep: false,
   inviteStep: false,
+  accountsStep: false,
   cardStep: false,
   threadStep: false,
   cardMenuStep: false,
@@ -1889,7 +1890,7 @@ function openRowSwipe(row) {
 
 const RAIL_UNLIT_MS = 200;
 const RAIL_FADE_MS = 140;
-const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop";
+const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop, #modal-accounts";
 
 function sheetAtTop(sheet, from) {
   for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
@@ -1898,6 +1899,7 @@ function sheetAtTop(sheet, from) {
 
 function closeSwipedSheet(sheet) {
   if (["pt-hold", "pt-pick", "pt-search"].includes(sheet.id)) closeSheets();
+  else if (sheet.id === "modal-accounts") hideModals();
   else closeFloating();
   sheet.style.transition = "";
   sheet.style.translate = "";
@@ -2599,6 +2601,32 @@ async function joinInviteHere() {
   }
 }
 
+function accountsShown() {
+  return studioSlim() && !$("modal-backdrop").classList.contains("hidden") && !$("modal-accounts").classList.contains("hidden");
+}
+
+function syncAccountsSheet() {
+  const open = accountsShown();
+  const step = layerStep("ptAccounts", open, studioPhone.accountsStep, history.state);
+  if (step === "push") history.pushState({ ...(history.state || { pane: phonePane() }), ptAccounts: true }, "");
+  studioPhone.accountsStep = open;
+  if (step === "back") history.back();
+}
+
+function wireAccountsSheet() {
+  const watch = node => new MutationObserver(syncAccountsSheet).observe(node, { attributes: true, attributeFilter: ["class"] });
+  watch($("modal-backdrop"));
+  watch($("modal-accounts"));
+  $("modal-backdrop").addEventListener("click", e => {
+    if (e.target === e.currentTarget && accountsShown()) hideModals();
+  });
+  window.addEventListener("popstate", () => {
+    if ((history.state && history.state.ptAccounts) || !accountsShown()) return;
+    studioPhone.accountsStep = false;
+    hideModals();
+  });
+}
+
 function wireInvite() {
   $("pt-invite-join").onclick = joinInviteHere;
   $("pt-invite-later").onclick = () => $("invite-link-cancel").click();
@@ -2685,6 +2713,7 @@ function wireStudioPhone() {
   wireFaceTaps();
   wireThreadScreen();
   wireInvite();
+  wireAccountsSheet();
   wireRoom();
   watchStudioPhone();
   $("app").dataset.tab = studioPhone.tab;

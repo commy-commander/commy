@@ -1075,6 +1075,15 @@ test("leaving an invite: Not now and back close it, and nothing closes it while 
   assert.doesNotMatch(glue, /\$\("pt-invite-wall"\)\.onclick/);
 });
 
+test("the Accounts sheet on the phone has its own back step and closes on the scrim or a swipe down", () => {
+  assert.match(glue, /const step = layerStep\("ptAccounts", open, studioPhone\.accountsStep, history\.state\);/);
+  assert.match(glue, /if \(\(history\.state && history\.state\.ptAccounts\) \|\| !accountsShown\(\)\) return;\n\s+studioPhone\.accountsStep = false;\n\s+hideModals\(\);/);
+  assert.match(glue, /if \(e\.target === e\.currentTarget && accountsShown\(\)\) hideModals\(\);/);
+  assert.match(glue, /const STUDIO_SHEET_NODES = "[^"]*#modal-accounts"/);
+  assert.match(glue, /else if \(sheet\.id === "modal-accounts"\) hideModals\(\);/);
+  assert.match(glue, /\n  wireAccountsSheet\(\);\n/);
+});
+
 test("joining from the invite screen says Joining, and a failure shows the app's words in red text above the keys", () => {
   assert.match(glue, /\$\("pt-invite-join"\)\.disabled = busy;\n\s+\$\("pt-invite-later"\)\.disabled = busy;\n\s+\$\("pt-invite-join"\)\.textContent = busy \? "Joining\\u2026" : "Join";/);
   const calls = /const summary = await invoke\("join_server", \{ ticket: invite\.ticket \}\);\n\s+pendingInvite = null;\n\s+hideModals\(\);\n\s+await enterJoinedServer\(summary\);/;
