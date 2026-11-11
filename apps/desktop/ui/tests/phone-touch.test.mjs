@@ -745,6 +745,13 @@ test("the quality mark opens a Voice sheet with the connection and the app's own
   assert.match(css, rule(' \\.pt-voice-sheet h3', '[^}]*font: 700 17px/1 var\\(--font-display\\);'));
 });
 
+test("the phone's profile editor finds the server tag's hint wherever the settings page wraps the picker", () => {
+  assert.match(glue, /\$\("pt-prof-tag-hint"\)\.textContent = \$\("account-server-tag"\)\.closest\("\.field-label"\)\.querySelector\("\.setting-sub"\)\.textContent;/);
+  const start = html.indexOf('id="account-server-tag"');
+  const label = html.lastIndexOf('<label class="field-label"', start);
+  assert.ok(label > 0 && html.indexOf("</label>", label) > html.indexOf('class="setting-sub"', start));
+});
+
 test("a stream you have not opened is a dark glass tile with the sharer's face and one Watch key", () => {
   assert.match(glue, /<span class="key primary go">Watch<\/span>/);
   assert.doesNotMatch(glue, /Tap to watch/);

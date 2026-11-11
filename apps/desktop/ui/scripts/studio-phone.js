@@ -1329,7 +1329,7 @@ function fillProfileEditor() {
   $("pt-prof-pro").value = (state.voice && state.voice.pronouns) || "";
   $("pt-prof-status").value = saved.status;
   $("pt-prof-about").value = decodeCustomEmojis(user.about);
-  $("pt-prof-tag-hint").textContent = $("account-server-tag").parentNode.querySelector(".setting-sub").textContent;
+  $("pt-prof-tag-hint").textContent = $("account-server-tag").closest(".field-label").querySelector(".setting-sub").textContent;
   studioPhone.profileEmoji = saved.emoji;
   studioPhone.profileClear = undefined;
   paintProfileAbout();
