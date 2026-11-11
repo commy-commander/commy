@@ -30,6 +30,7 @@ const studioPhone = {
   trayStep: false,
   inviteStep: false,
   cardStep: false,
+  threadStep: false,
   cardMenuStep: false,
   inviteBusy: false,
   trayHome: null,
@@ -434,7 +435,7 @@ function layChatPane() {
 
 function paintReplyNames() {
   if (!studioSlim() || !state.currentServer) return;
-  for (const name of $("messages").querySelectorAll(".reply-ref-name:not([data-pt-ink])")) {
+  for (const name of document.querySelectorAll(":is(#messages, #thread-messages) .reply-ref-name:not([data-pt-ink])")) {
     name.dataset.ptInk = "on";
     const member = state.currentServer.members.find(found => found.name === name.textContent);
     if (member && member.color) name.style.setProperty("--pt-ink", `#${member.color}`);
@@ -687,6 +688,7 @@ function dropSheets() {
   for (const name of STUDIO_SHEETS) if (app.classList.contains(name)) app.classList.remove(name);
   for (const held of document.querySelectorAll(".msg.pt-held")) held.classList.remove("pt-held");
   for (const copy of document.querySelectorAll(".pt-hold-msg")) copy.remove();
+  $("pt-hold")?.classList.remove("pt-tmore");
 }
 
 function closeSheets(then) {
@@ -1641,6 +1643,10 @@ function wireHorizon() {
       studioPhone.cardMenuStep = false;
       $("fp-menu").classList.add("hidden");
     }
+    if (!(history.state && history.state.ptThread) && studioPhone.threadStep) {
+      studioPhone.threadStep = false;
+      closeThread();
+    }
     if (back === "pt-voice-open" && phonePane() === "list" && !$("phone-voice").classList.contains("hidden")) $("app").classList.add(back);
   });
   $("channel-list").addEventListener("click", e => {
@@ -1664,6 +1670,9 @@ function watchStudioPhone() {
   watch($("channel-name"), { childList: true, characterData: true, subtree: true }, paintChatHeader);
   watch($("member-card"), { attributes: true, attributeFilter: ["class"] }, syncCardSheet);
   watch($("fp-menu"), { attributes: true, attributeFilter: ["class"] }, syncCardSheet);
+  watch($("thread-panel"), { attributes: true, attributeFilter: ["class"] }, syncThreadScreen);
+  watch($("thread-status"), { childList: true, characterData: true, subtree: true }, paintThreadWhere);
+  watch($("thread-panel").querySelector(".thread-head"), { attributes: true, attributeFilter: ["class"], subtree: true }, paintThreadMore);
   const cardBody = $("member-card").querySelector(".mc-body");
   watch(cardBody, { childList: true, subtree: true, characterData: true }, markCardCut);
   new ResizeObserver(markCardCut).observe(cardBody);
@@ -1684,6 +1693,7 @@ function watchStudioPhone() {
   watch($("video-label"), { childList: true, characterData: true, subtree: true }, paintWatch);
   watch($("messages"), { childList: true }, paintWatch);
   watch($("messages"), { childList: true }, paintReplyNames);
+  watch($("thread-messages"), { childList: true }, paintReplyNames);
   watch($("typing-text"), { childList: true, characterData: true, subtree: true }, paintTyper);
   new ResizeObserver(layChatPane).observe($("messages"));
   window.addEventListener("resize", layChatPane);
@@ -1902,6 +1912,7 @@ function swipeTarget(e) {
   const touch = e.touches[0];
   const pane = phonePane();
   if (profileOpen()) return edgeBackStarts(touch.clientX) && !sheetOpen() ? { kind: "back", node: $("pt-profile"), profile: true } : null;
+  if (pane === "chat" && studioPhone.threadStep && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: $("thread-panel"), thread: true };
   if (pane !== "list" && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: document.querySelector("main.main") };
   const msg = pane === "chat" && target.closest("#messages .msg");
   if (msg && msg.querySelector(':scope > .msg-actions button[title="Reply"]')) return { kind: "reply", node: msg };
@@ -1982,6 +1993,7 @@ function endSwipe(swipe, dx, cancelled) {
     node.style.translate = "";
     if (!cancelled && edgeBackCommits(dx)) {
       if (swipe.profile) leaveProfileEditor();
+      else if (swipe.thread) leaveThread();
       else phoneStep("back");
     }
   } else if (swipe.kind === "sheet") {
@@ -2671,6 +2683,7 @@ function wireStudioPhone() {
   wireHoldSheet();
   wireSwipes();
   wireFaceTaps();
+  wireThreadScreen();
   wireInvite();
   wireRoom();
   watchStudioPhone();
@@ -2685,3 +2698,79 @@ function wireStudioPhone() {
 }
 
 wireStudioPhone();
+
+function wireThreadScreen() {
+  const panel = $("thread-panel");
+  const head = panel.querySelector(".thread-head");
+  const back = studioNode("button", "pt-thread-back", '<i data-i="chevron-left"></i>');
+  back.type = "button";
+  back.setAttribute("aria-label", "Back");
+  back.onclick = leaveThread;
+  head.prepend(back);
+  const more = studioNode("button", "key sq more pt-thread-more", '<i data-i="ellipsis"></i>');
+  more.type = "button";
+  more.setAttribute("aria-label", "More");
+  more.onclick = openThreadMore;
+  head.appendChild(more);
+  const composer = panel.querySelector(".thread-composer");
+  const send = el("button", "composer-send pt-thread-send");
+  send.type = "button";
+  send.setAttribute("aria-label", "Send");
+  send.innerHTML = $("send-btn").innerHTML;
+  send.onclick = () => sendThreadReply();
+  composer.appendChild(send);
+  const input = $("thread-input");
+  const mark = () => composer.classList.toggle("has-text", input.value.trim().length > 0);
+  input.addEventListener("input", mark);
+  input.addEventListener("keydown", () => setTimeout(mark));
+  paintThreadMore();
+}
+
+function threadMoreRows() {
+  return ["thread-rename", "thread-archive", "thread-lock"].map(id => $(id)).filter(button => !button.classList.contains("hidden"));
+}
+
+function paintThreadMore() {
+  const more = $("thread-panel").querySelector(".pt-thread-more");
+  if (more) more.classList.toggle("hidden", !threadMoreRows().length);
+}
+
+function paintThreadWhere() {
+  const status = $("thread-status");
+  const channel = state.view === "server" && state.currentChannel ? `#${channelPlainName(state.currentChannel)}` : "";
+  status.dataset.where = channel;
+  status.classList.toggle("pt-only-where", !status.textContent.trim() || /^No replies/.test(status.textContent.trim()));
+}
+
+function openThreadMore() {
+  const buttons = threadMoreRows();
+  if (!buttons.length) return;
+  for (const copy of document.querySelectorAll(".pt-hold-msg")) copy.remove();
+  const rows = $("pt-hold-rows");
+  rows.replaceChildren(...buttons.map(button => holdRow(button.title, () => button.click())));
+  $("pt-hold-rx").replaceChildren();
+  $("pt-hold-rx").classList.add("hidden");
+  $("pt-hold").classList.add("pt-tmore");
+  openSheet("pt-hold-open");
+}
+
+function leaveThread() {
+  if (studioPhone.threadStep && history.state && history.state.ptThread) history.back();
+  else closeThread();
+}
+
+function syncThreadScreen() {
+  const open = studioSlim() && !$("thread-panel").classList.contains("hidden");
+  const entry = history.state;
+  const step = layerStep("ptThread", open, studioPhone.threadStep, entry);
+  if (step === "push") {
+    history.pushState({ ...(entry || { pane: phonePane() }), ptThread: true }, "");
+    $("thread-input").blur();
+  }
+  studioPhone.threadStep = open;
+  if (step === "back") history.back();
+  if (open) {
+    paintThreadMore();
+    paintThreadWhere();
+  }
+}

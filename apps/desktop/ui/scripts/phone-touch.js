@@ -188,6 +188,11 @@ const SHEET_ROWS = {
   "Report Message": { label: "Report message", icon: "flag" },
   "Delete": { label: "Delete", icon: "trash-2", danger: true },
   "Delete (Moderator)": { label: "Delete as moderator", icon: "trash-2", danger: true },
+  "Rename Thread": { label: "Rename thread", icon: "pencil" },
+  "Archive Thread": { label: "Archive thread", icon: "archive" },
+  "Unarchive Thread": { label: "Unarchive thread", icon: "archive" },
+  "Lock Thread": { label: "Lock thread", icon: "lock" },
+  "Unlock Thread": { label: "Unlock thread", icon: "lock" },
 };
 
 function swipeAxis(dx, dy) {

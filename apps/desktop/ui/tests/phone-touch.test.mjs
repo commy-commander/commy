@@ -1184,6 +1184,33 @@ test("holding a message lifts a copy of it above the guide's bottom sheet, with 
   assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .msg.pt-held { visibility: hidden; }'));
   assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .app:is(.pt-search-open, .pt-hold-open) > .pt-scrim { background: var(--scrim); }'));
   assert.match(glue, /const copy = heldCopy\(msg\);\n  \$\("pt-hold"\)\.prepend\(copy\);/);
-  assert.match(glue, /for \(const copy of document\.querySelectorAll\("\.pt-hold-msg"\)\) copy\.remove\(\);\n\}/);
+  assert.match(glue, /for \(const copy of document\.querySelectorAll\("\.pt-hold-msg"\)\) copy\.remove\(\);\n  \$\("pt-hold"\)\?\.classList\.remove\("pt-tmore"\);\n\}/);
   assert.match(glue, /copy\.inert = true;/);
+});
+
+test("an open thread on the phone is a full screen like the chat, with its own back step and a More sheet", () => {
+  const P = 'html[data-look="studio"][data-fit="slim"]';
+  const rule = selector => {
+    const start = css.indexOf(`${P} ${selector} {`);
+    assert.ok(start >= 0, selector);
+    return css.slice(start, css.indexOf("}", start));
+  };
+  assert.ok(rule('.app[data-pane="chat"].thread-open > .thread-panel').includes("grid-template-rows: 60px minmax(0, 1fr) auto;"));
+  assert.ok(rule('.app[data-pane="chat"].thread-open > .thread-panel::before').includes("margin: 6px 10px 11px;"));
+  assert.ok(rule(".thread-panel .thread-head").includes("grid-template-columns: 44px minmax(0, 1fr) auto;"));
+  assert.ok(rule(".thread-panel :is(.thread-title, .thread-title-input)").includes("font: 700 22px/22px var(--font-display);"));
+  assert.ok(css.includes(`${P} .thread-panel .thread-status::after { content: " \\00b7  " attr(data-where); }`));
+  assert.ok(css.includes(`${P} .thread-panel .thread-divider:last-child { display: none; }`));
+  assert.ok(css.includes(`${P} .thread-panel :is(.thread-head-icon, .thread-head > .icon-btn) { display: none; }`));
+  assert.ok(rule(".thread-panel .thread-composer").includes("margin: 0 16px calc(var(--hz-line) + 7px);"));
+  assert.ok(css.includes(`${P} .app.pt-hold-open > .pt-hold.pt-tmore { padding: 30px 14px calc(var(--hz-safe) + 8px); }`));
+  assert.ok(css.includes(`${P} .pt-hold .pt-sheet-rows > .arow:first-child { margin-bottom: 5px; }`));
+  assert.equal(sheetRow("Rename Thread").label, "Rename thread");
+  assert.equal(sheetRow("Unlock Thread").label, "Unlock thread");
+  assert.equal(sheetRow("Archive Thread").icon, "archive");
+  assert.match(glue, /const step = layerStep\("ptThread", open, studioPhone\.threadStep, entry\);/);
+  assert.match(glue, /if \(!\(history\.state && history\.state\.ptThread\) && studioPhone\.threadStep\) \{\n      studioPhone\.threadStep = false;\n      closeThread\(\);/);
+  assert.match(glue, /return \{ kind: "back", node: \$\("thread-panel"\), thread: true \};/);
+  assert.match(glue, /send\.onclick = \(\) => sendThreadReply\(\);/);
+  assert.match(glue, /more\.classList\.toggle\("hidden", !threadMoreRows\(\)\.length\);/);
 });
