@@ -1,0 +1,41 @@
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 6px 10px calc(-1 * var(--radius-xl));
+  padding: 14px 12px 0;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 96px), var(--panel);
+  -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+}
+html[data-look="studio"][data-fit="slim"][data-fx="lite"] body.mobile-app #drive-view { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  padding: var(--border-w);
+  border-radius: inherit;
+  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  -webkit-mask: linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(black 0 0) content-box exclude, linear-gradient(black 0 0);
+  pointer-events: none;
+}
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view > .drive-toolbar { position: static; min-height: 0; height: 0; margin: 0; padding: 0; border: 0; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-crumbs { display: none; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-toolbar > .beta-tag { position: absolute; top: -47px; right: 4px; z-index: 4; height: 22px; margin: 0; padding: 0 9px; border: 0; border-radius: 999px; background: var(--bg-active); box-shadow: none; font: 700 12px/22px var(--font); letter-spacing: normal; text-transform: none; color: var(--text-muted); }
+html[data-look="studio"][data-fit="slim"] body.mobile-app .main:has(> #drive-view:not(.hidden)) .chat-header { padding-right: 70px; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app .main:has(> #drive-view:not(.hidden)) #chat-hash { color: var(--text-muted); }
+html[data-look="studio"][data-fit="slim"] body.mobile-app .main:has(> #drive-view:not(.hidden)) #chat-hash svg { width: 19px; height: 19px; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app .main:has(> #drive-view:not(.hidden)) #channel-name { margin-left: 7px; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app .main:has(> #drive-view:not(.hidden)) .pt-chat-sub { padding-left: 0; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view > .drive-list { padding: 0; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-empty { display: grid; justify-items: center; gap: 8px; padding: 120px 18px 26px; text-align: center; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-empty > svg { display: none; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-empty > .pt-drive-well { display: grid; place-items: center; width: 64px; height: 64px; margin-bottom: 6px; border-radius: 50%; background: var(--input-bg); box-shadow: var(--slot); color: var(--text-faint); }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .pt-drive-well > .i { width: 28px; height: 28px; }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-empty > b { font: 700 17px/1.2 var(--font-display); color: var(--header-primary); }
+html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-empty > span { max-width: 340px; margin: 0; font: 400 14.5px/1.45 var(--font); color: var(--text-muted); }
