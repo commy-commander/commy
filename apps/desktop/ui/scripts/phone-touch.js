@@ -272,6 +272,10 @@ function earlyBuild(version) {
   return Boolean(major) && Number(major[1]) === 0;
 }
 
+function chatBanner({ view, channel }) {
+  return view === "server" && channel && channel.banner ? String(channel.banner) : "";
+}
+
 function trayTap(wasOpen, place) {
   if (!wasOpen || place === "tray" || place === "outside") return "pass";
   return place === "key" ? "stay" : "close";
@@ -458,6 +462,7 @@ if (typeof module !== "undefined" && module.exports) {
     ROOM_KEYS,
     trayTap,
     NOTIFY_PICKS,
+    chatBanner,
     earlyBuild,
     trayNeedsStep,
     roomTiles,

@@ -353,6 +353,22 @@ function buildChatHeader() {
   $("channel-name").after(studioNode("span", "pt-chev", '<i data-i="chevron-down"></i>'));
   $("phone-back").appendChild(studioNode("span", "pt-back-i", '<i data-i="chevron-left"></i>'));
   header.append(sub, title, chip);
+  const banner = el("div", "pt-chat-ban");
+  banner.id = "pt-chat-ban";
+  document.querySelector(".main").appendChild(banner);
+}
+
+function paintChatBanner() {
+  const node = $("pt-chat-ban");
+  const ref = chatBanner({ view: state.view, channel: state.currentChannel });
+  if (node.dataset.ref === ref) return;
+  node.dataset.ref = ref;
+  node.style.backgroundImage = "";
+  document.querySelector(".main").classList.toggle("pt-has-ban", Boolean(ref));
+  if (!ref) return;
+  loadServerImage(ref).then(url => {
+    if (url && node.dataset.ref === ref) node.style.backgroundImage = `url("${url}")`;
+  });
 }
 
 const STUDIO_TYPER_FACES = 3;
@@ -1128,6 +1144,7 @@ function paintChatHeader() {
     presence,
   });
   if (sub.textContent !== text) sub.textContent = text;
+  paintChatBanner();
   const name = $("phone-voice-name").textContent;
   const inVoice = !$("phone-voice").classList.contains("hidden");
   $("pt-room-chip").classList.toggle("hidden", !inVoice);

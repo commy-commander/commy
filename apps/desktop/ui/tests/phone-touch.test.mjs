@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -994,4 +994,34 @@ test("the You page keeps the design guide's measures, and the pressed Theme key 
   assert.match(css, rule(" \\.set \\.seg", "gap: 2px; padding: 4px; border-radius: 999px;"));
   assert.match(css, rule('\\[data-theme="light"\\] \\.seg \\.key\\.is-down', "background: var\\(--pillow-top\\), var\\(--bg-pressed\\); filter: none;"));
   assert.match(css, rule(" \\.seg \\.key\\.is-down \\.led", "box-shadow: 0 0 0 1\\.5px rgb\\(var\\(--dark\\) / \\.5\\);"));
+});
+
+test("a server banner is the top of the Home pane, under the glass, and fades out before the chips", () => {
+  const head = ' \\.app\\[data-pane="list"\\]\\[data-tab="home"\\]:not\\(\\.dm-mode\\) \\.sidebar-header\\.has-banner:not\\(\\.plain\\)';
+  assert.match(css, rule(head, "height: 110px; padding-top: 66px;"));
+  assert.match(css, rule(`${head} > \\.sidebar-banner`, "display: block;\\s+position: absolute;\\s+inset: 0 0 auto;\\s+z-index: 0;\\s+height: 132px;\\s+border-radius: var\\(--radius-xl\\) var\\(--radius-xl\\) 0 0;"));
+  assert.match(css, rule(`${head} > \\.sidebar-banner`, "mask-image: linear-gradient\\(#000 30%, transparent\\);\\s+pointer-events: none;"));
+  assert.match(css, rule(`${head} > \\.sidebar-banner::after`, "display: none;"));
+  assert.match(css, rule(' \\.app\\[data-pane="list"\\] \\.sidebar-banner', "display: none;"));
+});
+
+test("a channel banner never paints its row in the phone's channel list", () => {
+  assert.match(css, new RegExp(`${slim} \\.app\\[data-pane="list"\\] \\.channel\\.has-banner::before,\\n${slim} \\.app\\[data-pane="list"\\] \\.channel\\.has-banner::after \\{ display: none; \\}`));
+  assert.match(css, rule(' \\.app\\[data-pane="list"\\] \\.channel\\.has-banner :is\\(\\.hash, \\.channel-label\\)', "text-shadow: none;"));
+});
+
+test("a channel banner is the top of the chat pane, and messages are gone before they reach it", () => {
+  assert.equal(chatBanner({ view: "server", channel: { id: "c1", banner: "pic@host" } }), "pic@host");
+  assert.equal(chatBanner({ view: "server", channel: { id: "c1", banner: null } }), "");
+  assert.equal(chatBanner({ view: "server", channel: null }), "");
+  assert.equal(chatBanner({ view: "dm", channel: { id: "c1", banner: "pic@host" } }), "");
+  assert.match(glue, /const banner = el\("div", "pt-chat-ban"\);\n\s+banner\.id = "pt-chat-ban";\n\s+document\.querySelector\("\.main"\)\.appendChild\(banner\);/);
+  assert.match(glue, /const ref = chatBanner\(\{ view: state\.view, channel: state\.currentChannel \}\);\n\s+if \(node\.dataset\.ref === ref\) return;/);
+  assert.match(glue, /document\.querySelector\("\.main"\)\.classList\.toggle\("pt-has-ban", Boolean\(ref\)\);/);
+  assert.match(glue, /if \(url && node\.dataset\.ref === ref\) node\.style\.backgroundImage = `url\("\$\{url\}"\)`;/);
+  const pane = ' \\.app\\[data-pane="chat"\\] > \\.main\\.pt-pane\\.pt-has-ban';
+  assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "display: block;\\s+position: absolute;\\s+z-index: -1;\\s+left: 10px;\\s+right: 10px;\\s+top: var\\(--pt-pane-y, 66px\\);\\s+height: 88px;"));
+  assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "mask-image: linear-gradient\\(#000 20%, transparent\\);"));
+  assert.match(css, rule(`${pane} \\.messages`, "mask-image: linear-gradient\\(180deg, transparent 0, transparent 70px, #000 118px\\);"));
+  assert.match(css, rule(" \\.channel-intro-banner", "display: none;"));
 });
