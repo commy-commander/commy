@@ -22585,7 +22585,7 @@ function wireEvents() {
       toast(String(e));
     }
   };
-  $("home-btn").onclick = () => (wideRail() ? toggleDmMenu() : enterDmMode());
+  $("home-btn").onclick = () => (wideRail() && !studioDesk() ? toggleDmMenu() : enterDmMode());
   document.addEventListener("pointerdown", e => {
     if ($("dm-menu") && !e.target.closest("#dm-menu, #home-btn")) closeDmMenu();
   });
@@ -23481,6 +23481,7 @@ function wireEvents() {
   if (studioLook()) studioSaved();
   if (studioLook()) studioEvents();
   if (studioLook()) studioStart();
+  if (studioLook()) studioPops();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;

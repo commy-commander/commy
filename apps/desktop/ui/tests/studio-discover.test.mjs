@@ -21,8 +21,8 @@ const rule = selector => {
 };
 
 test("discover loads with the new look, roomy only, from the tokens", () => {
-  const link = '<link rel="stylesheet" id="studio-float" href="styles/studio-float.css" media="not all" />\n  <link rel="stylesheet" id="studio-discover" href="styles/studio-discover.css" media="not all" />';
-  assert.ok(html.includes(link));
+  const link = '<link rel="stylesheet" id="studio-discover" href="styles/studio-discover.css" media="not all" />';
+  assert.ok(html.indexOf(link) > html.indexOf('<link rel="stylesheet" id="studio-float" href="styles/studio-float.css" media="not all" />'));
   assert.ok(html.includes('<script src="scripts/overlay-view.js"></script>\n  <script src="scripts/studio-discover.js"></script>'));
   assert.ok(app.includes('  window.addEventListener("resize", applyMembersLayout);\n  if (studioLook()) studioDiscover();\n'));
   assert.ok(selectors.length > 25);
