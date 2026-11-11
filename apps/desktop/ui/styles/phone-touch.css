@@ -3012,3 +3012,7 @@ html[data-look="studio"][data-fit="slim"] .voice-invite:has(> .voice-invite-join
   html[data-look="studio"][data-fit="slim"] .voice-invite-row { flex-wrap: wrap; gap: 6px 8px; }
   html[data-look="studio"][data-fit="slim"] .voice-invite-status { flex: 1 0 100%; }
 }
+html[data-look="studio"][data-fit="slim"] body.mobile-app .drive-tools,
+html[data-look="studio"][data-fit="slim"] .drive-desktop-note { display: none; }
+html[data-look="studio"][data-fit="slim"] .drive-empty { gap: 12px; padding: 72px 36px; color: var(--text-faint); }
+html[data-look="studio"][data-fit="slim"] .drive-empty > span { max-width: 280px; font: 400 15px/1.45 var(--font); color: var(--text-muted); }

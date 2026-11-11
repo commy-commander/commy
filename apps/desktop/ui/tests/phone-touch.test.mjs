@@ -752,6 +752,13 @@ test("the phone's profile editor finds the server tag's hint wherever the settin
   assert.ok(label > 0 && html.indexOf("</label>", label) > html.indexOf('class="setting-sub"', start));
 });
 
+test("a drive on the phone app drops the keys that cannot work there and shows one quiet line", () => {
+  const P = 'html[data-look="studio"][data-fit="slim"]';
+  assert.ok(css.includes(`${P} body.mobile-app .drive-tools,\n${P} .drive-desktop-note { display: none; }`));
+  assert.ok(css.includes(`${P} .drive-empty > span { max-width: 280px;`));
+  assert.match(read("scripts", "app.js"), /: studioLook\(\) \? \$\("drive-desktop-note"\)\.textContent : "Open this channel in the desktop app to see its files\."\)\);/);
+});
+
 test("a stream you have not opened is a dark glass tile with the sharer's face and one Watch key", () => {
   assert.match(glue, /<span class="key primary go">Watch<\/span>/);
   assert.doesNotMatch(glue, /Tap to watch/);

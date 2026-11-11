@@ -8806,7 +8806,7 @@ function renderDrive() {
   if (!here.length) {
     const empty = el("div", "drive-empty");
     empty.appendChild(svgIcon("folder", 32));
-    empty.appendChild(el("span", null, works ? (driveUi.folder ? "This folder is empty" : "Nothing here yet. Upload a file or make a folder to get started.") : "Open this channel in the desktop app to see its files."));
+    empty.appendChild(el("span", null, works ? (driveUi.folder ? "This folder is empty" : "Nothing here yet. Upload a file or make a folder to get started.") : studioLook() ? $("drive-desktop-note").textContent : "Open this channel in the desktop app to see its files."));
     list.appendChild(empty);
     return;
   }
