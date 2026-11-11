@@ -1,0 +1,193 @@
+html[data-look="studio"]:not([data-fit="slim"]) .main:has(> .discover:not(.hidden)) > :not(.discover, .search-pop, .pins-pop, .saved-view, .activity-panel, .emoji-picker, .gif-picker) { visibility: hidden; }
+html[data-look="studio"]:not([data-fit="slim"]) .main:has(> .discover:not(.hidden)) > .chat-header .studio-star { visibility: visible; }
+html[data-look="studio"]:not([data-fit="slim"]) .discover {
+  background: none;
+  color: var(--text-normal);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-head {
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 20px;
+  padding: 24px 22px 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-title {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-title h2 {
+  margin: 0;
+  color: var(--header-primary);
+  font: 700 28px/1.1 var(--font-display);
+  letter-spacing: -.02em;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-title p {
+  margin: 0;
+  color: var(--text-muted);
+  font: 400 14px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-search {
+  flex: 0 0 300px;
+  height: 42px;
+  gap: 9px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--text-muted);
+  cursor: text;
+  transition: box-shadow var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .discover-search { box-shadow: inset 0 1px 2px rgb(var(--dark) / .5), inset 0 0 0 1px rgb(var(--dark) / .12); }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-search:hover { box-shadow: inset 0 1px 2px rgb(var(--dark) / .8), 0 0 0 1px var(--line-strong); }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-search:focus-within {
+  border-color: transparent;
+  box-shadow: inset 0 1px 2px rgb(var(--dark) / .8), 0 0 0 2px var(--accent);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-search-icon > svg { scale: 1.125; }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-search input {
+  height: 100%;
+  color: var(--header-primary);
+  font: 400 15px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-search input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-chips {
+  gap: 6px;
+  height: auto;
+  margin: 18px 22px 0;
+  padding: 0 0 18px;
+  background: linear-gradient(var(--line), var(--line)) 0 100% / 100% 1px no-repeat;
+  box-shadow: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-chip {
+  flex: none;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-normal);
+  font: 500 13.5px/1 var(--font);
+  transition: background var(--t-hover) var(--ease-out), box-shadow var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-chip:hover {
+  background: rgb(var(--lamp) / .07);
+  color: var(--text-normal);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-chip:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-chip[aria-pressed="true"],
+html[data-look="studio"]:not([data-fit="slim"]) .discover-chip[aria-pressed="true"]:hover {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-body { padding: 18px 22px 22px; }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-card {
+  height: auto;
+  min-height: 196px;
+  gap: 6px;
+  padding: 18px 18px 16px;
+  border: 0;
+  border-radius: 20px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background var(--t-hover) var(--ease-out), translate var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-card:hover {
+  background: var(--bg-hover);
+  translate: 0 -2px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-card-name {
+  color: var(--header-primary);
+  font: 700 18px/1.2 var(--font-display);
+  letter-spacing: -.01em;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-card-meta {
+  gap: 7px;
+  height: 20px;
+  color: var(--text-muted);
+  font: 500 12.5px/1.2 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-card-meta .discover-dot { background: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-card-text {
+  flex: 1;
+  height: auto;
+  margin: 6px 0 0;
+  color: var(--text-normal);
+  font: 400 14px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-card-foot {
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover .key.sm {
+  min-width: 0;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-foot {
+  height: 48px;
+  padding-top: 16px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: none;
+  margin: 0;
+  padding: 34px 18px 26px;
+  text-align: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty-art {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin: 0 0 6px;
+  border-radius: 50%;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--text-faint);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty-art > svg { scale: .5834; }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty[data-art="star"] > .discover-empty-art,
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty:not([data-art="star"]) > .discover-star { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-star {
+  --star-size: 56px;
+  margin-bottom: 6px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty h3 {
+  margin: 0;
+  color: var(--header-primary);
+  font: 700 17px/1.2 var(--font-display);
+  letter-spacing: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty p {
+  max-width: 340px;
+  margin: 0;
+  color: var(--text-muted);
+  font: 400 13.5px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty[data-tone="error"] p { color: var(--danger-text); }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-empty .key.sm { margin-top: 8px; }
+html[data-look="studio"][data-fit="slim"] .discover-star { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"]:not([data-fit="slim"]) .discover-card,
+  html[data-look="studio"]:not([data-fit="slim"]) .discover-chip,
+  html[data-look="studio"]:not([data-fit="slim"]) .discover-search { transition: none; }
+}

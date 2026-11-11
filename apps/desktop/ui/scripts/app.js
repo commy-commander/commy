@@ -23466,6 +23466,7 @@ function wireEvents() {
     applyMembersLayout();
   };
   window.addEventListener("resize", applyMembersLayout);
+  if (studioLook()) studioDiscover();
   applyMembersLayout();
   setupSidebarResize();
   if (studioLook()) studioSettingsShell(closeSettingsLayers);
