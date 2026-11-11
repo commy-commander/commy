@@ -115,6 +115,10 @@ function studioDialogParts() {
   }
 }
 
+function dialogJustOpened(oldClasses, hiddenNow) {
+  return !hiddenNow && String(oldClasses || "").split(/\s+/).includes("hidden");
+}
+
 function studioJoinParts(modal) {
   if (modal.classList.contains("hidden") || document.documentElement.dataset.fit === "slim") return;
   const icon = modal.querySelector(".sw-icon");
@@ -145,11 +149,19 @@ function studioDialogs() {
   dress();
   new MutationObserver(dress).observe(document.documentElement, { attributes: true, attributeFilter: ["data-fit"] });
   const shown = new MutationObserver(records => {
-    for (const modal of new Set(records.map(record => record.target))) studioJoinParts(modal);
+    for (const record of records) {
+      if (dialogJustOpened(record.oldValue, record.target.classList.contains("hidden"))) record.target.classList.add("quiet");
+    }
+    for (const modal of new Set(records.map(record => record.target))) {
+      if (joins.includes(modal)) studioJoinParts(modal);
+    }
   });
-  for (const modal of joins) shown.observe(modal, { attributes: true, attributeFilter: ["class"] });
+  for (const modal of modals) shown.observe(modal, { attributes: true, attributeFilter: ["class"], attributeOldValue: true });
+  document.addEventListener("keydown", () => {
+    for (const modal of modals) modal.classList.remove("quiet");
+  }, true);
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer };
+  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened };
 }

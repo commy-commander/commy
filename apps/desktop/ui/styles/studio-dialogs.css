@@ -254,6 +254,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join { width: min(
 html[data-look="studio"]:not([data-fit="slim"]) .modal.modal-wide.dialog.join { width: min(560px, calc(100vw - 48px)); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > p { font-size: 14.5px; }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .modal-actions.answers.spread { left: 24px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.quiet > .answers > .key:focus-visible { outline: 0; }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .answers > .key.out-k {
   margin-right: auto;
   color: var(--danger-text);
@@ -334,8 +335,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-join-wa
   box-shadow: 0 0 0 3px var(--bg-dark);
 }
 
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero { padding-top: 26px; overflow: visible; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero > .invite-link-hero,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero { padding-top: 26px; overflow: visible; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link .sw-head { margin-bottom: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) {
   position: relative;
   display: block;
@@ -348,13 +350,13 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:
   -webkit-mask-image: linear-gradient(rgb(0 0 0) 60%, transparent);
   mask-image: linear-gradient(rgb(0 0 0) 60%, transparent);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero > .invite-link-hero::after { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero > .invite-link-hero + .sw-head,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero::after { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero > .invite-link-hero + .sw-head,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) + .sw-head {
   position: relative;
   margin-top: -48px;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join.has-hero .sw-icon,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join#modal-invite-link.has-hero .sw-icon,
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .si-banner:not(.hidden) + .sw-head .sw-icon {
   width: 64px;
   height: 64px;

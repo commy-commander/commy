@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -122,7 +122,7 @@ test("the head row's tile takes the strip's colour, with no id before you join",
 });
 
 test("hero, warning slot, rules slot and steps follow the joining drawing", () => {
-  assert.ok(css.includes(`${J}.has-hero > .invite-link-hero,\n${J} > .si-banner:not(.hidden) {\n  position: relative;\n  display: block;\n  height: 112px;`));
+  assert.ok(css.includes(`${J}#modal-invite-link.has-hero > .invite-link-hero,\n${J} > .si-banner:not(.hidden) {\n  position: relative;\n  display: block;\n  height: 112px;`));
   assert.ok(css.includes("margin-top: -48px;"));
   assert.ok(css.includes("box-shadow: 0 0 0 4px var(--bg-dark), var(--pillow-sm);"));
   assert.match(rule(`${J} > .invite-link-warning > .i`), /color: var\(--danger-text\);/);
@@ -142,4 +142,14 @@ test("roles and answers are pick rows, banner roles grow into cards", () => {
   assert.match(rule(`${J} .role-pick.has-banner > .role-pick-banner`), /height: 38px;/);
   assert.ok(css.includes(`${J} .ob-check,\n${J} .role-pick > .role-pick-check {\n  order: 1;`));
   assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .invite-link-warning > .i,'));
+});
+
+test("a dialog opens without the focus ring until a key is pressed", () => {
+  assert.equal(dialogJustOpened("modal hidden", false), true);
+  assert.equal(dialogJustOpened("modal dialog slab", false), false);
+  assert.equal(dialogJustOpened("modal hidden", true), false);
+  assert.equal(dialogJustOpened(null, false), false);
+  assert.ok(css.includes(`${R} .modal.dialog.quiet > .answers > .key:focus-visible { outline: 0; }`));
+  assert.ok(glue.includes("attributeOldValue: true"));
+  assert.ok(glue.includes('modal.classList.remove("quiet")'));
 });
