@@ -1,0 +1,31 @@
+html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .app { height: calc(100vh - 36px); margin-top: 36px; padding-top: 6px; }
+html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .offline-chip { top: 46px; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar { height: 36px; background: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar-drag { gap: 9px; padding-left: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) #titlebar-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--server-tint, var(--accent));
+  box-shadow: inset 0 1px 0 rgb(var(--lamp) / .18);
+  color: var(--white);
+  font: 700 12px/1 var(--font);
+  letter-spacing: -.02em;
+  outline: 0;
+  filter: none;
+  scale: none;
+  transition: opacity var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) #titlebar-icon.has-image { background: var(--bg-raised); }
+html[data-look="studio"]:not([data-fit="slim"]) #titlebar-icon img { border-radius: inherit; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar-name { font: 600 13px/1 var(--font); color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn { width: 46px; height: 36px; color: var(--text-muted); transition: background var(--t-hover), color var(--t-hover); }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn svg { width: 10px; height: 10px; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar.is-idle :is(.titlebar-name, .titlebar-btn) { color: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar.is-idle #titlebar-icon { opacity: .55; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar .titlebar-btn:hover { background: var(--bg-hover); color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar .titlebar-btn.titlebar-close:hover { background: var(--danger); color: var(--danger-ink); }
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"]:not([data-fit="slim"]) #titlebar-icon,
+  html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn { transition: none; }
+}
