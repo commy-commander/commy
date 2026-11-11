@@ -465,6 +465,12 @@ test("over a stream every key is full size and the stream fills the screen only 
   assert.match(glue, /classList\.toggle\("theme-dark", full\)/);
 });
 
+test("the phone's chat shows no stream or camera tiles above it; streams play in the room and on the stream screen", () => {
+  const P = 'html[data-look="studio"][data-fit="slim"]';
+  assert.ok(css.includes(`${P} .app[data-pane="chat"]:not(.pt-stream-full) .stage { display: none; }`));
+  assert.ok(css.includes(`${P} .app[data-pane="chat"] .main > .cam-grid { display: none; }`));
+});
+
 test("the server strip and the glass slab on Home keep the design guide's measures", () => {
   const rule = selector => {
     const at = css.indexOf(`html[data-look="studio"][data-fit="slim"] ${selector} {`);

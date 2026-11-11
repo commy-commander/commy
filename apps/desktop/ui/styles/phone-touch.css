@@ -1685,6 +1685,8 @@ html[data-look="studio"][data-fit="slim"] .stage-volume { flex: 0 1 auto; min-wi
 html[data-look="studio"][data-fit="slim"] .stage-volume input[type="range"] { width: 72px; min-width: 40px; }
 html[data-look="studio"][data-fit="slim"] .stage-ink-tools { gap: 6px; padding-right: 6px; }
 html[data-look="studio"][data-fit="slim"] .stage-top .live-badge { background: var(--live); color: var(--live-ink); }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"]:not(.pt-stream-full) .stage { display: none; }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .main > .cam-grid { display: none; }
 html[data-look="studio"][data-fit="slim"] .app.pt-stream-full[data-pane="chat"] .stage:not(.hidden) {
   position: fixed;
   inset: 0;
