@@ -23478,6 +23478,7 @@ function wireEvents() {
   if (studioLook()) studioForum();
   if (studioLook()) studioSaved();
   if (studioLook()) studioEvents();
+  if (studioLook()) studioStart();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;
@@ -25652,6 +25653,7 @@ const STARTUP_OFFLINE_LINGER_MS = 1500;
 
 function paintStartup(view) {
   $("startup-title").textContent = startupTitle(view);
+  $("startup").classList.toggle("offline", view.offline);
   for (const key of STARTUP_STEPS) {
     const row = $(`startup-${key}`);
     row.dataset.state = view[key].state;
