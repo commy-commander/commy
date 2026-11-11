@@ -48,6 +48,7 @@ const LOCALE_EN = {
   "settings.search": "Search settings",
   "settings.search.none": "No settings match",
   "settings.close": "Close",
+  "settings.done": "Done",
   "appearance.chat": "Chat Text",
   "appearance.chatSize": "Chat Font Size",
   "appearance.compact": "Compact Mode",
