@@ -44,6 +44,11 @@ function describeUsage(usage) {
   return { total, totalText: formatBytes(total), freeText: free, rows, cacheText: formatBytes(cache) };
 }
 
+function folderLabel(path) {
+  const parts = String(path || "").split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : "";
+}
+
 function describeFolder(view) {
   const kind = FOLDER_NOTES[view.kind] ? view.kind : "default";
   return {
@@ -81,6 +86,7 @@ if (typeof module !== "undefined" && module.exports) {
     CLEAR_ALL_WORD,
     USAGE_PARTS,
     formatBytes,
+    folderLabel,
     describeUsage,
     describeFolder,
     describeMovePlan,

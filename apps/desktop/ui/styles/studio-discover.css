@@ -64,6 +64,19 @@ html[data-look="studio"]:not([data-fit="slim"]) .discover-chips {
   padding: 0 0 18px;
   background: linear-gradient(var(--line), var(--line)) 0 100% / 100% 1px no-repeat;
   box-shadow: none;
+  -webkit-mask-image: linear-gradient(90deg, black 88%, transparent), linear-gradient(black, black);
+  -webkit-mask-size: 100% 100%, 100% 1px;
+  -webkit-mask-position: 0 0, 0 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-image: linear-gradient(90deg, black 88%, transparent), linear-gradient(black, black);
+  mask-size: 100% 100%, 100% 1px;
+  mask-position: 0 0, 0 100%;
+  mask-repeat: no-repeat;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .discover-chips::after {
+  content: "";
+  flex: none;
+  width: 12%;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .discover-chip {
   flex: none;

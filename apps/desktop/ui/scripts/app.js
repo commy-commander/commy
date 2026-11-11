@@ -23483,6 +23483,7 @@ function wireEvents() {
   if (studioLook()) studioStart();
   if (studioLook()) studioPops();
   if (studioLook()) studioCompact();
+  if (studioLook()) studioMinors();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;

@@ -1,0 +1,38 @@
+html[data-look="studio"]:not([data-fit="slim"]) .msg[data-minors-low] > .msg-actions { top: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .sidebar-link-badge { font-size: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .conn-badge { font-size: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .msg-pinned,
+html[data-look="studio"]:not([data-fit="slim"]) .msg-held { font-size: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .server-tag-emoji { font-size: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .role-banner-preview { font-size: 12px; color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) .beta-tag,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .kind-text .beta-tag {
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .manage-row .kind {
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .manage-row .kind::first-letter { text-transform: uppercase; }
+html[data-look="studio"]:not([data-fit="slim"]) .bot-card-key {
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make#modal-add-server > .modal-divider {
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: lowercase;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .storage-path[data-minors-label] {
+  min-height: 0;
+  margin-top: 4px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-normal);
+  font: 500 14px/20px var(--font);
+}
