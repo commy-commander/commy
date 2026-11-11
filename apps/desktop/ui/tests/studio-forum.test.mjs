@@ -82,3 +82,9 @@ test("list rows, gallery cards and the empty well follow the guide", () => {
   assert.match(rule(`${R} .forum-empty h2`), /font: 700 17px\/1\.2 var\(--font-display\);/);
   assert.match(rule(`${R} .forum-empty p`), /max-width: 340px;/);
 });
+
+test("the forum glue puts its icons back when another script redraws the keys", () => {
+  const glue = readFileSync(new URL("../scripts/studio-forum.js", import.meta.url), "utf8");
+  assert.ok(glue.includes('if (!roomy || typeof studioIconMarkup !== "function") return;'));
+  assert.ok(glue.includes("watch.observe(node, { childList: true });"));
+});
