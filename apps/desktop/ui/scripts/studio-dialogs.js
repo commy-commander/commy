@@ -103,6 +103,12 @@ const MAKING_FIELD_ICONS = {
 
 const MAKING_SELECTS = ["event-channel", "poll-duration"];
 
+const SERVER_DIALOGS = ["modal-server-notify", "modal-join-sound", "modal-activities", "modal-pins", "modal-share"];
+
+const SERVER_LISTS = ["server-notify-levels", "join-sound-list", "pins-modal-list"];
+
+const LATCH_ROWS = ["invite-expiry", "share-quality"];
+
 const STUDIO_KEY_NAMES = ["key", "sm", "sq", "primary"];
 
 function studioKeyNames(classes, roomy) {
@@ -163,6 +169,7 @@ function studioDialogDress(modal) {
   modal.classList.toggle("slab", roomy);
   modal.classList.toggle("join", roomy && join);
   modal.classList.toggle("make", roomy && MAKING_DIALOGS.includes(modal.id));
+  modal.classList.toggle("serve", roomy && SERVER_DIALOGS.includes(modal.id));
   for (const box of modal.querySelectorAll(":scope > .report-also-block > input[type='checkbox'], :scope > .leaving-trust > input[type='checkbox']")) box.classList.toggle("switch", roomy);
   const actions = modal.querySelector(":scope > .modal-actions");
   if (!actions) return;
@@ -277,21 +284,33 @@ function studioMakingParts() {
   if (fold && !fold.querySelector(":scope > .i")) fold.insertAdjacentHTML("afterbegin", studioIconMarkup("chevron-right"));
 }
 
-function studioInviteParts() {
+function studioLatchRow(row) {
   const roomy = document.documentElement.dataset.fit !== "slim";
-  const expiry = document.getElementById("invite-expiry");
-  if (expiry) {
-    for (const choice of expiry.querySelectorAll(":scope > button")) {
-      studioToggle(choice, "key", roomy);
-      studioToggle(choice, "latch", roomy);
-      studioToggle(choice, "is-down", roomy && choice.classList.contains("active"));
-      if (!choice.querySelector(":scope > .led")) {
-        const led = document.createElement("i");
-        led.className = "led";
-        choice.appendChild(led);
-      }
+  for (const choice of row.querySelectorAll(":scope > button")) {
+    studioToggle(choice, "key", roomy);
+    studioToggle(choice, "latch", roomy);
+    studioToggle(choice, "is-down", roomy && choice.classList.contains("active"));
+    if (!choice.querySelector(":scope > .led")) {
+      const led = document.createElement("i");
+      led.className = "led";
+      choice.appendChild(led);
     }
   }
+}
+
+function studioServerParts() {
+  if (document.documentElement.dataset.fit === "slim" || typeof studioIconMarkup !== "function") return;
+  for (const row of document.querySelectorAll("#server-notify-levels > .notify-level, #join-sound-list > .notify-level")) {
+    if (!row.querySelector(":scope > .tick")) row.insertAdjacentHTML("beforeend", studioIconMarkup("check", "tick"));
+  }
+  for (const by of document.querySelectorAll("#pins-modal-list .pin-by")) {
+    if (!by.querySelector(":scope > .i")) by.insertAdjacentHTML("afterbegin", studioIconMarkup("pin"));
+  }
+}
+
+function studioInviteParts() {
+  const roomy = document.documentElement.dataset.fit !== "slim";
+  for (const row of LATCH_ROWS.map(id => document.getElementById(id)).filter(Boolean)) studioLatchRow(row);
   for (const [id, classes] of Object.entries(INVITE_KEYS)) {
     const key = document.getElementById(id);
     if (key) studioKeyDress(key, classes, roomy);
@@ -333,7 +352,7 @@ function studioJoinParts(modal) {
 
 function studioDialogs() {
   studioDialogParts();
-  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS, ...PEOPLE_DIALOGS, ...MAKING_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
+  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS, ...PEOPLE_DIALOGS, ...MAKING_DIALOGS, ...SERVER_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
   const joins = modals.filter(modal => JOIN_DIALOGS.includes(modal.id));
   const grids = ["moderate-lengths", "timeout-choices"].map(id => document.getElementById(id)).filter(Boolean);
   const leaving = document.getElementById("modal-leaving");
@@ -345,6 +364,7 @@ function studioDialogs() {
     for (const list of PEOPLE_LISTS.map(id => document.getElementById(id)).filter(Boolean)) studioPeopleRows(list);
     studioInviteParts();
     studioMakingKeys();
+    studioServerParts();
   };
   const keys = new MutationObserver(() => { for (const grid of grids) studioLengthKeys(grid); });
   for (const grid of grids) keys.observe(grid, { childList: true });
@@ -356,8 +376,12 @@ function studioDialogs() {
   const keyLists = MAKING_ROW_KEYS.map(([id]) => document.getElementById(id)).filter(Boolean);
   const making = new MutationObserver(studioMakingKeys);
   for (const list of keyLists) making.observe(list, { childList: true, subtree: true });
-  const expiry = document.getElementById("invite-expiry");
-  if (expiry) new MutationObserver(studioInviteParts).observe(expiry, { subtree: true, attributes: true, attributeFilter: ["class"] });
+  for (const input of ["activity-link-input"].map(id => document.getElementById(id)).filter(Boolean)) studioFieldIcon(input, "link");
+  const serverLists = SERVER_LISTS.map(id => document.getElementById(id)).filter(Boolean);
+  const serving = new MutationObserver(studioServerParts);
+  for (const list of serverLists) serving.observe(list, { childList: true, subtree: true });
+  const latches = new MutationObserver(studioInviteParts);
+  for (const row of LATCH_ROWS.map(id => document.getElementById(id)).filter(Boolean)) latches.observe(row, { subtree: true, attributes: true, attributeFilter: ["class"] });
   dress();
   new MutationObserver(dress).observe(document.documentElement, { attributes: true, attributeFilter: ["data-fit"] });
   const shown = new MutationObserver(records => {
@@ -377,5 +401,5 @@ function studioDialogs() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames };
+  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS };
 }

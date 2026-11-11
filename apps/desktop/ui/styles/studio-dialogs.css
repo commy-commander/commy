@@ -1679,3 +1679,281 @@ html[data-look="studio"][data-fit="slim"] #modal-username > .dlabel,
 html[data-look="studio"][data-fit="slim"] .kind-option > .tick,
 html[data-look="studio"][data-fit="slim"] #poll-add > .i,
 html[data-look="studio"][data-fit="slim"] .bot-port > summary > .i { display: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve { width: min(440px, calc(100vw - 48px)); gap: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve#modal-pins { width: min(560px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve#modal-share { width: min(640px, calc(100vw - 48px)); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > h2 + p {
+  color: var(--text-muted);
+  font: 400 14px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-head { display: grid; gap: 6px; margin: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-head > h2 {
+  margin: 0;
+  color: var(--header-primary);
+  font: 700 21px/1.2 var(--font-display);
+  letter-spacing: -.015em;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-head > p {
+  color: var(--text-muted);
+  font: 400 14px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve#modal-join-sound > .setting-sub {
+  margin-top: 2px;
+  color: var(--text-normal);
+  font: 400 14.5px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-label,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality-label {
+  margin: 4px 0 -4px;
+  color: var(--text-muted);
+  font: 600 13px/13px var(--font);
+  letter-spacing: 0;
+  text-transform: none;
+  text-indent: 16px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-label + .notify-row { margin-top: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row > div,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row > div { flex: 1; min-width: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row .setting-title,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row .setting-title { color: var(--text-normal); font: 500 14px/1.2 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row .setting-sub,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row .setting-sub { margin-top: 4px; font: 400 12.5px/1.35 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .notify-row > input.switch,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve > .setting-row > input.switch { flex: none; margin: 0; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-levels {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 9px 18px 9px 20px;
+  border: 0;
+  border-radius: 22px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-normal);
+  text-align: left;
+  transition: background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level:hover:not(:disabled) { background: rgb(var(--lamp) / .06); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level.picked {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level > .notify-mark { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level > span:not(.notify-mark, .sound-emoji) { flex: 1; min-width: 0; display: grid; gap: 3px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level-name { color: var(--header-primary); font: 600 14.5px/1.2 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level-sub { color: var(--text-muted); font: 400 12.5px/1.35 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level > .tick {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--accent-lit);
+  opacity: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .notify-level.picked > .tick { opacity: 1; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-cards { gap: 8px; margin-top: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-content: start;
+  justify-items: start;
+  row-gap: 4px;
+  height: auto;
+  padding: 14px 16px 16px;
+  border: 0;
+  border-radius: 20px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card:hover { background: rgb(var(--lamp) / .06); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card[aria-checked="true"] {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  color: var(--text-normal);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card-icon svg { width: 18px; height: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card[aria-checked="true"] .activity-card-icon { background: var(--accent); color: var(--accent-ink); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card-name { color: var(--header-primary); font: 600 14px/1.2 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-card-blurb { max-height: none; color: var(--text-muted); font: 400 12px/1.3 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup { margin-top: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-game {
+  gap: 6px;
+  height: auto;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-title { color: var(--header-primary); font: 600 15px/1.2 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-game > .setting-sub { color: var(--text-muted); font: 400 13.5px/1.45 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-watch { gap: 8px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .field-label > .dfind {
+  position: relative;
+  display: block;
+  text-indent: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .field-label > .dfind > .i {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .field-label > .dfind > input { padding-left: 44px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .activity-setup-watch > .setting-sub { margin-left: 16px; color: var(--text-muted); font: 400 13px/1.35 var(--font); }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pins-list-wide {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  max-height: 420px;
+  margin: 0;
+  overflow: auto;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pins-group-head {
+  margin: 8px 0 0 6px;
+  padding: 0;
+  color: var(--text-muted);
+  font: 600 13px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pins-group-head svg { width: 15px; height: 15px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px 12px 12px;
+  border-radius: 18px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row:focus-visible { background: rgb(var(--lamp) / .07); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-row > .avatar { width: 36px; height: 36px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-body { gap: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-author { color: var(--header-primary); font: 600 14.5px/1.2 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-time { margin-left: 6px; color: var(--text-muted); font: 400 12px/1 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-text { color: var(--text-normal); font: 400 14px/1.45 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-by {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font: 400 12.5px/1.2 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .pin-by > .i { width: 13px; height: 13px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tabs { gap: 6px; margin-top: 4px; border: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tab {
+  height: 34px;
+  margin: 0;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-muted);
+  font: 600 13.5px/1 var(--font);
+  transition: background var(--t-hover), color var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tab:hover { background: rgb(var(--lamp) / .06); color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-tab.active {
+  background: var(--bg-active);
+  color: var(--header-primary);
+  outline: var(--ring-on);
+  outline-offset: -2px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-grid {
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 2px;
+  padding: 2px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card {
+  display: grid;
+  gap: 8px;
+  padding: 8px 8px 10px;
+  border: 0;
+  border-radius: 20px;
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background var(--t-hover);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card:hover { background: rgb(var(--lamp) / .07); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card.picked {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 2px var(--accent-lit);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-thumb { border-radius: 13px; background: var(--input-bg); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card-label { gap: 8px; padding: 0 6px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card-name { flex: 0 1 auto; color: var(--header-primary); font: 600 13.5px/1.2 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card .kind {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgb(var(--lamp) / .08);
+  color: var(--text-muted);
+  font: 600 10.5px/1 var(--font);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-card .kind.playing { color: var(--green); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-loading { color: var(--text-muted); font: 400 14px/1.4 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality { gap: 12px; margin-top: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented > .key.latch {
+  flex-direction: column;
+  gap: 4px;
+  height: auto;
+  min-height: 58px;
+  padding: 10px 26px 10px 14px;
+  text-align: center;
+  white-space: normal;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented > .key.latch > strong { font: 600 14px/1.1 var(--font); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented > .key.latch > .led { background: var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .segmented > .key.latch > span { font: 400 11.5px/1.3 var(--font); opacity: .75; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quality > .setting-sub { margin: -4px 0 0 16px; color: var(--text-muted); font: 400 13px/1.35 var(--font); }
+
+html[data-look="studio"][data-fit="slim"] .notify-level > .tick,
+html[data-look="studio"][data-fit="slim"] #pins-modal-list .pin-by > .i,
+html[data-look="studio"][data-fit="slim"] #share-quality > button > .led { display: none; }

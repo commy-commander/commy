@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -268,4 +268,23 @@ test("making things: wave bars run edge to edge, selected text is ultramarine, o
   assert.equal(invite.includes("studioMakingParts"), false);
   const start = glue.slice(glue.indexOf("function studioDialogs()"));
   assert.ok(start.includes("new MutationObserver(studioMakingKeys)"));
+});
+
+test("a server's settings, pins, activities and sharing follow the drawing", () => {
+  const E = `${R} .modal.dialog.serve`;
+  assert.deepEqual(SERVER_DIALOGS, ["modal-server-notify", "modal-join-sound", "modal-activities", "modal-pins", "modal-share"]);
+  for (const id of [...SERVER_DIALOGS, ...SERVER_LISTS, ...LATCH_ROWS]) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(glue.includes('modal.classList.toggle("serve", roomy && SERVER_DIALOGS.includes(modal.id));'));
+  assert.ok(css.includes(`${E} { width: min(440px, calc(100vw - 48px)); gap: 12px; }`));
+  assert.ok(css.includes(`${E}#modal-pins { width: min(560px, calc(100vw - 48px)); }`));
+  assert.ok(css.includes(`${E}#modal-share { width: min(640px, calc(100vw - 48px)); }`));
+  assert.match(rule(`${E} .notify-level`), /border-radius: 22px;/);
+  assert.match(rule(`${E} .notify-level.picked`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\);/);
+  assert.match(rule(`${E} .notify-level > .notify-mark`), /display: none;/);
+  assert.match(rule(`${E} .activity-card[aria-checked="true"] .activity-card-icon`), /background: var\(--accent\);/);
+  assert.match(rule(`${E} .pin-row`), /border-radius: 18px;/);
+  assert.match(rule(`${E} .share-tab.active`), /outline: var\(--ring-on\);/);
+  assert.match(rule(`${E} .share-card.picked`), /box-shadow: inset 0 0 0 2px var\(--accent-lit\);/);
+  assert.match(rule(`${E} .share-quality > .segmented`), /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.ok(glue.includes('studioIconMarkup("pin")'));
 });
