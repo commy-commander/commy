@@ -42,3 +42,14 @@ test("a key never drops below its neighbours when it latches, mutes or switches 
 test("the sheet carries no comments", () => {
   assert.doesNotMatch(SHEET, /\/\*/);
 });
+
+test("an off primary key at Night is faint glass with muted words and a hairline, and Day keeps its own", () => {
+  const night = `${SWITCH}:not([data-theme="light"]) .key.primary:disabled,\n${SWITCH}:not([data-theme="light"]) .key.primary.is-off {`;
+  const start = SHEET.replace(/\r\n/g, "\n").indexOf(night);
+  assert.ok(start >= 0);
+  const body = SHEET.replace(/\r\n/g, "\n").slice(start, SHEET.replace(/\r\n/g, "\n").indexOf("}", start));
+  assert.match(body, /--k-ink: var\(--text-muted\);/);
+  assert.match(body, /color: var\(--text-muted\);/);
+  assert.match(body, /box-shadow: inset 0 0 0 1px rgb\(var\(--lamp\) \/ \.1\);/);
+  assert.doesNotMatch(body, /background/);
+});

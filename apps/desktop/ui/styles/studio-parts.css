@@ -206,7 +206,9 @@ html[data-look="studio"] .key.muted {
   filter: none;
 }
 html[data-look="studio"] .key:disabled,
-html[data-look="studio"] .key.is-off {
+html[data-look="studio"] .key.is-off,
+html[data-look="studio"] .key:disabled:hover,
+html[data-look="studio"] .key.is-off:hover {
   --k-ink: var(--text-faint);
   background: var(--k-off);
   -webkit-backdrop-filter: none;
@@ -215,6 +217,12 @@ html[data-look="studio"] .key.is-off {
   filter: none;
   scale: none;
   cursor: not-allowed;
+}
+html[data-look="studio"]:not([data-theme="light"]) .key.primary:disabled,
+html[data-look="studio"]:not([data-theme="light"]) .key.primary.is-off {
+  --k-ink: var(--text-muted);
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .1);
 }
 html[data-look="studio"] .key.sq {
   width: 40px;
