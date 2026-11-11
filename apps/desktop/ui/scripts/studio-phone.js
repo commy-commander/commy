@@ -1662,6 +1662,10 @@ function watchStudioPhone() {
   watch($("channel-name"), { childList: true, characterData: true, subtree: true }, paintChatHeader);
   watch($("member-card"), { attributes: true, attributeFilter: ["class"] }, syncCardSheet);
   watch($("fp-menu"), { attributes: true, attributeFilter: ["class"] }, syncCardSheet);
+  const cardBody = $("member-card").querySelector(".mc-body");
+  watch(cardBody, { childList: true, subtree: true, characterData: true }, markCardCut);
+  new ResizeObserver(markCardCut).observe(cardBody);
+  cardBody.addEventListener("scroll", markCardCut, { passive: true });
   watch($("chat-presence"), { attributes: true, attributeFilter: ["class", "title"] }, paintChatHeader);
   watch($("channel-list"), { childList: true }, () => {
     if (studioPhone.rowOpen && !studioPhone.rowOpen.row.isConnected) studioPhone.rowOpen = null;
@@ -2572,10 +2576,19 @@ function cardShown() {
   return studioSlim() && !$("member-card").classList.contains("hidden");
 }
 
+function markCardCut() {
+  const body = $("member-card").querySelector(".mc-body");
+  body.classList.toggle("pt-cut", studioSlim() && body.scrollHeight - body.scrollTop - body.clientHeight > 1);
+}
+
 function syncCardSheet() {
+  const field = $("mc-composer");
+  const home = studioSlim() ? $("member-card") : $("member-card").querySelector(".mc-body");
+  if (field.parentNode !== home) home.appendChild(field);
   const open = cardShown();
   const menu = open && !$("fp-menu").classList.contains("hidden");
   $("app").classList.toggle("pt-card-open", open);
+  markCardCut();
   const entry = history.state;
   const card = layerStep("ptCard", open, studioPhone.cardStep, entry);
   const more = layerStep("ptCardMenu", menu, studioPhone.cardMenuStep, entry);
@@ -2588,7 +2601,7 @@ function syncCardSheet() {
 }
 
 function editFromCard(e) {
-  if (!studioSlim() || !e.target.closest(".key.sm:not(.primary)")) return;
+  if (!studioSlim() || !e.target.closest("#mc-edit")) return;
   e.stopPropagation();
   e.preventDefault();
   if (!studioPhone.cardStep) {

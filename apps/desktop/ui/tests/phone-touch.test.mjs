@@ -1145,7 +1145,7 @@ test("the card sheet wears the design guide's phone sizes on top of the shared c
 
 test("Edit profile on your own card opens the phone's profile editor once the card has stepped back", () => {
   assert.match(glue, /\$\("mc-actions"\)\.addEventListener\("click", editFromCard, true\);/);
-  assert.match(glue, /if \(!studioSlim\(\) \|\| !e\.target\.closest\("\.key\.sm:not\(\.primary\)"\)\) return;/);
+  assert.match(glue, /if \(!studioSlim\(\) \|\| !e\.target\.closest\("#mc-edit"\)\) return;/);
   assert.match(glue, /window\.addEventListener\("popstate", \(\) => openProfileEditor\(\), \{ once: true \}\);\n  closeFloating\(\);/);
   assert.match(glue, /\$\("pt-profile"\)\.style\.setProperty\("--pc", personTint\(user\.id\)\);/);
 });
@@ -1157,4 +1157,14 @@ test("invite cards in a phone chat follow the same design guide rules as on desk
   assert.match(css, new RegExp(`@container icard \\(max-width: 339px\\) \\{\\n  ${slim} \\.invite-card-text,`));
   assert.match(css, new RegExp(`@container icard \\(max-width: 259px\\) \\{\\n  ${slim} \\.invite-card-mark,`));
   assert.match(css, rule(" \\.invite-card > button,\\n[^{]*", "min-width: 84px;\\s+height: 40px;"));
+});
+
+test("mutual servers on the phone's card use 36 px tiles lined up with the card's words, and the field stays pinned under the scrolling middle", () => {
+  assert.match(css, rule(" \\.member-card \\.prof-servers", "margin: 6px 14px 0;"));
+  assert.match(css, rule(" \\.member-card \\.prof-server", "min-height: 52px;"));
+  assert.match(css, rule(" \\.member-card \\.prof-tile", "width: 36px; height: 36px;"));
+  assert.match(css, rule(" \\.member-card \\.prof-name", "font-size: 16px; font-weight: 500;"));
+  assert.match(css, / \.member-card > \.mc-body\.pt-cut \{\n  -webkit-mask-image: linear-gradient\(180deg, #000 calc\(100% - 14px\), transparent\);\n  mask-image: linear-gradient\(180deg, #000 calc\(100% - 14px\), transparent\);/);
+  assert.match(glue, /body\.classList\.toggle\("pt-cut", studioSlim\(\) && body\.scrollHeight - body\.scrollTop - body\.clientHeight > 1\);/);
+  assert.match(glue, /const home = studioSlim\(\) \? \$\("member-card"\) : \$\("member-card"\)\.querySelector\("\.mc-body"\);\n  if \(field\.parentNode !== home\) home\.appendChild\(field\);/);
 });
