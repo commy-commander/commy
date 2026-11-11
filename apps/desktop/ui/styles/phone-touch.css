@@ -1127,7 +1127,7 @@ html[data-look="studio"][data-fit="slim"] .app:is(.pt-hold-open, .pt-chat-menu, 
   background: rgb(var(--dark) / .5);
 }
 html[data-look="studio"][data-fit="slim"] .app.pt-pick-open > .pt-scrim { position: fixed; inset: 0; z-index: 6; display: block; background: var(--scrim); }
-html[data-look="studio"][data-fit="slim"] .app.pt-search-open > .pt-scrim { background: var(--scrim); }
+html[data-look="studio"][data-fit="slim"] .app:is(.pt-search-open, .pt-hold-open) > .pt-scrim { background: var(--scrim); }
 html[data-look="studio"][data-fit="slim"] .pt-invite.on { --c: var(--accent); position: fixed; inset: 0; z-index: 170; display: block; background: var(--bg-dark); }
 html[data-look="studio"][data-fit="slim"] .pt-invite .iwall { position: absolute; inset: 0; background-size: cover; background-position: center; }
 html[data-look="studio"][data-fit="slim"] .pt-invite .iwall::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, color-mix(in srgb, var(--video-scrim) 74%, transparent)); }
@@ -2137,7 +2137,7 @@ html[data-look="studio"][data-fit="slim"] .msg { transition: background-color 14
 html[data-look="studio"][data-fit="slim"] .msg:not(.pt-dragging) { transition: translate 320ms var(--ease-spring), background-color 140ms var(--ease-out), box-shadow 140ms var(--ease-out); }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel:not(.pt-dragging),
 html[data-look="studio"][data-fit="slim"] .main:not(.pt-dragging) { transition: translate 260ms var(--ease-spring); }
-html[data-look="studio"][data-fit="slim"] .msg.pt-held { background: var(--bg-raised); border-radius: var(--radius-lg); }
+html[data-look="studio"][data-fit="slim"] .msg.pt-held { visibility: hidden; }
 html[data-look="studio"][data-fit="slim"] .msg .reactions { display: flex; flex-wrap: wrap; gap: 12px 10px; margin: 8px 0 -2px -3px; }
 html[data-look="studio"][data-fit="slim"] .msg .reaction {
   position: relative;
@@ -2180,16 +2180,34 @@ html[data-look="studio"][data-fit="slim"] .composer .icon-btn { min-width: 44px;
 
 html[data-look="studio"][data-fit="slim"] .app.pt-hold-open > .pt-hold {
   position: fixed;
-  left: 8px;
-  right: 8px;
-  bottom: calc(8px + env(safe-area-inset-bottom));
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 7;
   display: block;
-  padding: 46px 8px 10px;
-  border-radius: var(--radius-sheet);
-  background: var(--bg-mid);
-  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+  padding: 50px 14px max(14px, calc(var(--hz-safe) - 3px));
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 120px), var(--sheet-bg);
+  -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  box-shadow: inset 0 0 0 1px var(--rim-soft), 0 -24px 40px -10px rgb(var(--dark) / .8);
 }
+html[data-look="studio"][data-fit="slim"][data-fx="lite"] .app.pt-hold-open > .pt-hold { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look="studio"][data-fit="slim"] .app > .pt-hold > .msg.pt-hold-msg {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(100% + 15px);
+  z-index: 1;
+  margin: 0;
+  padding: 14px 14px 16px;
+  overflow: hidden;
+  border-radius: 28px;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .07), rgb(var(--lamp) / 0) 70%), var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--rim-soft), 0 34px 40px -12px rgb(var(--dark) / .95);
+  pointer-events: none;
+}
+html[data-look="studio"][data-fit="slim"] .app > .pt-hold > .msg.pt-hold-msg .msg-content { color: var(--header-primary); }
 html[data-look="studio"][data-fit="slim"] .pt-profile.on {
   position: fixed;
   inset: 0;
@@ -2346,24 +2364,38 @@ html[data-look="studio"][data-fit="slim"] .pdot:is(.invisible, .offline)::before
 html[data-look="studio"][data-fit="slim"] .pt-hold .rx.hidden + .pt-sheet-rows { margin-top: -34px; }
 html[data-look="studio"][data-fit="slim"] .pt-hold .rx {
   position: absolute;
-  left: 10px;
-  right: 10px;
-  top: -30px;
+  left: 16px;
+  right: 16px;
+  top: -34px;
+  z-index: 2;
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: 6px;
+  height: 66px;
+  padding: 0 9px;
   border-radius: 999px;
-  background: var(--bg-raised);
-  box-shadow: var(--pillow-card);
+  background: linear-gradient(180deg, rgb(var(--lamp) / .06), rgb(var(--lamp) / 0) 60%), var(--bg-mid);
+  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-3);
 }
-html[data-look="studio"][data-fit="slim"] .pt-hold .rx-key { width: 48px; height: 48px; font-size: 25px; }
+html[data-look="studio"][data-fit="slim"] .pt-hold .rx-key {
+  width: 48px;
+  height: 48px;
+  font-size: 25px;
+  background: var(--pillow-top), var(--bg-raised);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--pillow-sm);
+}
+html[data-look="studio"][data-fit="slim"] .pt-hold .rx-key.is-down { background: var(--pillow-top), var(--accent); box-shadow: var(--pillow-sm); }
+html[data-look="studio"][data-fit="slim"] .pt-hold .rx-key .i .i-rest { display: inline; }
+html[data-look="studio"][data-fit="slim"] .pt-hold .rx-key .i .i-on { display: none; }
 html[data-look="studio"][data-fit="slim"] .pt-hold .rx-key .i { width: 23px; height: 23px; }
 html[data-look="studio"][data-fit="slim"] .pt-sheet-rows { max-height: calc(70dvh - 80px); overflow-y: auto; scrollbar-width: none; }
 html[data-look="studio"][data-fit="slim"] .pt-sheet-rows::-webkit-scrollbar { display: none; }
 html[data-look="studio"][data-fit="slim"] .arow {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 15px;
   width: 100%;
   min-height: 56px;
   padding: 0 20px;
@@ -2371,7 +2403,7 @@ html[data-look="studio"][data-fit="slim"] .arow {
   border-radius: 999px;
   background: none;
   text-align: left;
-  font: 500 17px/1 var(--font);
+  font: 500 16.5px/1 var(--font);
   color: var(--header-primary);
 }
 html[data-look="studio"][data-fit="slim"] .arow:active { background: var(--bg-active); }

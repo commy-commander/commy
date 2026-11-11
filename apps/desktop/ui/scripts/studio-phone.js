@@ -666,6 +666,7 @@ function disarmHangUp() {
   }
 }
 
+const HELD_COPY_ROOM = 23;
 const STUDIO_SHEETS = ["pt-voice-open", "pt-hold-open", "pt-pick-open", "pt-chat-menu", "pt-search-open"];
 
 function openSheet(name) {
@@ -685,6 +686,7 @@ function dropSheets() {
   const app = $("app");
   for (const name of STUDIO_SHEETS) if (app.classList.contains(name)) app.classList.remove(name);
   for (const held of document.querySelectorAll(".msg.pt-held")) held.classList.remove("pt-held");
+  for (const copy of document.querySelectorAll(".pt-hold-msg")) copy.remove();
 }
 
 function closeSheets(then) {
@@ -1790,9 +1792,39 @@ function openHoldSheet(msg) {
     reactions.appendChild(more);
   }
   if (!rows.children.length && !canReact) return false;
+  for (const copy of document.querySelectorAll(".pt-hold-msg")) copy.remove();
+  const copy = heldCopy(msg);
+  $("pt-hold").prepend(copy);
   msg.classList.add("pt-held");
   openSheet("pt-hold-open");
+  fitHeldCopy(copy);
   return true;
+}
+
+function heldCopy(msg) {
+  const copy = msg.cloneNode(true);
+  copy.querySelector(":scope > .msg-actions")?.remove();
+  copy.classList.remove("pt-held", "pt-railed", "pt-lifted", "pt-dragging");
+  copy.style.translate = "";
+  let head = msg;
+  while (head && !(head.classList.contains("msg") && head.classList.contains("first"))) head = head.previousElementSibling;
+  if (head && head !== msg) {
+    const face = head.querySelector(":scope > .avatar");
+    const name = head.querySelector(":scope > .msg-body > .msg-head");
+    if (face) copy.querySelector(":scope > .avatar")?.replaceWith(face.cloneNode(true));
+    if (name) copy.querySelector(":scope > .msg-body")?.prepend(name.cloneNode(true));
+    copy.classList.add("first");
+  }
+  for (const node of [copy, ...copy.querySelectorAll("[id]")]) node.removeAttribute("id");
+  copy.classList.add("pt-hold-msg");
+  copy.inert = true;
+  copy.setAttribute("aria-hidden", "true");
+  return copy;
+}
+
+function fitHeldCopy(copy) {
+  const room = Math.floor($("pt-hold").offsetTop - HELD_COPY_ROOM);
+  copy.style.maxHeight = `calc(${Math.max(0, room)}px - env(safe-area-inset-top))`;
 }
 
 function wireHoldSheet() {

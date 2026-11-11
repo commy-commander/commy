@@ -174,7 +174,7 @@ const SWIPE = { slop: 6, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpe
 const TRAY_PULL = 40;
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
-  "Reply": { label: "Reply", icon: "reply", hint: "or swipe right" },
+  "Reply": { label: "Reply", icon: "reply", hint: "or swipe the message right" },
   "Open Thread": { label: "Open thread", icon: "message-square-text" },
   "Pin": { label: "Pin to channel", icon: "pin" },
   "Unpin": { label: "Unpin", icon: "pin" },

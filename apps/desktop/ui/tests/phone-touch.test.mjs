@@ -333,7 +333,7 @@ test("every sheet and long-press menu on the phone has full-size rows", () => {
   };
   assert.ok(height("\\.arow") >= 44);
   assert.ok(height(":is\\(\\.ctx-menu, \\.composer-menu\\) button") >= 44);
-  assert.match(css, /\.pt-hold \.rx-key \{ width: (4[4-9]|[5-9]\d)px; height: (4[4-9]|[5-9]\d)px;/);
+  assert.match(css, /\.pt-hold \.rx-key \{\n  width: (4[4-9]|[5-9]\d)px;\n  height: (4[4-9]|[5-9]\d)px;/);
   assert.equal((glue.match(/class="key sq tap (primary )?act (read|mute)"/g) || []).length, 2);
 });
 
@@ -1167,4 +1167,23 @@ test("mutual servers on the phone's card use 36 px tiles lined up with the card'
   assert.match(css, / \.member-card > \.mc-body\.pt-cut \{\n  -webkit-mask-image: linear-gradient\(180deg, #000 calc\(100% - 14px\), transparent\);\n  mask-image: linear-gradient\(180deg, #000 calc\(100% - 14px\), transparent\);/);
   assert.match(glue, /body\.classList\.toggle\("pt-cut", studioSlim\(\) && body\.scrollHeight - body\.scrollTop - body\.clientHeight > 1\);/);
   assert.match(glue, /const home = studioSlim\(\) \? \$\("member-card"\) : \$\("member-card"\)\.querySelector\("\.mc-body"\);\n  if \(field\.parentNode !== home\) home\.appendChild\(field\);/);
+});
+
+test("holding a message lifts a copy of it above the guide's bottom sheet, with the reactions across the sheet's top edge", () => {
+  const rule = selector => {
+    const start = css.indexOf(`html[data-look="studio"][data-fit="slim"] ${selector} {`);
+    assert.ok(start >= 0, selector);
+    return css.slice(start, css.indexOf("}", start));
+  };
+  const sheet = rule(".app.pt-hold-open > .pt-hold");
+  for (const line of ["left: 0;", "right: 0;", "bottom: 0;", "padding: 50px 14px max(14px, calc(var(--hz-safe) - 3px));", "border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;", "var(--sheet-bg);", "box-shadow: inset 0 0 0 1px var(--rim-soft), 0 -24px 40px -10px rgb(var(--dark) / .8);"]) assert.ok(sheet.includes(line), line);
+  const rx = rule(".pt-hold .rx");
+  for (const line of ["left: 16px;", "right: 16px;", "top: -34px;", "height: 66px;", "padding: 0 9px;", "border-radius: 999px;", "var(--bg-mid);", "box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-3);"]) assert.ok(rx.includes(line), line);
+  const copy = rule(".app > .pt-hold > .msg.pt-hold-msg");
+  for (const line of ["left: 14px;", "right: 14px;", "bottom: calc(100% + 15px);", "padding: 14px 14px 16px;", "border-radius: 28px;", "pointer-events: none;"]) assert.ok(copy.includes(line), line);
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .msg.pt-held { visibility: hidden; }'));
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .app:is(.pt-search-open, .pt-hold-open) > .pt-scrim { background: var(--scrim); }'));
+  assert.match(glue, /const copy = heldCopy\(msg\);\n  \$\("pt-hold"\)\.prepend\(copy\);/);
+  assert.match(glue, /for \(const copy of document\.querySelectorAll\("\.pt-hold-msg"\)\) copy\.remove\(\);\n\}/);
+  assert.match(glue, /copy\.inert = true;/);
 });
