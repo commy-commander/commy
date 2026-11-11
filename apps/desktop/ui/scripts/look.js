@@ -1,6 +1,6 @@
-const LOOK_KEY = "commy.look";
+const LOOK_KEY = "commy.look.2";
 const LOOK_FX_KEY = "commy.fx";
-const LOOK_DEFAULT = "classic";
+const LOOK_DEFAULT = "studio";
 const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760 };
 
 function lookFromSearch(search) {

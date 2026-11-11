@@ -7,12 +7,16 @@ const require = createRequire(import.meta.url);
 const { LOOK_KEY, LOOK_DEFAULT, resolveLook, lookFromSearch, windowFit, resolveFx, lookAttributes } = require("../scripts/look.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
-test("the new look stays off until someone asks for it", () => {
-  assert.equal(LOOK_DEFAULT, "classic");
-  assert.equal(LOOK_KEY, "commy.look");
-  assert.equal(resolveLook(null, ""), "classic");
-  assert.equal(resolveLook("anything", ""), "classic");
+test("the new look is on until someone turns it off", () => {
+  assert.equal(LOOK_DEFAULT, "studio");
+  assert.equal(resolveLook(null, ""), "studio");
+  assert.equal(resolveLook("anything", ""), "studio");
   assert.equal(resolveLook("studio", ""), "studio");
+  assert.equal(resolveLook("classic", ""), "classic");
+});
+
+test("a classic choice saved while the new look was opt-in is not carried over", () => {
+  assert.equal(LOOK_KEY, "commy.look.2");
 });
 
 test("the address can ask for either look, and wins over the saved choice", () => {
@@ -43,7 +47,8 @@ test("phones and slim windows start without glass, and a saved choice wins", () 
 });
 
 test("the classic look sets none of the new attributes", () => {
-  assert.deepEqual(lookAttributes({ stored: null, search: "", storedFx: "lite", width: 390, height: 844, phoneApp: true }), { look: null, fit: null, fx: null });
+  assert.deepEqual(lookAttributes({ stored: "classic", search: "", storedFx: "lite", width: 390, height: 844, phoneApp: true }), { look: null, fit: null, fx: null });
+  assert.deepEqual(lookAttributes({ stored: null, search: "", storedFx: null, width: 1440, height: 900, phoneApp: false }), { look: "studio", fit: "roomy", fx: null });
   assert.deepEqual(lookAttributes({ stored: "studio", search: "", storedFx: null, width: 390, height: 844, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite" });
   assert.deepEqual(lookAttributes({ stored: "studio", search: "", storedFx: null, width: 1440, height: 900, phoneApp: false }), { look: "studio", fit: "roomy", fx: null });
 });
