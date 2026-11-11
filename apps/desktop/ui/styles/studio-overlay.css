@@ -1,0 +1,111 @@
+html[data-look="studio"] {
+  --ov-pane: rgb(27 30 39 / .9);
+  --ov-lamp: linear-gradient(180deg, rgb(255 255 255 / .1), rgb(255 255 255 / 0) 72%);
+  --ov-rim: inset 0 0 0 1px rgb(255 255 255 / .09), inset 0 1px 0 rgb(255 255 255 / .1);
+  --ov-drop: 0 1px 2px rgb(0 0 0 / .45), 0 8px 14px -8px rgb(0 0 0 / .75);
+  --ov-pane-quiet: rgb(27 30 39 / .74);
+  --ov-ink: rgb(245 246 248);
+  --ov-text: rgb(220 223 230);
+  --ov-quiet: rgb(195 200 212);
+  --ov-well: rgb(50 56 70);
+  --ov-speak: rgb(79 214 156);
+}
+html[data-look="studio"][data-theme="light"] {
+  --ov-pane: rgb(255 255 255 / .93);
+  --ov-lamp: linear-gradient(180deg, rgb(255 255 255 / 0), rgb(255 255 255 / 0));
+  --ov-rim: inset 0 0 0 1px rgb(11 13 18 / .08);
+  --ov-drop: 0 1px 2px rgb(11 13 18 / .2), 0 8px 14px -8px rgb(11 13 18 / .5);
+  --ov-pane-quiet: rgb(255 255 255 / .76);
+  --ov-ink: rgb(11 13 18);
+  --ov-text: rgb(29 33 43);
+  --ov-quiet: rgb(59 65 79);
+  --ov-well: rgb(216 220 229);
+  --ov-speak: rgb(13 115 71);
+}
+html[data-look="studio"] body {
+  gap: 8px;
+  font-family: "Onest", system-ui, sans-serif;
+  color: var(--ov-ink);
+}
+html[data-look="studio"] .stack { gap: 5px; }
+html[data-look="studio"] .stack:empty,
+html[data-look="studio"] #notice-stack:has(> .notice.hidden) { display: none; }
+
+html[data-look="studio"] .member {
+  gap: 8px;
+  height: 32px;
+  padding: 0 13px 0 4px;
+  border: 0;
+  background: var(--ov-pane-quiet);
+  box-shadow: var(--ov-rim);
+  opacity: 1;
+  animation: ov-in .16s cubic-bezier(.2, .7, .2, 1);
+  transition: background-color .12s;
+}
+html[data-look="studio"] .member.speaking {
+  background: var(--ov-lamp), var(--ov-pane);
+  box-shadow: var(--ov-rim), var(--ov-drop);
+}
+html[data-look="studio"] .member .avatar {
+  width: 24px;
+  height: 24px;
+  font-family: "Onest", system-ui, sans-serif;
+  box-shadow: none;
+  opacity: .78;
+}
+html[data-look="studio"] .member .avatar.face { background: none; }
+html[data-look="studio"] .member .avatar.emoji { background: var(--ov-well); font-size: 14px; line-height: 1; }
+html[data-look="studio"] .avatar > svg.avatar-face { display: block; width: 100%; height: 100%; border-radius: 50%; }
+html[data-look="studio"] .member.speaking .avatar { box-shadow: 0 0 0 2px var(--ov-speak); opacity: 1; }
+html[data-look="studio"] .name {
+  font: 500 14px/1 "Onest", system-ui, sans-serif;
+  color: var(--ov-quiet);
+}
+html[data-look="studio"] .member.speaking .name { font-weight: 600; color: var(--ov-ink); }
+
+html[data-look="studio"] body.pictures #members { max-width: 246px; gap: 6px; }
+html[data-look="studio"] body.pictures.vertical #members { max-width: none; }
+html[data-look="studio"] body.pictures .member { width: 36px; height: 36px; padding: 0; }
+html[data-look="studio"] body.pictures .member .avatar { width: 28px; height: 28px; }
+html[data-look="studio"] body.pictures .member .avatar.emoji { font-size: 16px; }
+
+html[data-look="studio"] .line {
+  box-sizing: border-box;
+  max-width: 280px;
+  padding: 7px 13px 8px;
+  border: 0;
+  border-radius: 17px;
+  background: var(--ov-lamp), var(--ov-pane);
+  box-shadow: var(--ov-rim), var(--ov-drop);
+  font: 400 14px/1.4 "Onest", system-ui, sans-serif;
+  color: var(--ov-text);
+  overflow-wrap: anywhere;
+  animation: ov-in .16s cubic-bezier(.2, .7, .2, 1);
+  transition: opacity .5s;
+}
+html[data-look="studio"] .line b { font-family: "Onest", system-ui, sans-serif; font-weight: 600; color: var(--ov-role, var(--ov-ink)); }
+html[data-look="studio"][data-theme="light"] .line b { color: color-mix(in oklab, var(--ov-role, var(--ov-ink)) 55%, var(--ov-ink)); }
+
+html[data-look="studio"] .notice {
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px 0 6px;
+  border: 0;
+  background: var(--ov-lamp), var(--ov-pane);
+  box-shadow: var(--ov-rim), var(--ov-drop);
+  font: 600 14px/1 "Onest", system-ui, sans-serif;
+  color: var(--ov-ink);
+  animation: ov-in .16s cubic-bezier(.2, .7, .2, 1);
+}
+html[data-look="studio"] .notice::before { content: none; }
+html[data-look="studio"] .notice .ov-star { flex: none; display: block; width: 20px; height: 20px; }
+
+@keyframes ov-in { from { opacity: 0; translate: 0 4px; } }
+html[data-look="studio"][data-reduced-motion] .member,
+html[data-look="studio"][data-reduced-motion] .line,
+html[data-look="studio"][data-reduced-motion] .notice { animation: none; transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"] .member,
+  html[data-look="studio"] .line,
+  html[data-look="studio"] .notice { animation: none; transition: none; }
+}

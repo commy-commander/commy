@@ -5,7 +5,7 @@ const $ = id => document.getElementById(id);
 const OVERLAY_LABEL = windowLabel();
 
 const overlay = { members: [], speaking: new Set(), lingering: new Map(), showChat: true, showEveryone: false, picturesOnly: false, config: null, lines: [], testing: false };
-const TEST_MEMBERS = [{ id: "overlay-test", name: "You, talking" }];
+let testMember = overlayTestMember(null, false);
 const tiles = new Map();
 let noticeTimer = null;
 
@@ -24,8 +24,18 @@ function windowLabel() {
   }
 }
 
-function initials(name) {
-  return String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("") || "?";
+function starNode() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "ov-star");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("aria-hidden", "true");
+  for (const [fill, d] of OVERLAY_STAR) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("fill", fill);
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+  }
+  return svg;
 }
 
 function applyConfig(config) {
@@ -57,12 +67,14 @@ function renderRoster(roster) {
 function showNotice(text, ms = OVERLAY_NOTICE_MS) {
   const notice = $("notice");
   notice.textContent = text;
+  if (studioLook()) notice.prepend(starNode());
   notice.classList.remove("hidden");
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => notice.classList.add("hidden"), ms);
 }
 
-function runTest() {
+function runTest(me) {
+  testMember = overlayTestMember(me, studioLook());
   overlay.testing = true;
   showNotice("Overlay test", OVERLAY_TEST_MS);
   renderMembers();
@@ -76,23 +88,27 @@ function runTest() {
 function fillTile(row, member) {
   const avatar = el("div", "avatar");
   avatar.style.setProperty("--tint", personTint(member.id));
-  if (member.image) {
+  const picture = overlayPicture(member, studioLook());
+  if (picture.kind === "image") {
     const img = el("img");
-    img.src = member.image;
+    img.src = picture.value;
     img.alt = "";
     avatar.appendChild(img);
-  } else if (member.emoji) {
+  } else if (picture.kind === "emoji") {
     avatar.classList.add("emoji");
-    avatar.textContent = member.emoji;
+    avatar.textContent = picture.value;
+  } else if (picture.kind === "face") {
+    avatar.classList.add("face");
+    avatar.appendChild(studioFaceNode(document, picture.value));
   } else {
-    avatar.textContent = initials(member.name);
+    avatar.textContent = picture.value;
   }
   row.replaceChildren(avatar);
   if (!overlay.picturesOnly) row.appendChild(el("div", "name", member.name));
 }
 
 function memberTile(member) {
-  const key = overlayTileKey(member, overlay.picturesOnly);
+  const key = overlayTileKey(member, overlay.picturesOnly, studioLook());
   let row = tiles.get(member.id);
   if (!row) {
     row = el("div", "member");
@@ -110,7 +126,7 @@ function renderMembers() {
   const list = $("members");
   const lingering = new Set(overlay.lingering.keys());
   const speaking = overlay.testing ? new Set([...overlay.speaking, "overlay-test"]) : overlay.speaking;
-  const members = overlay.testing ? [...TEST_MEMBERS, ...overlay.members] : overlay.members;
+  const members = overlay.testing ? [testMember, ...overlay.members] : overlay.members;
   const shown = overlayVisibleMembers({ members, speaking, lingering, showEveryone: overlay.showEveryone, picturesOnly: overlay.picturesOnly });
   const ids = new Set(shown.map(m => m.id));
   for (const [id, row] of tiles) {
@@ -158,9 +174,11 @@ function addChatLine(line) {
   if (!overlay.showChat && !line.force) return;
   const chat = $("chat");
   const node = el("div", "line");
-  const who = el("b", null, `${line.author}: `);
-  if (line.color) who.style.color = `#${line.color}`;
-  node.append(who, document.createTextNode(line.text));
+  const studio = studioLook();
+  const who = el("b", null, studio ? `${line.author}:` : `${line.author}: `);
+  if (line.color && studio) who.style.setProperty("--ov-role", `#${line.color}`);
+  else if (line.color) who.style.color = `#${line.color}`;
+  node.append(who, document.createTextNode(studio ? ` ${line.text}` : line.text));
   chat.appendChild(node);
   overlay.lines = overlayPushLine(overlay.lines, node);
   for (const old of [...chat.children]) {
@@ -196,13 +214,17 @@ async function start() {
   applyOverlayAccessibility();
   window.addEventListener("storage", e => {
     if (e.key === ACCESSIBILITY_KEY) applyOverlayAccessibility();
+    if (e.key === LOOK_KEY) {
+      applyLook();
+      renderMembers();
+    }
   });
   if (!tauri) return;
   const own = { target: { kind: "WebviewWindow", label: OVERLAY_LABEL } };
   await tauri.event.listen("overlay-config", e => applyConfig(e.payload), own);
   await tauri.event.listen("overlay-roster", e => renderRoster(e.payload), own);
   await tauri.event.listen("overlay-chat", e => addChatLine(e.payload), own);
-  await tauri.event.listen("overlay-test", () => runTest(), own);
+  await tauri.event.listen("overlay-test", e => runTest(e.payload), own);
   await tauri.event.listen("overlay-reset", () => resetOverlay(), own);
   await tauri.event.listen("voice-speaking", e => setSpeaking(e.payload.user, e.payload.speaking));
   try {
@@ -223,6 +245,7 @@ if (!tauri && typeof location !== "undefined" && location.hash.startsWith("#prev
   setSpeaking("nova", true);
   addChatLine({ author: "nova", color: "9b7bff", text: "push to the left side, I'll hold mid" });
   addChatLine({ author: "ferris", text: "on it" });
+  if (opts.includes("test")) runTest({ id: "me" });
 }
 
 start();

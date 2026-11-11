@@ -10927,6 +10927,12 @@ function emitToOverlay(event, payload) {
   for (const label of ["overlay", OVERLAY_CHAT_LABEL]) window.__TAURI__.event.emitTo(label, event, payload).catch(() => {});
 }
 
+function overlayPictureOf(id) {
+  const raw = avatarFor(id)?.avatar || "";
+  const cached = raw.startsWith("blob:") ? avatarImages.get(raw.slice(5)) : null;
+  return { emoji: raw.startsWith("emoji:") ? raw.slice(6) : null, image: typeof cached === "string" ? cached : null };
+}
+
 function overlayRoster() {
   const server = state.currentServer;
   if (!state.voiceChannelId || !state.voiceServer || !server || server.id !== state.voiceServer.id) return null;
@@ -10939,15 +10945,7 @@ function overlayRoster() {
     members: channel.voice_users.map((name, i) => {
       const id = ids[i];
       const member = currentServerMember(id);
-      const raw = avatarFor(id)?.avatar || "";
-      const cached = raw.startsWith("blob:") ? avatarImages.get(raw.slice(5)) : null;
-      return {
-        id,
-        name,
-        color: member && member.color,
-        emoji: raw.startsWith("emoji:") ? raw.slice(6) : null,
-        image: typeof cached === "string" ? cached : null,
-      };
+      return { id, name, color: member && member.color, ...overlayPictureOf(id) };
     }),
   };
 }
@@ -22555,7 +22553,7 @@ function wireEvents() {
   $("overlay-test").addEventListener("click", async () => {
     await saveOverlaySettings({});
     await invoke("preview_overlay");
-    setTimeout(() => emitToOverlay("overlay-test", null), 500);
+    setTimeout(() => emitToOverlay("overlay-test", state.user ? { id: state.user.id, ...overlayPictureOf(state.user.id) } : null), 500);
   });
   $("overlay-everyone").addEventListener("change", e => saveOverlaySettings({ show_everyone: e.target.checked }));
   $("overlay-pictures").addEventListener("change", e => saveOverlaySettings({ pictures_only: e.target.checked }));

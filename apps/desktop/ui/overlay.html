@@ -108,6 +108,8 @@
     @keyframes pop { from { opacity: 0; } to { opacity: 1; } }
     @media (prefers-reduced-motion: reduce) { .member, .line { animation: none; } }
   </style>
+  <link rel="stylesheet" id="studio-tokens" href="styles/tokens.css" media="not all" />
+  <link rel="stylesheet" id="studio-overlay" href="styles/studio-overlay.css" media="not all" />
 </head>
 <body>
   <div class="stack" id="notice-stack"><div class="notice hidden" id="notice"></div></div>
@@ -115,6 +117,8 @@
   <div class="stack" id="chat"></div>
   <script src="scripts/tint.js"></script>
   <script src="scripts/accessibility.js"></script>
+  <script src="scripts/look.js"></script>
+  <script src="scripts/studio-faces.js"></script>
   <script src="scripts/overlay-view.js"></script>
   <script src="scripts/overlay.js"></script>
 </body>
