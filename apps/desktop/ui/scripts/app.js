@@ -23470,6 +23470,7 @@ function wireEvents() {
   if (studioLook()) studioSettingsShell(closeSettingsLayers);
   if (studioLook()) studioAccountsWindow();
   if (studioLook()) studioProfileEditor();
+  if (studioLook()) studioDialogs();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;

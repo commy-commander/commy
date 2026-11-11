@@ -1,0 +1,84 @@
+html[data-look="studio"]:not([data-fit="slim"]) .modal-backdrop:has(> .modal.dialog:not(.hidden)) { background: var(--scrim); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog {
+  gap: 12px;
+  width: min(400px, calc(100vw - 48px));
+  padding: 26px 28px 48px;
+  border: 0;
+  border-radius: var(--radius-xl);
+  color: var(--text-normal);
+  overflow: visible;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > h2 {
+  margin: 0;
+  color: var(--header-primary);
+  font: 700 21px/1.2 var(--font-display);
+  letter-spacing: -.015em;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > h2 + * { margin-top: -4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > p,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-account-step > p,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-lines,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-list {
+  color: var(--text-normal);
+  font: 400 15px/1.45 var(--font);
+  text-wrap: pretty;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > p:empty { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-account-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-account-step.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .setting-sub {
+  margin: 0;
+  color: var(--text-muted);
+  font: 400 13px/1.35 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font: 600 13px/13px var(--font);
+  letter-spacing: 0;
+  text-transform: none;
+  text-indent: 16px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .field-label > * { text-indent: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea) {
+  width: 100%;
+  height: 46px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font: 400 15px/1 var(--font);
+  transition: box-shadow var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog textarea {
+  height: auto;
+  padding: 13px 18px;
+  border-radius: var(--radius-lg);
+  line-height: 1.45;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input, textarea)::placeholder { color: var(--text-muted); opacity: 1; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea):hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea):focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-actions.answers {
+  position: absolute;
+  right: 24px;
+  bottom: -20px;
+  z-index: 4;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .answers > .key.third { order: -1; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .answers > .key:disabled { opacity: 1; }
