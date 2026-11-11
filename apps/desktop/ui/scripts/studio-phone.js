@@ -365,28 +365,7 @@ function decorateMessages() {
 }
 
 function buildChatBar() {
-  const menu = $("composer-menu");
-  for (const extra of BAR_EXTRAS) {
-    const row = studioNode("button", "pt-cm", `<i data-i="${extra.icon}"></i>${extra.label}`);
-    row.type = "button";
-    row.id = `pt-cm-${extra.id}`;
-    row.setAttribute("role", "menuitem");
-    row.onclick = () => {
-      menu.classList.add("hidden");
-      setTimeout(() => $(extra.press).click(), 0);
-    };
-    menu.appendChild(row);
-  }
   $("reply-bar").prepend(studioNode("span", "pt-chip-i", '<i data-i="reply"></i>'));
-  document.addEventListener("click", e => {
-    if (!studioSlim() || !e.target.closest || !e.target.closest("#attach-btn")) return;
-    if (!menu.classList.contains("hidden") || state.view !== "server" || canAttachHere() || canSendVoiceHere()) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    closeFloating("composer-menu");
-    for (const item of menu.querySelectorAll('[id^="cm-"]')) item.classList.add("hidden");
-    menu.classList.remove("hidden");
-  }, true);
 }
 
 function buildChatHeader() {
@@ -1891,7 +1870,7 @@ function openRowSwipe(row) {
 
 const RAIL_UNLIT_MS = 200;
 const RAIL_FADE_MS = 140;
-const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, .text-style-pop, #modal-accounts";
+const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, #modal-accounts";
 
 function sheetAtTop(sheet, from) {
   for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
