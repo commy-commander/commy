@@ -23474,6 +23474,7 @@ function wireEvents() {
   if (studioLook()) studioDialogs();
   if (studioLook()) studioFloat();
   if (studioLook()) studioTitlebar();
+  if (studioLook()) studioForum();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;
