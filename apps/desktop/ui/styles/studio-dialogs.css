@@ -1957,3 +1957,305 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.serve .share-quali
 html[data-look="studio"][data-fit="slim"] .notify-level > .tick,
 html[data-look="studio"][data-fit="slim"] #pins-modal-list .pin-by > .i,
 html[data-look="studio"][data-fit="slim"] #share-quality > button > .led { display: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc {
+  gap: 0;
+  width: min(440px, calc(100vw - 48px));
+  padding: 30px 28px 26px;
+  text-align: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .dstar {
+  --star-size: 64px;
+  display: block;
+  margin: 0 auto 14px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-logo { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > h2 { margin: 0; text-wrap: balance; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > h2 + * { margin-top: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > p:is(#signin-intro, #claim-intro),
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-wait > .signin-label {
+  margin: 14px 0 0;
+  color: var(--text-normal);
+  font: 400 14.5px/1.45 var(--font);
+  text-wrap: pretty;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start { margin-top: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > p#signin-intro:has(~ .signin-wait:not(.hidden)) { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start > .signin-go:is(#signin-go) {
+  width: 100%;
+  height: 46px;
+  justify-content: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font: 400 13px/1.35 var(--font);
+  text-align: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start > .signin-form:not(.hidden),
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start > .signin-step:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start .signin-label {
+  color: var(--text-normal);
+  font: 400 14px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start .signin-field {
+  width: 100%;
+  height: 46px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font: 400 15px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start .signin-field:focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start .signin-go:not(#signin-go) { height: 46px; border-radius: var(--radius-pill); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-code {
+  width: fit-content;
+  margin: 16px auto 0;
+  padding: 14px 26px;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font: 600 26px/1 var(--font-mono);
+  letter-spacing: .14em;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-status {
+  gap: 10px;
+  margin-top: 14px;
+  color: var(--text-muted);
+  font: 500 13.5px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait .signin-spinner {
+  width: 9px;
+  height: 9px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 0 4px rgb(var(--lamp) / .05);
+  animation: dc-wait 1.6s ease-in-out infinite;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-links { gap: 18px; margin-top: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-links > .btn-link {
+  padding: 0;
+  color: var(--link);
+  font: 500 14px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-links > .btn-link:last-child { color: var(--text-muted); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait > .signin-links > .btn-link:hover { text-decoration: underline; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-error:not(.hidden) {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--danger-text);
+  font: 500 14px/1.45 var(--font);
+  text-align: left;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-error > .i {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  color: var(--danger-text);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-back {
+  align-self: center;
+  margin-top: 12px;
+  padding: 0;
+  color: var(--link);
+  font: 500 14px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-back:hover { text-decoration: underline; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-start > .signin-back { margin-top: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server {
+  gap: 8px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+  font: 600 13px/13px var(--font);
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server > span { padding-left: 16px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field { min-height: 46px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel {
+  position: relative;
+  display: block;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > .i {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > .i.lead { right: auto; left: 18px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel:has(> select.hidden) { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > select:is(#signin-server-select) {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 46px;
+  padding: 0 46px 0 44px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  cursor: pointer;
+  font: 400 15px/1 var(--font);
+  text-overflow: ellipsis;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > select:is(#signin-server-select):focus-visible { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-field > .dsel > select option { background: var(--bg-raised); color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit:not(.hidden) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .dfind {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .dfind > .i {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .dfind > input:is(#signin-server-input) {
+  width: 100%;
+  height: 46px;
+  padding: 0 18px 0 44px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: var(--input-bg);
+  box-shadow: var(--slot), 0 0 0 2px var(--accent);
+  color: var(--header-primary);
+  font: 400 15px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .dfind > input:is(#signin-server-input)[aria-invalid="true"] { box-shadow: var(--slot), 0 0 0 2px var(--danger-text); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .key:is(#signin-server-save) {
+  flex: none;
+  height: 44px;
+  padding: 0 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .btn-link {
+  flex: none;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font: 500 14px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc .signin-server-edit > .btn-link:hover { color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server-note {
+  margin: 10px 0 0 16px;
+  color: var(--text-muted);
+  font: 400 13px/1.35 var(--font);
+  text-align: left;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server-note.warn { color: var(--text-normal); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-server-note.error { color: var(--danger-text); }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-profile {
+  margin: 16px 0 0;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--text-muted);
+  font: 400 14px/1.2 var(--font);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-actions:not(.hidden) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-actions#claim-retry-row { grid-template-columns: 1fr; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-actions > .key {
+  width: 100%;
+  height: 44px;
+  justify-content: center;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .claim-actions#claim-retry-row > .key { height: 46px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc.call-modal {
+  align-items: center;
+  width: min(320px, calc(100vw - 48px));
+  padding: 30px 24px 28px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-avatar {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 6px rgb(var(--lamp) / .05), 0 0 0 12px rgb(var(--lamp) / .025);
+  animation: dc-ring 1.8s ease-in-out infinite;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-avatar > :is(.avatar-xl, .av) { width: 96px; height: 96px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > h2#call-name { font-size: 22px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-sub {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font: 400 14.5px/1.45 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions {
+  justify-content: center;
+  gap: 28px;
+  margin-top: 22px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions > .call-btn.key.sq {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions > .call-btn.key.sq svg { width: 22px; height: 22px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions > .call-btn.decline.key.sq { color: var(--danger-text); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-actions > .call-btn.key.sq:hover { filter: none; }
+
+@keyframes dc-wait { 50% { opacity: .35; } }
+@keyframes dc-ring { 50% { box-shadow: 0 0 0 9px rgb(var(--lamp) / .07), 0 0 0 18px rgb(var(--lamp) / .03); } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .call-avatar,
+  html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.dc > .signin-wait .signin-spinner { animation: none; }
+}
+
+html[data-look="studio"][data-fit="slim"] .modal > .dstar,
+html[data-look="studio"][data-fit="slim"] .signin-server-field > .dsel > .i,
+html[data-look="studio"][data-fit="slim"] .signin-error > .i,
+html[data-look="studio"][data-fit="slim"] .signin-server-edit > .dfind > .i { display: none; }
+html[data-look="studio"][data-fit="slim"] .signin-server-field > .dsel,
+html[data-look="studio"][data-fit="slim"] .signin-server-edit > .dfind { display: contents; }

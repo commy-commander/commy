@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS } = require("../scripts/studio-dialogs.js");
+const { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS, SIGNIN_DIALOGS, SIGNIN_KEYS, SIGNIN_ERRORS, dialogStarState } = require("../scripts/studio-dialogs.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-dialogs.css");
@@ -287,4 +287,37 @@ test("a server's settings, pins, activities and sharing follow the drawing", () 
   assert.match(rule(`${E} .share-card.picked`), /box-shadow: inset 0 0 0 2px var\(--accent-lit\);/);
   assert.match(rule(`${E} .share-quality > .segmented`), /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
   assert.ok(glue.includes('studioIconMarkup("pin")'));
+});
+
+test("sign in, claim and the incoming call follow the drawing", () => {
+  const F = `${R} .modal.dialog.dc`;
+  assert.deepEqual(SIGNIN_DIALOGS, ["modal-signin", "modal-claim", "modal-call"]);
+  for (const id of [...SIGNIN_DIALOGS, ...Object.keys(SIGNIN_KEYS), ...SIGNIN_ERRORS, "signin-server-select", "signin-server-input", "signin-wait", "claim-retry-row", "call-avatar"]) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(glue.includes('modal.classList.toggle("dc", roomy && SIGNIN_DIALOGS.includes(modal.id));'));
+  assert.equal(SIGNIN_KEYS["signin-go"], "key primary");
+  assert.equal(SIGNIN_KEYS["call-accept"], "key sq primary");
+  assert.equal(SIGNIN_KEYS["call-decline"], "key sq");
+  assert.equal(dialogStarState("modal-signin", false, false), "idle");
+  assert.equal(dialogStarState("modal-signin", true, false), "waiting");
+  assert.equal(dialogStarState("modal-claim", false, false), "idle");
+  assert.equal(dialogStarState("modal-claim", false, true), "unimpressed");
+  assert.equal(dialogStarState("modal-call", false, false), null);
+  assert.match(rule(F), /width: min\(440px, calc\(100vw - 48px\)\);/);
+  assert.match(rule(F), /padding: 30px 28px 26px;/);
+  assert.match(rule(`${F} > .dstar`), /--star-size: 64px;/);
+  assert.match(rule(`${F} > .signin-logo`), /display: none;/);
+  assert.match(rule(`${F} > .signin-wait > .signin-code`), /font: 600 26px\/1 var\(--font-mono\);/);
+  assert.match(rule(`${F} > .signin-wait .signin-spinner`), /background: var\(--yellow\);/);
+  assert.match(rule(`${F} > .signin-error:not(.hidden)`), /color: var\(--danger-text\);/);
+  assert.match(rule(`${F} > .signin-server`), /border-top: 1px solid var\(--line\);/);
+  assert.match(rule(`${F}.call-modal`), /padding: 30px 24px 28px;/);
+  assert.match(rule(`${F} > .call-avatar`), /width: 112px;/);
+  assert.match(rule(`${F} > .call-actions > .call-btn.decline.key.sq`), /color: var\(--danger-text\);/);
+  assert.ok(css.includes("@media (prefers-reduced-motion: reduce) {\n  " + F + " > .call-avatar,"));
+  assert.ok(glue.includes('studioIconMarkup("circle-alert")'));
+  assert.ok(glue.includes('studioIconMarkup("globe", "lead")'));
+  const start = glue.slice(glue.indexOf("function studioDialogs()"));
+  assert.ok(start.includes("new MutationObserver(studioSigninParts)"));
+  const signin = glue.slice(glue.indexOf("function studioSigninParts()"), glue.indexOf("function studioInviteParts()"));
+  assert.equal(signin.includes("MutationObserver"), false);
 });

@@ -109,6 +109,26 @@ const SERVER_LISTS = ["server-notify-levels", "join-sound-list", "pins-modal-lis
 
 const LATCH_ROWS = ["invite-expiry", "share-quality"];
 
+const SIGNIN_DIALOGS = ["modal-signin", "modal-claim", "modal-call"];
+
+const SIGNIN_KEYS = {
+  "signin-go": "key primary",
+  "signin-server-save": "key",
+  "claim-keep": "key primary",
+  "claim-fresh": "key",
+  "claim-retry": "key primary",
+  "call-decline": "key sq",
+  "call-accept": "key sq primary",
+};
+
+const SIGNIN_ERRORS = ["signin-error", "claim-error"];
+
+function dialogStarState(modalId, waiting, problem) {
+  if (modalId === "modal-signin") return waiting ? "waiting" : "idle";
+  if (modalId === "modal-claim") return problem ? "unimpressed" : "idle";
+  return null;
+}
+
 const STUDIO_KEY_NAMES = ["key", "sm", "sq", "primary"];
 
 function studioKeyNames(classes, roomy) {
@@ -170,6 +190,7 @@ function studioDialogDress(modal) {
   modal.classList.toggle("join", roomy && join);
   modal.classList.toggle("make", roomy && MAKING_DIALOGS.includes(modal.id));
   modal.classList.toggle("serve", roomy && SERVER_DIALOGS.includes(modal.id));
+  modal.classList.toggle("dc", roomy && SIGNIN_DIALOGS.includes(modal.id));
   for (const box of modal.querySelectorAll(":scope > .report-also-block > input[type='checkbox'], :scope > .leaving-trust > input[type='checkbox']")) box.classList.toggle("switch", roomy);
   const actions = modal.querySelector(":scope > .modal-actions");
   if (!actions) return;
@@ -308,6 +329,41 @@ function studioServerParts() {
   }
 }
 
+function studioSigninStar(modal) {
+  if (document.documentElement.dataset.fit === "slim" || !["modal-signin", "modal-claim"].includes(modal.id)) return;
+  let art = modal.querySelector(":scope > .dstar");
+  if (!art) {
+    art = document.createElement("span");
+    art.className = "star dstar";
+    art.setAttribute("aria-hidden", "true");
+    art.setAttribute("data-lift", "");
+    art.dataset.state = "idle";
+    modal.prepend(art);
+    if (typeof Star !== "undefined") Star.mount(art);
+  }
+  const wait = document.getElementById("signin-wait");
+  const retry = document.getElementById("claim-retry-row");
+  const state = dialogStarState(modal.id, Boolean(wait && !wait.classList.contains("hidden")), Boolean(retry && !retry.classList.contains("hidden")));
+  if (state === "unimpressed") art.setAttribute("data-follow", "off");
+  else art.removeAttribute("data-follow");
+  if (art.dataset.state === state) return;
+  if (typeof Star !== "undefined") Star.set(art, state);
+  else art.dataset.state = state;
+}
+
+function studioSigninParts() {
+  const roomy = document.documentElement.dataset.fit !== "slim";
+  for (const [id, classes] of Object.entries(SIGNIN_KEYS)) {
+    const key = document.getElementById(id);
+    if (key) studioKeyDress(key, classes, roomy);
+  }
+  for (const modal of ["modal-signin", "modal-claim"].map(id => document.getElementById(id)).filter(Boolean)) studioSigninStar(modal);
+  if (!roomy || typeof studioIconMarkup !== "function") return;
+  for (const box of SIGNIN_ERRORS.map(id => document.getElementById(id)).filter(Boolean)) {
+    if (box.textContent.trim() && !box.querySelector(":scope > .i")) box.insertAdjacentHTML("afterbegin", studioIconMarkup("circle-alert"));
+  }
+}
+
 function studioInviteParts() {
   const roomy = document.documentElement.dataset.fit !== "slim";
   for (const row of LATCH_ROWS.map(id => document.getElementById(id)).filter(Boolean)) studioLatchRow(row);
@@ -352,7 +408,7 @@ function studioJoinParts(modal) {
 
 function studioDialogs() {
   studioDialogParts();
-  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS, ...PEOPLE_DIALOGS, ...MAKING_DIALOGS, ...SERVER_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
+  const modals = [...STUDIO_DIALOGS, ...JOIN_DIALOGS, ...MODERATE_DIALOGS, ...PEOPLE_DIALOGS, ...MAKING_DIALOGS, ...SERVER_DIALOGS, ...SIGNIN_DIALOGS].map(id => document.getElementById(id)).filter(Boolean);
   const joins = modals.filter(modal => JOIN_DIALOGS.includes(modal.id));
   const grids = ["moderate-lengths", "timeout-choices"].map(id => document.getElementById(id)).filter(Boolean);
   const leaving = document.getElementById("modal-leaving");
@@ -365,6 +421,7 @@ function studioDialogs() {
     studioInviteParts();
     studioMakingKeys();
     studioServerParts();
+    studioSigninParts();
   };
   const keys = new MutationObserver(() => { for (const grid of grids) studioLengthKeys(grid); });
   for (const grid of grids) keys.observe(grid, { childList: true });
@@ -377,6 +434,19 @@ function studioDialogs() {
   const making = new MutationObserver(studioMakingKeys);
   for (const list of keyLists) making.observe(list, { childList: true, subtree: true });
   for (const input of ["activity-link-input"].map(id => document.getElementById(id)).filter(Boolean)) studioFieldIcon(input, "link");
+  const server = document.getElementById("signin-server-select");
+  if (server) {
+    studioFieldIcon(server, "chevron-down", "dsel");
+    if (typeof studioIconMarkup === "function" && !server.parentElement.querySelector(":scope > .lead")) server.insertAdjacentHTML("beforebegin", studioIconMarkup("globe", "lead"));
+  }
+  const host = document.getElementById("signin-server-input");
+  if (host) studioFieldIcon(host, "globe");
+  const signing = new MutationObserver(studioSigninParts);
+  for (const id of ["signin-wait", "claim-retry-row"]) {
+    const node = document.getElementById(id);
+    if (node) signing.observe(node, { attributes: true, attributeFilter: ["class"] });
+  }
+  for (const node of SIGNIN_ERRORS.map(id => document.getElementById(id)).filter(Boolean)) signing.observe(node, { childList: true });
   const serverLists = SERVER_LISTS.map(id => document.getElementById(id)).filter(Boolean);
   const serving = new MutationObserver(studioServerParts);
   for (const list of serverLists) serving.observe(list, { childList: true, subtree: true });
@@ -401,5 +471,5 @@ function studioDialogs() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS };
+  module.exports = { STUDIO_DIALOGS, DIALOG_BLUE_ACTIONS, dialogAnswerClasses, JOIN_DIALOGS, JOIN_ANSWERS, joinAnswerClasses, joinTileServer, dialogJustOpened, MODERATE_DIALOGS, leavingTitleIcon, PEOPLE_DIALOGS, PEOPLE_LISTS, PEOPLE_SEARCHES, INVITE_KEYS, inviteRowKey, MAKING_DIALOGS, MAKING_KEYS, MAKING_ROW_KEYS, MAKING_FIELD_ICONS, MAKING_SELECTS, studioKeyNames, SERVER_DIALOGS, SERVER_LISTS, LATCH_ROWS, SIGNIN_DIALOGS, SIGNIN_KEYS, SIGNIN_ERRORS, dialogStarState };
 }
