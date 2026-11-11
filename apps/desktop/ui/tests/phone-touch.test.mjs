@@ -1149,3 +1149,12 @@ test("Edit profile on your own card opens the phone's profile editor once the ca
   assert.match(glue, /window\.addEventListener\("popstate", \(\) => openProfileEditor\(\), \{ once: true \}\);\n  closeFloating\(\);/);
   assert.match(glue, /\$\("pt-profile"\)\.style\.setProperty\("--pc", personTint\(user\.id\)\);/);
 });
+
+test("invite cards in a phone chat follow the same design guide rules as on desktop, answering to their own width", () => {
+  assert.match(css, rule(" \\.invite-card,\\n[^{]*\\.voice-invite", "container: icard / inline-size;"));
+  assert.match(css, rule(" \\.invite-card,\\n[^{]*\\.voice-invite", "grid-template-columns: 44px minmax\\(0, 1fr\\) auto;"));
+  assert.match(css, rule(" \\.invite-card,\\n[^{]*\\.voice-invite", "border-radius: 24px;"));
+  assert.match(css, new RegExp(`@container icard \\(max-width: 339px\\) \\{\\n  ${slim} \\.invite-card-text,`));
+  assert.match(css, new RegExp(`@container icard \\(max-width: 259px\\) \\{\\n  ${slim} \\.invite-card-mark,`));
+  assert.match(css, rule(" \\.invite-card > button,\\n[^{]*", "min-width: 84px;\\s+height: 40px;"));
+});
