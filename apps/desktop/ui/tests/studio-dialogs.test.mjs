@@ -21,7 +21,7 @@ const rule = selector => {
 
 test("the dialogs' new look stays off until the switch is on and off on the phone", () => {
   assert.ok(selectors.length > 20);
-  for (const selector of selectors) assert.ok(selector.startsWith(R), selector);
+  for (const selector of selectors) assert.ok(selector.startsWith(R) || selector.startsWith('html[data-look="studio"][data-fit="slim"]'), selector);
   assert.equal(css.includes("/*"), false);
   assert.deepEqual(css.match(/#[0-9a-fA-F]{3,8}\b/g), null);
   const sheet = html.indexOf('<link rel="stylesheet" id="studio-dialogs" href="styles/studio-dialogs.css" media="not all" />');
@@ -68,4 +68,19 @@ test("the dialog is the guide's slab with its answers on the bottom edge", () =>
   assert.match(rule(`${R} .modal.dialog > .modal-actions.answers`), /position: absolute;\n  right: 24px;\n  bottom: -20px;/);
   assert.match(rule(`${R} .modal-backdrop:has(> .modal.dialog:not(.hidden))`), /background: var\(--scrim\);/);
   assert.match(rule(`${R} .modal.dialog > .answers > .key:disabled`), /opacity: 1;/);
+});
+
+test("the four undrawn parts follow the guide's reading", () => {
+  assert.ok(glue.includes('studioIconMarkup("triangle-alert")'));
+  assert.ok(glue.includes('studioIconMarkup("check", "tick")'));
+  assert.match(rule(`${R} .modal.dialog > .danger-callout`), /border: 0;\n  border-radius: 14px;\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);\n  font: 400 14px\/1\.4 var\(--font\);/);
+  assert.match(rule(`${R} .modal.dialog > .danger-callout > .i`), /color: var\(--danger-text\);/);
+  assert.match(rule(`${R} .modal.dialog > .tray-opt + .tray-opt`), /box-shadow: inset 0 1px 0 var\(--line\);/);
+  assert.match(rule(`${R} .modal.dialog > .tray-opt`), /background: none;/);
+  assert.match(rule(`${R} .modal.dialog > .report-reasons > label`), /height: 32px;\n  padding: 0 10px;\n  border-radius: 7px;/);
+  assert.match(rule(`${R} .modal.dialog > .report-reasons > label > input`), /opacity: 0;/);
+  assert.ok(css.includes(`${R} .modal.dialog > .report-reasons > label:has(> input:checked) > .tick { opacity: 1; }`));
+  assert.match(rule(`${R} .modal.dialog > .delete-preview`), /border-radius: 14px;\n  background: var\(--input-bg\);\n  box-shadow: var\(--slot\);/);
+  assert.match(rule(`${R} .modal.dialog > .delete-preview > .avatar`), /width: 32px;\n  height: 32px;/);
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .danger-callout > .i,\nhtml[data-look="studio"][data-fit="slim"] .report-reasons > label > .tick { display: none; }'));
 });

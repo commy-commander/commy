@@ -61,7 +61,16 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog :where(input[type=
   font: 400 15px/1 var(--font);
   transition: box-shadow var(--t-hover) var(--ease-out);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog textarea {
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog textarea,
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > #report-note {
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font-size: 15px;
+  resize: none;
   height: auto;
   padding: 13px 18px;
   border-radius: var(--radius-lg);
@@ -82,3 +91,147 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-actions.a
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .answers > .key.third { order: -1; }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .answers > .key:disabled { opacity: 1; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 10px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  font: 400 14px/1.4 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout > .i {
+  grid-row: 1 / span 2;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--danger-text);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .danger-callout > strong {
+  color: var(--header-primary);
+  font-weight: 600;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog .confirm-name { color: var(--header-primary); }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt + .tray-opt {
+  margin-top: -12px;
+  box-shadow: inset 0 1px 0 var(--line);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt .setting-title {
+  color: var(--header-primary);
+  font: 600 14.5px/1.2 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .tray-opt .setting-sub { font: 400 12.5px/1.35 var(--font); }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons {
+  gap: 0;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-normal);
+  font: 500 13.5px/1 var(--font);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:hover { background: var(--bg-hover); color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label > input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:has(> input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label > .tick {
+  width: 15px;
+  height: 15px;
+  margin-left: auto;
+  color: var(--accent-lit);
+  opacity: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:has(> input:checked) {
+  color: var(--header-primary);
+  font-weight: 600;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .report-reasons > label:has(> input:checked) > .tick { opacity: 1; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview:empty { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview:hover { background: var(--input-bg); }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview > .avatar {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-body {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-author {
+  color: var(--header-primary);
+  font: 600 14px/1.2 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-time {
+  color: var(--text-muted);
+  font: 400 12px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .delete-preview .msg-content {
+  overflow: hidden;
+  color: var(--text-normal);
+  font: 400 14px/1.4 var(--font);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+html[data-look="studio"][data-fit="slim"] .danger-callout > .i,
+html[data-look="studio"][data-fit="slim"] .report-reasons > label > .tick { display: none; }

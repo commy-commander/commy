@@ -62,7 +62,17 @@ function studioDialogDress(modal) {
   });
 }
 
+function studioDialogParts() {
+  if (typeof studioIconMarkup !== "function") return;
+  const callout = document.querySelector("#modal-delete-channel > .danger-callout");
+  if (callout && !callout.querySelector(":scope > .i")) callout.insertAdjacentHTML("afterbegin", studioIconMarkup("triangle-alert"));
+  for (const reason of document.querySelectorAll("#report-reasons > label")) {
+    if (!reason.querySelector(":scope > .tick")) reason.insertAdjacentHTML("beforeend", studioIconMarkup("check", "tick"));
+  }
+}
+
 function studioDialogs() {
+  studioDialogParts();
   const modals = STUDIO_DIALOGS.map(id => document.getElementById(id)).filter(Boolean);
   const dress = () => { for (const modal of modals) studioDialogDress(modal); };
   dress();
