@@ -6682,7 +6682,7 @@ function paintVoiceRoomInk() {
     if (!ctx) continue;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, sheet.clientWidth, sheet.clientHeight);
-    const frame = inkFrame(store, now, still);
+    const frame = inkFrame(store, now, still, state.user && state.user.id);
     inkPaint(ctx, frame, voiceRoomInkRect(tile));
     busy = busy || frame.busy;
   }
@@ -21687,7 +21687,7 @@ function paintStageInk() {
   if (!ctx) return;
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-  const frame = inkFrame(ink.store, performance.now(), document.documentElement.hasAttribute("data-reduced-motion"));
+  const frame = inkFrame(ink.store, performance.now(), document.documentElement.hasAttribute("data-reduced-motion"), state.user && state.user.id);
   inkPaint(ctx, frame, stageInkRect());
   if (frame.busy) scheduleInkPaint();
 }

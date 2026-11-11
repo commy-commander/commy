@@ -5,6 +5,7 @@ const canvas = document.getElementById("ink");
 let store = inkStore();
 let raf = 0;
 let calm = false;
+let me = null;
 
 function reducedMotion() {
   let raw = null;
@@ -29,13 +30,14 @@ function paint() {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  const frame = inkFrame(store, performance.now(), calm);
+  const frame = inkFrame(store, performance.now(), calm, me);
   inkPaint(ctx, frame, { x: 0, y: 0, width, height }, ratio * Math.max(1, Math.min(2, window.innerWidth / 1280)));
   if (frame.busy) schedule();
 }
 
 function receive(news) {
   if (!news || !news.own) return;
+  me = news.sharer || me;
   inkAdd(store, news, performance.now(), news.sharer);
   schedule();
 }
@@ -44,7 +46,12 @@ async function start() {
   calm = reducedMotion();
   window.addEventListener("storage", e => {
     if (e.key === ACCESSIBILITY_KEY) calm = reducedMotion();
+    if (e.key === LOOK_KEY) {
+      applyLook();
+      schedule();
+    }
   });
+  if (document.fonts && document.fonts.load) document.fonts.load("700 12px Onest").then(schedule, () => {});
   window.addEventListener("resize", schedule);
   if (!tauri) return;
   await tauri.event.listen("stream-ink", e => receive(e.payload));
