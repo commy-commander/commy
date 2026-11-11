@@ -23469,6 +23469,7 @@ function wireEvents() {
   setupSidebarResize();
   if (studioLook()) studioSettingsShell(closeSettingsLayers);
   if (studioLook()) studioAccountsWindow();
+  if (studioLook()) studioProfileEditor();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
       state.showDmProfile = true;
@@ -26165,6 +26166,7 @@ function paintAccountBanner() {
   paintCardEffect(strip, state.user.card_effect, state.user.id);
   $("account-banner-upload").lastElementChild.textContent = state.user.banner ? "Change banner" : "Add banner";
   $("account-banner-remove").classList.toggle("hidden", !state.user.banner);
+  if (studioLook()) studioEditorBanner(strip);
 }
 
 async function saveAccountBanner(data) {

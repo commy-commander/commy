@@ -1,0 +1,352 @@
+html[data-look="studio"]:not([data-fit="slim"]) .set-pane.set-editor {
+  position: relative;
+  padding: 0 24px 40px;
+  margin-bottom: 48px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .set-pane.set-editor > .profile-card:first-child { margin-top: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor {
+  position: static;
+  display: block;
+  overflow: visible;
+  border-radius: 0;
+  background: none;
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-banner {
+  position: relative;
+  height: 112px;
+  margin: 0 -24px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background-position: center;
+  background-size: cover;
+  -webkit-mask-image: linear-gradient(rgb(0 0 0) 38%, transparent 92%);
+  mask-image: linear-gradient(rgb(0 0 0) 38%, transparent 92%);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-banner.wash {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--pc, var(--accent)) 46%, transparent), color-mix(in srgb, var(--pc, var(--accent)) 12%, transparent)) !important;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-banner > .card-effect.fx { border-radius: inherit; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .role-banner-tools {
+  position: absolute;
+  top: 68px;
+  right: 24px;
+  bottom: auto;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .role-banner-tools > .key {
+  margin: 0;
+  border-radius: var(--radius-pill);
+  color: var(--k-ink);
+  font: 600 13px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .role-banner-tools > .key.hidden { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .role-banner-tools > #account-banner-remove { order: 1; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .role-banner-tools > .key.sq {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .role-banner-tools > .key > .i {
+  width: 18px !important;
+  height: 18px !important;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .role-banner-tools .rb-plus { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-key-words {
+  display: inline-block;
+  text-transform: lowercase;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-key-words::first-letter { text-transform: uppercase; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-body {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  margin-top: -22px;
+  padding: 0 2px 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-avw {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  padding: 5px;
+  --pres-ring: var(--bg-dark);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor #account-avatar {
+  width: 60px;
+  height: 60px;
+  border: 0;
+  font-size: 24px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .45);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-avpres {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  z-index: 2;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 2.5px var(--pres-ring);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-avpres.idle { background: var(--pres-ring); box-shadow: 0 0 0 2.5px var(--pres-ring), inset 3.5px -3px 0 .5px var(--yellow); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-avpres.off { background: var(--pres-ring); box-shadow: 0 0 0 2.5px var(--pres-ring), inset 0 0 0 2px var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-avpres.dnd { background: var(--red); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-avpres.dnd::after {
+  content: "";
+  position: absolute;
+  top: 4.5px;
+  left: 2.5px;
+  right: 2.5px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--white);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .profile-names {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 6px;
+  padding-bottom: 6px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .profile-display {
+  flex: 0 0 100%;
+  overflow: hidden;
+  color: var(--header-primary);
+  font: 700 18px/1.1 var(--font-display);
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .profile-username,
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-pronouns {
+  color: var(--text-muted);
+  font: 400 13px/1 var(--font);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-pronouns:not(:empty)::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin: 0 7px 3px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .field-label:has(#account-about),
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .field-label:has(.look-grid),
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .form-actions { grid-column: 1 / -1; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .field-label:has(#account-server-tag) { grid-column: 1; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .field-label:has(.look-grid) { margin-top: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .field-label > .setting-sub {
+  margin: 0 0 0 1px;
+  color: var(--text-muted);
+  font: 400 13px/1.35 var(--font);
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .emoji-slot-field {
+  gap: 0;
+  height: 46px;
+  padding: 0 0 0 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  transition: box-shadow var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .emoji-slot-field:hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .emoji-slot-field:focus-within { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .emoji-slot-field > .emoji-slot {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--text-muted);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .emoji-slot-field > input[type="text"] {
+  height: 46px;
+  padding: 0 18px 0 6px;
+  background: none;
+  box-shadow: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .emoji-slot-field > input[type="text"]:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .emoji-slot-field > input[type="text"]:focus { box-shadow: none; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-pick > .pres-dot {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--green);
+  pointer-events: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-pick > .pres-dot.idle { background: transparent; box-shadow: inset 3.5px -3px 0 .5px var(--yellow); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-pick > .pres-dot.dnd { background: var(--red); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-pick > .pres-dot.dnd::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--white);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-pick > .pres-dot.off { background: transparent; box-shadow: inset 0 0 0 2px var(--text-faint); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .set-pick:has(> .pres-dot) > select { padding-left: 37px; }
+
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .field-emoji {
+  position: relative;
+  display: block;
+  padding: 14px 8px 50px 18px;
+  border-radius: 24px;
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  transition: box-shadow var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .field-emoji:hover { box-shadow: var(--slot), 0 0 0 1px var(--line-strong); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .field-emoji:focus-within { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .field-emoji > #account-about {
+  display: block;
+  width: 100%;
+  height: 66px;
+  min-height: 0;
+  padding: 0 10px 0 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font: 400 15px/22px var(--font);
+  resize: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .field-emoji > #account-about:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .field-emoji > #account-about:focus { box-shadow: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .field-emoji > .set-count {
+  position: absolute;
+  left: 18px;
+  bottom: 21px;
+  color: var(--text-muted);
+  font: 400 13px/1 var(--font);
+  font-variant-numeric: tabular-nums;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .field-emoji > #account-about-emoji {
+  position: absolute;
+  top: auto;
+  right: 8px;
+  bottom: 10px;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor #account-effect-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 7px;
+  width: auto;
+  min-width: 0;
+  padding: 9px 0 8px;
+  border: 0;
+  border-radius: 16px;
+  outline: 0;
+  background: var(--glass-key, var(--bg-raised));
+  box-shadow: var(--glass-rim, inset 0 0 0 1px var(--line));
+  color: var(--text-normal);
+  font: 500 12px/1 var(--font);
+  text-transform: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option:hover { background: var(--glass-key-hover, var(--bg-hover)); }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option[aria-checked="true"] {
+  outline: var(--ring-on);
+  outline-offset: 2px;
+  color: var(--header-primary);
+  font-weight: 600;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option > span:last-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option > .avatar {
+  width: 32px;
+  height: 32px;
+  margin: 6px;
+  border: 0;
+  font-size: 13px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option > .avatar > .avatar-border { inset: -6px; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option > .avatar > .ab-double::after { inset: 3px; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option:has(> .look-swatch) { padding: 6px 6px 9px; }
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-swatch {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 44px;
+  border-radius: 11px;
+  overflow: hidden;
+  background: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-swatch > .set-scene {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .form-actions {
+  position: absolute;
+  right: 24px;
+  bottom: -20px;
+  z-index: 4;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .p-editor #account-save.key { padding: 0 18px; font: 600 14px/1 var(--font); }
+
+html[data-look="studio"][data-fit="slim"] .set-avw { display: contents; }
+html[data-look="studio"][data-fit="slim"] .set-avpres,
+html[data-look="studio"][data-fit="slim"] .set-pronouns,
+html[data-look="studio"][data-fit="slim"] .set-count,
+html[data-look="studio"][data-fit="slim"] .set-scene,
+html[data-look="studio"][data-fit="slim"] .set-pick > .pres-dot,
+html[data-look="studio"][data-fit="slim"] #account-avatar-btn > .i,
+html[data-look="studio"][data-fit="slim"] #account-banner-upload > .i { display: none; }
