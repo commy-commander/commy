@@ -19,7 +19,7 @@ function resolveLook(stored, search) {
 }
 
 function windowFit(width, height, phoneApp = false) {
-  if (width < LOOK_FIT.slimWidth || height >= width * LOOK_FIT.tallRatio) return "slim";
+  if (width <= LOOK_FIT.slimWidth || height >= width * LOOK_FIT.tallRatio) return "slim";
   if (phoneApp && height > width) return "slim";
   if (width >= LOOK_FIT.roomyWidth && height >= LOOK_FIT.roomyHeight) return "roomy";
   return "compact";

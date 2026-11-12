@@ -28,11 +28,11 @@ test("the address can ask for either look, and wins over the saved choice", () =
   assert.equal(resolveLook("studio", "?classic"), "classic");
 });
 
-test("a window is slim under 700 wide or at least twice as tall as wide, roomy from 1180 by 760, compact in between", () => {
+test("a window is slim up to 700 wide, where the old sheet's 700 media rules still fire, or at least twice as tall as wide, roomy from 1180 by 760, compact in between", () => {
   assert.equal(windowFit(390, 844), "slim");
   assert.equal(windowFit(699, 600), "slim");
-  assert.equal(windowFit(700, 900), "compact");
-  assert.equal(windowFit(700, 1399), "compact");
+  assert.equal(windowFit(700, 900), "slim");
+  assert.equal(windowFit(700, 1399), "slim");
   assert.equal(windowFit(700, 1400), "slim");
   assert.equal(windowFit(701, 600), "compact");
   assert.equal(windowFit(1100, 3840), "slim");
@@ -79,7 +79,7 @@ test("a slim window wider than 550 zooms by its width over 550, and nothing else
   assert.ok(Math.abs(windowZoom(650, 900) - 650 / 550) < 1e-9);
   assert.equal(windowZoom(550, 1920), 1);
   assert.equal(windowZoom(420, 800), 1);
-  assert.equal(windowZoom(700, 900), 1);
+  assert.ok(Math.abs(windowZoom(700, 900) - 700 / 550) < 1e-9);
   assert.ok(Math.abs(windowZoom(700, 1400) - 700 / 550) < 1e-9);
   assert.equal(windowZoom(1100, 2199), 1);
   assert.equal(windowZoom(1100, 2200), 2);
@@ -111,7 +111,8 @@ test("a slim window stacks when its height over the zoom is 1800 or more", () =>
   assert.deepEqual(lookAttributes({ ...base, width: 550, height: 1920 }), { look: "studio", fit: "slim", fx: "lite", stack: "on" });
   assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 2400 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
   assert.deepEqual(lookAttributes({ ...base, width: 420, height: 800 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
-  assert.deepEqual(lookAttributes({ ...base, width: 700, height: 900 }), { look: "studio", fit: "compact", fx: null, stack: null });
+  assert.deepEqual(lookAttributes({ ...base, width: 700, height: 900 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, width: 701, height: 900 }), { look: "studio", fit: "compact", fx: null, stack: null });
 });
 
 test("the zoom moves only when it must, gives up after three moves in a row, and a bad saved zoom is ignored", () => {
