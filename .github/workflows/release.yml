@@ -70,11 +70,27 @@ jobs:
         id: version
         uses: ./.github/actions/release-config
 
+      - name: Windows signing
+        id: signing
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-signing
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT || 'https://eus.codesigning.azure.net' }}
+          account: ${{ vars.ARTIFACT_SIGNING_ACCOUNT || 'commy-signing' }}
+          profile: ${{ vars.ARTIFACT_SIGNING_PROFILE || 'commy-public' }}
+
       - name: Build and bundle
         working-directory: apps/desktop/src-tauri
         env:
           TEST_BUILD: ${{ steps.version.outputs.test_build }}
           FULL_VERSION: ${{ steps.version.outputs.full }}
+          AZURE_TENANT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             export COMMY_VERSION="$FULL_VERSION"
@@ -103,6 +119,10 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.full }}
           TARGET: ${{ matrix.target }}
+          SIGNING: ${{ steps.signing.outputs.enabled }}
+          AZURE_TENANT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
         run: |
           out="$PWD/dist"
           mkdir -p "$out"
@@ -114,6 +134,9 @@ jobs:
               grep -q 'data-folder.nsh' "$nsi" || { echo "installer has no data folder page"; exit 1; }
               cp "$bundle"/nsis/*-setup.exe "$out/Commy_${VERSION}_x64-setup.exe"
               exe="./target/$TARGET/release/commy-desktop.exe"
+              if [ "$SIGNING" = true ]; then
+                bash "$GITHUB_WORKSPACE/.github/actions/windows-signing/sign.sh" "$exe" "$out/Commy_${VERSION}_x64-setup.exe"
+              fi
               zip="$out/Commy_${VERSION}_x64-portable.zip"
               if command -v 7z >/dev/null; then
                 7z a -tzip "$zip" "$exe"
@@ -504,6 +527,23 @@ jobs:
           CHECKSUMS_SIGNED: ${{ steps.checksums.outputs.signed }}
           MAC_SIGNED: ${{ needs.macos-universal.outputs.signed }}
         run: |
+          WINDOWS_SIGNED=false
+          setup="$(ls dist/Commy_*_x64-setup.exe 2>/dev/null | head -n 1)"
+          if [ -n "$setup" ] && python3 - "$setup" <<'PY'
+          import struct
+          import sys
+
+          data = open(sys.argv[1], "rb").read()
+          header = struct.unpack_from("<I", data, 0x3C)[0]
+          optional = header + 24
+          directories = optional + (112 if struct.unpack_from("<H", data, optional)[0] == 0x20B else 96)
+          security_size = struct.unpack_from("<I", data, directories + 4 * 8 + 4)[0]
+          sys.exit(0 if security_size else 1)
+          PY
+          then
+            WINDOWS_SIGNED=true
+          fi
+          echo "Windows installer signed: $WINDOWS_SIGNED"
           cat > notes.md <<EOF
           ## Downloads
 
@@ -523,7 +563,18 @@ jobs:
           | Bots (`commy-bot`, see the [bot guide](https://git.commy.chat/commy/commy/src/branch/main/crates/commy-bot/README.md)) | `commy-bot-windows-x64.zip`, `commy-bot-macos-universal.tar.gz` or `commy-bot-linux-x64.tar.gz` |
 
           EOF
-          if [ "$MAC_SIGNED" = true ]; then
+          if [ "$MAC_SIGNED" = true ] && [ "$WINDOWS_SIGNED" = true ]; then
+            cat >> notes.md <<'EOF'
+          The Windows build is code signed by Commy Communications LLC, and the macOS app is signed
+          with an Apple Developer ID and notarized by Apple.
+          EOF
+          elif [ "$WINDOWS_SIGNED" = true ]; then
+            cat >> notes.md <<'EOF'
+          The Windows build is code signed by Commy Communications LLC. The macOS build is not
+          notarized yet: right click Commy.app and choose **Open** the first time, or run
+          `xattr -dr com.apple.quarantine /Applications/Commy.app`.
+          EOF
+          elif [ "$MAC_SIGNED" = true ]; then
             cat >> notes.md <<'EOF'
           The macOS app is signed with an Apple Developer ID and notarized by Apple. The Windows
           build is not code signed yet: choose **More info > Run anyway** in SmartScreen.

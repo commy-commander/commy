@@ -1,0 +1,87 @@
+name: Windows signing
+description: Prepare SignTool with Azure Artifact Signing and point the Tauri bundle at it
+inputs:
+  endpoint:
+    description: Artifact Signing account endpoint
+    required: true
+  account:
+    description: Artifact Signing account name
+    required: true
+  profile:
+    description: Certificate profile name
+    required: true
+outputs:
+  enabled:
+    description: "true when the AZURE_* credentials are set and SignTool is ready"
+    value: ${{ steps.tools.outputs.enabled }}
+runs:
+  using: composite
+  steps:
+    - name: Prepare SignTool and the Artifact Signing client
+      id: tools
+      shell: bash
+      env:
+        CLIENT_VERSION: "1.0.151"
+        CLIENT_SHA256: 35375a4bc4e1102da729fc3d8d9925f774c3baae6b8b7ff6398d948ca9ab0d8a
+        ENDPOINT: ${{ inputs.endpoint }}
+        ACCOUNT: ${{ inputs.account }}
+        PROFILE: ${{ inputs.profile }}
+      run: |
+        if [ -z "${AZURE_TENANT_ID:-}" ] || [ -z "${AZURE_CLIENT_ID:-}" ] || [ -z "${AZURE_CLIENT_SECRET:-}" ]; then
+          echo "::warning::The AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET secrets are not set, so the Windows build is not code signed"
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        signtool="$(ls "/c/Program Files (x86)/Windows Kits/10/bin/"*/x64/signtool.exe 2>/dev/null | sort -V | tail -n 1)"
+        [ -n "$signtool" ] || { echo "SignTool not found: install the Windows SDK on this runner"; exit 1; }
+        echo "SignTool: $signtool"
+
+        dir="$RUNNER_TEMP/artifact-signing"
+        mkdir -p "$dir"
+        if ! dotnet --list-runtimes 2>/dev/null | grep -q '^Microsoft.NETCore.App 10\.'; then
+          curl -fsSL -o "$dir/dotnet-install.ps1" https://dot.net/v1/dotnet-install.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$dir/dotnet-install.ps1")" \
+            -Runtime dotnet -Channel 10.0 -Architecture x64 -InstallDir "$(cygpath -w "$dir/dotnet")" -NoPath
+          echo "DOTNET_ROOT=$(cygpath -w "$dir/dotnet")" >> "$GITHUB_ENV"
+          echo "DOTNET_ROOT_X64=$(cygpath -w "$dir/dotnet")" >> "$GITHUB_ENV"
+        fi
+
+        curl -fsSL -o "$dir/client.zip" \
+          "https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/${CLIENT_VERSION}/microsoft.artifactsigning.client.${CLIENT_VERSION}.nupkg"
+        echo "$CLIENT_SHA256  $dir/client.zip" | sha256sum -c -
+        powershell -NoProfile -Command "Expand-Archive -Force -Path '$(cygpath -w "$dir/client.zip")' -DestinationPath '$(cygpath -w "$dir/client")'"
+        dlib="$dir/client/bin/x64/Azure.CodeSigning.Dlib.dll"
+        [ -f "$dlib" ] || { echo "The Artifact Signing client has no x64 dlib"; exit 1; }
+
+        jq -n --arg endpoint "$ENDPOINT" --arg account "$ACCOUNT" --arg profile "$PROFILE" '{
+          Endpoint: $endpoint,
+          CodeSigningAccountName: $account,
+          CertificateProfileName: $profile,
+          ExcludeCredentials: [
+            "ManagedIdentityCredential", "WorkloadIdentityCredential", "SharedTokenCacheCredential",
+            "VisualStudioCredential", "VisualStudioCodeCredential", "AzureCliCredential",
+            "AzurePowerShellCredential", "AzureDeveloperCliCredential", "InteractiveBrowserCredential"
+          ]
+        }' > "$dir/metadata.json"
+
+        {
+          echo "WINDOWS_SIGNTOOL=$(cygpath -w "$signtool")"
+          echo "WINDOWS_SIGN_DLIB=$(cygpath -w "$dlib")"
+          echo "WINDOWS_SIGN_METADATA=$(cygpath -w "$dir/metadata.json")"
+        } >> "$GITHUB_ENV"
+        echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+    - name: Sign the Tauri bundle with SignTool
+      if: steps.tools.outputs.enabled == 'true'
+      shell: bash
+      working-directory: apps/desktop/src-tauri
+      run: |
+        [ -f tauri.release.conf.json ] || exit 0
+        jq --arg tool "$WINDOWS_SIGNTOOL" --arg dlib "$WINDOWS_SIGN_DLIB" --arg metadata "$WINDOWS_SIGN_METADATA" \
+          '.bundle.windows.signCommand = {
+            cmd: $tool,
+            args: ["sign", "/fd", "SHA256", "/tr", "http://timestamp.acs.microsoft.com", "/td", "SHA256",
+                   "/dlib", $dlib, "/dmdf", $metadata, "%1"]
+          }' tauri.release.conf.json > tauri.release.conf.json.signed
+        mv tauri.release.conf.json.signed tauri.release.conf.json
+        jq .bundle.windows tauri.release.conf.json
