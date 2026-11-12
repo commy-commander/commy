@@ -272,7 +272,7 @@ jobs:
             need IOS_CERTIFICATE_PASSWORD
             need IOS_MOBILE_PROVISION
             echo "Signing with the certificate and profile from IOS_CERTIFICATE and IOS_MOBILE_PROVISION"
-          elif [ -n "$APPLE_API_KEY" ]; then
+          elif [ -n "$APPLE_API_KEY" ] || [ -f ~/.appstoreconnect/private_keys/"AuthKey_${APPLE_API_KEY_ID}.p8" ]; then
             need APPLE_API_KEY_ID
             need APPLE_API_ISSUER
             echo "Signing automatically with the App Store Connect API key"
@@ -334,9 +334,9 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER }}
           ASC_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
+          key_path=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
           if [ -n "$ASC_KEY" ]; then
             mkdir -p ~/.appstoreconnect/private_keys
-            key_path=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
             printf '%s' "$ASC_KEY" > "$key_path"
           fi
           unset APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH
@@ -344,7 +344,7 @@ jobs:
             [ -n "$IOS_MOBILE_PROVISION" ] || unset IOS_MOBILE_PROVISION
           else
             unset IOS_CERTIFICATE IOS_CERTIFICATE_PASSWORD IOS_MOBILE_PROVISION
-            [ -z "$ASC_KEY" ] || export APPLE_API_KEY="$ASC_KEY_ID" APPLE_API_ISSUER="$ASC_ISSUER_ID" APPLE_API_KEY_PATH="$key_path"
+            [ -z "$ASC_KEY_ID" ] || [ ! -f "$key_path" ] || export APPLE_API_KEY="$ASC_KEY_ID" APPLE_API_ISSUER="$ASC_ISSUER_ID" APPLE_API_KEY_PATH="$key_path"
           fi
           [ -n "$ASC_KEY_ID" ] || unset ASC_KEY_ID ASC_ISSUER_ID
           upload=()
