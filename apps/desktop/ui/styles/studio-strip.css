@@ -478,3 +478,85 @@ html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane] .stri
 html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane] .strip-person > small { flex: 0 1 auto; min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 12.5px/1 var(--font); color: var(--text-muted); }
 html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane] .strip-person.strip-in > small { color: var(--speaking, var(--text-muted)); }
 html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane]:not([data-tab="home"]) .rail-item .server-icon.active { outline: 0; }
+html[data-look="studio"][data-fit="slim"][data-stack="on"] {
+  --st-sheet: min(640px, calc(var(--st-th) - 96px));
+}
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane] .chat-header > .strip-people-key {
+  position: relative;
+  grid-column: 6;
+  grid-row: 1 / 3;
+  justify-self: end;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--text-normal);
+}
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane] .chat-header > .strip-people-key > .i { width: 20px; height: 20px; }
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane] .chat-header > .strip-people-key > .led { position: absolute; right: 6px; top: 6px; display: none; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane].strip-people .chat-header > .strip-people-key {
+  color: var(--header-primary);
+  background: linear-gradient(180deg, rgb(var(--lamp) / .08), rgb(var(--lamp) / 0) 70%), var(--bg-active);
+  box-shadow: var(--pillow-sm);
+}
+html[data-look="studio"][data-fit="slim"][data-stack="on"]:not([data-theme="light"]) .app[data-pane].strip-people .chat-header > .strip-people-key {
+  background: var(--glass-hi), var(--glass-key-on);
+  -webkit-backdrop-filter: var(--glass-fx);
+  backdrop-filter: var(--glass-fx);
+  box-shadow: var(--glass-rim), var(--glass-pool), var(--glass-drop);
+}
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane].strip-people .chat-header > .strip-people-key > .led { display: block; }
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane].dm-mode:has(> .dm-profile.hidden) .chat-header > .strip-people-key { display: none; }
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane].strip-people > .strip-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  display: block;
+  background: var(--scrim);
+}
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane]:not(.strip-people) > :is(.strip-scrim, .strip-grab) { display: none; }
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane].strip-people:not(.dm-mode) > #member-list,
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane].strip-people.dm-mode > .dm-profile {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 7;
+  display: block !important;
+  width: auto;
+  height: var(--st-sheet);
+  margin: 0;
+  padding: 30px 18px 0;
+  border: 0;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 120px), var(--sheet-bg);
+  -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
+  box-shadow: inset 0 0 0 1px var(--rim-soft), 0 -24px 40px -10px rgb(var(--dark) / .8);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  translate: 0 var(--strip-drag, 0px);
+}
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane].strip-people > .strip-grab {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--st-sheet) - 30px);
+  z-index: 8;
+  display: grid;
+  justify-items: center;
+  width: 132px;
+  height: 30px;
+  margin-left: -66px;
+  padding: 9px 0 0;
+  border: 0;
+  background: none;
+  cursor: grab;
+  touch-action: none;
+  translate: 0 var(--strip-drag, 0px);
+}
+html[data-look="studio"][data-fit="slim"][data-stack="on"] .app[data-pane] > .strip-grab > i { width: 38px; height: 5px; border-radius: 3px; background: var(--line-strong); }

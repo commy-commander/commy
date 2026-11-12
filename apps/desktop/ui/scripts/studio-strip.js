@@ -5,6 +5,15 @@ const STRIP_TILES = [
 ];
 const STRIP_CHIP_GAP = 8;
 const STRIP_ONLINE = "Online now";
+const STRIP_SHEET_CLOSE_PX = 80;
+
+function stripSheetDrag(dy) {
+  return Math.max(0, Math.round(dy));
+}
+
+function stripSheetCloses(dy) {
+  return dy >= STRIP_SHEET_CLOSE_PX;
+}
 
 function stripStacked(data) {
   return data.look === "studio" && data.fit === "slim" && data.stack === "on";
@@ -158,7 +167,97 @@ function studioStrip() {
     if (nodes.length && tail.some((node, i) => node !== nodes[i])) list.append(...nodes);
   };
 
+  const peopleOpen = () => app.classList.contains("strip-people");
+
+  const paintPeopleKey = () => {
+    const key = app.querySelector(".strip-people-key");
+    if (!key) return;
+    const on = peopleOpen();
+    key.classList.toggle("is-on", on);
+    key.setAttribute("aria-pressed", String(on));
+  };
+
+  const openPeople = () => {
+    if (peopleOpen()) return;
+    app.classList.add("strip-people");
+    history.pushState({ ...(history.state || {}), stripPeople: true }, "");
+    paintPeopleKey();
+  };
+
+  const closePeople = how => {
+    if (!peopleOpen()) return;
+    app.classList.remove("strip-people");
+    app.style.removeProperty("--strip-drag");
+    paintPeopleKey();
+    if (how === "history" || !(history.state && history.state.stripPeople)) return;
+    if (how !== "leave") {
+      history.back();
+      return;
+    }
+    const entry = { ...history.state };
+    delete entry.stripPeople;
+    history.replaceState(entry, "");
+  };
+
+  const placeSheet = () => {
+    const header = document.querySelector(".main .chat-header");
+    if (header && !header.querySelector(":scope > .strip-people-key")) {
+      const key = el("button", "key sq strip-people-key");
+      key.type = "button";
+      key.dataset.stripPeople = "key";
+      key.setAttribute("aria-label", "Members");
+      key.setAttribute("aria-pressed", "false");
+      key.innerHTML = `${studioIconMarkup("users")}<i class="led"></i>`;
+      key.onclick = e => {
+        e.stopPropagation();
+        if (peopleOpen()) closePeople();
+        else openPeople();
+      };
+      header.appendChild(key);
+    }
+    if (!app.querySelector(":scope > .strip-scrim")) {
+      const scrim = el("div", "strip-scrim");
+      scrim.dataset.stripPeople = "scrim";
+      scrim.onclick = () => closePeople();
+      app.appendChild(scrim);
+    }
+    if (!app.querySelector(":scope > .strip-grab")) {
+      const grab = el("button", "strip-grab");
+      grab.type = "button";
+      grab.dataset.stripPeople = "grab";
+      grab.setAttribute("aria-label", "Close");
+      grab.appendChild(el("i"));
+      let from = null;
+      grab.onpointerdown = e => {
+        from = e.clientY;
+        grab.setPointerCapture(e.pointerId);
+      };
+      grab.onpointermove = e => {
+        if (from === null) return;
+        app.style.setProperty("--strip-drag", `${stripSheetDrag(e.clientY - from)}px`);
+      };
+      grab.onpointerup = e => {
+        if (from === null) return;
+        const dy = e.clientY - from;
+        from = null;
+        app.style.removeProperty("--strip-drag");
+        if (stripSheetCloses(dy)) closePeople();
+      };
+      grab.onpointercancel = () => {
+        from = null;
+        app.style.removeProperty("--strip-drag");
+      };
+      grab.onclick = e => {
+        if (e.detail === 0) closePeople();
+      };
+      app.appendChild(grab);
+    }
+    paintPeopleKey();
+  };
+
   const undo = () => {
+    if (peopleOpen()) closePeople("leave");
+    for (const node of document.querySelectorAll("[data-strip-people]")) node.remove();
     for (const tile of app.querySelectorAll(".strip-tile")) tile.remove();
     for (const node of document.querySelectorAll("[data-strip-person]")) node.remove();
     peopleSeen = "";
@@ -193,6 +292,7 @@ function studioStrip() {
       placeTiles();
       placePeople();
       placeChips();
+      placeSheet();
     } finally {
       busy = false;
     }
@@ -216,11 +316,20 @@ function studioStrip() {
   watch($("me-avatar"), { childList: true, attributes: true, subtree: true });
   watch(bar.querySelector('.tab[data-tab="messages"] .badge'), { attributes: true, childList: true, characterData: true, subtree: true });
   watch(bar.querySelector('.tab[data-tab="live"] .ld'), { attributes: true });
+  watch(document.querySelector(".main .chat-header"), { childList: true });
   window.addEventListener("resize", later);
+  window.addEventListener("popstate", () => {
+    if (peopleOpen() && !(history.state && history.state.stripPeople)) closePeople("history");
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape" || !peopleOpen() || !$("member-card").classList.contains("hidden")) return;
+    e.stopPropagation();
+    closePeople();
+  }, true);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(later);
   sync();
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STRIP_TILES, STRIP_CHIP_GAP, STRIP_ONLINE, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead };
+  module.exports = { STRIP_TILES, STRIP_CHIP_GAP, STRIP_ONLINE, STRIP_SHEET_CLOSE_PX, stripSheetDrag, stripSheetCloses, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead };
 }

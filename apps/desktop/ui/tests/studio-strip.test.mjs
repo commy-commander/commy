@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STRIP_TILES, STRIP_CHIP_GAP, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead } = require("../scripts/studio-strip.js");
+const { STRIP_TILES, STRIP_CHIP_GAP, STRIP_SHEET_CLOSE_PX, stripSheetDrag, stripSheetCloses, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead } = require("../scripts/studio-strip.js");
 const { phoneAppViewport, SLIM_VIEWPORT, SLIM_LAYOUT_WIDTH_PX, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT } = require("../scripts/phone.js");
 const { LOOK_FIT } = require("../scripts/look.js");
 
@@ -101,6 +101,53 @@ test("the glue only acts in the stack and takes back what it added", () => {
   assert.ok(glue.includes('if (!stripStacked(root.dataset)) {\n        undo();'));
   assert.ok(glue.includes("app.dataset.stripRoom = \"on\";"));
   assert.ok(glue.includes("if (app.dataset.stripRoom) {\n      delete app.dataset.stripRoom;\n      app.classList.remove(\"pt-voice-open\");"));
+});
+
+test("the chat head keeps a glass people key that lights by the ON rule while the people sheet is open", () => {
+  const key = `${STACK} .app[data-pane] .chat-header > .strip-people-key`;
+  assert.match(rule(key), /width: 44px;\n  height: 44px;/);
+  assert.match(rule(key), /border-radius: 50%;/);
+  assert.match(glue, /studioIconMarkup\("users"\)/);
+  assert.match(glue, /el\("button", "key sq strip-people-key"\)/);
+  const day = rule(`${STACK} .app[data-pane].strip-people .chat-header > .strip-people-key`);
+  assert.ok(day.includes("linear-gradient(180deg, rgb(var(--lamp) / .08), rgb(var(--lamp) / 0) 70%), var(--bg-active);"));
+  assert.ok(day.includes("box-shadow: var(--pillow-sm);"));
+  const night = rule(`${STACK}:not([data-theme="light"]) .app[data-pane].strip-people .chat-header > .strip-people-key`);
+  assert.ok(night.includes("background: var(--glass-hi), var(--glass-key-on);"));
+  assert.ok(night.includes("box-shadow: var(--glass-rim), var(--glass-pool), var(--glass-drop);"));
+  assert.ok(css.includes(`${STACK} .app[data-pane].strip-people .chat-header > .strip-people-key > .led { display: block; }`));
+});
+
+test("the people pane opens as a tall sheet with a grab bar over a scrim, at most 640 high", () => {
+  assert.ok(css.includes("--st-sheet: min(640px, calc(var(--st-th) - 96px));"));
+  const sheet = rule(`${STACK} .app[data-pane].strip-people:not(.dm-mode) > #member-list,\n${STACK} .app[data-pane].strip-people.dm-mode > .dm-profile`);
+  assert.ok(sheet.includes("height: var(--st-sheet);"));
+  assert.ok(sheet.includes("padding: 30px 18px 0;"));
+  assert.ok(sheet.includes("border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;"));
+  assert.ok(sheet.includes("overflow-y: auto;"));
+  assert.ok(sheet.includes("translate: 0 var(--strip-drag, 0px);"));
+  assert.match(rule(`${STACK} .app[data-pane].strip-people > .strip-scrim`), /background: var\(--scrim\);/);
+  assert.match(rule(`${STACK} .app[data-pane].strip-people > .strip-grab`), /width: 132px;\n  height: 30px;/);
+  assert.ok(css.includes(`${STACK} .app[data-pane] > .strip-grab > i { width: 38px; height: 5px; border-radius: 3px; background: var(--line-strong); }`));
+  assert.ok(css.includes(`${STACK} .app[data-pane]:not(.strip-people) > :is(.strip-scrim, .strip-grab) { display: none; }`));
+});
+
+test("back, a swipe down past 80 or the scrim closes the people sheet", () => {
+  assert.equal(STRIP_SHEET_CLOSE_PX, 80);
+  assert.equal(stripSheetDrag(-30), 0);
+  assert.equal(stripSheetDrag(41.6), 42);
+  assert.equal(stripSheetCloses(79), false);
+  assert.equal(stripSheetCloses(80), true);
+  assert.ok(glue.includes('history.pushState({ ...(history.state || {}), stripPeople: true }, "");'));
+  assert.ok(glue.includes('if (peopleOpen() && !(history.state && history.state.stripPeople)) closePeople("history");'));
+  assert.ok(glue.includes('scrim.onclick = () => closePeople();'));
+  assert.ok(glue.includes('if (stripSheetCloses(dy)) closePeople();'));
+});
+
+test("leaving the stack closes the people sheet without a history step and takes its parts away", () => {
+  assert.ok(glue.includes('if (peopleOpen()) closePeople("leave");\n    for (const node of document.querySelectorAll("[data-strip-people]")) node.remove();'));
+  assert.ok(glue.includes("delete entry.stripPeople;\n    history.replaceState(entry, \"\");"));
+  for (const part of ["key", "scrim", "grab"]) assert.ok(glue.includes(`dataset.stripPeople = "${part}";`), part);
 });
 
 test("an upright phone app screen wider than 550 is laid out 550 wide in the new look only", () => {
