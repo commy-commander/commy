@@ -307,11 +307,12 @@ function trayNeedsStep(entry) {
 const ROOM_KEYS = [
   { id: "sounds", label: "Sounds", icon: "music" },
   { id: "camera", label: "Camera", icon: "video-off" },
+  { id: "share", label: "Share", icon: "monitor-up" },
   { id: "mic", label: "Mic", icon: "mic" },
   { id: "deafen", label: "Deafen", icon: "headphones" },
   { id: "leave", label: "Leave", icon: "phone-off" },
 ];
-const ROOM_LAMPS = ["sounds", "camera", "mic", "deafen"];
+const ROOM_LAMPS = ["sounds", "camera", "share", "mic", "deafen"];
 const SIGNAL_WORDS = { good: "Good", ok: "Fair", bad: "Poor" };
 
 function roomTiles(channel, me = {}) {
@@ -367,11 +368,16 @@ function roomKeyState(id, voice = {}) {
   if (id === "deafen") return { down: Boolean(voice.deafened), icon: voice.deafened ? "headphone-off" : "headphones", label: voice.deafened ? "Undeafen" : "Deafen" };
   if (id === "camera") return { down: false, off: !voice.camera, on: Boolean(voice.camera), icon: voice.camera ? "video" : "video-off", label: voice.camera ? "Turn off camera" : "Turn on camera" };
   if (id === "sounds") return { down: Boolean(voice.sounds), icon: "music", label: "Soundboard" };
+  if (id === "share") return { down: false, on: Boolean(voice.sharing), icon: "monitor-up", label: voice.sharing ? "Stop sharing your screen" : "Share your screen" };
   return { down: false, icon: "phone", label: "Hang up" };
 }
 
 function canOfferShare({ mobileApp, canShare, iPhone }) {
   return !iPhone && (!mobileApp || Boolean(canShare));
+}
+
+function roomKeyOffered(id, { mobileApp, finePointer }) {
+  return id !== "share" || (!mobileApp && Boolean(finePointer));
 }
 
 function roomTileStreams(streams, me = {}) {
@@ -447,6 +453,7 @@ if (typeof module !== "undefined" && module.exports) {
     TRAY_PULL,
     trayOpens,
     canOfferShare,
+    roomKeyOffered,
     roomFaces,
     horizonY,
     horizonPath,

@@ -1,6 +1,6 @@
 const LOOK_FX_KEY = "commy.fx";
 const LOOK_ZOOM_KEY = "commy.zoom";
-const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760, stackWidth: 550, stackHeight: 1800, tallRatio: 2, zoomMax: 8 };
+const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760, phoneWidth: 550, tallRatio: 2, zoomMax: 8 };
 const LOOK_ZOOM_SETTLE = { everyMs: 50, steadyPolls: 3, maxPolls: 40, hops: 3 };
 
 function windowFit(width, height, phoneApp = false) {
@@ -11,18 +11,14 @@ function windowFit(width, height, phoneApp = false) {
 }
 
 function windowZoom(width, height) {
-  if (windowFit(width, height) !== "slim" || !(width > LOOK_FIT.stackWidth)) return 1;
-  return Math.min(LOOK_FIT.zoomMax, width / LOOK_FIT.stackWidth);
+  if (windowFit(width, height) !== "slim" || !(width > LOOK_FIT.phoneWidth)) return 1;
+  return Math.min(LOOK_FIT.zoomMax, width / LOOK_FIT.phoneWidth);
 }
 
 function windowLayout({ width, height, zoom = 1, canZoom = false }) {
   const real = { width: width * zoom, height: height * zoom };
   const want = canZoom ? windowZoom(real.width, real.height) : 1;
   return { zoom: want, width: real.width / want, height: real.height / want };
-}
-
-function windowStack(width, height) {
-  return windowFit(width, height) === "slim" && height / windowZoom(width, height) >= LOOK_FIT.stackHeight;
 }
 
 function zoomHop(zoomNow, zoomWanted, hops) {
@@ -43,8 +39,7 @@ function resolveFx(stored, { fit, phoneApp }) {
 function lookAttributes({ storedFx, width, height, phoneApp, zoom = 1 }) {
   const real = { width: width * zoom, height: height * zoom };
   const fit = windowFit(real.width, real.height, phoneApp);
-  const stack = !phoneApp && windowStack(real.width, real.height);
-  return { look: "studio", fit, fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null, stack: stack ? "on" : null };
+  return { look: "studio", fit, fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null };
 }
 
 function studioLook() {
@@ -178,5 +173,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_FIT, windowFit, windowZoom, windowLayout, windowStack, zoomHop, knownZoom, resolveFx, lookAttributes };
+  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_FIT, windowFit, windowZoom, windowLayout, zoomHop, knownZoom, resolveFx, lookAttributes };
 }

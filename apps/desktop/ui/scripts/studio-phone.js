@@ -2308,6 +2308,7 @@ function roomVoice() {
     hand: $("voice-panel").classList.contains("in-audience") ? { raised: $("vp-hand").classList.contains("on") } : null,
     talk: !$("vp-talk").classList.contains("hidden"),
     talking: Boolean(state.talking),
+    sharing: Boolean(state.sharing),
   };
 }
 
@@ -2325,6 +2326,7 @@ function roomOpen() {
 function syncRoomKeys() {
   const voice = roomVoice();
   const call = Boolean(state.voiceServer && state.voiceServer.call);
+  const where = { mobileApp: document.body.classList.contains("mobile-app"), finePointer: window.matchMedia("(any-pointer: fine)").matches };
   for (const key of document.querySelectorAll("[data-room-key]")) {
     const id = key.dataset.roomKey;
     if (id === "leave") continue;
@@ -2348,6 +2350,7 @@ function syncRoomKeys() {
       key.querySelector(".i").outerHTML = StudioIcons.markup(now.icon);
     }
     if (id === "camera") (key.closest(".k") || key).classList.toggle("gone", call);
+    if (id === "share") (key.closest(".k") || key).classList.toggle("hidden", !roomKeyOffered(id, where));
   }
 }
 
@@ -2375,6 +2378,7 @@ function pressRoomKey(id) {
   else if (id === "mic") $("mute-btn").click();
   else if (id === "deafen") $("deafen-btn").click();
   else if (id === "camera") $("vp-camera").click();
+  else if (id === "share") $("share-btn").click();
   else if (id === "sounds") {
     if (studioPhone.soundsWereOpen) closeFloating();
     else $("vp-soundboard").click();

@@ -23873,7 +23873,6 @@ function wireEvents() {
   if (studioLook()) studioPops();
   if (studioLook()) studioCompact();
   if (studioLook()) studioMinors();
-  if (studioLook()) studioStrip();
   if (studioLook()) studioWeb();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {
