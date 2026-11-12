@@ -1,0 +1,62 @@
+html[data-look="studio"][data-fit="slim"] .modal.dialog :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), textarea, select) { font-size: 16px !important; }
+html[data-look="studio"][data-fit="slim"] #modal-delete-message .setting-sub { display: none; }
+
+html[data-look="studio"][data-fit="slim"] :is(.people-list, .pins-list, .discover-body, .forum-list, .events-list, .member-scroll, .dm-list) { overscroll-behavior-y: contain; }
+html[data-look="studio"][data-fit="slim"] :is(.search-scope, .discover-chips, .events-tabs) { overscroll-behavior-x: contain; }
+html[data-look="studio"][data-fit="slim"].touch-only :is(img, a, .channel, .server-icon, .folder-head, .channel-group) { -webkit-user-drag: none; }
+
+html[data-look="studio"][data-fit="slim"] .main > .composer :is(#text-style-btn, #gif-btn) > .pt-fk::before { content: ""; position: absolute; inset: -8px 0 -8px -10px; }
+html[data-look="studio"][data-fit="slim"] .main > .composer #gif-btn > .pt-fk::before { inset: -8px -8px -8px 0; }
+html[data-look="studio"][data-fit="slim"] .emoji-browser .eb-rail { gap: 12px; }
+html[data-look="studio"][data-fit="slim"] .emoji-browser :is(.eb-rail-btn, .eb-tone) { position: relative; }
+html[data-look="studio"][data-fit="slim"] .emoji-browser .eb-rail-btn::before { content: ""; position: absolute; inset: -6px; }
+html[data-look="studio"][data-fit="slim"] .emoji-browser .eb-tone::before { content: ""; position: absolute; inset: -5px; }
+html[data-look="studio"][data-fit="slim"] .pt-picker-tabs > button { min-height: 44px; }
+html[data-look="studio"][data-fit="slim"] .gif-note > .btn-link { position: relative; }
+html[data-look="studio"][data-fit="slim"] .gif-note > .btn-link::before { content: ""; position: absolute; inset: -12px -8px; }
+html[data-look="studio"][data-fit="slim"] #poll-add::before { content: ""; position: absolute; inset: -6px 0; }
+html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input[type="range"]:not(#sensitivity-db) { height: 44px; margin-block: -9px; }
+html[data-look="studio"][data-fit="slim"] .ctx-slider input[type="range"] {
+  height: 44px;
+  margin: 0;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+html[data-look="studio"][data-fit="slim"] .ctx-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(var(--accent), var(--accent)) 0 0 / var(--fill, 50%) 100% no-repeat, var(--input-bg);
+  box-shadow: var(--slot);
+}
+html[data-look="studio"][data-fit="slim"] .ctx-slider input[type="range"]::-webkit-slider-thumb {
+  width: 26px;
+  height: 26px;
+  margin-top: -10px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--cream);
+  box-shadow: 0 2px 0 var(--cream-deep), 0 4px 10px rgb(var(--dark) / .4);
+  -webkit-appearance: none;
+  appearance: none;
+}
+html[data-look="studio"][data-fit="slim"] .game-chip .game-chip-x { position: relative; }
+html[data-look="studio"][data-fit="slim"] .game-chip .game-chip-x::before { content: ""; position: absolute; inset: -16px -6px -16px -10px; }
+html[data-look="studio"][data-fit="slim"] .upload-roles > label.role-self { min-height: 44px; }
+html[data-look="studio"][data-fit="slim"] #channel-edit-emoji { position: relative; }
+html[data-look="studio"][data-fit="slim"] #channel-edit-emoji::before { content: ""; position: absolute; inset: -8px; }
+html[data-look="studio"][data-fit="slim"] #channel-edit-color { width: 44px; height: 44px; }
+html[data-look="studio"][data-fit="slim"] .modal-profile .key.sq.mc-more::before { content: ""; position: absolute; inset: -6px; }
+html[data-look="studio"][data-fit="slim"] .modal-profile .mc-actions > .key.sm::before { content: ""; position: absolute; inset: -6px 0; }
+html[data-look="studio"][data-fit="slim"] .events-layer .events-head .events-tabs > .events-tab { height: 44px; }
+html[data-look="studio"][data-fit="slim"] .events-layer .event-actions > .key.sm::before { content: ""; position: absolute; inset: -2px 0; }
+html[data-look="studio"][data-fit="slim"] .events-layer .event-actions > .pe-ibtn { position: relative; }
+html[data-look="studio"][data-fit="slim"] .events-layer .event-actions > .pe-ibtn::before { content: ""; position: absolute; inset: -2px; }
+html[data-look="studio"][data-fit="slim"] .discover :is(.discover-chip, .discover-card-foot > button) { position: relative; }
+html[data-look="studio"][data-fit="slim"] .discover :is(.discover-chip, .discover-card-foot > button)::before { content: ""; position: absolute; inset: -2px 0; }
+html[data-look="studio"][data-fit="slim"] .thread-panel #thread-title { box-sizing: border-box; height: 44px; margin-block: -10px; padding-block: 10px; }
+
+html[data-look="studio"][data-fit="slim"] :is(.person-row, .kind-option, .template-tile, .prof-server, .pin-row, .channel.sidebar-link, .dm-thread.friend-request, .discover-card, label.setting-row) { transition: background-color 180ms var(--ease-out); }
+html[data-look="studio"][data-fit="slim"] :is(.person-row, .kind-option, .template-tile, .prof-server, .pin-row, .channel.sidebar-link, .dm-thread.friend-request, label.setting-row):active { background-color: var(--bg-hover); transition: background-color 0s linear 60ms; }
+html[data-look="studio"][data-fit="slim"] :is(.thread-link, .eb-tone, .eb-rail-btn, .eb-emoji, .pin-unpin, .search-scope-btn, .game-chip-x, .events-tab, .discover-chip, .friend-yes, .signin-back, .btn-link, #mc-emoji, #pt-prof-emoji, #pt-presence, #thread-title:not(:disabled), #input-mode > button, #overview-icon, .hzn-voice .open) { transition: opacity 180ms var(--ease-out); }
+html[data-look="studio"][data-fit="slim"] :is(.thread-link, .eb-tone, .eb-rail-btn, .eb-emoji, .pin-unpin, .search-scope-btn, .game-chip-x, .events-tab, .discover-chip, .friend-yes, .signin-back, .btn-link, #mc-emoji, #pt-prof-emoji, #pt-presence, #thread-title:not(:disabled), #input-mode > button, #overview-icon, .hzn-voice .open):active { opacity: .55; transition: none; }

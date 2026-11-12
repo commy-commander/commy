@@ -133,7 +133,7 @@ function syncPickerSheet() {
 function wirePickerGrab(grab, sheet) {
   grab.addEventListener("pointerdown", e => {
     if (!pickerShown()) return;
-    phonePicker.drag = { id: e.pointerId, y: e.clientY, dy: 0 };
+    phonePicker.drag = { id: e.pointerId, y: e.clientY, dy: 0, samples: [{ t: e.timeStamp, x: e.clientX, y: e.clientY }] };
     grab.setPointerCapture(e.pointerId);
     sheet.classList.add("pt-dragging");
   });
@@ -141,6 +141,7 @@ function wirePickerGrab(grab, sheet) {
     const drag = phonePicker.drag;
     if (!drag || drag.id !== e.pointerId) return;
     drag.dy = e.clientY - drag.y;
+    drag.samples = keepSamples(drag.samples, { t: e.timeStamp, x: e.clientX, y: e.clientY });
     sheet.style.translate = `0 ${sheetPull(drag.dy)}px`;
   });
   const end = cancelled => e => {
@@ -148,7 +149,7 @@ function wirePickerGrab(grab, sheet) {
     if (!drag || drag.id !== e.pointerId) return;
     phonePicker.drag = null;
     sheet.classList.remove("pt-dragging");
-    if (!cancelled && sheetCloses(drag.dy)) closePickerSheet();
+    if (!cancelled && sheetSettles(drag.dy, dragSpeed(drag.samples, e.timeStamp).y, SWIPE.sheetAt)) closePickerSheet();
     else sheet.style.translate = "";
   };
   grab.addEventListener("pointerup", end(false));

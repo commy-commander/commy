@@ -27,6 +27,13 @@ function phoneDialogShown() {
   return backdrop.querySelector(":scope > .modal.dialog.slab:not(.hidden)");
 }
 
+function phoneDialogSheet() {
+  if (typeof studioSlim !== "function" || !studioSlim()) return null;
+  const backdrop = document.getElementById("modal-backdrop");
+  if (!backdrop || backdrop.classList.contains("hidden")) return null;
+  return backdrop.querySelector(":scope > .modal:not(.hidden)");
+}
+
 function phoneDialogVisible(node) {
   return Boolean(node) && !node.classList.contains("hidden") && node.getClientRects().length > 0;
 }
@@ -157,14 +164,15 @@ function phoneDialogAtTop(modal, from) {
 
 function phoneDialogTouchStart(e) {
   phoneDialogs.swipe = null;
-  const modal = phoneDialogShown();
+  const modal = phoneDialogSheet();
   if (!modal) return;
   e.stopPropagation();
-  if (e.touches.length !== 1 || modal.classList.contains("pd-gate") || !modal.contains(e.target)) return;
+  if (e.touches.length !== 1 || modal.classList.contains("pd-gate") || phoneDialogIsGate(modal) || !modal.contains(e.target)) return;
   if (e.target.closest("input, textarea, select")) return;
   const head = e.touches[0].clientY - modal.getBoundingClientRect().top < 64;
   if (!head && !phoneDialogAtTop(modal, e.target)) return;
-  phoneDialogs.swipe = { modal, x: e.touches[0].clientX, y: e.touches[0].clientY, axis: null, dy: 0 };
+  const at = { t: e.timeStamp, x: e.touches[0].clientX, y: e.touches[0].clientY };
+  phoneDialogs.swipe = { modal, x: at.x, y: at.y, axis: null, dy: 0, samples: [at] };
 }
 
 function phoneDialogTouchMove(e) {
@@ -182,29 +190,32 @@ function phoneDialogTouchMove(e) {
   }
   if (swipe.axis !== "y") return;
   swipe.dy = sheetPull(dy);
+  swipe.samples = keepSamples(swipe.samples, { t: e.timeStamp, x: e.touches[0].clientX, y: e.touches[0].clientY });
   phoneDialogs.swipedAt = Date.now();
   if (e.cancelable) e.preventDefault();
   swipe.modal.style.translate = `0 ${swipe.dy}px`;
 }
 
-function phoneDialogTouchEnd(cancelled) {
+function phoneDialogTouchEnd(cancelled, at) {
   const swipe = phoneDialogs.swipe;
   phoneDialogs.swipe = null;
   if (!swipe || swipe.axis !== "y") return;
   const modal = swipe.modal;
+  const speed = dragSpeed(swipe.samples, at).y;
   modal.classList.remove("pt-dragging");
-  if (cancelled || !sheetCloses(swipe.dy)) {
+  if (cancelled || !sheetSettles(swipe.dy, speed, SWIPE.sheetAt)) {
     modal.style.translate = "";
     return;
   }
   const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  modal.style.transition = "translate 200ms var(--ease-out)";
+  const ms = calm ? 0 : settleMs(modal.offsetHeight - swipe.dy, speed, MOTION.sheetOutMs, 120);
+  modal.style.transition = `translate ${ms}ms var(--ease-out)`;
   modal.style.translate = "0 calc(100% + 48px)";
   setTimeout(() => {
+    if (phoneDialogSheet() === modal) phoneDialogSafe(modal);
     modal.style.transition = "";
     modal.style.translate = "";
-    if (phoneDialogShown() === modal) phoneDialogSafe(modal);
-  }, calm ? 0 : 200);
+  }, ms);
 }
 
 function phoneDialogsWire() {
@@ -236,8 +247,8 @@ function phoneDialogsWire() {
   }, true);
   backdrop.addEventListener("touchstart", phoneDialogTouchStart, { passive: true });
   backdrop.addEventListener("touchmove", phoneDialogTouchMove, { passive: false });
-  backdrop.addEventListener("touchend", () => phoneDialogTouchEnd(false), { passive: true });
-  backdrop.addEventListener("touchcancel", () => phoneDialogTouchEnd(true), { passive: true });
+  backdrop.addEventListener("touchend", e => phoneDialogTouchEnd(false, e.timeStamp), { passive: true });
+  backdrop.addEventListener("touchcancel", e => phoneDialogTouchEnd(true, e.timeStamp), { passive: true });
   sync();
 }
 

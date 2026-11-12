@@ -49,6 +49,10 @@ function signOutPrompt(account, t) {
   return next ? t("accounts.signOut.next", { name: next.name || next.email }) : t("accounts.signOut.last");
 }
 
+function signedOutInPlace(account, mobileApp) {
+  return Boolean(mobileApp) && !(account && account.signed_in);
+}
+
 function accountChangeStep(was, account, addingAccount) {
   if (account.signed_in && !was) return "open";
   if (!account.signed_in && (was || account.pending_code)) return "sign-in";
@@ -71,5 +75,5 @@ function accountScreenName(user) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, accountChangeStep, accountScreenName };
+  module.exports = { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, signedOutInPlace, accountChangeStep, accountScreenName };
 }

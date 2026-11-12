@@ -329,6 +329,22 @@ fn restart_signed_in_as_someone_else(handle: &AppHandle) -> ! {
     crate::relaunch::restart(handle)
 }
 
+fn signed_out_in_place(switched: bool, folder_open: bool, can_relaunch: bool) -> bool {
+    folder_open && !switched && !can_relaunch
+}
+
+fn leave_account(app: &App, handle: &AppHandle, switched: bool) {
+    let folder_open = app.data_dir().is_some();
+    if signed_out_in_place(switched, folder_open, !cfg!(target_os = "ios")) {
+        #[cfg(target_os = "ios")]
+        crate::relaunch::start_fresh_when_hidden(true);
+        return;
+    }
+    if switched || folder_open {
+        restart_signed_in_as_someone_else(handle);
+    }
+}
+
 pub fn require_account(app: &App) -> Result<(), String> {
     if is_signed_in(&app.account.lock().unwrap()) {
         Ok(())
@@ -972,6 +988,10 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
         store(&app, &state);
     }
     use_sync_service(handle, server, doc);
+    #[cfg(target_os = "ios")]
+    if next == AfterSignIn::KeepOpen {
+        crate::relaunch::start_fresh_when_hidden(false);
+    }
     match (&next, app.data_dir()) {
         (AfterSignIn::Restart, _) => restart_signed_in_as_someone_else(handle),
         (AfterSignIn::KeepOpen, Some(dir)) if account_folder::is_locked(dir) => {
@@ -1075,9 +1095,7 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);
     }
-    if switched || app.data_dir().is_some() {
-        restart_signed_in_as_someone_else(&handle);
-    }
+    leave_account(&app, &handle, switched);
     let _ = handle.emit("account-changed", ());
     Ok(view(&app))
 }
@@ -1199,9 +1217,7 @@ async fn forget_deleted_account(app: &App, handle: &AppHandle) -> Result<Account
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);
     }
-    if switched || app.data_dir().is_some() {
-        restart_signed_in_as_someone_else(handle);
-    }
+    leave_account(app, handle, switched);
     let _ = handle.emit("account-changed", ());
     Ok(view(app))
 }
@@ -1693,6 +1709,14 @@ mod tests {
         assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, Some(&a)), AfterSignIn::Restart);
         assert_eq!(after_sign_in(Opening::Ready(b), None), AfterSignIn::OpenFolder);
         assert_eq!(after_sign_in(Opening::AskAboutUnclaimed, None), AfterSignIn::OpenFolder);
+    }
+
+    #[test]
+    fn signing_out_stays_in_place_only_where_the_app_cannot_relaunch_itself() {
+        assert!(signed_out_in_place(false, true, false));
+        assert!(!signed_out_in_place(false, true, true));
+        assert!(!signed_out_in_place(true, true, false));
+        assert!(!signed_out_in_place(false, false, false));
     }
 
     fn signed_in_as(id: &str) -> AccountState {

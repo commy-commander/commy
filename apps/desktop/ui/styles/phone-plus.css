@@ -76,10 +76,11 @@ html[data-look="studio"][data-fit="slim"] .main > .composer.pt-plus-open .pt-plu
 html[data-look="studio"][data-fit="slim"] .main > .composer.pt-plus-open .pt-plus-k:nth-child(4) { transition-delay: 160ms, 160ms, 0s; }
 html[data-look="studio"][data-fit="slim"] .main > .composer.pt-plus-open .pt-plus-k:nth-child(5) { transition-delay: 200ms, 200ms, 0s; }
 html[data-look="studio"][data-fit="slim"] .main > .composer :is(#text-style-btn, #gif-btn) {
-  display: grid;
-  place-items: center;
+  position: relative;
+  display: block;
   flex: none;
   align-self: flex-end;
+  overflow: hidden;
   width: 28px;
   min-width: 28px;
   height: 28px;
@@ -97,7 +98,7 @@ html[data-look="studio"][data-fit="slim"] .main > .composer #gif-btn.hidden { di
 html[data-look="studio"][data-fit="slim"] .main > .composer :is(#text-style-btn, #gif-btn)::before,
 html[data-look="studio"][data-fit="slim"] .main > .composer :is(#text-style-btn, #gif-btn)::after,
 html[data-look="studio"][data-fit="slim"] .main > .composer #text-style-btn > svg { display: none; }
-html[data-look="studio"][data-fit="slim"] .main > .composer :is(#text-style-btn, #gif-btn) > .pt-fk { display: grid; place-items: center; }
+html[data-look="studio"][data-fit="slim"] .main > .composer :is(#text-style-btn, #gif-btn) > .pt-fk { position: absolute; inset: 0; display: grid; place-items: center; }
 html[data-look="studio"][data-fit="slim"] .main > .composer :is(#text-style-btn, #gif-btn) > .pt-fk .i { width: 20px; height: 20px; }
 html[data-look="studio"][data-fit="slim"] .main > .composer #text-style-btn { margin-right: 9px; }
 html[data-look="studio"][data-fit="slim"] .main > .composer #text-style-btn:has(+ #gif-btn:not(.hidden)) { margin-right: 0; }

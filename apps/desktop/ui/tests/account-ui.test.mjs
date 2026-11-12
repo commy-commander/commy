@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, accountChangeStep, accountScreenName } = require("../scripts/account-ui.js");
+const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, signedOutInPlace, accountChangeStep, accountScreenName } = require("../scripts/account-ui.js");
 const LOCALE_EN = require("../scripts/locales/en.js");
 
 function memoryStorage(entries = {}) {
@@ -114,4 +114,11 @@ test("the account's own name becomes the screen name, so sign-in skips the name 
   const long = accountScreenName({ name: "é".repeat(40) });
   assert.equal(new TextEncoder().encode(long).length, 32);
   assert.equal(long, "é".repeat(16));
+});
+
+test("a phone that signed out without restarting starts over on the sign-in page", () => {
+  assert.equal(signedOutInPlace({ signed_in: false }, true), true);
+  assert.equal(signedOutInPlace({ signed_in: true }, true), false);
+  assert.equal(signedOutInPlace({ signed_in: false }, false), false);
+  assert.equal(signedOutInPlace(null, true), true);
 });

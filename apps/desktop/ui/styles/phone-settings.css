@@ -54,7 +54,7 @@ html[data-look="studio"][data-fit="slim"][data-fx="lite"] .settings-layer > .set
 html[data-look="studio"][data-fit="slim"][data-fx="lite"] .settings-layer > .settings-nav::after,
 html[data-look="studio"][data-fit="slim"][data-fx="lite"] .settings-layer > .settings-content::after { display: none; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-nav > .settings-nav-inner,
-html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content > .settings-content-inner { position: absolute; inset: 0 0 40px; z-index: 1; width: auto; height: auto; max-width: none; margin: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content > .settings-content-inner { position: absolute; inset: 0 0 40px; z-index: 1; align-self: stretch; width: auto; height: auto; max-width: none; margin: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-nav > .settings-nav-inner::-webkit-scrollbar,
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content > .settings-content-inner::-webkit-scrollbar { display: none; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-nav > .settings-nav-inner.pt-more,

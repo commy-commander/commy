@@ -8773,6 +8773,7 @@ body.mobile-app .msg:not(.touched):hover .reaction.add { opacity: 0; }
 body.mobile-app .scroll-down { width: 44px; height: 44px; right: 16px; }
 html.mobile-app { overflow: hidden; }
 body.mobile-app { position: fixed; inset: 0; width: 100%; height: auto; }
+html.viewport-shifted body.mobile-app { translate: 0 var(--app-top, 0px); }
 body.mobile-app :is(.messages, .thread-messages) { overflow-x: hidden; overscroll-behavior: contain; }
 body.mobile-app :is(.channel-scroll, .members, .eb-body, .gif-grid, .emoji-grid) { overscroll-behavior: contain; }
 .file-catcher { position: fixed; left: 0; top: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; }

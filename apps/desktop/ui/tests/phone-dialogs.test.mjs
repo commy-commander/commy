@@ -95,7 +95,7 @@ test("gates close only from their own answers", () => {
   for (const id of ["modal-leave-server", "modal-server-notify", "modal-create-channel", "modal-onboarding"]) assert.equal(phoneDialogGate(id), false, id);
   assert.match(glue, /if \(modal\.classList\.contains\("pd-gate"\)\) \{\n    history\.pushState/);
   assert.match(glue, /if \(e\.type === "mousedown" && !modal\.classList\.contains\("pd-gate"\)\) phoneDialogSafe\(modal\);/);
-  assert.match(glue, /modal\.classList\.contains\("pd-gate"\) \|\| !modal\.contains\(e\.target\)\) return;/);
+  assert.match(glue, /modal\.classList\.contains\("pd-gate"\) \|\| phoneDialogIsGate\(modal\) \|\| !modal\.contains\(e\.target\)\) return;/);
 });
 
 test("back, swipe down and a scrim tap pick the safe answer", () => {
@@ -110,6 +110,9 @@ test("back, swipe down and a scrim tap pick the safe answer", () => {
   assert.equal(phoneDialogSafeId(["poll-create"]), null);
   assert.match(glue, /const step = layerStep\("ptDialog", open, phoneDialogs\.held, history\.state\);/);
   assert.match(glue, /swipe\.dy = sheetPull\(dy\);/);
-  assert.match(glue, /if \(cancelled \|\| !sheetCloses\(swipe\.dy\)\) \{/);
+  assert.match(glue, /const speed = dragSpeed\(swipe\.samples, at\)\.y;/);
+  assert.match(glue, /if \(cancelled \|\| !sheetSettles\(swipe\.dy, speed, SWIPE\.sheetAt\)\) \{/);
+  assert.match(glue, /const ms = calm \? 0 : settleMs\(modal\.offsetHeight - swipe\.dy, speed, MOTION\.sheetOutMs, 120\);/);
+  assert.match(glue, /return backdrop\.querySelector\(":scope > \.modal:not\(\.hidden\)"\);/);
   assert.match(glue, /window\.addEventListener\("popstate", phoneDialogOnBack\);/);
 });

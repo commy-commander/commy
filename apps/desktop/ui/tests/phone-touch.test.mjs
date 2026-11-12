@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const {
   PHONE_TABS, HORIZON, HORIZON_SPRINGS, HANG_UP_FUSE_MS, horizonY, horizonPath, horizonLift, springStep,
   phoneTabAfter, hangUpTap, badgeText, roomLine, liveSummary, liveRooms, liveStreams, stackPeople,
-  SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts, edgeBackCommits,
+  SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
   WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
@@ -169,14 +169,24 @@ test("nothing on the phone offers to share an iPhone screen, and the bar names n
 });
 
 test("a swipe is sideways only once it clearly is, so scrolling the chat never drags a message", () => {
-  assert.equal(SWIPE.slop, 6);
+  assert.equal(SWIPE.slop, 10);
+  assert.equal(SWIPE.lean, 1.2);
   assert.equal(swipeAxis(4, 3), null);
-  assert.equal(swipeAxis(6, 2), "x");
-  assert.equal(swipeAxis(6, 5), "y");
+  assert.equal(swipeAxis(9, 9), null);
+  assert.equal(swipeAxis(10, 2), "x");
+  assert.equal(swipeAxis(10, 9), "y");
   assert.equal(swipeAxis(30, 8), "x");
   assert.equal(swipeAxis(-30, 8), "x");
   assert.equal(swipeAxis(14, 14), "y");
   assert.equal(swipeAxis(4, 40), "y");
+});
+
+test("a pull from the screen edge may wander more before it stops counting as going back", () => {
+  assert.equal(SWIPE.edgeLean, 0.6);
+  assert.equal(swipeAxis(14, 14, SWIPE.edgeLean), "x");
+  assert.equal(swipeAxis(12, 18, SWIPE.edgeLean), "x");
+  assert.equal(swipeAxis(8, 30, SWIPE.edgeLean), "y");
+  assert.match(glue, /swipe\.axis = swipeAxis\(dx, dy, swipe\.kind === "back" \? SWIPE\.edgeLean : SWIPE\.lean\);/);
 });
 
 test("pulling a message right follows the finger to 84 px and replies past 56", () => {
@@ -227,7 +237,7 @@ test("starting a reply moves nothing: the chip sits in the gap above the field",
   const body = css.slice(at, css.indexOf("}", at));
   assert.match(body, /height: 30px;/);
   assert.match(body, /margin: -33px 0 3px 70px;/);
-  assert.match(css, /\.app\[data-pane="chat"\] \.messages \{\s+margin: 6px 10px 51px;/);
+  assert.match(css, /\.app\[data-pane="chat"\] \.messages \{\s+margin: 6px 0 51px;/);
 });
 
 test("the chat screen keeps the design guide's measures", () => {
@@ -241,7 +251,10 @@ test("the chat screen keeps the design guide's measures", () => {
   assert.match(rule('.app:is([data-pane="chat"], [data-pane="people"])'), /padding: max\(env\(safe-area-inset-top\), 14px\) 0 0;/);
   assert.match(rule('.app:is([data-pane="chat"], [data-pane="people"]) .chat-header'), /height: 60px;[\s\S]*padding: 0 14px 0 6px;/);
   assert.match(rule('.app:is([data-pane="chat"], [data-pane="people"]) #chat-hash'), /font: 300 22px\/22px var\(--font-display\);[\s\S]*color: var\(--link\);/);
-  assert.match(rule('.app[data-pane="chat"] > .main.pt-pane::before'), /left: 10px;\s+right: 10px;[\s\S]*border-radius: var\(--radius-xl\);/);
+  assert.match(rule('.app[data-pane="chat"] > .main.pt-pane::before'), /left: 0;\s+right: 0;\s+top: var\(--pt-pane-y, 66px\);\s+bottom: 0;\s+border-radius: var\(--radius-xl\) var\(--radius-xl\) 0 0;/);
+  assert.doesNotMatch(rule('.app[data-pane="chat"] > .main.pt-pane::before'), /backdrop-filter/);
+  assert.equal(css.includes('.app[data-pane="chat"] > .main.pt-pane::after'), false);
+  assert.match(rule('.app[data-pane="chat"] .messages'), /margin: 6px 0 51px;\s+padding: 36px 8px 0;/);
   assert.match(rule('.app[data-pane="chat"] .msg'), /grid-template-columns: 40px minmax\(0, 1fr\);\s+gap: 0 12px;\s+margin: 0;\s+padding: 8px 8px 10px;/);
   assert.match(rule('.app[data-pane="chat"] .msg-author'), /font: 600 15\.5px\/1 var\(--font\);/);
   assert.match(rule('.app[data-pane="chat"] .msg-time'), /font: 400 13px\/1 var\(--font\);/);
@@ -249,7 +262,12 @@ test("the chat screen keeps the design guide's measures", () => {
   assert.match(rule('.msg .reaction.mine'), /background: var\(--pillow-top\), var\(--accent\); color: var\(--accent-ink\);/);
   assert.match(rule('.app[data-pane="chat"] .msg.pt-railed'), /margin-inline: -4px;\s+padding-inline: 12px;\s+border-radius: 22px;/);
   assert.match(rule('.app[data-pane="chat"] .composer'), /margin: 0 16px calc\(var\(--hz-line\) \+ 7px\);/);
-  assert.match(rule('.app[data-pane="chat"] .typing-strip'), /left: 22px;\s+bottom: calc\(var\(--hz-line\) - 30px\);/);
+  assert.match(rule('.app[data-pane="chat"] .typing-strip'), /left: 32px;\s+bottom: calc\(var\(--hz-line\) \+ 78px\);/);
+  assert.ok(css.includes(':not([data-stack="on"]) .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: var(--hz-safe); }\nhtml[data-look="studio"][data-fit="slim"].keyboard-up .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: 0px; }'));
+  assert.equal(css.includes('.keyboard-up .app[data-pane="chat"] .typing-strip'), false);
+  assert.match(rule('.app[data-pane="chat"] .main:has(> .awaited-bar:not(.hidden)) > .typing-strip'), /bottom: calc\(var\(--hz-line\) \+ 120px\);/);
+  assert.match(rule('.app[data-pane="chat"] .main:has(> .reply-bar:not(.hidden)) > .typing-strip'), /bottom: calc\(var\(--hz-line\) \+ 88px\);/);
+  assert.ok(css.indexOf('.main:has(> .awaited-bar:not(.hidden)) > .typing-strip') < css.indexOf('.main:has(> .reply-bar:not(.hidden)) > .typing-strip'));
   assert.match(rule('.app[data-pane="chat"] .msg .chat-image'), /max-width: 100%; max-height: 300px;[^}]*border-radius: 16px;/);
 });
 
@@ -275,8 +293,9 @@ test("going back starts at the left edge and needs a real pull", () => {
   assert.equal(edgeBackStarts(0), true);
   assert.equal(edgeBackStarts(SWIPE.edge), true);
   assert.equal(edgeBackStarts(SWIPE.edge + 1), false);
-  assert.equal(edgeBackCommits(SWIPE.backAt - 1), false);
-  assert.equal(edgeBackCommits(SWIPE.backAt), true);
+  assert.equal(SWIPE.edge, 30);
+  assert.match(glue, /if \(!cancelled && backSettles\(dx, speed, node\.offsetWidth\)\) return swipeBack\(swipe, dx, speed\);/);
+  assert.match(glue, /swipe\.node\.style\.translate = `\$\{Math\.max\(0, dx\)\}px 0`;/);
 });
 
 test("a row opens far enough for two full-size actions and snaps open or shut", () => {
@@ -291,6 +310,9 @@ test("a row opens far enough for two full-size actions and snaps open or shut", 
   assert.equal(rowStaysOpen(SWIPE.rowAt, false), true);
   assert.equal(rowStaysOpen(SWIPE.rowOpen - 10, true), true);
   assert.equal(rowStaysOpen(SWIPE.rowOpen - SWIPE.rowAt, true), false);
+  assert.equal(rowStaysOpen(SWIPE.rowFlickAt, false, SWIPE.rowFlick), true);
+  assert.equal(rowStaysOpen(SWIPE.rowFlickAt - 1, false, SWIPE.rowFlick), false);
+  assert.equal(rowStaysOpen(SWIPE.rowOpen - 10, true, -SWIPE.rowFlick), false);
 });
 
 test("the sheet names every message action in plain words and marks the ones that delete", () => {
@@ -552,7 +574,7 @@ test("going back with the tray open closes only the tray, and leaving the room s
 });
 
 test("server names under the tiles keep their descenders", () => {
-  assert.match(css, /\.rail-folder > \.pt-name \{\n  max-width: 74px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  margin-block: -2px;\n  padding-block: 2px;/);
+  assert.match(css, /\.rail-folder > \.pt-name \{\n  max-width: 66px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  margin-block: -2px;\n  padding-block: 2px;/);
 });
 
 test("a swiped channel row shows two round keys with no words, and the row runs off the pane's edge", () => {
@@ -810,7 +832,7 @@ test("the tray is the app's own soundboard, moved into the room and put back whe
   assert.match(glue, /el\("small", "pt-tray-line", "The whole room hears these\."\)/);
   assert.match(glue, /add\.classList\.toggle\("hidden", \$\("sb-add"\)\.classList\.contains\("hidden"\)\);\n\s+add\.onclick = \(\) => \$\("sb-add"\)\.click\(\);/);
   assert.match(glue, /if \(!open\) \$\("soundboard-pop"\)\.classList\.toggle\("hidden", true\);/);
-  assert.match(glue, /full \? sheetCloses\(dx\) : swipe\.up && trayOpens\(dx\)/);
+  assert.match(glue, /full \? sheetSettles\(dx, speed, SWIPE\.sheetAt\) : swipe\.up && trayOpens\(dx\)/);
 });
 
 test("the stream you are watching plays in its tile and carries its own stop key", () => {
@@ -1051,7 +1073,7 @@ test("a channel banner is the top of the chat pane, and messages are gone before
   assert.match(glue, /document\.querySelector\("\.main"\)\.classList\.toggle\("pt-has-ban", Boolean\(ref\)\);/);
   assert.match(glue, /if \(url && node\.dataset\.ref === ref\) node\.style\.backgroundImage = `url\("\$\{url\}"\)`;/);
   const pane = ' \\.app\\[data-pane="chat"\\] > \\.main\\.pt-pane\\.pt-has-ban';
-  assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "display: block;\\s+position: absolute;\\s+z-index: -1;\\s+left: 10px;\\s+right: 10px;\\s+top: var\\(--pt-pane-y, 66px\\);\\s+height: 88px;"));
+  assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "display: block;\\s+position: absolute;\\s+z-index: -1;\\s+left: 0;\\s+right: 0;\\s+top: var\\(--pt-pane-y, 66px\\);\\s+height: 88px;"));
   assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "mask-image: linear-gradient\\(#000 20%, transparent\\);"));
   assert.match(css, rule(`${pane} \\.messages`, "mask-image: linear-gradient\\(180deg, transparent 0, transparent 70px, #000 118px\\);"));
   assert.match(css, rule(" \\.channel-intro-banner", "display: none;"));

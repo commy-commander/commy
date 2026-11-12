@@ -84,7 +84,7 @@ test("Back, a swipe down on the grab and the scrim close it", () => {
   assert.match(glue, /history\.pushState\(\{ \.\.\.\(history\.state \|\| \{ pane: phonePane\(\) \}\), ptPicker: true \}, ""\)/);
   assert.match(glue, /if \(\(history\.state && history\.state\.ptPicker\) \|\| !pickerShown\(\)\) return;/);
   assert.match(glue, /scrim\.onclick = closePickerSheet;/);
-  assert.match(glue, /if \(!cancelled && sheetCloses\(drag\.dy\)\) closePickerSheet\(\);/);
+  assert.match(glue, /if \(!cancelled && sheetSettles\(drag\.dy, dragSpeed\(drag\.samples, e\.timeStamp\)\.y, SWIPE\.sheetAt\)\) closePickerSheet\(\);/);
   assert.match(glue, /sheet\.style\.translate = `0 \$\{sheetPull\(drag\.dy\)\}px`;/);
 });
 

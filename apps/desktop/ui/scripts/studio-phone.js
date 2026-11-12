@@ -41,6 +41,10 @@ const studioPhone = {
   liveTimer: 0,
   badge: 0,
   calm: false,
+  falling: null,
+  railOn: null,
+  chatBar: { up: false, run: 0 },
+  tabNext: null,
   rowOpen: null,
   swipedAt: 0,
   railTimer: 0,
@@ -591,6 +595,60 @@ async function setPhoneTab(tab) {
   }
 }
 
+function openPhoneTab(tab) {
+  if (phonePane() === "list") return setPhoneTab(tab);
+  lowerChatBar();
+  studioPhone.tabNext = tab;
+  setTimeout(() => {
+    if (studioPhone.tabNext === tab) studioPhone.tabNext = null;
+  }, 1000);
+  phoneStep("back");
+}
+
+function chatBarMayRise() {
+  const input = $("message-input");
+  return studioSlim() && phonePane() === "chat" && !sheetOpen()
+    && !document.documentElement.classList.contains("keyboard-up")
+    && document.activeElement !== input && !input.value.trim()
+    && $("reply-bar").classList.contains("hidden")
+    && !document.querySelector(".main > .composer").classList.contains("pt-plus-open");
+}
+
+function showChatBar(up) {
+  const app = $("app");
+  if (app.classList.contains("pt-bar-up") === up) return;
+  app.classList.toggle("pt-bar-up", up);
+  if (up) layHorizon();
+}
+
+function lowerChatBar() {
+  studioPhone.chatBar = { up: false, run: 0 };
+  showChatBar(false);
+}
+
+function wireChatBar() {
+  const log = $("messages");
+  let last = log.scrollTop;
+  let touchedAt = -Infinity;
+  const touched = () => {
+    touchedAt = performance.now();
+  };
+  for (const type of ["touchstart", "touchmove", "touchend", "wheel"]) log.addEventListener(type, touched, { passive: true });
+  log.addEventListener("scroll", () => {
+    const delta = log.scrollTop - last;
+    last = log.scrollTop;
+    if (!delta || performance.now() - touchedAt > MOTION.barTouchMs) return;
+    if (!chatBarMayRise()) return lowerChatBar();
+    studioPhone.chatBar = chatBarAfter(studioPhone.chatBar, delta, log.scrollHeight - log.scrollTop - log.clientHeight);
+    showChatBar(studioPhone.chatBar.up);
+  }, { passive: true });
+  $("message-input").addEventListener("focus", lowerChatBar);
+  new MutationObserver(lowerChatBar).observe($("reply-bar"), { attributes: true, attributeFilter: ["class"] });
+  new MutationObserver(() => {
+    if (log.scrollHeight - log.scrollTop - log.clientHeight <= MOTION.barEnd) lowerChatBar();
+  }).observe(log, { childList: true });
+}
+
 function paintStudioTitle() {
   const tab = studioPhone.tab;
   $("pt-title-text").textContent = STUDIO_TITLES[tab] || "";
@@ -608,6 +666,12 @@ function syncPhoneTab() {
     app.dataset.tab = next;
     paintHorizonTab(false);
     paintStudioTitle();
+  }
+  if (phonePane() !== "chat" || app.classList.contains("thread-open")) lowerChatBar();
+  if (studioPhone.tabNext && phonePane() === "list") {
+    const tab = studioPhone.tabNext;
+    studioPhone.tabNext = null;
+    setPhoneTab(tab);
   }
   if (phonePane() !== "list" && app.classList.contains("pt-voice-open")) app.classList.remove("pt-voice-open");
   if (studioPhone.searchHome && !app.classList.contains("pt-search-open")) stowSearchSheet();
@@ -649,9 +713,11 @@ function disarmHangUp() {
 
 const HELD_COPY_ROOM = 23;
 const STUDIO_SHEETS = ["pt-voice-open", "pt-hold-open", "pt-pick-open", "pt-chat-menu", "pt-search-open"];
+const STUDIO_FALLING_SHEETS = ["pt-hold-open", "pt-pick-open"];
 
 function openSheet(name) {
   const app = $("app");
+  endSheetFall();
   for (const other of STUDIO_SHEETS) if (other !== name && app.classList.contains(other)) app.classList.remove(other);
   if (app.classList.contains(name)) return;
   app.classList.add(name);
@@ -660,20 +726,42 @@ function openSheet(name) {
 
 function sheetOpen() {
   const app = $("app");
-  return STUDIO_SHEETS.some(name => app.classList.contains(name));
+  return !studioPhone.falling && STUDIO_SHEETS.some(name => app.classList.contains(name));
 }
 
-function dropSheets() {
+function endSheetFall() {
+  const falling = studioPhone.falling;
+  if (!falling) return;
+  studioPhone.falling = null;
+  clearTimeout(falling.timer);
   const app = $("app");
-  for (const name of STUDIO_SHEETS) if (app.classList.contains(name)) app.classList.remove(name);
-  for (const held of document.querySelectorAll(".msg.pt-held")) held.classList.remove("pt-held");
+  app.classList.remove("pt-sheets-out", ...falling.names);
   for (const copy of document.querySelectorAll(".pt-hold-msg")) copy.remove();
   $("pt-hold")?.classList.remove("pt-tmore");
 }
 
-function closeSheets(then) {
+function dropSheets(atOnce = false) {
+  const app = $("app");
+  if (studioPhone.falling) {
+    if (atOnce) endSheetFall();
+    return;
+  }
+  const open = STUDIO_SHEETS.filter(name => app.classList.contains(name));
+  const falls = !atOnce && !studioPhone.calm && studioSlim() && open.length > 0 && open.every(name => STUDIO_FALLING_SHEETS.includes(name));
+  for (const held of document.querySelectorAll(".msg.pt-held")) held.classList.remove("pt-held");
+  if (falls) {
+    app.classList.add("pt-sheets-out");
+    studioPhone.falling = { names: open, timer: setTimeout(endSheetFall, MOTION.sheetOutMs) };
+    return;
+  }
+  for (const name of open) app.classList.remove(name);
+  for (const copy of document.querySelectorAll(".pt-hold-msg")) copy.remove();
+  $("pt-hold")?.classList.remove("pt-tmore");
+}
+
+function closeSheets(then, atOnce = false) {
   const wasOpen = sheetOpen();
-  dropSheets();
+  dropSheets(atOnce);
   if (wasOpen && history.state && history.state.ptSheet) {
     if (then) window.addEventListener("popstate", () => then(), { once: true });
     if (history.state.ptTray) {
@@ -819,6 +907,29 @@ function decorateRail() {
     head.after(el("span", "pt-name", head.title));
   }
   placeTileName();
+  paintRailFades();
+  showRailTile();
+}
+
+function paintRailFades() {
+  const rail = document.querySelector(".app > .rail");
+  if (!rail) return;
+  const fades = studioSlim() ? railFades(rail.scrollLeft, rail.clientWidth, rail.scrollWidth) : { left: false, right: false };
+  rail.classList.toggle("pt-more-left", fades.left);
+  rail.classList.toggle("pt-more-right", fades.right);
+}
+
+function showRailTile() {
+  const rail = document.querySelector(".app > .rail");
+  const lit = document.querySelector("#server-list :is(.server-icon, .folder-head).active");
+  const on = lit ? lit.title : null;
+  if (!rail || on === studioPhone.railOn) return;
+  studioPhone.railOn = on;
+  if (!lit || !studioSlim() || !rail.clientWidth) return;
+  const box = lit.parentNode.getBoundingClientRect();
+  const left = box.left - rail.getBoundingClientRect().left + rail.scrollLeft;
+  const next = railReveal(left, box.width, rail.scrollLeft, rail.clientWidth, rail.scrollWidth);
+  if (next !== rail.scrollLeft) rail.scrollTo({ left: next, behavior: studioPhone.calm ? "auto" : "smooth" });
 }
 
 function tileLabelWidth(cell) {
@@ -1561,7 +1672,7 @@ function wireHorizon() {
   const h = horizonParts();
   h.bar.addEventListener("click", e => {
     const tab = e.target.closest(".tab");
-    if (tab) return setPhoneTab(tab.dataset.tab);
+    if (tab) return openPhoneTab(tab.dataset.tab);
     if (e.target.closest(".hang")) {
       if (hangUpTap(studioPhone.armed) === "leave") {
         disarmHangUp();
@@ -1690,6 +1801,9 @@ function watchStudioPhone() {
     layHorizon();
   });
   window.addEventListener("resize", layHorizon);
+  const rail = document.querySelector(".app > .rail");
+  rail.addEventListener("scroll", paintRailFades, { passive: true });
+  new ResizeObserver(paintRailFades).observe(rail);
   document.addEventListener("visibilitychange", () => !document.hidden && refreshLiveRooms(false));
   studioPhone.liveTimer = setInterval(() => !document.hidden && studioSlim() && refreshLiveRooms(false), STUDIO_LIVE_REFRESH_MS);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(layHorizon);
@@ -1789,6 +1903,7 @@ function openHoldSheet(msg) {
   msg.classList.add("pt-held");
   openSheet("pt-hold-open");
   fitHeldCopy(copy);
+  $("pt-hold").style.setProperty("--pt-sheet-h", `${$("pt-hold").offsetHeight}px`);
   return true;
 }
 
@@ -1870,7 +1985,7 @@ function openRowSwipe(row) {
 
 const RAIL_UNLIT_MS = 200;
 const RAIL_FADE_MS = 140;
-const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, #modal-accounts";
+const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, #pt-voice-sheet, #emoji-pop, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, #modal-accounts";
 
 function sheetAtTop(sheet, from) {
   for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
@@ -1878,11 +1993,53 @@ function sheetAtTop(sheet, from) {
 }
 
 function closeSwipedSheet(sheet) {
-  if (["pt-hold", "pt-pick", "pt-search"].includes(sheet.id)) closeSheets();
+  if (["pt-hold", "pt-pick", "pt-search"].includes(sheet.id)) closeSheets(undefined, true);
   else if (sheet.id === "modal-accounts") hideModals();
+  else if (sheet.id === "pt-voice-sheet") closeVoiceOptions();
   else closeFloating();
   sheet.style.transition = "";
   sheet.style.translate = "";
+}
+
+const STUDIO_PAGE_LAYERS = ["user-settings", "server-settings", "channel-settings", "events-layer"];
+const STUDIO_FLOATING = ".modal-backdrop:not(.hidden), .pop-menu:not(.hidden), #emoji-pop:not(.hidden), #member-card:not(.hidden), #lightbox:not(.hidden)";
+
+function openPageLayer() {
+  return STUDIO_PAGE_LAYERS.map(id => $(id)).find(layer => layer && !layer.classList.contains("hidden")) || null;
+}
+
+function floatingOpen() {
+  return Boolean(document.querySelector(STUDIO_FLOATING));
+}
+
+function settingsPageBack(layer) {
+  const content = layer.querySelector(":scope > .settings-content");
+  const settle = () => {
+    clearTimeout(studioPhone.pageBackTimer);
+    layer.classList.remove("pt-page-back");
+  };
+  return {
+    node: content,
+    begin: () => {
+      clearTimeout(studioPhone.pageBackTimer);
+      layer.classList.add("pt-page-back");
+      settingsPhoneView(layer, "menu");
+    },
+    stay: () => {
+      settingsPhoneView(layer, "page");
+      studioPhone.pageBackTimer = setTimeout(settle, studioPhone.calm ? 0 : MOTION.paneInMs);
+    },
+    then: () => {
+      settle();
+      if (history.state && history.state.page) history.back();
+    },
+  };
+}
+
+function pageLayerBack(layer) {
+  if (layer.id === "events-layer") return { node: layer, then: () => $("events-close").click() };
+  if (layer.dataset.phoneView === "page" || layer.classList.contains("pt-page-back")) return settingsPageBack(layer);
+  return { node: layer, then: () => layer.querySelector(".settings-phone-close").click() };
 }
 
 function swipeTarget(e) {
@@ -1892,6 +2049,9 @@ function swipeTarget(e) {
   if (sheet) return target.closest("input, textarea, select") || !sheetAtTop(sheet, target) ? null : { kind: "sheet", node: sheet, up: sheet.matches(".pt-tray:not(.pt-tray-full)") };
   if (target.closest("input, textarea, select, pre, code, video, audio, .md-table")) return null;
   const touch = e.touches[0];
+  if (floatingOpen()) return null;
+  const layer = openPageLayer();
+  if (layer) return edgeBackStarts(touch.clientX) && !sheetOpen() ? { kind: "back", ...pageLayerBack(layer) } : null;
   const pane = phonePane();
   if (profileOpen()) return edgeBackStarts(touch.clientX) && !sheetOpen() ? { kind: "back", node: $("pt-profile"), profile: true } : null;
   if (pane === "chat" && studioPhone.threadStep && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: $("thread-panel"), thread: true };
@@ -1926,7 +2086,7 @@ function paintSwipe(swipe, dx) {
   } else if (swipe.kind === "row") {
     swipe.node.style.translate = `${rowPull(dx, swipe.wasOpen)}px 0`;
   } else if (swipe.kind === "back") {
-    swipe.node.style.translate = `${Math.max(0, dx) * 0.35}px 0`;
+    swipe.node.style.translate = `${Math.max(0, dx)}px 0`;
   } else if (swipe.kind === "sheet") {
     swipe.node.style.translate = `0 ${sheetPull(dx)}px`;
   }
@@ -1939,14 +2099,65 @@ function stowReplyRail(node) {
   if (cue.parentNode !== $("app")) $("app").appendChild(cue);
 }
 
-function endSwipe(swipe, dx, cancelled) {
+function slideAway(node, left, speed, then) {
+  const ms = studioPhone.calm ? 0 : settleMs(left, speed, MOTION.paneMs, MOTION.paneMinMs);
+  node.style.transition = `translate ${ms}ms var(--ease-settle)`;
+  node.style.translate = "100% 0";
+  const rest = since => {
+    if (node.offsetWidth && performance.now() - since < 300) return requestAnimationFrame(() => rest(since));
+    node.style.transition = "";
+    node.style.translate = "";
+    requestAnimationFrame(() => node.classList.remove("pt-dragging"));
+  };
+  setTimeout(() => {
+    then();
+    rest(performance.now());
+  }, ms);
+}
+
+function swipeBack(swipe, dx, speed) {
   const node = swipe.node;
+  const left = Math.max(0, node.offsetWidth - dx);
+  if (swipe.profile && profileDirty()) {
+    node.classList.remove("pt-dragging");
+    node.style.translate = "";
+    leaveProfileEditor();
+    return;
+  }
+  if (swipe.profile) return slideAway(node, left, speed, closeProfileEditor);
+  if (swipe.then) return slideAway(node, left, speed, swipe.then);
+  if (swipe.thread) return slideAway(node, left, speed, leaveThread);
+  const rest = () => {
+    node.style.translate = "";
+    requestAnimationFrame(() => node.classList.remove("pt-dragging"));
+  };
+  const move = { from: dx, ms: settleMs(left, speed, MOTION.paneMs, MOTION.paneMinMs), land: rest };
+  primePhoneMove(move);
+  phoneStep("back");
+  setTimeout(() => {
+    if (phoneMoveNext !== move) return;
+    primePhoneMove(null);
+    rest();
+  }, MOTION.paneMs);
+}
+
+function endSwipe(swipe, dx, cancelled, speed = 0) {
+  const node = swipe.node;
+  if (swipe.kind === "back") {
+    if (!cancelled && backSettles(dx, speed, node.offsetWidth)) return swipeBack(swipe, dx, speed);
+    node.classList.remove("pt-dragging");
+    node.style.translate = "";
+    if (swipe.stay) swipe.stay();
+    return;
+  }
   node.classList.remove("pt-dragging");
   if (swipe.kind === "reply") {
     node.style.translate = "";
     clearTimeout(studioPhone.railTimer);
     const cue = $("pt-reply-cue");
     const wait = ms => (studioPhone.calm ? 0 : ms);
+    const sends = !cancelled && swipeSettles(dx, speed, SWIPE.replyAt);
+    if (sends) cue.classList.add("ready", "used");
     studioPhone.railTimer = setTimeout(() => {
       cue.classList.remove("ready");
       studioPhone.railTimer = setTimeout(() => {
@@ -1955,13 +2166,14 @@ function endSwipe(swipe, dx, cancelled) {
         studioPhone.railTimer = setTimeout(() => stowReplyRail(node), wait(RAIL_FADE_MS));
       }, wait(RAIL_FADE_MS));
     }, wait(RAIL_UNLIT_MS));
-    if (!cancelled && replyCommits(dx)) {
+    if (sends) {
       const reply = node.querySelector(':scope > .msg-actions button[title="Reply"]');
+      if (navigator.vibrate) navigator.vibrate(6);
       setTimeout(() => reply.click(), wait(SWIPE.chipAfterMs));
     }
   } else if (swipe.kind === "row") {
     const pull = rowPull(dx, swipe.wasOpen);
-    if (!cancelled && rowStaysOpen(pull, swipe.wasOpen)) {
+    if (!cancelled && rowStaysOpen(pull, swipe.wasOpen, speed)) {
       if (swipe.wasOpen) node.style.translate = `${SWIPE.rowOpen}px 0`;
       else {
         node.style.translate = "";
@@ -1971,70 +2183,82 @@ function endSwipe(swipe, dx, cancelled) {
       node.style.translate = "";
       if (swipe.wasOpen) closeRowSwipe();
     }
-  } else if (swipe.kind === "back") {
-    node.style.translate = "";
-    if (!cancelled && edgeBackCommits(dx)) {
-      if (swipe.profile) leaveProfileEditor();
-      else if (swipe.thread) leaveThread();
-      else phoneStep("back");
-    }
   } else if (swipe.kind === "sheet") {
     const full = node.classList.contains("pt-tray-full");
-    if (!cancelled && (full ? sheetCloses(dx) : swipe.up && trayOpens(dx))) {
+    if (!cancelled && (full ? sheetSettles(dx, speed, SWIPE.sheetAt) : swipe.up && trayOpens(dx))) {
       node.style.translate = "";
       node.classList.toggle("pt-tray-full", !full);
       return;
     }
-    if (cancelled || !sheetCloses(dx)) {
+    if (cancelled || !sheetSettles(dx, speed, SWIPE.sheetAt)) {
       node.style.translate = "";
       return;
     }
-    node.style.transition = "translate 200ms var(--ease-out)";
+    const ms = studioPhone.calm ? 0 : settleMs(node.offsetHeight - dx, speed, MOTION.sheetOutMs, 120);
+    node.style.transition = `translate ${ms}ms var(--ease-out)`;
     node.style.translate = "0 calc(100% + 48px)";
-    setTimeout(() => closeSwipedSheet(node), studioPhone.calm ? 0 : 200);
+    setTimeout(() => closeSwipedSheet(node), ms);
   }
 }
 
 function wireSwipes() {
   let swipe = null;
+  let frame = 0;
+  const along = () => (swipe.kind === "sheet" ? "y" : "x");
+  const live = () => Boolean(swipe && swipe.axis === along());
+  const paint = () => {
+    frame = 0;
+    if (live()) paintSwipe(swipe, swipe.dx);
+  };
+  const finish = (cancelled, at) => {
+    cancelAnimationFrame(frame);
+    frame = 0;
+    if (live()) {
+      const speed = dragSpeed(swipe.samples, at);
+      endSwipe(swipe, swipe.dx, cancelled, along() === "y" ? speed.y : speed.x);
+    }
+    swipe = null;
+  };
   document.addEventListener("touchstart", e => {
+    if (live()) finish(true, e.timeStamp);
     swipe = null;
     if (!studioSlim() || e.touches.length !== 1) return;
     if (studioPhone.rowOpen && !e.target.closest(".pt-acts") && e.target.closest(".channel") !== studioPhone.rowOpen.row) closeRowSwipe();
     const found = swipeTarget(e);
     if (!found) return;
-    swipe = { ...found, x: e.touches[0].clientX, y: e.touches[0].clientY, axis: null, dx: 0, from: 0 };
+    const touch = e.touches[0];
+    swipe = { ...found, x: touch.clientX, y: touch.clientY, axis: null, dx: 0, from: 0, samples: [{ t: e.timeStamp, x: touch.clientX, y: touch.clientY }] };
   }, { passive: true });
   document.addEventListener("touchmove", e => {
-    if (!swipe || !e.touches[0]) return;
-    const dx = e.touches[0].clientX - swipe.x;
-    const dy = e.touches[0].clientY - swipe.y;
-    const along = swipe.kind === "sheet" ? "y" : "x";
-    const pull = along === "y" ? dy : dx;
+    const touch = e.touches[0];
+    if (!swipe || !touch) return;
+    const dx = touch.clientX - swipe.x;
+    const dy = touch.clientY - swipe.y;
+    const pull = along() === "y" ? dy : dx;
     if (!swipe.axis) {
-      swipe.axis = swipeAxis(dx, dy);
-      if ((swipe.axis && swipe.axis !== along) || (swipe.axis === along && pull < 0 && !swipe.wasOpen && !swipe.up)) {
+      swipe.axis = swipeAxis(dx, dy, swipe.kind === "back" ? SWIPE.edgeLean : SWIPE.lean);
+      if ((swipe.axis && swipe.axis !== along()) || (swipe.axis === along() && pull < 0 && !swipe.wasOpen && !swipe.up)) {
         swipe = null;
         return;
       }
-      if (swipe.axis === along) {
+      if (live()) {
         swipe.from = swipe.wasOpen ? 0 : pull;
         swipe.node.classList.add("pt-dragging");
-        studioPhone.swipedAt = Date.now();
+        if (swipe.begin) swipe.begin();
       }
     }
-    if (swipe.axis !== along) return;
+    if (!live()) return;
     swipe.dx = pull - swipe.from;
+    swipe.samples = keepSamples(swipe.samples, { t: e.timeStamp, x: touch.clientX, y: touch.clientY });
     studioPhone.swipedAt = Date.now();
     if (e.cancelable) e.preventDefault();
-    paintSwipe(swipe, swipe.dx);
+    if (!frame) frame = requestAnimationFrame(paint);
   }, { passive: false });
-  const finish = cancelled => () => {
-    if (swipe && swipe.axis === (swipe.kind === "sheet" ? "y" : "x")) endSwipe(swipe, swipe.dx, cancelled);
-    swipe = null;
-  };
-  document.addEventListener("touchend", finish(false), { passive: true });
-  document.addEventListener("touchcancel", finish(true), { passive: true });
+  document.addEventListener("touchend", e => finish(false, e.timeStamp), { passive: true });
+  document.addEventListener("touchcancel", e => finish(true, e.timeStamp), { passive: true });
+  document.addEventListener("scroll", () => {
+    if (swipe && !swipe.axis) swipe = null;
+  }, { capture: true, passive: true });
   document.addEventListener("click", e => {
     if (!studioSlim() || !e.isTrusted) return;
     const justSwiped = Date.now() - (studioPhone.swipedAt || 0) < 350;
@@ -2699,6 +2923,7 @@ function wireStudioPhone() {
   wireHomeHead();
   wireHoldSheet();
   wireSwipes();
+  wireChatBar();
   wireFaceTaps();
   wireThreadScreen();
   wireInvite();
@@ -2771,6 +2996,7 @@ function openThreadMore() {
   $("pt-hold-rx").classList.add("hidden");
   $("pt-hold").classList.add("pt-tmore");
   openSheet("pt-hold-open");
+  $("pt-hold").style.setProperty("--pt-sheet-h", `${$("pt-hold").offsetHeight}px`);
 }
 
 function leaveThread() {

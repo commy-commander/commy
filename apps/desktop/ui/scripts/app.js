@@ -3020,7 +3020,7 @@ function railServerButton(server, folderId) {
   const btn = el("button", "server-icon");
   paintServerIcon(btn, server);
   btn.title = server.name;
-  btn.draggable = true;
+  btn.draggable = !touchOnly();
   btn.dataset.id = server.id;
   btn.style.setProperty("--server-tint", serverTint(server.id));
   if (state.currentServer && server.id === state.currentServer.id) btn.classList.add("active");
@@ -3267,7 +3267,7 @@ function renderServerRail() {
     const folder = el("div", "rail-folder" + (item.open ? " open" : ""));
     const head = el("button", "folder-head");
     head.title = item.name || servers.map(s => s.name).join(", ");
-    head.draggable = true;
+    head.draggable = !touchOnly();
     if (item.open) {
       head.appendChild(svgIcon("folder", 22));
     } else {
@@ -3977,7 +3977,7 @@ function renderChannels() {
       if (isCollapsed && !active) continue;
       const row = isVoiceKind(channel.kind) ? voiceChannelRow(channel, canCreate, section.pinned) : textChannelRow(channel, canCreate, section.pinned);
       if (canCreate && !section.fixed) {
-        row.draggable = true;
+        row.draggable = !touchOnly();
         row.addEventListener("dragstart", e => {
           dragChannel = channel;
           e.dataTransfer.effectAllowed = "move";
@@ -13271,7 +13271,7 @@ function sectionHeader(section, collapsed, canCreate) {
   if (canCreate) {
     if (section.category) {
       header.appendChild(channelGear(section.category));
-      header.draggable = true;
+      header.draggable = !touchOnly();
       header.addEventListener("dragstart", e => {
         dragCategoryId = section.category.id;
         dragChannel = { kind: "category", id: section.category.id };
@@ -17503,7 +17503,7 @@ async function openForward(message) {
   $("forward-files-note").classList.toggle("hidden", !(message.attachments || []).some(a => a.filename));
   $("forward-search").value = "";
   showModal("modal-forward");
-  $("forward-search").focus();
+  if (!touchOnly()) $("forward-search").focus();
   const views = [];
   for (const summary of state.servers) {
     try {
@@ -19269,8 +19269,10 @@ function wireNarrowLayout() {
   applyNarrowLayout();
 }
 
+let phonePaneNext = null;
+
 function phonePane() {
-  return $("app").dataset.pane || "list";
+  return phonePaneNext || $("app").dataset.pane || "list";
 }
 
 function chatPaneShowing() {
@@ -19281,7 +19283,11 @@ function setPhonePane(pane, { fromHistory = false } = {}) {
   if (narrowSplit()) return;
   const was = phonePane();
   if (was === pane) return;
-  $("app").dataset.pane = pane;
+  phonePaneNext = pane;
+  runPhoneMove(moveKind(was, pane), () => {
+    $("app").dataset.pane = pane;
+    if (phonePaneNext === pane) phonePaneNext = null;
+  });
   if (!fromHistory && phonePaneGoesDeeper(was, pane)) history.pushState({ pane }, "");
   if (pane === "list") closeDiscover();
   $("members-btn").classList.toggle("active", pane === "people");
@@ -19409,9 +19415,16 @@ function wireTouchMessages() {
 function wireLongPressMenus() {
   let press = null;
   let heldOpen = false;
+  const rest = () => {
+    for (const node of document.querySelectorAll(".pressing")) node.classList.remove("pressing");
+  };
   const cancel = () => {
-    if (press) clearTimeout(press.timer);
+    if (press) {
+      clearTimeout(press.timer);
+      clearTimeout(press.show);
+    }
     press = null;
+    rest();
   };
   document.addEventListener("touchstart", e => {
     cancel();
@@ -19421,12 +19434,19 @@ function wireLongPressMenus() {
     if (!target.closest || target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])")) return;
     const touch = e.touches[0];
     const at = { x: touch.clientX, y: touch.clientY };
-    press = { at, timer: setTimeout(() => {
-      press = null;
-      if (voiceDrag || !target.isConnected) return;
-      heldOpen = true;
-      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: at.x, clientY: at.y, button: 2 }));
-    }, LONG_PRESS.ms) };
+    const pressed = target.closest(PRESSABLE);
+    press = {
+      at,
+      show: setTimeout(() => pressed && pressed.isConnected && pressed.classList.add("pressing"), MOTION.pressShowMs),
+      timer: setTimeout(() => {
+        press = null;
+        rest();
+        if (voiceDrag || !target.isConnected) return;
+        heldOpen = true;
+        const opened = !target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: at.x, clientY: at.y, button: 2 }));
+        if (opened && navigator.vibrate) navigator.vibrate(8);
+      }, LONG_PRESS.ms),
+    };
   }, { passive: true });
   document.addEventListener("touchmove", e => {
     const touch = e.touches[0];
@@ -19455,19 +19475,90 @@ function fitPhoneViewport() {
   if (meta.getAttribute("content") !== content) meta.setAttribute("content", content);
 }
 
+const KEYBOARD_HEIGHT_KEY = "commy.keyboard-height";
+const KEYBOARD_GUESS_MS = 700;
+const KEYBOARD_STICK_PX = 48;
+const TYPING_FIELDS = "input:not([type=\"checkbox\"], [type=\"radio\"], [type=\"range\"], [type=\"file\"], [type=\"button\"], [type=\"color\"]), textarea, [contenteditable]:not([contenteditable=\"false\"])";
+
 function lockPhoneViewport() {
   fitPhoneViewport();
-  window.matchMedia("(orientation: portrait)").addEventListener("change", fitPhoneViewport);
+  const portrait = window.matchMedia("(orientation: portrait)");
   const view = window.visualViewport;
-  if (!view) return;
-  const fit = () => {
-    const root = document.documentElement;
-    const keyboard = keyboardHeight(window.innerHeight, view.height, view.offsetTop);
-    root.style.setProperty("--app-height", `${Math.round(view.height)}px`);
-    root.style.setProperty("--keyboard-height", `${keyboard}px`);
-    root.classList.toggle("keyboard-up", keyboard > 0);
-    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+  if (!view) {
+    portrait.addEventListener("change", fitPhoneViewport);
+    return;
+  }
+  const root = document.documentElement;
+  const seen = { full: 0, turned: false, guess: 0, softKeys: true };
+  const typing = () => Boolean(document.activeElement && document.activeElement.matches && document.activeElement.matches(TYPING_FIELDS));
+  const turn = () => (portrait.matches ? "tall" : "wide");
+  const known = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(KEYBOARD_HEIGHT_KEY) || "{}")[turn()] || {};
+      return { keyboard: Number(saved.keyboard) || 0, lift: Number(saved.lift) || 0 };
+    } catch (e) {
+      return { keyboard: 0, lift: 0 };
+    }
   };
+  const remember = frame => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(KEYBOARD_HEIGHT_KEY) || "{}");
+      if (saved[turn()] && saved[turn()].keyboard === frame.keyboard && saved[turn()].lift === frame.lift) return;
+      saved[turn()] = { keyboard: frame.keyboard, lift: frame.lift };
+      localStorage.setItem(KEYBOARD_HEIGHT_KEY, JSON.stringify(saved));
+    } catch (e) {
+      return;
+    }
+  };
+  const show = frame => {
+    const atEnd = [$("messages"), $("thread-messages")].filter(log => log && log.clientHeight && log.scrollHeight - log.scrollTop - log.clientHeight < KEYBOARD_STICK_PX);
+    root.style.setProperty("--app-height", `${frame.height}px`);
+    root.style.setProperty("--app-top", `${frame.top}px`);
+    root.style.setProperty("--keyboard-height", `${frame.lift}px`);
+    root.classList.toggle("keyboard-up", frame.keyboard > 0);
+    root.classList.toggle("viewport-shifted", frame.top > 0);
+    for (const log of atEnd) log.scrollTop = log.scrollHeight;
+  };
+  const fit = () => {
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    seen.full = fullHeightAfter(seen.full, window.innerHeight, view.height, seen.turned || !typing());
+    seen.turned = false;
+    const frame = viewportFrame({ fullHeight: seen.full, layoutHeight: window.innerHeight, visibleHeight: view.height, offsetTop: view.offsetTop });
+    if (frame.keyboard) {
+      seen.softKeys = true;
+      clearTimeout(seen.guess);
+      seen.guess = 0;
+      remember(frame);
+    } else if (seen.guess) return;
+    show(frame);
+  };
+  const guessOpen = () => {
+    const last = known();
+    if (!seen.softKeys || !last.keyboard || root.classList.contains("keyboard-up") || seen.full - last.keyboard < 200) return;
+    show({ height: seen.full - last.keyboard, top: 0, keyboard: last.keyboard, lift: last.lift });
+    clearTimeout(seen.guess);
+    seen.guess = setTimeout(() => {
+      seen.guess = 0;
+      seen.softKeys = seen.full - view.height >= MOTION.keyboardMin;
+      fit();
+    }, KEYBOARD_GUESS_MS);
+  };
+  document.addEventListener("focusin", e => {
+    if (e.target.matches && e.target.matches(TYPING_FIELDS)) guessOpen();
+  });
+  document.addEventListener("focusout", () => {
+    setTimeout(() => {
+      if (typing()) return;
+      clearTimeout(seen.guess);
+      seen.guess = 0;
+      show({ height: Math.round(Math.max(seen.full, view.height)), top: 0, keyboard: 0, lift: 0 });
+    }, 0);
+  });
+  portrait.addEventListener("change", () => {
+    fitPhoneViewport();
+    seen.turned = true;
+    fit();
+  });
   view.addEventListener("resize", fit);
   view.addEventListener("scroll", fit);
   fit();
@@ -19580,7 +19671,7 @@ function openGroupModal(serverId, preselect = []) {
   $("group-search").value = "";
   renderGroupList();
   showModal("modal-group");
-  $("group-search").focus();
+  if (!touchOnly()) $("group-search").focus();
 }
 
 function groupMemberIds(serverId) {
@@ -20206,7 +20297,7 @@ function openNewDm() {
   $("new-dm-search").value = "";
   renderNewDmList();
   showModal("modal-new-dm");
-  $("new-dm-search").focus();
+  if (!touchOnly()) $("new-dm-search").focus();
 }
 
 function renderNewDmList() {
@@ -26223,7 +26314,7 @@ async function applyAccountChange() {
     if (account.needs_account_folder) await openAccountFolder();
     else await continueBoot();
   } else if (step === "sign-in") {
-    showSignIn();
+    if (!(was && startOverSignedOut())) showSignIn();
   } else if (step === "accounts") {
     await openAccounts();
   }
@@ -26316,13 +26407,23 @@ async function switchAccount(row) {
   }
 }
 
+function startOverSignedOut() {
+  if (!signedOutInPlace(account, document.body.classList.contains("mobile-app"))) return false;
+  window.location.reload();
+  return true;
+}
+
 async function signOutOfCurrent() {
   if (!(await confirm(signOutPrompt(account, t)))) return;
+  const mobile = document.body.classList.contains("mobile-app");
+  if (mobile && state.voiceServer) await disconnectVoice().catch(() => {});
   try {
     account = await invoke("account_sign_out");
   } catch (e) {
     toast(String(e));
+    return;
   }
+  startOverSignedOut();
 }
 
 const deleteAccount = { step: "ask", mode: "code", busy: false };
@@ -26405,6 +26506,7 @@ async function finishDeleteAccount() {
     account = await invoke("account_delete_finish", proof);
     $("delete-account-password").value = "";
     hideModals();
+    if (startOverSignedOut()) return;
     toast("Your account was deleted.");
   } catch (e) {
     setDeleteAccountBusy(false);

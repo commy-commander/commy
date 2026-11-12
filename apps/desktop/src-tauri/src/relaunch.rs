@@ -32,6 +32,11 @@ pub fn reopen_needed() -> bool {
     REOPEN_NEEDED.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+#[cfg(target_os = "ios")]
+pub fn start_fresh_when_hidden(fresh: bool) {
+    REOPEN_NEEDED.store(fresh, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[cfg(not(target_os = "ios"))]
 pub fn restart(handle: &AppHandle) -> ! {
     crate::invite_link::step_aside();

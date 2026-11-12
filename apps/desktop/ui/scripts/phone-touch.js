@@ -170,7 +170,7 @@ function listLabel(typed) {
   return typed.replace(/ ([A-Z])(?=[a-z])/g, (_, letter) => " " + letter.toLowerCase());
 }
 
-const SWIPE = { slop: 6, replyAt: 56, replyMax: 84, edge: 24, backAt: 80, rowOpen: 112, rowAt: 60, sheetAt: 72, chipAfterMs: 110 };
+const SWIPE = { slop: 10, lean: 1.2, edgeLean: 0.6, replyAt: 56, replyMax: 84, edge: 30, rowOpen: 112, rowAt: 60, rowFlick: 0.45, rowFlickAt: 24, sheetAt: 72, chipAfterMs: 110 };
 const TRAY_PULL = 40;
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
@@ -195,9 +195,9 @@ const SHEET_ROWS = {
   "Unlock Thread": { label: "Unlock thread", icon: "lock" },
 };
 
-function swipeAxis(dx, dy) {
+function swipeAxis(dx, dy, lean = SWIPE.lean) {
   if (Math.abs(dx) < SWIPE.slop && Math.abs(dy) < SWIPE.slop) return null;
-  return Math.abs(dx) > Math.abs(dy) * 1.5 ? "x" : "y";
+  return Math.abs(dx) > Math.abs(dy) * lean ? "x" : "y";
 }
 
 function replyPull(dx) {
@@ -213,10 +213,6 @@ function edgeBackStarts(x) {
   return x <= SWIPE.edge;
 }
 
-function edgeBackCommits(dx) {
-  return dx >= SWIPE.backAt;
-}
-
 function rowPull(dx, wasOpen) {
   const raw = (wasOpen ? SWIPE.rowOpen : 0) + dx;
   if (raw <= 0) return 0;
@@ -224,7 +220,9 @@ function rowPull(dx, wasOpen) {
   return Math.min(SWIPE.rowOpen + 18, SWIPE.rowOpen + (raw - SWIPE.rowOpen) * 0.25);
 }
 
-function rowStaysOpen(pull, wasOpen) {
+function rowStaysOpen(pull, wasOpen, speed = 0) {
+  if (speed <= -SWIPE.rowFlick) return false;
+  if (speed >= SWIPE.rowFlick && pull >= SWIPE.rowFlickAt) return true;
   return wasOpen ? pull > SWIPE.rowOpen - SWIPE.rowAt : pull >= SWIPE.rowAt;
 }
 
@@ -471,7 +469,6 @@ if (typeof module !== "undefined" && module.exports) {
     replyPull,
     replyCommits,
     edgeBackStarts,
-    edgeBackCommits,
     rowPull,
     rowStaysOpen,
     sheetPull,

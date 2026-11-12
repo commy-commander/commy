@@ -1,0 +1,141 @@
+html[data-look="studio"][data-fit="slim"][data-move]::view-transition { pointer-events: none; }
+html[data-look="studio"][data-fit="slim"][data-move]::view-transition-group(root) { animation-duration: var(--pt-move-ms, 340ms); }
+html[data-look="studio"][data-fit="slim"][data-move]::view-transition-old(root),
+html[data-look="studio"][data-fit="slim"][data-move]::view-transition-new(root) { mix-blend-mode: normal; animation: none; }
+html[data-look="studio"][data-fit="slim"][data-move="push"]::view-transition-old(root) { animation: pt-move-under-out var(--pt-move-ms, 340ms) var(--ease-settle) both; }
+html[data-look="studio"][data-fit="slim"][data-move="push"]::view-transition-new(root) { animation: pt-move-over-in var(--pt-move-ms, 340ms) var(--ease-settle) both; box-shadow: -24px 0 48px -12px rgb(var(--dark) / .6); }
+html[data-look="studio"][data-fit="slim"][data-move="pop"]::view-transition-old(root) { z-index: 1; clip-path: inset(0 0 0 var(--pt-pop-from, 0px)); animation: pt-move-over-out var(--pt-move-ms, 340ms) var(--ease-settle) both; }
+html[data-look="studio"][data-fit="slim"][data-move="pop"]::view-transition-new(root) { animation: pt-move-under-in var(--pt-move-ms, 340ms) var(--ease-settle) both; }
+@keyframes pt-move-over-in {
+  from { translate: 100% 0; }
+}
+@keyframes pt-move-under-out {
+  to { translate: -24% 0; opacity: .5; }
+}
+@keyframes pt-move-over-out {
+  to { translate: calc(100% - var(--pt-pop-from, 0px)) 0; }
+}
+@keyframes pt-move-under-in {
+  from { translate: -24% 0; opacity: .5; }
+}
+html[data-look="studio"][data-fit="slim"][data-move="push-in"] .app > .main,
+html[data-look="studio"][data-fit="slim"][data-move="pop-in"] .app > :is(.rail, .sidebar) { animation: pt-pane-in 260ms var(--ease-settle); }
+@keyframes pt-pane-in {
+  from { opacity: 0; }
+}
+
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] :is(.messages, .thread-messages) { touch-action: pan-y; }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel-scroll { touch-action: pan-y; }
+html[data-look="studio"][data-fit="slim"] :is(.pt-hold, .pt-scrim) { touch-action: none; }
+html[data-look="studio"][data-fit="slim"] :is(.pt-pick, .pt-pick-step, .ctx-menu, .composer-menu, .member-card > .mc-body, .pt-search-body) { overscroll-behavior: none; }
+html[data-look="studio"][data-fit="slim"] :is(.main, .pt-profile, .thread-panel, .msg, .channel, .pt-hold, .pt-pick, .pt-search).pt-dragging { will-change: translate; }
+
+html[data-look="studio"][data-fit="slim"] :is(.msg, .channel, .dm-thread, .member, .voice-user, .srow, .arow) { -webkit-tap-highlight-color: transparent; }
+html[data-look="studio"][data-fit="slim"] .msg.pressing { background-color: var(--bg-hover); transition: background-color 120ms var(--ease-out); }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] :is(.channel, .dm-thread).pressing,
+html[data-look="studio"][data-fit="slim"] :is(.member, .voice-user, .srow, .arow).pressing { background-color: var(--bg-hover); }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .rail-item.pressing > .server-icon { scale: .96 .93; }
+
+html[data-look="studio"][data-fit="slim"] .app.pt-hold-open > .pt-hold,
+html[data-look="studio"][data-fit="slim"] .app.pt-pick-open > .pt-pick { animation: pt-sheet-rise 320ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] .app.pt-hold-open > .pt-hold > .msg.pt-hold-msg { animation: pt-held-lift 320ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] .app:is(.pt-hold-open, .pt-pick-open, .pt-search-open, .pt-chat-menu) > .pt-scrim { animation: pt-scrim-in 200ms var(--ease-out); }
+html[data-look="studio"][data-fit="slim"] .app.pt-sheets-out > :is(.pt-hold, .pt-pick) { animation: pt-sheet-fall 200ms var(--ease-out) forwards; pointer-events: none; }
+html[data-look="studio"][data-fit="slim"] .app.pt-sheets-out > .pt-hold > .msg.pt-hold-msg { animation: pt-held-out 200ms var(--ease-out) forwards; }
+html[data-look="studio"][data-fit="slim"] .app.pt-sheets-out > .pt-scrim { animation: pt-scrim-out 200ms var(--ease-out) forwards; pointer-events: none; }
+@keyframes pt-sheet-rise {
+  from { translate: 0 var(--pt-sheet-h, 100%); }
+}
+@keyframes pt-held-lift {
+  from { translate: 0 calc(-1 * var(--pt-sheet-h, 0px)); scale: .96; opacity: .4; }
+}
+@keyframes pt-scrim-in {
+  from { opacity: 0; }
+}
+@keyframes pt-sheet-fall {
+  to { translate: 0 calc(var(--pt-sheet-h, 100%) + 60px); }
+}
+@keyframes pt-held-out {
+  to { translate: 0 calc(-1 * var(--pt-sheet-h, 0px) - 60px); opacity: 0; }
+}
+@keyframes pt-scrim-out {
+  to { opacity: 0; }
+}
+
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"]:not(.thread-open) > .hzn {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: block;
+  height: calc(var(--hz-line) + 76px);
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  visibility: hidden;
+  opacity: 0;
+  translate: 0 14px;
+  transition: opacity 160ms var(--ease-out), translate 260ms var(--ease-settle), visibility 0s 260ms;
+}
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"].pt-bar-up:not(.thread-open) > .hzn { visibility: visible; opacity: 1; translate: 0 0; transition-delay: 0s; }
+html[data-look="studio"][data-fit="slim"].keyboard-up .app[data-pane="chat"]:not(.thread-open) > .hzn { display: none; }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .main > :is(.composer, .typing-strip) { transition: opacity 160ms var(--ease-out), translate 260ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"].pt-bar-up .main > :is(.composer, .typing-strip) { opacity: 0; translate: 0 14px; pointer-events: none; }
+
+html[data-look="studio"][data-fit="slim"] .modal-backdrop > :is(.modal, .modal.dialog.slab),
+html[data-look="studio"][data-fit="slim"] :is(.pop-menu.ctx-menu, .emoji-pop, .member-card),
+html[data-look="studio"][data-fit="slim"] .app.pt-search-open > .pt-search,
+html[data-look="studio"][data-fit="slim"] .pt-room.opts ~ .pt-voice-sheet,
+html[data-look="studio"][data-fit="slim"] .pt-picker > .pt-picker-sheet { animation: pt-sheet-rise 320ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] .modal-backdrop:not(.hidden) { animation: pt-scrim-in 200ms var(--ease-out); }
+html[data-look="studio"][data-fit="slim"] .pt-room.opts ~ .pt-voice-scrim,
+html[data-look="studio"][data-fit="slim"] .app.pt-card-open > .pt-scrim { animation: pt-scrim-in 200ms var(--ease-out); }
+html[data-look="studio"][data-fit="slim"] :is(.emoji-pop, .pt-voice-sheet, .modal-backdrop > .modal):not(.pt-dragging) { transition: translate 260ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] :is(.emoji-pop, .pt-voice-sheet, .modal-backdrop > .modal).pt-dragging { transition: none; will-change: translate; }
+html[data-look="studio"][data-fit="slim"] :is(.settings-layer, #events-layer) { animation: pt-push-in 300ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] .settings-layer > .settings-content { animation: pt-push-in 300ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] .settings-layer > .settings-nav { animation: pt-pane-in 260ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] :is(.settings-layer, #events-layer, .settings-layer > .settings-content):not(.pt-dragging) { transition: translate 260ms var(--ease-settle); }
+html[data-look="studio"][data-fit="slim"] :is(.settings-layer, #events-layer, .settings-layer > .settings-content).pt-dragging { transition: none; will-change: translate; }
+html[data-look="studio"][data-fit="slim"] :is(.settings-layer, #events-layer).pt-dragging { box-shadow: -18px 0 40px rgb(0 0 0 / .28); }
+html[data-look="studio"][data-fit="slim"] .settings-layer.pt-page-back > .settings-content { z-index: 2; display: flex; box-shadow: -18px 0 40px rgb(0 0 0 / .28); }
+html[data-look="studio"][data-fit="slim"] .settings-layer.pt-page-back .settings-page > h1:first-child { display: none; }
+html[data-look="studio"][data-fit="slim"] .settings-layer.pt-page-back .settings-page > h1:first-child + .settings-intro { margin-top: 0; }
+html[data-look="studio"][data-fit="slim"] #lightbox { touch-action: none; }
+html[data-look="studio"][data-fit="slim"] #lightbox:not(.hidden) { animation: pt-scrim-in 200ms var(--ease-out); }
+html[data-look="studio"][data-fit="slim"] #lightbox-img { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+html[data-look="studio"][data-fit="slim"] #lightbox.pt-dragging > #lightbox-img { will-change: transform; }
+@supports (transition-behavior: allow-discrete) {
+  html[data-look="studio"][data-fit="slim"] .modal-backdrop { transition: opacity 200ms var(--ease-out), display 200ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] .modal-backdrop.hidden { opacity: 0; pointer-events: none; }
+  html[data-look="studio"][data-fit="slim"] .modal-backdrop.hidden > .modal:not(.hidden) { translate: 0 100%; transition: translate 200ms var(--ease-out); }
+  html[data-look="studio"][data-fit="slim"] :is(.pop-menu.ctx-menu, .emoji-pop, .member-card):not(.pt-dragging) { transition: translate 260ms var(--ease-settle), display 200ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] :is(.pop-menu.ctx-menu, .emoji-pop, .member-card).hidden { translate: 0 calc(100% + 48px); pointer-events: none; transition: translate 200ms var(--ease-out), display 200ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] .pt-voice-sheet:not(.pt-dragging) { transition: translate 260ms var(--ease-settle), display 200ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] .pt-room:not(.opts) ~ .pt-voice-sheet { translate: 0 calc(100% + 48px); pointer-events: none; transition: translate 200ms var(--ease-out), display 200ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] :is(.pt-voice-scrim, .app > .pt-scrim) { position: fixed; inset: 0; z-index: 6; background: var(--scrim); transition: opacity 200ms var(--ease-out), display 200ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] .pt-room:not(.opts) ~ .pt-voice-scrim,
+  html[data-look="studio"][data-fit="slim"] .app:not(.pt-hold-open, .pt-chat-menu, .pt-search-open, .pt-pick-open, .pt-card-open) > .pt-scrim { opacity: 0; pointer-events: none; }
+  html[data-look="studio"][data-fit="slim"] :is(.settings-layer, #events-layer):not(.pt-dragging) { transition: translate 260ms var(--ease-settle), display 240ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] :is(.settings-layer, #events-layer).hidden { translate: 100% 0; pointer-events: none; transition: translate 240ms var(--ease-out), display 240ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] #lightbox { transition: opacity 180ms var(--ease-out), display 180ms allow-discrete; }
+  html[data-look="studio"][data-fit="slim"] #lightbox.hidden { opacity: 0; pointer-events: none; }
+  html[data-look="studio"][data-fit="slim"] #lightbox.hidden > #lightbox-img { visibility: hidden; }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  html[data-look="studio"][data-fit="slim"] :is(.msg, .channel, .dm-thread, .rail-item, .member, .voice-user) { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  html[data-look="studio"][data-fit="slim"] .msg .msg-body { -webkit-user-select: none; user-select: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"][data-fit="slim"] .app.pt-hold-open > .pt-hold,
+  html[data-look="studio"][data-fit="slim"] .app.pt-pick-open > .pt-pick,
+  html[data-look="studio"][data-fit="slim"] .app.pt-hold-open > .pt-hold > .msg.pt-hold-msg,
+  html[data-look="studio"][data-fit="slim"] .app > .pt-scrim,
+  html[data-look="studio"][data-fit="slim"] .app > :is(.main, .rail, .sidebar) { animation: none !important; }
+  html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .hzn,
+  html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .main > :is(.composer, .typing-strip) { transition: none; }
+}
