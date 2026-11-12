@@ -87,8 +87,8 @@ test("under 1180 the account is the face and gear, the chat bar keeps emoji, and
   assert.match(rule(`${C} .chat-header .header-actions:has(> .search-box:is(:focus-within, .open))::after`, narrow), /flex: 0 0 38px;/);
 });
 
-test("under 1040 the second and third header tools give way", () => {
-  assert.ok(block("(max-width: 1040px)").includes(`${C} .header-actions > #threads-btn,\n  ${C} .header-actions > #saved-btn { display: none; }`));
+test("under 1040 Pinned, Threads and Saved give way, so the keys are People, More and search", () => {
+  assert.ok(block("(max-width: 1040px)").includes(`${C} .header-actions > #pins-btn,\n  ${C} .header-actions > #threads-btn,\n  ${C} .header-actions > #saved-btn { display: none; }`));
   assert.ok(html.indexOf('id="threads-btn"') < html.indexOf('id="saved-btn"'));
   assert.ok(html.indexOf('id="pins-btn"') < html.indexOf('id="threads-btn"'));
   assert.ok(html.indexOf('id="saved-btn"') < html.indexOf('id="members-btn"'));
@@ -104,14 +104,15 @@ test("under 1180 Text Style is the last row of the plus menu and opens the same 
   assert.match(glue, /getElementById\("text-style-btn"\)[\s\S]*button\.click\(\);[\s\S]*placePopup\(pop, field, "above"\);/);
 });
 
-test("under 1040 Threads and Saved fold into a More key that opens the desktop menu", () => {
+test("under 1040 Pinned, Threads and Saved fold into a More key that opens the desktop menu", () => {
   assert.ok(block("(max-width: 1040px)").includes(`${C} .header-actions > #studio-more-btn:not([data-empty]) { display: flex; }`));
   assert.match(glue, /more\.className = "icon-btn studio-more-btn";/);
   assert.match(glue, /more\.title = "More";/);
   assert.match(glue, /studioCompactIcon\("ellipsis", 20\)/);
   assert.match(glue, /actions\.insertBefore\(more, search/);
   assert.match(glue, /menu\.className = "pop-menu ctx-menu studio-more-menu hidden";/);
-  assert.deepEqual(STUDIO_COMPACT_ROWS.map(row => [row.label, row.button, row.icon, row.open]), [["Threads", "threads-btn", "thread", "toggleThreadsPanel"], ["Saved", "saved-btn", "bookmark", "toggleSavedView"]]);
+  assert.deepEqual(STUDIO_COMPACT_ROWS.map(row => [row.label, row.button, row.icon, row.open]), [["Pinned", "pins-btn", "pin", "togglePinsPanel"], ["Threads", "threads-btn", "thread", "toggleThreadsPanel"], ["Saved", "saved-btn", "bookmark", "toggleSavedView"]]);
+  assert.match(app, /\$\("pins-btn"\)\.onclick = togglePinsPanel;/);
   assert.match(app, /\$\("threads-btn"\)\.onclick = toggleThreadsPanel;/);
   assert.match(app, /\$\("saved-btn"\)\.onclick = toggleSavedView;/);
   assert.match(rule(`${R} .header-actions > #studio-more-btn[data-dot]::after`), /background: var\(--accent-2\);/);
@@ -119,13 +120,13 @@ test("under 1040 Threads and Saved fold into a More key that opens the desktop m
 
 test("a row follows its key, carries the badge, and lights the More dot", () => {
   const read = map => row => map[row.key];
-  const both = studioCompactRowStates(STUDIO_COMPACT_ROWS, read({ threads: { shown: true }, saved: { shown: true, badge: " 3 " } }));
-  assert.deepEqual(both, [{ key: "threads", shown: true, badge: "" }, { key: "saved", shown: true, badge: "3" }]);
+  const both = studioCompactRowStates(STUDIO_COMPACT_ROWS, read({ pins: { shown: true, badge: "1" }, threads: { shown: true }, saved: { shown: true, badge: " 3 " } }));
+  assert.deepEqual(both, [{ key: "pins", shown: true, badge: "1" }, { key: "threads", shown: true, badge: "" }, { key: "saved", shown: true, badge: "3" }]);
   assert.equal(studioCompactDot(both), true);
   assert.equal(studioCompactEmpty(both), false);
-  const quiet = studioCompactRowStates(STUDIO_COMPACT_ROWS, read({ threads: { shown: false, badge: "2" }, saved: { shown: true } }));
+  const quiet = studioCompactRowStates(STUDIO_COMPACT_ROWS, read({ pins: { shown: false, badge: "1" }, threads: { shown: false, badge: "2" }, saved: { shown: true } }));
   assert.equal(studioCompactDot(quiet), false);
-  const none = studioCompactRowStates(STUDIO_COMPACT_ROWS, read({ threads: {}, saved: {} }));
+  const none = studioCompactRowStates(STUDIO_COMPACT_ROWS, read({ pins: {}, threads: {}, saved: {} }));
   assert.equal(studioCompactEmpty(none), true);
   assert.equal(studioCompactMenuLeft({ right: 926 }, 220, 1000), 706);
   assert.equal(studioCompactMenuLeft({ right: 100 }, 220, 1000), 8);

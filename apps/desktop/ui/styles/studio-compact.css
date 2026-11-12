@@ -85,6 +85,7 @@ html[data-look="studio"][data-fit="slim"] .studio-more-menu { display: none; }
   html[data-look="studio"][data-fit="compact"] .chat-header .header-actions:has(> .search-box:is(:focus-within, .open)) > .icon-btn { visibility: hidden; }
 }
 @media (max-width: 1040px) {
+  html[data-look="studio"][data-fit="compact"] .header-actions > #pins-btn,
   html[data-look="studio"][data-fit="compact"] .header-actions > #threads-btn,
   html[data-look="studio"][data-fit="compact"] .header-actions > #saved-btn { display: none; }
   html[data-look="studio"][data-fit="compact"] .header-actions > #studio-more-btn:not([data-empty]) { display: flex; }

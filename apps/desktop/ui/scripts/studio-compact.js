@@ -1,6 +1,7 @@
 const STUDIO_COMPACT_MARK = "data-studio-compact";
 let studioCompactStarted = false;
 const STUDIO_COMPACT_ROWS = [
+  { key: "pins", button: "pins-btn", label: "Pinned", icon: "pin", open: "togglePinsPanel" },
   { key: "threads", button: "threads-btn", label: "Threads", icon: "thread", open: "toggleThreadsPanel" },
   { key: "saved", button: "saved-btn", label: "Saved", icon: "bookmark", open: "toggleSavedView" },
 ];
