@@ -2712,6 +2712,7 @@ html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .reply-bar {
 html[data-look="studio"][data-fit="slim"]:not([data-theme="light"]) .app[data-pane="chat"] .reply-bar { background: rgb(var(--lamp) / .12); -webkit-backdrop-filter: var(--glass-fx); backdrop-filter: var(--glass-fx); box-shadow: var(--glass-rim); }
 html[data-look="studio"][data-fit="slim"][data-fx="lite"]:not([data-theme="light"]) .app[data-pane="chat"] .reply-bar { background: color-mix(in srgb, var(--glass-key) 61%, var(--bg-raised)); -webkit-backdrop-filter: none; backdrop-filter: none; }
 html[data-look="studio"][data-fit="slim"] .reply-bar.hidden { display: none; }
+html[data-look="studio"][data-fit="slim"] .main:has(> .reply-bar:not(.hidden)) > #awaited-bar { display: none; }
 html[data-look="studio"][data-fit="slim"] .reply-bar:not(.hidden) { animation: pt-chip-in var(--t-enter) var(--ease-spring); }
 @keyframes pt-chip-in {
   from { opacity: 0; translate: 0 6px; }

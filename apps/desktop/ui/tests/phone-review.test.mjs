@@ -96,3 +96,10 @@ test("a long toast on the phone wraps to three lines and stays above the tab bar
   assert.match(rule(touch, ".toast"), /width: max-content;[\s\S]*padding: 12px 22px 12px 16px;[\s\S]*border-radius: 24px;/);
   assert.match(rule(touch, ".toast > .toast-text"), /-webkit-line-clamp: 3;[\s\S]*white-space: normal;/);
 });
+
+test("the reply chip takes the waiting bar's place, and Notify when online keeps the card open", () => {
+  assert.ok(touch.includes(`${SLIM} .main:has(> .reply-bar:not(.hidden)) > #awaited-bar { display: none; }`));
+  const app = read("scripts", "app.js");
+  assert.match(app, /const item = \(label, icon, onClick, cls = "", keep\) => \{[\s\S]{0,200}closeFloating\(keep\);/);
+  assert.match(app, /item\("Notify when online", "signal", \(\) => toggleFriendOnlinePick\(person\.id\), "ctx-check" \+ \(wants \? " checked" : ""\), keepOpen\);/);
+});

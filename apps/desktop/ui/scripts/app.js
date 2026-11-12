@@ -13994,12 +13994,12 @@ function openProfileMenu(person, x, y, keepOpen, card = null) {
   closeFloating(keepOpen);
   const menu = $("fp-menu");
   menu.replaceChildren(el("div", "ctx-title", person.name));
-  const item = (label, icon, onClick, cls = "") => {
+  const item = (label, icon, onClick, cls = "", keep) => {
     const btn = el("button", cls);
     btn.appendChild(svgIcon(icon, 18));
     btn.appendChild(document.createTextNode(label));
     btn.onclick = () => {
-      closeFloating();
+      closeFloating(keep);
       onClick();
     };
     menu.appendChild(btn);
@@ -14020,7 +14020,7 @@ function openProfileMenu(person, x, y, keepOpen, card = null) {
     nickname: () => item("Nickname", "pencil", () => openNicknameModal(currentServerMember(person.id))),
     notify: () => {
       const wants = wantsFriendOnline(notifyPrefs(), person.id);
-      item("Notify when online", "signal", () => toggleFriendOnlinePick(person.id), "ctx-check" + (wants ? " checked" : ""));
+      item("Notify when online", "signal", () => toggleFriendOnlinePick(person.id), "ctx-check" + (wants ? " checked" : ""), keepOpen);
     },
     unfriend: () => item("Remove friend", "close", async () => {
       if (await confirm(`Remove ${person.name} from your friends?`)) await friendAction(person.id, "remove", person.name);
