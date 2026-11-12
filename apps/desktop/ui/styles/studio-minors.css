@@ -36,3 +36,71 @@ html[data-look="studio"]:not([data-fit="slim"]) .storage-path[data-minors-label]
   color: var(--text-normal);
   font: 500 14px/20px var(--font);
 }
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 46px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: rgb(var(--lamp) / .03);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-normal);
+  font: 500 14.5px/1 var(--font);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick:hover { background: rgb(var(--lamp) / .06); }
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick.held {
+  background: var(--bg-active);
+  box-shadow: inset 0 0 0 1.5px var(--accent-lit);
+  color: var(--header-primary);
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick.has-banner {
+  height: auto;
+  padding: 48px 16px 13px;
+  border-radius: 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick.has-banner > .role-pick-banner {
+  height: 38px;
+  -webkit-mask-image: linear-gradient(black 45%, transparent);
+  mask-image: linear-gradient(black 45%, transparent);
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick > .role-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0;
+  border-radius: 50%;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick > .role-pick-check {
+  order: 1;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--accent-lit);
+  opacity: 0;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick > .role-pick-check > svg {
+  width: 18px;
+  height: 18px;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #modal-choose-roles.dialog .role-pick.held > .role-pick-check { opacity: 1; }

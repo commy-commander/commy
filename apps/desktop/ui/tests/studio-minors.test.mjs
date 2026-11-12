@@ -100,3 +100,14 @@ test("the Discover chips fade at the right edge and keep their hairline", () => 
   assert.ok(discover.includes(`${R} .discover-chips::after {\n  content: "";\n  flex: none;\n  width: 12%;\n}`));
   assert.match(read("../styles/styles.css"), /\.discover-chips \{[^}]*overflow-x: auto;/);
 });
+
+test("Choose Roles rows are the guide's pills with a tick, not a radio circle", () => {
+  const D = `${R} #modal-choose-roles.dialog`;
+  assert.match(rule(`${D} .role-pick`), /border-radius: var\(--radius-pill\)/);
+  assert.match(rule(`${D} .role-pick.held`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\)/);
+  const check = rule(`${D} .role-pick > .role-pick-check`);
+  assert.match(check, /border: 0/);
+  assert.match(check, /background: none/);
+  assert.match(check, /opacity: 0/);
+  assert.match(rule(`${D} .role-pick.held > .role-pick-check`), /opacity: 1/);
+});
