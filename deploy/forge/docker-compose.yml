@@ -17,9 +17,10 @@ services:
       FORGEJO__server__DISABLE_SSH: "true"
       FORGEJO__server__OFFLINE_MODE: "true"
       FORGEJO__server__LANDING_PAGE: explore
+      FORGEJO__api__ENABLE_SWAGGER: "false"
       FORGEJO__database__DB_TYPE: sqlite3
       FORGEJO__security__INSTALL_LOCK: "true"
-      FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES: 172.16.0.0/12
+      FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES: 172.16.0.0/12,192.168.0.0/16
       FORGEJO__service__DISABLE_REGISTRATION: "true"
       FORGEJO__service__REQUIRE_SIGNIN_VIEW: "false"
       FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE: "true"
