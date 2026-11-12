@@ -76,14 +76,6 @@
     </div>
   </div>
   <div class="offline-chip hidden" id="offline-chip" role="status"><span class="offline-dot" aria-hidden="true"></span><span>Offline. Showing what is saved on this device.</span></div>
-  <div class="update-chip hidden" id="update-chip" role="status">
-    <span class="update-chip-dot" aria-hidden="true"></span>
-    <span class="update-chip-text" id="update-chip-text"></span>
-    <button class="btn-primary btn-small update-chip-open" type="button" id="update-chip-open">Update</button>
-    <button class="icon-btn update-chip-close" type="button" id="update-chip-close" title="Dismiss" aria-label="Dismiss">
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7l1.4-1.4 6.3 6.3 6.3-6.3z"/></svg>
-    </button>
-  </div>
   <div id="titlebar" class="titlebar hidden">
     <div class="titlebar-drag" id="titlebar-drag">
       <span class="titlebar-icon server-icon" id="titlebar-icon"></span>
@@ -152,6 +144,14 @@
         </div>
       </div>
 
+      <div class="update-chip hidden" id="update-chip" role="status">
+        <span class="update-chip-dot" aria-hidden="true"></span>
+        <span class="update-chip-text" id="update-chip-text"></span>
+        <button class="btn-primary btn-small update-chip-open" type="button" id="update-chip-open">Update</button>
+        <button class="icon-btn update-chip-close" type="button" id="update-chip-close" title="Dismiss" aria-label="Dismiss">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7l1.4-1.4 6.3 6.3 6.3-6.3z"/></svg>
+        </button>
+      </div>
       <section class="voice-panel hidden" id="voice-panel">
         <div class="vp-live hidden" id="vp-live">
           <div class="vp-live-head">

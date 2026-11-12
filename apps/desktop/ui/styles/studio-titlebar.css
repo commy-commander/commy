@@ -1,7 +1,6 @@
 html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .app { height: 100vh; margin-top: 0; }
 html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .rail { padding-right: calc(146px - var(--st-mr)); }
 html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .offline-chip { top: calc(var(--st-mt) + 9px); }
-html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .update-chip { top: calc(var(--st-mt) + 9px); }
 html[data-look="studio"]:not([data-fit="slim"]) .titlebar { left: auto; height: calc(var(--st-mt) * 2 + 50px); background: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .titlebar-drag { display: none; }
 html[data-look="studio"] #titlebar-icon.is-logo { background: none; box-shadow: none; border-radius: 0; }
