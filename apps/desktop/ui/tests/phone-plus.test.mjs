@@ -15,7 +15,7 @@ const rule = selector => {
 };
 
 test("every plus rule is for the phone app in the new look, with tokens and no comments", () => {
-  const flat = css.replace(/@media \(prefers-reduced-motion: reduce\) \{/, "");
+  const flat = css.replace(/@media \(prefers-reduced-motion: reduce\) \{/, "").replace(/@container pt-rec \(max-width: 361px\) \{/, "");
   const selectors = flat.split("}").map(block => block.split("{")[0]).flatMap(head => head.split(/,(?![^(]*\))/)).map(s => s.trim()).filter(Boolean);
   assert.ok(selectors.length > 20);
   for (const selector of selectors) assert.ok(selector.startsWith(SLIM), selector);
@@ -79,4 +79,13 @@ test("the recording bar takes the field's place with Cancel as glass and Send as
   assert.match(rule(".main > .composer > .voice-rec"), /position: absolute;\n  inset: 1px 0;[\s\S]*border-radius: 24px;\n  background: var\(--bar-field\);/);
   assert.match(rule(".voice-rec :is(#voice-rec-cancel, #voice-rec-send)"), /height: 32px;[\s\S]*background: var\(--k-plain\);/);
   assert.match(rule(".voice-rec #voice-rec-send"), /--k-ink: var\(--accent-ink\);\n  background: var\(--pillow-top\), var\(--accent\);/);
+});
+
+test("the recording dot is live red and still under reduced motion, the hint hides when cramped, and the field's placeholder ends in dots", () => {
+  const css = read("styles", "phone-plus.css");
+  assert.match(css, /\.voice-rec \.voice-rec-dot \{[^}]*background: var\(--danger\);/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.voice-rec \.voice-rec-dot \{ animation: none; \}\n\}/);
+  assert.match(css, /container: pt-rec \/ inline-size;/);
+  assert.match(css, /@container pt-rec \(max-width: 361px\) \{\n\s*html\[data-look="studio"\]\[data-fit="slim"\] \.voice-rec \.voice-rec-hint \{ visibility: hidden; \}\n\}/);
+  assert.match(css, /#message-input::placeholder \{ text-overflow: ellipsis; \}/);
 });

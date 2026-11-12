@@ -138,6 +138,7 @@ html[data-look="studio"][data-fit="slim"] .main > .composer > .voice-rec {
   position: absolute;
   inset: 1px 0;
   z-index: 3;
+  container: pt-rec / inline-size;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -153,7 +154,13 @@ html[data-look="studio"][data-fit="slim"] .main > .composer:has(> .voice-rec:not
 html[data-look="studio"][data-fit="slim"] .main > .composer:has(> .voice-rec:not(.hidden)) > :is(textarea, .composer-attach, .composer-send, .icon-btn, .composer-slow) { visibility: hidden; }
 html[data-look="studio"][data-fit="slim"] .voice-rec .voice-rec-label { font: 600 14px/1 var(--font); color: var(--header-primary); white-space: nowrap; }
 html[data-look="studio"][data-fit="slim"] .voice-rec .voice-rec-time { min-width: 0; font: 400 14px/1 var(--font); font-variant-numeric: tabular-nums; color: var(--header-primary); }
-html[data-look="studio"][data-fit="slim"] .voice-rec .voice-rec-hint { flex: 1; min-width: 0; font: 400 12px/1 var(--font); color: var(--text-muted); }
+html[data-look="studio"][data-fit="slim"] .voice-rec .voice-rec-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--danger); }
+html[data-look="studio"][data-fit="slim"] .voice-rec .voice-rec-hint { flex: 1; min-width: 0; font: 400 12px/1 var(--font); color: var(--text-muted); white-space: nowrap; overflow: visible; text-overflow: clip; }
+@container pt-rec (max-width: 361px) {
+  html[data-look="studio"][data-fit="slim"] .voice-rec .voice-rec-hint { visibility: hidden; }
+}
+html[data-look="studio"][data-fit="slim"] .main > .composer > #message-input::placeholder { text-overflow: ellipsis; }
+html[data-look="studio"][data-fit="slim"] .main > .composer > #message-input { text-overflow: ellipsis; }
 html[data-look="studio"][data-fit="slim"] .voice-rec :is(#voice-rec-cancel, #voice-rec-send) {
   --k-ink: var(--header-primary);
   display: inline-flex;
@@ -191,4 +198,5 @@ html[data-look="studio"][data-fit="slim"] .voice-rec :is(#voice-rec-cancel, #voi
   html[data-look="studio"][data-fit="slim"] .main > .composer *,
   html[data-look="studio"][data-fit="slim"] .main > .composer *::before,
   html[data-look="studio"][data-fit="slim"] .main > .typing-strip { transition-duration: .001ms !important; transition-delay: 0s !important; }
+  html[data-look="studio"][data-fit="slim"] .voice-rec .voice-rec-dot { animation: none; }
 }
