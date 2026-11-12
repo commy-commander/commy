@@ -161,3 +161,7 @@ test("an upright phone app screen wider than 550 is laid out 550 wide in the new
   assert.equal(phoneAppViewport(669, true, false), TWO_PANE_VIEWPORT);
   assert.ok(once(app, "phoneAppViewport(portrait.matches ? shortSide : longSide, portrait.matches, studioLook())"));
 });
+
+test("in the stack a notice sits above the five-key bar while in voice, never over its labels", () => {
+  assert.match(rule(`${STACK} body:has(> .app[data-pane].pt-in-voice) > .toast`), /bottom: calc\(var\(--st-bar\) \+ var\(--st-gap\)\)/);
+});
