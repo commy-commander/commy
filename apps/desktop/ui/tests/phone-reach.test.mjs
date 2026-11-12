@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { REACH_NEVER, REACH_TYPED, REACH_FIELDS, hoverless, dropHover, lockedViewport, fieldHints, typedInto } = require("../scripts/phone-reach.js");
+const { REACH_NEVER, REACH_TYPED, REACH_FIELDS, CORNER_BAND, hoverless, dropHover, lockedViewport, fieldHints, typedInto, cornerRoom } = require("../scripts/phone-reach.js");
 const { touchOnly } = require("../scripts/phone-motion.js");
 
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -154,4 +154,40 @@ test("empty lists tell you to hold a message on the phone and to hover it with a
   assert.match(app, /function messageReach\(\) \{\n  return typeof touchOnly === "function" && touchOnly\(\) \? "Hold" : "Hover";\n\}/);
   assert.equal((app.match(/`\$\{messageReach\(\)\} a message and choose /g) || []).length, 3);
   assert.equal(/"Hover a message/.test(app), false);
+});
+
+test("a covered top right corner asks for room, anything else asks for none", () => {
+  const duo = { w: 466, h: 678, top: 0 };
+  assert.equal(cornerRoom({ ...duo, regions: [[383, 17, 83, 145]] }), 83);
+  assert.equal(cornerRoom({ ...duo, regions: [[383, 17, 83, 145], [400, 30, 40, 40]] }), 83);
+  assert.equal(cornerRoom({ ...duo, regions: [] }), 0);
+  assert.equal(cornerRoom(undefined), 0);
+  assert.equal(cornerRoom({ ...duo, regions: [[0, 17, 83, 145]] }), 0);
+  assert.equal(cornerRoom({ ...duo, regions: [[383, CORNER_BAND, 83, 145]] }), 0);
+  assert.equal(cornerRoom({ ...duo, regions: [[120, 17, 346, 60]] }), 0);
+  assert.equal(cornerRoom({ ...duo, regions: [[383, 17, 0, 145]] }), 0);
+  assert.equal(cornerRoom({ w: 402, h: 874, top: 62, regions: [[138, 11, 126, 37]] }), 0);
+  assert.equal(cornerRoom({ w: 402, h: 874, top: 62, regions: [[300, 11, 102, 40]] }), 0);
+});
+
+test("the covered corner becomes a size the phone sheets can use, scaled to the page", () => {
+  assert.match(code, /root\.setAttribute\("data-corner", "right"\);\s+root\.style\.setProperty\("--corner-room", `\$\{Math\.ceil\(room \* root\.clientWidth \/ view\.w\)\}px`\);/);
+  assert.match(code, /root\.removeAttribute\("data-corner"\);\s+root\.style\.removeProperty\("--corner-room"\);/);
+  assert.match(code, /showCorner\(window\.screenRegions\);\s+window\.addEventListener\("screenregions", \(\) => showCorner\(window\.screenRegions\)\);/);
+  const corner = '[data-corner="right"]';
+  assert.match(rule(`${corner} .app[data-pane="list"] > .sidebar > :is(.pt-find, .pt-compose)`), /translate: calc\(-1 \* var\(--corner-room\)\) 0;/);
+  assert.match(rule(`${corner} .app.pt-switch[data-pane="list"] .sidebar-header`), /padding-right: calc\(66px \+ var\(--corner-room\)\);/);
+  assert.match(rule(`${corner} .acct .edit`), /translate: calc\(-1 \* var\(--corner-room\)\) 0;/);
+  assert.match(rule(`${corner} .pt-profile .phd .save`), /margin-right: calc\(2px \+ var\(--corner-room\)\);/);
+  assert.equal(css.split("\n").filter(line => line.includes("--corner-room")).every(line => line.startsWith(`${SLIM}${corner} `)), true);
+});
+
+test("the iPhone app tells the page which parts of the screen are covered", () => {
+  const swift = read("..", "apple-sign-in", "ios", "Sources", "ScreenRegions.swift");
+  const plugin = read("..", "apple-sign-in", "ios", "Sources", "AppleSignInPlugin.swift");
+  assert.match(swift, /reservedRegions\(kind: \.occlusion\)/);
+  assert.match(swift, /window\.screenRegions=/);
+  assert.match(swift, /new Event\('screenregions'\)/);
+  assert.equal(/^\s*\/\//m.test(swift), false);
+  assert.match(plugin, /override func load\(webview: WKWebView\) \{\s+ScreenRegions\.watch\(webview\)/);
 });

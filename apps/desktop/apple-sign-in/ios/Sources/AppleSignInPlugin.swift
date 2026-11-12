@@ -1,6 +1,7 @@
 import AuthenticationServices
 import Tauri
 import UIKit
+import WebKit
 
 class SignInRequest: Decodable {
   let nonce: String
@@ -75,6 +76,10 @@ class AppleSignInPlugin: Plugin, ASAuthorizationControllerDelegate, ASAuthorizat
   private var controller: ASAuthorizationController?
   private var sheet: ASWebAuthenticationSession?
   private var sheetInvoke: Invoke?
+
+  @objc public override func load(webview: WKWebView) {
+    ScreenRegions.watch(webview)
+  }
 
   @objc public func signIn(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SignInRequest.self)

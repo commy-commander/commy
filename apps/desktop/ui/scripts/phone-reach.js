@@ -1,5 +1,7 @@
 const REACH_NEVER = ":not(*)";
 const REACH_ZOOM = ["maximum-scale=1", "user-scalable=no"];
+const CORNER_BAND = 120;
+const CORNER_SHARE = 0.5;
 const REACH_TYPED = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 const REACH_FIELDS = [
   [/search/, { enterkeyhint: "search", autocapitalize: "none", autocorrect: "off" }],
@@ -57,12 +59,43 @@ function typedInto(target) {
   return Boolean(node && node.closest && node.closest(REACH_TYPED));
 }
 
+function cornerRoom(view) {
+  const width = Number(view && view.w) || 0;
+  const cleared = Number(view && view.top) || 0;
+  let room = 0;
+  for (const region of (view && view.regions) || []) {
+    const [x, y, w, h] = region.map(Number);
+    if (!(width > 0 && w > 0 && h > 0)) continue;
+    if (y + h <= cleared || y >= CORNER_BAND) continue;
+    if (x + w / 2 <= width / 2) continue;
+    const need = width - x;
+    if (need > width * CORNER_SHARE) continue;
+    room = Math.max(room, need);
+  }
+  return room;
+}
+
+function showCorner(view) {
+  const root = document.documentElement;
+  const room = cornerRoom(view);
+  if (!room) {
+    root.removeAttribute("data-corner");
+    root.style.removeProperty("--corner-room");
+    return;
+  }
+  root.setAttribute("data-corner", "right");
+  root.style.setProperty("--corner-room", `${Math.ceil(room * root.clientWidth / view.w)}px`);
+}
+
 function wirePhoneReach() {
   const root = document.documentElement;
   if (!root.classList.contains("mobile-app") && !document.body.classList.contains("mobile-app")) return;
   const view = document.querySelector('meta[name="viewport"]');
   if (view) view.setAttribute("content", lockedViewport(view.getAttribute("content")));
   for (const field of document.querySelectorAll("input[id], textarea[id]")) dressField(field);
+  showCorner(window.screenRegions);
+  window.addEventListener("screenregions", () => showCorner(window.screenRegions));
+  window.addEventListener("resize", () => showCorner(window.screenRegions));
   if (!touchOnly()) return;
   root.classList.add("touch-only");
   for (const sheet of document.styleSheets) dropHoverIn(sheet);
@@ -78,5 +111,5 @@ function wirePhoneReach() {
 if (typeof document !== "undefined" && typeof touchOnly === "function") wirePhoneReach();
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { REACH_NEVER, REACH_TYPED, REACH_FIELDS, hoverless, dropHover, lockedViewport, fieldHints, typedInto };
+  module.exports = { REACH_NEVER, REACH_TYPED, REACH_FIELDS, CORNER_BAND, hoverless, dropHover, lockedViewport, fieldHints, typedInto, cornerRoom };
 }

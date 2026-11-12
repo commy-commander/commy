@@ -62,3 +62,11 @@ html[data-look="studio"][data-fit="slim"] :is(.person-row, .kind-option, .templa
 html[data-look="studio"][data-fit="slim"] :is(.person-row, .kind-option, .template-tile, .prof-server, .pin-row, .channel.sidebar-link, .dm-thread.friend-request, label.setting-row):active { background-color: var(--bg-hover); transition: background-color 0s linear 60ms; }
 html[data-look="studio"][data-fit="slim"] :is(.thread-link, .eb-tone, .eb-rail-btn, .eb-emoji, .pin-unpin, .search-scope-btn, .game-chip-x, .events-tab, .discover-chip, .friend-yes, .signin-back, .btn-link, #mc-emoji, #pt-prof-emoji, #pt-presence, #thread-title:not(:disabled), #input-mode > button, #overview-icon, .hzn-voice .open) { transition: opacity 180ms var(--ease-out); }
 html[data-look="studio"][data-fit="slim"] :is(.thread-link, .eb-tone, .eb-rail-btn, .eb-emoji, .pin-unpin, .search-scope-btn, .game-chip-x, .events-tab, .discover-chip, .friend-yes, .signin-back, .btn-link, #mc-emoji, #pt-prof-emoji, #pt-presence, #thread-title:not(:disabled), #input-mode > button, #overview-icon, .hzn-voice .open):active { opacity: .55; transition: none; }
+
+html[data-look="studio"][data-fit="slim"][data-corner="right"] .app[data-pane="list"] .sidebar-header { padding-right: calc(46px + var(--corner-room)); }
+html[data-look="studio"][data-fit="slim"][data-corner="right"] .app.pt-switch[data-pane="list"] .sidebar-header { padding-right: calc(66px + var(--corner-room)); }
+html[data-look="studio"][data-fit="slim"][data-corner="right"] .app[data-pane="list"] > .sidebar > :is(.pt-find, .pt-compose) { translate: calc(-1 * var(--corner-room)) 0; }
+html[data-look="studio"][data-fit="slim"][data-corner="right"] .app[data-pane="list"][data-tab="messages"] .dm-search { margin-right: var(--corner-room); }
+html[data-look="studio"][data-fit="slim"][data-corner="right"] .acct { padding-right: calc(18px + var(--corner-room)); }
+html[data-look="studio"][data-fit="slim"][data-corner="right"] .acct .edit { translate: calc(-1 * var(--corner-room)) 0; }
+html[data-look="studio"][data-fit="slim"][data-corner="right"] .pt-profile .phd .save { margin-right: calc(2px + var(--corner-room)); }
