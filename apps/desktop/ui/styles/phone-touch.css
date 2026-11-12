@@ -1868,6 +1868,7 @@ html[data-look="studio"][data-fit="slim"] .app:is([data-pane="chat"], [data-pane
 html[data-look="studio"][data-fit="slim"] .app[data-pane="people"] > :is(#member-list, .dm-profile) { margin: 0 8px 8px; }
 html[data-look="studio"][data-fit="slim"] body { letter-spacing: -.003em; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main { z-index: 0; background: none; border: 0; border-radius: 0; box-shadow: none; }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"].pt-chat-menu > .main { z-index: auto; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane::before {
   content: "";
   position: absolute;
@@ -2632,6 +2633,7 @@ html[data-look="studio"][data-fit="slim"]:not([data-theme="light"]) .pt-reply-cu
 html[data-look="studio"][data-fit="slim"] .pt-reply-cue.ready .rk,
 html[data-look="studio"][data-fit="slim"]:not([data-theme="light"]) .pt-reply-cue.ready .rk { background: var(--swipe-done); color: var(--accent-ink); scale: 1; }
 html[data-look="studio"][data-fit="slim"] .pt-reply-cue.used .rk { scale: 1; }
+html[data-look="studio"][data-fit="slim"] .pt-reply-cue.left .rk { left: auto; right: 10px; }
 html[data-look="studio"][data-fit="slim"] .pt-reply-cue .i { width: 20px; height: 20px; }
 html[data-look="studio"][data-fit="slim"] .messages { position: relative; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] .msg.pt-railed {

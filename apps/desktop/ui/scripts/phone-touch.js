@@ -170,11 +170,11 @@ function listLabel(typed) {
   return typed.replace(/ ([A-Z])(?=[a-z])/g, (_, letter) => " " + letter.toLowerCase());
 }
 
-const SWIPE = { slop: 10, lean: 1.2, edgeLean: 0.6, replyAt: 56, replyMax: 84, edge: 30, rowOpen: 112, rowAt: 60, rowFlick: 0.45, rowFlickAt: 24, sheetAt: 72, chipAfterMs: 110 };
+const SWIPE = { slop: 10, lean: 1.2, edgeLean: 0.6, scrollSlop: 4, replyAt: 56, replyMax: 84, edge: 30, rowOpen: 112, rowAt: 60, rowFlick: 0.45, rowFlickAt: 24, sheetAt: 72, chipAfterMs: 110 };
 const TRAY_PULL = 40;
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
-  "Reply": { label: "Reply", icon: "reply", hint: "or swipe the message right" },
+  "Reply": { label: "Reply", icon: "reply", hint: "or swipe the message" },
   "Open Thread": { label: "Open thread", icon: "message-square-text" },
   "Pin": { label: "Pin to channel", icon: "pin" },
   "Unpin": { label: "Unpin", icon: "pin" },
@@ -201,12 +201,12 @@ function swipeAxis(dx, dy, lean = SWIPE.lean) {
 }
 
 function replyPull(dx) {
-  if (!(dx > 0)) return 0;
-  return Math.min(SWIPE.replyMax, dx);
+  if (!Number.isFinite(dx)) return dx > 0 ? SWIPE.replyMax : dx < 0 ? -SWIPE.replyMax : 0;
+  return Math.max(-SWIPE.replyMax, Math.min(SWIPE.replyMax, dx));
 }
 
 function replyCommits(dx) {
-  return dx >= SWIPE.replyAt;
+  return Math.abs(dx) >= SWIPE.replyAt;
 }
 
 function edgeBackStarts(x) {

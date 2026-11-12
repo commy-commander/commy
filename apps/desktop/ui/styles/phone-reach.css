@@ -4,6 +4,8 @@ html[data-look="studio"][data-fit="slim"] #modal-delete-message .setting-sub { d
 html[data-look="studio"][data-fit="slim"] :is(.people-list, .pins-list, .discover-body, .forum-list, .events-list, .member-scroll, .dm-list) { overscroll-behavior-y: contain; }
 html[data-look="studio"][data-fit="slim"] :is(.search-scope, .discover-chips, .events-tabs) { overscroll-behavior-x: contain; }
 html[data-look="studio"][data-fit="slim"].touch-only :is(img, a, .channel, .server-icon, .folder-head, .channel-group) { -webkit-user-drag: none; }
+html[data-look="studio"][data-fit="slim"].touch-only :is(body, body *) { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+html[data-look="studio"][data-fit="slim"].touch-only :is(input, textarea, select, [contenteditable]:not([contenteditable="false"]), [contenteditable]:not([contenteditable="false"]) *) { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 
 html[data-look="studio"][data-fit="slim"] .main > .composer :is(#text-style-btn, #gif-btn) > .pt-fk::before { content: ""; position: absolute; inset: -8px 0 -8px -10px; }
 html[data-look="studio"][data-fit="slim"] .main > .composer #gif-btn > .pt-fk::before { inset: -8px -8px -8px 0; }

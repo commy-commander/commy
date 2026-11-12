@@ -114,9 +114,11 @@ html[data-look="studio"][data-fit="slim"] .startup-bar {
 }
 html[data-look="studio"][data-fit="slim"] .startup-fill { border-radius: inherit; }
 html[data-look="studio"][data-fit="slim"] .startup-skip {
+  position: relative;
+  align-self: start;
   width: 100%;
   height: 50px;
-  margin: 16px 0 0;
+  margin: 26px 0 0;
   padding: 0 20px;
   border: 0;
   border-radius: var(--radius-pill);
@@ -126,6 +128,8 @@ html[data-look="studio"][data-fit="slim"] .startup-skip {
   font: 600 16px/1 var(--font);
   transition: scale var(--t-hover) var(--ease-spring);
 }
+html[data-look="studio"][data-fit="slim"] .startup-card:has(> .startup-skip.shown) > .startup-steps { padding-bottom: 80px; }
+html[data-look="studio"][data-fit="slim"] .startup-card:has(> .startup-skip.shown) > .startup-skip { width: calc(100% - 36px); margin-top: -66px; }
 html[data-look="studio"][data-fit="slim"] .startup-skip:active { scale: .98 .97; transition-duration: var(--t-press); }
 html[data-look="studio"][data-fit="slim"] .offline-chip {
   top: calc(env(safe-area-inset-top) + 8px);

@@ -186,14 +186,24 @@ test("a pull from the screen edge may wander more before it stops counting as go
   assert.equal(swipeAxis(14, 14, SWIPE.edgeLean), "x");
   assert.equal(swipeAxis(12, 18, SWIPE.edgeLean), "x");
   assert.equal(swipeAxis(8, 30, SWIPE.edgeLean), "y");
-  assert.match(glue, /swipe\.axis = swipeAxis\(dx, dy, swipe\.kind === "back" \? SWIPE\.edgeLean : SWIPE\.lean\);/);
+  assert.match(glue, /swipe\.axis = swipeAxis\(dx, dy, swipe\.kind === "back" && !swipe\.wide \? SWIPE\.edgeLean : SWIPE\.lean\);/);
 });
 
-test("pulling a message right follows the finger to 84 px and replies past 56", () => {
+test("pulling a message to either side follows the finger to 84 px and replies past 56", () => {
   assert.equal(SWIPE.replyAt, 56);
   assert.equal(SWIPE.replyMax, 84);
-  assert.equal(replyPull(-20), 0);
+  assert.equal(replyPull(-20), -20);
+  assert.equal(replyPull(-70), -70);
+  assert.equal(replyPull(-900), -SWIPE.replyMax);
+  assert.equal(replyPull(0), 0);
   assert.equal(replyPull(NaN), 0);
+  assert.equal(replyCommits(-(SWIPE.replyAt - 1)), false);
+  assert.equal(replyCommits(-SWIPE.replyAt), true);
+  assert.equal(SHEET_ROWS.Reply.hint, "or swipe the message");
+  assert.match(glue, /\(swipe\.axis === along\(\) && pull < 0 && !swipe\.wasOpen && !swipe\.up && swipe\.kind !== "reply"\)/);
+  assert.match(glue, /cue\.classList\.toggle\("left", dx < 0\);/);
+  assert.match(glue, /const sends = !cancelled && swipeSettles\(Math\.abs\(dx\), dx < 0 \? -speed : speed, SWIPE\.replyAt\);/);
+  assert.match(read("styles", "phone-touch.css"), /^html\[data-look="studio"\]\[data-fit="slim"\] \.pt-reply-cue\.left \.rk \{ left: auto; right: 10px; \}$/m);
   assert.equal(replyPull(30), 30);
   assert.equal(replyPull(SWIPE.replyAt), SWIPE.replyAt);
   assert.equal(replyPull(70), 70);

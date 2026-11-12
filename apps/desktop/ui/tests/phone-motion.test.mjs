@@ -150,7 +150,10 @@ test("swipes paint once a frame, read the finger's speed, and let the system scr
   assert.match(glue, /if \(!frame\) frame = requestAnimationFrame\(paint\);/);
   assert.match(glue, /swipe\.samples = keepSamples\(swipe\.samples, \{ t: e\.timeStamp, x: touch\.clientX, y: touch\.clientY \}\);/);
   assert.match(glue, /const speed = dragSpeed\(swipe\.samples, at\);/);
-  assert.match(glue, /document\.addEventListener\("scroll", \(\) => \{\n\s+if \(swipe && !swipe\.axis\) swipe = null;\n\s+\}, \{ capture: true, passive: true \}\);/);
+  assert.match(glue, /document\.addEventListener\("scroll", e => \{\n\s+if \(swipe && !swipe\.axis && scrolledAway\(swipe\.tops, e\.target\)\) swipe = null;\n\s+\}, \{ capture: true, passive: true \}\);/);
+  assert.match(glue, /tops: scrollersAround\(e\.target\),/);
+  assert.match(glue, /if \(node\.scrollHeight > node\.clientHeight \+ 1\) tops\.set\(node, node\.scrollTop\);/);
+  assert.match(glue, /return Boolean\(node && tops\.has\(node\) && Math\.abs\(node\.scrollTop - tops\.get\(node\)\) > SWIPE\.scrollSlop\);/);
   assert.match(rule(' .app[data-pane="chat"] :is(.messages, .thread-messages)'), /touch-action: pan-y;/);
   assert.match(rule(" :is(.pt-hold, .pt-scrim)"), /touch-action: none;/);
   assert.match(rule(" :is(.pt-pick, .pt-pick-step, .ctx-menu, .composer-menu, .member-card > .mc-body, .pt-search-body)"), /overscroll-behavior: none;/);
@@ -229,14 +232,18 @@ test("every sheet rises the same way, follows the finger and falls when it close
   assert.match(glue, /else if \(sheet\.id === "pt-voice-sheet"\) closeVoiceOptions\(\);/);
 });
 
-test("Settings and Events push in from the right and go back with a swipe from the left edge", () => {
+test("Settings and Events push in from the right and go back with a swipe to the right", () => {
   assert.match(rule(" :is(.settings-layer, #events-layer)"), /animation: pt-push-in 300ms var\(--ease-settle\);/);
   assert.match(rule(" .settings-layer > .settings-content"), /animation: pt-push-in 300ms var\(--ease-settle\);/);
   assert.match(rule(" :is(.settings-layer, #events-layer, .settings-layer > .settings-content).pt-dragging"), /transition: none;/);
   assert.match(rule(" .settings-layer.pt-page-back > .settings-content"), /z-index: 2; display: flex;/);
   assert.match(css, /:is\(\.settings-layer, #events-layer\)\.hidden \{ translate: 100% 0; pointer-events: none; transition: translate 240ms var\(--ease-out\), display 240ms allow-discrete; \}/);
   assert.match(glue, /const STUDIO_PAGE_LAYERS = \["user-settings", "server-settings", "channel-settings", "events-layer"\];/);
-  assert.match(glue, /if \(floatingOpen\(\)\) return null;\n  const layer = openPageLayer\(\);\n  if \(layer\) return edgeBackStarts\(touch\.clientX\) && !sheetOpen\(\) \? \{ kind: "back", \.\.\.pageLayerBack\(layer\) \} : null;/);
+  assert.match(glue, /if \(floatingOpen\(\)\) return null;\n  const layer = openPageLayer\(\);\n  if \(layer\) \{\n    const edge = edgeBackStarts\(touch\.clientX\);\n    return !sheetOpen\(\) && \(edge \|\| !slidesSideways\(target, layer\)\) \? \{ kind: "back", wide: !edge, \.\.\.pageLayerBack\(layer\) \} : null;\n  \}/);
+  assert.match(glue, /const STUDIO_SIDEWAYS = 'canvas, \[draggable="true"\], \[role="slider"\], \.overlay-map, #sound-trim';/);
+  assert.match(glue, /if \(node\.scrollWidth > node\.clientWidth \+ 1 && \/auto\|scroll\/\.test\(getComputedStyle\(node\)\.overflowX\)\) return true;/);
+  assert.match(glue, /return \[\.\.\.document\.querySelectorAll\(STUDIO_FLOATING\)\]\.some\(node => node\.getClientRects\(\)\.length > 0\);/);
+  assert.match(rule(" :is(.settings-layer, #events-layer, .settings-nav-inner, .settings-content-inner, #events-body)"), /touch-action: pan-y;/);
   assert.match(glue, /if \(layer\.id === "events-layer"\) return \{ node: layer, then: \(\) => \$\("events-close"\)\.click\(\) \};/);
   assert.match(glue, /return \{ node: layer, then: \(\) => layer\.querySelector\("\.settings-phone-close"\)\.click\(\) \};/);
   assert.match(glue, /if \(swipe\.then\) return slideAway\(node, left, speed, swipe\.then\);/);
@@ -293,4 +300,16 @@ test("the picture viewer takes a pinch, a double tap, a pull down and an edge sw
   assert.match(rule(" #lightbox:not(.hidden)"), /animation: pt-scrim-in 200ms var\(--ease-out\);/);
   assert.match(css, /#lightbox\.hidden > #lightbox-img \{ visibility: hidden; \}/);
   assert.match(glue, /const STUDIO_FLOATING = "\.modal-backdrop:not\(\.hidden\), \.pop-menu:not\(\.hidden\), #emoji-pop:not\(\.hidden\), #member-card:not\(\.hidden\), #lightbox:not\(\.hidden\)";/);
+});
+
+test("a settings layer that is already open is refreshed where it stands, with no new history step", () => {
+  const app = read("scripts", "app.js");
+  assert.match(app, /const shown = layer\.classList\.contains\("hidden"\) \? null : \{ view: layer\.dataset\.phoneView, tab: layer\.dataset\.tab \};/);
+  assert.match(app, /for \(const other of document\.querySelectorAll\("\.settings-layer"\)\) if \(other !== layer\) other\.classList\.add\("hidden"\);/);
+  assert.match(app, /if \(!shown\) history\.pushState\(\{ pane: phonePane\(\), settings: true \}, ""\);\n  else if \(shown\.view === "menu" && shown\.tab === tab\) settingsPhoneView\(layer, "menu"\);/);
+});
+
+test("the chat menu sheet sits above its scrim, so its rows are bright and can be tapped", () => {
+  const touch = read("styles", "phone-touch.css");
+  assert.match(touch, /^html\[data-look="studio"\]\[data-fit="slim"\] \.app\[data-pane="chat"\]\.pt-chat-menu > \.main \{ z-index: auto; \}$/m);
 });

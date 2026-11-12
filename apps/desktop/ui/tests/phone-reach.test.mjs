@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { REACH_NEVER, REACH_FIELDS, hoverless, dropHover, lockedViewport, fieldHints } = require("../scripts/phone-reach.js");
+const { REACH_NEVER, REACH_TYPED, REACH_FIELDS, hoverless, dropHover, lockedViewport, fieldHints, typedInto } = require("../scripts/phone-reach.js");
 const { touchOnly } = require("../scripts/phone-motion.js");
 
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -127,4 +127,23 @@ test("lists inside sheets and pages keep their scroll to themselves", () => {
 
 test("a tip that only works with a keyboard is not shown on the phone", () => {
   assert.match(rule(" #modal-delete-message .setting-sub"), /display: none;/);
+});
+
+test("holding a finger down never selects text, except where you type", () => {
+  assert.match(rule(".touch-only :is(body, body *)"), /-webkit-user-select: none; user-select: none; -webkit-touch-callout: none;/);
+  assert.match(rule('.touch-only :is(input, textarea, select, [contenteditable]:not([contenteditable="false"]), [contenteditable]:not([contenteditable="false"]) *)'), /-webkit-user-select: text; user-select: text; -webkit-touch-callout: default;/);
+  assert.match(code, /document\.addEventListener\("selectstart", e => \{\n    if \(!typedInto\(e\.target\)\) e\.preventDefault\(\);\n  \}, true\);/);
+  const field = { nodeType: 1, closest: selector => (selector === REACH_TYPED ? field : null) };
+  const words = { nodeType: 1, closest: () => null };
+  assert.equal(typedInto(field), true);
+  assert.equal(typedInto({ nodeType: 3, parentElement: field }), true);
+  assert.equal(typedInto(words), false);
+  assert.equal(typedInto({ nodeType: 3, parentElement: words }), false);
+  assert.equal(typedInto(null), false);
+});
+
+test("empty lists tell you to hold a message on the phone and to hover it with a mouse", () => {
+  assert.match(app, /function messageReach\(\) \{\n  return typeof touchOnly === "function" && touchOnly\(\) \? "Hold" : "Hover";\n\}/);
+  assert.equal((app.match(/`\$\{messageReach\(\)\} a message and choose /g) || []).length, 3);
+  assert.equal(/"Hover a message/.test(app), false);
 });

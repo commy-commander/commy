@@ -26,6 +26,7 @@ html[data-look="studio"][data-fit="slim"][data-move="pop-in"] .app > :is(.rail, 
 
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] :is(.messages, .thread-messages) { touch-action: pan-y; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel-scroll { touch-action: pan-y; }
+html[data-look="studio"][data-fit="slim"] :is(.settings-layer, #events-layer, .settings-nav-inner, .settings-content-inner, #events-body) { touch-action: pan-y; }
 html[data-look="studio"][data-fit="slim"] :is(.pt-hold, .pt-scrim) { touch-action: none; }
 html[data-look="studio"][data-fit="slim"] :is(.pt-pick, .pt-pick-step, .ctx-menu, .composer-menu, .member-card > .mc-body, .pt-search-body) { overscroll-behavior: none; }
 html[data-look="studio"][data-fit="slim"] :is(.main, .pt-profile, .thread-panel, .msg, .channel, .pt-hold, .pt-pick, .pt-search).pt-dragging { will-change: translate; }

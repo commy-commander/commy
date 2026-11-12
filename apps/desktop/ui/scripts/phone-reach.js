@@ -1,5 +1,6 @@
 const REACH_NEVER = ":not(*)";
 const REACH_ZOOM = ["maximum-scale=1", "user-scalable=no"];
+const REACH_TYPED = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 const REACH_FIELDS = [
   [/search/, { enterkeyhint: "search", autocapitalize: "none", autocorrect: "off" }],
   [/^(username-input|add-friend-username|entry-code|entry-code-input|invite-custom-name|template-code-input|activity-link-input)$/, { enterkeyhint: "done", autocapitalize: "none", autocorrect: "off", spellcheck: "false" }],
@@ -50,6 +51,11 @@ function dressField(field) {
   for (const [name, value] of Object.entries(fieldHints(field.id))) if (!field.hasAttribute(name)) field.setAttribute(name, value);
 }
 
+function typedInto(target) {
+  const node = target && target.nodeType === 3 ? target.parentElement : target;
+  return Boolean(node && node.closest && node.closest(REACH_TYPED));
+}
+
 function wirePhoneReach() {
   const root = document.documentElement;
   if (!root.classList.contains("mobile-app") && !document.body.classList.contains("mobile-app")) return;
@@ -63,10 +69,13 @@ function wirePhoneReach() {
     if (e.target && e.target.tagName === "LINK") dropHoverIn(e.target.sheet);
   }, true);
   document.addEventListener("dragstart", e => e.preventDefault(), true);
+  document.addEventListener("selectstart", e => {
+    if (!typedInto(e.target)) e.preventDefault();
+  }, true);
 }
 
 if (typeof document !== "undefined" && typeof touchOnly === "function") wirePhoneReach();
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { REACH_NEVER, REACH_FIELDS, hoverless, dropHover, lockedViewport, fieldHints };
+  module.exports = { REACH_NEVER, REACH_TYPED, REACH_FIELDS, hoverless, dropHover, lockedViewport, fieldHints, typedInto };
 }

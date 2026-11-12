@@ -2008,8 +2008,31 @@ function openPageLayer() {
   return STUDIO_PAGE_LAYERS.map(id => $(id)).find(layer => layer && !layer.classList.contains("hidden")) || null;
 }
 
+const STUDIO_SIDEWAYS = 'canvas, [draggable="true"], [role="slider"], .overlay-map, #sound-trim';
+
 function floatingOpen() {
-  return Boolean(document.querySelector(STUDIO_FLOATING));
+  return [...document.querySelectorAll(STUDIO_FLOATING)].some(node => node.getClientRects().length > 0);
+}
+
+function slidesSideways(target, within) {
+  for (let node = target; node && node !== within; node = node.parentElement) {
+    if (node.matches(STUDIO_SIDEWAYS)) return true;
+    if (node.scrollWidth > node.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(node).overflowX)) return true;
+  }
+  return false;
+}
+
+function scrollersAround(target) {
+  const tops = new Map();
+  for (let node = target; node && node.nodeType === 1; node = node.parentElement) {
+    if (node.scrollHeight > node.clientHeight + 1) tops.set(node, node.scrollTop);
+  }
+  return tops;
+}
+
+function scrolledAway(tops, scroller) {
+  const node = scroller === document ? document.scrollingElement : scroller;
+  return Boolean(node && tops.has(node) && Math.abs(node.scrollTop - tops.get(node)) > SWIPE.scrollSlop);
 }
 
 function settingsPageBack(layer) {
@@ -2051,7 +2074,10 @@ function swipeTarget(e) {
   const touch = e.touches[0];
   if (floatingOpen()) return null;
   const layer = openPageLayer();
-  if (layer) return edgeBackStarts(touch.clientX) && !sheetOpen() ? { kind: "back", ...pageLayerBack(layer) } : null;
+  if (layer) {
+    const edge = edgeBackStarts(touch.clientX);
+    return !sheetOpen() && (edge || !slidesSideways(target, layer)) ? { kind: "back", wide: !edge, ...pageLayerBack(layer) } : null;
+  }
   const pane = phonePane();
   if (profileOpen()) return edgeBackStarts(touch.clientX) && !sheetOpen() ? { kind: "back", node: $("pt-profile"), profile: true } : null;
   if (pane === "chat" && studioPhone.threadStep && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: $("thread-panel"), thread: true };
@@ -2081,6 +2107,7 @@ function paintSwipe(swipe, dx) {
       cue.classList.add("on");
     }
     node.style.translate = `${replyPull(dx)}px 0`;
+    cue.classList.toggle("left", dx < 0);
     cue.classList.toggle("ready", replyCommits(dx));
     if (replyCommits(dx)) cue.classList.add("used");
   } else if (swipe.kind === "row") {
@@ -2095,7 +2122,7 @@ function paintSwipe(swipe, dx) {
 function stowReplyRail(node) {
   const cue = $("pt-reply-cue");
   node.classList.remove("pt-railed", "pt-lifted");
-  cue.classList.remove("on", "ready", "out", "used");
+  cue.classList.remove("on", "ready", "out", "used", "left");
   if (cue.parentNode !== $("app")) $("app").appendChild(cue);
 }
 
@@ -2156,7 +2183,7 @@ function endSwipe(swipe, dx, cancelled, speed = 0) {
     clearTimeout(studioPhone.railTimer);
     const cue = $("pt-reply-cue");
     const wait = ms => (studioPhone.calm ? 0 : ms);
-    const sends = !cancelled && swipeSettles(dx, speed, SWIPE.replyAt);
+    const sends = !cancelled && swipeSettles(Math.abs(dx), dx < 0 ? -speed : speed, SWIPE.replyAt);
     if (sends) cue.classList.add("ready", "used");
     studioPhone.railTimer = setTimeout(() => {
       cue.classList.remove("ready");
@@ -2227,7 +2254,7 @@ function wireSwipes() {
     const found = swipeTarget(e);
     if (!found) return;
     const touch = e.touches[0];
-    swipe = { ...found, x: touch.clientX, y: touch.clientY, axis: null, dx: 0, from: 0, samples: [{ t: e.timeStamp, x: touch.clientX, y: touch.clientY }] };
+    swipe = { ...found, x: touch.clientX, y: touch.clientY, axis: null, dx: 0, from: 0, tops: scrollersAround(e.target), samples: [{ t: e.timeStamp, x: touch.clientX, y: touch.clientY }] };
   }, { passive: true });
   document.addEventListener("touchmove", e => {
     const touch = e.touches[0];
@@ -2236,8 +2263,8 @@ function wireSwipes() {
     const dy = touch.clientY - swipe.y;
     const pull = along() === "y" ? dy : dx;
     if (!swipe.axis) {
-      swipe.axis = swipeAxis(dx, dy, swipe.kind === "back" ? SWIPE.edgeLean : SWIPE.lean);
-      if ((swipe.axis && swipe.axis !== along()) || (swipe.axis === along() && pull < 0 && !swipe.wasOpen && !swipe.up)) {
+      swipe.axis = swipeAxis(dx, dy, swipe.kind === "back" && !swipe.wide ? SWIPE.edgeLean : SWIPE.lean);
+      if ((swipe.axis && swipe.axis !== along()) || (swipe.axis === along() && pull < 0 && !swipe.wasOpen && !swipe.up && swipe.kind !== "reply")) {
         swipe = null;
         return;
       }
@@ -2256,8 +2283,8 @@ function wireSwipes() {
   }, { passive: false });
   document.addEventListener("touchend", e => finish(false, e.timeStamp), { passive: true });
   document.addEventListener("touchcancel", e => finish(true, e.timeStamp), { passive: true });
-  document.addEventListener("scroll", () => {
-    if (swipe && !swipe.axis) swipe = null;
+  document.addEventListener("scroll", e => {
+    if (swipe && !swipe.axis && scrolledAway(swipe.tops, e.target)) swipe = null;
   }, { capture: true, passive: true });
   document.addEventListener("click", e => {
     if (!studioSlim() || !e.isTrusted) return;

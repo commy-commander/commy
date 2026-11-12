@@ -2222,11 +2222,15 @@ function setVoiceStatus(node, name, title) {
 
 function openSettingsLayer(id, tab) {
   hideModals();
-  for (const layer of document.querySelectorAll(".settings-layer")) layer.classList.add("hidden");
-  $(id).classList.remove("hidden");
+  const layer = $(id);
+  const shown = layer.classList.contains("hidden") ? null : { view: layer.dataset.phoneView, tab: layer.dataset.tab };
+  for (const other of document.querySelectorAll(".settings-layer")) if (other !== layer) other.classList.add("hidden");
+  layer.classList.remove("hidden");
   selectSettingsTab(id, tab);
-  for (const range of $(id).querySelectorAll('input[type="range"]')) syncRangeFill(range);
-  if (isPhoneWidth(window.innerWidth)) history.pushState({ pane: phonePane(), settings: true }, "");
+  for (const range of layer.querySelectorAll('input[type="range"]')) syncRangeFill(range);
+  if (!isPhoneWidth(window.innerWidth)) return;
+  if (!shown) history.pushState({ pane: phonePane(), settings: true }, "");
+  else if (shown.view === "menu" && shown.tab === tab) settingsPhoneView(layer, "menu");
 }
 
 function syncRangeFill(range) {
@@ -9357,7 +9361,7 @@ function pinsEmptyState() {
   empty.appendChild(mark);
   empty.appendChild(el("strong", null, "No pinned messages yet"));
   const hint = canPinIn(state.currentServer, state.currentChannel)
-    ? "Hover a message and choose Pin to keep it here for everyone."
+    ? `${messageReach()} a message and choose Pin to keep it here for everyone.`
     : "Members who can pin messages keep the important ones here.";
   empty.appendChild(el("span", null, hint));
   return empty;
@@ -10359,7 +10363,7 @@ function threadsEmptyState() {
   mark.appendChild(svgIcon("thread", 26));
   empty.appendChild(mark);
   empty.appendChild(el("strong", null, "No threads yet"));
-  empty.appendChild(el("span", null, "Hover a message and choose Open Thread to start one."));
+  empty.appendChild(el("span", null, `${messageReach()} a message and choose Open Thread to start one.`));
   return empty;
 }
 
@@ -17416,7 +17420,7 @@ function savedEmptyState() {
   mark.appendChild(svgIcon("bookmark", 26));
   empty.appendChild(mark);
   empty.appendChild(el("strong", null, "Nothing saved yet"));
-  empty.appendChild(el("span", null, "Hover a message and choose Save to keep it here, or Remind Me to hear about it later. Saved messages stay on this device."));
+  empty.appendChild(el("span", null, `${messageReach()} a message and choose Save to keep it here, or Remind Me to hear about it later. Saved messages stay on this device.`));
   return empty;
 }
 
@@ -19435,6 +19439,10 @@ function wireTouchMessages() {
     }
     if (msg) msg.classList.toggle("touched");
   });
+}
+
+function messageReach() {
+  return typeof touchOnly === "function" && touchOnly() ? "Hold" : "Hover";
 }
 
 function wireLongPressMenus() {

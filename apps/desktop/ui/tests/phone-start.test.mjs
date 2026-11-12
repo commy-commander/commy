@@ -53,3 +53,9 @@ test("each step shows its state with a mark, and the waiting mark holds still fo
   assert.match(rule(' #startup.offline #startup-connection[data-state="failed"] .startup-mark'), /background: var\(--accent-2\);\n  color: var\(--accent-2-ink\);/);
   assert.ok(css.includes(`@media (prefers-reduced-motion: reduce) {\n  ${SLIM} .startup-step[data-state="working"] .startup-mark { animation: none; }\n}`));
 });
+
+test("the key that opens Commy early sits inside the card of steps, and the card does not jump when it arrives", () => {
+  assert.match(rule(" .startup-skip"), /position: relative;\n  align-self: start;\n  width: 100%;\n  height: 50px;\n  margin: 26px 0 0;/);
+  assert.match(rule(" .startup-card:has(> .startup-skip.shown) > .startup-steps"), /padding-bottom: 80px;/);
+  assert.match(rule(" .startup-card:has(> .startup-skip.shown) > .startup-skip"), /width: calc\(100% - 36px\); margin-top: -66px;/);
+});
