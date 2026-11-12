@@ -326,6 +326,7 @@ html[data-look="studio"] .avatar.has-border { position: relative; }
 html[data-look="studio"] .avatar > .avatar-border {
   --bw: 2.5px;
   --ring: var(--cream);
+  --play: paused;
   position: absolute;
   inset: -5px;
   box-sizing: border-box;
@@ -336,16 +337,21 @@ html[data-look="studio"] .avatar > .avatar-border {
   animation: none;
   pointer-events: none;
 }
+html[data-look="studio"] .avatar-lg > .avatar-border,
+html[data-look="studio"] .avatar-xl > .avatar-border,
+html[data-look="studio"] .mc-head .avatar > .avatar-border,
+html[data-look="studio"] #pt-prof-av .avatar > .avatar-border,
+html[data-look="studio"] .pt-profile .look.on .avatar > .avatar-border,
+html[data-look="studio"] .look-option:hover .avatar > .avatar-border,
+html[data-look="studio"] .look-option:focus-visible .avatar > .avatar-border { --play: running; }
 html[data-look="studio"] .avatar > .avatar-border::before {
   content: "";
   position: absolute;
   inset: 0;
-  padding: var(--bw);
   border-radius: 50%;
   background: var(--ring);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - var(--bw) - .4px), #000 calc(100% - var(--bw) + .4px));
+  mask: radial-gradient(closest-side, transparent calc(100% - var(--bw) - .4px), #000 calc(100% - var(--bw) + .4px));
   pointer-events: none;
 }
 html[data-look="studio"] .avatar > .ab-double { --bw: 1.5px; inset: -7px; }
@@ -359,29 +365,66 @@ html[data-look="studio"] .avatar > .ab-double::after {
 }
 html[data-look="studio"] .avatar > .ab-sunset { --ring: conic-gradient(var(--accent-2), var(--tx-orange), var(--tx-pink), var(--tx-purple), var(--accent-2)); }
 html[data-look="studio"] .avatar > .ab-ocean { --ring: conic-gradient(var(--tx-teal), var(--accent-lit), var(--tx-blue), var(--tx-green), var(--tx-teal)); }
-html[data-look="studio"] .avatar > .ab-neon { --ring: var(--tx-pink); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--tx-pink) 80%, transparent)); }
+html[data-look="studio"] .avatar > .ab-sunset,
+html[data-look="studio"] .avatar > .ab-ocean,
+html[data-look="studio"] .avatar > .ab-prism { animation: ab-turn 16s linear infinite var(--play); }
+html[data-look="studio"] .avatar > .ab-ocean { animation-duration: 20s; animation-direction: reverse; }
+html[data-look="studio"] .avatar > .ab-neon { --ring: var(--tx-pink); }
+html[data-look="studio"] .avatar > .ab-neon::after,
+html[data-look="studio"] .avatar > .ab-halo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 7px 1px color-mix(in srgb, var(--ring) 75%, transparent), inset 0 0 5px color-mix(in srgb, var(--ring) 60%, transparent);
+  animation: ab-glow 3.4s ease-in-out infinite var(--play);
+  pointer-events: none;
+}
 html[data-look="studio"] .avatar > .ab-stars { --ring: var(--tx-yellow); --bw: 1.5px; }
 html[data-look="studio"] .avatar > .ab-leaves { --ring: var(--tx-green); --bw: 1.5px; }
+html[data-look="studio"] .avatar > .ab-orbit { animation: ab-turn 12s linear infinite var(--play); }
 html[data-look="studio"] .avatar > .ab-orbit::before {
-  padding: 0;
+  box-sizing: border-box;
   border: 1.5px dashed color-mix(in srgb, var(--cream) 60%, transparent);
   background: none;
   -webkit-mask: none;
   mask: none;
 }
+html[data-look="studio"] .avatar > .ab-halo { --ring: var(--tx-yellow); --bw: 2px; }
+html[data-look="studio"] .avatar > .ab-halo::after {
+  inset: -1px;
+  box-shadow: 0 0 11px 2px color-mix(in srgb, var(--ring) 62%, transparent), inset 0 0 7px color-mix(in srgb, var(--ring) 48%, transparent);
+  animation-duration: 4.6s;
+}
+html[data-look="studio"] .avatar > .ab-comet {
+  --ring: conic-gradient(transparent 0 30%, color-mix(in srgb, var(--cream) 34%, transparent) 64%, var(--cream));
+  animation: ab-turn 5.5s linear infinite var(--play);
+}
+html[data-look="studio"] .avatar > .ab-eclipse {
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--tx-yellow) 55%, transparent));
+  animation: ab-turn 28s linear infinite var(--play);
+}
+html[data-look="studio"] .avatar > .ab-eclipse::before {
+  background: linear-gradient(215deg, var(--cream), var(--tx-yellow) 70%);
+  -webkit-mask: radial-gradient(circle closest-side at calc(50% + 1.4px) calc(50% - 1.4px), transparent calc(100% - 1.9px), #000 calc(100% - 1.3px));
+  mask: radial-gradient(circle closest-side at calc(50% + 1.4px) calc(50% - 1.4px), transparent calc(100% - 1.9px), #000 calc(100% - 1.3px));
+}
+html[data-look="studio"] .avatar > .ab-ripple { --ring: var(--tx-teal); --bw: 2px; }
+html[data-look="studio"] .avatar > .ab-prism { --ring: conic-gradient(var(--tx-yellow) 0 50deg, transparent 50deg 60deg, var(--tx-orange) 60deg 110deg, transparent 110deg 120deg, var(--tx-pink) 120deg 170deg, transparent 170deg 180deg, var(--tx-purple) 180deg 230deg, transparent 230deg 240deg, var(--tx-blue) 240deg 290deg, transparent 290deg 300deg, var(--tx-teal) 300deg 350deg, transparent 350deg); --bw: 3px; animation-duration: 24s; }
 html[data-look="studio"] .avatar-border .ab-o {
   position: absolute;
   z-index: 1;
   top: var(--y);
   left: var(--x);
-  width: 15%;
-  height: 15%;
+  width: calc(15% * var(--z, 1));
+  height: calc(15% * var(--z, 1));
   min-width: 7px;
   min-height: 7px;
   translate: -50% -50%;
   rotate: var(--r);
 }
 html[data-look="studio"] .avatar-border .ab-o svg { display: block; width: 100%; height: 100%; fill: var(--tx-yellow); }
+html[data-look="studio"] .ab-stars .ab-o { animation: ab-twinkle 3.8s ease-in-out calc(var(--d) * 1s) infinite var(--play); }
 html[data-look="studio"] .ab-leaves .ab-o svg { fill: var(--tx-green); }
 html[data-look="studio"] .ab-leaves .ab-o.b svg { fill: var(--green); }
 html[data-look="studio"] .avatar-border .ab-orbit-dot {
@@ -399,6 +442,81 @@ html[data-look="studio"] .avatar-border .ab-orbit-dot {
   background: var(--accent-lit);
   box-shadow: 0 0 0 2px var(--bg-dark);
 }
+html[data-look="studio"] .avatar-border .ab-head {
+  position: absolute;
+  top: calc(var(--bw) / 2);
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: var(--cream);
+  box-shadow: 0 0 6px 1.5px color-mix(in srgb, var(--cream) 70%, transparent);
+}
+html[data-look="studio"] .avatar-border .ab-wave {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--tx-teal);
+  animation: ab-wave 3.6s ease-out -1.1s infinite var(--play);
+}
+html[data-look="studio"] .avatar-border .ab-wave.b { animation-delay: -2.9s; }
+html[data-look="studio"] .avatar > .ab-bloom,
+html[data-look="studio"] .avatar > .ab-frost,
+html[data-look="studio"] .avatar > .ab-dial { inset: -13%; }
+html[data-look="studio"] .avatar > .ab-bloom::before,
+html[data-look="studio"] .avatar > .ab-frost::before,
+html[data-look="studio"] .avatar > .ab-dial::before { content: none; }
+html[data-look="studio"] .avatar-border .ab-art {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+html[data-look="studio"] .ab-art g,
+html[data-look="studio"] .ab-art path { transform-box: view-box; transform-origin: 50% 50%; }
+html[data-look="studio"] .ab-art .bl-back path { fill: color-mix(in srgb, var(--tx-pink) 40%, var(--tx-purple)); stroke: color-mix(in srgb, var(--tx-purple) 70%, var(--cream-ink)); stroke-width: .5; }
+html[data-look="studio"] .ab-art .bl-front path { fill: var(--tx-pink); stroke: color-mix(in srgb, var(--tx-pink) 62%, var(--cream-ink)); stroke-width: .5; }
+html[data-look="studio"] .ab-art .bl-shine path { fill: color-mix(in srgb, var(--white) 55%, var(--tx-pink)); }
+html[data-look="studio"] .ab-art .bl-bead { fill: color-mix(in srgb, var(--tx-yellow) 62%, var(--white)); }
+html[data-look="studio"] .ab-art .bl-seat { fill: none; stroke: color-mix(in srgb, var(--tx-pink) 26%, var(--white)); }
+html[data-look="studio"] .ab-art .bl-wreath { animation: ab-turn 120s linear infinite var(--play); }
+html[data-look="studio"] .avatar > .ab-frost { filter: drop-shadow(0 0 2.5px color-mix(in srgb, var(--tx-blue) 60%, transparent)); }
+html[data-look="studio"] .ab-art .fr-ring { fill: none; stroke: var(--white); }
+html[data-look="studio"] .ab-art .fr-edge { fill: none; stroke: var(--tx-blue); stroke-width: .45; }
+html[data-look="studio"] .ab-art .fr-line { fill: none; stroke: color-mix(in srgb, var(--tx-blue) 75%, transparent); stroke-width: .7; }
+html[data-look="studio"] .ab-art .fr-small { fill: var(--tx-blue); }
+html[data-look="studio"] .ab-art .fr-side { fill: color-mix(in srgb, var(--tx-blue) 62%, var(--white)); }
+html[data-look="studio"] .ab-art .fr-tall { fill: color-mix(in srgb, var(--tx-blue) 40%, var(--white)); stroke: color-mix(in srgb, var(--tx-blue) 55%, var(--cream-ink)); stroke-width: .45; stroke-linejoin: round; }
+html[data-look="studio"] .ab-art .fr-core { fill: var(--white); animation: ab-glint 4.2s ease-in-out infinite var(--play); }
+html[data-look="studio"] .ab-art .di-band { fill: none; stroke: color-mix(in srgb, var(--cream) 10%, transparent); }
+html[data-look="studio"] .ab-art .di-rim { fill: none; stroke: color-mix(in srgb, var(--cream) 88%, transparent); stroke-width: 1; }
+html[data-look="studio"] .ab-art .di-seat { fill: none; stroke: color-mix(in srgb, var(--cream) 42%, transparent); stroke-width: .7; }
+html[data-look="studio"] .ab-art .di-minor { fill: none; stroke: color-mix(in srgb, var(--cream) 52%, transparent); stroke-width: .6; }
+html[data-look="studio"] .ab-art .di-hour { fill: none; stroke: color-mix(in srgb, var(--cream) 90%, transparent); stroke-width: 1.5; stroke-linecap: round; }
+html[data-look="studio"] .ab-art .di-quarter { fill: none; stroke: var(--cream); stroke-width: 2.3; stroke-linecap: round; }
+html[data-look="studio"] .ab-art .di-hand { fill: var(--cream); stroke: var(--cream); stroke-width: .8; stroke-linejoin: round; filter: drop-shadow(0 0 1.6px color-mix(in srgb, var(--cream) 70%, transparent)); animation: ab-turn 60s steps(60) infinite var(--play); }
+@keyframes ab-turn { to { rotate: 360deg; } }
+@keyframes ab-glow { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes ab-twinkle { 0%, 100% { opacity: 1; scale: 1; } 50% { opacity: .45; scale: .72; } }
+@keyframes ab-glint { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+@keyframes ab-wave { from { opacity: .75; scale: 1; } to { opacity: 0; scale: 1.2; } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"] .avatar > .avatar-border,
+  html[data-look="studio"] .avatar > .avatar-border::after,
+  html[data-look="studio"] .avatar-border i,
+  html[data-look="studio"] .avatar-border .ab-art * { animation: none !important; }
+  html[data-look="studio"] .avatar-border .ab-wave { opacity: .4; scale: 1.12; }
+  html[data-look="studio"] .avatar-border .ab-wave.b { display: none; }
+}
+html[data-look="studio"][data-reduced-motion] .avatar > .avatar-border,
+html[data-look="studio"][data-reduced-motion] .avatar > .avatar-border::after,
+html[data-look="studio"][data-reduced-motion] .avatar-border i,
+html[data-look="studio"][data-reduced-motion] .avatar-border .ab-art * { animation: none !important; }
+html[data-look="studio"][data-reduced-motion] .avatar-border .ab-wave { opacity: .4; scale: 1.12; }
+html[data-look="studio"][data-reduced-motion] .avatar-border .ab-wave.b { display: none; }
 
 html[data-look="studio"] .card-effect.fx {
   position: absolute;
@@ -432,7 +550,8 @@ html[data-look="studio"] .fx.sparkles .hero::after {
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cream) 70%, transparent) 50%, transparent);
 }
 html[data-look="studio"] .fx.sparkles .hero::after { rotate: 90deg; }
-html[data-look="studio"] .fx.sparkles .dust {
+html[data-look="studio"] .fx .dust {
+  position: absolute;
   width: 2.4cqh;
   height: 2.4cqh;
   min-width: 1.5px;
@@ -476,6 +595,108 @@ html[data-look="studio"] .fx.bubbles i {
   box-shadow: inset 0 0 0 max(1px, .9cqh) color-mix(in srgb, var(--cream) 58%, transparent);
   animation: fx-rise calc(var(--t) * 1s) ease-in-out calc(var(--d) * -1s) infinite;
 }
+html[data-look="studio"] .fx .dust.lg { width: 4cqh; height: 4cqh; min-width: 2px; min-height: 2px; opacity: .9; box-shadow: 0 0 2.5cqh color-mix(in srgb, var(--cream) 70%, transparent); }
+html[data-look="studio"] .fx.fireflies i {
+  width: calc(var(--z) * 1cqh);
+  height: calc(var(--z) * 1cqh);
+  min-width: 2.5px;
+  min-height: 2.5px;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--cream) 0 26%, var(--tx-yellow) 56%, transparent 76%);
+  box-shadow: 0 0 calc(var(--z) * 1.2cqh) calc(var(--z) * .3cqh) color-mix(in srgb, var(--tx-yellow) 46%, transparent);
+  animation: fx-wander calc(var(--t) * 1s) ease-in-out calc(var(--d) * -1s) infinite, fx-blink calc(var(--t) * .43s) ease-in-out calc(var(--d) * -.7s) infinite;
+}
+html[data-look="studio"] .fx.fireflies .b { animation-direction: reverse, normal; }
+html[data-look="studio"] .fx.rain i {
+  width: max(1px, .9cqh);
+  height: calc(var(--z) * 1cqh);
+  border-radius: 1cqh;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--cream) 90%, transparent));
+  rotate: 14deg;
+  animation: fx-rain calc(var(--t) * 1s) linear calc(var(--p) * var(--t) * -1s) infinite;
+}
+html[data-look="studio"] .fx.rain .far { opacity: .38; }
+html[data-look="studio"] .fx.rain .mid { width: max(1.5px, 1.3cqh); opacity: .6; }
+html[data-look="studio"] .fx.rain .near { width: max(2px, 1.9cqh); opacity: .72; filter: blur(.3cqh); }
+html[data-look="studio"] .fx.meteors .m {
+  width: calc(var(--z) * 1cqh);
+  height: max(1.5px, 1.9cqh);
+  border-radius: 1cqh;
+  background: linear-gradient(90deg, var(--cream), color-mix(in srgb, var(--tx-blue) 62%, transparent) 30%, transparent);
+  transform-origin: 0 50%;
+  rotate: -24deg;
+  opacity: 0;
+  animation: fx-streak calc(var(--t) * 1s) linear calc(var(--d) * -1s) infinite;
+}
+html[data-look="studio"] .fx.meteors .m::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -1.6cqh;
+  width: 4.2cqh;
+  height: 4.2cqh;
+  min-width: 2px;
+  min-height: 2px;
+  translate: 0 -50%;
+  border-radius: 50%;
+  background: var(--cream);
+  box-shadow: 0 0 4.5cqh 1.6cqh color-mix(in srgb, var(--cream) 60%, transparent);
+}
+html[data-look="studio"] .fx.petals i {
+  width: calc(var(--z) * 1cqh);
+  height: calc(var(--z) * 1cqh);
+  min-width: 4px;
+  min-height: 4px;
+  animation: fx-drift calc(var(--t) * 1s) linear calc(var(--p) * var(--t) * -1s) infinite, fx-tumble calc(var(--t) * .37s) ease-in-out calc(var(--p) * -5s) infinite alternate;
+}
+html[data-look="studio"] .fx.petals i svg { display: block; width: 100%; height: 100%; fill: var(--tx-pink); }
+html[data-look="studio"] .fx.petals .b svg { fill: color-mix(in srgb, var(--tx-pink) 55%, var(--cream)); }
+html[data-look="studio"] .fx.petals .far { opacity: .6; }
+html[data-look="studio"] .fx.petals .near { opacity: .75; filter: blur(.5cqh); }
+html[data-look="studio"] .fx.sunbeams .beam {
+  top: -20%;
+  left: -20%;
+  width: 140%;
+  height: 140%;
+  background: conic-gradient(from 184deg at 76% -7%, transparent 4deg, color-mix(in srgb, var(--accent-2) 56%, transparent) 9deg, transparent 15deg, transparent 21deg, color-mix(in srgb, var(--cream) 34%, transparent) 28deg, transparent 37deg, transparent 43deg, color-mix(in srgb, var(--accent-2) 46%, transparent) 48deg, transparent 54deg, transparent 60deg, color-mix(in srgb, var(--cream) 28%, transparent) 68deg, transparent 78deg), radial-gradient(circle at 76% 10%, color-mix(in srgb, var(--accent-2) 62%, transparent), transparent 36%);
+  -webkit-mask: radial-gradient(circle at 76% 0, #000 18%, transparent 78%);
+  mask: radial-gradient(circle at 76% 0, #000 18%, transparent 78%);
+  transform-origin: 76% -7%;
+  animation: fx-sweep 9s ease-in-out infinite alternate;
+}
+html[data-look="studio"] .fx.sunbeams .beam.b { background: conic-gradient(from 190deg at 76% -7%, transparent 6deg, color-mix(in srgb, var(--cream) 30%, transparent) 12deg, transparent 19deg, transparent 30deg, color-mix(in srgb, var(--accent-2) 40%, transparent) 37deg, transparent 45deg, transparent 56deg, color-mix(in srgb, var(--cream) 24%, transparent) 62deg, transparent 70deg); animation-duration: 13s; animation-direction: alternate-reverse; }
+html[data-look="studio"] .fx.sunbeams .dust { background: var(--accent-2); }
+html[data-look="studio"] .fx.nebula .cloud {
+  width: calc(var(--z) * 1.7cqh);
+  height: calc(var(--z) * 1cqh);
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--ink) 72%, transparent), color-mix(in srgb, var(--ink) 26%, transparent) 55%, transparent);
+  mix-blend-mode: screen;
+  animation: fx-float calc(var(--t) * 1s) ease-in-out calc(var(--d) * -1s) infinite alternate;
+}
+html[data-look="studio"] .fx.nebula .n1 { --ink: var(--tx-purple); }
+html[data-look="studio"] .fx.nebula .n2 { --ink: var(--accent-lit); }
+html[data-look="studio"] .fx.nebula .n3 { --ink: var(--tx-pink); }
+html[data-look="studio"] .fx.nebula .n4 { --ink: var(--tx-teal); }
+html[data-look="studio"] .fx.confetti i {
+  width: calc(var(--z) * .62cqh);
+  height: calc(var(--z) * 1cqh);
+  min-width: 2px;
+  min-height: 3.5px;
+  border-radius: .7cqh;
+  background: var(--ink);
+  animation: fx-fall calc(var(--t) * 1s) linear calc(var(--p) * var(--t) * -1s) infinite, fx-flip calc(var(--t) * .26s) linear calc(var(--p) * -2s) infinite;
+}
+html[data-look="studio"] .fx.confetti .k1 { --ink: var(--tx-yellow); }
+html[data-look="studio"] .fx.confetti .k2 { --ink: var(--tx-pink); }
+html[data-look="studio"] .fx.confetti .k3 { --ink: var(--tx-blue); }
+html[data-look="studio"] .fx.confetti .k4 { --ink: var(--tx-teal); }
+html[data-look="studio"] .fx.confetti .k5 { --ink: var(--tx-purple); }
+html[data-look="studio"] .fx.confetti .k6 { --ink: var(--accent-2); }
+html[data-look="studio"] .pt-profile .look:not(.on) .card-effect.fx i,
+html[data-look="studio"] .pt-profile .look:not(.on) .card-effect.fx g,
 html[data-look="studio"] .look-option .card-effect.fx i,
 html[data-look="studio"] .look-option .card-effect.fx g { animation-play-state: paused; }
 html[data-look="studio"] .look-option:hover .card-effect.fx i,
@@ -485,15 +706,26 @@ html[data-look="studio"] .look-option:focus-visible .card-effect.fx g { animatio
 @keyframes fx-breathe { 0%, 100% { opacity: .28; scale: .62; } 50% { opacity: 1; scale: 1; } }
 @keyframes fx-fall { from { translate: -3cqh calc((var(--y) + 14) * -1cqh); } 50% { translate: 3cqh calc((50 - var(--y)) * 1cqh); } to { translate: -1cqh calc((114 - var(--y)) * 1cqh); } }
 @keyframes fx-sway { from { transform: translateX(-3%) scaleY(.94); } to { transform: translateX(3%) scaleY(1.06); } }
+@keyframes fx-wander { 0%, 100% { translate: -50% -50%; } 25% { translate: calc(-50% + 7cqh) calc(-50% - 5cqh); } 50% { translate: calc(-50% + 11cqh) calc(-50% + 3cqh); } 75% { translate: calc(-50% + 3cqh) calc(-50% + 6cqh); } }
+@keyframes fx-blink { 0%, 100% { opacity: .22; } 40%, 62% { opacity: 1; } }
+@keyframes fx-rain { from { translate: calc((var(--y) + 24) * .25cqh) calc((var(--y) + 24) * -1cqh); } to { translate: calc((124 - var(--y)) * -.25cqh) calc((124 - var(--y)) * 1cqh); } }
+@keyframes fx-streak { 0% { translate: 0 0; opacity: 0; } 3%, 22% { opacity: 1; } 30%, 100% { translate: -112cqh 49.9cqh; opacity: 0; } }
+@keyframes fx-drift { from { translate: -7cqh calc((var(--y) + 16) * -1cqh); } 35% { translate: 5cqh calc((30 - var(--y)) * 1cqh); } 70% { translate: -4cqh calc((76 - var(--y)) * 1cqh); } to { translate: 3cqh calc((116 - var(--y)) * 1cqh); } }
+@keyframes fx-tumble { from { rotate: -50deg; scale: 1 .72; } to { rotate: 150deg; scale: .78 1; } }
+@keyframes fx-sweep { from { rotate: -3deg; opacity: .7; } to { rotate: 3deg; opacity: 1; } }
+@keyframes fx-float { from { translate: calc(-50% - 6cqh) calc(-50% + 3cqh); scale: .9; } to { translate: calc(-50% + 6cqh) calc(-50% - 3cqh); scale: 1.1; } }
+@keyframes fx-flip { from { rotate: 1 .6 0 0deg; } to { rotate: 1 .6 0 360deg; } }
 @keyframes fx-rise { 0% { translate: -50% calc(-50% + 26cqh); opacity: 0; } 22% { opacity: 1; } 50% { translate: calc(-50% + 3cqh) -50%; } 82% { opacity: 1; } 100% { translate: calc(-50% - 2cqh) calc(-50% - 30cqh); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   html[data-look="studio"] .card-effect.fx i,
   html[data-look="studio"] .card-effect.fx g { animation: none !important; }
   html[data-look="studio"] .fx.sparkles .s,
-  html[data-look="studio"] .fx.sparkles .dust { scale: 1; }
+  html[data-look="studio"] .fx .dust { scale: 1; }
+  html[data-look="studio"] .fx.meteors .m { opacity: .9; }
 }
 html[data-look="studio"][data-reduced-motion] .card-effect.fx i,
 html[data-look="studio"][data-reduced-motion] .card-effect.fx g { animation: none !important; }
+html[data-look="studio"][data-reduced-motion] .fx.meteors .m { opacity: .9; }
 html[data-look="studio"] .voice-invite-faces .avatar-border { display: none; }
 html[data-look="studio"] .member-card .mc-field::before,
 html[data-look="studio"] .member-card .mc-field::after { content: none; }

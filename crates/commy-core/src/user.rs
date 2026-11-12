@@ -78,8 +78,10 @@ pub fn kept_phone_until(incoming: Option<i64>, held: Option<i64>, now_ms: i64) -
     incoming.filter(fresh).max(held.filter(fresh))
 }
 
-pub const AVATAR_BORDERS: [&str; 8] = ["ring", "double", "sunset", "ocean", "neon", "stars", "leaves", "orbit"];
-pub const CARD_EFFECTS: [&str; 4] = ["sparkles", "snow", "aurora", "bubbles"];
+pub const AVATAR_BORDERS: [&str; 16] = [
+    "ring", "double", "sunset", "ocean", "neon", "stars", "leaves", "orbit", "halo", "comet", "eclipse", "bloom", "frost", "ripple", "prism", "dial",
+];
+pub const CARD_EFFECTS: [&str; 11] = ["sparkles", "snow", "aurora", "bubbles", "fireflies", "rain", "meteors", "petals", "sunbeams", "nebula", "confetti"];
 
 pub fn valid_avatar_border(name: &str) -> bool {
     AVATAR_BORDERS.contains(&name)

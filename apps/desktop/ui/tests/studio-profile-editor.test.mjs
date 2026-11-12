@@ -59,7 +59,7 @@ test("the banner runs edge to edge with the keys on its fade and Save inside the
 
 test("borders and effects are glass tiles and the chosen one wears the ring", () => {
   assert.match(rule(`${R} .p-editor .look-grid`), /grid-template-columns: repeat\(9, minmax\(0, 1fr\)\);\n  gap: 6px;/);
-  assert.match(rule(`${R} .p-editor #account-effect-grid`), /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);\n  gap: 10px;/);
+  assert.match(rule(`${R} .p-editor #account-effect-grid`), /grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);\n  gap: 8px;/);
   assert.match(rule(`${R} .p-editor .look-option`), /padding: 9px 0 8px;\n  border: 0;\n  border-radius: 16px;/);
   assert.match(rule(`${R} .p-editor .look-option[aria-checked="true"]`), /outline: var\(--ring-on\);\n  outline-offset: 2px;/);
   assert.match(rule(`${R} .p-editor .look-swatch`), /height: 44px;\n  border-radius: 11px;/);

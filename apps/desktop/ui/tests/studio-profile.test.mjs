@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows, profilePaneRows } = require("../scripts/studio-profile.js");
-const { STUDIO_SPARKLES, STUDIO_DUST, STUDIO_SNOW, STUDIO_BUBBLES, STUDIO_CURTAINS, studioOrnaments, studioSnow, studioCurtain, studioEffect } = require("../scripts/profile-look.js");
+const { STUDIO_SPARKLES, STUDIO_DUST, STUDIO_SNOW, STUDIO_BUBBLES, STUDIO_CURTAINS, STUDIO_FIREFLIES, STUDIO_RAIN, STUDIO_NIGHT, STUDIO_METEORS, STUDIO_PETALS, STUDIO_MOTES, STUDIO_CLOUDS, STUDIO_CONFETTI, studioOrnaments, studioFrame, studioSnow, studioCurtain, studioEffect } = require("../scripts/profile-look.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-profile.css");
@@ -133,7 +133,33 @@ test("an avatar border is a ring 2.5 thick that stands off the avatar, and none 
   assert.deepEqual([leaves[0].x, leaves[0].y, leaves[0].turn, leaves[0].odd], [95.32, 71.13, 295, false]);
   assert.deepEqual([leaves[1].x, leaves[1].y, leaves[1].turn, leaves[1].odd], [81.47, 88.86, 321, true]);
   assert.deepEqual(studioOrnaments("ring"), []);
-  assert.match(app, /const mark = el\("i", point\.odd && id === "leaves" \? "ab-o b" : "ab-o"\);/);
+  assert.deepEqual(studioFrame("leaves").map(part => part.cls), ["ab-o", "ab-o b", "ab-o", "ab-o b", "ab-o", "ab-o b"]);
+  assert.deepEqual(studioFrame("stars")[2], { cls: "ab-o", vars: { x: "50%", y: "0%", r: "360deg", z: 1.3, d: 1.4 }, path: stars[2].path });
+  assert.match(app, /for \(const part of studioFrame\(id\)\) ring\.appendChild\(lookPart\(part, "0 0 10 10"\)\);/);
+});
+
+test("a ring is cut with a round mask, so it is the same thickness all the way round", () => {
+  const before = rule(".avatar > .avatar-border::before");
+  assert.ok(before.includes("mask: radial-gradient(closest-side, transparent calc(100% - var(--bw) - .4px), #000 calc(100% - var(--bw) + .4px));"));
+  assert.ok(!before.includes("padding"));
+});
+
+test("a frame moves only on a big avatar or under the pointer, and stands still in a list", () => {
+  assert.ok(rule(".avatar > .avatar-border").includes("--play: paused;"));
+  assert.ok(css.includes(`${SWITCH} .avatar-lg > .avatar-border,\n${SWITCH} .avatar-xl > .avatar-border,\n${SWITCH} .mc-head .avatar > .avatar-border,\n${SWITCH} #pt-prof-av .avatar > .avatar-border,\n${SWITCH} .pt-profile .look.on .avatar > .avatar-border,\n${SWITCH} .look-option:hover .avatar > .avatar-border,\n${SWITCH} .look-option:focus-visible .avatar > .avatar-border { --play: running; }`));
+  const frames = css.slice(css.indexOf(`${SWITCH} .avatar.has-border`), css.indexOf(`${SWITCH} .card-effect.fx {`));
+  const moving = frames.match(/animation: ab-[^;]*;/g);
+  assert.equal(moving.length, 10);
+  for (const line of moving) assert.ok(line.endsWith("var(--play);"), line);
+  assert.ok(rule(".ab-art .di-hand").includes("animation: ab-turn 60s steps(60) infinite var(--play);"));
+  assert.ok(rule(".ab-art .bl-wreath").includes("animation: ab-turn 120s linear infinite var(--play);"));
+  assert.ok(rule(".ab-art .fr-core").includes("animation: ab-glint 4.2s ease-in-out infinite var(--play);"));
+  assert.ok(css.includes(`${SWITCH} .ab-art g,\n${SWITCH} .ab-art path { transform-box: view-box; transform-origin: 50% 50%; }`));
+  assert.doesNotMatch(frames, /--tx-red|--red|--danger/);
+  assert.ok(css.includes(`${SWITCH} .avatar > .ab-halo { --ring: var(--tx-yellow); --bw: 2px; }`));
+  assert.ok(css.includes(`${SWITCH} .avatar > .ab-ripple { --ring: var(--tx-teal); --bw: 2px; }`));
+  for (const ink of ["--accent-2", "--accent-lit", "--ring-on"]) assert.equal(frames.split("\n").filter(line => /ab-(halo|eclipse|ripple|wave)|\.(bl|fr|di)-/.test(line) && line.includes(ink)).length, 0, ink);
+  assert.ok(rule(".ab-art .di-hand").includes("fill: var(--cream);"));
 });
 
 test("each profile effect is one fixed drawing, the same on every card", () => {
@@ -159,11 +185,36 @@ test("each profile effect is one fixed drawing, the same on every card", () => {
   const rays = studioCurtain(STUDIO_CURTAINS[0]);
   assert.equal(rays.length, 57);
   assert.deepEqual(rays.slice(0, 3), [{ x: -4, y: 0.62, h: 14.91, o: 0 }, { x: -2.9, y: 2.07, h: 14.16, o: 0.13 }, { x: -1.8, y: -1.76, h: 18.69, o: 0.08 }]);
-  assert.match(app, /if \(studioLook\(\)\) \{\n    banner\.appendChild\(studioEffectNode\(kind\.id\)\);\n    return;\n  \}/);
+  assert.match(app, /function paintCardEffect\(banner, effect\) \{\n  banner\.querySelector\(":scope > \.card-effect"\)\?\.remove\(\);\n  if \(isCardEffect\(effect\)\) banner\.appendChild\(studioEffectNode\(effect\)\);\n\}/);
   assert.ok(css.includes(`${SWITCH} .card-effect.fx {`));
   assert.ok(rule(".card-effect.fx").includes("container-type: size;"));
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\n  html\[data-look="studio"\] \.card-effect\.fx i,\n  html\[data-look="studio"\] \.card-effect\.fx g \{ animation: none !important; \}/);
   assert.ok(css.includes(`${SWITCH} .look-option .card-effect.fx g { animation-play-state: paused; }`));
+});
+
+test("the seven new effects are fixed drawings too, with the light gathered on the right", () => {
+  assert.equal(STUDIO_FIREFLIES.length, 10);
+  assert.ok(STUDIO_FIREFLIES.filter(fly => fly[0] > 50).length >= 6);
+  assert.deepEqual(studioEffect("fireflies")[1], { cls: "b", vars: { x: 62, y: 40, z: 6.5, d: 2.1, t: 11 } });
+  assert.deepEqual(STUDIO_RAIN.map(layer => [layer[0], layer[1]]), [["far", 14], ["mid", 11], ["near", 6]]);
+  assert.equal(studioEffect("rain").length, 31);
+  const meteors = studioEffect("meteors");
+  assert.equal(meteors.filter(part => part.cls === "m").length, STUDIO_METEORS.length);
+  assert.equal(meteors.filter(part => part.cls.startsWith("dust")).length, STUDIO_NIGHT.length);
+  assert.ok(STUDIO_METEORS.every(([x, y]) => x >= 40 && y <= 24));
+  assert.deepEqual(STUDIO_PETALS.map(layer => [layer[0], layer[1]]), [["far", 5], ["mid", 5], ["near", 2]]);
+  assert.ok(studioEffect("petals").every(part => part.path));
+  assert.deepEqual(studioEffect("sunbeams").slice(0, 2), [{ cls: "beam" }, { cls: "beam b" }]);
+  assert.equal(studioEffect("sunbeams").length, 2 + STUDIO_MOTES.length);
+  assert.deepEqual(STUDIO_CLOUDS.map(cloud => cloud[0]), ["n1", "n2", "n3", "n4"]);
+  const confetti = studioEffect("confetti");
+  assert.equal(confetti.length, STUDIO_CONFETTI.count);
+  assert.deepEqual([...new Set(confetti.map(bit => bit.cls))].sort(), ["k1", "k2", "k3", "k4", "k5", "k6"]);
+  const effects = css.slice(css.indexOf(`${SWITCH} .fx .dust.lg`), css.indexOf("@keyframes fx-breathe"));
+  assert.doesNotMatch(effects, /--tx-red|--red|--danger/);
+  assert.ok(css.includes(`${SWITCH} .pt-profile .look:not(.on) .card-effect.fx i,\n${SWITCH} .pt-profile .look:not(.on) .card-effect.fx g,\n${SWITCH} .look-option .card-effect.fx i,\n${SWITCH} .look-option .card-effect.fx g { animation-play-state: paused; }`));
+  assert.ok(css.includes(`  ${SWITCH} .fx.meteors .m { opacity: .9; }\n}`));
+  assert.ok(css.includes(`${SWITCH}[data-reduced-motion] .fx.meteors .m { opacity: .9; }`));
 });
 
 test("the full profile and the DM side pane are built from the card's parts", () => {

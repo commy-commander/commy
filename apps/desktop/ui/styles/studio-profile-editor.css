@@ -269,8 +269,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-grid {
   margin: 0;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .p-editor #account-effect-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-option {
   position: relative;

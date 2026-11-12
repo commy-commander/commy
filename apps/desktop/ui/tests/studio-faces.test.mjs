@@ -11,6 +11,8 @@ const html = read("index.html");
 const parts = read("styles", "studio-parts.css");
 const tokens = read("styles", "tokens.css");
 
+const MOON_CHEEK = '<ellipse cx="14.6" cy="23.4" rx="1.6" ry="1.1" style="fill:#f08f7d" opacity=".55"/>';
+
 test("a person with no picture always gets the same face, on every device", () => {
   for (const id of ["a", "user-1", "9f3c2d", "0"]) {
     assert.equal(studioFaceFor(id), studioFaceFor(id));
@@ -54,14 +56,18 @@ test("the robot is kept for bots, and a bot never gets anything else", () => {
   }
 });
 
-test("every face has a drawing, in one colour on the cap, with no colours of its own", () => {
+test("every face has a drawing, in one colour on the cap, and only the moon's cheek has a colour of its own", () => {
   for (const name of [...STUDIO_FACES, STUDIO_BOT_FACE]) {
     const art = STUDIO_FACE_ART[name];
     assert.ok(art, name);
     assert.ok(art.startsWith('<use href="#sf-cap"/>'), name);
     assert.match(art, /var\(--c\)/);
-    assert.doesNotMatch(art, /#[0-9a-f]{3,8}\b|rgb\(/i);
+    assert.doesNotMatch(name === "moon" ? art.replace(MOON_CHEEK, "") : art, /#[0-9a-f]{3,8}\b|rgb\(/i);
   }
+  assert.equal(STUDIO_FACE_ART.moon.split(MOON_CHEEK).length, 2);
+  assert.ok(STUDIO_FACE_ART.moon.includes('<path d="M23.5 8.57A12.2 12.2 0 1 0 31.84 27.07 10.2 10.2 0 0 1 23.5 8.57Z" style="fill:var(--c)"/>'));
+  assert.ok(STUDIO_FACE_ART.moon.includes('<path d="M13.1 18.4q1.9 2 3.8 0" style="fill:none;stroke:var(--a-ground);stroke-width:1.7;stroke-linecap:round"/>'));
+  assert.ok(!STUDIO_FACE_ART.moon.includes("#sf-eye"));
   assert.equal(Object.keys(STUDIO_FACE_ART).length, STUDIO_FACES.length + 1);
   assert.match(STUDIO_FACE_SHARED, /color-mix\(in srgb, var\(--c\) 24%, var\(--a-ground\)\)/);
 });

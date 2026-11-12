@@ -2663,10 +2663,6 @@ function paintAvatar(node, userId, name) {
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const ORNAMENT_PATHS = {
-  stars: "M0,-1 L0.29,-0.4 0.95,-0.31 0.48,0.15 0.59,0.81 0,0.5 -0.59,0.81 -0.48,0.15 -0.95,-0.31 -0.29,-0.4Z",
-  leaves: "M0,-1 C0.62,-0.5 0.62,0.5 0,1 C-0.62,0.5 -0.62,-0.5 0,-1Z",
-};
 
 function setAvatarBorder(node, border) {
   node.querySelector(":scope > .avatar-border")?.remove();
@@ -2685,32 +2681,25 @@ function profileShape(box, d) {
   return svg;
 }
 
+function lookPart(part, box) {
+  const node = el("i", part.cls);
+  for (const [name, value] of Object.entries(part.vars || {})) node.style.setProperty(`--${name}`, String(value));
+  if (part.path) node.appendChild(profileShape(box, part.path));
+  return node;
+}
+
 function avatarBorderNode(id) {
   const ring = el("span", `avatar-border ab-${id}`);
   ring.setAttribute("aria-hidden", "true");
-  const ornament = BORDER_ORNAMENTS[id];
-  if (studioLook()) {
-    for (const point of studioOrnaments(id)) {
-      const mark = el("i", point.odd && id === "leaves" ? "ab-o b" : "ab-o");
-      mark.style.setProperty("--x", `${point.x}%`);
-      mark.style.setProperty("--y", `${point.y}%`);
-      mark.style.setProperty("--r", `${point.turn}deg`);
-      mark.appendChild(profileShape("0 0 10 10", point.path));
-      ring.appendChild(mark);
-    }
-  } else if (ornament) {
+  for (const part of studioFrame(id)) ring.appendChild(lookPart(part, "0 0 10 10"));
+  const art = studioFrameArt(id);
+  if (art) {
     const svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("class", "ab-ornaments");
+    svg.setAttribute("class", "ab-art");
     svg.setAttribute("viewBox", "0 0 100 100");
-    for (const point of ornamentPoints(ornament.count, ornament.from, ornament.to)) {
-      const path = document.createElementNS(SVG_NS, "path");
-      path.setAttribute("d", ORNAMENT_PATHS[id]);
-      path.setAttribute("transform", `translate(${point.x} ${point.y}) rotate(${point.angle}) scale(${ornament.size})`);
-      svg.appendChild(path);
-    }
+    svg.innerHTML = art;
     ring.appendChild(svg);
   }
-  if (id === "orbit") ring.appendChild(el("span", "ab-orbit-dot"));
   return ring;
 }
 
@@ -2751,35 +2740,13 @@ function studioEffectNode(id) {
   const layer = el("div", `card-effect fx theme-dark ${id}`);
   layer.setAttribute("aria-hidden", "true");
   if (id === "aurora") layer.appendChild(studioAuroraNode());
-  for (const part of studioEffect(id)) {
-    const dot = el("i", part.cls);
-    for (const [name, value] of Object.entries(part.vars)) dot.style.setProperty(`--${name}`, String(value));
-    if (part.path) dot.appendChild(profileShape("0 0 20 20", part.path));
-    layer.appendChild(dot);
-  }
+  for (const part of studioEffect(id)) layer.appendChild(lookPart(part, "0 0 20 20"));
   return layer;
 }
 
-function paintCardEffect(banner, effect, seed) {
+function paintCardEffect(banner, effect) {
   banner.querySelector(":scope > .card-effect")?.remove();
-  const kind = CARD_EFFECTS.find(e => e.id === effect);
-  if (!kind) return;
-  if (studioLook()) {
-    banner.appendChild(studioEffectNode(kind.id));
-    return;
-  }
-  const layer = el("div", `card-effect ce-${kind.id}`);
-  layer.setAttribute("aria-hidden", "true");
-  for (const p of particleSeeds(kind.particles, seed)) {
-    const dot = el("span", "ce-p");
-    dot.style.setProperty("--x", `${p.x}%`);
-    dot.style.setProperty("--y", `${p.y}%`);
-    dot.style.setProperty("--d", p.delay);
-    dot.style.setProperty("--s", p.size);
-    dot.style.setProperty("--t", `${p.duration}s`);
-    layer.appendChild(dot);
-  }
-  banner.appendChild(layer);
+  if (isCardEffect(effect)) banner.appendChild(studioEffectNode(effect));
 }
 
 function lookOption(label, preview, checked, onPick) {
