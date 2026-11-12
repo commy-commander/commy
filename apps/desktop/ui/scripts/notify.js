@@ -133,9 +133,14 @@ function phoneInFront(mobileApp, visibility) {
   return Boolean(mobileApp) && visibility === "visible";
 }
 
-function alertWay({ phoneInFront: inFront, ...wanted }) {
+function sentBeforeFront(atSecs, frontSinceSecs) {
+  return Number.isFinite(atSecs) && Number.isFinite(frontSinceSecs) && atSecs < frontSinceSecs;
+}
+
+function alertWay({ phoneInFront: inFront, at, frontSince, caughtUp, ...wanted }) {
   if (!shouldNotify(wanted)) return "none";
-  return inFront ? "in_app" : "system";
+  if (!inFront) return "system";
+  return caughtUp || sentBeforeFront(at, frontSince) ? "none" : "in_app";
 }
 
 function inAppLine({ title, body }) {
@@ -146,6 +151,6 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
     channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter, phoneInFront,
-    alertWay, inAppLine,
+    alertWay, inAppLine, sentBeforeFront,
   };
 }

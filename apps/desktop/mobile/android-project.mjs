@@ -189,6 +189,7 @@ export function readGoogleServices(value, readFile = path => readFileSync(path, 
 
 export const LAUNCHER_LAYERS = { background: "commy_launcher_background", foreground: "commy_launcher_foreground", monochrome: "commy_launcher_monochrome" };
 export const LAUNCHER_NAMES = ["ic_launcher", "ic_launcher_round"];
+export const NOTIFICATION_ICON = "commy_notification";
 
 export function launcherIcon(layers = LAUNCHER_LAYERS) {
   const lines = Object.entries(layers).map(([layer, name]) => `    <${layer} android:drawable="@drawable/${name}" />\n`).join("");
@@ -217,7 +218,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   copyFileSync(keepRulesFrom, keepRulesTo);
   mkdirSync(launcherLayersTo, { recursive: true });
   mkdirSync(launcherIconTo, { recursive: true });
-  for (const name of Object.values(LAUNCHER_LAYERS)) copyFileSync(`${launcherFrom}${name}.png`, `${launcherLayersTo}${name}.png`);
+  for (const name of [...Object.values(LAUNCHER_LAYERS), NOTIFICATION_ICON]) copyFileSync(`${launcherFrom}${name}.png`, `${launcherLayersTo}${name}.png`);
   for (const name of LAUNCHER_NAMES) writeFileSync(`${launcherIconTo}${name}.xml`, launcherIcon());
   const gradle = readFileSync(gradlePath, "utf8");
   const debugStore = process.env.ANDROID_DEBUG_KEYSTORE_FILE;
@@ -228,7 +229,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(releaseStore ? `Release builds sign with the upload key, password from ${UPLOAD_KEY.passwordEnv}` : "ANDROID_UPLOAD_KEYSTORE_FILE is not set, so release builds are unsigned");
   console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call and screen share services, relaunching, invite links and the sign-in return link");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
-  console.log("The launcher icon is the star on night blue, with a one-colour layer for themed icons");
+  console.log("The launcher icon is the star on night blue, with a one-colour layer for themed icons, and notifications show the white star");
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
   const packageName = applicationId(gradle);
   const firebase = googleServices && firebaseValues(googleServices, packageName);

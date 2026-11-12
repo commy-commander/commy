@@ -8,7 +8,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use commy_sync::wake::{
-    preview_ok, push_target, register_until_ok, wake_day, PushService, WakeForget, WakeRegister, WakeRing, MAX_RING_TAGS, PUSH_GAP_SECS,
+    preview_ok, push_target, register_until_ok, wake_day, PushService, WakeForget, WakeRegister, WakeRing, WakeSeat, MAX_RING_TAGS, PUSH_GAP_SECS,
+    SEAT_HOLD_SECS,
 };
 use tokio::sync::mpsc;
 
@@ -47,6 +48,7 @@ impl Pusher {
 }
 
 const PUSH_GAP: Duration = Duration::from_secs(PUSH_GAP_SECS);
+const SEAT_HOLD: Duration = Duration::from_secs(SEAT_HOLD_SECS);
 const RETRY_WAITS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(4)];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -62,11 +64,23 @@ pub struct Wakes {
     pusher: Pusher,
     last: Mutex<HashMap<String, Instant>>,
     queued: Mutex<HashMap<String, Vec<String>>>,
+    seated: Mutex<HashMap<String, Instant>>,
 }
 
 impl Wakes {
     pub fn new(pusher: Pusher) -> Self {
-        Self { pusher, last: Mutex::new(HashMap::new()), queued: Mutex::new(HashMap::new()) }
+        Self { pusher, last: Mutex::new(HashMap::new()), queued: Mutex::new(HashMap::new()), seated: Mutex::new(HashMap::new()) }
+    }
+
+    fn seat(&self, pushes: impl IntoIterator<Item = String>, now: Instant) {
+        let mut seated = self.seated.lock().unwrap();
+        for push in pushes {
+            seated.insert(push, now + SEAT_HOLD);
+        }
+    }
+
+    fn seated_elsewhere(&self, push: &str, now: Instant) -> bool {
+        self.seated.lock().unwrap().get(push).is_some_and(|until| now < *until)
     }
 
     pub fn enabled(&self) -> bool {
@@ -112,6 +126,7 @@ impl Wakes {
     pub fn forget_idle(&self) {
         let now = Instant::now();
         self.last.lock().unwrap().retain(|_, at| now.saturating_duration_since(*at) < PUSH_GAP);
+        self.seated.lock().unwrap().retain(|_, until| now < *until);
     }
 }
 
@@ -144,7 +159,11 @@ async fn deliver_with_retries(service: &Service, push: &str, previews: &[String]
 
 async fn send_after(service: Arc<Service>, push: String, wait: Duration) {
     tokio::time::sleep(wait).await;
-    let previews = service.wakes.release_queued(&push, Instant::now());
+    let now = Instant::now();
+    let previews = service.wakes.release_queued(&push, now);
+    if service.wakes.seated_elsewhere(&push, now) {
+        return;
+    }
     send(service, push, previews).await;
 }
 
@@ -232,6 +251,30 @@ pub async fn forget(
     }
 }
 
+pub async fn seat(
+    State(service): State<Arc<Service>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(request): Json<WakeSeat>,
+) -> Response {
+    if !service.wakes.enabled() {
+        return (StatusCode::NOT_FOUND, "wake-ups are off").into_response();
+    }
+    if limited(&service, peer, &headers) {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
+    match service.store.wake_targets(&[request.seat.0], today()).await {
+        Ok(pushes) => {
+            service.wakes.seat(pushes, Instant::now());
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => {
+            tracing::warn!("sync: could not look up wake registrations: {e}");
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+    }
+}
+
 pub async fn ring(
     State(service): State<Arc<Service>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -256,7 +299,7 @@ pub async fn ring(
         }
     };
     let now = Instant::now();
-    for push in pushes {
+    for push in pushes.into_iter().filter(|push| !service.wakes.seated_elsewhere(push, now)) {
         match service.wakes.plan(&push, now, request.preview.as_deref()) {
             Plan::Now => {
                 tokio::spawn(send(service.clone(), push, request.preview.iter().cloned().collect()));
@@ -329,6 +372,19 @@ mod tests {
         let held = wakes.release_queued("fcm:a", start + PUSH_GAP);
         let newest: Vec<String> = (2..MAX_HELD_PREVIEWS + 2).map(|n| n.to_string()).collect();
         assert_eq!(held, newest);
+    }
+
+    #[test]
+    fn a_phone_stays_quiet_while_its_person_sits_at_another_device() {
+        let wakes = Wakes::new(Pusher::Off);
+        let start = Instant::now();
+        assert!(!wakes.seated_elsewhere("fcm:a", start));
+        wakes.seat(["fcm:a".to_string()], start);
+        assert!(wakes.seated_elsewhere("fcm:a", start + SEAT_HOLD / 2));
+        assert!(!wakes.seated_elsewhere("fcm:b", start), "other phones still ring");
+        assert!(!wakes.seated_elsewhere("fcm:a", start + SEAT_HOLD), "the phone rings again once the beats stop");
+        wakes.seat(["fcm:a".to_string()], start + SEAT_HOLD / 2);
+        assert!(wakes.seated_elsewhere("fcm:a", start + SEAT_HOLD), "each beat holds it longer");
     }
 
     #[test]

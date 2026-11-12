@@ -1750,30 +1750,44 @@ fn resume_mic_test(app: &App, was_running: bool) {
     }
 }
 
+fn afk_env_override() -> Option<i64> {
+    std::env::var("COMMY_AFK_SECS").ok().and_then(|v| v.parse().ok())
+}
+
+fn afk_timeout_secs(app: &App, env_override: Option<i64>) -> i64 {
+    env_override.unwrap_or_else(|| app.voice.lock().unwrap().afk_timeout_minutes as i64 * 60)
+}
+
+fn idle_secs(app: &App) -> i64 {
+    let last_voice = app.voice_session.lock().unwrap().as_ref().map_or(0, |s| s.last_activity.load(std::sync::atomic::Ordering::Relaxed));
+    let last_ui = app.last_user_activity.load(std::sync::atomic::Ordering::Relaxed);
+    let sharing = app.screen_share.lock().unwrap().is_some();
+    if sharing {
+        0
+    } else {
+        chrono::Utc::now().timestamp() - last_voice.max(last_ui)
+    }
+}
+
+async fn run_seat_beats(handle: tauri::AppHandle) {
+    let env_override = afk_env_override();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(commy_sync::wake::SEAT_BEAT_SECS)).await;
+        let app = handle.state::<App>();
+        if afk::in_seat(idle_secs(&app), afk_timeout_secs(&app, env_override)) {
+            push_wake::beat_seat(&app).await;
+        }
+    }
+}
+
 async fn run_afk_watchdog(handle: tauri::AppHandle) {
-    let env_override: Option<i64> = std::env::var("COMMY_AFK_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok());
+    let env_override = afk_env_override();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         let app = handle.state::<App>();
-        let timeout_secs = env_override.unwrap_or_else(|| {
-            app.voice.lock().unwrap().afk_timeout_minutes as i64 * 60
-        });
-        let voice = app.voice_session.lock().unwrap().as_ref().map(|s| {
-            let last = s.last_activity.load(std::sync::atomic::Ordering::Relaxed);
-            (s.server, s.channel, last)
-        });
-        let last_ui = app
-            .last_user_activity
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let last_voice = voice.map_or(0, |(_, _, last)| last);
-        let sharing = app.screen_share.lock().unwrap().is_some();
-        let idle_for = if sharing {
-            0
-        } else {
-            chrono::Utc::now().timestamp() - last_voice.max(last_ui)
-        };
+        let timeout_secs = afk_timeout_secs(&app, env_override);
+        let voice = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+        let idle_for = idle_secs(&app);
         let Some(presence) = app.profile.lock().unwrap().as_ref().map(|p| p.presence) else {
             continue;
         };
@@ -1789,7 +1803,7 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
             afk::AfkAction::None => {}
         }
 
-        let Some((sid, current, _)) = voice else { continue };
+        let Some((sid, current)) = voice else { continue };
         let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
         let ours = app.node_hex.lock().unwrap().clone().unwrap_or_default();
         let step = {
@@ -7729,6 +7743,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             "mentioned": mentions.any(),
             "mentions": mentions.kinds(),
             "content": message.content,
+            "at": message.created_at.timestamp(),
             "has_attachments": message.files().next().is_some(),
             "voice_message": commy_core::message::only_a_voice_message(&message.content, message.attachments.iter()),
             "tts": message.speaks_for(state.server.permissions_for(message.author)),
@@ -8231,6 +8246,9 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 tauri::async_runtime::spawn(run_media_loop(handle.clone(), media));
                 tauri::async_runtime::spawn(run_dm_loop(handle.clone(), dms));
                 tauri::async_runtime::spawn(run_afk_watchdog(handle.clone()));
+                if cfg!(desktop) {
+                    tauri::async_runtime::spawn(run_seat_beats(handle.clone()));
+                }
                 tauri::async_runtime::spawn(run_voice_redialer(handle.clone()));
                 tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
                 tauri::async_runtime::spawn(run_event_reminders(handle.clone()));

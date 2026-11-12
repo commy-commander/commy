@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use chrono::Utc;
-use commy_sync::wake::{sealed_preview, wake_day, WakeForget, WakeRegister, WakeRing, MAX_DAYS_AHEAD, MAX_RING_TAGS};
+use commy_sync::wake::{seat_tag, sealed_preview, wake_day, WakeForget, WakeRegister, WakeRing, WakeSeat, MAX_DAYS_AHEAD, MAX_RING_TAGS};
 use commy_sync::StreamKeys;
 use commy_core::ServerId;
 use commy_sync::wire::Bytes;
@@ -33,6 +33,7 @@ type Tagged = Vec<(Tag, Source)>;
 enum Source {
     Dm,
     Server(ServerId),
+    Seat,
 }
 
 struct Registered {
@@ -83,6 +84,24 @@ pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<St
             Ok(res) if res.status().is_success() => tracing::info!("rang {} wake-up tags", chunk.len()),
             Ok(res) => tracing::info!("the sync service refused a wake-up ring: {}", res.status()),
             Err(e) => tracing::info!("could not ring a wake-up: {e}"),
+        }
+    }
+}
+
+fn seat_tags(app: &App, days: &[i64]) -> Option<Vec<Tag>> {
+    let identity = app.identity()?;
+    let me = app.profile.lock().unwrap().as_ref()?.id.to_string();
+    Some(days.iter().map(|day| (seat_tag(&identity.to_bytes(), &me, *day), *day)).collect())
+}
+
+pub async fn beat_seat(app: &App) {
+    let Some(base) = sync_link::url().as_deref().and_then(wake_url) else { return };
+    let Some(seats) = seat_tags(app, &[today()]) else { return };
+    for (seat, _) in seats {
+        match app.http.post(format!("{base}/seat")).json(&WakeSeat { seat: Bytes(seat) }).send().await {
+            Ok(res) if res.status().is_success() => tracing::debug!("told the sync service you are at this computer"),
+            Ok(res) => tracing::debug!("the sync service did not take the seat beat: {}", res.status()),
+            Err(e) => tracing::debug!("could not send the seat beat: {e}"),
         }
     }
 }
@@ -316,12 +335,16 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
     let days = days_from(today);
     let dm = dm_sync::wake_tags(app, &days);
     let servers = server_wake::wake_tags(app, &days);
+    let seats = seat_tags(app, &days);
     let dm_settled = dm.is_some();
+    let seat_settled = seats.is_some();
     let mut wanted: Vec<(Tag, Source)> = dm.unwrap_or_default().into_iter().map(|tag| (tag, Source::Dm)).collect();
     wanted.extend(servers.tags.into_iter().map(|(server, tag)| (tag, Source::Server(server))));
+    wanted.extend(seats.unwrap_or_default().into_iter().map(|tag| (tag, Source::Seat)));
     let stale = no_longer_wanted(&push, today, &wanted, |source| match source {
         Source::Dm => dm_settled,
         Source::Server(server) => !servers.unsettled.contains(server),
+        Source::Seat => seat_settled,
     });
     let http = app.http.clone();
     let (fresh, kept) = fresh_first(&push, still_needed(&push, today, wanted.clone()));

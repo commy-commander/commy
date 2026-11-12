@@ -23,6 +23,11 @@ pub fn decide(idle_secs: i64, timeout_secs: i64, presence: Presence, auto_idle: 
     AfkAction::None
 }
 
+pub fn in_seat(idle_secs: i64, timeout_secs: i64) -> bool {
+    let window = if timeout_secs > NO_TIMEOUT { timeout_secs } else { DEFAULT_TIMEOUT_MINUTES as i64 * 60 };
+    idle_secs < window
+}
+
 pub fn at_launch(chosen: Presence) -> Option<Presence> {
     (chosen == Presence::Online).then_some(Presence::Idle)
 }
@@ -36,6 +41,16 @@ mod tests {
         assert_eq!(at_launch(Presence::Online), Some(Presence::Idle));
         assert_eq!(decide(i64::MAX / 2, 600, Presence::Idle, true), AfkAction::None, "stays idle while nobody is at the computer");
         assert_eq!(decide(3, 600, Presence::Idle, true), AfkAction::Restore, "voice activity brings them back");
+    }
+
+    #[test]
+    fn someone_is_at_the_computer_until_they_would_go_idle() {
+        assert!(in_seat(0, 600));
+        assert!(in_seat(599, 600));
+        assert!(!in_seat(600, 600));
+        assert!(!in_seat(chrono::Utc::now().timestamp(), 600), "a fresh launch with no activity is not in the seat");
+        assert!(in_seat(60, 0), "with idle turned off the usual window still applies");
+        assert!(!in_seat(DEFAULT_TIMEOUT_MINUTES as i64 * 60, 0));
     }
 
     #[test]

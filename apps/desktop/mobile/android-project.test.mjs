@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { LAUNCHER_LAYERS, LAUNCHER_NAMES, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, MAX_SDK } from "./android-project.mjs";
+import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -253,6 +253,19 @@ test("the launcher icon is an adaptive icon with a ground, the star and a one-co
     assert.equal(xml.split(`<${layer} android:drawable="@drawable/${LAUNCHER_LAYERS[layer]}" />`).length - 1, 1, layer);
   }
   assert.deepEqual(LAUNCHER_NAMES, ["ic_launcher", "ic_launcher_round"]);
+});
+
+test("notifications show the star as a white shape on clear ground", () => {
+  const png = readFileSync(new URL(`./android-icon/${NOTIFICATION_ICON}.png`, import.meta.url));
+  assert.equal(png.toString("latin1", 1, 4), "PNG");
+  assert.equal(png.readUInt32BE(16), 96);
+  assert.equal(png.readUInt32BE(20), 96);
+  assert.equal(png[25], 6, "the picture keeps its see-through ground");
+  for (const name of ["WakePreviews.kt", "WakeService.kt"]) {
+    const source = readFileSync(new URL(`./android/${name}`, import.meta.url), "utf8");
+    assert.ok(!source.includes("android.R.drawable.stat_notify_chat"), name);
+    assert.ok(source.includes(`R.drawable.${NOTIFICATION_ICON}`), name);
+  }
 });
 
 test("every launcher layer ships as a square picture big enough for the largest screens", () => {

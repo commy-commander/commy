@@ -5134,6 +5134,12 @@ function appFocused() {
   return windowFocused && document.visibilityState === "visible" && document.hasFocus();
 }
 
+let phoneFrontSince = nowSecs();
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") phoneFrontSince = nowSecs();
+});
+
 function phoneShowing() {
   return phoneInFront(document.body.classList.contains("mobile-app"), document.visibilityState);
 }
@@ -5245,7 +5251,7 @@ function onMessageCreated(msg) {
     else if (dmListShown() && isGroupServer(msg.server)) renderDmThreads();
   }
   const level = levelForChannel(prefs, msg.server, msg.channel, nowSecs());
-  const way = alertWay({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: false, mentioned, announcement });
+  const way = alertWay({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), at: Number(msg.at), frontSince: phoneFrontSince, isDm: false, mentioned, announcement });
   if (way !== "none") {
     const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
     alertNotice(way, notice, `channel:${msg.server}:${msg.channel}`);
@@ -5607,7 +5613,7 @@ function onMessagesCaughtUp(payload) {
     }
     if (info.channel_name === undefined || isBlocked(info.author) || !isRecent(Number(info.at), now)) continue;
     const level = levelForChannel(prefs, server, channel, now);
-    const way = alertWay({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: false, mentioned, announcement: Boolean(info.announcement) });
+    const way = alertWay({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), caughtUp: true, isDm: false, mentioned, announcement: Boolean(info.announcement) });
     if (way !== "none") {
       const notice = caughtUpNotice(sensitiveNotice({ ...info, count, server_name: payload.server_name }, channel, sensitiveConfirmed()), plainText);
       notices.push({ way, notice, target: `channel:${server}:${channel}` });
@@ -5662,7 +5668,7 @@ function onDmReceived(dm) {
   const carded = appFocused() && !viewing;
   if (carded) showDmCard(dm);
   const prefs = notifyPrefs();
-  const way = alertWay({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), isDm: true, mentioned: true });
+  const way = alertWay({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), at: Number(dm.at), frontSince: phoneFrontSince, isDm: true, mentioned: true });
   if (way !== "none") {
     const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
     if (way === "system" || !carded) alertNotice(way, { title: dm.name, body }, `dm:${dm.user}`);

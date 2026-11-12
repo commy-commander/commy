@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, inAppLine } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, inAppLine, sentBeforeFront } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -191,6 +191,18 @@ test("the phone app alerts inside the app while it is on screen and with a syste
   assert.equal(alertWay({ ...dm, phoneInFront: true, presence: "do_not_disturb" }), "none");
   assert.equal(alertWay({ level: "mentions", presence: "online", focusedOnIt: false, phoneInFront: true, isDm: false, mentioned: false }), "none");
   assert.equal(alertWay({ level: "mentions", presence: "online", focusedOnIt: false, phoneInFront: true, isDm: false, mentioned: true }), "in_app");
+});
+
+test("opening the phone app stays quiet about messages its push already announced", () => {
+  const dm = { level: "all", presence: "online", focusedOnIt: false, isDm: true, mentioned: true };
+  assert.equal(alertWay({ ...dm, phoneInFront: true, at: 99, frontSince: 100 }), "none", "sent while the app was away");
+  assert.equal(alertWay({ ...dm, phoneInFront: true, at: 100, frontSince: 100 }), "in_app", "sent once the app was open");
+  assert.equal(alertWay({ ...dm, phoneInFront: true, caughtUp: true }), "none", "caught up on opening");
+  assert.equal(alertWay({ ...dm, phoneInFront: false, at: 99, frontSince: 100 }), "system", "the desktop and a phone in the background are unchanged");
+  assert.equal(alertWay({ ...dm, phoneInFront: false, caughtUp: true }), "system");
+  assert.equal(alertWay({ ...dm, phoneInFront: true, at: NaN, frontSince: 100 }), "in_app", "older backends send no time");
+  assert.equal(sentBeforeFront(undefined, 100), false);
+  assert.equal(sentBeforeFront(5, undefined), false);
 });
 
 test("an in-app alert reads as one line", () => {

@@ -4,7 +4,7 @@ use data_encoding::BASE64;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::stream::{StreamKeys, NONCE_BYTES, TAG_BYTES};
+use crate::stream::{StreamKeys, StreamSecret, NONCE_BYTES, TAG_BYTES};
 use crate::wire::Bytes;
 
 pub const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -16,6 +16,9 @@ pub const PREVIEW_PLAIN: usize = 352;
 pub const MAX_PREVIEW_TEXT: usize = 200;
 pub const MAX_PREVIEW_ENCODED: usize = (PREVIEW_PLAIN + NONCE_BYTES + TAG_BYTES).div_ceil(3) * 4;
 const PREVIEW_AAD: &[u8] = b"commy-wake-preview/v1";
+const SEAT_LABEL: &str = "commy-wake-seat/v1";
+pub const SEAT_BEAT_SECS: u64 = 45;
+pub const SEAT_HOLD_SECS: u64 = 120;
 
 pub type WakeTag = Bytes<32>;
 
@@ -41,6 +44,15 @@ pub struct WakeRing {
     pub tags: Vec<WakeTag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WakeSeat {
+    pub seat: WakeTag,
+}
+
+pub fn seat_tag(account_secret: &[u8; 32], who: &str, day: i64) -> [u8; 32] {
+    StreamSecret::derive(account_secret, SEAT_LABEL, who.as_bytes()).keys().wake_tag(who, day)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +186,18 @@ mod tests {
         assert_ne!(keys.wake_tag("ab", 1), keys.wake_tag("a", 1), "lengths are bound into the tag");
         assert_ne!(&tag, &keys.read_token());
         assert_ne!(&tag, &keys.id.0);
+    }
+
+    #[test]
+    fn a_seat_needs_the_account_secret_and_changes_every_day() {
+        let seat = seat_tag(&[1; 32], "alice", 20_000);
+        assert_eq!(seat, seat_tag(&[1; 32], "alice", 20_000));
+        assert_ne!(seat, seat_tag(&[2; 32], "alice", 20_000));
+        assert_ne!(seat, seat_tag(&[1; 32], "bob", 20_000));
+        assert_ne!(seat, seat_tag(&[1; 32], "alice", 20_001));
+        assert!(SEAT_BEAT_SECS * 2 < SEAT_HOLD_SECS, "one lost beat does not wake the phone");
+        let beat = WakeSeat { seat: Bytes(seat) };
+        assert_eq!(serde_json::from_str::<WakeSeat>(&serde_json::to_string(&beat).unwrap()).unwrap(), beat);
     }
 
     #[test]

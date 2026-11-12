@@ -445,6 +445,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         "user": partner.to_string(),
         "name": sender.visible_name(),
         "content": crate::view::dm_excerpt(&message),
+        "at": message.created_at.timestamp(),
         "request": verdict != safety::Verdict::Inbox,
         "spam": verdict == safety::Verdict::Spam,
     });

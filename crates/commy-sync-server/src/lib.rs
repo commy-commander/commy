@@ -138,6 +138,7 @@ pub fn router(service: Arc<Service>) -> Router {
         .route("/sync/wake/register", post(wake::register).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/forget", post(wake::forget).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/ring", post(wake::ring).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
+        .route("/sync/wake/seat", post(wake::seat).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/pictures/{id}", get(pictures::fetch).merge(put(pictures::store).layer(DefaultBodyLimit::max(MAX_PICTURE_SEALED))))
         .route("/healthz", get(health))
         .with_state(service)

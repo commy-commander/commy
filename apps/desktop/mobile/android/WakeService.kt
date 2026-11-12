@@ -27,7 +27,7 @@ class WakeService : FirebaseMessagingService() {
     }
     WakePreviews.ensureChannel(this)
     val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-      .setSmallIcon(android.R.drawable.stat_notify_chat)
+      .setSmallIcon(R.drawable.commy_notification)
       .setContentTitle("Commy")
       .setContentText("New messages in Commy")
       .setCategory(NotificationCompat.CATEGORY_MESSAGE)

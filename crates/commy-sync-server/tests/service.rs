@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use commy_sync::stream::{StreamSecret, APPEND_NONCE_BYTES};
-use commy_sync::wake::{wake_day, WakeForget, WakeRegister, WakeRing, WakeTag, MAX_RING_TAGS};
+use commy_sync::wake::{seat_tag, wake_day, WakeForget, WakeRegister, WakeRing, WakeSeat, WakeTag, MAX_RING_TAGS};
 use commy_sync::errands::{self, Errand, Outcome, OwnerWork};
 use commy_sync::wire::{Blob, Bytes, ClientFrame, ErrorCode, ServerFrame, ERASE_EVERYTHING, MAX_STREAMS_PER_CONNECTION};
 use commy_sync::{Eraser, SyncClient, SyncEvent};
@@ -345,13 +345,44 @@ async fn a_ring_wakes_the_rung_persons_phones_once_per_gap() {
 }
 
 #[tokio::test]
+async fn a_phone_stays_quiet_while_its_person_is_at_their_desktop() {
+    let config = Config::from_env(|_| None).unwrap();
+    let (pushed, mut pushes) = tokio::sync::mpsc::unbounded_channel();
+    let service = Service::with_pusher(Store::memory(), &config, Pusher::Recording(pushed));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    tokio::spawn(serve(listener, service));
+
+    let keys = StreamSecret::random().keys();
+    let today = wake_day(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64);
+    let bob = Bytes(keys.wake_tag("bob", today));
+    let bob_seat = Bytes(seat_tag(&[3; 32], "bob", today));
+    let register = |tag: &WakeTag, push: &str| serde_json::to_value(WakeRegister { tag: tag.clone(), push: push.into(), until: today }).unwrap();
+    for tag in [&bob, &bob_seat] {
+        assert_eq!(post(&address, "/sync/wake/register", &register(tag, "fcm:bob-phone")).await, 204);
+    }
+    assert_eq!(post(&address, "/sync/wake/register", &register(&bob, "fcm:carol-phone")).await, 204);
+
+    let seated = serde_json::to_value(WakeSeat { seat: bob_seat }).unwrap();
+    assert_eq!(post(&address, "/sync/wake/seat", &seated).await, 204);
+    let ring = serde_json::to_value(WakeRing { tags: vec![bob], preview: None }).unwrap();
+    assert_eq!(post(&address, "/sync/wake/ring", &ring).await, 204);
+    assert_eq!(tokio::time::timeout(WAIT, pushes.recv()).await.unwrap().as_deref(), Some("fcm:carol-phone"), "a phone without that seat still rings");
+    assert!(tokio::time::timeout(Duration::from_millis(500), pushes.recv()).await.is_err(), "the seated person's phone stays quiet");
+
+    let stranger = serde_json::to_value(WakeSeat { seat: Bytes(seat_tag(&[4; 32], "bob", today)) }).unwrap();
+    assert_eq!(post(&address, "/sync/wake/seat", &stranger).await, 204, "a seat nobody registered quiets nobody");
+}
+
+#[tokio::test]
 async fn wake_ups_are_off_without_a_push_service() {
     let (url, _) = start().await;
     let address = url.trim_start_matches("ws://").trim_end_matches("/sync").to_string();
     let tag = Bytes([1; 32]);
     let register = serde_json::to_value(WakeRegister { tag: tag.clone(), push: "fcm:x".into(), until: 0 }).unwrap();
     assert_eq!(post(&address, "/sync/wake/register", &register).await, 404);
-    assert_eq!(post(&address, "/sync/wake/ring", &serde_json::to_value(WakeRing { tags: vec![tag], preview: None }).unwrap()).await, 204);
+    assert_eq!(post(&address, "/sync/wake/ring", &serde_json::to_value(WakeRing { tags: vec![tag.clone()], preview: None }).unwrap()).await, 204);
+    assert_eq!(post(&address, "/sync/wake/seat", &serde_json::to_value(WakeSeat { seat: tag }).unwrap()).await, 404);
 }
 
 async fn request(address: &str, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
