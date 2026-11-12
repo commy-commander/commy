@@ -284,7 +284,33 @@ pub fn select_device(available: &[String], wanted: Option<&str>) -> Option<usize
     if wanted.is_empty() {
         return None;
     }
-    available.iter().position(|n| n == wanted)
+    available
+        .iter()
+        .position(|n| n == wanted)
+        .or_else(|| available.iter().position(|n| same_device(wanted, n)))
+}
+
+pub fn same_device(a: &str, b: &str) -> bool {
+    a.trim() == b.trim() || device_identity(a) == device_identity(b)
+}
+
+fn device_identity(name: &str) -> String {
+    let mut identity = String::with_capacity(name.len());
+    let mut rest = name.trim();
+    while let Some(open) = rest.find('(') {
+        identity.push_str(&rest[..=open]);
+        rest = without_port_number(&rest[open + 1..]);
+    }
+    identity.push_str(rest);
+    identity.to_lowercase()
+}
+
+fn without_port_number(after_paren: &str) -> &str {
+    let digits = after_paren.bytes().take_while(u8::is_ascii_digit).count();
+    match after_paren[digits..].strip_prefix("- ") {
+        Some(rest) if digits > 0 => rest,
+        _ => after_paren,
+    }
 }
 
 type OpenedDevice = Arc<Mutex<Option<String>>>;
@@ -309,7 +335,7 @@ pub fn device_to_switch_to(
 ) -> Option<String> {
     let opened = opened?;
     match wanted.map(str::trim).filter(|w| !w.is_empty()) {
-        Some(wanted) if wanted == opened => None,
+        Some(wanted) if same_device(wanted, opened) => None,
         Some(wanted) => wanted_is_back(wanted).then(|| wanted.to_string()),
         None => default_now().filter(|now| now != opened),
     }
@@ -321,7 +347,7 @@ fn device_moved(input: bool, wanted: Option<&str>, opened: &OpenedDevice) -> boo
     device_to_switch_to(
         wanted,
         opened.as_deref(),
-        |wanted| device_names(&host, input).iter().any(|n| n == wanted),
+        |wanted| device_names(&host, input).iter().any(|n| same_device(wanted, n)),
         || default_device_name(&host, input),
     )
     .is_some()
@@ -648,6 +674,22 @@ mod tests {
     }
 
     #[test]
+    fn a_device_renumbered_by_the_system_is_still_the_same_device() {
+        let names = vec!["Speakers (Realtek)".to_string(), "Headset (2- USB Audio)".to_string()];
+        assert_eq!(select_device(&names, Some("Headset (USB Audio)")), Some(1));
+        assert_eq!(select_device(&names, Some("Headset (3- USB Audio)")), Some(1));
+        assert!(same_device("Mic (12- Yeti)", "mic (Yeti)"));
+        assert!(!same_device("Headset (USB Audio)", "Headset (Bluetooth)"));
+        assert!(!same_device("Line (2-channel)", "Line (channel)"));
+    }
+
+    #[test]
+    fn an_exact_name_wins_over_a_renumbered_one() {
+        let names = vec!["Headset (2- USB Audio)".to_string(), "Headset (USB Audio)".to_string()];
+        assert_eq!(select_device(&names, Some("Headset (USB Audio)")), Some(1));
+    }
+
+    #[test]
     fn missing_or_unset_device_falls_back_to_default() {
         let names = vec!["Speakers (Realtek)".to_string()];
         assert_eq!(select_device(&names, None), None);
@@ -740,6 +782,7 @@ mod tests {
         assert_eq!(device_to_switch_to(Some("Headset"), Some("Laptop Mic"), gone, no_default), None);
         assert_eq!(device_to_switch_to(Some("Headset"), Some("Headset"), back, no_default), None);
         assert_eq!(device_to_switch_to(Some("Headset"), None, back, no_default), None);
+        assert_eq!(device_to_switch_to(Some("Headset (USB)"), Some("Headset (2- USB)"), back, no_default), None);
     }
 
     #[test]

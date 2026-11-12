@@ -195,6 +195,17 @@ function createCameraPipeline(stream) {
   return pipe;
 }
 
+function cameraPipelineRunning(pipe) {
+  return Boolean(pipe && pipe.timer);
+}
+
+function swapCameraSource(pipe, stream) {
+  for (const track of pipe.stream.getTracks()) track.stop();
+  pipe.stream = stream;
+  pipe.video.srcObject = stream;
+  pipe.video.play().catch(() => {});
+}
+
 function stopCameraPipeline(pipe) {
   if (!pipe) return;
   clearInterval(pipe.timer);

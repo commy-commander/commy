@@ -5680,12 +5680,46 @@ const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
 const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null, tucked: false };
 
-function savedCameraId() {
-  try { return localStorage.getItem(CAMERA_KEY) || ""; } catch { return ""; }
+function savedCamera() {
+  try { return readCameraChoice(localStorage.getItem(CAMERA_KEY)); } catch { return null; }
+}
+
+function saveCamera(choice) {
+  try {
+    if (choice) localStorage.setItem(CAMERA_KEY, cameraChoiceText(choice));
+    else localStorage.removeItem(CAMERA_KEY);
+  } catch {}
+}
+
+async function listCameras() {
+  try {
+    return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+  } catch {
+    return [];
+  }
+}
+
+function liveCameraId(pipe) {
+  const track = pipe && pipe.stream.getVideoTracks()[0];
+  return track && track.readyState === "live" ? track.getSettings().deviceId || "" : null;
+}
+
+function rememberCameraLabel(stream) {
+  const choice = savedCamera();
+  const track = stream.getVideoTracks()[0];
+  if (!choice || !track || !track.label || choice.label === track.label) return;
+  if (track.getSettings().deviceId === choice.id) saveCamera({ id: choice.id, label: track.label });
 }
 
 async function openCameraStream() {
-  const deviceId = savedCameraId();
+  const choice = savedCamera();
+  const found = findCamera(await listCameras(), choice);
+  const stream = await openCameraById(found ? found.deviceId : choice ? choice.id : "");
+  rememberCameraLabel(stream);
+  return stream;
+}
+
+async function openCameraById(deviceId) {
   const video = deviceId ? { deviceId: { exact: deviceId } } : {};
   try {
     return await navigator.mediaDevices.getUserMedia({
@@ -5715,6 +5749,7 @@ async function startCamera() {
     return;
   }
   const pipe = createCameraPipeline(stream);
+  watchCameraTrack(pipe);
   cam.pipe = pipe;
   cam.timer = setInterval(async () => {
     if (cam.busy || !pipe.drawn || cam.pipe !== pipe) return;
@@ -5731,6 +5766,48 @@ async function startCamera() {
   state.cameraOn = true;
   renderVoicePanel();
   if (state.currentServer) await refreshCurrentServer();
+}
+
+function watchCameraTrack(pipe) {
+  const track = pipe.stream.getVideoTracks()[0];
+  if (track) track.addEventListener("ended", () => followCamera(pipe));
+}
+
+async function followCamera(pipe) {
+  if (!cameraPipelineRunning(pipe) || pipe.following) return;
+  pipe.following = true;
+  try {
+    const move = cameraMove(await listCameras(), savedCamera(), liveCameraId(pipe));
+    if (move) {
+      const stream = await openCameraById(move.deviceId);
+      if (cameraPipelineRunning(pipe)) {
+        swapCameraSource(pipe, stream);
+        watchCameraTrack(pipe);
+        rememberCameraLabel(stream);
+      } else {
+        for (const track of stream.getTracks()) track.stop();
+      }
+    }
+  } catch {}
+  pipe.following = false;
+}
+
+function refreshOpenDevicePicks() {
+  if (openSettingsLayerId()) {
+    loadAudioDevices();
+    loadCameraDevices();
+  }
+  if (!$("voice-pop").classList.contains("hidden")) fillVoicePop();
+}
+
+function wireDeviceFollowing() {
+  const media = navigator.mediaDevices;
+  if (!media || !media.addEventListener) return;
+  media.addEventListener("devicechange", () => {
+    followCamera(cam.pipe);
+    followCamera(previewPipe);
+    refreshOpenDevicePicks();
+  });
 }
 
 function stopCameraTracks() {
@@ -6985,17 +7062,7 @@ function showCameraFrame(frame) {
 }
 
 async function loadCameraDevices() {
-  const select = $("camera-device");
-  try {
-    const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
-    const chosen = savedCameraId();
-    select.replaceChildren();
-    select.appendChild(new Option("Default", ""));
-    devices.forEach((d, i) => {
-      select.appendChild(new Option(d.label || `Camera ${i + 1}`, d.deviceId));
-    });
-    select.value = devices.some(d => d.deviceId === chosen) ? chosen : "";
-  } catch {}
+  fillPicks($("camera-device"), cameraPicks(await listCameras(), savedCamera()));
 }
 
 let previewPipe = null;
@@ -7007,6 +7074,7 @@ async function toggleCameraPreview() {
   }
   try {
     previewPipe = createCameraPipeline(await openCameraStream());
+    watchCameraTrack(previewPipe);
     $("cam-stage").appendChild(previewPipe.canvas);
     $("cam-stage").classList.add("live");
     $("cam-preview-btn").textContent = "Stop Test";
@@ -7107,12 +7175,13 @@ async function chooseCameraBackdrop() {
   }
 }
 
+function fillPicks(select, picks, lead = []) {
+  select.replaceChildren(...lead, ...picks.options.map(o => new Option(o.label, o.value)));
+  select.value = picks.value;
+}
+
 function fillDeviceSelect(select, names, chosen) {
-  select.replaceChildren();
-  select.appendChild(new Option("Default", ""));
-  for (const name of names) select.appendChild(new Option(name, name));
-  if (chosen && !names.includes(chosen)) select.appendChild(new Option(`${chosen} (not connected)`, chosen));
-  select.value = chosen || "";
+  fillPicks(select, audioDevicePicks(names, chosen));
 }
 
 async function loadAudioDevices() {
@@ -11547,27 +11616,18 @@ function placeVoicePop() {
   pop.style.top = `${Math.max(8, dock.top - 26 - box.height)}px`;
 }
 
-function fillVoicePick(select, names, current) {
-  select.replaceChildren(new Option("Default", ""), ...names.map(n => new Option(n, n)));
-  select.value = names.includes(current || "") ? current : "";
-}
 
 async function fillVoicePop() {
   try {
     const devices = await invoke("list_audio_devices");
-    fillVoicePick($("vop-mic"), devices.inputs, state.voice.input_device);
-    fillVoicePick($("vop-speakers"), devices.outputs, state.voice.output_device);
+    fillDeviceSelect($("vop-mic"), devices.inputs, state.voice.input_device);
+    fillDeviceSelect($("vop-speakers"), devices.outputs, state.voice.output_device);
   } catch {
     for (const id of ["vop-mic", "vop-speakers"]) $(id).replaceChildren(new Option("No devices found", ""));
   }
   const camera = $("vop-camera");
-  let cameras = [];
-  try {
-    cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
-  } catch {}
-  const chosen = savedCameraId();
-  camera.replaceChildren(new Option("Off", "off"), new Option("Default", ""), ...cameras.map((d, i) => new Option(d.label || `Camera ${i + 1}`, d.deviceId)));
-  camera.value = !state.cameraOn ? "off" : cameras.some(d => d.deviceId === chosen) ? chosen : "";
+  fillPicks(camera, cameraPicks(await listCameras(), savedCamera()), [new Option("Off", "off")]);
+  if (!state.cameraOn) camera.value = "off";
 }
 
 function openVoicePop() {
@@ -11626,8 +11686,8 @@ function animateToggle(button, off) {
 }
 
 async function useCameraDevice(id) {
-  try { localStorage.setItem(CAMERA_KEY, id); } catch {}
-  if ($("camera-device").value !== id) $("camera-device").value = id;
+  saveCamera(cameraChoiceFor(await listCameras(), id, savedCamera()));
+  await loadCameraDevices();
   if (previewPipe) {
     stopCameraPreview();
     toggleCameraPreview();
@@ -11650,14 +11710,7 @@ async function toggleVideoPop(anchor) {
   select.replaceChildren(el("option", null, "Loading cameras..."));
   pop.classList.remove("hidden");
   placePopup(pop, anchor, "above");
-  try {
-    const cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
-    const chosen = savedCameraId();
-    select.replaceChildren(new Option("Default", ""), ...cameras.map((d, i) => new Option(d.label || `Camera ${i + 1}`, d.deviceId)));
-    select.value = cameras.some(d => d.deviceId === chosen) ? chosen : "";
-  } catch {
-    select.replaceChildren(el("option", null, "No cameras found"));
-  }
+  fillPicks(select, cameraPicks(await listCameras(), savedCamera()));
 }
 
 async function toggleAudioPop(which, anchor) {
@@ -11684,9 +11737,7 @@ async function toggleAudioPop(which, anchor) {
   try {
     const devices = await invoke("list_audio_devices");
     const names = input ? devices.inputs : devices.outputs;
-    const current = (input ? state.voice.input_device : state.voice.output_device) || "";
-    select.replaceChildren(new Option("Default", ""), ...names.map(n => new Option(n, n)));
-    select.value = names.includes(current) ? current : "";
+    fillDeviceSelect(select, names, input ? state.voice.input_device : state.voice.output_device);
   } catch (e) {
     select.replaceChildren(el("option", null, "No devices found"));
   }
@@ -23245,6 +23296,7 @@ function wireEvents() {
   onCameraFxChange(renderCameraFx);
   renderCameraFx();
   $("camera-device").addEventListener("change", e => useCameraDevice(e.target.value));
+  wireDeviceFollowing();
   $("input-device").addEventListener("change", saveAudioDevices);
   $("output-device").addEventListener("change", saveAudioDevices);
 
