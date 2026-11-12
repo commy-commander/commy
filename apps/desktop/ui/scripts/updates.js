@@ -16,9 +16,9 @@ function updateStatusText(status, nowMs = Date.now()) {
     case "downloading": return `Downloading Commy ${s.version}${s.progress != null ? `, ${s.progress}%` : ""}...`;
     case "ready": return `Commy ${s.version} is ready. Restart to finish updating.`;
     case "available":
-      return s.reason === "portable"
-        ? `Commy ${s.version} is out. This copy runs without the installer, so download the new version yourself.`
-        : `Commy ${s.version} is out. Update it the way you installed Commy.`;
+      if (s.reason === "portable") return `Commy ${s.version} is out. This copy runs without the installer, so download the new version yourself.`;
+      if (s.can_install) return `Commy ${s.version} is out. Automatic updates are off, so click Update Now to install it.`;
+      return `Commy ${s.version} is out. Update it the way you installed Commy.`;
     case "up_to_date": return `You have the latest version.${checked}`;
     case "failed": return `${s.error || "The check did not finish."}${checked}`;
   }
@@ -35,9 +35,19 @@ function updateAction(status) {
     case "checking": return { label: "Checking...", action: "check", disabled: true };
     case "downloading": return { label: "Downloading...", action: "check", disabled: true };
     case "ready": return { label: "Restart Now", action: "restart", disabled: false };
-    case "available": return { label: "Download Page", action: "page", disabled: !s.page };
+    case "available":
+      if (s.can_install) return { label: "Update Now", action: "check", disabled: false };
+      return { label: "Download Page", action: "page", disabled: !s.page };
   }
   return { label: "Check for Updates", action: "check", disabled: false };
 }
 
-if (typeof module !== "undefined") module.exports = { agoWords, updateStatusText, updateAction };
+const OUTDATED_SKIPS = new Set(["dev", "store"]);
+
+function outdatedNotice(status) {
+  const s = status || {};
+  if (s.phase !== "available" || !s.version || OUTDATED_SKIPS.has(s.reason)) return null;
+  return `Commy ${s.version} is out. Until you update, you may not be able to connect with people on the newest version.`;
+}
+
+if (typeof module !== "undefined") module.exports = { agoWords, updateStatusText, updateAction, outdatedNotice };

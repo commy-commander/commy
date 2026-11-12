@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-const { agoWords, updateStatusText, updateAction } = createRequire(import.meta.url)("../scripts/updates.js");
+const { agoWords, updateStatusText, updateAction, outdatedNotice } = createRequire(import.meta.url)("../scripts/updates.js");
 const now = 1_760_000_000_000;
 const ago = secs => now / 1000 - secs;
 
@@ -43,4 +43,26 @@ test("development builds never check", () => {
 
 test("a failed check shows the reason", () => {
   assert.equal(updateStatusText({ phase: "failed", error: "Could not reach the update server.", checked_at: ago(10) }, now), "Could not reach the update server. Checked just now.");
+});
+
+test("with automatic updates off, a found version waits for Update Now", () => {
+  const status = { phase: "available", can_install: true, reason: null, version: "0.2.2" };
+  assert.equal(updateStatusText(status, now), "Commy 0.2.2 is out. Automatic updates are off, so click Update Now to install it.");
+  assert.deepEqual(updateAction(status), { label: "Update Now", action: "check", disabled: false });
+});
+
+test("an outdated copy warns that it may not connect with the newest version", () => {
+  const warning = "Commy 0.2.2 is out. Until you update, you may not be able to connect with people on the newest version.";
+  assert.equal(outdatedNotice({ phase: "available", can_install: true, version: "0.2.2" }), warning);
+  assert.equal(outdatedNotice({ phase: "available", reason: "portable", version: "0.2.2" }), warning);
+  assert.equal(outdatedNotice({ phase: "available", reason: "package", version: "0.2.2" }), warning);
+});
+
+test("no outdated warning when current, busy, or on a store or development build", () => {
+  assert.equal(outdatedNotice(null), null);
+  assert.equal(outdatedNotice({ phase: "up_to_date" }), null);
+  assert.equal(outdatedNotice({ phase: "downloading", version: "0.2.2" }), null);
+  assert.equal(outdatedNotice({ phase: "ready", version: "0.2.2" }), null);
+  assert.equal(outdatedNotice({ phase: "available", reason: "store", version: "0.2.2" }), null);
+  assert.equal(outdatedNotice({ phase: "available", reason: "dev", version: "0.2.2" }), null);
 });

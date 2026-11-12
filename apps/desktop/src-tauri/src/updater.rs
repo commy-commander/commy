@@ -144,8 +144,8 @@ pub fn start(handle: &AppHandle) {
         tokio::time::sleep(FIRST_CHECK).await;
         loop {
             let auto = handle.state::<crate::App>().voice.lock().unwrap().auto_update;
-            if auto && check_due(&status(&handle), chrono::Utc::now().timestamp()) {
-                check(&handle).await;
+            if check_due(&status(&handle), chrono::Utc::now().timestamp()) {
+                run(&handle, Mode::when_auto_update(auto)).await;
             }
             tokio::time::sleep(CHECK_EVERY).await;
         }
@@ -161,7 +161,31 @@ pub fn check_due(status: &UpdateStatus, now: i64) -> bool {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mode {
+    Install,
+    LookOnly,
+}
+
+impl Mode {
+    pub fn when_auto_update(auto: bool) -> Self {
+        if auto {
+            Mode::Install
+        } else {
+            Mode::LookOnly
+        }
+    }
+}
+
 pub async fn check(handle: &AppHandle) -> UpdateStatus {
+    run(handle, Mode::Install).await
+}
+
+pub async fn look(handle: &AppHandle) -> UpdateStatus {
+    run(handle, Mode::LookOnly).await
+}
+
+async fn run(handle: &AppHandle, mode: Mode) -> UpdateStatus {
     if VERSION.is_none() {
         return status(handle);
     }
@@ -175,7 +199,7 @@ pub async fn check(handle: &AppHandle) -> UpdateStatus {
         s.error = None;
         s.progress = None;
     });
-    let result = run_check(handle).await;
+    let result = run_check(handle, mode).await;
     updates.busy.store(false, Ordering::SeqCst);
     let now = chrono::Utc::now().timestamp();
     match result {
@@ -200,7 +224,7 @@ pub async fn check(handle: &AppHandle) -> UpdateStatus {
     status(handle)
 }
 
-async fn run_check(handle: &AppHandle) -> Result<(), String> {
+async fn run_check(handle: &AppHandle, mode: Mode) -> Result<(), String> {
     let Some(current) = VERSION.and_then(parse_version) else {
         return Err("This build does not update itself.".into());
     };
@@ -212,7 +236,7 @@ async fn run_check(handle: &AppHandle) -> Result<(), String> {
     let found = version.to_string();
     let page = DOWNLOAD_PAGE.to_string();
     let can_install = handle.state::<Updates>().status.lock().unwrap().can_install;
-    if !can_install {
+    if !can_install || mode == Mode::LookOnly {
         set(handle, |s| {
             s.phase = Phase::Available;
             s.version = Some(found);
@@ -332,6 +356,12 @@ mod tests {
         assert!(check_due(&checked(Phase::Failed, 1), now));
         assert!(!check_due(&checked(Phase::Ready, CHECK_EVERY.as_secs() as i64), now));
         assert!(!check_due(&UpdateStatus { phase: Phase::Downloading, ..UpdateStatus::default() }, now));
+    }
+
+    #[test]
+    fn turning_auto_update_off_still_looks_for_new_versions() {
+        assert_eq!(Mode::when_auto_update(true), Mode::Install);
+        assert_eq!(Mode::when_auto_update(false), Mode::LookOnly);
     }
 
     #[test]

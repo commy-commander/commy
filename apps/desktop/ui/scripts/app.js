@@ -10968,6 +10968,27 @@ function onUpdateStatus(status) {
     toast(`Commy ${status.version} is ready. Restart from Settings > Startup & Updates.`);
   }
   renderUpdateStatus();
+  paintUpdateChip();
+}
+
+let dismissedUpdateVersion = null;
+
+function paintUpdateChip() {
+  const notice = outdatedNotice(updateStatus);
+  const offline = !$("offline-chip").classList.contains("hidden");
+  const dismissed = !!notice && dismissedUpdateVersion === updateStatus.version;
+  $("update-chip-text").textContent = notice || "";
+  $("update-chip").classList.toggle("hidden", !notice || offline || dismissed);
+}
+
+function dismissUpdateChip() {
+  dismissedUpdateVersion = updateStatus && updateStatus.version;
+  paintUpdateChip();
+}
+
+function openUpdateSettings() {
+  dismissUpdateChip();
+  openUserSettings("updates");
 }
 
 function renderUpdateStatus() {
@@ -23521,6 +23542,8 @@ function wireEvents() {
     renderUpdateStatus();
   });
   $("update-action").onclick = runUpdateAction;
+  $("update-chip-open").onclick = openUpdateSettings;
+  $("update-chip-close").onclick = dismissUpdateChip;
   $("conn-test-run").onclick = runConnectionTest;
   $("verbose-log-toggle").addEventListener("change", e => setVerboseLogging(e.target.checked));
   $("log-folder-open").onclick = () => invoke("open_log_folder").catch(err => toast(String(err)));
@@ -25989,6 +26012,7 @@ function paintStartup(view) {
 
 function paintOfflineChip(view) {
   $("offline-chip").classList.toggle("hidden", !(view && view.offline));
+  paintUpdateChip();
 }
 
 function closeStartupLoader() {

@@ -7918,11 +7918,13 @@ fn start_with_computer_by_default(handle: &tauri::AppHandle) {
 #[tauri::command]
 fn set_auto_update(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) -> VoiceSettings {
     let settings = app.update_voice(|voice| voice.auto_update = enabled);
-    if enabled {
-        tauri::async_runtime::spawn(async move {
+    tauri::async_runtime::spawn(async move {
+        if enabled {
             updater::check(&handle).await;
-        });
-    }
+        } else {
+            updater::look(&handle).await;
+        }
+    });
     settings
 }
 
