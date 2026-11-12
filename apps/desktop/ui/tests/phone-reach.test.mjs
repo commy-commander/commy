@@ -73,6 +73,14 @@ test("the phone app page cannot be zoomed by accident, and keeps the rest of its
   assert.equal(lockedViewport("width=device-width, initial-scale=1"), "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no");
   assert.equal(lockedViewport("width=device-width, maximum-scale=5, user-scalable=yes"), "width=device-width, maximum-scale=1, user-scalable=no");
   assert.equal(lockedViewport(lockedViewport("width=device-width, viewport-fit=cover")), lockedViewport("width=device-width, viewport-fit=cover"));
+});
+
+test("a wide phone screen that is laid out at a set width is left free to scale up and fill the screen", () => {
+  const { SLIM_VIEWPORT, TWO_PANE_VIEWPORT } = require("../scripts/phone.js");
+  assert.equal(lockedViewport(SLIM_VIEWPORT), SLIM_VIEWPORT);
+  assert.equal(lockedViewport(TWO_PANE_VIEWPORT), TWO_PANE_VIEWPORT);
+  assert.doesNotMatch(lockedViewport(SLIM_VIEWPORT), /maximum-scale/);
+  assert.match(lockedViewport(SLIM_VIEWPORT), /user-scalable=no/);
   assert.match(code, /if \(!root\.classList\.contains\("mobile-app"\) && !document\.body\.classList\.contains\("mobile-app"\)\) return;/);
 });
 

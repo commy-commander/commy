@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
-const { isPhoneWidth, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation } = require("../scripts/phone.js");
+const { isPhoneWidth, phonePaneAfter, phonePaneGoesDeeper, backKeepsGoing, PHONE_BACK_STEPS, rowOpensConversation } = require("../scripts/phone.js");
 
 test("phone widths stay well below the smallest desktop window", () => {
   assert.equal(isPhoneWidth(390), true);
@@ -28,6 +29,33 @@ test("only moves deeper add a step that the system back gesture can undo", () =>
   assert.equal(phonePaneGoesDeeper("chat", "people"), true);
   assert.equal(phonePaneGoesDeeper("people", "chat"), false);
   assert.equal(phonePaneGoesDeeper("chat", "list"), false);
+});
+
+test("going back keeps stepping until the screen the person asked for shows", () => {
+  assert.equal(backKeepsGoing("list", "chat", { pane: "chat", ptSheet: "pt-chat-menu" }, 0), true);
+  assert.equal(backKeepsGoing("list", "chat", { pane: "chat" }, 1), true);
+  assert.equal(backKeepsGoing("list", "list", {}, 2), false);
+  assert.equal(backKeepsGoing("chat", "people", { pane: "people" }, 0), true);
+  assert.equal(backKeepsGoing("chat", "chat", { pane: "chat" }, 0), false);
+  assert.equal(backKeepsGoing("chat", "list", {}, 0), false);
+});
+
+test("going back stops at the first step, with nothing asked for, and before it could run away", () => {
+  assert.equal(backKeepsGoing(null, "chat", { pane: "chat" }, 0), false);
+  assert.equal(backKeepsGoing("list", "chat", {}, 0), false);
+  assert.equal(backKeepsGoing("list", "chat", null, 0), false);
+  assert.equal(backKeepsGoing("list", "chat", { pane: "chat" }, PHONE_BACK_STEPS), false);
+});
+
+test("the back step on the phone names its goal and the history handler walks to it", () => {
+  const app = readFileSync(new URL("../scripts/app.js", import.meta.url), "utf8");
+  assert.match(app, /phoneBack = \{ goal: to, steps: 0 \};\n\s+history\.back\(\);/);
+  assert.match(app, /if \(!back \|\| !backKeepsGoing\(back\.goal, pane, entry, back\.steps\)\) return;\n\s+phoneBack = \{ goal: back\.goal, steps: back\.steps \+ 1 \};\n\s+history\.back\(\);/);
+});
+
+test("a panel opened from the chat menu takes the menu's place in the history", () => {
+  const app = readFileSync(new URL("../scripts/app.js", import.meta.url), "utf8");
+  assert.match(app, /if \(history\.state && history\.state\.ptSheet\) history\.replaceState\(entry, ""\);\n\s+else history\.pushState\(entry, ""\);/);
 });
 
 test("tapping a channel or a conversation opens it, but links, requests and row buttons do not", () => {

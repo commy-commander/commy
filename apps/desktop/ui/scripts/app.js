@@ -19519,6 +19519,7 @@ function wireNarrowLayout() {
 }
 
 let phonePaneNext = null;
+let phoneBack = null;
 
 function phonePane() {
   return phonePaneNext || $("app").dataset.pane || "list";
@@ -19547,8 +19548,10 @@ function phoneStep(action) {
   if (!isPhoneWidth(window.innerWidth) || narrowSplit()) return false;
   const from = phonePane();
   const to = phonePaneAfter(from, action);
-  if (!phonePaneGoesDeeper(from, to) && history.state && history.state.pane) history.back();
-  else setPhonePane(to);
+  if (!phonePaneGoesDeeper(from, to) && history.state && history.state.pane) {
+    phoneBack = { goal: to, steps: 0 };
+    history.back();
+  } else setPhonePane(to);
   return true;
 }
 
@@ -19581,16 +19584,24 @@ function closeOpenPhonePanel() {
 
 function notePhonePanelOpened() {
   if (!isPhoneWidth(window.innerWidth) || narrowSplit() || (history.state && history.state.panel)) return;
-  history.pushState({ pane: phonePane(), panel: true }, "");
+  const entry = { pane: phonePane(), panel: true };
+  if (history.state && history.state.ptSheet) history.replaceState(entry, "");
+  else history.pushState(entry, "");
 }
 
 function onPhoneHistory(e) {
   const entry = e.state || {};
+  const back = phoneBack;
+  phoneBack = null;
   const layer = document.querySelector(".settings-layer:not(.hidden)");
   if (layer && !entry.settings) closeSettingsLayers();
   else if (layer && !entry.page) settingsPhoneView(layer, "menu");
   else if (!entry.panel && closeOpenPhonePanel()) return;
-  setPhonePane(entry.pane || "list", { fromHistory: true });
+  const pane = entry.pane || "list";
+  setPhonePane(pane, { fromHistory: true });
+  if (!back || !backKeepsGoing(back.goal, pane, entry, back.steps)) return;
+  phoneBack = { goal: back.goal, steps: back.steps + 1 };
+  history.back();
 }
 
 function wireSettingsPhoneBars() {

@@ -1,5 +1,6 @@
 const PHONE_MAX_WIDTH_PX = 700;
 const PHONE_PANE_DEPTH = { list: 0, chat: 1, people: 2 };
+const PHONE_BACK_STEPS = 12;
 const PHONE_APP_VIEWPORT = "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content";
 const TAP_AFTER_SCROLL_MS = 350;
 const TWO_PANE_MIN_WIDTH_PX = 640;
@@ -22,6 +23,11 @@ function phonePaneAfter(pane, action) {
 
 function phonePaneGoesDeeper(from, to) {
   return (PHONE_PANE_DEPTH[to] ?? 0) > (PHONE_PANE_DEPTH[from] ?? 0);
+}
+
+function backKeepsGoing(goal, pane, entry, steps) {
+  if (!goal || steps >= PHONE_BACK_STEPS) return false;
+  return phonePaneGoesDeeper(goal, pane) && Boolean(entry && entry.pane);
 }
 
 function rowOpensConversation(rowClasses, tappedButton) {
@@ -49,5 +55,5 @@ function headerTapLeavesPeople(pane, buttonId) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PHONE_MAX_WIDTH_PX, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT, TWO_PANE_LAYOUT_WIDTH_PX, SLIM_VIEWPORT, SLIM_LAYOUT_WIDTH_PX, isPhoneWidth, phoneAppViewport, phonePaneAfter, phonePaneGoesDeeper, rowOpensConversation, tapEndsScroll, LONG_PRESS, longPressDrifted, headerTapLeavesPeople };
+  module.exports = { PHONE_MAX_WIDTH_PX, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT, TWO_PANE_LAYOUT_WIDTH_PX, SLIM_VIEWPORT, SLIM_LAYOUT_WIDTH_PX, isPhoneWidth, phoneAppViewport, phonePaneAfter, phonePaneGoesDeeper, backKeepsGoing, PHONE_BACK_STEPS, rowOpensConversation, tapEndsScroll, LONG_PRESS, longPressDrifted, headerTapLeavesPeople };
 }

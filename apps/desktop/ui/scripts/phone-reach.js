@@ -35,6 +35,7 @@ function dropHoverIn(sheet) {
 
 function lockedViewport(content) {
   const parts = String(content || "").split(",").map(part => part.trim()).filter(Boolean);
+  if (parts.some(part => /^width\s*=\s*\d/.test(part))) return parts.join(", ");
   const kept = parts.filter(part => !/^(maximum-scale|user-scalable)\s*=/.test(part));
   const cover = kept.findIndex(part => part.startsWith("viewport-fit"));
   kept.splice(cover < 0 ? kept.length : cover, 0, ...REACH_ZOOM);
