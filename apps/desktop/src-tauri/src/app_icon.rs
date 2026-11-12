@@ -12,15 +12,15 @@ pub const TARGETS: &[&str] = &["app", "tray"];
 const TASKBAR_ICON_PREFIX: &str = "taskbar-icon";
 const TASKBAR_ICON_SIZES: &[u32] = &[256, 64, 48, 32, 24, 16];
 pub const TILE_COLOURS: &[(&str, &str)] = &[
-    ("amber", "#e08a1e"),
-    ("mint", "#1f9e6e"),
-    ("ocean", "#2a6fd1"),
-    ("violet", "#7448d4"),
+    ("amber", "#f2b24c"),
+    ("mint", "#8fdcbd"),
+    ("ocean", "#c3d6ff"),
+    ("violet", "#dccdff"),
     ("mono", "#33363d"),
 ];
 
 const CUSTOM_SIZE: u32 = 256;
-const MARK_PNG: &[u8] = include_bytes!("../../ui/images/commy_v3_noback.png");
+const MARK_PNG: &[u8] = include_bytes!("../../ui/images/commy-star-512.png");
 
 static CURRENT: RwLock<Option<(RgbaImage, RgbaImage)>> = RwLock::new(None);
 
@@ -49,7 +49,7 @@ fn tile_colour(name: &str) -> Option<[u8; 3]> {
     TILE_COLOURS.iter().find(|(preset, _)| *preset == name).and_then(|(_, hex)| parse_hex(hex))
 }
 
-pub const CLASSIC_TILE: &str = "#ef443c";
+pub const CLASSIC_TILE: &str = "#1a2574";
 const STAR_FIT: f32 = 0.7;
 
 fn star_geometry(star: &RgbaImage) -> (f32, f32, f32) {
@@ -244,10 +244,10 @@ mod tests {
         let named: Vec<&str> = TILE_COLOURS.iter().map(|(name, _)| *name).collect();
         assert_eq!(coloured, named);
         assert!(TILE_COLOURS.iter().all(|(_, hex)| parse_hex(hex).is_some()));
-        assert_eq!(parse_hex("#e08a1e"), Some([0xe0, 0x8a, 0x1e]));
-        assert_eq!(parse_hex("e08a1e"), None);
-        assert_eq!(parse_hex("#e08a1"), None);
-        assert_eq!(parse_hex("#zz8a1e"), None);
+        assert_eq!(parse_hex("#f2b24c"), Some([0xf2, 0xb2, 0x4c]));
+        assert_eq!(parse_hex("f2b24c"), None);
+        assert_eq!(parse_hex("#f2b24"), None);
+        assert_eq!(parse_hex("#zzb24c"), None);
     }
 
     #[test]

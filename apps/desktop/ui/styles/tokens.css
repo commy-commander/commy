@@ -129,9 +129,9 @@
   --row-h: 56px;
   --icon-stroke: 0;
 
-  --shadow-1: 0 1px 1px rgba(0, 0, 0, .5), 0 6px 12px -4px rgba(0, 0, 0, .5);
-  --shadow-2: 0 1px 0 rgba(0, 0, 0, .6), 0 18px 30px -12px rgba(0, 0, 0, .55), 0 50px 90px -30px rgba(0, 0, 0, .7);
-  --shadow-3: 0 1px 0 rgba(0, 0, 0, .6), 0 10px 16px -6px rgba(0, 0, 0, .6), 0 28px 44px -14px rgba(0, 0, 0, .7);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 18px -6px rgba(0, 0, 0, .38);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, .28), 0 20px 44px -16px rgba(0, 0, 0, .42), 0 56px 110px -36px rgba(0, 0, 0, .5);
+  --shadow-3: 0 1px 3px rgba(0, 0, 0, .28), 0 12px 26px -10px rgba(0, 0, 0, .42), 0 30px 60px -20px rgba(0, 0, 0, .5);
   --fx-blur: 34px;
   --fx-sat: 1.25;
 
@@ -229,9 +229,9 @@ html[data-theme="light"], .theme-light {
   --swipe-neutral: #d8dce5;
   --horizon-ground: rgba(236, 238, 242, .94);
   --horizon-fade: rgba(236, 238, 242, .78);
-  --shadow-1: 0 1px 1px rgba(40, 48, 70, .16), 0 6px 12px -4px rgba(40, 48, 70, .2);
-  --shadow-2: 0 1px 0 rgba(40, 48, 70, .2), 0 18px 30px -12px rgba(40, 48, 70, .25), 0 50px 90px -30px rgba(40, 48, 70, .35);
-  --shadow-3: 0 1px 0 rgba(40, 48, 70, .2), 0 10px 16px -6px rgba(40, 48, 70, .25), 0 28px 44px -14px rgba(40, 48, 70, .32);
+  --shadow-1: 0 1px 2px rgba(40, 48, 70, .1), 0 8px 18px -6px rgba(40, 48, 70, .16);
+  --shadow-2: 0 1px 3px rgba(40, 48, 70, .1), 0 20px 44px -16px rgba(40, 48, 70, .2), 0 56px 110px -36px rgba(40, 48, 70, .26);
+  --shadow-3: 0 1px 3px rgba(40, 48, 70, .1), 0 12px 26px -10px rgba(40, 48, 70, .2), 0 30px 60px -20px rgba(40, 48, 70, .24);
 }
 
 html[data-fx="lite"], .fx-lite, html[data-fx="lite"] .theme-dark {
@@ -242,8 +242,8 @@ html[data-fx="lite"], .fx-lite, html[data-fx="lite"] .theme-dark {
   --sheet-bg: #171a21;
   --video-scrim: #0d0f14;
   --horizon-ground: #090a0e;
-  --shadow-2: 0 1px 0 rgba(0, 0, 0, .6), 0 10px 18px -8px rgba(0, 0, 0, .6);
-  --shadow-3: 0 1px 0 rgba(0, 0, 0, .6), 0 6px 12px -6px rgba(0, 0, 0, .6);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, .28), 0 12px 26px -10px rgba(0, 0, 0, .45);
+  --shadow-3: 0 1px 3px rgba(0, 0, 0, .28), 0 8px 18px -8px rgba(0, 0, 0, .45);
 }
 html[data-theme="light"][data-fx="lite"], html[data-theme="light"] .fx-lite, .theme-light .fx-lite, .theme-light.fx-lite, html[data-fx="lite"] .theme-light {
   --panel: #f4f5f8;
@@ -251,8 +251,8 @@ html[data-theme="light"][data-fx="lite"], html[data-theme="light"] .fx-lite, .th
   --horizon-ground: #eceef2;
   --sheet-bg: #ffffff;
   --video-scrim: #0d0f14;
-  --shadow-2: 0 1px 0 rgba(40, 48, 70, .2), 0 10px 18px -8px rgba(40, 48, 70, .28);
-  --shadow-3: 0 1px 0 rgba(40, 48, 70, .2), 0 6px 12px -6px rgba(40, 48, 70, .28);
+  --shadow-2: 0 1px 3px rgba(40, 48, 70, .1), 0 12px 26px -10px rgba(40, 48, 70, .22);
+  --shadow-3: 0 1px 3px rgba(40, 48, 70, .1), 0 8px 18px -8px rgba(40, 48, 70, .22);
 }
 
 :root, .theme-dark, .theme-light, .fx-lite {
@@ -269,7 +269,7 @@ html[data-theme="light"][data-fx="lite"], html[data-theme="light"] .fx-lite, .th
   --pillow: inset 0 1px 1px rgb(var(--lamp) / .28), inset 0 -9px 12px -8px rgb(var(--dark) / .42), 0 1px 1px rgb(var(--dark) / .35), 0 3px 6px -1px rgb(var(--dark) / .4), 0 10px 18px -6px rgb(var(--dark) / .55);
   --pillow-sm: inset 0 1px 1px rgb(var(--lamp) / .2), inset 0 -6px 8px -6px rgb(var(--dark) / .36), 0 1px 1px rgb(var(--dark) / .35), 0 5px 9px -3px rgb(var(--dark) / .5);
   --pillow-down: inset 0 2px 5px rgb(var(--dark) / .5), inset 0 -1px 0 rgb(var(--lamp) / .07), 0 1px 1px rgb(var(--dark) / .25);
-  --pillow-card: inset 0 1px 1px rgb(var(--lamp) / .12), 0 1px 2px rgb(var(--dark) / .4), 0 16px 24px -12px rgb(var(--dark) / .65);
+  --pillow-card: inset 0 1px 1px rgb(var(--lamp) / .12), 0 1px 3px rgb(var(--dark) / .28), 0 18px 34px -14px rgb(var(--dark) / .45);
   --pillow-bar: inset 0 1px 1px rgb(var(--lamp) / .5), inset 0 -14px 18px -12px rgb(var(--dark) / .32), 0 2px 3px rgb(var(--dark) / .4), 0 20px 30px -10px rgb(var(--dark) / .7);
   --slot: inset 0 1px 3px rgb(var(--dark) / .75), 0 1px 0 rgb(var(--lamp) / .1);
 }
@@ -277,7 +277,7 @@ html[data-theme="light"], .theme-light {
   --pillow: inset 0 1px 1px rgb(var(--lamp) / .5), inset 0 -8px 10px -8px rgb(var(--dark) / .2), 0 0 0 1px rgb(var(--dark) / .07), 0 2px 4px -1px rgb(var(--dark) / .22), 0 10px 16px -8px rgb(var(--dark) / .32);
   --pillow-sm: inset 0 1px 1px rgb(var(--lamp) / .5), inset 0 -6px 8px -6px rgb(var(--dark) / .16), 0 0 0 1px rgb(var(--dark) / .07), 0 4px 8px -3px rgb(var(--dark) / .26);
   --pillow-down: inset 0 2px 4px rgb(var(--dark) / .32), 0 0 0 1px rgb(var(--dark) / .06);
-  --pillow-card: inset 0 1px 1px rgb(var(--lamp) / .6), 0 0 0 1px rgb(var(--dark) / .06), 0 14px 22px -12px rgb(var(--dark) / .35);
+  --pillow-card: inset 0 1px 1px rgb(var(--lamp) / .6), 0 0 0 1px rgb(var(--dark) / .06), 0 16px 30px -14px rgb(var(--dark) / .24);
   --pillow-bar: inset 0 1px 1px rgb(var(--lamp) / .45), inset 0 -14px 18px -12px rgb(var(--dark) / .3), 0 2px 3px rgb(var(--dark) / .25), 0 18px 26px -10px rgb(var(--dark) / .45);
   --slot: inset 0 1px 3px rgb(var(--dark) / .4), inset 0 0 0 1px rgb(var(--dark) / .1);
 }

@@ -2,12 +2,33 @@ html[data-look="studio"]:not([data-fit="slim"]) .modal-backdrop:has(> .modal.dia
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog {
   gap: 12px;
   width: min(400px, calc(100vw - 48px));
-  padding: 26px 28px 48px;
+  padding: 26px 28px 24px;
   border: 0;
   border-radius: var(--radius-xl);
   color: var(--text-normal);
   overflow: visible;
 }
+html[data-look="studio"]:not(.mobile-app) .modal > .modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--k-plain);
+  box-shadow: var(--k-plain-shadow);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--t-hover), color var(--t-hover);
+}
+html[data-look="studio"]:not(.mobile-app) .modal > .modal-close:hover { background: var(--k-plain-hover); color: var(--header-primary); }
+html[data-look="studio"]:not(.mobile-app) .modal > .modal-close:focus-visible { outline: 2px solid var(--accent-lit); outline-offset: 2px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > h2 { padding-right: 36px; }
 html[data-look="studio"] .modal.dialog > h2 {
   margin: 0;
   color: var(--header-primary);
@@ -81,13 +102,11 @@ html[data-look="studio"] .modal.dialog :where(input[type="text"], input[type="pa
 html[data-look="studio"] .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea):focus { box-shadow: var(--slot), 0 0 0 2px var(--accent); }
 
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .modal-actions.answers {
-  position: absolute;
-  right: 24px;
-  bottom: -20px;
-  z-index: 4;
   display: flex;
+  flex: none;
+  justify-content: flex-end;
   gap: 8px;
-  margin: 0;
+  margin: 10px 0 0;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog > .answers > .key.third { order: -1; }
 html[data-look="studio"] .modal.dialog > .answers > .key:disabled { opacity: 1; }
@@ -250,7 +269,6 @@ html[data-look="studio"] .modal.dialog > .delete-preview .msg-content {
 html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join { width: min(440px, calc(100vw - 48px)); }
 html[data-look="studio"]:not([data-fit="slim"]) .modal.modal-wide.dialog.join { width: min(560px, calc(100vw - 48px)); }
 html[data-look="studio"] .modal.dialog.join > p { font-size: 14.5px; }
-html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.join > .modal-actions.answers.spread { left: 24px; }
 html[data-look="studio"] .modal.dialog.quiet > .answers > .key:focus-visible { outline: 0; }
 html[data-look="studio"] .modal.dialog.join > .answers > .key.out-k {
   margin-right: auto;
@@ -1465,6 +1483,7 @@ html[data-look="studio"] .modal.dialog.make .bot-waiting-dot {
 }
 
 html[data-look="studio"] .modal.dialog.make .poll-rows { gap: 8px; margin-top: -4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .modal.dialog.make .poll-rows { flex: 0 1 auto; max-height: max(108px, calc(100vh - 520px)); margin-inline: -4px; padding: 4px; overflow-y: auto; scrollbar-width: thin; }
 html[data-look="studio"] .modal.dialog.make .poll-row { gap: 8px; }
 html[data-look="studio"] .modal.dialog.make .poll-row > .poll-row-remove.key.sq {
   width: 44px;

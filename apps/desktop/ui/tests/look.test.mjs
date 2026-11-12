@@ -4,28 +4,14 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { LOOK_KEY, LOOK_DEFAULT, LOOK_FIT, resolveLook, lookFromSearch, windowFit, windowZoom, windowLayout, windowStack, zoomHop, knownZoom, resolveFx, lookAttributes } = require("../scripts/look.js");
+const { LOOK_FIT, windowFit, windowZoom, windowLayout, windowStack, zoomHop, knownZoom, resolveFx, lookAttributes } = require("../scripts/look.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
-test("the new look is on until someone turns it off", () => {
-  assert.equal(LOOK_DEFAULT, "studio");
-  assert.equal(resolveLook(null, ""), "studio");
-  assert.equal(resolveLook("anything", ""), "studio");
-  assert.equal(resolveLook("studio", ""), "studio");
-  assert.equal(resolveLook("classic", ""), "classic");
-});
-
-test("a classic choice saved while the new look was opt-in is not carried over", () => {
-  assert.equal(LOOK_KEY, "commy.look.2");
-});
-
-test("the address can ask for either look, and wins over the saved choice", () => {
-  assert.equal(lookFromSearch("?mobile&studio"), "studio");
-  assert.equal(lookFromSearch("?studio=1"), "studio");
-  assert.equal(lookFromSearch("?mobile"), null);
-  assert.equal(lookFromSearch("?studious"), null);
-  assert.equal(resolveLook("classic", "?studio"), "studio");
-  assert.equal(resolveLook("studio", "?classic"), "classic");
+test("the new look is the only look: nothing saved and nothing in the address turns it off", () => {
+  const look = require("../scripts/look.js");
+  for (const gone of ["LOOK_KEY", "LOOK_DEFAULT", "resolveLook", "lookFromSearch", "lookSearch", "chooseLook"]) assert.equal(look[gone], undefined, gone);
+  assert.equal(lookAttributes({ stored: "classic", search: "?classic", storedFx: null, width: 1440, height: 900, phoneApp: false }).look, "studio");
+  assert.doesNotMatch(html, /new-look-toggle/);
 });
 
 test("a window is slim up to 700 wide, where the old sheet's 700 media rules still fire, or at least twice as tall as wide, roomy from 1180 by 760, compact in between", () => {
@@ -52,7 +38,7 @@ test("in the phone app a screen taller than wide is slim, and one on its side ke
   assert.equal(windowFit(1000, 700, true), "compact");
   assert.equal(windowFit(800, 800, true), "compact");
   assert.equal(windowFit(800, 1280, false), "compact");
-  const base = { stored: "studio", search: "", storedFx: null };
+  const base = { storedFx: null };
   assert.deepEqual(lookAttributes({ ...base, width: 800, height: 1280, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
   assert.deepEqual(lookAttributes({ ...base, width: 1280, height: 800, phoneApp: true }), { look: "studio", fit: "roomy", fx: "lite", stack: null });
   assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 3840, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
@@ -66,11 +52,10 @@ test("phones and slim windows start without glass, and a saved choice wins", () 
   assert.equal(resolveFx("lite", { fit: "roomy", phoneApp: false }), "lite");
 });
 
-test("the classic look sets none of the new attributes", () => {
-  assert.deepEqual(lookAttributes({ stored: "classic", search: "", storedFx: "lite", width: 390, height: 844, phoneApp: true }), { look: null, fit: null, fx: null, stack: null });
-  assert.deepEqual(lookAttributes({ stored: null, search: "", storedFx: null, width: 1440, height: 900, phoneApp: false }), { look: "studio", fit: "roomy", fx: null, stack: null });
-  assert.deepEqual(lookAttributes({ stored: "studio", search: "", storedFx: null, width: 390, height: 844, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
-  assert.deepEqual(lookAttributes({ stored: "studio", search: "", storedFx: null, width: 1440, height: 900, phoneApp: false }), { look: "studio", fit: "roomy", fx: null, stack: null });
+test("every window gets the look, its fit and its effects", () => {
+  assert.deepEqual(lookAttributes({ storedFx: "lite", width: 390, height: 844, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ storedFx: null, width: 1440, height: 900, phoneApp: false }), { look: "studio", fit: "roomy", fx: null, stack: null });
+  assert.deepEqual(lookAttributes({ storedFx: null, width: 390, height: 844, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
 });
 
 test("a slim window wider than 550 zooms by its width over 550, and nothing else zooms", () => {
@@ -105,7 +90,7 @@ test("a slim window stacks when its height over the zoom is 1800 or more", () =>
   assert.equal(windowStack(550, 1799), false);
   assert.equal(windowStack(420, 800), false);
   assert.equal(windowStack(1920, 4000), false);
-  const base = { stored: "studio", search: "", storedFx: null, phoneApp: false };
+  const base = { storedFx: null, phoneApp: false };
   assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 3840 }), { look: "studio", fit: "slim", fx: "lite", stack: "on" });
   assert.deepEqual(lookAttributes({ ...base, width: 550, height: 1920, zoom: 2 }), { look: "studio", fit: "slim", fx: "lite", stack: "on" });
   assert.deepEqual(lookAttributes({ ...base, width: 550, height: 1920 }), { look: "studio", fit: "slim", fx: "lite", stack: "on" });

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_FACES, STUDIO_BOT_FACE, STUDIO_FACE_COLOURS, STUDIO_FACE_SPRITE, STUDIO_FACE_SHARED, STUDIO_FACE_ART, studioFaceFor, studioFaceColour, studioFaceSprite } = require("../scripts/studio-faces.js");
+const { STUDIO_FACES, STUDIO_BOT_FACE, STUDIO_FACE_COLOURS, STUDIO_FACE_TINT, STUDIO_FACE_SPRITE, STUDIO_FACE_SHARED, STUDIO_FACE_ART, studioFaceFor, studioFaceColour, studioFaceSprite } = require("../scripts/studio-faces.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const app = read("scripts", "app.js");
 const html = read("index.html");
@@ -24,28 +24,25 @@ test("the set is ten faces in a fixed order, and the rank mark is not dealt out"
   assert.ok(!STUDIO_FACES.includes("helm"));
 });
 
-test("faces and colours are shared out evenly, and the colour does not follow the face", () => {
+test("faces are shared out evenly", () => {
   const faces = Object.fromEntries(STUDIO_FACES.map(name => [name, 0]));
-  const colours = Object.fromEntries(STUDIO_FACE_COLOURS.map(name => [name, 0]));
-  const both = new Map();
-  for (let i = 0; i < 12000; i++) {
-    const face = studioFaceFor(`person-${i}`);
-    const colour = studioFaceColour(`person-${i}`);
-    faces[face]++;
-    colours[colour]++;
-    both.set(`${face} ${colour}`, (both.get(`${face} ${colour}`) || 0) + 1);
-  }
+  for (let i = 0; i < 12000; i++) faces[studioFaceFor(`person-${i}`)]++;
   for (const name of STUDIO_FACES) assert.ok(faces[name] > 1000 && faces[name] < 1400, `${name}: ${faces[name]}`);
-  for (const name of STUDIO_FACE_COLOURS) assert.ok(colours[name] > 1750 && colours[name] < 2250, `${name}: ${colours[name]}`);
-  assert.equal(both.size, STUDIO_FACES.length * STUDIO_FACE_COLOURS.length);
-  for (const [pair, count] of both) assert.ok(count > 130 && count < 270, `${pair}: ${count}`);
+});
+
+test("each face wears its colour from the style guide's default avatars", () => {
+  assert.deepEqual(STUDIO_FACE_TINT, { fox: "ferris", owl: "nova", finch: "pip", visor: "ash", moon: "lumen", frog: "dot", cat: "lumen", bear: "ferris", rabbit: "nova", planet: "dot", bot: "bot" });
+  for (let i = 0; i < 500; i++) assert.equal(studioFaceColour(`person-${i}`), STUDIO_FACE_TINT[studioFaceFor(`person-${i}`)]);
+  assert.equal(studioFaceColour("person-1", true), "bot");
+  assert.match(tokens, /--role-bot:/);
 });
 
 test("a face takes one of the six avatar colours from the tokens, the same for a person every time", () => {
   assert.deepEqual(STUDIO_FACE_COLOURS, ["ferris", "nova", "pip", "ash", "lumen", "dot"]);
   for (const name of STUDIO_FACE_COLOURS) assert.match(tokens, new RegExp(`--role-${name}:`));
+  for (const tint of Object.values(STUDIO_FACE_TINT).filter(tint => tint !== "bot")) assert.ok(STUDIO_FACE_COLOURS.includes(tint), tint);
   assert.equal(studioFaceColour("9f3c2d"), studioFaceColour("9f3c2d"));
-  assert.match(read("scripts", "studio-faces.js"), /svg\.style\.setProperty\("--c", `var\(--role-\$\{studioFaceColour\(id\)\}\)`\);/);
+  assert.match(read("scripts", "studio-faces.js"), /svg\.style\.setProperty\("--c", `var\(--role-\$\{studioFaceColour\(id, bot\)\}\)`\);/);
   assert.doesNotMatch(read("scripts", "studio-faces.js"), /--tint|personTint/);
 });
 

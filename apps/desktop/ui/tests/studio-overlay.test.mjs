@@ -31,7 +31,7 @@ test("the overlay's new look stays off until the switch is on", () => {
   const order = ["scripts/accessibility.js", "scripts/look.js", "scripts/studio-faces.js", "scripts/overlay-view.js", "scripts/overlay.js"].map(name => page.indexOf(`<script src="${name}"></script>`));
   assert.ok(order.every(at => at > 0));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
-  assert.match(script, /if \(e\.key === LOOK_KEY\) \{\n\s+applyLook\(\);\n\s+renderMembers\(\);/);
+  assert.match(script, /if \(e\.key === LOOK_FX_KEY\) \{\n\s+applyLook\(\);\n\s+renderMembers\(\);/);
 });
 
 test("a pane over a game is smoked colour, never a blur", () => {

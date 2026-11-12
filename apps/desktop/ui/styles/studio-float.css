@@ -38,6 +38,11 @@ html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button svg {
   color: var(--text-muted);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .pop-menu button.ctx-hand svg { color: var(--yellow); }
+html[data-look="studio"]:not([data-fit="slim"]) .banner-menu { width: 376px; }
+html[data-look="studio"]:not([data-fit="slim"]) .banner-tiles { gap: 8px; padding: 5px 5px 9px; }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .banner-tile { min-height: 0; padding: 0; border-radius: 12px; box-shadow: 0 1px 2px rgb(var(--dark) / .4); }
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .banner-tile:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .pop-menu .banner-tile:focus-visible { background: none; outline: 2px solid var(--accent-lit); outline-offset: 2px; }
 html[data-look="studio"]:not([data-fit="slim"]) .pop-menu > .ctx-title,
 html[data-look="studio"]:not([data-fit="slim"]) .pop-menu > .ctx-label {
   padding: 8px 12px 6px;

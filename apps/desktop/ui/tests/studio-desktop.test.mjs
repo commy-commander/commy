@@ -5,7 +5,6 @@ import { createRequire } from "node:module";
 import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
-const { lookSearch } = require("../scripts/look.js");
 const { STUDIO_ROOM_SVG, studioRoomMarkup, mountStudioRoom, mountStudioStar, studioStarState } = require("../scripts/studio-room.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
@@ -44,24 +43,21 @@ test("every desktop rule waits for the new look switch", () => {
   for (const selector of list) assert.ok(selector.startsWith(SWITCH), selector);
 });
 
-test("the roomy stage grows with the window between 1180 and 1920 wide", () => {
+test("the roomy stage keeps thin margins and its side panes grow with the window between 1180 and 1920 wide", () => {
   const sheet = css.replace(/\r\n/g, "\n");
+  const roomy = sheet.slice(sheet.indexOf('html[data-look="studio"]:not([data-fit="slim"]) {\n  --st-ml:'), sheet.indexOf('html[data-look="studio"][data-fit="compact"] {'));
+  for (const line of ["--st-ml: 12px;", "--st-mr: 12px;", "--st-mt: 10px;", "--st-mb: 12px;", "--st-gap: 12px;", "--st-lean: -8px;", "--st-hang: 0;"]) assert.ok(roomy.includes(`  ${line}\n`), line);
   const fluid = {
-    "--st-ml": "clamp(24px, calc(5.95vw - 46px), 68px)",
-    "--st-mr": "clamp(26px, calc(3.5vw - 15px), 52px)",
-    "--st-gap": "clamp(26px, calc(1.08vw + 13.2px), 34px)",
-    "--st-wing": "clamp(232px, calc(9.2vw + 123px), 300px)",
+    "--st-wing": "clamp(246px, calc(9.2vw + 137px), 314px)",
     "--st-side": "clamp(228px, calc(6vw + 157px), 272px)",
-    "--st-lean": "clamp(8px, calc(var(--st-ml) - 14px), 26px)",
   };
-  for (const [name, value] of Object.entries(fluid)) assert.ok(sheet.includes(`${name}: ${value};`), name);
+  for (const [name, value] of Object.entries(fluid)) assert.ok(roomy.includes(`${name}: ${value};`), name);
   const at = (value, width) => {
     const [, low, slope, base, high] = value.match(/clamp\((\d+)px, calc\(([\d.]+)vw ([+-] [\d.]+)px\), (\d+)px\)/);
     return Math.round(Math.min(Number(high), Math.max(Number(low), (Number(slope) * width) / 100 + Number(base.replace(" ", "")))));
   };
-  assert.deepEqual([1180, 1440, 1920, 2560].map(width => at(fluid["--st-ml"], width)), [24, 40, 68, 68]);
   assert.deepEqual([1180, 1440, 1920, 2560].map(width => at(fluid["--st-side"], width)), [228, 243, 272, 272]);
-  assert.deepEqual([1180, 1440, 1920, 2560].map(width => at(fluid["--st-wing"], width)), [232, 255, 300, 300]);
+  assert.deepEqual([1180, 1440, 1920, 2560].map(width => at(fluid["--st-wing"], width)), [246, 269, 314, 314]);
   assert.match(sheet, /\.messages \.msg-content \{ max-width: 1000px; \}/);
   assert.match(sheet, /@media \(min-width: 1340px\) and \(max-width: 1400px\)/);
 });
@@ -106,17 +102,10 @@ test("the chat bar gains a Send key that the classic look hides", () => {
   assert.match(classic, /\.composer-send \{ display: none; \}/);
 });
 
-test("Settings has a New Look switch", () => {
-  assert.ok(html.includes('id="new-look-toggle"'));
-  assert.ok(html.includes('data-i18n="appearance.newLook"'));
-});
-
-test("choosing a look drops any look word from the address and keeps the rest", () => {
-  assert.equal(lookSearch("?studio"), "");
-  assert.equal(lookSearch("?mobile&studio"), "?mobile");
-  assert.equal(lookSearch("?classic=1&mobile"), "?mobile");
-  assert.equal(lookSearch("?mobile"), "?mobile");
-  assert.equal(lookSearch(""), "");
+test("Settings has no New Look switch, in the page or in the words", () => {
+  assert.equal(html.includes("new-look-toggle"), false);
+  assert.equal(html.includes("appearance.newLook"), false);
+  for (const words of ["../scripts/locales/en.js", "../scripts/locales/es.js"]) assert.equal(read(words).includes("appearance.newLook"), false, words);
 });
 
 test("the room scene is one hidden drawing with no comments", () => {
@@ -263,4 +252,54 @@ test("a channel banner leaves its row plain and a channel colour tints its icon"
 test("in Day the current server tile's initials are dark ink", () => {
   const D = `${SWITCH}[data-theme="light"]${NOT_SLIM}`;
   assert.ok(css.includes(`${D} .server-icon.active,\n${D} .server-icon.active:hover { color: var(--ink-strong); }`));
+});
+
+test("the people pane is as tall as the chat beside it, with a narrow gap between them", () => {
+  assert.match(css, /html\[data-look="studio"\]:not\(\[data-fit="slim"\]\) \.members \{[^}]*\n  margin-block: 0;/);
+  assert.ok(css.includes('html[data-look="studio"]:not([data-fit="slim"]) .pet-figure { width: 56px; height: 56px; }'));
+});
+
+test("the gear sits inside the profile pill", () => {
+  assert.match(css, /html\[data-look="studio"\]:not\(\[data-fit="slim"\]\) \.user-panel \{[^}]*\n  padding: 0 47px 0 8px;/);
+  assert.match(css, /html\[data-look="studio"\]:not\(\[data-fit="slim"\]\) \.user-actions \{[^}]*\n  right: 7px;/);
+});
+
+test("over a banner picture the server's keys sit on dark glass at the right, in white", () => {
+  const keys = 'html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header.has-banner:not(.plain) .header-btns';
+  assert.ok(css.includes(`${keys} { gap: 6px; margin: 0 0 0 auto; }`));
+  const key = css.slice(css.indexOf(`${keys} .icon-btn {`), css.indexOf("}", css.indexOf(`${keys} .icon-btn {`)));
+  assert.match(key, /background: rgb\(var\(--dark\) \/ \.55\);/);
+  assert.match(key, /color: var\(--white\);\n  filter: none;/);
+});
+
+test("no star hangs over the chat", () => {
+  assert.ok(css.includes('html[data-look="studio"] .studio-star { display: none; }'));
+  assert.equal(css.includes(".studio-star .star"), false);
+  assert.equal(css.includes(".studio-star::after"), false);
+});
+
+test("a profile's menu closes on a second press of its key or a press anywhere outside it", () => {
+  const app = read("../scripts/app.js");
+  assert.equal(app.split('if (closeIfOpen("fp-menu")) return;').length - 1, 3);
+  assert.ok(app.includes('closeMenuOutside("fp-menu", e.target, ".mc-more, .fp-more");'));
+  const context = vm.createContext({});
+  const start = app.indexOf("function closeIfOpen(id) {");
+  const end = app.indexOf("\n}\n", app.indexOf("function closeMenuOutside(")) + 3;
+  const classes = hidden => ({ hidden, contains: name => name === "hidden" && hidden, add() { node.classList = classes(true); } });
+  let node = null;
+  const make = hidden => { node = { classList: classes(hidden), contains: target => target === "inside" }; return node; };
+  vm.runInContext(app.slice(start, end), context);
+  context.$ = () => node;
+  make(true);
+  assert.equal(context.closeIfOpen("fp-menu"), false);
+  make(false);
+  assert.equal(context.closeIfOpen("fp-menu"), true);
+  assert.equal(node.classList.contains("hidden"), true);
+  make(false);
+  context.closeMenuOutside("fp-menu", "inside", ".mc-more");
+  assert.equal(node.classList.contains("hidden"), false);
+  context.closeMenuOutside("fp-menu", { closest: () => true }, ".mc-more");
+  assert.equal(node.classList.contains("hidden"), false);
+  context.closeMenuOutside("fp-menu", { closest: () => null }, ".mc-more");
+  assert.equal(node.classList.contains("hidden"), true);
 });

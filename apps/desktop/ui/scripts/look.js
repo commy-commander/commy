@@ -1,22 +1,7 @@
-const LOOK_KEY = "commy.look.2";
 const LOOK_FX_KEY = "commy.fx";
-const LOOK_DEFAULT = "studio";
 const LOOK_ZOOM_KEY = "commy.zoom";
 const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760, stackWidth: 550, stackHeight: 1800, tallRatio: 2, zoomMax: 8 };
 const LOOK_ZOOM_SETTLE = { everyMs: 50, steadyPolls: 3, maxPolls: 40, hops: 3 };
-
-function lookFromSearch(search) {
-  const words = String(search || "").replace(/^\?/, "").split("&").map(part => part.split("=")[0]);
-  if (words.includes("studio")) return "studio";
-  if (words.includes("classic")) return "classic";
-  return null;
-}
-
-function resolveLook(stored, search) {
-  const asked = lookFromSearch(search);
-  if (asked) return asked;
-  return stored === "studio" || stored === "classic" ? stored : LOOK_DEFAULT;
-}
 
 function windowFit(width, height, phoneApp = false) {
   if (width <= LOOK_FIT.slimWidth || height >= width * LOOK_FIT.tallRatio) return "slim";
@@ -55,13 +40,11 @@ function resolveFx(stored, { fit, phoneApp }) {
   return fit === "slim" || phoneApp ? "lite" : "glass";
 }
 
-function lookAttributes({ stored, search, storedFx, width, height, phoneApp, zoom = 1 }) {
-  const look = resolveLook(stored, search);
-  if (look !== "studio") return { look: null, fit: null, fx: null, stack: null };
+function lookAttributes({ storedFx, width, height, phoneApp, zoom = 1 }) {
   const real = { width: width * zoom, height: height * zoom };
   const fit = windowFit(real.width, real.height, phoneApp);
   const stack = !phoneApp && windowStack(real.width, real.height);
-  return { look, fit, fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null, stack: stack ? "on" : null };
+  return { look: "studio", fit, fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null, stack: stack ? "on" : null };
 }
 
 function studioLook() {
@@ -149,8 +132,6 @@ function applyLook() {
   const root = document.documentElement;
   fitWindowZoom();
   const attrs = lookAttributes({
-    stored: storedLookValue(LOOK_KEY),
-    search: window.location.search,
     storedFx: storedLookValue(LOOK_FX_KEY),
     width: window.innerWidth,
     height: window.innerHeight,
@@ -177,23 +158,6 @@ function setLookFx(value) {
   return root.dataset.fx === "lite" ? "lite" : "glass";
 }
 
-function lookSearch(search) {
-  const kept = String(search || "").replace(/^\?/, "").split("&").filter(part => part && !["studio", "classic"].includes(part.split("=")[0]));
-  return kept.length ? "?" + kept.join("&") : "";
-}
-
-function chooseLook(look) {
-  try {
-    window.localStorage.setItem(LOOK_KEY, look === "studio" ? "studio" : "classic");
-  } catch {
-    return false;
-  }
-  const search = lookSearch(window.location.search);
-  if (search === window.location.search) window.location.reload();
-  else window.location.search = search;
-  return true;
-}
-
 if (typeof document !== "undefined") {
   try {
     lookWindow.zoom = knownZoom(window.sessionStorage.getItem(LOOK_ZOOM_KEY));
@@ -214,5 +178,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { LOOK_KEY, LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_DEFAULT, LOOK_FIT, lookFromSearch, resolveLook, windowFit, windowZoom, windowLayout, windowStack, zoomHop, knownZoom, resolveFx, lookAttributes, lookSearch };
+  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_FIT, windowFit, windowZoom, windowLayout, windowStack, zoomHop, knownZoom, resolveFx, lookAttributes };
 }

@@ -269,7 +269,7 @@
     modal.className = "modal modal-signin hidden";
     modal.id = "modal-web-unlock";
     modal.innerHTML = `
-      <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
+      <img class="signin-logo" src="images/commy-star.svg" alt="" />
       <h2>Open your servers here</h2>
       <p>Signing in to your account opens your servers in this browser.</p>
       <div class="signin-start" id="web-unlock-ask-row">

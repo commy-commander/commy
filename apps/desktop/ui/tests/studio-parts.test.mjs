@@ -53,3 +53,9 @@ test("an off primary key at Night is faint glass with muted words and a hairline
   assert.match(body, /box-shadow: inset 0 0 0 1px rgb\(var\(--lamp\) \/ \.1\);/);
   assert.doesNotMatch(body, /background/);
 });
+
+test("a dropdown's list is drawn in the theme's own colours, so its words can be read", () => {
+  assert.ok(SHEET.includes('html[data-look="studio"] select { color-scheme: dark; }'));
+  assert.ok(SHEET.includes('html[data-look="studio"][data-theme="light"] select { color-scheme: light; }'));
+  assert.ok(SHEET.includes('html[data-look="studio"] select option, html[data-look="studio"] select optgroup { background: var(--bg-raised); color: var(--header-primary); }'));
+});

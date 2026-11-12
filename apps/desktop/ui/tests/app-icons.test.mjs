@@ -35,6 +35,6 @@ test("colour tiles match the colours the desktop app paints", () => {
   painted.classic = /pub const CLASSIC_TILE: &str = "(#[0-9a-f]{6})"/.exec(source)[1];
   for (const preset of APP_ICON_PRESETS) {
     assert.equal(preset.tile, painted[preset.id], preset.id);
-    assert.equal(preset.image, "images/commy_v3_noback.png");
+    assert.equal(preset.image, "images/commy-star.svg");
   }
 });

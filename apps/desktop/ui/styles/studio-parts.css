@@ -507,3 +507,7 @@ html[data-look="studio"] .filecard .file-size { font: 400 13px/1 var(--font); }
 html[data-look="studio"] .filecard .file-size.file-failed { color: var(--danger); }
 html[data-look="studio"] .filecard .key.file-save { flex: none; width: 38px; height: 38px; }
 html[data-look="studio"] ::selection { background: var(--accent); color: var(--accent-ink); }
+html[data-look="studio"] select { color-scheme: dark; }
+html[data-look="studio"][data-theme="light"] select { color-scheme: light; }
+html[data-look="studio"] select option, html[data-look="studio"] select optgroup { background: var(--bg-raised); color: var(--header-primary); }
+html[data-look="studio"] select option:disabled { color: var(--text-muted); }

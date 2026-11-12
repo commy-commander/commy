@@ -108,7 +108,8 @@ test("the window keeps the chat window's place, list and lit pill", () => {
 test("Done takes the gear's place while a settings window is open, and Esc still closes", () => {
   assert.match(css, /html\[data-look="studio"\] \.user-actions > \.set-done \{ display: none; \}/);
   assert.match(css, /body:has\(\.settings-layer:not\(\.hidden\)\) \.user-actions > \.set-done \{ display: inline-flex; \}/);
-  assert.match(css, /body:has\(\.settings-layer:not\(\.hidden\)\) \.user-panel \{ padding-right: calc\(71px - 25px \* var\(--st-hang\)\); \}/);
+  assert.match(css, /body:has\(\.settings-layer:not\(\.hidden\)\) \.user-panel \{ padding-right: 79px; \}/);
+  assert.match(css, /body:has\(\.settings-layer:not\(\.hidden\)\) \.user-actions \{ top: 9px; right: 9px; \}/);
   assert.match(rule(`${ROOMY} .settings-close-wrap`), /display: none;/);
   const shell = read("../scripts/studio-settings.js");
   assert.match(shell, /done\.className = "key sm cream set-done";/);
@@ -188,10 +189,16 @@ test("Theme is three theme cards, each an island of its own theme, and Delete Ac
   assert.match(rule(`${STUDIO} .settings-layer .set-theme[aria-checked="true"]`), /0 0 0 2px var\(--accent-lit\)/);
   assert.match(rule(`${STUDIO} .settings-layer .set-theme .tmini.split > .tm.theme-light`), /clip-path: polygon\(58% 0, 100% 0, 100% 100%, 42% 100%\);/);
   assert.match(rule(`${STUDIO} .settings-layer .set-theme .lab > b`), /white-space: nowrap;/);
-  assert.match(rule(`${STUDIO} .settings-layer .set-danger #acct-delete`), /right: 24px;\n  bottom: -20px;/);
+  assert.match(rule(`${STUDIO} .settings-layer .set-danger #acct-delete`), /right: 24px;\n  bottom: 20px;/);
+  assert.match(rule(`${STUDIO} .settings-layer .set-danger`), /position: relative; padding-bottom: 76px;/);
   assert.match(rule(`${STUDIO} .settings-layer .set-danger > .settings-subhead > .i`), /color: var\(--danger-text\);/);
   const shell = read("../scripts/studio-settings.js");
   assert.match(shell, /studioIconMarkup\("triangle-alert"\)/);
   assert.match(shell, /key\.insertAdjacentHTML\("afterbegin", studioIconMarkup\("trash-2"\)\);/);
   assert.equal(css.includes('html[data-look="studio"][data-fit="slim"] .set-themes,'), false);
+});
+
+test("a profile opened from a settings window sits above it", () => {
+  assert.ok(css.includes('html[data-look="studio"]:has(.settings-layer:not(.hidden)) .profile-pop { z-index: 160; }'));
+  assert.match(read("../styles/styles.css"), /\.settings-layer \{[^}]*z-index: 150;/);
 });

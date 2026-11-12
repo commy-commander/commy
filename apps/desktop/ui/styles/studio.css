@@ -146,15 +146,15 @@ html[data-look="studio"]:not([data-fit="slim"]) .studio-room::after {
 html[data-look="studio"][data-fx="lite"] .studio-room::after { display: none; }
 
 html[data-look="studio"]:not([data-fit="slim"]) {
-  --st-ml: clamp(24px, calc(5.95vw - 46px), 68px);
-  --st-mr: clamp(26px, calc(3.5vw - 15px), 52px);
-  --st-mt: 24px;
-  --st-mb: 70px;
-  --st-gap: clamp(26px, calc(1.08vw + 13.2px), 34px);
-  --st-wing: clamp(232px, calc(9.2vw + 123px), 300px);
+  --st-ml: 12px;
+  --st-mr: 12px;
+  --st-mt: 10px;
+  --st-mb: 12px;
+  --st-gap: 12px;
+  --st-wing: clamp(246px, calc(9.2vw + 137px), 314px);
   --st-side: clamp(228px, calc(6vw + 157px), 272px);
-  --st-lean: clamp(8px, calc(var(--st-ml) - 14px), 26px);
-  --st-hang: 1;
+  --st-lean: -8px;
+  --st-hang: 0;
 }
 html[data-look="studio"][data-fit="compact"] {
   --st-ml: 10px;
@@ -357,7 +357,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .user-panel {
   position: relative;
   height: 50px;
   gap: 4px;
-  padding: 0 calc(47px - 13px * var(--st-hang)) 0 8px;
+  padding: 0 47px 0 8px;
   border-radius: var(--radius-pill);
   background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
@@ -385,7 +385,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .user-actions .icon-btn > svg { 
 html[data-look="studio"]:not([data-fit="slim"]) .user-actions {
   position: absolute;
   top: 7px;
-  right: calc(5px - 21px * var(--st-hang));
+  right: 7px;
 }
 
 html[data-look="studio"]:not([data-fit="slim"]) .sidebar {
@@ -424,7 +424,16 @@ html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header.has-banner.plain
 html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header.has-banner.plain .icon-btn { color: var(--text-muted); filter: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header.has-banner.plain .icon-btn:hover { color: var(--header-primary); }
 html[data-look="studio"]:not([data-fit="slim"]) .header-btns { gap: 0; margin: -4px -4px 0 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header.has-banner:not(.plain) .header-btns { margin-top: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header.has-banner:not(.plain) .header-btns { gap: 6px; margin: 0 0 0 auto; }
+html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header.has-banner:not(.plain) .header-btns .icon-btn {
+  background: rgb(var(--dark) / .55);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  backdrop-filter: blur(8px) saturate(1.2);
+  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .16), 0 2px 6px rgb(var(--dark) / .4);
+  color: var(--white);
+  filter: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header.has-banner:not(.plain) .header-btns .icon-btn:hover { background: rgb(var(--dark) / .75); }
 html[data-look="studio"]:not([data-fit="slim"]) .header-btns .icon-btn { width: 30px; height: 30px; border-radius: 50%; }
 html[data-look="studio"]:not([data-fit="slim"]) .sidebar-game-tags { gap: 6px; padding: 0 10px 4px; }
 html[data-look="studio"]:not([data-fit="slim"]) .game-chip,
@@ -524,7 +533,6 @@ html[data-look="studio"]:not([data-fit="slim"]) .chat-header .topic {
 @media (min-width: 1340px) and (max-width: 1400px) {
   html[data-look="studio"]:not([data-fit="slim"]) .chat-header .topic { display: block; }
 }
-html[data-look="studio"]:not([data-fit="slim"]) .studio-star + .header-actions { margin-left: 0; }
 html[data-look="studio"]:not([data-fit="slim"]) .header-actions { flex: none; gap: 2px; }
 html[data-look="studio"]:not([data-fit="slim"]) .header-actions .icon-btn {
   width: 34px;
@@ -717,7 +725,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .dm-profile {
 html[data-look="studio"]:not([data-fit="slim"]) .members {
   display: flex;
   flex-direction: column;
-  margin-block: calc(28px * var(--st-hang)) calc(22px * var(--st-hang));
+  margin-block: 0;
   padding: 0 12px 0 16px;
   overflow: visible;
 }
@@ -797,10 +805,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .pet-widget {
   z-index: 2;
   flex: none;
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 56px minmax(0, 1fr);
   align-items: start;
-  gap: 12px;
-  margin: calc(12px - 44px * var(--st-hang)) calc(-22px * var(--st-hang)) calc(8px + 26px * var(--st-hang)) calc(-38px * var(--st-hang));
+  gap: 10px;
+  margin: 12px calc(-8px * var(--st-hang)) calc(8px + 26px * var(--st-hang)) calc(-8px * var(--st-hang));
   padding: 16px 16px calc(60px - 28px * var(--st-hang)) 18px;
   overflow: visible;
   border: 0;
@@ -808,10 +816,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .pet-widget {
   background: linear-gradient(180deg, rgb(var(--lamp) / .07), rgb(var(--lamp) / 0) 70%), var(--bg-raised);
   box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-3);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .pet-figure { width: 76px; height: 74px; }
+html[data-look="studio"]:not([data-fit="slim"]) .pet-figure { width: 56px; height: 56px; }
 html[data-look="studio"]:not([data-fit="slim"]) .pet-info { gap: 0; }
 html[data-look="studio"]:not([data-fit="slim"]) .pet-head { align-items: center; gap: 8px; padding-right: 8px; }
-html[data-look="studio"]:not([data-fit="slim"]) .pet-name { color: var(--header-primary); font: 700 21px/24px var(--font-display); letter-spacing: -.015em; }
+html[data-look="studio"]:not([data-fit="slim"]) .pet-name { color: var(--header-primary); font: 700 19px/24px var(--font-display); letter-spacing: -.015em; }
 html[data-look="studio"]:not([data-fit="slim"]) .pet-level {
   height: 18px;
   padding: 0 7px;
@@ -1263,38 +1271,6 @@ html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .vp-invite svg.ai .
 html[data-look="studio"]:not([data-fit="slim"]) .members .avatar-border,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-user .avatar-border { display: none; }
 html[data-look="studio"] .studio-star { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .studio-star {
-  position: relative;
-  z-index: 6;
-  display: block;
-  flex: none;
-  align-self: flex-start;
-  width: calc(46px + 30px * var(--st-hang));
-  height: 0;
-  margin: 0 12px 0 auto;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-html[data-look="studio"]:not([data-fit="slim"]) .studio-star .star {
-  --star-size: calc(46px + 30px * var(--st-hang));
-  position: absolute;
-  top: calc(-28px - 24px * var(--st-hang));
-  left: 0;
-}
-html[data-look="studio"]:not([data-fit="slim"]) .studio-star::after {
-  content: "";
-  position: absolute;
-  top: calc(13px + 9px * var(--st-hang));
-  right: 12px;
-  left: 12px;
-  z-index: -1;
-  height: 9px;
-  border-radius: 50%;
-  background: rgb(var(--dark) / .5);
-  filter: blur(5px);
-}
 html[data-look="studio"]:not([data-fit="slim"]) .channel.voice-channel.active.connected,
 html[data-look="studio"]:not([data-fit="slim"]) .channel.voice-channel.active.connected:hover {
   min-height: 26px;
@@ -1705,8 +1681,6 @@ html[data-look="studio"]:not([data-fit="slim"]) .vr-clock {
   letter-spacing: -.01em;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .vr-tools { display: flex; flex: none; justify-content: flex-end; gap: 2px; width: 319px; margin-left: auto; }
-html[data-look="studio"]:not([data-fit="slim"]) .vr-head .studio-star { margin-right: 36px; }
-html[data-look="studio"]:not([data-fit="slim"]) .vr-head .studio-star + .vr-tools { margin-left: 0; }
 @media (max-width: 1179px) {
   html[data-look="studio"]:not([data-fit="slim"]) .vr-tools { width: 173px; }
 }
@@ -2043,7 +2017,7 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn .vp-hangup
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn .vp-hangup:hover { top: 10px; right: -18px; width: 46px; height: 46px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main {
   grid-column: 3;
-  margin: calc(28px * var(--st-hang)) 0 calc(22px * var(--st-hang)) var(--st-gap);
+  margin: 0 0 0 var(--st-gap);
   border-radius: 28px;
   background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));

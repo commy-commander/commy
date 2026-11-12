@@ -1,6 +1,7 @@
 const STUDIO_FACES = ["fox", "owl", "finch", "visor", "moon", "frog", "cat", "bear", "rabbit", "planet"];
 const STUDIO_BOT_FACE = "bot";
 const STUDIO_FACE_COLOURS = ["ferris", "nova", "pip", "ash", "lumen", "dot"];
+const STUDIO_FACE_TINT = { fox: "ferris", owl: "nova", finch: "pip", visor: "ash", moon: "lumen", frog: "dot", cat: "lumen", bear: "ferris", rabbit: "nova", planet: "dot", bot: "bot" };
 const STUDIO_FACE_SPRITE = "studio-faces";
 
 const STUDIO_FACE_SHARED = '<g id="sf-cap"><rect width="40" height="40" rx="11" style="fill:color-mix(in srgb, var(--c) 24%, var(--a-ground))"/><path d="M0 11A11 11 0 0 1 11 0H40L0 30Z" style="fill:var(--white)" opacity=".045"/></g><g id="sf-eye"><rect x="-1.5" y="-2.7" width="3" height="5.4" rx="1.5" style="fill:var(--a-ground)"/></g><clipPath id="sf-clip"><rect width="40" height="40" rx="11"/></clipPath>';
@@ -33,8 +34,8 @@ function studioFaceFor(id, bot = false) {
   return STUDIO_FACES[(studioFaceHash(id) & 65535) % STUDIO_FACES.length];
 }
 
-function studioFaceColour(id) {
-  return STUDIO_FACE_COLOURS[(studioFaceHash(id) >>> 16) % STUDIO_FACE_COLOURS.length];
+function studioFaceColour(id, bot = false) {
+  return STUDIO_FACE_TINT[studioFaceFor(id, bot)];
 }
 
 function studioFaceSprite() {
@@ -55,7 +56,7 @@ function studioFaceNode(doc, id, bot = false) {
   svg.setAttribute("viewBox", "0 0 40 40");
   svg.setAttribute("aria-hidden", "true");
   svg.dataset.face = name;
-  svg.style.setProperty("--c", `var(--role-${studioFaceColour(id)})`);
+  svg.style.setProperty("--c", `var(--role-${studioFaceColour(id, bot)})`);
   const use = doc.createElementNS("http://www.w3.org/2000/svg", "use");
   use.setAttribute("href", `#sf-${name}`);
   svg.appendChild(use);
@@ -63,5 +64,5 @@ function studioFaceNode(doc, id, bot = false) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_FACES, STUDIO_BOT_FACE, STUDIO_FACE_COLOURS, STUDIO_FACE_SPRITE, STUDIO_FACE_SHARED, STUDIO_FACE_ART, studioFaceHash, studioFaceFor, studioFaceColour, studioFaceSprite, mountStudioFaces, studioFaceNode };
+  module.exports = { STUDIO_FACES, STUDIO_BOT_FACE, STUDIO_FACE_COLOURS, STUDIO_FACE_TINT, STUDIO_FACE_SPRITE, STUDIO_FACE_SHARED, STUDIO_FACE_ART, studioFaceHash, studioFaceFor, studioFaceColour, studioFaceSprite, mountStudioFaces, studioFaceNode };
 }

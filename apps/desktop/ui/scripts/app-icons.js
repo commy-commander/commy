@@ -1,11 +1,11 @@
-const APP_ICON_MARK = "images/commy_v3_noback.png";
+const APP_ICON_MARK = "images/commy-star.svg";
 
 const APP_ICON_PRESETS = [
-  { id: "classic", label: "Classic", image: APP_ICON_MARK, tile: "#ef443c" },
-  { id: "amber", label: "Amber", image: APP_ICON_MARK, tile: "#e08a1e" },
-  { id: "mint", label: "Mint", image: APP_ICON_MARK, tile: "#1f9e6e" },
-  { id: "ocean", label: "Ocean", image: APP_ICON_MARK, tile: "#2a6fd1" },
-  { id: "violet", label: "Violet", image: APP_ICON_MARK, tile: "#7448d4" },
+  { id: "classic", label: "Night", image: APP_ICON_MARK, tile: "#1a2574" },
+  { id: "amber", label: "Amber", image: APP_ICON_MARK, tile: "#f2b24c" },
+  { id: "mint", label: "Mint", image: APP_ICON_MARK, tile: "#8fdcbd" },
+  { id: "ocean", label: "Sky", image: APP_ICON_MARK, tile: "#c3d6ff" },
+  { id: "violet", label: "Lilac", image: APP_ICON_MARK, tile: "#dccdff" },
   { id: "mono", label: "Mono", image: APP_ICON_MARK, tile: "#33363d" },
 ];
 

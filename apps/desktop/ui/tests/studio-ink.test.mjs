@@ -107,7 +107,7 @@ test("the drawing window knows the look and loads Onest", () => {
   assert.ok(order.every(at => at > 0));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   assert.match(page, /@font-face \{ font-family: "Onest"; src: url\("fonts\/onest-latin-wght-normal\.woff2"\) format\("woff2"\); font-weight: 100 900; \}/);
-  assert.match(script, /if \(e\.key === LOOK_KEY\) \{\n\s+applyLook\(\);\n\s+schedule\(\);/);
+  assert.match(script, /if \(e\.key === LOOK_FX_KEY\) \{\n\s+applyLook\(\);\n\s+schedule\(\);/);
   assert.match(script, /inkFrame\(store, performance\.now\(\), calm, me\)/);
   assert.equal(script.includes("/".repeat(2)), false);
 });

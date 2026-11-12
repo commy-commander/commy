@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, MAX_SDK } from "./android-project.mjs";
+import { existsSync, readFileSync } from "node:fs";
+import { LAUNCHER_LAYERS, LAUNCHER_NAMES, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -243,4 +244,24 @@ test("release bundles carry the native symbol table for Play crash reports, once
   assert.match(out, /android \{\n    System\.getenv\("NDK_HOME"\)\?\.takeIf \{ it\.isNotBlank\(\) \}\?\.let \{ ndkPath = it \}\n    namespace/);
   const debugOnly = tauriGradle.replace(/        getByName\("release"\)[\s\S]*?\n        \}\n/, "");
   assert.equal(withNativeSymbols(debugOnly), debugOnly);
+});
+
+test("the launcher icon is an adaptive icon with a ground, the star and a one-colour layer", () => {
+  const xml = launcherIcon();
+  assert.match(xml, /^<\?xml version="1.0" encoding="utf-8"\?>\n<adaptive-icon /);
+  for (const layer of ["background", "foreground", "monochrome"]) {
+    assert.equal(xml.split(`<${layer} android:drawable="@drawable/${LAUNCHER_LAYERS[layer]}" />`).length - 1, 1, layer);
+  }
+  assert.deepEqual(LAUNCHER_NAMES, ["ic_launcher", "ic_launcher_round"]);
+});
+
+test("every launcher layer ships as a square picture big enough for the largest screens", () => {
+  for (const name of Object.values(LAUNCHER_LAYERS)) {
+    const file = new URL(`./android-icon/${name}.png`, import.meta.url);
+    assert.ok(existsSync(file), name);
+    const png = readFileSync(file);
+    assert.equal(png.toString("latin1", 1, 4), "PNG", name);
+    assert.equal(png.readUInt32BE(16), 432, name);
+    assert.equal(png.readUInt32BE(20), 432, name);
+  }
 });

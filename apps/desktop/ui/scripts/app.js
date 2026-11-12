@@ -2511,10 +2511,6 @@ function wireAccessibility() {
     prefs.theme = e.target.value;
     saveAccessibility(prefs);
   });
-  $("new-look-toggle").checked = studioLook();
-  $("new-look-toggle").addEventListener("change", e => {
-    if (!chooseLook(e.target.checked ? "studio" : "classic")) e.target.checked = studioLook();
-  });
   $("language-select").addEventListener("change", e => {
     prefs.language = e.target.value;
     saveAccessibility(prefs);
@@ -2544,6 +2540,27 @@ function showModal(id) {
   $("modal-backdrop").classList.remove("hidden");
   for (const modal of document.querySelectorAll(".modal")) modal.classList.add("hidden");
   $(id).classList.remove("hidden");
+  placeModalClose($(id));
+}
+
+const MODALS_WITHOUT_CLOSE = ["modal-call", "modal-signin", "modal-claim", "modal-username"];
+let modalCloseKey = null;
+
+function modalHasClose(id) {
+  return !MODALS_WITHOUT_CLOSE.includes(id);
+}
+
+function placeModalClose(modal) {
+  if (!modalCloseKey) {
+    modalCloseKey = el("button", "modal-close");
+    modalCloseKey.type = "button";
+    modalCloseKey.appendChild(svgIcon("close", 18));
+    modalCloseKey.onclick = hideModals;
+  }
+  modalCloseKey.title = t("settings.close");
+  modalCloseKey.setAttribute("aria-label", t("settings.close"));
+  if (modalHasClose(modal.id)) modal.appendChild(modalCloseKey);
+  else modalCloseKey.remove();
 }
 
 function hideModals() {
@@ -3055,15 +3072,23 @@ function paintTitlebar() {
   const icon = $("titlebar-icon");
   $("titlebar-name").textContent = server ? server.name : "Commy";
   if (server) {
+    icon.classList.remove("is-logo");
     paintServerIcon(icon, server);
   } else {
     icon.classList.remove("has-image");
+    icon.classList.add("is-logo");
     const img = el("img");
-    img.src = "images/commy_v3_noback.png";
+    img.src = "images/commy-star-small.svg";
     img.alt = "";
     img.draggable = false;
     icon.replaceChildren(img);
   }
+}
+
+const WINDOW_DRAG_STRIP = 70;
+
+function windowDragSpot(target, fit, y) {
+  return fit !== "slim" && (target.id === "rail" || (target.id === "app" && y < WINDOW_DRAG_STRIP));
 }
 
 async function setupTitlebar() {
@@ -3078,6 +3103,8 @@ async function setupTitlebar() {
   $("tb-close").addEventListener("click", () => act("close"));
   $("titlebar-drag").addEventListener("mousedown", e => { if (e.button === 0 && e.detail === 1) act("drag"); });
   $("titlebar-drag").addEventListener("dblclick", () => act("toggle-maximize"));
+  $("app").addEventListener("mousedown", e => { if (e.button === 0 && e.detail === 1 && windowDragSpot(e.target, document.documentElement.dataset.fit, e.clientY)) act("drag"); });
+  $("app").addEventListener("dblclick", e => { if (windowDragSpot(e.target, document.documentElement.dataset.fit, e.clientY)) act("toggle-maximize"); });
   paintTitlebar();
 }
 
@@ -7226,7 +7253,7 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
+  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -7734,6 +7761,25 @@ async function saveOwnProfile(changes) {
 
 let avatarMenuAnchor = null;
 let accountStatusEmoji = "";
+
+let bannerMenuUse = null;
+
+function openBannerMenu(anchor, title, use) {
+  bannerMenuUse = async stock => {
+    $("banner-menu").classList.add("hidden");
+    try {
+      const src = stock || (await chooseImage(title, $("server-image-file")));
+      if (src) await use(src);
+    } catch (err) {
+      toast(String(err));
+    }
+  };
+  const tiles = $("banner-tiles");
+  if (!tiles.childElementCount) tiles.append(...stockBannerTiles(document, src => bannerMenuUse(src)));
+  const menu = $("banner-menu");
+  placePopup(menu, anchor, "below");
+  menu.style.left = `${Math.max(8, Math.min(parseFloat(menu.style.left), window.innerWidth - menu.offsetWidth - 8))}px`;
+}
 
 function openAvatarMenu(anchor) {
   avatarMenuAnchor = anchor;
@@ -13859,6 +13905,7 @@ function studioProfilePane(person, place, reopen) {
     more.appendChild(studioIconNode("ellipsis", 17, false));
     more.onclick = e => {
       e.stopPropagation();
+      if (closeIfOpen("fp-menu")) return;
       const r = more.getBoundingClientRect();
       openProfileMenu(person, r.right - 220, r.bottom + 6, undefined, { rows, anchor: more });
     };
@@ -14029,6 +14076,7 @@ async function openFullProfile(member) {
     more.appendChild(svgIcon("more", 20));
     more.onclick = e => {
       e.stopPropagation();
+      if (closeIfOpen("fp-menu")) return;
       const r = more.getBoundingClientRect();
       openProfileMenu(person, r.right - 220, r.bottom + 6);
     };
@@ -14039,6 +14087,19 @@ async function openFullProfile(member) {
     openProfileMenu(person, e.clientX, e.clientY);
   };
   showModal("modal-profile");
+}
+
+function closeIfOpen(id) {
+  const node = $(id);
+  if (node.classList.contains("hidden")) return false;
+  node.classList.add("hidden");
+  return true;
+}
+
+function closeMenuOutside(id, target, openers) {
+  const node = $(id);
+  if (node.classList.contains("hidden") || node.contains(target) || target.closest(openers)) return;
+  node.classList.add("hidden");
 }
 
 function openProfileMenu(person, x, y, keepOpen, card = null) {
@@ -14213,6 +14274,7 @@ function openMemberCard(member, anchor) {
   more.replaceChildren(studio ? studioIconNode("ellipsis", 17, false) : svgIcon("more", 18));
   more.onclick = e => {
     e.stopPropagation();
+    if (closeIfOpen("fp-menu")) return;
     const r = more.getBoundingClientRect();
     openProfileMenu(member, r.right - 220, r.bottom + 6, "member-card", studio ? { rows, anchor: more } : null);
   };
@@ -14333,18 +14395,14 @@ function renderRolePicker(server, list) {
   if (!list.childElementCount) list.appendChild(el("div", "manage-empty", "This server has no roles to pick yet"));
 }
 
-async function uploadRoleBanner(server, role) {
-  try {
-    const src = await chooseImage("Choose a role banner", $("server-image-file"));
-    if (!src) return;
+function uploadRoleBanner(server, role, anchor) {
+  openBannerMenu(anchor, "Choose a role banner", async src => {
     const data = await cropImageFile(src, 600, 240);
     await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data });
     await refreshCurrentServer();
     openServerSettings();
     toast("Role banner saved");
-  } catch (err) {
-    toast(String(err));
-  }
+  });
 }
 
 async function removeRoleBanner(server, role) {
@@ -14409,16 +14467,10 @@ function roleForm(server, role, onClose) {
     if (tagValue) previewName.appendChild(roleTagChip(tagValue, color));
     previewName.appendChild(el("span", null, name.value.trim() || "Role name"));
   };
-  bannerBtn.onclick = async () => {
-    try {
-      const src = await chooseImage("Choose a role banner", $("server-image-file"));
-      if (!src) return;
-      bannerChange = await cropImageFile(src, 600, 240);
-      paintPreview();
-    } catch (err) {
-      toast(String(err));
-    }
-  };
+  bannerBtn.onclick = e => openBannerMenu(e.currentTarget, "Choose a role banner", async src => {
+    bannerChange = await cropImageFile(src, 600, 240);
+    paintPreview();
+  });
   bannerClear.onclick = () => {
     bannerChange = null;
     paintPreview();
@@ -19828,7 +19880,7 @@ function renderDmHome() {
 function buildWelcomeHome() {
   const home = el("div", "empty-state welcome-home");
   const mark = el("img", "welcome-mark");
-  mark.src = "images/commy_v3_noback.png";
+  mark.src = "images/commy-star.svg";
   mark.alt = "";
   mark.draggable = false;
   home.appendChild(mark);
@@ -22913,14 +22965,8 @@ function wireEvents() {
     e.stopPropagation();
     openAvatarMenu(e.currentTarget);
   };
-  $("account-banner-upload").onclick = async () => {
-    try {
-      const src = await chooseImage("Choose a profile banner", $("server-image-file"));
-      if (src) await saveAccountBanner(await cropImageFile(src, 600, 240));
-    } catch (err) {
-      toast(String(err));
-    }
-  };
+  $("account-banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a profile banner", async src => saveAccountBanner(await cropImageFile(src, 600, 240)));
+  $("banner-own").onclick = () => bannerMenuUse && bannerMenuUse(null);
   $("account-banner-remove").onclick = () => saveAccountBanner(null);
   $("account-banner-remove").appendChild(svgIcon("close", 14));
   $("account-banner-upload").firstElementChild.appendChild(svgIcon("plus", 14));
@@ -22954,8 +23000,9 @@ function wireEvents() {
     applyAvatar("none");
   };
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "banner-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     if (!open.length) return;
+    closeMenuOutside("fp-menu", e.target, ".mc-more, .fp-more");
     if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #vp-conn-meta, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
@@ -23253,21 +23300,18 @@ function wireEvents() {
   wireNicknameModal();
   wireVoiceStatus();
 
-  const uploadServerImage = async which => {
+  $("overview-icon").onclick = async () => {
     try {
-      const src = await chooseImage(which === "icon" ? "Choose a server avatar" : "Choose a server banner", $("server-image-file"));
-      if (!src) return;
-      const data = which === "icon" ? await cropImageFile(src, 256, 256) : await cropImageFile(src, 960, 320);
-      await setServerImage(which, data);
+      const src = await chooseImage("Choose a server avatar", $("server-image-file"));
+      if (src) await setServerImage("icon", await cropImageFile(src, 256, 256));
     } catch (err) {
       toast(String(err));
     }
   };
-  $("overview-icon").onclick = () => uploadServerImage("icon");
-  $("banner-upload").onclick = () => uploadServerImage("banner");
+  $("banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a server banner", async src => setServerImage("banner", await cropImageFile(src, 960, 320)));
   $("overview-icon-remove").onclick = () => setServerImage("icon", null);
   $("banner-remove").onclick = () => setServerImage("banner", null);
-  $("invite-bg-upload").onclick = uploadInviteBackground;
+  $("invite-bg-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose an invite background", saveInviteBackground);
   $("invite-bg-remove").onclick = () => setServerImage("invite", null);
   $("invite-custom-name").addEventListener("input", paintInviteNameCheck);
   $("invite-custom-name").addEventListener("keydown", e => {
@@ -23418,15 +23462,7 @@ function wireEvents() {
     syncChannelDirty();
   };
   $("channel-edit-emoji").onclick = e => pickChannelLead(e.currentTarget, "edit", syncChannelDirty);
-  $("channel-banner-upload").onclick = async () => {
-    try {
-      const src = await chooseImage("Choose a channel banner", $("server-image-file"));
-      if (!src) return;
-      await setChannelBanner(await cropImageFile(src, 960, 320));
-    } catch (err) {
-      toast(String(err));
-    }
-  };
+  $("channel-banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a channel banner", async src => setChannelBanner(await cropImageFile(src, 960, 320)));
   $("channel-banner-remove").onclick = () => setChannelBanner(null);
   $("channel-edit-name").addEventListener("keydown", e => {
     if (e.key === "Enter") saveChannelEdits();
@@ -25039,21 +25075,15 @@ function paintInviteBackground(server) {
   }
 }
 
-async function uploadInviteBackground() {
-  try {
-    const src = await chooseImage("Choose an invite background", $("server-image-file"));
-    if (!src) return;
-    let data = null;
-    for (const quality of [0.86, 0.76, 0.66, 0.56, 0.46]) {
-      data = await cropImageFile(src, 1280, 720, quality);
-      if (data.length * 3 / 4 <= INVITE_BACKGROUND_MAX) break;
-      data = null;
-    }
-    if (!data) throw "That image is too detailed to fit. Try a simpler one.";
-    await setServerImage("invite", data);
-  } catch (err) {
-    toast(String(err));
+async function saveInviteBackground(src) {
+  let data = null;
+  for (const quality of [0.86, 0.76, 0.66, 0.56, 0.46]) {
+    data = await cropImageFile(src, 1280, 720, quality);
+    if (data.length * 3 / 4 <= INVITE_BACKGROUND_MAX) break;
+    data = null;
   }
+  if (!data) throw "That image is too detailed to fit. Try a simpler one.";
+  await setServerImage("invite", data);
 }
 
 function paintInviteNameCheck() {
@@ -25299,7 +25329,7 @@ function renderRoleSettings(server) {
     upload.type = "button";
     upload.appendChild(svgIcon("plus", 14));
     upload.appendChild(el("span", null, role.banner ? "Change banner" : "Add banner"));
-    upload.onclick = () => uploadRoleBanner(server, role);
+    upload.onclick = e => uploadRoleBanner(server, role, e.currentTarget);
     if (role.banner) {
       const remove = el("button", "role-banner-btn icon", "");
       remove.type = "button";

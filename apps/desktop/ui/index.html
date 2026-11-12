@@ -4,7 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Commy</title>
-  <link rel="icon" href="images/commy_round.png" />
+  <link rel="icon" href="images/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="images/favicon-32.png" sizes="32x32" />
   <link rel="stylesheet" href="styles/styles.css" />
   <link rel="stylesheet" id="studio-tokens" href="styles/tokens.css" media="not all" />
   <link rel="stylesheet" id="studio-parts" href="styles/studio-parts.css" media="not all" />
@@ -47,7 +48,7 @@
 <body>
   <div class="startup" id="startup" role="status" aria-live="polite">
     <div class="startup-card">
-      <img class="startup-logo" src="images/commy_v3_noback.png" alt="" width="64" height="64" draggable="false" />
+      <img class="startup-logo" src="images/commy-star.svg" alt="" width="64" height="64" draggable="false" />
       <h1 class="startup-title" id="startup-title">Starting Commy</h1>
       <ol class="startup-steps">
         <li class="startup-step" id="startup-connection" data-state="working">
@@ -68,7 +69,7 @@
   </div>
   <div class="startup reopen hidden" id="reopen" role="alertdialog" aria-labelledby="reopen-title" aria-describedby="reopen-text">
     <div class="startup-card">
-      <img class="startup-logo" src="images/commy_v3_noback.png" alt="" width="64" height="64" draggable="false" />
+      <img class="startup-logo" src="images/commy-star.svg" alt="" width="64" height="64" draggable="false" />
       <h1 class="startup-title" id="reopen-title" data-i18n="reopen.title">Open Commy again</h1>
       <p class="reopen-text" id="reopen-text" data-i18n="reopen.text">Go to your Home Screen, then open Commy to finish.</p>
     </div>
@@ -579,7 +580,7 @@
 
   <div class="modal-backdrop hidden" id="modal-backdrop">
     <div class="modal modal-signin hidden" id="modal-signin">
-      <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
+      <img class="signin-logo" src="images/commy-star.svg" alt="" />
       <h2 id="signin-title" data-i18n="signin.title">Sign in to Commy</h2>
       <p id="signin-intro" data-i18n="signin.intro">A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
       <div class="signin-start" id="signin-start">
@@ -643,7 +644,7 @@
     </div>
 
     <div class="modal modal-signin hidden" id="modal-claim">
-      <img class="signin-logo" src="images/commy_v3_noback.png" alt="" />
+      <img class="signin-logo" src="images/commy-star.svg" alt="" />
       <h2 id="claim-title" data-i18n="claim.title">Is this your profile?</h2>
       <p id="claim-intro"></p>
       <div class="claim-profile" id="claim-profile"></div>
@@ -2192,13 +2193,6 @@
               <option value="system" data-i18n="accessibility.theme.system">Follow system</option>
             </select>
           </div>
-          <label class="settings-card setting-row" data-search="new look studio redesign design glass preview">
-            <div>
-              <div class="setting-title" data-i18n="appearance.newLook">New Look</div>
-              <div class="setting-sub" data-i18n="appearance.newLook.sub">The redesigned Commy, on for everyone. Turn it off to go back to the classic look. Commy reloads when you change this, which ends a call you are in.</div>
-            </div>
-            <input type="checkbox" id="new-look-toggle" class="switch" />
-          </label>
           <div class="settings-card setting-row" data-search="translate translation spanish espanol">
             <div>
               <div class="setting-title" data-i18n="accessibility.language">Language</div>
@@ -3464,6 +3458,10 @@
     <button id="avatar-emoji">Use an Emoji or GIF</button>
     <button id="avatar-remove" class="danger">Remove Avatar</button>
   </div>
+  <div class="pop-menu banner-menu hidden" id="banner-menu">
+    <div class="banner-tiles" id="banner-tiles"></div>
+    <button id="banner-own">Upload a Picture</button>
+  </div>
   <input type="file" id="photo-file" accept="image/*,video/*" multiple class="file-catcher" tabindex="-1" aria-hidden="true" />
   <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
   <input type="file" id="vrm-file" accept=".vrm" class="hidden" />
@@ -3586,6 +3584,7 @@
   <script src="scripts/server-colors.js"></script>
   <script src="scripts/starfield.js"></script>
   <script src="scripts/app-icons.js"></script>
+  <script src="scripts/stock-banners.js"></script>
   <script src="scripts/layout.js"></script>
   <script src="scripts/phone.js"></script>
   <script src="scripts/phone-touch.js"></script>

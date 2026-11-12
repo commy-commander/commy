@@ -46,7 +46,7 @@ async function start() {
   calm = reducedMotion();
   window.addEventListener("storage", e => {
     if (e.key === ACCESSIBILITY_KEY) calm = reducedMotion();
-    if (e.key === LOOK_KEY) {
+    if (e.key === LOOK_FX_KEY) {
       applyLook();
       schedule();
     }

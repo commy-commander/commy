@@ -23,7 +23,7 @@ const rule = selector => {
 
 test("the dialogs' new look stays off until the switch is on, and its parts also dress the phone", () => {
   assert.ok(selectors.length > 20);
-  for (const selector of selectors) assert.ok(selector.startsWith(R) || selector.startsWith(`${P} `) || selector.startsWith(`${P}[data-theme="light"] `), selector);
+  for (const selector of selectors) assert.ok(selector.startsWith(R) || selector.startsWith(`${P} `) || selector.startsWith(`${P}[data-theme="light"] `) || selector.startsWith(`${P}:not(.mobile-app) .modal > .modal-close`), selector);
   assert.equal(css.includes("/*"), false);
   assert.deepEqual(css.match(/#[0-9a-fA-F]{3,8}\b/g), null);
   const sheet = html.indexOf('<link rel="stylesheet" id="studio-dialogs" href="styles/studio-dialogs.css" media="not all" />');
@@ -75,10 +75,12 @@ test("a dialog gets one bright key: cream beside red, plain glass beside blue", 
   assert.match(rule(`${R} .modal.dialog > .answers > .key.third`), /order: -1;/);
 });
 
-test("the dialog is the guide's slab with its answers on the bottom edge", () => {
-  assert.match(rule(`${R} .modal.dialog`), /width: min\(400px, calc\(100vw - 48px\)\);\n  padding: 26px 28px 48px;\n  border: 0;\n  border-radius: var\(--radius-xl\);/);
+test("the dialog is the guide's slab with its answers inside, on the last row", () => {
+  assert.match(rule(`${R} .modal.dialog`), /width: min\(400px, calc\(100vw - 48px\)\);\n  padding: 26px 28px 24px;\n  border: 0;\n  border-radius: var\(--radius-xl\);/);
   assert.match(rule(`${P} .modal.dialog > h2`), /font: 700 21px\/1\.2 var\(--font-display\);/);
-  assert.match(rule(`${R} .modal.dialog > .modal-actions.answers`), /position: absolute;\n  right: 24px;\n  bottom: -20px;/);
+  const answers = rule(`${R} .modal.dialog > .modal-actions.answers`);
+  assert.match(answers, /display: flex;\n  flex: none;\n  justify-content: flex-end;\n  gap: 8px;\n  margin: 10px 0 0;/);
+  assert.doesNotMatch(answers, /position: absolute|bottom: -/);
   assert.match(rule(`${R} .modal-backdrop:has(> .modal.dialog:not(.hidden))`), /background: var\(--scrim\);/);
   assert.match(rule(`${P} .modal.dialog > .answers > .key:disabled`), /opacity: 1;/);
 });
@@ -118,7 +120,7 @@ test("joining a server: six dialogs, each answer named, red words on the left", 
   assert.deepEqual(joinAnswerClasses(["si-leave", "si-answers", "si-close"]), ["key out-k", "key", "key primary"]);
   assert.deepEqual(joinAnswerClasses(["invite-link-cancel", "invite-link-join"]), ["key", "key primary"]);
   for (const id of Object.keys(JOIN_ANSWERS)) assert.ok(JOIN_ANSWERS[id].split(" ").filter(name => name === "primary").length <= 1, id);
-  assert.match(rule(`${JR} > .modal-actions.answers.spread`), /left: 24px;/);
+  assert.equal(css.includes(".modal-actions.answers.spread"), false);
   assert.match(rule(`${J} > .answers > .key.out-k`), /margin-right: auto;\n  color: var\(--danger-text\);/);
   assert.match(rule(`${JR}`), /width: min\(440px, calc\(100vw - 48px\)\);/);
   assert.match(rule(`${R} .modal.modal-wide.dialog.join`), /width: min\(560px, calc\(100vw - 48px\)\);/);
@@ -338,4 +340,20 @@ test("sign in, claim and the incoming call follow the drawing", () => {
   assert.ok(start.includes("new MutationObserver(studioSigninParts)"));
   const signin = glue.slice(glue.indexOf("function studioSigninParts()"), glue.indexOf("function studioInviteParts()"));
   assert.equal(signin.includes("MutationObserver"), false);
+});
+
+test("every window on a computer has a round close key in its top corner, and the ones that must be answered do not", () => {
+  const key = rule(`${P}:not(.mobile-app) .modal > .modal-close`);
+  assert.match(key, /position: absolute;\n  top: 14px;\n  right: 14px;/);
+  assert.match(key, /width: 32px;\n  height: 32px;/);
+  assert.match(key, /border-radius: 50%;\n  background: var\(--k-plain\);/);
+  assert.match(read("../styles/styles.css"), /\.modal-close \{ display: none; \}/);
+  assert.ok(css.includes(`${R} .modal.dialog > h2 { padding-right: 36px; }`));
+  assert.ok(app.includes('const MODALS_WITHOUT_CLOSE = ["modal-call", "modal-signin", "modal-claim", "modal-username"];'));
+  assert.match(app, /\n  placeModalClose\(\$\(id\)\);\n/);
+  assert.ok(app.includes("modalCloseKey.onclick = hideModals;"));
+});
+
+test("a long poll scrolls its options inside the dialog", () => {
+  assert.match(rule(`${R} .modal.dialog.make .poll-rows`), /flex: 0 1 auto; max-height: max\(108px, calc\(100vh - 520px\)\); margin-inline: -4px; padding: 4px; overflow-y: auto;/);
 });

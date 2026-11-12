@@ -43,14 +43,15 @@ test("the fields follow the ruled order and each one still exists", () => {
   assert.match(rule(`${R} .p-editor > .profile-fields > .field-label:has(#account-server-tag)`), /grid-column: 1;/);
 });
 
-test("the banner runs edge to edge with the keys on its fade and Save on the bottom edge", () => {
+test("the banner runs edge to edge with the keys on its fade and Save inside the card, on the last row", () => {
   assert.match(rule(`${R} .p-editor > .profile-banner`), /height: 112px;\n  margin: 0 -24px;/);
   assert.ok(rule(`${R} .p-editor > .profile-banner`).includes("linear-gradient(rgb(0 0 0) 38%, transparent 92%)"));
   assert.match(rule(`${R} .p-editor > .role-banner-tools`), /top: 68px;\n  right: 24px;/);
   assert.match(rule(`${R} .p-editor > .role-banner-tools > .key.sq`), /width: 34px;\n  height: 34px;/);
   assert.match(rule(`${R} .p-editor > .role-banner-tools > #account-banner-remove`), /order: 1;/);
   assert.match(rule(`${R} .p-editor > .profile-body`), /gap: 14px;\n  margin-top: -22px;\n  padding: 0 2px 18px;/);
-  assert.ok(css.includes(`${R} .p-editor > .profile-fields > .form-actions {\n  position: absolute;\n  right: 24px;\n  bottom: -20px;`));
+  assert.ok(css.includes(`${R} .p-editor > .profile-fields > .form-actions {\n  display: flex;\n  justify-content: flex-end;\n  gap: 8px;\n  margin: 6px 0 0;`));
+  assert.equal(css.includes(".form-actions {\n  position: absolute;"), false);
   assert.match(rule(`${R} .set-pane.set-editor`), /padding: 0 24px 40px;/);
   assert.ok(glue.includes('["account-save", "key primary", ""]'));
   assert.ok(glue.includes("banner.after(tools)"));

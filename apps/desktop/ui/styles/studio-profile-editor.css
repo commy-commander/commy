@@ -332,13 +332,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .p-editor .look-swatch > .set-sc
 }
 
 html[data-look="studio"]:not([data-fit="slim"]) .p-editor > .profile-fields > .form-actions {
-  position: absolute;
-  right: 24px;
-  bottom: -20px;
-  z-index: 4;
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
-  margin: 0;
+  margin: 6px 0 0;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .p-editor #account-save.key { padding: 0 18px; font: 600 14px/1 var(--font); }
 

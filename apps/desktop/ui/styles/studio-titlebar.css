@@ -1,31 +1,19 @@
-html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .app { height: calc(100vh - 36px); margin-top: 36px; padding-top: 6px; }
-html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .offline-chip { top: 46px; }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar { height: 36px; background: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar-drag { gap: 9px; padding-left: 12px; }
-html[data-look="studio"]:not([data-fit="slim"]) #titlebar-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: var(--server-tint, var(--accent));
-  box-shadow: inset 0 1px 0 rgb(var(--lamp) / .18);
-  color: var(--white);
-  font: 700 12px/1 var(--font);
-  letter-spacing: -.02em;
-  outline: 0;
-  filter: none;
-  scale: none;
-  transition: opacity var(--t-hover);
-}
-html[data-look="studio"]:not([data-fit="slim"]) #titlebar-icon.has-image { background: var(--bg-raised); }
-html[data-look="studio"]:not([data-fit="slim"]) #titlebar-icon img { border-radius: inherit; }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar-name { font: 600 13px/1 var(--font); color: var(--text-muted); }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn { width: 46px; height: 36px; color: var(--text-muted); transition: background var(--t-hover), color var(--t-hover); }
+html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .app { height: 100vh; margin-top: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .rail { padding-right: calc(146px - var(--st-mr)); }
+html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .offline-chip { top: calc(var(--st-mt) + 9px); }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar { left: auto; height: calc(var(--st-mt) * 2 + 50px); background: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar-drag { display: none; }
+html[data-look="studio"] #titlebar-icon.is-logo { background: none; box-shadow: none; border-radius: 0; }
+html[data-look="studio"] #titlebar-icon.is-logo img { object-fit: contain; border-radius: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn { width: 46px; height: 100%; padding-block: calc(var(--st-mt) + 7px); background-clip: content-box; color: var(--text-muted); transition: background var(--t-hover), color var(--t-hover); }
 html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn svg { width: 10px; height: 10px; }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar.is-idle :is(.titlebar-name, .titlebar-btn) { color: var(--text-faint); }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar.is-idle #titlebar-icon { opacity: .55; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar.is-idle .titlebar-btn { color: var(--text-faint); }
 html[data-look="studio"]:not([data-fit="slim"]) .titlebar .titlebar-btn:hover { background: var(--bg-hover); color: var(--header-primary); }
 html[data-look="studio"]:not([data-fit="slim"]) .titlebar .titlebar-btn.titlebar-close:hover { background: var(--danger); color: var(--danger-ink); }
 @media (prefers-reduced-motion: reduce) {
-  html[data-look="studio"]:not([data-fit="slim"]) #titlebar-icon,
   html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn { transition: none; }
 }
+html[data-look="studio"] .titlebar-icon.server-icon, html[data-look="studio"] .titlebar-icon.server-icon:hover { border-radius: 50%; }
+html[data-look="studio"][data-fit="slim"] body.has-titlebar { position: fixed; inset: 32px 0 0; width: auto; height: auto; min-height: 0; transform: translateZ(0); --app-height: calc(100dvh - 32px); }
+html[data-look="studio"][data-fit="slim"] body.has-titlebar > .titlebar { top: -32px; }
+html[data-look="studio"][data-fit="slim"] body.has-titlebar .app { height: 100%; margin-top: 0; }

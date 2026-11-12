@@ -214,7 +214,7 @@ async function start() {
   applyOverlayAccessibility();
   window.addEventListener("storage", e => {
     if (e.key === ACCESSIBILITY_KEY) applyOverlayAccessibility();
-    if (e.key === LOOK_KEY) {
+    if (e.key === LOOK_FX_KEY) {
       applyLook();
       renderMembers();
     }

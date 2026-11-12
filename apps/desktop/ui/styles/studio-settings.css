@@ -2,10 +2,11 @@ html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hi
 html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hidden)) .app::before,
 html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hidden)) .app::after { visibility: hidden; }
 
-html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hidden)) .user-panel { padding-right: calc(71px - 25px * var(--st-hang)); }
-html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hidden)) .user-actions { top: 9px; right: calc(5px - 27px * var(--st-hang)); }
+html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hidden)) .user-panel { padding-right: 79px; }
+html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hidden)) .user-actions { top: 9px; right: 9px; }
 html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hidden)) .user-actions > :not(.set-done) { display: none; }
 html[data-look="studio"] .user-actions > .set-done { display: none; }
+html[data-look="studio"]:has(.settings-layer:not(.hidden)) .profile-pop { z-index: 160; }
 html[data-look="studio"]:not([data-fit="slim"]) body:has(.settings-layer:not(.hidden)) .user-actions > .set-done { display: inline-flex; }
 
 html[data-look="studio"]:not([data-fit="slim"]) .settings-layer {
@@ -626,7 +627,7 @@ html[data-look="studio"] .settings-layer .set-theme .tick {
   transition: opacity var(--t-hover), scale 200ms var(--ease-spring);
 }
 html[data-look="studio"] .settings-layer .set-theme[aria-checked="true"] .tick { opacity: 1; scale: 1; }
-html[data-look="studio"] .settings-layer .set-danger { position: relative; margin-bottom: 20px; padding-bottom: 38px; }
+html[data-look="studio"] .settings-layer .set-danger { position: relative; padding-bottom: 76px; }
 html[data-look="studio"] .settings-layer .set-danger :is(.settings-card, .account-line) { position: static; }
 html[data-look="studio"] .settings-layer .set-danger > .settings-subhead > .set-head-words { display: inline-block; }
 html[data-look="studio"] .settings-layer .set-danger > .settings-subhead > .set-head-words::first-letter { text-transform: uppercase; }
@@ -641,7 +642,7 @@ html[data-look="studio"] .settings-layer .set-danger > .settings-subhead > .i {
 html[data-look="studio"] .settings-layer .set-danger #acct-delete {
   position: absolute;
   right: 24px;
-  bottom: -20px;
+  bottom: 20px;
   z-index: 2;
   height: 40px;
   padding: 0 18px;
