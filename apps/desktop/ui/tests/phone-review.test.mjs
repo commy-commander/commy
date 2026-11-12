@@ -72,7 +72,7 @@ test("the drive channel hides the waiting bar like the forum does", () => {
 });
 
 test("a toast wears the new look on the phone and sits above a dialog's answers", () => {
-  assert.match(rule(touch, ".toast"), /border-radius: var\(--radius-pill\);[\s\S]*bottom: calc\(var\(--hz-line\) \+ 68px\);/);
+  assert.match(rule(touch, ".toast"), /border-radius: 24px;[\s\S]*bottom: calc\(var\(--hz-line\) \+ 68px\);/);
   assert.ok(touch.includes(`${SLIM} body:has(> #modal-backdrop:not(.hidden)) > .toast { bottom: calc(var(--keyboard-height, 0px) + env(safe-area-inset-bottom) + 104px); }`));
 });
 
@@ -90,4 +90,9 @@ test("Server Settings and Edit Channel from the menus open on the list, and the 
   assert.match(settings, /const PHONE_SETTINGS_FROM_MENUS = \{ "sm-settings": "server-settings", "chm-settings": "channel-settings" \};/);
   assert.match(settings, /if \(studioSlim\(\)\) settingsPhoneView\(layer, "menu"\);/);
   assert.match(read("scripts", "phone-settings-page.js"), /pane\.prepend\(el\("h2", "settings-subhead set-head", "Server"\)\);/);
+});
+
+test("a long toast on the phone wraps to three lines and stays above the tab bar", () => {
+  assert.match(rule(touch, ".toast"), /width: max-content;[\s\S]*padding: 12px 22px 12px 16px;[\s\S]*border-radius: 24px;/);
+  assert.match(rule(touch, ".toast > .toast-text"), /-webkit-line-clamp: 3;[\s\S]*white-space: normal;/);
 });
