@@ -9,7 +9,7 @@
 ## Checklist
 
 - [ ] The branch is cut from the latest `main` and the title follows [Conventional Commits](https://www.conventionalcommits.org)
-- [ ] `cargo fmt --all`, `cargo clippy --workspace` and `cargo test --workspace` pass
+- [ ] `cargo clippy --workspace` and `cargo test --workspace` pass
 - [ ] No code comments (see CONTRIBUTING.md)
 - [ ] New modules have unit tests, and UI changes were checked in the running app
 - [ ] No secrets, `.env` files, personal names or emails are included

@@ -8,10 +8,12 @@ see [SECURITY.md](SECURITY.md).
 ## Branch flow
 
 - `main` is protected and always releasable. Nobody pushes to it directly.
-- Do all work on a branch cut from the latest `main`:
-  - `feature/<short-name>` for new features
-  - `bugfix/<short-name>` for fixes
+- Do all work on a branch cut from the latest `main`, named after the
+  change's Conventional Commits type:
+  - `feat/<short-name>` for new features
+  - `fix/<short-name>` for fixes
   - `docs/<short-name>` for documentation
+  - `ci/<short-name>`, `chore/<short-name>` and so on for the other types
 - Open a pull request into `main`. It merges once checks pass and it has
   been reviewed.
 - Delete the branch after it merges.
@@ -19,9 +21,9 @@ see [SECURITY.md](SECURITY.md).
 ```sh
 git switch main
 git pull
-git switch -c feature/my-change
+git switch -c feat/my-change
 # ...work, commit...
-git push -u origin feature/my-change
+git push -u origin feat/my-change
 ```
 
 ## Commits
@@ -41,7 +43,6 @@ count as comments. The only exceptions are license or SPDX headers,
 ## Before opening a PR
 
 ```sh
-cargo fmt --all
 cargo clippy --workspace
 cargo test --workspace
 ```
