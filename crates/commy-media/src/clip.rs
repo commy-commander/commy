@@ -1,5 +1,5 @@
 use crate::devices::FrameSource;
-use crate::mixer::volume_gain;
+use crate::mixer::{ramp_at, volume_gain, Limiter};
 use commy_audio::codec::soft_limit;
 use commy_audio::{FRAME_SIZE, SAMPLE_RATE};
 use std::collections::VecDeque;
@@ -68,6 +68,7 @@ impl FrameSource for ClipQueue {
 }
 
 pub const MAX_MIXED_CLIPS: usize = 4;
+const STOP_FADE_SAMPLES: usize = 240;
 
 #[derive(Debug)]
 struct MixedClip {
@@ -79,12 +80,13 @@ struct MixedClip {
 pub struct ClipMixer {
     clips: VecDeque<MixedClip>,
     gain: f32,
+    limiter: Limiter,
     idle_frames: u32,
 }
 
 impl Default for ClipMixer {
     fn default() -> Self {
-        Self { clips: VecDeque::new(), gain: 1.0, idle_frames: 0 }
+        Self { clips: VecDeque::new(), gain: 1.0, limiter: Limiter::default(), idle_frames: 0 }
     }
 }
 
@@ -103,7 +105,7 @@ impl ClipMixer {
         if samples.is_empty() {
             return;
         }
-        self.stop(id);
+        self.clips.retain(|clip| clip.id != id);
         while self.clips.len() >= MAX_MIXED_CLIPS {
             self.clips.pop_front();
         }
@@ -112,7 +114,9 @@ impl ClipMixer {
     }
 
     pub fn stop(&mut self, id: u64) {
-        self.clips.retain(|clip| clip.id != id);
+        for clip in self.clips.iter_mut().filter(|clip| clip.id == id) {
+            fade_out(&mut clip.samples);
+        }
     }
 
     pub fn clear(&mut self) {
@@ -135,14 +139,31 @@ impl FrameSource for ClipMixer {
             return vec![0; FRAME_SIZE];
         }
         let gain = self.gain;
-        let frame = (0..FRAME_SIZE)
+        let mixed: Vec<f32> = (0..FRAME_SIZE)
             .map(|_| {
                 let sum: f32 = self.clips.iter_mut().filter_map(|clip| clip.samples.pop_front()).filter(|s| s.is_finite()).sum();
-                (soft_limit(sum * gain) * i16::MAX as f32).round() as i16
+                sum * gain
             })
             .collect();
         self.clips.retain(|clip| !clip.samples.is_empty());
-        frame
+        let (start, end) = self.limiter.follow(peak(&mixed));
+        mixed
+            .iter()
+            .enumerate()
+            .map(|(i, sample)| (soft_limit(sample * ramp_at(start, end, i)) * i16::MAX as f32).round() as i16)
+            .collect()
+    }
+}
+
+fn peak(samples: &[f32]) -> f32 {
+    samples.iter().fold(0.0, |peak, s| peak.max(s.abs()))
+}
+
+fn fade_out(samples: &mut VecDeque<f32>) {
+    samples.truncate(STOP_FADE_SAMPLES);
+    let len = samples.len() as f32;
+    for (i, sample) in samples.iter_mut().enumerate() {
+        *sample *= 1.0 - (i + 1) as f32 / len;
     }
 }
 
@@ -310,10 +331,60 @@ mod tests {
         mixer.push(7, &vec![0.5; FRAME_SIZE], SAMPLE_RATE as f32, 1.0);
         assert_eq!(mixer.playing(), 1, "the same clip id replaces itself");
         mixer.stop(7);
+        mixer.next_frame();
         assert_eq!(mixer.playing(), 0);
         for id in 0..10 {
             mixer.push(id, &[0.1; 48], SAMPLE_RATE as f32, 1.0);
         }
         assert_eq!(mixer.playing(), MAX_MIXED_CLIPS);
+    }
+
+    fn tone(amplitude: f32, len: usize) -> Vec<f32> {
+        (0..len).map(|i| amplitude * (i as f32 * 0.05).sin()).collect()
+    }
+
+    #[test]
+    fn overlapping_alerts_are_turned_down_instead_of_distorted() {
+        let mut mixer = ClipMixer::new();
+        for id in 0..MAX_MIXED_CLIPS as u64 {
+            mixer.push(id, &tone(0.47, FRAME_SIZE * 8), SAMPLE_RATE as f32, 1.0);
+        }
+        mixer.next_frame();
+        let frame = mixer.next_frame();
+        let shape = tone(1.0, FRAME_SIZE * 2);
+        let scale = frame.iter().map(|s| s.unsigned_abs()).max().unwrap() as f32 / i16::MAX as f32;
+        assert!(scale <= 0.9, "{scale}");
+        assert!(scale > 0.8, "{scale}");
+        for (i, s) in frame.iter().enumerate() {
+            let want = shape[FRAME_SIZE + i] * scale;
+            assert!((*s as f32 / i16::MAX as f32 - want).abs() < 0.01, "sample {i} is bent");
+        }
+    }
+
+    #[test]
+    fn a_quiet_clip_after_a_loud_mix_comes_back_to_full_level() {
+        let mut mixer = ClipMixer::new();
+        for id in 0..MAX_MIXED_CLIPS as u64 {
+            mixer.push(id, &vec![0.5; FRAME_SIZE], SAMPLE_RATE as f32, 1.0);
+        }
+        mixer.next_frame();
+        mixer.push(9, &vec![0.25; FRAME_SIZE * 200], SAMPLE_RATE as f32, 1.0);
+        let mut last = Vec::new();
+        for _ in 0..200 {
+            last = mixer.next_frame();
+        }
+        assert!(last.iter().all(|s| (*s as f32 / i16::MAX as f32 - 0.25).abs() < 0.01));
+    }
+
+    #[test]
+    fn a_stopped_clip_fades_instead_of_clicking() {
+        let mut mixer = ClipMixer::new();
+        mixer.push(3, &vec![0.5; FRAME_SIZE * 4], SAMPLE_RATE as f32, 1.0);
+        mixer.next_frame();
+        mixer.stop(3);
+        let frame = mixer.next_frame();
+        assert!(frame[0] > frame[STOP_FADE_SAMPLES / 2] && frame[STOP_FADE_SAMPLES / 2] > 0);
+        assert!(frame[STOP_FADE_SAMPLES - 1..].iter().all(|s| *s == 0));
+        assert_eq!(mixer.playing(), 0);
     }
 }

@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const {
   MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND,
   isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
-  voiceRosterChange, monoSamples, soundLevel,
+  voiceRosterChange, monoSamples, soundLevel, playAlone,
 } = require("../scripts/alert-sounds.js");
 
 test("your own sounds have their own ids that never clash with built-in ones", () => {
@@ -90,4 +90,35 @@ test("the new look has its own sounds for a new message and a direct message, an
   assert.match(app, /const STUDIO_SOUND_FILES = \{ notification: "sounds\/studio\/notification\.mp3", ding: "sounds\/studio\/ding\.mp3" \};/);
   assert.match(app, /return builtInSoundFile\(name, SOUND_FILES, STUDIO_SOUND_FILES, studioLook\(\)\);/);
   for (const name of ["notification", "ding"]) assert.ok(statSync(new URL(`../sounds/studio/${name}.mp3`, import.meta.url)).size > 10000);
+});
+
+function fakeSound() {
+  let finish;
+  const sound = { stops: 0, ended: new Promise(resolve => { finish = resolve; }) };
+  sound.stop = () => {
+    sound.stops++;
+    finish();
+  };
+  sound.finish = () => finish();
+  return sound;
+}
+
+test("an alert that comes again while it plays starts over instead of stacking on itself", async () => {
+  const playing = new Map();
+  const first = playAlone(playing, "ding", fakeSound);
+  const second = playAlone(playing, "ding", fakeSound);
+  assert.equal(first.stops, 1);
+  assert.equal(second.stops, 0);
+  assert.equal(playing.get("ding"), second);
+  const other = playAlone(playing, "ring", fakeSound);
+  assert.equal(second.stops, 0, "a different sound plays alongside");
+  await first.ended;
+  assert.equal(playing.get("ding"), second, "the stopped one does not clear the new one");
+  second.finish();
+  other.finish();
+  await second.ended;
+  await other.ended;
+  assert.equal(playing.size, 0);
+  assert.equal(playAlone(playing, "ding", () => null), null);
+  assert.equal(playing.size, 0);
 });

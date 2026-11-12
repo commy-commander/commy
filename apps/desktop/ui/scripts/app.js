@@ -4682,7 +4682,7 @@ function alertSoundUrl(name) {
   return builtInSoundFile(name, SOUND_FILES, STUDIO_SOUND_FILES, studioLook());
 }
 
-const appSounds = { native: null, decoded: new Map(), next: 1 };
+const appSounds = { native: null, decoded: new Map(), next: 1, alerts: new Map() };
 const MAX_DECODED_SOUNDS = 32;
 
 function nativeSoundOutput() {
@@ -4712,6 +4712,7 @@ async function playOnOutput(url, level, sound) {
   await invoke("sound_play", new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength), {
     headers: { "x-commy-rate": String(rate), "x-commy-level": String(level), "x-commy-clip": String(clip) },
   });
+  if (sound.stopped) return invoke("sound_stop", { clip }).catch(() => {});
   await new Promise(resolve => {
     const timer = setTimeout(resolve, (samples.length / rate) * 1000);
     sound.halt = () => {
@@ -4759,7 +4760,7 @@ function playSound(eventId, force) {
   const url = name && name !== NO_SOUND ? alertSoundUrl(name) : null;
   if (!url) return null;
   if (!force && (!prefs.enabled || state.user?.presence === "do_not_disturb")) return null;
-  return playAppSound(url, prefs.volume);
+  return playAlone(appSounds.alerts, url, () => playAppSound(url, prefs.volume));
 }
 
 const ALERT_SOUND_DB = "commy-alert-sounds";

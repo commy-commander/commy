@@ -9,8 +9,32 @@ const DUCK_STEP: f32 = 0.05;
 pub const MAX_VOLUME: f32 = 2.0;
 const DB_PER_DOUBLING_ABOVE_FULL: f32 = 10.0;
 const FULL_SCALE: f32 = i16::MAX as f32;
-const LIMIT_CEILING: f32 = 0.89 * FULL_SCALE;
+const LIMIT_CEILING: f32 = 0.89;
 const LIMIT_RELEASE_PER_FRAME: f32 = 1.012;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Limiter {
+    gain: f32,
+}
+
+impl Default for Limiter {
+    fn default() -> Self {
+        Self { gain: 1.0 }
+    }
+}
+
+impl Limiter {
+    pub(crate) fn follow(&mut self, peak: f32) -> (f32, f32) {
+        let wanted = if peak > LIMIT_CEILING { LIMIT_CEILING / peak } else { 1.0 };
+        let start = self.gain;
+        self.gain = if wanted < start { wanted } else { (start * LIMIT_RELEASE_PER_FRAME).min(wanted) };
+        (start, self.gain)
+    }
+}
+
+pub(crate) fn ramp_at(start: f32, end: f32, index: usize) -> f32 {
+    start + (end - start) * (index as f32 + 1.0) / FRAME_SIZE as f32
+}
 
 pub fn volume_gain(volume: f32) -> f32 {
     let volume = if volume.is_finite() { volume.clamp(0.0, MAX_VOLUME) } else { 1.0 };
@@ -30,7 +54,7 @@ pub struct Mixer {
     priority_talking: HashSet<u64>,
     duck: f32,
     duck_tail: u32,
-    limiter: f32,
+    limiter: Limiter,
 }
 
 impl Default for Mixer {
@@ -43,7 +67,7 @@ impl Default for Mixer {
             priority_talking: HashSet::new(),
             duck: 1.0,
             duck_tail: 0,
-            limiter: 1.0,
+            limiter: Limiter::default(),
         }
     }
 }
@@ -149,22 +173,11 @@ impl Mixer {
         }
         let master = self.master;
         let peak = acc.iter().fold(0.0f32, |m, s| m.max((s * master).abs()));
-        let (start, end) = self.advance_limiter(peak);
-        let n = FRAME_SIZE as f32;
+        let (start, end) = self.limiter.follow(peak / FULL_SCALE);
         acc.iter()
             .enumerate()
-            .map(|(i, s)| {
-                let limit = start + (end - start) * (i as f32 + 1.0) / n;
-                (soft_limit(s * master * limit / FULL_SCALE) * FULL_SCALE).round() as i16
-            })
+            .map(|(i, s)| (soft_limit(s * master * ramp_at(start, end, i) / FULL_SCALE) * FULL_SCALE).round() as i16)
             .collect()
-    }
-
-    fn advance_limiter(&mut self, peak: f32) -> (f32, f32) {
-        let wanted = if peak > LIMIT_CEILING { LIMIT_CEILING / peak } else { 1.0 };
-        let start = self.limiter;
-        self.limiter = if wanted < start { wanted } else { (start * LIMIT_RELEASE_PER_FRAME).min(wanted) };
-        (start, self.limiter)
     }
 }
 
@@ -256,7 +269,7 @@ mod tests {
             last = mixer.next_frame();
         }
         let peak = last.iter().map(|s| s.unsigned_abs()).max().unwrap();
-        assert!(peak <= LIMIT_CEILING as u16 + 1 && peak > 25_000, "{peak}");
+        assert!(peak <= (LIMIT_CEILING * FULL_SCALE) as u16 + 1 && peak > 25_000, "{peak}");
         let scale = f32::from(peak) / 20_000.0;
         let worst = input
             .iter()

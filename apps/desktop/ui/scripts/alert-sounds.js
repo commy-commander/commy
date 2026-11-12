@@ -65,10 +65,24 @@ function soundLevel(volume) {
   return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
 }
 
+function playAlone(playing, key, start) {
+  playing.get(key)?.stop();
+  const sound = start();
+  if (!sound) {
+    playing.delete(key);
+    return sound;
+  }
+  playing.set(key, sound);
+  sound.ended.then(() => {
+    if (playing.get(key) === sound) playing.delete(key);
+  });
+  return sound;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     ALERT_SOUND_PREFIX, MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND, RING_GAP_MS,
     isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
-    voiceRosterChange, monoSamples, soundLevel,
+    voiceRosterChange, monoSamples, soundLevel, playAlone,
   };
 }
