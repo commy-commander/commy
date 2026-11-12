@@ -13,6 +13,14 @@ function phoneSetRestore() {
     parent.insertBefore(node, next);
   }
   for (const face of document.querySelectorAll(".account-card .set-me")) face.remove();
+  for (const head of document.querySelectorAll(".settings-layer .set-head")) head.remove();
+}
+
+function phoneSetServerHead() {
+  const card = document.querySelector("#server-settings .overview-card");
+  const pane = card && card.parentElement;
+  if (!pane || !pane.classList.contains("set-pane") || pane.querySelector(":scope > .set-head")) return;
+  pane.prepend(el("h2", "settings-subhead set-head", "Server"));
 }
 
 function phoneSetLift(page) {
@@ -48,6 +56,7 @@ function syncPhoneSettingsPage() {
     for (const page of document.querySelectorAll(".settings-layer .settings-page")) phoneSetLift(page);
   }
   phoneSetFace();
+  phoneSetServerHead();
 }
 
 function wirePhoneSettingsPage() {

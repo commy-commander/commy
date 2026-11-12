@@ -39,3 +39,4 @@ html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-emp
 html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .pt-drive-well > .i { width: 28px; height: 28px; }
 html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-empty > b { font: 700 17px/1.2 var(--font-display); color: var(--header-primary); }
 html[data-look="studio"][data-fit="slim"] body.mobile-app #drive-view .drive-empty > span { max-width: 340px; margin: 0; font: 400 14.5px/1.45 var(--font); color: var(--text-muted); }
+html[data-look="studio"][data-fit="slim"] .main:has(> #drive-view:not(.hidden)) #awaited-bar { display: none; }

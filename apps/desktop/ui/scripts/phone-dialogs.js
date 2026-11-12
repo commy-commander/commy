@@ -2,7 +2,7 @@ const PHONE_DIALOG_HEADS = ["h2", ".sw-head", ".notify-head", ".catalog-head"];
 
 const PHONE_DIALOG_SAFE = [/^(?!join-wait-).+-cancel$/, /-later$/, /-deny$/, /^create-server-back$/, /^signin-back$/, /-close$/, /-done$/];
 
-const phoneDialogs = { held: false, backing: false, swipe: null, swipedAt: 0 };
+const phoneDialogs = { held: false, backing: false, swipe: null, swipedAt: 0, moving: false, movingTimer: 0, waiting: false };
 
 function phoneDialogGate(id, { signedIn = true, laterShown = true, acceptShown = false } = {}) {
   if (["modal-username", "modal-claim", "modal-call"].includes(id)) return true;
@@ -73,10 +73,33 @@ function phoneDialogDress() {
   phoneDialogFit(modal);
 }
 
+function phoneDialogMoved() {
+  phoneDialogs.moving = false;
+  if (!phoneDialogs.waiting) return;
+  phoneDialogs.waiting = false;
+  phoneDialogStep();
+}
+
+function phoneDialogWatchHistory() {
+  for (const name of ["back", "go"]) {
+    const real = history[name].bind(history);
+    history[name] = (...args) => {
+      phoneDialogs.moving = true;
+      clearTimeout(phoneDialogs.movingTimer);
+      phoneDialogs.movingTimer = setTimeout(phoneDialogMoved, 600);
+      return real(...args);
+    };
+  }
+}
+
 function phoneDialogStep() {
   if (phoneDialogs.backing || typeof layerStep !== "function") return;
   const open = Boolean(phoneDialogShown());
   const step = layerStep("ptDialog", open, phoneDialogs.held, history.state);
+  if (step === "push" && phoneDialogs.moving) {
+    phoneDialogs.waiting = true;
+    return;
+  }
   if (step === "push") history.pushState({ ...(history.state || { pane: phonePane() }), ptDialog: true }, "");
   phoneDialogs.held = open;
   if (step === "back") {
@@ -91,8 +114,16 @@ function phoneDialogSync() {
 }
 
 function phoneDialogOnBack() {
+  const waited = phoneDialogs.waiting;
+  phoneDialogs.waiting = false;
+  phoneDialogs.moving = false;
+  clearTimeout(phoneDialogs.movingTimer);
   if (phoneDialogs.backing) {
     phoneDialogs.backing = false;
+    phoneDialogStep();
+    return;
+  }
+  if (waited) {
     phoneDialogStep();
     return;
   }
@@ -194,6 +225,7 @@ function phoneDialogsWire() {
     });
     for (const modal of backdrop.querySelectorAll(":scope > .modal")) sizes.observe(modal);
   }
+  phoneDialogWatchHistory();
   window.addEventListener("popstate", phoneDialogOnBack);
   document.addEventListener("mousedown", phoneDialogScrim, true);
   document.addEventListener("click", phoneDialogScrim, true);

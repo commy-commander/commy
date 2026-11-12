@@ -20,8 +20,19 @@ const PHONE_MENU_ICONS = {
   "chm-voice-status": "pencil",
   "chm-settings": "settings",
 };
+const PHONE_MENU_WORD_ICONS = {
+  "Full Profile": "user",
+  "Invite to a server": "user-plus",
+  "Nickname": "pencil",
+  "Remove friend": "user-minus",
+  "Block": "ban",
+  "Unblock": "ban",
+  "Report": "flag",
+  "Time out": "clock",
+  "Remove timeout": "clock",
+};
 const PHONE_MENU_SWITCH_WORDS = { "sm-mute": "Mute Server" };
-const PHONE_MENUS = ["server-menu", "channel-menu"];
+const PHONE_MENUS = ["server-menu", "channel-menu", "fp-menu"];
 
 function phoneMenuKind(button) {
   if (button.classList.contains("ctx-check")) return "switch";
@@ -32,9 +43,9 @@ function phoneMenuKind(button) {
 function dressPhoneMenuRow(button) {
   const kind = phoneMenuKind(button);
   if (!button.querySelector(":scope > .l")) {
-    const words = PHONE_MENU_SWITCH_WORDS[button.id] || button.textContent;
+    const words = PHONE_MENU_SWITCH_WORDS[button.id] || button.textContent.trim();
     button.replaceChildren();
-    const icon = PHONE_MENU_ICONS[button.id];
+    const icon = PHONE_MENU_ICONS[button.id] || (kind === "row" && PHONE_MENU_WORD_ICONS[words]);
     if (icon) button.insertAdjacentHTML("beforeend", studioIconMarkup(icon));
     button.appendChild(el("span", "l", words));
     if (kind === "pick") button.insertAdjacentHTML("beforeend", studioIconMarkup("check", "tick"));

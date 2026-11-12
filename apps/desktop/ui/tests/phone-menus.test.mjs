@@ -10,7 +10,8 @@ const SLIM = 'html[data-look="studio"][data-fit="slim"]';
 const flat = css.replace(/@media \(hover: hover\) \{\n([\s\S]*?)\n\}\n/g, "$1\n");
 
 const rule = selector => {
-  const at = flat.indexOf(`${selector} {`);
+  const ends = [`${selector} {`, `${selector},\n`].map(end => flat.indexOf(end)).filter(at => at !== -1);
+  const at = ends.length ? Math.min(...ends) : -1;
   assert.notEqual(at, -1, selector);
   return flat.slice(at, flat.indexOf("}", at));
 };
@@ -19,7 +20,7 @@ test("every phone menu rule is for the phone app in the new look, with tokens an
   const selectors = flat.split("}").map(block => block.split("{")[0]).flatMap(head => head.split(",")).map(s => s.trim()).filter(Boolean);
   assert.ok(selectors.length > 30);
   for (const selector of selectors) assert.ok(selector.startsWith(SLIM), selector);
-  assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(css.replace(/#(server|channel)-menu/g, "")), false);
+  assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(css.replace(/#(server|channel|fp)-menu/g, "")), false);
   assert.equal(css.includes("/*"), false);
   assert.equal(/\/\/|\/\*/.test(glue), false);
   assert.equal(css.includes(":is("), false);
@@ -69,5 +70,5 @@ test("a row under the finger does not stay lit on touch: the classic hover is ca
   assert.match(rule(`${SLIM} #channel-menu > .arow:active`), /background: var\(--bg-active\);/);
   const hover = css.slice(css.indexOf("@media (hover: hover) {"));
   assert.ok(hover.length > 20);
-  assert.match(hover, /#channel-menu > \.arow:hover \{ background: rgb\(var\(--lamp\) \/ \.06\); \}/);
+  assert.match(hover, /#channel-menu > \.arow:hover[^{]*\{ background: rgb\(var\(--lamp\) \/ \.06\); \}/);
 });

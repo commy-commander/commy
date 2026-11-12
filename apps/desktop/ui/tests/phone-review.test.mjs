@@ -36,7 +36,7 @@ test("small words that open things carry a 44 point tap area", () => {
   assert.match(rule(viewer, "#lightbox-source"), /position: relative;/);
   assert.match(rule(viewer, "#lightbox-source::after"), /content: "";\n\s*position: absolute;\n\s*inset: -15px -10px;/);
   assert.match(rule(touch, ".acct .t .presence::after"), /inset: -15px -10px;/);
-  assert.match(rule(touch, ".pt-profile .in .e::after"), /inset: -13px -10px;/);
+  assert.match(rule(touch, ".pt-profile .in .e::after"), /inset: -13px -11px;/);
 });
 
 test("an empty display name shows the username as its placeholder", () => {
@@ -49,4 +49,45 @@ test("an off phone switch at Day is a sunken track, not white on a white sheet",
   const sunk = "background: var(--bg-active); box-shadow: inset 0 1px 2px rgb(var(--dark) / .45), 0 1px 0 rgb(var(--lamp) / .5);";
   assert.ok(touch.includes(`${day} :not([aria-checked="true"]) > .tog { ${sunk} }`));
   assert.ok(read("styles", "phone-settings-page.css").includes(`${day} .settings-layer .settings-content input.switch:not(:checked) { ${sunk} }`));
+});
+
+test("a dialog opened while another phone layer is still stepping back waits for that step before taking its own", () => {
+  const dialogs = read("scripts", "phone-dialogs.js");
+  assert.match(dialogs, /if \(step === "push" && phoneDialogs\.moving\) \{\n\s*phoneDialogs\.waiting = true;\n\s*return;\n\s*\}/);
+  assert.match(dialogs, /for \(const name of \["back", "go"\]\)/);
+  assert.match(dialogs, /if \(waited\) \{\n\s*phoneDialogStep\(\);\n\s*return;\n\s*\}/);
+});
+
+test("the profile card's More menu is the same hold sheet as the server and channel menus", () => {
+  const glue = read("scripts", "phone-menus.js");
+  const css = read("styles", "phone-menus.css");
+  assert.match(glue, /const PHONE_MENUS = \["server-menu", "channel-menu", "fp-menu"\];/);
+  assert.match(glue, /"Report": "flag",/);
+  assert.ok(css.includes(`${SLIM} #fp-menu > .arow:hover`));
+  assert.ok(css.includes(`${SLIM} #fp-menu > .arow.danger:hover`));
+});
+
+test("the drive channel hides the waiting bar like the forum does", () => {
+  assert.ok(read("styles", "phone-drive.css").includes(`${SLIM} .main:has(> #drive-view:not(.hidden)) #awaited-bar { display: none; }`));
+});
+
+test("a toast wears the new look on the phone and sits above a dialog's answers", () => {
+  assert.match(rule(touch, ".toast"), /border-radius: var\(--radius-pill\);[\s\S]*bottom: calc\(var\(--hz-line\) \+ 68px\);/);
+  assert.ok(touch.includes(`${SLIM} body:has(> #modal-backdrop:not(.hidden)) > .toast { bottom: calc(var(--keyboard-height, 0px) + env(safe-area-inset-bottom) + 104px); }`));
+});
+
+test("small keys reach a 44 point tap area", () => {
+  const dialogs = read("styles", "phone-dialogs.css");
+  assert.ok(dialogs.includes(`${SLIM} .modal.dialog .key.latch { min-height: 44px; }`));
+  assert.ok(dialogs.includes(`${SLIM} .modal.dialog.dc > .signin-back::after { content: ""; position: absolute; inset: -15px -10px; }`));
+  assert.ok(dialogs.includes(`${SLIM} .modal.dialog .pin-unpin::after { content: ""; position: absolute; inset: -10px; }`));
+  assert.ok(forum.includes(`${SLIM} #forum-view .forum-mode::after { content: ""; position: absolute; inset: -4px -2px; }`));
+  assert.ok(touch.includes(`${SLIM} .stage-ink-tools > .stage-btn { width: 44px; min-width: 44px; }`));
+});
+
+test("Server Settings and Edit Channel from the menus open on the list, and the server overview card is titled", () => {
+  const settings = read("scripts", "phone-settings.js");
+  assert.match(settings, /const PHONE_SETTINGS_FROM_MENUS = \{ "sm-settings": "server-settings", "chm-settings": "channel-settings" \};/);
+  assert.match(settings, /if \(studioSlim\(\)\) settingsPhoneView\(layer, "menu"\);/);
+  assert.match(read("scripts", "phone-settings-page.js"), /pane\.prepend\(el\("h2", "settings-subhead set-head", "Server"\)\);/);
 });

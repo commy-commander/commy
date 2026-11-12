@@ -1,4 +1,6 @@
 const PHONE_SETTINGS_LAYERS = ["user-settings", "server-settings", "channel-settings"];
+const PHONE_SETTINGS_FROM_MENUS = { "sm-settings": "server-settings", "chm-settings": "channel-settings" };
+let phoneSettingsWantsMenu = "";
 
 function phoneSettingsMore(scroller) {
   if (!scroller) return;
@@ -67,6 +69,10 @@ function wirePhoneSettings() {
     if (!layer) continue;
     let tab = layer.dataset.tab;
     new MutationObserver(() => {
+      if (phoneSettingsWantsMenu === id && !layer.classList.contains("hidden")) {
+        phoneSettingsWantsMenu = "";
+        if (studioSlim()) settingsPhoneView(layer, "menu");
+      }
       if (layer.dataset.tab !== tab) {
         tab = layer.dataset.tab;
         phoneSettingsTurn(layer);
@@ -83,6 +89,10 @@ function wirePhoneSettings() {
     for (const scroller of layer.querySelectorAll(".settings-nav-inner, .settings-content-inner")) {
       scroller.addEventListener("scroll", () => phoneSettingsMore(scroller), { passive: true });
     }
+  }
+  for (const [key, id] of Object.entries(PHONE_SETTINGS_FROM_MENUS)) {
+    const row = $(key);
+    if (row) row.addEventListener("click", () => { phoneSettingsWantsMenu = studioSlim() ? id : ""; }, true);
   }
   new MutationObserver(() => {
     for (const id of PHONE_SETTINGS_LAYERS) if ($(id)) phoneSettingsHead($(id));
