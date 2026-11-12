@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { MAX_PINS_PER_CHANNEL, holdsMessages, sortPins, groupPinsByChannel, pinButtonState, unseenPinIds, pinBadgeText, pinTitleWithNew, canPinIn, pinRoomLeft, composerLock, pinExcerpt } =
+const { MAX_PINS_PER_CHANNEL, holdsMessages, sortPins, groupPinsByChannel, pinButtonState, PIN_SEEN_PIECE, newestPinTime, unseenPinIds, pinSeenMarks, pinMarkPieces, mergePinMarks, pinMarkChange, pinMarksToPublish, pinBadgeText, pinTitleWithNew, canPinIn, pinRoomLeft, composerLock, pinExcerpt } =
   require("../scripts/pins.js");
 
 const plain = s => s;
@@ -75,4 +75,39 @@ test("the badge counts pins not seen yet and clears once they are", () => {
   assert.equal(pinTitleWithNew("3 pinned messages", 2), "3 pinned messages (2 new)");
   assert.equal(pinTitleWithNew("3 pinned messages", 0), "3 pinned messages");
   assert.equal(pinTitleWithNew("Pinned Messages", 0), "Pinned Messages");
+});
+
+test("pins seen on another device clear the badge here", () => {
+  const pins = [
+    { message: { id: "1" }, at: "2026-11-12T10:00:00Z" },
+    { message: { id: "2" }, at: "2026-11-12T11:00:00Z" },
+    { message: { id: "3" }, at: "2026-11-12T12:00:00Z" },
+  ];
+  const upTo = Date.parse("2026-11-12T11:00:00Z");
+  assert.deepEqual(unseenPinIds(pins, [], upTo), ["3"]);
+  assert.deepEqual(unseenPinIds(pins, ["3"], upTo), []);
+  assert.deepEqual(unseenPinIds(pins, [], newestPinTime(pins)), []);
+  assert.deepEqual(unseenPinIds(pins, [], 0), ["1", "2", "3"]);
+  assert.equal(newestPinTime(pins), Date.parse("2026-11-12T12:00:00Z"));
+  assert.equal(newestPinTime([]), 0);
+});
+
+test("viewing pins makes one synced setting per channel that only moves forward", () => {
+  const pins = [{ message: { id: "1" }, at: "2026-11-12T10:00:00Z" }];
+  const at = Date.parse("2026-11-12T10:00:00Z");
+  assert.equal(PIN_SEEN_PIECE, "pins.seen.");
+  assert.deepEqual(pinMarkChange({}, "c1", pins), { "pins.seen.c1": at });
+  assert.equal(pinMarkChange({ c1: at }, "c1", pins), null);
+  assert.equal(pinMarkChange({ c1: at + 1 }, "c1", pins), null);
+  assert.equal(pinMarkChange({}, "c1", []), null);
+  assert.equal(pinMarkChange({}, "", pins), null);
+});
+
+test("synced pin settings read back into marks and merge to the newest", () => {
+  const pieces = { "pins.seen.c1": 5, "pins.seen.c2": null, "notify.level": "all", "pins.seen.": 3, "pins.seen.c3": "junk" };
+  assert.deepEqual(pinSeenMarks(pieces), { c1: 5 });
+  assert.deepEqual(pinMarkPieces({ c1: 5, c2: 0 }), { "pins.seen.c1": 5 });
+  assert.deepEqual(mergePinMarks({ c1: 9, c2: 1 }, { c1: 4, c2: 7, c3: 2 }), { c1: 9, c2: 7, c3: 2 });
+  assert.deepEqual(pinMarksToPublish({ c1: 9, c2: 1, c3: 4 }, { "pins.seen.c1": 3, "pins.seen.c2": 1 }), { "pins.seen.c1": 9, "pins.seen.c3": 4 });
+  assert.deepEqual(pinMarksToPublish({}, {}), {});
 });

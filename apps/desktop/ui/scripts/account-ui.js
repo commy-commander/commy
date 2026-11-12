@@ -1,6 +1,7 @@
 const UI_OWNER_KEY = "commy.uiOwner";
 const ACCOUNT_UI_KEYS = [
   "commy.pins.seen",
+  "commy.pins.marks",
   "commy.switcher.recent",
   "commy.hiddenMessages",
   "commy.collapsedSections",

@@ -4957,7 +4957,9 @@ function saveNotifyPrefs(prefs, { fromSync = false } = {}) {
 }
 
 function applySyncedPrefs(set) {
-  saveNotifyPrefs(prefsWithPieces(notifyPrefs(), syncedValues(set)), { fromSync: true });
+  const values = syncedValues(set);
+  if (absorbPinMarks(values)) syncPinButton();
+  saveNotifyPrefs(prefsWithPieces(notifyPrefs(), values), { fromSync: true });
   $("notify-level").value = notifyPrefs().level;
   $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
   renderServerRail();
@@ -4967,10 +4969,13 @@ function applySyncedPrefs(set) {
 
 async function loadSyncedPrefs() {
   try {
-    const { prefs, publish } = startupPrefs(notifyPrefs(), await invoke("sync_prefs_load"));
+    const synced = await invoke("sync_prefs_load");
+    const { prefs, publish } = startupPrefs(notifyPrefs(), synced);
+    const pinPublish = pinMarksToPublish(pinMarks(), syncedValues(synced));
     saveNotifyPrefs(prefs, { fromSync: true });
-    applySyncedPrefs({});
-    if (Object.keys(publish).length) await invoke("sync_prefs_set", { changes: publish });
+    applySyncedPrefs(synced);
+    const changes = { ...publish, ...pinPublish };
+    if (Object.keys(changes).length) await invoke("sync_prefs_set", { changes });
   } catch {}
 }
 
@@ -9327,23 +9332,51 @@ async function setPinned(message, pinned) {
 }
 
 const PINS_SEEN_KEY = "commy.pins.seen";
+const PIN_MARKS_KEY = "commy.pins.marks";
 let pinSyncToken = 0;
 
-function pinsSeen(channelId) {
+function storedMap(key) {
   try {
-    const all = JSON.parse(localStorage.getItem(PINS_SEEN_KEY) || "{}");
-    return Array.isArray(all[channelId]) ? all[channelId] : [];
+    const value = JSON.parse(localStorage.getItem(key) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   } catch {
-    return [];
+    return {};
   }
 }
 
+function pinMarks() {
+  return storedMap(PIN_MARKS_KEY);
+}
+
+function savePinMarks(marks) {
+  try { localStorage.setItem(PIN_MARKS_KEY, JSON.stringify(marks)); } catch {}
+}
+
+function pinsSeen(channelId) {
+  const ids = storedMap(PINS_SEEN_KEY)[channelId];
+  return { ids: Array.isArray(ids) ? ids : [], mark: Number(pinMarks()[channelId]) || 0 };
+}
+
 function markPinsSeen(channelId, pins) {
-  try {
-    const all = JSON.parse(localStorage.getItem(PINS_SEEN_KEY) || "{}");
-    all[channelId] = (pins || []).map(p => p.message.id);
-    localStorage.setItem(PINS_SEEN_KEY, JSON.stringify(all));
-  } catch {}
+  const all = storedMap(PINS_SEEN_KEY);
+  all[channelId] = (pins || []).map(p => p.message.id);
+  try { localStorage.setItem(PINS_SEEN_KEY, JSON.stringify(all)); } catch {}
+  const marks = pinMarks();
+  const change = pinMarkChange(marks, channelId, pins);
+  if (!change) return;
+  savePinMarks(mergePinMarks(marks, pinSeenMarks(change)));
+  invoke("sync_prefs_set", { changes: change }).catch(() => {});
+}
+
+function absorbPinMarks(values) {
+  const incoming = pinSeenMarks(values);
+  if (!Object.keys(incoming).length) return false;
+  savePinMarks(mergePinMarks(pinMarks(), incoming));
+  return true;
+}
+
+function pinsPanelOpen() {
+  return !$("pins-pop").classList.contains("hidden");
 }
 
 function syncPinButton() {
@@ -9360,7 +9393,9 @@ function syncPinButton() {
   if (count === 0) return;
   invoke("get_pins", { serverId: state.currentServer.id, channelId: channel.id }).then(pins => {
     if (token !== pinSyncToken) return;
-    const unseen = unseenPinIds(pins, pinsSeen(channel.id)).length;
+    const seen = pinsSeen(channel.id);
+    const unseen = pinsPanelOpen() ? 0 : unseenPinIds(pins, seen.ids, seen.mark).length;
+    if (unseen === 0) markPinsSeen(channel.id, pins);
     badge.textContent = pinBadgeText(unseen);
     badge.classList.toggle("hidden", unseen === 0);
     btn.title = pinTitleWithNew(title, unseen);

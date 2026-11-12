@@ -27,9 +27,63 @@ function pinButtonState({ view, channel, count }) {
   };
 }
 
-function unseenPinIds(pins, seen) {
+const PIN_SEEN_PIECE = "pins.seen.";
+
+function pinTime(pin) {
+  const at = Date.parse(pin && pin.at);
+  return Number.isFinite(at) ? at : 0;
+}
+
+function newestPinTime(pins) {
+  return (pins || []).reduce((newest, pin) => Math.max(newest, pinTime(pin)), 0);
+}
+
+function unseenPinIds(pins, seen, mark = 0) {
   const known = new Set(seen || []);
-  return (pins || []).map(p => p && p.message && p.message.id).filter(id => id && !known.has(id));
+  const seenUpTo = Number(mark) || 0;
+  return (pins || [])
+    .filter(pin => pin && pin.message && pin.message.id && !known.has(pin.message.id))
+    .filter(pin => seenUpTo <= 0 || pinTime(pin) > seenUpTo)
+    .map(pin => pin.message.id);
+}
+
+function pinSeenMarks(pieces) {
+  const marks = {};
+  for (const [key, value] of Object.entries(pieces || {})) {
+    if (!key.startsWith(PIN_SEEN_PIECE)) continue;
+    const channel = key.slice(PIN_SEEN_PIECE.length);
+    const at = Number(value);
+    if (channel && Number.isFinite(at) && at > 0) marks[channel] = at;
+  }
+  return marks;
+}
+
+function pinMarkPieces(marks) {
+  const pieces = {};
+  for (const [channel, value] of Object.entries(marks || {})) {
+    const at = Number(value);
+    if (channel && Number.isFinite(at) && at > 0) pieces[`${PIN_SEEN_PIECE}${channel}`] = at;
+  }
+  return pieces;
+}
+
+function mergePinMarks(local, incoming) {
+  const merged = { ...(local || {}) };
+  for (const [channel, at] of Object.entries(incoming || {})) {
+    if (!(Number(merged[channel]) >= at)) merged[channel] = at;
+  }
+  return merged;
+}
+
+function pinMarkChange(marks, channel, pins) {
+  const newest = newestPinTime(pins);
+  if (!channel || newest <= (Number((marks || {})[channel]) || 0)) return null;
+  return { [`${PIN_SEEN_PIECE}${channel}`]: newest };
+}
+
+function pinMarksToPublish(local, synced) {
+  const known = pinSeenMarks(synced);
+  return pinMarkPieces(Object.fromEntries(Object.entries(local || {}).filter(([channel, at]) => !(known[channel] >= Number(at)))));
 }
 
 function pinBadgeText(unseen) {
@@ -70,5 +124,5 @@ function pinExcerpt(message, plain) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { MAX_PINS_PER_CHANNEL, holdsMessages, sortPins, groupPinsByChannel, pinButtonState, unseenPinIds, pinBadgeText, pinTitleWithNew, canPinIn, pinRoomLeft, composerLock, pinExcerpt };
+  module.exports = { MAX_PINS_PER_CHANNEL, holdsMessages, sortPins, groupPinsByChannel, pinButtonState, PIN_SEEN_PIECE, newestPinTime, unseenPinIds, pinSeenMarks, pinMarkPieces, mergePinMarks, pinMarkChange, pinMarksToPublish, pinBadgeText, pinTitleWithNew, canPinIn, pinRoomLeft, composerLock, pinExcerpt };
 }

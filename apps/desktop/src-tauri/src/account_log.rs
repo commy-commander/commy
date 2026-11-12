@@ -564,6 +564,23 @@ pub fn relation_records(pieces: BTreeMap<UserId, RelationPiece>) -> Vec<Record> 
     out
 }
 
+pub fn prefs_records(set: BTreeMap<String, PrefPiece>) -> Vec<Record> {
+    let mut out = Vec::new();
+    let mut current = BTreeMap::new();
+    for (key, piece) in set {
+        current.insert(key, piece);
+        if current.len() > 1 && record_bytes(&Record::Prefs { set: current.clone() }) > MAX_RECORD_BYTES {
+            let last = current.pop_last().expect("just inserted");
+            out.push(Record::Prefs { set: std::mem::take(&mut current) });
+            current.insert(last.0, last.1);
+        }
+    }
+    if !current.is_empty() {
+        out.push(Record::Prefs { set: current });
+    }
+    out
+}
+
 fn seed_relations(app: &App) {
     if with_state(app, |state| state.relations_seeded).unwrap_or(true) {
         return;
@@ -608,8 +625,8 @@ fn seed(handle: &AppHandle) {
             state.fold(record.clone());
             state.enqueue(record, None);
         }
-        if !state.prefs.is_empty() {
-            state.enqueue(Record::Prefs { set: state.prefs.clone() }, None);
+        for record in prefs_records(state.prefs.clone()) {
+            state.enqueue(record, None);
         }
         let keys: Vec<Record> = state
             .community
@@ -1059,5 +1076,20 @@ mod tests {
         for record in saved_records(ops) {
             assert!(record_bytes(&record) <= MAX_RECORD_BYTES);
         }
+    }
+
+    #[test]
+    fn many_settings_split_into_records_that_fit() {
+        let set: BTreeMap<String, PrefPiece> =
+            (0..2000).map(|n| (format!("pins.seen.{n:036}"), PrefPiece { value: (1_800_000_000_000_i64 + n).into(), at: n })).collect();
+        let records = prefs_records(set.clone());
+        assert!(records.len() > 1);
+        let mut back = BTreeMap::new();
+        for record in records {
+            assert!(record_bytes(&record) <= MAX_RECORD_BYTES);
+            let Record::Prefs { set } = record else { panic!("not a settings record") };
+            back.extend(set);
+        }
+        assert_eq!(back, set);
     }
 }
