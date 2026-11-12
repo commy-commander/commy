@@ -37,6 +37,8 @@
 		-Server
 	}
 
+	header >Cache-Control encoded-at-edge no-transform
+
 	@app_check path /api/auth/commy/captcha
 	header @app_check -X-Frame-Options
 
@@ -58,6 +60,7 @@
 	handle {
 		reverse_proxy {args[0]}-web:3000 {
 			header_up X-Forwarded-For {client_ip}
+			header_down Cache-Control no-transform encoded-at-edge
 			lb_try_duration 15s
 		}
 	}
@@ -95,6 +98,14 @@
 }
 
 {$FORGE_DOMAIN:git.commy.chat} {
+	log {
+		output file /var/log/caddy/forge-access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format json
+	}
+
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
