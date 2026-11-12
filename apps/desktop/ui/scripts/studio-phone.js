@@ -805,7 +805,7 @@ function stowSearchSheet() {
 
 function wireHomeHead() {
   $("pt-find").onclick = openSearchSheet;
-  const openMenu = () => openServerMenu(state.currentServer, 0, 0);
+  const openMenu = () => openServerSwitcher();
   $("server-name-header").addEventListener("click", e => {
     if (e.target.closest("button") || !paintHomeHead()) return;
     openMenu();
@@ -977,7 +977,7 @@ function paintHomeHead() {
   const menu = studioSlim() && studioPhone.tab === "home" && state.view === "server" && Boolean(state.currentServer) && !state.currentServer.group;
   if (menu) {
     name.setAttribute("role", "button");
-    name.setAttribute("aria-haspopup", "menu");
+    name.setAttribute("aria-haspopup", "dialog");
     name.tabIndex = 0;
   } else if (name.getAttribute("aria-haspopup")) {
     name.removeAttribute("role");

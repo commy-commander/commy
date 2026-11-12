@@ -526,9 +526,10 @@ test("the server strip and the glass slab on Home keep the design guide's measur
   assert.match(rule('.app[data-pane="list"] .channel.voice-channel.pt-busy'), /height: 58px;/);
 });
 
-test("Home reads in the guide's words, and the server name opens the server's own menu", () => {
+test("Home reads in the guide's words, and the server name opens the server switcher", () => {
   assert.match(glue, /const STUDIO_HOME_WORDS = \{ "Server Rules": "Rules", "Text Channels": "Text channels", "Voice Channels": "Voice channels" \};/);
-  assert.match(glue, /const openMenu = \(\) => openServerMenu\(state\.currentServer, 0, 0\);/);
+  assert.match(glue, /const openMenu = \(\) => openServerSwitcher\(\);/);
+  assert.match(glue, /name\.setAttribute\("aria-haspopup", "dialog"\);/);
   assert.match(glue, /openCreateChannel\("text", null\);/);
   assert.match(read("scripts", "app.js"), /function textChannelRow\([\s\S]{0,400}row\.dataset\.channel = channel\.id;/);
 });
