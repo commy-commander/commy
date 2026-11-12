@@ -191,3 +191,9 @@ test("the iPhone app tells the page which parts of the screen are covered", () =
   assert.equal(/^\s*\/\//m.test(swift), false);
   assert.match(plugin, /override func load\(webview: WKWebView\) \{\s+ScreenRegions\.watch\(webview\)/);
 });
+
+test("the iPhone app lays the page out over the whole screen, safe areas included", () => {
+  const swift = read("..", "apple-sign-in", "ios", "Sources", "ScreenRegions.swift");
+  assert.match(swift, /DispatchQueue\.main\.async \{\s+page\.scrollView\.contentInsetAdjustmentBehavior = \.never/);
+  assert.match(html, /<meta name="viewport" content="[^"]*viewport-fit=cover/);
+});

@@ -9,6 +9,7 @@ final class ScreenRegions: UIView {
 
   nonisolated static func watch(_ page: WKWebView) {
     DispatchQueue.main.async {
+      page.scrollView.contentInsetAdjustmentBehavior = .never
       let watcher = ScreenRegions(frame: page.bounds)
       watcher.page = page
       watcher.isUserInteractionEnabled = false
