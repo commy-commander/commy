@@ -67,6 +67,8 @@ html[data-look="studio"] .composer .gif-btn {
 }
 html[data-look="studio"] .composer .gif-btn { font: 600 12px/1 var(--font); letter-spacing: 0; border: 0; }
 html[data-look="studio"] .composer #emoji-btn { margin-right: 8px; }
+html[data-look="studio"]:not([data-fit="slim"]) .composer #gif-btn { order: 1; margin-right: 8px; }
+html[data-look="studio"]:not([data-fit="slim"]) .composer #gif-btn:not(.hidden) + #emoji-btn { margin-right: 0; }
 html[data-look="studio"] .composer .icon-btn:hover,
 html[data-look="studio"] .composer .gif-btn:hover { background: var(--bg-hover); color: var(--header-primary); }
 html[data-look="studio"] .composer .icon-btn > svg { width: 19px; height: 19px; }
@@ -205,7 +207,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .sidebar { grid-column: 1; }
 html[data-look="studio"]:not([data-fit="slim"]) .main { grid-column: 2; }
 html[data-look="studio"]:not([data-fit="slim"]) .members,
 html[data-look="studio"]:not([data-fit="slim"]) .thread-panel,
-html[data-look="studio"]:not([data-fit="slim"]) .dm-profile { grid-column: 3; }
+html[data-look="studio"]:not([data-fit="slim"]) .dm-profile { grid-column: 3; width: var(--st-wing); }
 
 html[data-look="studio"]:not([data-fit="slim"]) .rail {
   gap: 0;
@@ -464,6 +466,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .channel-group::first-letter,
 html[data-look="studio"]:not([data-fit="slim"]) .member-group::first-letter { text-transform: uppercase; }
 html[data-look="studio"]:not([data-fit="slim"]) .section-title { text-transform: lowercase; }
 html[data-look="studio"]:not([data-fit="slim"]) .section-title::first-letter { text-transform: uppercase; }
+html[data-look="studio"]:not([data-fit="slim"]) .section-title.keep-case { text-transform: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .channel {
   min-height: 26px;
   gap: 10px;
@@ -541,6 +544,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .header-actions .icon-btn {
   color: var(--text-muted);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .header-actions .icon-btn > svg { width: 20px; height: 20px; }
+html[data-look="studio"]:not([data-fit="slim"]) .header-actions > #threads-btn > svg { translate: 0 -1px; }
+html[data-look="studio"]:not([data-fit="slim"]) .header-actions > #pins-btn > svg { translate: -.5px .5px; }
 html[data-look="studio"]:not([data-fit="slim"]) .header-actions .icon-btn:hover { background: var(--bg-hover); color: var(--header-primary); }
 html[data-look="studio"]:not([data-fit="slim"]) .header-actions .icon-btn.active {
   background: var(--k-plain);
@@ -571,6 +576,29 @@ html[data-look="studio"]:not([data-fit="slim"]) .messages {
   scrollbar-width: thin;
   scrollbar-color: var(--bg-active) transparent;
 }
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-banner {
+  display: block;
+  position: relative;
+  flex: none;
+  height: 0;
+  pointer-events: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 112px;
+  background: var(--chat-banner) center / cover no-repeat;
+  -webkit-mask-image: linear-gradient(#000 24%, transparent);
+  mask-image: linear-gradient(#000 24%, transparent);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-banner:has(+ .messages.hidden) { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .messages {
+  padding-top: 96px;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, transparent 34px, #000 96px);
+  mask-image: linear-gradient(180deg, transparent 0, transparent 34px, #000 96px);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .channel-intro-banner { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .msg {
   gap: 14px;
   margin: 0 -8px;
@@ -936,32 +964,6 @@ html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="muted"] 
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="muted"] .vp-signal,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="deafened"] .vp-status,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="deafened"] .vp-signal { color: var(--text-muted); }
-html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="armed"] .vp-status,
-html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="armed"] .vp-signal { color: var(--danger-text); }
-html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="armed"] .vp-hangup,
-html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="armed"] .vp-hangup:hover {
-  background: radial-gradient(130% 100% at 50% -12%, rgb(var(--lamp) / .2), rgb(var(--lamp) / 0) 64%), var(--danger);
-  box-shadow: inset 0 2px 5px rgb(var(--dark) / .5), inset 0 -1px 0 rgb(var(--lamp) / .07), 0 1px 1px rgb(var(--dark) / .25);
-  filter: none;
-}
-html[data-look="studio"]:not([data-fit="slim"]) .vp-fuse {
-  position: absolute;
-  top: 0;
-  right: 28px;
-  left: 28px;
-  z-index: 5;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--danger);
-  opacity: 0;
-  pointer-events: none;
-  transform-origin: 0 50%;
-}
-html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="armed"] .vp-fuse { opacity: 1; animation: studio-fuse 3s linear forwards; }
-@keyframes studio-fuse {
-  from { scale: 1 1; }
-  to { scale: 0 1; }
-}
 html[data-look="studio"]:not([data-fit="slim"]) .vp-conn .icon-btn { width: 32px; height: 32px; border-radius: 50%; color: var(--text-muted); }
 html[data-look="studio"]:not([data-fit="slim"]) .vp-conn .vp-hangup,
 html[data-look="studio"]:not([data-fit="slim"]) .vp-conn .vp-hangup:hover {
@@ -1071,8 +1073,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .vp-meter i:nth-child(12) { --h:
 }
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="deafened"] .vp-meter i { background: var(--text-faint); scale: 1 .08; animation: none; }
 @media (prefers-reduced-motion: reduce) {
-  html[data-look="studio"]:not([data-fit="slim"]) .voice-panel.has-sound .vp-meter i,
-  html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="armed"] .vp-fuse { animation: none; }
+  html[data-look="studio"]:not([data-fit="slim"]) .voice-panel.has-sound .vp-meter i { animation: none; }
 }
 html[data-look="studio"]:not([data-fit="slim"]) .vp-voice .split-btn .caret-btn {
   width: 18px;

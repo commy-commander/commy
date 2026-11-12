@@ -1,7 +1,5 @@
 const STUDIO_DOCK_BARS = 12;
-const STUDIO_DOCK_FUSE_MS = 3000;
 const STUDIO_DOCK_LINES = {
-  armed: ["Press again to leave", "Or press anything else to stay."],
   deafened: ["Deafened", "Peace and quiet. Suspicious."],
   muted: ["Muted", "Chew freely. Nobody hears you."],
 };
@@ -42,8 +40,8 @@ function studioDockQuality(quality) {
   return { line: words[0], sub: words[1] };
 }
 
-function studioDockWords({ status, where, muted, deafened, armed }) {
-  const state = armed ? "armed" : deafened ? "deafened" : muted ? "muted" : "live";
+function studioDockWords({ status, where, muted, deafened }) {
+  const state = deafened ? "deafened" : muted ? "muted" : "live";
   const lines = STUDIO_DOCK_LINES[state] || [status || "", where || ""];
   return { state, line: lines[0], sub: lines[1] };
 }
@@ -79,12 +77,8 @@ function mountStudioDock(doc, makeIcon) {
   meter.className = "vp-meter";
   meter.setAttribute("aria-hidden", "true");
   for (let i = 0; i < STUDIO_DOCK_BARS; i += 1) meter.appendChild(doc.createElement("i"));
-  const fuse = doc.createElement("i");
-  fuse.className = "vp-fuse";
-  fuse.setAttribute("aria-hidden", "true");
   row.prepend(hand);
   row.append(invite, meter);
-  panel.prepend(fuse);
   return invite;
 }
 
@@ -95,40 +89,10 @@ function studioDockSound(doc, heard) {
   return true;
 }
 
-function createStudioDockFuse(ms = STUDIO_DOCK_FUSE_MS, timers = null) {
-  const wait = timers ? timers.set : (fn, t) => setTimeout(fn, t);
-  const stop = timers ? timers.clear : id => clearTimeout(id);
-  let pending = null;
-  let onChange = () => {};
-  const settle = () => {
-    if (pending === null) return false;
-    stop(pending);
-    pending = null;
-    onChange(false);
-    return true;
-  };
-  return {
-    armed: () => pending !== null,
-    watch(fn) {
-      onChange = fn;
-    },
-    cancel: settle,
-    press() {
-      if (settle()) return "leave";
-      pending = wait(() => {
-        pending = null;
-        onChange(false);
-      }, ms);
-      onChange(true);
-      return "armed";
-    },
-  };
-}
-
 if (typeof document !== "undefined") {
   mountStudioDock(document, typeof studioIconNode === "undefined" ? null : (name, size) => studioIconNode(name, size, false));
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_DOCK_SIGNAL_BARS, STUDIO_DOCK_SIGNAL_LIT, studioDockSignalMarkup, studioDockSignal, STUDIO_DOCK_BARS, STUDIO_DOCK_FUSE_MS, STUDIO_DOCK_LINES, STUDIO_DOCK_QUALITY, studioDockQuality, studioDockWords, studioDockDesk, mountStudioDock, studioDockSound, createStudioDockFuse };
+  module.exports = { STUDIO_DOCK_SIGNAL_BARS, STUDIO_DOCK_SIGNAL_LIT, studioDockSignalMarkup, studioDockSignal, STUDIO_DOCK_BARS, STUDIO_DOCK_LINES, STUDIO_DOCK_QUALITY, studioDockQuality, studioDockWords, studioDockDesk, mountStudioDock, studioDockSound };
 }

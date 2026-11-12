@@ -691,3 +691,6 @@ html[data-look="studio"]:not([data-fit="slim"]) body:has(> .lightbox:not(.hidden
   html[data-look="studio"]:not([data-fit="slim"]) .toast { animation: none; }
 }
 html[data-look="studio"][data-fit="slim"] .search-empty .sstar { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .sidebar-game-tags .game-chip { transition: background var(--t-hover), color var(--t-hover); }
+html[data-look="studio"]:not([data-fit="slim"]) .sidebar-game-tags .game-chip:hover { background: var(--bg-hover); color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .sidebar-game-tags .game-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

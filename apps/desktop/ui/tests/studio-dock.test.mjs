@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_DOCK_BARS, STUDIO_DOCK_FUSE_MS, STUDIO_DOCK_LINES, studioDockQuality, studioDockWords, studioDockDesk, mountStudioDock, studioDockSound, createStudioDockFuse } = require("../scripts/studio-dock.js");
+const { STUDIO_DOCK_BARS, STUDIO_DOCK_LINES, studioDockQuality, studioDockWords, studioDockDesk, mountStudioDock, studioDockSound } = require("../scripts/studio-dock.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio.css");
@@ -44,14 +44,12 @@ function fakeDock(look, fit, withRow = true) {
 }
 
 test("the dock says the state on line one and keeps the room on line two until you mute", () => {
-  const live = studioDockWords({ status: "Voice Connected", where: "Lounge / Pixel Pioneers", muted: false, deafened: false, armed: false });
+  const live = studioDockWords({ status: "Voice Connected", where: "Lounge / Pixel Pioneers", muted: false, deafened: false });
   assert.deepEqual(live, { state: "live", line: "Voice Connected", sub: "Lounge / Pixel Pioneers" });
   const muted = studioDockWords({ status: "Voice Connected", where: "Lounge / Pixel Pioneers", muted: true });
   assert.deepEqual(muted, { state: "muted", line: "Muted", sub: STUDIO_DOCK_LINES.muted[1] });
   assert.equal(studioDockWords({ muted: true, deafened: true }).state, "deafened");
   assert.equal(studioDockWords({ muted: true, deafened: true }).line, "Deafened");
-  const armed = studioDockWords({ status: "Voice Connected", where: "Lounge", muted: true, deafened: true, armed: true });
-  assert.deepEqual(armed, { state: "armed", line: "Press again to leave", sub: "Or press anything else to stay." });
   assert.deepEqual(studioDockWords({}), { state: "live", line: "", sub: "" });
 });
 
@@ -70,7 +68,7 @@ test("the desktop dock is the new look outside the phone fit", () => {
   assert.equal(studioDockDesk(fakeDock(null, "roomy")), false);
 });
 
-test("the invite key, the hand key, the level meter and the fuse are built once and only in the new look", () => {
+test("the invite key, the hand key and the level meter are built once and only in the new look", () => {
   assert.equal(mountStudioDock(fakeDock(null, "roomy"), null), null);
   assert.equal(mountStudioDock(fakeDock("studio", "roomy", false), null), null);
   const doc = fakeDock("studio", "roomy");
@@ -86,7 +84,7 @@ test("the invite key, the hand key, the level meter and the fuse are built once 
   const meter = doc.row.children[2];
   assert.equal(meter.children.length, STUDIO_DOCK_BARS);
   assert.equal(meter.attrs["aria-hidden"], "true");
-  assert.equal(doc.panel.children[0].className, "vp-fuse");
+  assert.equal(doc.panel.children.some(child => child.className === "vp-fuse"), false);
   assert.equal(mountStudioDock(doc, null), invite);
   assert.equal(doc.row.children.length, 3);
 });
@@ -103,26 +101,12 @@ test("the meter only moves while somebody in the room is heard", () => {
   assert.match(css, /\[data-dock="deafened"\] \.vp-meter i \{[^}]*animation: none;/);
 });
 
-test("hang up asks twice and the first press wears off", () => {
-  const timers = [];
-  const seen = [];
-  const fuse = createStudioDockFuse(STUDIO_DOCK_FUSE_MS, { set: (fn, ms) => timers.push({ fn, ms }) - 1, clear: id => { timers[id].cleared = true; } });
-  fuse.watch(on => seen.push(on));
-  assert.equal(fuse.armed(), false);
-  assert.equal(fuse.cancel(), false);
-  assert.equal(fuse.press(), "armed");
-  assert.equal(fuse.armed(), true);
-  assert.equal(timers[0].ms, 3000);
-  assert.equal(fuse.press(), "leave");
-  assert.equal(timers[0].cleared, true);
-  assert.equal(fuse.armed(), false);
-  assert.equal(fuse.press(), "armed");
-  timers[1].fn();
-  assert.equal(fuse.armed(), false);
-  assert.equal(fuse.press(), "armed");
-  assert.equal(fuse.cancel(), true);
-  assert.equal(fuse.armed(), false);
-  assert.deepEqual(seen, [true, false, true, false, true, false]);
+test("hang up leaves on the first press", () => {
+  assert.match(app, /\$\("vp-disconnect"\)\.onclick = disconnectVoice;/);
+  assert.doesNotMatch(app, /studioHang/);
+  assert.doesNotMatch(css, /data-dock="armed"|vp-fuse/);
+  assert.equal(STUDIO_DOCK_LINES.armed, undefined);
+  assert.equal(studioDockWords({ muted: false, deafened: false, armed: true }).state, "live");
 });
 
 test("the dock script loads after the icons and before the app, and the page has the voice pop-up", () => {
@@ -140,7 +124,6 @@ test("in the new look the dock holds only what the guide draws", () => {
   }
   assert.match(app, /if \(studioDesk\(\) && channel\.id === state\.voiceChannelId\) \{\n\s+showCallGrid\(\);/);
   assert.match(app, /\$\("chm-activities"\)\.onclick/);
-  assert.match(app, /if \(!studioDesk\(\) \|\| studioHang\.press\(\) === "leave"\) disconnectVoice\(\);/);
 });
 
 test("the signal mark is five bars, and fair and poor light three and one", () => {

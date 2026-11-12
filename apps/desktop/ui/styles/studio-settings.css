@@ -96,6 +96,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-nav-group {
 }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-nav-group::first-letter { text-transform: uppercase; }
 html[data-look="studio"]:not([data-fit="slim"]) #channel-settings-title { text-transform: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-nav-inner.searching > :is(.settings-tab, .settings-nav-group, .settings-nav-sep) { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-tab {
   display: flex;
   align-items: center;
@@ -318,6 +319,7 @@ html[data-look="studio"] .set-pick > .i:last-child { right: 18px; color: var(--t
 html[data-look="studio"] .set-pick > .i:first-child:not(:last-child) { left: 18px; color: var(--header-primary); }
 html[data-look="studio"] .set-pick:has(> .i:first-child:not(:last-child)) > select { padding-left: 45px; }
 html[data-look="studio"] .setting-row > .set-pick { flex: 0 0 auto; min-width: 180px; }
+html[data-look="studio"] .inline-row > .set-pick { flex: 0 0 auto; min-width: 128px; }
 
 html[data-look="studio"] .settings-layer .slider-row {
   display: grid;
@@ -365,6 +367,42 @@ html[data-look="studio"] .settings-layer input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
 }
+html[data-look="studio"] .settings-layer .setting-row:has(> input[type="range"]) { flex-wrap: wrap; row-gap: 8px; }
+html[data-look="studio"] .settings-layer .setting-row:has(> input[type="range"]) > div:first-child { flex: 3 1 260px; }
+html[data-look="studio"] .settings-layer .setting-row > input[type="range"] { flex: 1 1 240px; width: auto; min-width: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-layer .setting-row > input[type="range"] { max-width: 280px; }
+html[data-look="studio"] .settings-layer .setting-title > #channel-limit-label {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font: 500 13px/18px var(--font);
+}
+html[data-look="studio"] #channel-settings .set-pane > .settings-card:not(.setting-row, .hidden):has(~ .settings-card.setting-row:not(.hidden)) { padding-bottom: 14px; }
+html[data-look="studio"] .integration-status {
+  gap: 12px;
+  min-height: 46px;
+  margin-top: 16px;
+  padding: 8px 8px 8px 18px;
+  border-radius: var(--radius-pill);
+  background: var(--input-bg);
+  box-shadow: var(--slot);
+  color: var(--header-primary);
+  font: 500 14px/1.3 var(--font);
+}
+html[data-look="studio"] .integration-status .integration-recheck { padding: 0 12px; color: var(--text-muted); font: 500 13px/1 var(--font); }
+html[data-look="studio"] .integration-status .integration-recheck:hover { color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-tab > .tab-dot { margin-right: 4px; box-shadow: 0 0 0 3px rgb(var(--dark) / .18); }
+html[data-look="studio"] .set-pane:has(.game-search:not(.hidden)) { z-index: 5; }
+html[data-look="studio"]:not([data-fit="slim"]) .game-search {
+  top: calc(100% + 8px);
+  padding: 7px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .06), rgb(var(--lamp) / 0) 60%), var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--rim-soft), inset 0 1px 0 rgb(var(--lamp) / .12), var(--shadow-3);
+}
+html[data-look="studio"]:not([data-fit="slim"]) .game-hit { gap: 12px; min-height: 52px; padding: 6px 12px 6px 6px; border-radius: 16px; }
+html[data-look="studio"]:not([data-fit="slim"]) .game-hit:hover,
+html[data-look="studio"]:not([data-fit="slim"]) .game-hit:focus-visible { background: var(--bg-hover); outline: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .game-hit-cover { border-radius: 8px; }
 html[data-look="studio"] .settings-layer input[type="range"]::-webkit-slider-runnable-track {
   height: 8px;
   border-radius: 4px;

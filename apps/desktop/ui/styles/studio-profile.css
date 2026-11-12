@@ -785,3 +785,26 @@ html[data-look="studio"] .prof-tile {
 }
 html[data-look="studio"] .prof-tile img { width: 100%; height: 100%; object-fit: cover; }
 html[data-look="studio"] .prof-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-look="studio"] .game-pop {
+  gap: 14px;
+  padding: 14px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgb(var(--lamp) / .06), rgb(var(--lamp) / 0) 60%), var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--rim-soft), inset 0 1px 0 rgb(var(--lamp) / .12), var(--shadow-3);
+}
+html[data-look="studio"] .gp-cover { border-radius: 12px; background: var(--bg-active); box-shadow: 0 0 0 1px var(--rim-soft), 0 2px 3px rgb(var(--dark) / .4), 0 6px 8px -3px rgb(var(--dark) / .6); color: var(--text-muted); }
+html[data-look="studio"] .gp-name { font: 600 16px/1.25 var(--font); }
+html[data-look="studio"] .gp-year,
+html[data-look="studio"] .gp-note { font: 400 13px/1.3 var(--font); }
+html[data-look="studio"] .game-pop .ac-steam {
+  height: 40px;
+  border-radius: var(--radius-pill);
+  background: var(--pillow-top), var(--cream);
+  box-shadow: var(--pillow-sm);
+  color: var(--cream-ink);
+  font: 600 14px/1 var(--font);
+  transition: scale var(--t-hover) var(--ease-spring), filter var(--t-hover) var(--ease-out);
+}
+html[data-look="studio"] .game-pop .ac-steam:hover { filter: brightness(1.06); }
+html[data-look="studio"] .game-pop .ac-steam:active { scale: .96 .93; box-shadow: var(--pillow-down); }
+html[data-look="studio"] .game-pop .ac-steam:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

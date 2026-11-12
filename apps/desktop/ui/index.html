@@ -371,6 +371,7 @@
           </div>
         </div>
       </section>
+      <div class="chat-banner" id="chat-banner" aria-hidden="true"></div>
       <div class="messages" id="messages"></div>
       <div class="scroll-down-dock">
         <button class="scroll-down hidden" id="scroll-down" type="button" title="Scroll to newest" aria-label="Scroll to newest"></button>
@@ -1026,8 +1027,8 @@
     </div>
 
     <div class="modal hidden" id="modal-transfer-owner">
-      <h2>Transfer Ownership</h2>
-      <p>The new owner gets every permission, including deleting the server. You stay as a member with the roles you have now. This cannot be undone by you.</p>
+      <h2 id="transfer-owner-title">Transfer Ownership</h2>
+      <p id="transfer-owner-body">The new owner gets every permission, including deleting the server. You stay as a member with the roles you have now. This cannot be undone by you.</p>
       <label class="field-label">New owner
         <select id="transfer-owner-pick" class="compact-select"></select>
       </label>
@@ -1930,16 +1931,16 @@
               <div class="cam-stage-idle" id="cam-stage-idle">Your camera is off</div>
             </div>
             <div class="camera-controls">
-              <label class="field-label">Camera
+              <label class="field-label" data-search="webcam device video">Camera
                 <select id="camera-device"><option value="">Default</option></select>
               </label>
-              <div class="field-label" id="cam-bg-label">Background</div>
+              <div class="field-label" id="cam-bg-label" data-search="blur image backdrop virtual">Background</div>
               <div class="segmented cam-bg" id="cam-bg" role="radiogroup" aria-labelledby="cam-bg-label">
                 <button data-bg="off" role="radio"><strong>Off</strong></button>
                 <button data-bg="blur" role="radio"><strong>Blur</strong></button>
                 <button data-bg="image" role="radio"><strong>Image</strong></button>
               </div>
-              <div class="field-label desktop-only" id="cam-avatar-label">Avatar</div>
+              <div class="field-label desktop-only" id="cam-avatar-label" data-search="vrm face cat robot alien">Avatar</div>
               <div class="segmented cam-avatars desktop-only" id="cam-avatar" role="radiogroup" aria-labelledby="cam-avatar-label">
                 <button data-avatar="off" role="radio" title="No avatar"><strong>Off</strong></button>
                 <button data-avatar="cat" role="radio" title="Cat"><img alt="Cat" /></button>
@@ -3162,9 +3163,14 @@
                 <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M8.5 10.2H7.2a1.2 1.2 0 0 0-1.2 1.2v1.2a1.2 1.2 0 0 0 1.2 1.2h1.3v-1.2H7.8M11.5 10v4M14.2 14v-4h2.3M14.2 12h1.8"/></svg>
               </div>
               <div class="integration-copy">
-                <div class="setting-title">GIF search <span class="integration-state" id="server-gif-state"></span></div>
+                <div class="setting-title">GIF search</div>
                 <div class="setting-sub">GIF search works through each member's Commy account without a key. Add a KLIPY or GIPHY key here and everyone's GIF searches in this server use it instead. Members' apps hold a copy of the key, so make one just for this server.</div>
               </div>
+            </div>
+            <div class="integration-status" id="gif-search-status" data-tone="off" role="status">
+              <span class="integration-dot" aria-hidden="true"></span>
+              <span class="integration-status-text"></span>
+              <button class="btn-link integration-recheck" type="button" data-kind="gif-search">Check Again</button>
             </div>
             <label class="field-label">Provider
               <select id="server-gif-provider">
@@ -3189,9 +3195,14 @@
             <div class="integration-head">
               <div class="integration-logo">IGDB</div>
               <div>
-                <div class="setting-title">IGDB game database <span class="integration-state" id="game-db-state"></span></div>
+                <div class="setting-title">IGDB game database</div>
                 <div class="setting-sub">Game search with cover art when tagging this server with games. It works through your Commy account without a login; add one here only if your account server does not offer game search. Members' apps hold a copy of the login, so make one just for this server.</div>
               </div>
+            </div>
+            <div class="integration-status" id="game-database-status" data-tone="off" role="status">
+              <span class="integration-dot" aria-hidden="true"></span>
+              <span class="integration-status-text"></span>
+              <button class="btn-link integration-recheck" type="button" data-kind="game-database">Check Again</button>
             </div>
             <ol class="integration-steps">
               <li>Sign in at <a data-href="https://dev.twitch.tv/console/apps">dev.twitch.tv/console/apps</a> (IGDB uses Twitch developer accounts; two-factor sign-in must be on).</li>
@@ -3223,6 +3234,11 @@
                 <div class="setting-sub">Commy shares files between members' devices. In a small server everyone who has a picture can be offline at once, and it won't load until one of them is back. Connect an R2 bucket on your own Cloudflare account, and members' apps also keep an encrypted copy of each file up to 30 MB there.</div>
                 <div class="setting-sub">Only members can open those copies; Cloudflare and Commy can't. The worker only answers members' apps, and only you and people whose role has Manage Cloudflare Storage see its address. You pay Cloudflare for what is stored, which for a small server is usually nothing: the first 10 GB a month are free. Direct messages and bigger files stay peer to peer.</div>
               </div>
+            </div>
+            <div class="integration-status" id="file-storage-status" data-tone="off" role="status">
+              <span class="integration-dot" aria-hidden="true"></span>
+              <span class="integration-status-text"></span>
+              <button class="btn-link integration-recheck" type="button" data-kind="file-storage">Check Again</button>
             </div>
             <ol class="integration-steps">
               <li>Deploy the Commy storage worker to your Cloudflare account and give it a setup code. <button class="btn-link" id="file-store-guide" type="button">How to set it up</button></li>
@@ -3463,6 +3479,7 @@
     <div class="banner-tiles" id="banner-tiles"></div>
     <button id="banner-own">Upload a Picture</button>
   </div>
+  <div class="game-pop hidden" id="game-pop" role="dialog" aria-label="Game"></div>
   <input type="file" id="photo-file" accept="image/*,video/*" multiple class="file-catcher" tabindex="-1" aria-hidden="true" />
   <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" />
   <input type="file" id="vrm-file" accept=".vrm" class="hidden" />
@@ -3519,6 +3536,7 @@
   <script src="scripts/join-requests.js"></script>
   <script src="scripts/tip-jar.js"></script>
   <script src="scripts/file-store.js"></script>
+  <script src="scripts/integration-status.js"></script>
   <script src="scripts/pet.js"></script>
   <script src="scripts/voice-input.js"></script>
   <script src="scripts/voice-filters.js"></script>

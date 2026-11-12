@@ -88,7 +88,9 @@ test("starting up is the guide's offline pane: a thin slab, the star at 58, the 
   assert.match(rule(`${R} .startup-step[data-state="done"] .startup-mark`), /color: var\(--green\);/);
   assert.match(rule(`${R} .startup-name`), /font: 600 14\.5px\/1 var\(--font\);/);
   assert.match(rule(`${R} .startup-detail`), /font: 400 12\.5px\/1\.2 var\(--font\);/);
-  assert.match(rule(`${R} .startup-skip.key`), /right: 24px;\n  bottom: -20px;/);
+  assert.match(rule(`${R} .startup-skip.key`), /grid-column: 1 \/ -1;\n  grid-row: 4;\n  justify-self: end;\n  margin: 14px 0 0;/);
+  assert.ok(css.includes(`${R} .startup-skip.key:not(.shown) { display: none; }`));
+  assert.doesNotMatch(rule(`${R} .startup-skip.key`), /position: absolute|bottom: -/);
   assert.ok(css.includes("@keyframes start-wait { 50% { opacity: .35; } }"));
   assert.ok(css.includes(`@media (prefers-reduced-motion: reduce) {\n  ${R} .startup-step[data-state="working"] .startup-mark { animation: none; }\n}`));
 });

@@ -39,7 +39,7 @@ function fileStoreLabel(url) {
 
 function fileStoreStatus(server) {
   if (!server || !server.file_store) return "Files here travel between members' devices only.";
-  return `Connected to Cloudflare storage at ${fileStoreLabel(server.file_store)}.`;
+  return `Encrypted copies go to Cloudflare storage at ${fileStoreLabel(server.file_store)}.`;
 }
 
 if (typeof module !== "undefined") {

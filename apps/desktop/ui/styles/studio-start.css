@@ -144,11 +144,12 @@ html[data-look="studio"]:not([data-fit="slim"]) .startup-bar {
 }
 html[data-look="studio"]:not([data-fit="slim"]) .startup-fill { border-radius: inherit; }
 html[data-look="studio"]:not([data-fit="slim"]) .startup-skip.key {
-  position: absolute;
-  right: 24px;
-  bottom: -20px;
-  margin: 0;
+  grid-column: 1 / -1;
+  grid-row: 4;
+  justify-self: end;
+  margin: 14px 0 0;
 }
+html[data-look="studio"]:not([data-fit="slim"]) .startup-skip.key:not(.shown) { display: none; }
 
 html[data-look="studio"]:not([data-fit="slim"]) .offline-chip {
   gap: 8px;
@@ -177,10 +178,6 @@ html[data-look="studio"]:not([data-fit="slim"]) .messages > .channel-intro:only-
   grid-column: 1;
   grid-row: 2 / span 2;
   align-self: center;
-}
-html[data-look="studio"]:not([data-fit="slim"]) .messages > .channel-intro:only-child > .channel-intro-banner {
-  grid-column: 1 / -1;
-  grid-row: 1;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .messages > .channel-intro:only-child > .channel-intro-mark { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .messages > .channel-intro:only-child > h2 {

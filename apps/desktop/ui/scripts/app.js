@@ -3762,9 +3762,25 @@ function markServerRead(serverId) {
 
 let leavingServerId = null;
 
-function openLeaveServer(serverId) {
+function heirsOf(server) {
+  return server.members.filter(m => !(state.user && m.id === state.user.id) && m.id !== server.owner && !m.bot);
+}
+
+async function serverToLeave(serverId) {
+  if (state.currentServer && state.currentServer.id === serverId) return state.currentServer;
+  return invoke("get_server", { serverId }).catch(() => null);
+}
+
+async function openLeaveServer(serverId) {
   const server = state.servers.find(s => s.id === serverId);
   if (!server) return;
+  if (!server.group) {
+    const full = await serverToLeave(serverId);
+    if (full && state.user && full.owner === state.user.id && heirsOf(full).length) {
+      openTransferOwner(full, true);
+      return;
+    }
+  }
   leavingServerId = serverId;
   $("leave-server-title").textContent = server.group ? "Leave this group?" : `Leave '${server.name}'`;
   $("leave-server-body").textContent = server.group
@@ -3776,10 +3792,17 @@ function openLeaveServer(serverId) {
 
 let deletingServerId = null;
 
-function openTransferOwner(server) {
+const TRANSFER_OWNER_WORDS = {
+  stay: ["Transfer Ownership", "The new owner gets every permission, including deleting the server. You stay as a member with the roles you have now. This cannot be undone by you.", "Transfer Ownership"],
+  leave: ["Hand the server over first", "You own this server, so pick who takes it over before you leave. The new owner gets every permission, including deleting the server. This cannot be undone by you.", "Transfer and Continue"],
+};
+
+let transferring = null;
+
+function openTransferOwner(server, leaving = false) {
   const pick = $("transfer-owner-pick");
   pick.replaceChildren();
-  const others = server.members.filter(m => !(state.user && m.id === state.user.id) && m.id !== server.owner && !m.bot);
+  const others = heirsOf(server);
   for (const member of others) {
     const option = el("option", null, member.name);
     option.value = member.id;
@@ -3789,10 +3812,15 @@ function openTransferOwner(server) {
     toast("There is nobody else here to hand the server to");
     return;
   }
+  transferring = { server, leaving };
+  const words = TRANSFER_OWNER_WORDS[leaving ? "leave" : "stay"];
+  $("transfer-owner-title").textContent = words[0];
+  $("transfer-owner-body").textContent = words[1];
   const input = $("transfer-owner-input");
   input.value = "";
   input.placeholder = server.name;
   const go = $("transfer-owner-go");
+  go.textContent = words[2];
   go.disabled = true;
   input.oninput = () => {
     go.disabled = input.value.trim() !== server.name.trim();
@@ -3802,16 +3830,19 @@ function openTransferOwner(server) {
 }
 
 async function confirmTransferOwner() {
-  const server = state.currentServer;
-  if (!server) return;
+  if (!transferring) return;
+  const { server, leaving } = transferring;
   const pick = $("transfer-owner-pick");
   const name = pick.selectedOptions[0] ? pick.selectedOptions[0].textContent : "them";
   try {
     await invoke("transfer_ownership", { serverId: server.id, userId: pick.value, confirmName: $("transfer-owner-input").value });
+    transferring = null;
     hideModals();
-    await refreshCurrentServer();
-    if (!$("server-settings").classList.contains("hidden")) openServerSettings("overview");
+    const here = state.currentServer && state.currentServer.id === server.id;
+    if (here) await refreshCurrentServer();
+    if (here && !leaving && !$("server-settings").classList.contains("hidden")) openServerSettings("overview");
     toast(`${name} now owns ${server.name}`);
+    if (leaving) await openLeaveServer(server.id);
   } catch (e) {
     toast(String(e));
   }
@@ -3924,6 +3955,22 @@ function paintChannelBand(row, channel) {
     const tint = String(channel.color).replace(/^#/, "");
     if (/^([0-9a-f]{3}|[0-9a-f]{6})$/i.test(tint)) row.style.setProperty("--channel-tint", `#${tint}`);
   }
+}
+
+function paintDeskChatBanner() {
+  const node = $("chat-banner");
+  const ref = chatBanner({ view: state.view, channel: state.currentChannel });
+  if (node.dataset.ref === ref) return;
+  node.dataset.ref = ref;
+  node.style.removeProperty("--chat-banner");
+  const main = node.parentElement;
+  main.classList.remove("has-chat-banner");
+  if (!ref) return;
+  loadServerImage(ref).then(url => {
+    if (!url || node.dataset.ref !== ref) return;
+    node.style.setProperty("--chat-banner", `url("${url}")`);
+    main.classList.add("has-chat-banner");
+  });
 }
 
 function channelNameNode(channel, cls = null) {
@@ -7230,7 +7277,7 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop"]) {
+  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop", "game-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -12009,6 +12056,46 @@ function coverSlot(className, imageId, size) {
   return slot;
 }
 
+let gamePopFor = "";
+
+function fillGamePop(name, details, cover, looking) {
+  const pop = $("game-pop");
+  const info = el("div", "gp-info");
+  info.appendChild(el("div", "gp-name", (details && details.name) || name));
+  if (details && details.year) info.appendChild(el("div", "gp-year", String(details.year)));
+  const main = el("div", "gp-main");
+  main.append(coverSlot("gp-cover", (details && details.cover) || cover, "t_cover_big"), info);
+  const steam = details && steamButton(details.steam);
+  pop.replaceChildren(main, steam || el("div", "gp-note", looking ? "Looking for the store page" : "No Steam page found for this game"));
+}
+
+function openGamePop(anchor, name, cover = null) {
+  const pop = $("game-pop");
+  const key = gameKey(name);
+  if (!pop.classList.contains("hidden") && gamePopFor === key) {
+    pop.classList.add("hidden");
+    return;
+  }
+  gamePopFor = key;
+  const known = knownGames.get(key);
+  fillGamePop(name, known, cover, !known);
+  placePopup(pop, anchor, "below");
+  if (known) return;
+  lookUpGame(name).then(found => {
+    if (pop.classList.contains("hidden") || gamePopFor !== key) return;
+    fillGamePop(name, found, cover, false);
+    placePopup(pop, anchor, "below");
+  });
+}
+
+function gameLink(node, name, cover, anchor) {
+  node.classList.add("game-link");
+  node.onclick = e => {
+    e.stopPropagation();
+    openGamePop(anchor(), name, cover);
+  };
+}
+
 function activityTime(person) {
   const time = el("div", "ac-time");
   time.appendChild(svgIcon("gamepad", 14));
@@ -12028,8 +12115,10 @@ function activityCard(person) {
   const main = el("div", "ac-main");
   const info = el("div", "ac-info");
   info.append(el("div", "ac-game", game), activityTime(person));
-  main.append(coverSlot("ac-cover", art, "t_cover_big"), info);
+  const cover = coverSlot("ac-cover", art, "t_cover_big");
+  main.append(cover, info);
   card.append(glow, main);
+  gameLink(card, game, art, () => cover);
   const steam = details && steamButton(details.steam);
   if (steam) card.appendChild(steam);
   return card;
@@ -12111,12 +12200,72 @@ function syncServerGifHelp() {
   for (const a of help.querySelectorAll("a[data-href]")) wireExternalLink(a, a.dataset.href);
 }
 
+const integrationChecks = createIntegrationChecks();
+
+function integrationConfig(server, kind) {
+  if (kind === "gif-search") return server.gif_key ? `${server.gif_key.provider}:${server.gif_key.key}` : "";
+  if (kind === "game-database") return server.game_db ? server.game_db.client_id : "";
+  return server.file_store || "";
+}
+
+async function probeIntegration(server, kind) {
+  const configured = Boolean(integrationConfig(server, kind));
+  try {
+    if (kind === "gif-search") {
+      await searchGifs("hello", configured ? server.gif_key : { key: "" });
+      return { configured, ok: true };
+    }
+    if (kind === "game-database") {
+      const hits = await invoke("search_games", { query: "portal", serverId: server.id });
+      return { configured, ok: hits.length > 0, reason: hits.length ? null : "empty" };
+    }
+    if (!configured) return { configured, ok: false };
+    const info = await invoke("test_file_store", { url: server.file_store });
+    const paired = Boolean(info && info.paired);
+    return { configured, ok: paired, reason: paired ? null : "unpaired" };
+  } catch (e) {
+    return { configured, ok: false, reason: e && e.message ? e.message : String(e) };
+  }
+}
+
+function paintIntegration(kind, status) {
+  const row = $(`${kind}-status`);
+  row.dataset.tone = status.tone;
+  row.querySelector(".integration-status-text").textContent = status.text;
+  row.querySelector(".integration-recheck").classList.toggle("hidden", status.tone === "busy");
+  const tab = $(`tab-${kind}`);
+  const lit = status.tone === "ok" || status.tone === "warn";
+  let dot = tab.querySelector(".tab-dot");
+  if (lit && !dot) dot = tab.appendChild(el("span", "tab-dot"));
+  if (dot) dot.classList.toggle("hidden", !lit);
+  if (lit) {
+    dot.dataset.tone = status.tone;
+    dot.title = status.text;
+  }
+}
+
+async function checkIntegration(kind, force = false) {
+  const server = state.currentServer;
+  const tab = $(`tab-${kind}`);
+  if (!server || tab.classList.contains("hidden") || hiddenOnThisDevice(tab)) return;
+  const config = integrationConfig(server, kind);
+  const key = [server.id, kind, config].join("\n");
+  const known = force ? null : integrationChecks.fresh(key);
+  if (known) {
+    paintIntegration(kind, known);
+    return;
+  }
+  paintIntegration(kind, integrationStatus(kind, null));
+  const status = integrationChecks.keep(key, integrationStatus(kind, await probeIntegration(server, kind)));
+  const now = state.currentServer;
+  if (now && now.id === server.id && integrationConfig(now, kind) === config) paintIntegration(kind, status);
+}
+
 function renderServerGifEditor(server) {
   const own = server.gif_key;
   $("server-gif-provider").value = own && GIF_PROVIDERS.has(own.provider) ? own.provider : "klipy";
   $("server-gif-key").value = own ? own.key : "";
-  $("server-gif-state").textContent = own ? "Connected" : "";
-  $("server-gif-state").classList.toggle("on", Boolean(own));
+  checkIntegration("gif-search");
   $("server-gif-remove").classList.toggle("hidden", !own);
   $("server-gif-result").textContent = "";
   syncServerGifHelp();
@@ -12135,6 +12284,7 @@ async function saveServerGifKey(remove) {
       await searchGifs("hello", { provider, key });
     }
     await invoke("set_gif_key", { serverId: server.id, provider, key: key || null });
+    integrationChecks.clear();
     await refreshCurrentServer();
     renderServerGifEditor(state.currentServer);
     syncGifButton();
@@ -12155,8 +12305,7 @@ function renderGameDbEditor(server) {
   $("game-db-client-id").value = login ? login.client_id : "";
   $("game-db-client-secret").value = "";
   $("game-db-client-secret").placeholder = login ? "Saved (leave blank to keep)" : "";
-  $("game-db-state").textContent = login ? "Connected" : "";
-  $("game-db-state").classList.toggle("on", Boolean(login));
+  checkIntegration("game-database");
   $("game-db-remove").classList.toggle("hidden", !login);
   $("game-db-result").textContent = "";
 }
@@ -12173,6 +12322,7 @@ async function saveGameDb(remove) {
       clientId: remove ? null : $("game-db-client-id").value,
       clientSecret: remove ? null : $("game-db-client-secret").value || null,
     });
+    integrationChecks.clear();
     await refreshCurrentServer();
     renderGameDbEditor(state.currentServer);
     if (!remove) {
@@ -12343,6 +12493,21 @@ function gameChip(server, tag, cls) {
   return chip;
 }
 
+function gameTagKey(server, tag, cls) {
+  const chip = gameChip(server, tag, cls);
+  const meta = (server.game_tag_meta || []).find(m => m.name === tag);
+  chip.setAttribute("role", "button");
+  chip.tabIndex = 0;
+  chip.title = `About ${tag}`;
+  gameLink(chip, tag, meta ? meta.cover : null, () => chip);
+  chip.onkeydown = e => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    chip.click();
+  };
+  return chip;
+}
+
 function renderGameTagEditor(server) {
   gameTagDraft = [...(server.game_tags || [])];
   gameTagMetaDraft = [...(server.game_tag_meta || [])];
@@ -12390,7 +12555,7 @@ function renderServerExtras(list, server) {
   if (server.game_tags && server.game_tags.length) {
     const row = el("div", "sidebar-game-tags");
     for (const tag of server.game_tags) {
-      row.appendChild(gameChip(server, tag, "game-chip small"));
+      row.appendChild(gameTagKey(server, tag, "game-chip small"));
     }
     list.appendChild(row);
   }
@@ -13289,7 +13454,7 @@ function sectionHeader(section, collapsed, canCreate) {
   const caret = el("span", "section-caret");
   caret.appendChild(svgIcon("chevronDown", 12));
   header.appendChild(caret);
-  header.appendChild(el("span", "section-title", section.title));
+  header.appendChild(el("span", section.fixed ? "section-title keep-case" : "section-title", section.title));
   header.onclick = () => toggleSection(section.key);
   if (canCreate) {
     if (section.category) {
@@ -13529,6 +13694,7 @@ function renderFileStoreEditor(server) {
   $("file-store-code").value = "";
   $("file-store-code").disabled = !editable;
   $("file-store-status").textContent = fileStoreStatus(server);
+  checkIntegration("file-storage");
   $("file-store-save").classList.toggle("hidden", !editable);
   $("file-store-remove").classList.toggle("hidden", !editable || !server.file_store);
 }
@@ -13552,6 +13718,7 @@ async function saveFileStore(remove) {
     await invoke("set_file_store", { serverId: server.id, url, setupCode: url ? setupCode : null });
     $("file-store-code").value = "";
     toast(url ? "File storage connected" : "Files here are peer to peer only again");
+    integrationChecks.clear();
     await refreshCurrentServer();
     renderFileStoreEditor(state.currentServer);
   } catch (err) {
@@ -18228,8 +18395,6 @@ function renderShareButton() {
   renderVoicePanel();
 }
 
-const studioHang = createStudioDockFuse();
-
 function studioDesk() {
   return studioDockDesk(document);
 }
@@ -18240,7 +18405,6 @@ function paintStudioDock() {
   const vs = state.voiceServer;
   const desk = studioDesk() && Boolean(state.voiceChannelId && vs);
   if (!desk) {
-    studioHang.cancel();
     panel.dataset.dock = "";
     paintVoiceRoomDock(voiceRoomLeft());
     return;
@@ -18252,13 +18416,12 @@ function paintStudioDock() {
     where: call ? `Call with ${vs.name}` : `${channelTextName(vs.channelName)} / ${vs.name}`,
     muted: state.voice.muted,
     deafened: state.voice.deafened,
-    armed: studioHang.armed(),
   });
   panel.dataset.dock = words.state;
   $("vp-status-text").textContent = words.line;
   $("vp-where").textContent = words.sub;
   $("vp-conn-meta").title = "Connection and devices";
-  $("vp-disconnect").title = words.state === "armed" ? `Press again to leave ${call ? "the call" : channelTextName(vs.channelName)}` : "Hang up";
+  $("vp-disconnect").title = "Hang up";
   const here = !call && state.view === "server" && state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
   const invite = $("vp-invite");
   if (invite) invite.classList.toggle("hidden", !(here && here.can_invite));
@@ -19812,6 +19975,7 @@ function formatShortTime(iso) {
 
 async function enterDmMode(openFirst = true) {
   setViewMode("dm");
+  if (openFirst && state.showDmProfile && studioDesk()) $("dm-profile").classList.remove("hidden");
   state.currentServer = null;
   state.currentChannel = null;
   if (!openFirst) state.currentDm = null;
@@ -22298,6 +22462,7 @@ function wireEvents() {
     }
   }
   wireSettingsSearch();
+  new MutationObserver(paintDeskChatBanner).observe($("channel-name"), { childList: true, characterData: true, subtree: true });
 
   const appearance = loadAppearance();
   applyAppearance(appearance);
@@ -22982,6 +23147,7 @@ function wireEvents() {
   };
   document.addEventListener("mousedown", e => {
     const open = ["emoji-pop", "avatar-menu", "banner-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    closeMenuOutside("game-pop", e.target, ".game-link");
     if (!open.length) return;
     closeMenuOutside("fp-menu", e.target, ".mc-more, .fp-more");
     if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #vp-conn-meta, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
@@ -23242,6 +23408,7 @@ function wireEvents() {
   });
   $("server-delete-open").onclick = () => state.currentServer && openDeleteServer(state.currentServer);
   $("server-transfer-open").onclick = () => state.currentServer && openTransferOwner(state.currentServer);
+  for (const again of document.querySelectorAll(".integration-recheck")) again.onclick = () => checkIntegration(again.dataset.kind, true);
   $("transfer-owner-cancel").onclick = hideModals;
   $("transfer-owner-go").onclick = confirmTransferOwner;
   $("transfer-owner-input").onkeydown = e => {
@@ -23531,15 +23698,7 @@ function wireEvents() {
   $("vp-change-source").onclick = openSharePicker;
   $("vp-stop-watch").onclick = stopWatching;
   $("vp-watch-label").onclick = showWatchedStream;
-  $("vp-disconnect").onclick = () => {
-    if (!studioDesk() || studioHang.press() === "leave") disconnectVoice();
-  };
-  studioHang.watch(paintStudioDock);
-  for (const type of ["pointerdown", "keydown"]) {
-    document.addEventListener(type, e => {
-      if (studioHang.armed() && !$("vp-disconnect").contains(e.target)) studioHang.cancel();
-    }, true);
-  }
+  $("vp-disconnect").onclick = disconnectVoice;
   if ($("vp-invite")) $("vp-invite").onclick = () => $("invite-btn").click();
   for (const [id, open] of [["mute-btn", key => toggleAudioPop("input", key)], ["deafen-btn", key => toggleAudioPop("output", key)], ["vp-camera", key => toggleVideoPop(key)]]) {
     $(id).addEventListener("contextmenu", e => {
@@ -24658,7 +24817,7 @@ function openServerInfo(server) {
   const games = $("si-games");
   games.replaceChildren();
   for (const tag of server.game_tags || []) {
-    games.appendChild(gameChip(server, tag, "game-chip small"));
+    games.appendChild(gameTagKey(server, tag, "game-chip small"));
   }
   games.classList.toggle("hidden", !games.childElementCount);
   $("si-rules-wrap").classList.toggle("hidden", !server.rules);
@@ -25769,6 +25928,7 @@ async function refreshCurrentServer() {
     const still = state.currentServer.channels.find(c => c.id === keepChannel.id);
     if (still) {
       state.currentChannel = still;
+      paintDeskChatBanner();
       syncPinButton();
       syncRulesGate();
       if (still.kind !== keepChannel.kind) {
