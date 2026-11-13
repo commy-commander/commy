@@ -22551,6 +22551,12 @@ function wireEvents() {
     appearance.textStyles = e.target.checked;
     saveAppearance(appearance);
   });
+  $("tall-stack-toggle").checked = lookStackChosen();
+  $("tall-stack-toggle").addEventListener("change", e => {
+    e.target.checked = setLookStack(e.target.checked);
+    paintStripPanelSettings();
+  });
+  paintStripPanelSettings();
 
   $("mic-test-btn").onclick = async () => {
     try {
@@ -23873,6 +23879,7 @@ function wireEvents() {
   if (studioLook()) studioPops();
   if (studioLook()) studioCompact();
   if (studioLook()) studioMinors();
+  if (studioLook()) studioStrip();
   if (studioLook()) studioWeb();
   $("dm-profile-btn").onclick = () => {
     if (isPhoneWidth(window.innerWidth)) {

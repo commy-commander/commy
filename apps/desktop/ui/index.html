@@ -27,6 +27,7 @@
   <link rel="stylesheet" id="studio-pops" href="styles/studio-pops.css" media="not all" />
   <link rel="stylesheet" id="studio-discover" href="styles/studio-discover.css" media="not all" />
   <link rel="stylesheet" id="studio-start" href="styles/studio-start.css" media="not all" />
+  <link rel="stylesheet" id="studio-strip" href="styles/studio-strip.css" media="not all" />
   <link rel="stylesheet" id="studio-phone" href="styles/phone-touch.css" media="not all" />
   <link rel="stylesheet" id="studio-phone-viewer" href="styles/phone-viewer.css" media="not all" />
   <link rel="stylesheet" id="studio-phone-forum" href="styles/phone-forum.css" media="not all" />
@@ -2239,6 +2240,18 @@
             </div>
             <input type="checkbox" id="text-styles-toggle" class="switch" checked />
           </label>
+          <label class="settings-card setting-row desktop-only" data-search="tall window stacked stack layout narrow portrait">
+            <div>
+              <div class="setting-title" data-i18n="appearance.tallStack">Stacked Tall Window</div>
+              <div class="setting-sub" data-i18n="appearance.tallStack.sub">When the window is very tall and narrow, show your servers, chat and voice room stacked together instead of one screen at a time.</div>
+            </div>
+            <input type="checkbox" id="tall-stack-toggle" class="switch" />
+          </label>
+          <div class="settings-card stack-panels desktop-only hidden" id="stack-panels" data-search="tall window stacked panels order reorder hide show">
+            <div class="setting-title" data-i18n="appearance.stackPanels">Stacked Panels</div>
+            <div class="setting-sub" data-i18n="appearance.stackPanels.sub">Pick which panels show in the stack and put them in the order you like.</div>
+            <div class="stack-panels-list" id="stack-panels-list"></div>
+          </div>
           <h2 class="settings-subhead desktop-only native-only" data-i18n="appearance.appIcon">App Icon</h2>
           <div class="settings-card icon-card desktop-only native-only">
             <div class="setting-sub" data-i18n="appearance.appIcon.sub">Shown in your taskbar or dock while Commy is running.</div>
@@ -3529,6 +3542,7 @@
   <script src="scripts/overlay-view.js"></script>
   <script src="scripts/studio-discover.js"></script>
   <script src="scripts/studio-start.js"></script>
+  <script src="scripts/studio-strip.js"></script>
   <script src="scripts/profile-look.js"></script>
   <script src="scripts/studio-titlebar.js"></script>
   <script src="scripts/studio-profile.js"></script>

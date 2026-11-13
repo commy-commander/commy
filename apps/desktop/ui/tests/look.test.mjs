@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { LOOK_FIT, windowFit, windowZoom, windowLayout, zoomHop, knownZoom, resolveFx, lookAttributes } = require("../scripts/look.js");
+const { LOOK_FIT, LOOK_STACK_KEY, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes } = require("../scripts/look.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 test("the new look is the only look: nothing saved and nothing in the address turns it off", () => {
@@ -39,9 +39,9 @@ test("in the phone app a screen taller than wide is slim, and one on its side ke
   assert.equal(windowFit(800, 800, true), "compact");
   assert.equal(windowFit(800, 1280, false), "compact");
   const base = { storedFx: null };
-  assert.deepEqual(lookAttributes({ ...base, width: 800, height: 1280, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite" });
-  assert.deepEqual(lookAttributes({ ...base, width: 1280, height: 800, phoneApp: true }), { look: "studio", fit: "roomy", fx: "lite" });
-  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 3840, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite" });
+  assert.deepEqual(lookAttributes({ ...base, width: 800, height: 1280, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, width: 1280, height: 800, phoneApp: true }), { look: "studio", fit: "roomy", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 3840, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
 });
 
 test("phones and slim windows start without glass, and a saved choice wins", () => {
@@ -53,9 +53,9 @@ test("phones and slim windows start without glass, and a saved choice wins", () 
 });
 
 test("every window gets the look, its fit and its effects", () => {
-  assert.deepEqual(lookAttributes({ storedFx: "lite", width: 390, height: 844, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite" });
-  assert.deepEqual(lookAttributes({ storedFx: null, width: 1440, height: 900, phoneApp: false }), { look: "studio", fit: "roomy", fx: null });
-  assert.deepEqual(lookAttributes({ storedFx: null, width: 390, height: 844, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite" });
+  assert.deepEqual(lookAttributes({ storedFx: "lite", width: 390, height: 844, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ storedFx: null, width: 1440, height: 900, phoneApp: false }), { look: "studio", fit: "roomy", fx: null, stack: null });
+  assert.deepEqual(lookAttributes({ storedFx: null, width: 390, height: 844, phoneApp: true }), { look: "studio", fit: "slim", fx: "lite", stack: null });
 });
 
 test("a slim window wider than 550 zooms by its width over 550, and nothing else zooms", () => {
@@ -81,15 +81,40 @@ test("the layout is worked out from the real window, whatever zoom is on now", (
   assert.deepEqual(windowLayout({ width: 1100, height: 3840 }), { zoom: 1, width: 1100, height: 3840 });
 });
 
-test("a tall slim desktop window keeps the phone layout instead of a stacked view", () => {
+test("a tall slim desktop window keeps the phone layout unless the stacked view is chosen", () => {
   const base = { storedFx: null, phoneApp: false };
-  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 3840 }), { look: "studio", fit: "slim", fx: "lite" });
-  assert.deepEqual(lookAttributes({ ...base, width: 550, height: 1920, zoom: 2 }), { look: "studio", fit: "slim", fx: "lite" });
-  assert.deepEqual(lookAttributes({ ...base, width: 578, height: 2000 }), { look: "studio", fit: "slim", fx: "lite" });
-  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 2400 }), { look: "studio", fit: "slim", fx: "lite" });
-  assert.deepEqual(lookAttributes({ ...base, width: 420, height: 800 }), { look: "studio", fit: "slim", fx: "lite" });
-  assert.deepEqual(lookAttributes({ ...base, width: 700, height: 900 }), { look: "studio", fit: "slim", fx: "lite" });
-  assert.deepEqual(lookAttributes({ ...base, width: 701, height: 900 }), { look: "studio", fit: "compact", fx: null });
+  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 3840 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, storedStack: "off", width: 1100, height: 3840 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, width: 578, height: 2000 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, width: 701, height: 900 }), { look: "studio", fit: "compact", fx: null, stack: null });
+  assert.equal(LOOK_STACK_KEY, "commy.tallStack");
+  assert.equal(stackChosen("on"), true);
+  assert.equal(stackChosen("off"), false);
+  assert.equal(stackChosen(null), false);
+});
+
+test("with the stacked view chosen, a slim window stacks when its height over the zoom is 1800 or more", () => {
+  assert.equal(windowStack(1100, 3840), true);
+  assert.equal(windowStack(1100, 3599), false);
+  assert.equal(windowStack(550, 1800), true);
+  assert.equal(windowStack(550, 1799), false);
+  assert.equal(windowStack(420, 800), false);
+  assert.equal(windowStack(1920, 4000), false);
+  const base = { storedFx: null, storedStack: "on", phoneApp: false };
+  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 3840 }), { look: "studio", fit: "slim", fx: "lite", stack: "on" });
+  assert.deepEqual(lookAttributes({ ...base, width: 550, height: 1920, zoom: 2 }), { look: "studio", fit: "slim", fx: "lite", stack: "on" });
+  assert.deepEqual(lookAttributes({ ...base, width: 578, height: 2000 }), { look: "studio", fit: "slim", fx: "lite", stack: "on" });
+  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 2400 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, width: 420, height: 800 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, phoneApp: true, width: 1100, height: 3840 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+});
+
+test("Appearance has a Stacked Tall Window switch that phones do not show", () => {
+  assert.ok(html.includes('<label class="settings-card setting-row desktop-only" data-search="tall window stacked stack layout narrow portrait">'));
+  assert.ok(html.includes('<input type="checkbox" id="tall-stack-toggle" class="switch" />'));
+  const app = readFileSync(new URL("../scripts/app.js", import.meta.url), "utf8");
+  assert.ok(app.includes('$("tall-stack-toggle").checked = lookStackChosen();'));
+  assert.ok(app.includes("e.target.checked = setLookStack(e.target.checked);"));
 });
 
 test("the zoom moves only when it must, gives up after three moves in a row, and a bad saved zoom is ignored", () => {

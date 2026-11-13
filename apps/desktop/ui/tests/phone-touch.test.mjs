@@ -273,7 +273,7 @@ test("the chat screen keeps the design guide's measures", () => {
   assert.match(rule('.app[data-pane="chat"] .msg.pt-railed'), /margin-inline: -4px;\s+padding-inline: 12px;\s+border-radius: 22px;/);
   assert.match(rule('.app[data-pane="chat"] .composer'), /margin: 0 16px calc\(var\(--hz-line\) \+ 7px\);/);
   assert.match(rule('.app[data-pane="chat"] .typing-strip'), /left: 32px;\s+bottom: calc\(var\(--hz-line\) \+ 78px\);/);
-  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: var(--hz-safe); }\nhtml[data-look="studio"][data-fit="slim"].keyboard-up .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: 0px; }'));
+  assert.ok(css.includes(':not([data-stack="on"]) .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: var(--hz-safe); }\nhtml[data-look="studio"][data-fit="slim"].keyboard-up .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: 0px; }'));
   assert.equal(css.includes('.keyboard-up .app[data-pane="chat"] .typing-strip'), false);
   assert.match(rule('.app[data-pane="chat"] .main:has(> .awaited-bar:not(.hidden)) > .typing-strip'), /bottom: calc\(var\(--hz-line\) \+ 120px\);/);
   assert.match(rule('.app[data-pane="chat"] .main:has(> .reply-bar:not(.hidden)) > .typing-strip'), /bottom: calc\(var\(--hz-line\) \+ 88px\);/);

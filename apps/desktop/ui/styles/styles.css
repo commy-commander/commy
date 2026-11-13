@@ -8903,3 +8903,10 @@ body.mobile-app .channel.drive-channel { display: none; }
   body.mobile-app .chat-header .search-box { flex: 0 1 132px; width: auto; min-width: 44px; }
 }
 body.mobile-app .header-actions .icon-btn:not(.active):hover { background: none; color: var(--text-muted); }
+
+.stack-panels { display: flex; flex-direction: column; gap: 4px; }
+.stack-panels-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.stack-panel { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.stack-panel-name { flex: 1; min-width: 0; color: var(--header-primary); font-size: 14px; }
+.stack-panel-move { width: 32px; height: 32px; }
+.stack-panel-move:disabled { opacity: .35; cursor: default; }

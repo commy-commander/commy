@@ -1,6 +1,7 @@
 const LOOK_FX_KEY = "commy.fx";
 const LOOK_ZOOM_KEY = "commy.zoom";
-const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760, phoneWidth: 550, tallRatio: 2, zoomMax: 8 };
+const LOOK_STACK_KEY = "commy.tallStack";
+const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760, phoneWidth: 550, stackHeight: 1800, tallRatio: 2, zoomMax: 8 };
 const LOOK_ZOOM_SETTLE = { everyMs: 50, steadyPolls: 3, maxPolls: 40, hops: 3 };
 
 function windowFit(width, height, phoneApp = false) {
@@ -21,6 +22,14 @@ function windowLayout({ width, height, zoom = 1, canZoom = false }) {
   return { zoom: want, width: real.width / want, height: real.height / want };
 }
 
+function windowStack(width, height) {
+  return windowFit(width, height) === "slim" && height / windowZoom(width, height) >= LOOK_FIT.stackHeight;
+}
+
+function stackChosen(stored) {
+  return stored === "on";
+}
+
 function zoomHop(zoomNow, zoomWanted, hops) {
   if (Math.abs(zoomWanted - zoomNow) < 0.01) return "stay";
   return hops >= LOOK_ZOOM_SETTLE.hops ? "give-up" : "move";
@@ -36,10 +45,11 @@ function resolveFx(stored, { fit, phoneApp }) {
   return fit === "slim" || phoneApp ? "lite" : "glass";
 }
 
-function lookAttributes({ storedFx, width, height, phoneApp, zoom = 1 }) {
+function lookAttributes({ storedFx, storedStack = null, width, height, phoneApp, zoom = 1 }) {
   const real = { width: width * zoom, height: height * zoom };
   const fit = windowFit(real.width, real.height, phoneApp);
-  return { look: "studio", fit, fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null };
+  const stack = !phoneApp && stackChosen(storedStack) && windowStack(real.width, real.height);
+  return { look: "studio", fit, fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null, stack: stack ? "on" : null };
 }
 
 function studioLook() {
@@ -128,6 +138,7 @@ function applyLook() {
   fitWindowZoom();
   const attrs = lookAttributes({
     storedFx: storedLookValue(LOOK_FX_KEY),
+    storedStack: storedLookValue(LOOK_STACK_KEY),
     width: window.innerWidth,
     height: window.innerHeight,
     phoneApp: root.classList.contains("mobile-app"),
@@ -153,6 +164,20 @@ function setLookFx(value) {
   return root.dataset.fx === "lite" ? "lite" : "glass";
 }
 
+function setLookStack(on) {
+  try {
+    window.localStorage.setItem(LOOK_STACK_KEY, on ? "on" : "off");
+  } catch {
+    return false;
+  }
+  applyLook();
+  return stackChosen(storedLookValue(LOOK_STACK_KEY));
+}
+
+function lookStackChosen() {
+  return stackChosen(storedLookValue(LOOK_STACK_KEY));
+}
+
 if (typeof document !== "undefined") {
   try {
     lookWindow.zoom = knownZoom(window.sessionStorage.getItem(LOOK_ZOOM_KEY));
@@ -173,5 +198,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_FIT, windowFit, windowZoom, windowLayout, zoomHop, knownZoom, resolveFx, lookAttributes };
+  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_STACK_KEY, LOOK_FIT, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes };
 }

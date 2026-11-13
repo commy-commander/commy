@@ -1903,7 +1903,7 @@ html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane
   mask-image: linear-gradient(180deg, transparent 0, transparent 70px, #000 118px);
 }
 html[data-look="studio"][data-fit="slim"] .channel-intro-banner { display: none; }
-html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: var(--hz-safe); }
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: var(--hz-safe); }
 html[data-look="studio"][data-fit="slim"].keyboard-up .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: 0px; }
 html[data-look="studio"][data-fit="slim"] .app:is([data-pane="chat"], [data-pane="people"]) .chat-header {
   display: grid;
