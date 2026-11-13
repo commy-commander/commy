@@ -3977,17 +3977,16 @@ function paintChannelBand(row, channel) {
 }
 
 function paintDeskChatBanner() {
-  const node = $("chat-banner");
+  const main = document.querySelector(".main");
   const ref = chatBanner({ view: state.view, channel: state.currentChannel });
-  if (node.dataset.ref === ref) return;
-  node.dataset.ref = ref;
-  node.style.removeProperty("--chat-banner");
-  const main = node.parentElement;
+  if (main.dataset.chatBanner === ref) return;
+  main.dataset.chatBanner = ref;
+  main.style.removeProperty("--chat-banner");
   main.classList.remove("has-chat-banner");
   if (!ref) return;
   loadServerImage(ref).then(url => {
-    if (!url || node.dataset.ref !== ref) return;
-    node.style.setProperty("--chat-banner", `url("${url}")`);
+    if (!url || main.dataset.chatBanner !== ref) return;
+    main.style.setProperty("--chat-banner", `url("${url}")`);
     main.classList.add("has-chat-banner");
   });
 }

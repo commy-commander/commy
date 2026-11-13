@@ -28,6 +28,8 @@
   --white: #ffffff;
   --lamp: 255 255 255;
   --dark: 0 0 0;
+  --on-photo: 255 255 255;
+  --photo-shade: 6 7 10;
 
   --header-primary: #f5f6f8;
   --text-normal: #dcdfe6;

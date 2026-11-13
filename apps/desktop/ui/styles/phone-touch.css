@@ -1865,22 +1865,28 @@ html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane
 html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane.pt-has-ban > .pt-chat-ban {
   display: block;
   position: absolute;
-  z-index: -1;
+  z-index: -2;
   left: 0;
   right: 0;
-  top: var(--pt-pane-y, 66px);
-  height: 88px;
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  top: calc(-1 * max(env(safe-area-inset-top), 14px));
+  height: calc(max(env(safe-area-inset-top), 14px) + var(--pt-pane-y, 66px) + var(--radius-xl));
   background-size: cover;
   background-position: center;
-  -webkit-mask-image: linear-gradient(#000 20%, transparent);
-  mask-image: linear-gradient(#000 20%, transparent);
   pointer-events: none;
 }
-html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane.pt-has-ban .messages {
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, transparent 70px, #000 118px);
-  mask-image: linear-gradient(180deg, transparent 0, transparent 70px, #000 118px);
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane.pt-has-ban > .pt-chat-ban::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(var(--photo-shade) / .5), rgb(var(--photo-shade) / .32) 55%, rgb(var(--photo-shade) / .5));
 }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane.pt-has-ban > .chat-header {
+  color: rgb(var(--on-photo));
+  text-shadow: 0 1px 2px rgb(var(--photo-shade) / .55), 0 0 12px rgb(var(--photo-shade) / .35);
+}
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane.pt-has-ban > .chat-header #channel-name { color: rgb(var(--on-photo)); }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane.pt-has-ban > .chat-header :is(#phone-back, .hash, .pt-chat-sub, .pt-chev, .icon-btn) { color: rgb(var(--on-photo) / .86); }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="chat"] > .main.pt-pane.pt-has-ban > .chat-header svg { filter: drop-shadow(0 1px 2px rgb(var(--photo-shade) / .55)); }
 html[data-look="studio"][data-fit="slim"] .channel-intro-banner { display: none; }
 html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: var(--hz-safe); }
 html[data-look="studio"][data-fit="slim"].keyboard-up .app[data-pane="chat"] > :is(.main, .thread-panel) { --hz-line: 0px; }

@@ -16,6 +16,7 @@ const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.
 const css = read("styles", "phone-touch.css");
 const glue = read("scripts", "studio-phone.js");
 const html = read("index.html");
+const strip = read("styles", "studio-strip.css");
 
 test("the line is flat away from your tab and rises nine pixels under it", () => {
   assert.equal(horizonY(40, 300, HORIZON.swell, null, 0).toFixed(2), "30.00");
@@ -1127,7 +1128,7 @@ test("a channel banner never paints its row in the phone's channel list", () => 
   assert.match(css, rule(' \\.app\\[data-pane="list"\\] \\.channel\\.has-banner :is\\(\\.hash, \\.channel-label\\)', "text-shadow: none;"));
 });
 
-test("a channel banner is the top of the chat pane, and messages are gone before they reach it", () => {
+test("a channel banner is the plain background behind the chat header, with no fade over the messages", () => {
   assert.equal(chatBanner({ view: "server", channel: { id: "c1", banner: "pic@host" } }), "pic@host");
   assert.equal(chatBanner({ view: "server", channel: { id: "c1", banner: null } }), "");
   assert.equal(chatBanner({ view: "server", channel: null }), "");
@@ -1137,9 +1138,12 @@ test("a channel banner is the top of the chat pane, and messages are gone before
   assert.match(glue, /document\.querySelector\("\.main"\)\.classList\.toggle\("pt-has-ban", Boolean\(ref\)\);/);
   assert.match(glue, /if \(url && node\.dataset\.ref === ref\) node\.style\.backgroundImage = `url\("\$\{url\}"\)`;/);
   const pane = ' \\.app\\[data-pane="chat"\\] > \\.main\\.pt-pane\\.pt-has-ban';
-  assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "display: block;\\s+position: absolute;\\s+z-index: -1;\\s+left: 0;\\s+right: 0;\\s+top: var\\(--pt-pane-y, 66px\\);\\s+height: 88px;"));
-  assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "mask-image: linear-gradient\\(#000 20%, transparent\\);"));
-  assert.match(css, rule(`${pane} \\.messages`, "mask-image: linear-gradient\\(180deg, transparent 0, transparent 70px, #000 118px\\);"));
+  assert.match(css, rule(`${pane} > \\.pt-chat-ban`, "display: block;\\s+position: absolute;\\s+z-index: -2;\\s+left: 0;\\s+right: 0;\\s+top: calc\\(-1 \\* max\\(env\\(safe-area-inset-top\\), 14px\\)\\);\\s+height: calc\\(max\\(env\\(safe-area-inset-top\\), 14px\\) \\+ var\\(--pt-pane-y, 66px\\) \\+ var\\(--radius-xl\\)\\);"));
+  assert.match(css, rule(`${pane} > \\.pt-chat-ban::after`, "background: linear-gradient\\(180deg, rgb\\(var\\(--photo-shade\\) / \\.5\\), rgb\\(var\\(--photo-shade\\) / \\.32\\) 55%, rgb\\(var\\(--photo-shade\\) / \\.5\\)\\);"));
+  assert.match(css, rule(`${pane} > \\.chat-header #channel-name`, "color: rgb\\(var\\(--on-photo\\)\\);"));
+  assert.doesNotMatch(css, /pt-has-ban[^{]*\{[^}]*mask-image/);
+  assert.doesNotMatch(strip, /pt-has-ban[^{]*\{[^}]*mask-image/);
+  assert.match(strip, /\.main\.pt-pane\.pt-has-ban > \.pt-chat-ban \{[^}]*top: 0;\s+height: calc\(var\(--pt-pane-y, 66px\) \+ var\(--radius-xl\)\);/);
   assert.match(css, rule(" \\.channel-intro-banner", "display: none;"));
 });
 

@@ -704,7 +704,6 @@ body.voice-dragging, body.voice-dragging * { cursor: grabbing !important; }
 }
 .empty-state h3 { color: var(--header-primary); margin-bottom: 8px; font-size: 24px; font-family: var(--font-display); letter-spacing: -.01em; }
 
-.chat-banner { display: none; }
 .channel-intro { margin-top: auto; padding: 24px 8px 8px; }
 .channel-intro-banner {
   height: 180px;

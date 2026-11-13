@@ -576,28 +576,18 @@ html[data-look="studio"]:not([data-fit="slim"]) .messages {
   scrollbar-width: thin;
   scrollbar-color: var(--bg-active) transparent;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-banner {
-  display: block;
-  position: relative;
-  flex: none;
-  height: 0;
-  pointer-events: none;
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-header {
+  border-radius: 0 var(--radius-xl) 0 0;
+  background: linear-gradient(90deg, rgb(var(--photo-shade) / .62), rgb(var(--photo-shade) / .3) 55%, rgb(var(--photo-shade) / .48)), var(--chat-banner) center / cover no-repeat;
+  box-shadow: inset 0 -1px 0 rgb(var(--on-photo) / .08);
+  color: rgb(var(--on-photo));
+  text-shadow: 0 1px 2px rgb(var(--photo-shade) / .55), 0 0 12px rgb(var(--photo-shade) / .35);
 }
-html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-banner::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto;
-  height: 112px;
-  background: var(--chat-banner) center / cover no-repeat;
-  -webkit-mask-image: linear-gradient(#000 24%, transparent);
-  mask-image: linear-gradient(#000 24%, transparent);
-}
-html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-banner:has(+ .messages.hidden) { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .messages {
-  padding-top: 96px;
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, transparent 34px, #000 96px);
-  mask-image: linear-gradient(180deg, transparent 0, transparent 34px, #000 96px);
-}
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-header .hash,
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-header .topic,
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-header .header-actions .icon-btn { color: rgb(var(--on-photo) / .86); }
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-header .topic { box-shadow: inset 1px 0 0 rgb(var(--on-photo) / .3); }
+html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-header .header-actions .icon-btn > svg { filter: drop-shadow(0 1px 2px rgb(var(--photo-shade) / .55)); }
 html[data-look="studio"]:not([data-fit="slim"]) .channel-intro-banner { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .msg {
   gap: 14px;

@@ -13,13 +13,15 @@ const profile = read("styles/studio-profile.css");
 const STUDIO = 'html[data-look="studio"]';
 const DESK = `${STUDIO}:not([data-fit="slim"])`;
 
-test("a channel's banner sits at the top of the chat on desktop and the welcome block drops its copy", () => {
-  assert.ok(html.includes('<div class="chat-banner" id="chat-banner" aria-hidden="true"></div>\n      <div class="messages" id="messages"></div>'));
-  assert.ok(base.includes(".chat-banner { display: none; }"));
-  assert.ok(studio.includes(`${DESK} .main.has-chat-banner > .chat-banner {`));
-  assert.ok(studio.includes(`${DESK} .main.has-chat-banner > .chat-banner:has(+ .messages.hidden) { display: none; }`));
+test("a channel's banner is the plain background of the chat header on desktop, with no fade strip over the messages", () => {
+  assert.ok(!html.includes('id="chat-banner"'));
+  assert.ok(!base.includes(".chat-banner"));
+  assert.ok(!studio.includes(".chat-banner"));
+  assert.match(studio, new RegExp(`${DESK.replace(/[[\]()".]/g, "\\$&")} \\.main\\.has-chat-banner > \\.chat-header \\{[^}]*background: linear-gradient\\(90deg, [^;]+\\), var\\(--chat-banner\\) center / cover no-repeat;`));
+  assert.ok(!/has-chat-banner[^{]*\{[^}]*mask-image/.test(studio));
   assert.ok(studio.includes(`${DESK} .channel-intro-banner { display: none; }`));
-  assert.match(app, /function paintDeskChatBanner\(\) \{\n  const node = \$\("chat-banner"\);\n  const ref = chatBanner\(\{ view: state\.view, channel: state\.currentChannel \}\);/);
+  assert.match(app, /function paintDeskChatBanner\(\) \{\n  const main = document\.querySelector\("\.main"\);\n  const ref = chatBanner\(\{ view: state\.view, channel: state\.currentChannel \}\);/);
+  assert.ok(app.includes('main.style.setProperty("--chat-banner", `url("${url}")`);'));
   assert.ok(app.includes('new MutationObserver(paintDeskChatBanner).observe($("channel-name"), { childList: true, characterData: true, subtree: true });'));
 });
 
