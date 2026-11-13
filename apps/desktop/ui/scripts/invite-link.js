@@ -7,8 +7,8 @@ async function openInviteLink(link) {
   try {
     const invite = await invoke("resolve_invite_link", { link });
     pendingInvite = invite;
-    $("invite-link-name").textContent = invite.server_name;
-    $("invite-link-icon").textContent = initials(invite.server_name);
+    $("invite-link-name").textContent = serverShownName(invite.server_name);
+    $("invite-link-icon").textContent = initials(serverShownName(invite.server_name));
     const hero = $("invite-link-hero");
     hero.style.backgroundImage = invite.background ? `url("${invite.background}")` : "";
     $("modal-invite-link").classList.toggle("has-hero", Boolean(invite.background));

@@ -5936,7 +5936,7 @@ async fn run_event_reminders(handle: tauri::AppHandle) {
                     let mins = (e.start - now).num_minutes();
                     let answered = e.rsvps.iter().any(|(u, _)| *u == profile.id);
                     (answered && (0..=LEAD_MINUTES).contains(&mins)).then(|| {
-                        (s.server.id, s.server.name.clone(), e.id.clone(), e.title.clone(), mins)
+                        (s.server.id, commy_core::server::shown_server_name(&s.server.name), e.id.clone(), e.title.clone(), mins)
                     })
                 })
             })

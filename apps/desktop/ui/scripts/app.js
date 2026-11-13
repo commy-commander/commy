@@ -3015,7 +3015,7 @@ function isGroupServer(serverId) {
 function railServerButton(server, folderId) {
   const btn = el("button", "server-icon");
   paintServerIcon(btn, server);
-  btn.title = server.name;
+  btn.title = shownServerName(server);
   btn.draggable = !touchOnly();
   btn.dataset.id = server.id;
   btn.style.setProperty("--server-tint", serverTint(server.id));
@@ -3041,6 +3041,16 @@ function railServerButton(server, folderId) {
   return wrap;
 }
 
+function shownServerName(server) {
+  return server ? serverShownName(server.name) : "";
+}
+
+function paintServerName(node, server) {
+  node.replaceChildren(...serverNameParts(server.name, server.emojis).map(part => typeof part === "string"
+    ? document.createTextNode(part)
+    : customEmojiImg(part.emoji.name, part.emoji.image, "custom-emoji server-name-emoji")));
+}
+
 function plainServer() {
   return state.view === "server" && state.currentServer && !state.currentServer.group ? state.currentServer : null;
 }
@@ -3049,7 +3059,8 @@ function paintTitlebar() {
   if (!document.body.classList.contains("has-titlebar")) return;
   const server = plainServer();
   const icon = $("titlebar-icon");
-  $("titlebar-name").textContent = server ? server.name : "Commy";
+  if (server) paintServerName($("titlebar-name"), server);
+  else $("titlebar-name").textContent = "Commy";
   if (server) {
     icon.classList.remove("is-logo");
     paintServerIcon(icon, server);
@@ -3090,7 +3101,7 @@ async function setupTitlebar() {
 function syncWindowTitle() {
   paintTitlebar();
   const server = plainServer();
-  const name = server ? server.name : null;
+  const name = server ? shownServerName(server) : null;
   if (name === state.windowTitleServer) return;
   state.windowTitleServer = name;
   document.title = name ? `${name} - Commy` : "Commy";
@@ -3272,7 +3283,7 @@ function renderServerRail() {
     const servers = item.servers.map(id => byId.get(id)).filter(Boolean);
     const folder = el("div", "rail-folder" + (item.open ? " open" : ""));
     const head = el("button", "folder-head");
-    head.title = item.name || servers.map(s => s.name).join(", ");
+    head.title = item.name || servers.map(shownServerName).join(", ");
     head.draggable = !touchOnly();
     if (item.open) {
       head.appendChild(svgIcon("folder", 22));
@@ -3413,7 +3424,7 @@ function noteJoinRequests(server) {
     const now = server.join_requests || [];
     const before = seenJoinRequests.get(server.id);
     seenJoinRequests.set(server.id, now);
-    const message = before ? joinRequestToast(server.name, newJoinRequests(before, now)) : "";
+    const message = before ? joinRequestToast(shownServerName(server), newJoinRequests(before, now)) : "";
     if (message) toast(message);
     const layer = $("server-settings");
     if (!layer.classList.contains("hidden") && layer.dataset.tab === "joins") renderJoinRequestSettings(server);
@@ -3677,7 +3688,7 @@ function openServerMenu(server, x, y, folderId) {
   menuServer = server;
   menuFolderOf = folderId || null;
   const { level, muted } = serverPrefs(server.id);
-  $("server-menu-title").textContent = server.name;
+  $("server-menu-title").textContent = shownServerName(server);
   for (const btn of $("server-menu").querySelectorAll(".ctx-radio")) {
     btn.classList.toggle("checked", btn.dataset.level === level);
   }
@@ -3790,7 +3801,7 @@ async function openLeaveServer(serverId) {
     }
   }
   leavingServerId = serverId;
-  $("leave-server-title").textContent = server.group ? "Leave this group?" : `Leave '${server.name}'`;
+  $("leave-server-title").textContent = server.group ? "Leave this group?" : `Leave '${shownServerName(server)}'`;
   $("leave-server-body").textContent = server.group
     ? "You stop seeing its messages and calls, and your copy of the conversation is removed from this device."
     : "Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.";
@@ -3849,7 +3860,7 @@ async function confirmTransferOwner() {
     const here = state.currentServer && state.currentServer.id === server.id;
     if (here) await refreshCurrentServer();
     if (here && !leaving && !$("server-settings").classList.contains("hidden")) openServerSettings("overview");
-    toast(`${name} now owns ${server.name}`);
+    toast(`${name} now owns ${shownServerName(server)}`);
     if (leaving) await openLeaveServer(server.id);
   } catch (e) {
     toast(String(e));
@@ -3858,7 +3869,7 @@ async function confirmTransferOwner() {
 
 function openDeleteServer(server) {
   deletingServerId = server.id;
-  $("delete-server-title").textContent = `Delete '${server.name}'`;
+  $("delete-server-title").textContent = `Delete '${shownServerName(server)}'`;
   const input = $("delete-server-input");
   input.value = "";
   input.placeholder = server.name;
@@ -4015,7 +4026,7 @@ function renderChannels() {
     renderDmThreads();
     return;
   }
-  $("server-name").textContent = server.name;
+  paintServerName($("server-name"), server);
   paintNarrowRail();
   paintSidebarBanner();
   renderServerExtras(list, server);
@@ -4553,7 +4564,7 @@ function loadServerImage(ref) {
 }
 
 function paintServerIcon(node, server) {
-  node.replaceChildren(document.createTextNode(initials(server.name)));
+  node.replaceChildren(document.createTextNode(initials(shownServerName(server))));
   node.classList.remove("has-image");
   if (!server.icon) return;
   const ref = server.icon;
@@ -5322,7 +5333,7 @@ function onMessageCreated(msg) {
   const level = levelForChannel(prefs, msg.server, msg.channel, nowSecs());
   const way = alertWay({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), at: Number(msg.at), frontSince: phoneFrontSince, isDm: false, mentioned, announcement });
   if (way !== "none") {
-    const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
+    const notice = messageNotice(sensitiveNotice(noticeServerShown(msg), msg.channel, sensitiveConfirmed()), plainText);
     alertNotice(way, notice, `channel:${msg.server}:${msg.channel}`);
     alertSound(way, "message");
   }
@@ -5684,7 +5695,7 @@ function onMessagesCaughtUp(payload) {
     const level = levelForChannel(prefs, server, channel, now);
     const way = alertWay({ level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), caughtUp: true, isDm: false, mentioned, announcement: Boolean(info.announcement) });
     if (way !== "none") {
-      const notice = caughtUpNotice(sensitiveNotice({ ...info, count, server_name: payload.server_name }, channel, sensitiveConfirmed()), plainText);
+      const notice = caughtUpNotice(sensitiveNotice(noticeServerShown({ ...info, count, server_name: payload.server_name }), channel, sensitiveConfirmed()), plainText);
       notices.push({ way, notice, target: `channel:${server}:${channel}` });
     }
   }
@@ -5696,6 +5707,10 @@ function onMessagesCaughtUp(payload) {
   if (!changed) return;
   syncUnreadBadge();
   if (state.currentServer && state.currentServer.id === server) renderChannels();
+}
+
+function noticeServerShown(info) {
+  return info.server_name ? { ...info, server_name: serverShownName(info.server_name) } : info;
 }
 
 function alertNotice(way, notice, target) {
@@ -6521,7 +6536,7 @@ function syncVoiceRoom(tiles) {
 function paintVoiceRoomHead(channel, left) {
   const server = state.currentServer;
   $("vr-name").textContent = channelPlainName(channel);
-  const sub = voiceRoomSub({ status: channel.voice_status, server: server.name });
+  const sub = voiceRoomSub({ status: channel.voice_status, server: shownServerName(server) });
   const may = canSetVoiceStatus({ channel, server, me: state.user && state.user.id });
   const line = $("vr-sub");
   line.textContent = sub.text;
@@ -9157,7 +9172,7 @@ function buildGroupIntro(server) {
   const mark = el("div", "channel-intro-mark");
   mark.appendChild(svgIcon("people", 34));
   intro.appendChild(mark);
-  intro.appendChild(el("h2", null, server.name));
+  intro.appendChild(el("h2", null, shownServerName(server)));
   const others = server.members.filter(m => !state.user || m.id !== state.user.id).map(m => m.name);
   const who = others.length > 1 ? `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]}` : others[0] || "just you so far";
   intro.appendChild(el("p", null, `This is the start of your group with ${who}. Messages and calls ${inBrowserApp() ? "stay" : "go straight"} between the people in it.`));
@@ -9544,7 +9559,7 @@ async function jumpToPin(pin, fromPanel = false) {
 async function openServerPins() {
   if (!state.currentServer) return;
   closeFloating();
-  $("pins-modal-title").textContent = `Pinned in ${state.currentServer.name}`;
+  $("pins-modal-title").textContent = `Pinned in ${shownServerName(state.currentServer)}`;
   showModal("modal-pins");
   await renderServerPins();
 }
@@ -11171,7 +11186,7 @@ function overlayRoster() {
   if (!channel) return null;
   const ids = channel.voice_user_ids || [];
   return {
-    server: server.name,
+    server: shownServerName(server),
     channel: channel.name,
     members: channel.voice_users.map((name, i) => {
       const id = ids[i];
@@ -11394,7 +11409,7 @@ function renderVoiceFilter() {
     button.setAttribute("aria-checked", String(on));
   }
   const server = state.voiceServer;
-  $("voice-filter-note").textContent = voiceFilterNote(key, voiceFilterHeldHere(state.voiceFilterHeld, server), server && server.name);
+  $("voice-filter-note").textContent = voiceFilterNote(key, voiceFilterHeldHere(state.voiceFilterHeld, server), shownServerName(server));
 }
 
 function wireVoiceFilter() {
@@ -12674,7 +12689,7 @@ const rulesPrompted = new Set();
 function openRules() {
   const server = state.currentServer;
   if (!server || !server.rules) return;
-  $("rules-title").textContent = `${server.name} Rules`;
+  $("rules-title").textContent = `${shownServerName(server)} Rules`;
   $("rules-body").replaceChildren(renderMarkdown(server.rules));
   $("rules-accept").classList.toggle("hidden", !server.needs_rules);
   showModal("modal-rules");
@@ -12706,10 +12721,10 @@ function openServerWelcome(step) {
   const twoSteps = Boolean(server.rules) && (hasRoles || Boolean(server.onboarding));
   $("sw-steps").lastElementChild.textContent = server.onboarding ? "Questions" : "Roles";
   paintServerIcon($("sw-icon"), server);
-  $("sw-title").textContent = step === "rules" ? `Welcome to ${server.name}` : `You are in, ${state.user ? state.user.username : "friend"}`;
+  $("sw-title").textContent = step === "rules" ? `Welcome to ${shownServerName(server)}` : `You are in, ${state.user ? state.user.username : "friend"}`;
   $("sw-sub").textContent = step === "rules"
     ? "This server asks new members to read its rules before posting."
-    : `${server.name} has roles you can give yourself.`;
+    : `${shownServerName(server)} has roles you can give yourself.`;
   $("sw-steps").classList.toggle("hidden", !twoSteps);
   for (const dot of $("sw-steps").children) {
     dot.classList.toggle("active", dot.dataset.step === step);
@@ -12839,7 +12854,7 @@ function openOnboarding(mode, draft) {
   paintServerIcon($("ob-icon"), server);
   const who = state.user ? state.user.username : "friend";
   const copy = {
-    join: [`Welcome in, ${who}`, `${server.name} uses your answers to hand out roles and open the right channels.`],
+    join: [`Welcome in, ${who}`, `${shownServerName(server)} uses your answers to hand out roles and open the right channels.`],
     change: ["Your answers", "Change what you picked when you joined. Your roles update right away."],
     preview: ["Welcome in, friend", "This is what new members see after the rules. Nothing picked here is saved."],
   }[mode];
@@ -13192,7 +13207,7 @@ function openEvents() {
   const first = new Date();
   eventsView.month = new Date(first.getFullYear(), first.getMonth(), 1);
   eventsView.day = null;
-  $("events-title").textContent = `${state.currentServer.name} Events`;
+  $("events-title").textContent = `${shownServerName(state.currentServer)} Events`;
   $("event-create").classList.toggle("hidden", !canCreateEvents(state.currentServer));
   $("events-layer").classList.remove("hidden");
   renderEvents();
@@ -13617,7 +13632,7 @@ function paintServerTagEditor() {
   const preview = $("server-tag-preview");
   const me = state.user ? state.user.display_name || state.user.username : "You";
   preview.replaceChildren(el("span", null, me));
-  if (serverTagEdit.letters) preview.appendChild(serverTagChip({ ...serverTagEdit, server: state.currentServer && state.currentServer.name }));
+  if (serverTagEdit.letters) preview.appendChild(serverTagChip({ ...serverTagEdit, server: shownServerName(state.currentServer) }));
   else preview.appendChild(el("span", "setting-sub", "Type some letters to see the tag"));
 }
 
@@ -14049,14 +14064,14 @@ async function openInviteMenu(person, anchor) {
   await refreshPeople();
   const servers = invitableServers(person.id);
   for (const server of servers) {
-    const btn = el("button", null, server.name);
+    const btn = el("button", null, shownServerName(server));
     btn.onclick = async () => {
       menu.classList.add("hidden");
       try {
         const ticket = await invoke("get_invite", { serverId: server.id });
         await invoke("open_dm", { userId: person.id });
-        const sent = await invoke("send_dm", { userId: person.id, content: `Come join me in ${server.name}! ${ticket}` });
-        dmSentToast(sent, person.name, `Invited ${person.name} to ${server.name}`);
+        const sent = await invoke("send_dm", { userId: person.id, content: `Come join me in ${shownServerName(server)}! ${ticket}` });
+        dmSentToast(sent, person.name, `Invited ${person.name} to ${shownServerName(server)}`);
       } catch (e) {
         toast(String(e));
       }
@@ -14217,7 +14232,7 @@ function mutualServerRows(servers, leave) {
     row.type = "button";
     const tile = row.appendChild(el("span", "prof-tile"));
     paintNarrowServerIcon(tile, state.servers.find(x => x.id === s.id) || s);
-    row.appendChild(el("span", "prof-name", s.name));
+    row.appendChild(el("span", "prof-name", shownServerName(s)));
     row.onclick = () => {
       leave();
       selectServer(s.id).then(phoneShowChat);
@@ -14263,8 +14278,8 @@ async function openFullProfile(member) {
   $("fp-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
   $("fp-servers").replaceChildren(...servers.map(s => {
     const row = el("button", "dm-profile-server");
-    row.appendChild(el("span", "server-chip", initials(s.name)));
-    row.appendChild(el("span", null, s.name));
+    row.appendChild(el("span", "server-chip", initials(shownServerName(s))));
+    row.appendChild(el("span", null, shownServerName(s)));
     row.onclick = () => {
       hideModals();
       selectServer(s.id).then(phoneShowChat);
@@ -14914,9 +14929,9 @@ function renderStorageSettings() {
   list.replaceChildren();
   for (const server of railServers()) {
     const row = el("div", "keep-row");
-    row.appendChild(el("span", "keep-name", server.name));
+    row.appendChild(el("span", "keep-name", shownServerName(server)));
     const select = keepSelect(storageSettings.servers[server.id] || "", `Default (${KEEP_LABELS[storageSettings.keep]})`);
-    select.setAttribute("aria-label", `Keep messages from ${server.name} for`);
+    select.setAttribute("aria-label", `Keep messages from ${shownServerName(server)} for`);
     select.onchange = () => setHistoryWindow(server.id, select.value || null);
     row.appendChild(select);
     list.appendChild(row);
@@ -15333,7 +15348,7 @@ function renderBanLengths(member, server, ban) {
     };
     grid.appendChild(btn);
   }
-  $("moderate-text").textContent = banChoiceText(member.name, server.name, ban.hours);
+  $("moderate-text").textContent = banChoiceText(member.name, shownServerName(server), ban.hours);
 }
 
 function confirmKick(member, server = state.currentServer) {
@@ -15341,7 +15356,7 @@ function confirmKick(member, server = state.currentServer) {
   askModeration({
     title: `Kick ${member.name}`,
     member,
-    text: `They are removed from ${server.name} and can rejoin with a new invite.`,
+    text: `They are removed from ${shownServerName(server)} and can rejoin with a new invite.`,
     label: "Kick",
     run: async () => {
       await invoke("kick_member", { serverId: server.id, userId: member.id });
@@ -15357,7 +15372,7 @@ function confirmBan(member, server = state.currentServer) {
   askModeration({
     title: `Ban ${member.name}`,
     member,
-    text: banChoiceText(member.name, server.name, null),
+    text: banChoiceText(member.name, shownServerName(server), null),
     label: "Ban",
     lengths: () => renderBanLengths(member, server, ban),
     run: async () => {
@@ -15632,7 +15647,7 @@ function openNicknameModal(member) {
   if (!member || !server) return;
   closeFloating();
   nicknameTarget = { serverId: server.id, userId: member.id };
-  $("nickname-hint").textContent = nicknamePrompt(member, server, state.user && state.user.id);
+  $("nickname-hint").textContent = nicknamePrompt(member, server && { ...server, name: shownServerName(server) }, state.user && state.user.id);
   const input = $("nickname-input");
   input.value = member.nickname || "";
   input.placeholder = member.username || "Nickname";
@@ -15689,7 +15704,7 @@ function openReport(target) {
   const servers = target.servers || [];
   $("report-server-row").classList.toggle("hidden", servers.length < 2);
   const pick = $("report-server");
-  pick.replaceChildren(...servers.map(s => new Option(s.name, s.id)));
+  pick.replaceChildren(...servers.map(s => new Option(shownServerName(s), s.id)));
   pick.value = target.serverId;
   pick.onchange = () => {
     reportTarget.serverId = pick.value;
@@ -15811,7 +15826,7 @@ async function renderReportSettings(server) {
 function onReportReceived(report) {
   const server = state.servers.find(s => s.id === report.server);
   invoke("notify", {
-    title: `New report${server ? ` in ${server.name}` : ""}`,
+    title: `New report${server ? ` in ${shownServerName(server)}` : ""}`,
     body: `${report.reporter_name} reported ${report.reported_name}`,
     target: null,
   }).catch(() => {});
@@ -16023,7 +16038,7 @@ function mayUseOtherServers() {
 
 function expressionGroups(kind) {
   const external = kind === "emoticons" || mayUseOtherServers();
-  return pickerGroups(serverHere(), shareable[kind], kind, { external });
+  return pickerGroups(serverHere(), shareable[kind], kind, { external }).map(group => ({ ...group, name: serverShownName(group.name) }));
 }
 
 function usableCustomEmojis() {
@@ -16913,7 +16928,7 @@ async function openJoinSoundPicker(serverId) {
     toast(String(e));
     return;
   }
-  $("join-sound-server").textContent = server.name;
+  $("join-sound-server").textContent = shownServerName(server);
   renderJoinSoundPicker(server, server.my_join_sound || null);
   showModal("modal-join-sound");
 }
@@ -16992,7 +17007,7 @@ async function toggleSoundboardPop() {
     };
     grid.appendChild(btn);
   };
-  grid.appendChild(el("div", "sb-section", server.name));
+  grid.appendChild(el("div", "sb-section", shownServerName(server)));
   for (const sound of server.sounds || []) addButton(sound.name, sound.name, sound.emoji);
   if (!(server.sounds || []).length) {
     grid.appendChild(el("div", "sb-empty", server.can_upload_sounds
@@ -17008,14 +17023,14 @@ async function toggleSoundboardPop() {
   let lastServer = null;
   for (const sound of others) {
     if (sound.server !== lastServer) {
-      grid.appendChild(el("div", "sb-section", sound.server_name));
+      grid.appendChild(el("div", "sb-section", serverShownName(sound.server_name)));
       lastServer = sound.server;
     }
     const btn = el("button", "sb-sound");
     const mark = soundPadMark(sound.emoji);
     if (mark) btn.appendChild(mark);
     btn.appendChild(el("span", null, sound.name));
-    btn.title = `Play ${sound.name} from ${sound.server_name} for everyone in the channel`;
+    btn.title = `Play ${sound.name} from ${serverShownName(sound.server_name)} for everyone in the channel`;
     btn.disabled = !server.can_use_soundboard;
     btn.onclick = async () => {
       const now = Date.now();
@@ -17670,7 +17685,7 @@ function savedRow(entry, { reminder = null, now }) {
   const body = el("div", "saved-body");
   const line = el("div", "saved-line");
   line.appendChild(el("span", "saved-author", entry.author_name || "Someone"));
-  line.appendChild(el("span", "saved-origin", savedOrigin(entry)));
+  line.appendChild(el("span", "saved-origin", savedOrigin(entry.server_name ? { ...entry, server_name: serverShownName(entry.server_name) } : entry)));
   if (reminder) {
     const chip = el("span", "saved-chip" + (reminder.due <= now ? " due" : ""));
     chip.appendChild(svgIcon("bell", 14));
@@ -17782,7 +17797,7 @@ async function openForward(message) {
   try {
     dms = await invoke("list_dm_threads");
   } catch {}
-  forwarding.targets = { servers: views.map(s => ({ ...s, channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
+  forwarding.targets = { servers: views.map(s => ({ ...s, name: shownServerName(s), channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
   renderForwardList();
 }
 
@@ -19364,7 +19379,7 @@ function paintNarrowRail() {
 function paintNarrowServers(server) {
   const active = $("narrow-active");
   paintNarrowServerIcon(active.querySelector(".narrow-active-icon"), server);
-  active.title = server ? `${server.name}: server controls` : "Direct Messages";
+  active.title = server ? `${shownServerName(server)}: server controls` : "Direct Messages";
   const others = railServers().filter(s => !server || s.id !== server.id);
   const shown = others.length > 4 ? others.slice(0, 3) : others;
   const cells = shown.map(other => {
@@ -19377,7 +19392,7 @@ function paintNarrowServers(server) {
   if (!cells.length) cells.push(svgIcon(server ? "chatBubble" : "plus", 20));
   grid.classList.toggle("lone", !others.length);
   grid.replaceChildren(...cells);
-  grid.title = others.length ? `Switch server: ${others.map(s => s.name).join(", ")}` : "Switch server";
+  grid.title = others.length ? `Switch server: ${others.map(shownServerName).join(", ")}` : "Switch server";
   grid.classList.toggle("unread", others.some(s => serverUnreadCount(s.id) > 0));
 }
 
@@ -19448,7 +19463,7 @@ function serverSwitchRows() {
   const current = narrowViewServer();
   return [
     narrowMenuRow("Direct Messages", icon => paintNarrowServerIcon(icon, null), enterDmMode, !current),
-    ...railServers().map(server => narrowMenuRow(server.name, icon => paintNarrowServerIcon(icon, server), () => selectServer(server.id), Boolean(current) && server.id === current.id)),
+    ...railServers().map(server => narrowMenuRow(shownServerName(server), icon => paintNarrowServerIcon(icon, server), () => selectServer(server.id), Boolean(current) && server.id === current.id)),
     narrowMenuRow("Add a Server", narrowGlyph("plus"), () => $("add-server-btn").click()),
     narrowMenuRow("Discover Servers", narrowGlyph("globe"), () => $("discover-btn").click()),
   ];
@@ -19457,7 +19472,7 @@ function serverSwitchRows() {
 function serverControlRows(server) {
   const events = upcomingEventCount(server);
   const rows = [
-    el("div", "narrow-menu-title", server.name),
+    el("div", "narrow-menu-title", shownServerName(server)),
     narrowMenuRow(events ? `${events} Event${events === 1 ? "" : "s"}` : "Events", narrowGlyph("calendar"), () => openEvents()),
   ];
   if (server.rules) rows.push(narrowMenuRow("Server Rules", narrowGlyph("book"), () => openRules()));
@@ -19972,7 +19987,7 @@ function renderGroupList() {
     row.appendChild(avatarWithPresence(person.name, person.id));
     const meta = el("div", "dm-meta");
     meta.appendChild(el("div", "dm-name", person.name));
-    meta.appendChild(el("div", "dm-preview", already ? "Already in this group" : person.servers.map(s => s.name).join(", ")));
+    meta.appendChild(el("div", "dm-preview", already ? "Already in this group" : person.servers.map(shownServerName).join(", ")));
     row.appendChild(meta);
     const pick = el("span", "pick");
     pick.appendChild(svgIcon("check", 14));
@@ -20233,7 +20248,7 @@ async function renderDmThreads() {
         row.appendChild(avatarWithPresence(person.name, person.id));
         const meta = el("div", "dm-meta");
         meta.appendChild(el("div", "dm-name", person.name));
-        meta.appendChild(el("div", "dm-preview", person.servers.map(s => s.name).join(", ")));
+        meta.appendChild(el("div", "dm-preview", person.servers.map(shownServerName).join(", ")));
         row.appendChild(meta);
         row.onclick = () => messageUser(person.id, person.name);
         list.appendChild(row);
@@ -20487,8 +20502,8 @@ function renderDmProfile(userId, name) {
   list.innerHTML = "";
   for (const server of servers) {
     const row = el("button", "dm-profile-server");
-    row.appendChild(el("span", "server-chip", initials(server.name)));
-    row.appendChild(el("span", null, server.name));
+    row.appendChild(el("span", "server-chip", initials(shownServerName(server))));
+    row.appendChild(el("span", null, shownServerName(server)));
     row.onclick = () => selectServer(server.id).then(phoneShowChat);
     list.appendChild(row);
   }
@@ -20547,7 +20562,7 @@ function renderInvitePeople() {
     row.appendChild(avatarWithPresence(person.name, person.id));
     const meta = el("div", "dm-meta");
     meta.appendChild(el("div", "dm-name", person.name));
-    meta.appendChild(el("div", "dm-preview", person.friend ? "Friend" : person.servers.map(s => s.name).join(", ")));
+    meta.appendChild(el("div", "dm-preview", person.friend ? "Friend" : person.servers.map(shownServerName).join(", ")));
     row.appendChild(meta);
     const sent = state.invitedNow.has(person.id);
     const btn = el("button", sent ? "btn-secondary btn-small" : "btn-primary btn-small", sent ? "Sent" : "Invite");
@@ -20556,11 +20571,11 @@ function renderInvitePeople() {
       btn.disabled = true;
       try {
         await invoke("open_dm", { userId: person.id });
-        const sentDm = await invoke("send_dm", { userId: person.id, content: `Come join me in ${server.name}! ${$("invite-text").value}` });
+        const sentDm = await invoke("send_dm", { userId: person.id, content: `Come join me in ${shownServerName(server)}! ${$("invite-text").value}` });
         state.invitedNow.add(person.id);
         btn.className = "btn-secondary btn-small";
         btn.textContent = "Sent";
-        dmSentToast(sentDm, person.name, `Invited ${person.name} to ${server.name}`);
+        dmSentToast(sentDm, person.name, `Invited ${person.name} to ${shownServerName(server)}`);
       } catch (e) {
         btn.disabled = false;
         toast(String(e));
@@ -20604,7 +20619,7 @@ function renderNewDmList() {
     row.appendChild(avatarWithPresence(person.name, person.id));
     const meta = el("div", "dm-meta");
     meta.appendChild(el("div", "dm-name", person.name));
-    meta.appendChild(el("div", "dm-preview", person.servers.map(s => s.name).join(", ")));
+    meta.appendChild(el("div", "dm-preview", person.servers.map(shownServerName).join(", ")));
     row.appendChild(meta);
     row.onclick = () => {
       hideModals();
@@ -21559,7 +21574,7 @@ async function toggleVoice(channel, back = false) {
     }
     state.voiceServer = leaving
       ? null
-      : { id: state.currentServer.id, name: state.currentServer.name, channelName: channel.name, activities_enabled: Boolean(state.currentServer.activities_enabled) };
+      : { id: state.currentServer.id, name: shownServerName(state.currentServer), channelName: channel.name, activities_enabled: Boolean(state.currentServer.activities_enabled) };
     if (leaving) {
       state.sharing = false;
       state.shareSource = null;
@@ -24524,7 +24539,7 @@ async function addFromCatalog() {
     await refreshExpressions();
     catalog.picked = null;
     for (const t of $("catalog-grid").querySelectorAll(".catalog-tile.picked")) t.classList.remove("picked");
-    toast(`Added :${name}: to ${server.name}`);
+    toast(`Added :${name}: to ${shownServerName(server)}`);
   } catch (e) {
     toast(String(e.message || e));
   } finally {
@@ -24577,7 +24592,7 @@ async function saveEmoticon() {
     await invoke("add_emoticon", { serverId: server.id, name, text });
     hideModals();
     await refreshExpressions();
-    toast(`Added :${name}: to ${server.name}`);
+    toast(`Added :${name}: to ${shownServerName(server)}`);
   } catch (e) {
     toast(String(e));
   }
@@ -24894,7 +24909,7 @@ function openServerInfo(server) {
   const me = state.user && server.members.find(m => m.id === state.user.id);
   const online = server.members.filter(m => m.presence && m.presence !== "offline").length;
   paintServerIcon($("si-icon"), server);
-  $("si-title").textContent = server.name;
+  $("si-title").textContent = shownServerName(server);
   const count = server.members.length;
   $("si-sub").textContent = [`${count} member${count === 1 ? "" : "s"}`, online ? `${online} online` : "", server.public ? "Public server" : ""].filter(Boolean).join(" \u00b7 ");
   const banner = $("si-banner");
@@ -25075,7 +25090,7 @@ function openServerSettings(tab) {
   if (!canOpenServerSettings(server)) return openServerInfo(server);
   const layer = $("server-settings");
   const canMembers = server.can_kick || server.can_manage_roles;
-  $("server-settings-title").textContent = server.name;
+  $("server-settings-title").textContent = shownServerName(server);
 
   $("rename-input").value = server.name;
   $("rename-input").disabled = !server.can_manage_server;
@@ -25640,8 +25655,8 @@ async function unbanRemoved(server, ban) {
 async function inviteBack(server, person) {
   const invite = (await invoke("create_invite_link", { serverId: server.id, expires: "7d" })).url;
   await invoke("open_dm", { userId: person.id });
-  const sent = await invoke("send_dm", { userId: person.id, content: `Come back to ${server.name}! ${invite}` });
-  dmSentToast(sent, person.name, `Sent ${person.name} an invite back to ${server.name}`);
+  const sent = await invoke("send_dm", { userId: person.id, content: `Come back to ${shownServerName(server)}! ${invite}` });
+  dmSentToast(sent, person.name, `Sent ${person.name} an invite back to ${shownServerName(server)}`);
 }
 
 function renderRemovedSettings(server) {
@@ -25854,8 +25869,8 @@ function botRoleChips(server, member, changed) {
 async function removeBot(server, member, command) {
   const banning = command === "ban_member";
   const question = banning
-    ? `Ban ${member.name} from ${server.name}? It is removed and cannot rejoin until unbanned.`
-    : `Remove ${member.name} from ${server.name}?`;
+    ? `Ban ${member.name} from ${shownServerName(server)}? It is removed and cannot rejoin until unbanned.`
+    : `Remove ${member.name} from ${shownServerName(server)}?`;
   if (!(await confirm(question))) return;
   try {
     await invoke(command, { serverId: server.id, userId: member.id });
@@ -27055,7 +27070,7 @@ function voiceInviteSource(serverId, channelId) {
   const connected = state.voiceServer && state.voiceServer.id === serverId && state.voiceChannelId === channelId ? state.voiceServer : null;
   const summary = state.servers.find(s => s.id === serverId);
   return {
-    serverName: (current && current.name) || (connected && connected.name) || (summary && summary.name) || "",
+    serverName: serverShownName((current && current.name) || (connected && connected.name) || (summary && summary.name) || ""),
     channelName: channel ? channelPlainName(channel) : (connected && connected.channelName) || "",
   };
 }
@@ -27080,7 +27095,7 @@ async function openVoiceInvite(serverId, channelId) {
     dms = await invoke("list_dm_threads");
   } catch {}
   if (!voiceInviting || voiceInviting.server !== serverId || voiceInviting.channel !== channelId) return;
-  voiceInviting.targets = { servers: views.map(s => ({ ...s, channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
+  voiceInviting.targets = { servers: views.map(s => ({ ...s, name: shownServerName(s), channels: s.channels.map(c => ({ ...c, name: channelPlainName(c) })) })), dms };
   renderVoiceInviteList();
 }
 
@@ -27135,7 +27150,7 @@ function voiceInviteLocalPresence(invite) {
   const ids = channel.voice_user_ids || [];
   return {
     known: true,
-    server_name: server.name,
+    server_name: shownServerName(server),
     channel_name: channelPlainName(channel),
     user_limit: channel.user_limit || 0,
     can_view: channel.can_view !== false,
@@ -27183,7 +27198,7 @@ function paintVoiceInviteCard(card, invite, presence) {
   const users = live ? live.users || [] : [];
   const limit = live ? live.user_limit || 0 : 0;
   const full = live ? voiceInviteIsFull({ users, limit, inThisCall }) : false;
-  card.querySelector(".voice-invite-title").textContent = voiceInviteTitle({ channelName: invite.channel_name, serverName: invite.server_name, live });
+  card.querySelector(".voice-invite-title").textContent = voiceInviteTitle({ channelName: invite.channel_name, serverName: serverShownName(invite.server_name), live });
   const summary = voiceInviteSummary(users);
   const faces = card.querySelector(".voice-invite-faces");
   faces.replaceChildren(...summary.shown.map(user => makeAvatar(user.id, user.name, "avatar avatar-sm")));

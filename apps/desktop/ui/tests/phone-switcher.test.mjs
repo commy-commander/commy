@@ -9,7 +9,8 @@ const css = read("styles", "phone-switcher.css");
 const glue = read("scripts", "phone-switcher.js");
 const html = read("index.html");
 const SLIM = 'html[data-look="studio"][data-fit="slim"]';
-const { SWITCHER_NEWS_FACES, newsServers, newsSummary, newsWords, optionsWords } = require("../scripts/phone-switcher.js");
+globalThis.serverShownName = require("../scripts/server-names.js").serverShownName;
+const { SWITCHER_NEWS_FACES, newsServers, newsSummary, newsCount, newsWords, optionsWords } = require("../scripts/phone-switcher.js");
 
 const rule = selector => {
   const at = css.indexOf(`${SLIM} ${selector} {`);
@@ -66,6 +67,18 @@ test("the capsule names the servers with news for screen readers", () => {
   assert.equal(newsWords(items.slice(0, 1)), "New in Night Owls");
   assert.equal(newsWords(items.slice(0, 2)), "New in Night Owls and Book Nook");
   assert.equal(newsWords(items), "New in Night Owls, Book Nook and 1 more");
+});
+
+test("the capsule says its number counts new messages", () => {
+  assert.equal(newsCount({ label: "1" }), "1 new");
+  assert.equal(newsCount({ label: "99+" }), "99+ new");
+  assert.match(glue, /news\.title = newsWords\(items\);/);
+});
+
+test("server names drop emoji codes in the capsule and options key", () => {
+  const items = [{ server: { id: "gi", name: "Gabagool Industries :pepodancels:" }, count: 1 }];
+  assert.equal(newsWords(items), "New in Gabagool Industries");
+  assert.equal(optionsWords({ name: ":pepodancels: Gabagool Industries" }), "Gabagool Industries options");
 });
 
 test("the row of servers gives way to the name on Home, and the sheet borrows the app's own server list", () => {

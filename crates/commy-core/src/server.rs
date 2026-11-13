@@ -109,6 +109,45 @@ pub fn valid_thread_name(name: &str) -> bool {
     clean_thread_name(name).as_deref() == Some(name) && name.chars().count() <= MAX_THREAD_NAME_CHARS
 }
 
+fn emoji_code_at(name: &str, start: usize) -> Option<(usize, bool)> {
+    let rest = &name[start + 1..];
+    let end = rest.find(':')?;
+    let code = &rest[..end];
+    let shaped = (2..=32).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    shaped.then(|| (start + 1 + end + 1, code.bytes().any(|b| b.is_ascii_lowercase() || b == b'_')))
+}
+
+fn replace_emoji_codes(name: &str, keep_word: bool) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut at = 0;
+    while let Some(found) = name[at..].find(':') {
+        let start = at + found;
+        out.push_str(&name[at..start]);
+        match emoji_code_at(name, start) {
+            Some((end, true)) => {
+                if keep_word {
+                    out.push_str(&name[start + 1..end - 1]);
+                }
+                at = end;
+            }
+            Some((end, false)) => {
+                out.push_str(&name[start..end]);
+                at = end;
+            }
+            None => {
+                out.push(':');
+                at = start + 1;
+            }
+        }
+    }
+    out.push_str(&name[at..]);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub fn shown_server_name(name: &str) -> String {
+    [false, true].into_iter().map(|keep_word| replace_emoji_codes(name, keep_word)).find(|shown| !shown.is_empty()).unwrap_or_else(|| name.to_string())
+}
+
 pub const MAX_VOICE_STATUS_CHARS: usize = 80;
 
 pub fn clean_voice_status(text: &str) -> Option<String> {
@@ -751,6 +790,18 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shown_server_name_drops_emoji_codes() {
+        assert_eq!(shown_server_name("Gabagool Industries :pepodancels:"), "Gabagool Industries");
+        assert_eq!(shown_server_name(":pepodancels: Gabagool  Industries"), "Gabagool Industries");
+        assert_eq!(shown_server_name("Pixel :heart: Club"), "Pixel Club");
+        assert_eq!(shown_server_name(":pepodancels:"), "pepodancels");
+        assert_eq!(shown_server_name("Night shift 10:30:45"), "Night shift 10:30:45");
+        assert_eq!(shown_server_name("Team: Alpha"), "Team: Alpha");
+        assert_eq!(shown_server_name("Café :ok_hand: ünïcode"), "Café ünïcode");
+        assert_eq!(shown_server_name(""), "");
+    }
 
     #[test]
     fn new_server_has_defaults() {

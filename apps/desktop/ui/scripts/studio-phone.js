@@ -1029,7 +1029,7 @@ function liveTile(stream, wide) {
   foot.appendChild(makeAvatar(stream.userId, stream.name, "avatar"));
   const text = el("span", "t");
   text.appendChild(el("b", "", stream.mine ? "Your screen" : `${stream.name}'s screen`));
-  text.appendChild(el("span", "", `${room.channelName} · ${room.serverName}`));
+  text.appendChild(el("span", "", `${room.channelName} · ${serverShownName(room.serverName)}`));
   foot.appendChild(text);
   if (wide) foot.appendChild(personStack(room.people.filter(person => person.id !== stream.userId)));
   tile.append(thumb, foot);
@@ -1043,7 +1043,7 @@ function liveRoomRow(room) {
   row.appendChild(studioNode("span", "rw-icon", '<i data-i="volume-2"></i>'));
   const text = el("span", "t");
   text.appendChild(el("b", "", room.channelName));
-  text.appendChild(el("span", "", `${room.serverName} · ${roomLine(room.people.length, room.here)}`));
+  text.appendChild(el("span", "", `${serverShownName(room.serverName)} · ${roomLine(room.people.length, room.here)}`));
   row.append(text, personStack(room.people));
   row.onclick = () => openLiveRoom(room);
   return row;
@@ -1395,7 +1395,7 @@ function paintProfileTag() {
   const worn = wornTag();
   const button = $("pt-prof-tag");
   button.querySelector(":scope > .server-tag")?.remove();
-  value.textContent = worn ? worn.server.name : "None";
+  value.textContent = worn ? shownServerName(worn.server) : "None";
   if (worn) value.before(serverTagChip(worn.tag));
   const options = wearableTags(state.servers);
   button.disabled = !options.length && !worn;
@@ -1797,7 +1797,7 @@ function paintChatHeader() {
   const presence = $("chat-presence").classList.contains("hidden") ? "" : $("chat-presence").title;
   const text = chatSubtitle({
     view: state.view === "dm" ? "dm" : "server",
-    serverName: state.currentServer ? state.currentServer.name : "",
+    serverName: shownServerName(state.currentServer),
     group: Boolean(state.view === "server" && state.currentServer && state.currentServer.group),
     presence,
   });

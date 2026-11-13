@@ -112,7 +112,7 @@ pub fn label(state: &ServerState, me: UserId) -> Option<Label> {
         .iter()
         .filter_map(|m| commy_view::known_name_of(state, m.user).map(|name| (m.user.to_string(), name)))
         .collect();
-    Some(Label { name: server.name.clone(), group: server.group, channels, members })
+    Some(Label { name: commy_core::server::shown_server_name(&server.name), group: server.group, channels, members })
 }
 
 pub fn labels(app: &App) -> BTreeMap<String, Label> {

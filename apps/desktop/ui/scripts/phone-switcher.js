@@ -14,9 +14,13 @@ function newsSummary(items, faces = SWITCHER_NEWS_FACES) {
   return { faces: items.slice(0, faces).map(item => item.server), total, label: total > 99 ? "99+" : String(total) };
 }
 
+function newsCount(summary) {
+  return `${summary.label} new`;
+}
+
 function newsWords(items) {
   if (!items.length) return "Your servers";
-  const names = items.map(item => item.server.name);
+  const names = items.map(item => serverShownName(item.server.name));
   return `New in ${names.length > 2 ? `${names.slice(0, 2).join(", ")} and ${names.length - 2} more` : names.join(" and ")}`;
 }
 
@@ -78,7 +82,7 @@ function buildServerSwitcher() {
 }
 
 function optionsWords(server) {
-  return server ? `${server.name} options` : "Server options";
+  return server ? `${serverShownName(server.name)} options` : "Server options";
 }
 
 function switcherKey(icon, words, target) {
@@ -95,6 +99,7 @@ function paintNewsCapsule() {
   const items = current ? newsServers(railServers(), current.id, serverUnreadCount, isServerMuted) : [];
   news.hidden = !switcherOn() || !items.length;
   news.setAttribute("aria-label", newsWords(items));
+  news.title = newsWords(items);
   if (news.hidden) return;
   const summary = newsSummary(items);
   const faces = summary.faces.map(server => {
@@ -103,7 +108,7 @@ function paintNewsCapsule() {
     face.style.setProperty("--server-tint", serverTint(server.id));
     return face;
   });
-  news.replaceChildren(...faces, el("span", "pt-count", summary.label));
+  news.replaceChildren(...faces, el("span", "pt-count pt-news-count", newsCount(summary)));
 }
 
 function paintSwitcher() {
@@ -190,7 +195,7 @@ function wireServerSwitcher() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { SWITCHER_NEWS_FACES, newsServers, newsSummary, newsWords, optionsWords };
+  module.exports = { SWITCHER_NEWS_FACES, newsServers, newsSummary, newsCount, newsWords, optionsWords };
 } else {
   wireServerSwitcher();
 }

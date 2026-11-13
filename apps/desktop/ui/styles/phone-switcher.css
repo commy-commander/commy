@@ -35,7 +35,7 @@ html[data-look="studio"][data-fit="slim"] .pt-news > .pt-news-face {
 }
 html[data-look="studio"][data-fit="slim"] .pt-news > .pt-news-face + .pt-news-face { margin-left: -4px; }
 html[data-look="studio"][data-fit="slim"] .pt-news > .pt-news-face.has-image { background-size: cover; background-position: center; }
-html[data-look="studio"][data-fit="slim"] .pt-news > .pt-count { margin-left: 5px; }
+html[data-look="studio"][data-fit="slim"] .pt-news > .pt-count { margin-left: 6px; height: 24px; padding: 0 9px; font-size: 12.5px; white-space: nowrap; }
 
 html[data-look="studio"][data-fit="slim"] .pt-servers:not([hidden]) {
   position: fixed;
