@@ -1,7 +1,7 @@
 
 use crate::event::ServerEvent;
 use crate::identity::{Identity, IdentityKey, Signature};
-use crate::ids::{ServerId, UserId};
+use crate::ids::{ChannelId, ServerId, UserId};
 use crate::permissions::Permissions;
 use crate::server::Server;
 use serde::{Deserialize, Serialize};
@@ -108,6 +108,10 @@ pub fn may_go_unsigned(event: &ServerEvent) -> bool {
     }
 }
 
+pub fn channel_subject(channel: ChannelId) -> String {
+    format!("channel:{channel}")
+}
+
 pub fn subject(event: &ServerEvent) -> Option<String> {
     use ServerEvent as E;
     let s = match event {
@@ -115,8 +119,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::MemberLeave { user, .. } => format!("member:{user}"),
         E::MemberBan { user, .. } | E::MemberUnban { user, .. } | E::MemberBanUntil { user, .. } => format!("ban:{user}"),
         E::ProfileUpdate { profile } => format!("profile:{}", profile.id),
-        E::ChannelCreate { channel, .. } => format!("channel:{}", channel.id),
-        E::ChannelDelete { channel, .. } => format!("channel:{channel}"),
+        E::ChannelCreate { channel, .. } => channel_subject(channel.id),
+        E::ChannelDelete { channel, .. } => channel_subject(*channel),
         E::ChannelUpdate { channel, .. } => format!("channel.name:{channel}"),
         E::ChannelLayout { channel, .. } => format!("channel.layout:{channel}"),
         E::ChannelLimit { channel, .. } => format!("channel.limit:{channel}"),

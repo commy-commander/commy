@@ -94,7 +94,7 @@ use view::{
 use base64::Engine as _;
 use commy_core::SignedEvent;
 use commy_core::{
-    Activity, ActivityInput, Attachment, Channel, ChannelId, ChannelKind, DmAction, DmMessage, Identity, Message, MessageId, Permissions,
+    Activity, ActivityInput, Attachment, ChannelId, ChannelKind, DmAction, DmMessage, Identity, Message, MessageId, Permissions,
     Presence, RoleId, ServerEvent, ServerId, ServerState, StoreError, UserId,
     UserProfile,
 };
@@ -515,7 +515,7 @@ async fn own_server_state<'a>(
     name: &str,
     connect: impl std::future::Future<Output = CmdResult<()>>,
 ) -> CmdResult<(ServerState, UserProfile, tokio::sync::RwLockReadGuard<'a, ()>)> {
-    own_server_state_from(app, id, connect, |owner| commy_core::Server::new(name, owner)).await
+    own_server_state_from(app, id, connect, |owner| commy_core::Server::awaiting_copy(name, owner)).await
 }
 
 async fn own_server_state_from<'a>(
@@ -3487,6 +3487,9 @@ async fn rename_server(
 fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
     let shows_pronouns = app.safety.lock().unwrap().profile_policy.shows_details_to_servers();
     let pronouns = app.voice.lock().unwrap().pronouns.clone().filter(|_| shows_pronouns);
+    if app.awaits_snapshot(sid) {
+        return Vec::new();
+    }
     let servers = app.servers.lock().unwrap();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
     let perms = our_permissions(app, state, me);
@@ -4435,6 +4438,45 @@ mod removal_tests {
 #[cfg(test)]
 mod placeholder_tests {
     use super::*;
+
+    #[test]
+    fn a_copy_waiting_for_its_snapshot_announces_no_channels_even_for_its_owner() {
+        let identity = Identity::generate();
+        let mut me = UserProfile::new("me");
+        me.identity = Some(identity.public());
+        let server = commy_core::Server::new("s", me.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(me.id, me.clone());
+        let app = App::default();
+        *app.profile.lock().unwrap() = Some(me.clone());
+        *app.identity.lock().unwrap() = Some(identity.clone());
+        app.servers.lock().unwrap().insert(sid, state);
+        let mut ticket = ServerTicket::new(sid, "s", [7; 32], vec![]);
+        ticket.owner = Some((me.id, identity.public()));
+        app.invites.lock().unwrap().insert(sid, ticket.encode());
+
+        app.set_awaiting_snapshot(sid, true);
+        assert!(invite_names_me_owner(&app, sid, me.id));
+        assert!(structure_announcements(&app, sid, me.id).is_empty());
+        let relayed_only = neighbor_announcements(&app, sid, me.id);
+        assert!(relayed_only.is_empty(), "{relayed_only:?}");
+
+        app.set_awaiting_snapshot(sid, false);
+        let settled = structure_announcements(&app, sid, me.id);
+        assert!(settled.iter().any(|e| matches!(e, ServerEvent::ChannelCreate { .. })));
+    }
+
+    #[tokio::test]
+    async fn joining_holds_no_made_up_channels_while_the_snapshot_is_on_its_way() {
+        let app = App::default();
+        *app.profile.lock().unwrap() = Some(UserProfile::new("me"));
+        let (state, _, signing) = own_server_state(&app, ServerId::new(), "Joined", async { Ok(()) }).await.unwrap();
+        drop(signing);
+        assert!(state.server.channels.is_empty());
+        assert_eq!(state.server.afk_channel(), None);
+        assert_eq!(state.server.name, "Joined");
+    }
 
     #[test]
     fn a_placeholder_naming_us_owner_grants_nothing_over_others() {
@@ -8202,30 +8244,6 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                     if let Err(e) = rejoined {
                         tracing::debug!("could not stay on a deleted server to pass on its deletion: {e}");
                     }
-                }
-
-                let afk_channels: Vec<(ServerId, ServerEvent)> = {
-                    let mut servers = app.servers.lock().unwrap();
-                    servers
-                        .values_mut()
-                        .filter(|s| Some(s.server.owner) == me && s.server.afk_channel().is_none())
-                        .map(|state| {
-                            let sid = state.server.id;
-                            let position = state.server.channels.len() as u32;
-                            let channel = Channel::new("AFK", ChannelKind::Voice, position);
-                            let event = ServerEvent::ChannelCreate { server: sid, channel };
-                            let _ = state.apply(event.clone());
-                            (sid, event)
-                        })
-                        .collect()
-                };
-                for (sid, event) in afk_channels {
-                    let payload = app.wire_for(sid, event);
-                    community_sync::publish(sid, &payload);
-                    if let Err(e) = node.broadcast(sid, payload).await {
-                        tracing::debug!("afk channel announce pending: {e}");
-                    }
-                    app.persist_server(sid);
                 }
 
                 *app.node_hex.lock().unwrap() = Some(hex.clone());

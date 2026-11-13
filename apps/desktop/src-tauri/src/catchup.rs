@@ -1201,6 +1201,11 @@ pub fn release_own_servers(app: &App, invites: &HashMap<ServerId, String>) {
             .collect()
     };
     for server in settled {
+        let made_up = app.servers.lock().unwrap().get_mut(&server).map(|state| state.drop_channels_nobody_announced(me)).unwrap_or_default();
+        if !made_up.is_empty() {
+            tracing::warn!("{server} drops {} channels this device made up while it waited", made_up.len());
+            app.persist_server(server);
+        }
         tracing::warn!("{server} is ours and already has history; it no longer waits for a snapshot");
         app.set_awaiting_snapshot(server, false);
     }
@@ -2759,6 +2764,34 @@ mod tests {
         app.set_awaiting_snapshot(sid, true);
         release_own_servers(&app, &invite(&me));
         assert!(app.awaits_snapshot(sid));
+    }
+
+    #[test]
+    fn an_owners_other_device_drops_the_channels_it_made_up_before_it_stops_waiting() {
+        let me = Member::new("owner");
+        let friend = Member::new("friend");
+        let (real, general) = server(&me);
+        let sid = real.server.id;
+        let mut ours = placeholder(&me, sid);
+        let made_up: Vec<ChannelId> = ours.server.channels.iter().map(|c| c.id).collect();
+        join(&mut ours, &friend);
+        let announced = real.server.channel(general).unwrap().clone();
+        let create = SignedEvent::sign(sid, me.id(), 1_000, ServerEvent::ChannelCreate { server: sid, channel: announced }, &me.identity);
+        assert_eq!(ours.apply_signed(&create), Ok(true));
+        ours.apply(ServerEvent::MessageCreate { message: friend.post(&real, general, "hi") }).unwrap();
+        let app = app_with(&me, ours);
+        app.set_awaiting_snapshot(sid, true);
+        let mut ticket = commy_net::ServerTicket::new(sid, "s", [7; 32], vec![]);
+        ticket.owner = Some((me.id(), me.identity.public()));
+
+        release_own_servers(&app, &HashMap::from([(sid, ticket.encode())]));
+        assert!(!app.awaits_snapshot(sid));
+        let state = app.servers.lock().unwrap()[&sid].clone();
+        let kept: Vec<ChannelId> = state.server.channels.iter().map(|c| c.id).collect();
+        assert_eq!(kept, vec![general]);
+        assert!(made_up.iter().all(|c| state.server.channel(*c).is_none()));
+        assert_eq!(state.server.afk_channel(), None);
+        assert_eq!(state.messages(general).len(), 1);
     }
 
     #[test]

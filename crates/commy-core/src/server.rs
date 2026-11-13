@@ -745,6 +745,13 @@ impl Server {
             .max_by_key(|r| r.position)
     }
 
+    pub fn awaiting_copy(name: impl Into<String>, owner: UserId) -> Self {
+        let mut server = Self::new(name, owner);
+        server.channels.clear();
+        server.afk_channel_id = None;
+        server
+    }
+
     pub fn group(owner: UserId) -> Self {
         let mut server = Self::new("", owner);
         server.group = true;
@@ -812,6 +819,16 @@ mod tests {
         assert_eq!(server.channels[1].kind, ChannelKind::Voice);
         assert!(server.is_member(owner));
         assert_eq!(server.afk_channel(), Some(server.channels[2].id));
+    }
+
+    #[test]
+    fn a_copy_awaiting_the_owners_snapshot_makes_up_no_channels() {
+        let me = UserId::new();
+        let waiting = Server::awaiting_copy("Joined", me);
+        assert!(waiting.channels.is_empty());
+        assert_eq!(waiting.afk_channel(), None);
+        assert_eq!(waiting.name, "Joined");
+        assert!(waiting.is_member(me));
     }
 
     #[test]

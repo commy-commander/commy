@@ -1030,6 +1030,28 @@ impl ServerState {
         self.signed_actions.contains_key(subject)
     }
 
+    pub fn drop_channels_nobody_announced(&mut self, me: UserId) -> Vec<ChannelId> {
+        let made_up: Vec<ChannelId> = self
+            .server
+            .channels
+            .iter()
+            .filter(|c| !self.holds_signed_action(&action::channel_subject(c.id)))
+            .filter(|c| self.messages(c.id).iter().all(|m| m.author == me))
+            .map(|c| c.id)
+            .collect();
+        for &channel in &made_up {
+            self.server.channels.retain(|c| c.id != channel);
+            for m in self.messages.remove(&channel).into_iter().flatten() {
+                self.index.remove(&m.id);
+            }
+            self.channel_keys.remove(&channel);
+            if self.server.afk_channel_id == Some(channel) {
+                self.server.afk_channel_id = None;
+            }
+        }
+        made_up
+    }
+
     pub fn audit_log(&self) -> &[AuditEntry] {
         &self.audit
     }
@@ -3591,6 +3613,40 @@ mod tests {
 
         assert_eq!(state.apply(ServerEvent::AfkChannelSet { server: sid, channel: None }), Ok(true));
         assert_eq!(state.server.afk_channel(), None);
+    }
+
+    #[test]
+    fn only_channels_someone_announced_or_others_spoke_in_survive_a_tidy() {
+        let (mut state, made_up_text, me) = fixture();
+        let sid = state.server.id;
+        let made_up: Vec<ChannelId> = state.server.channels.iter().map(|c| c.id).collect();
+        let friend = join(&mut state, "friend");
+        let announced = Channel::new("general", ChannelKind::Text, 0);
+        let (announced_id, quiet) = (announced.id, Channel::new("General", ChannelKind::Voice, 1));
+        let quiet_id = quiet.id;
+        for channel in [announced, quiet] {
+            let create = signed_event(&state, me, Utc::now(), ServerEvent::ChannelCreate { server: sid, channel });
+            assert_eq!(state.apply_signed(&create), Ok(true));
+        }
+        let heard = post(&state, announced_id, friend, "hi");
+        let mine = post(&state, made_up_text, me, "only me in here");
+        for message in [&heard, &mine] {
+            state.apply(ServerEvent::MessageCreate { message: message.clone() }).unwrap();
+        }
+        let spoken_in = Channel::new("off-topic", ChannelKind::Text, 3);
+        let spoken_id = spoken_in.id;
+        state.apply(ServerEvent::ChannelCreate { server: sid, channel: spoken_in }).unwrap();
+        state.apply(ServerEvent::MessageCreate { message: post(&state, spoken_id, friend, "yo") }).unwrap();
+
+        let dropped = state.drop_channels_nobody_announced(me);
+        assert_eq!(dropped, made_up);
+        let kept: Vec<ChannelId> = state.server.channels.iter().map(|c| c.id).collect();
+        assert_eq!(kept, vec![announced_id, quiet_id, spoken_id]);
+        assert!(!state.has_message(mine.id));
+        assert!(state.has_message(heard.id));
+        assert_eq!(state.server.afk_channel_id, None);
+        assert!(!state.server.deleted_channels.contains(&made_up_text), "a tidy is not a delete");
+        assert!(state.drop_channels_nobody_announced(me).is_empty());
     }
 
     #[test]
