@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, playsAppSound, inAppLine, sentBeforeFront } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -217,4 +217,21 @@ test("a phone in the background lets its notification play the sound, so it neve
 test("an in-app alert reads as one line", () => {
   assert.equal(inAppLine({ title: "Ana in #general (Club)", body: "hi" }), "Ana in #general (Club): hi");
   assert.equal(inAppLine({ title: "Ana", body: "" }), "Ana");
+});
+
+test("a tapped notification names the DM or the channel it opens", () => {
+  const id = "7da1b7e3-9818-4075-a087-1c4587540659";
+  const room = "0b1c2d3e-4f50-4617-8899-aabbccddeeff";
+  assert.deepEqual(noticeTarget(`dm:${id}`), { kind: "dm", user: id });
+  assert.deepEqual(noticeTarget(`channel:${id}:${room}`), { kind: "channel", server: id, channel: room });
+  for (const bad of [null, "", "dm:", "dm:a b", `dm:${id}:x`, `channel:${id}`, `channel:${id}:${room}:x`, "call:abc", "open:calc.exe"]) {
+    assert.equal(noticeTarget(bad), null, String(bad));
+  }
+});
+
+test("phones get a tappable banner instead of the quick reply card", () => {
+  assert.equal(quickReplyCard({ focused: true, viewing: false, phone: false }), true);
+  assert.equal(quickReplyCard({ focused: true, viewing: false, phone: true }), false);
+  assert.equal(quickReplyCard({ focused: true, viewing: true, phone: false }), false);
+  assert.equal(quickReplyCard({ focused: false, viewing: false, phone: false }), false);
 });

@@ -483,7 +483,6 @@ mod phone_push {
         PLUGIN.lock().unwrap().clone()
     }
 
-    #[cfg(target_os = "android")]
     #[derive(Deserialize, Default)]
     struct TargetAnswer {
         #[serde(default)]
@@ -501,7 +500,6 @@ mod phone_push {
         });
     }
 
-    #[cfg(target_os = "android")]
     pub fn take_target() -> Option<String> {
         let plugin = plugin()?;
         plugin.run_mobile_plugin::<TargetAnswer>("takeTarget", serde_json::json!({})).ok()?.target
@@ -550,15 +548,11 @@ pub use phone_push::init;
 #[cfg(target_os = "android")]
 pub use phone_push::show;
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 use phone_push as phone;
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(mobile))]
 mod phone {
-    #[cfg(target_os = "ios")]
-    pub(super) use super::phone_push::save_previews;
-
-    #[cfg(not(target_os = "ios"))]
     pub fn save_previews(_previews: serde_json::Value) {}
 
     pub fn take_target() -> Option<String> {
@@ -584,14 +578,40 @@ fn opened(handle: &AppHandle, target: Option<String>) -> Option<String> {
     }
 }
 
-fn tapped(handle: &AppHandle) {
-    let Some(target) = opened(handle, phone::take_target()) else { return };
+fn tapped(handle: &AppHandle) -> bool {
+    let Some(target) = opened(handle, phone::take_target()) else { return false };
     if UI_TAKES_TARGETS.load(Ordering::SeqCst) {
         use tauri::Emitter;
         let _ = handle.emit("notification-clicked", target);
     } else {
         *TARGET.lock().unwrap() = Some(target);
     }
+    true
+}
+
+const IOS_TAP_LOOKS_MS: [u64; 5] = [0, 300, 700, 1500, 3000];
+const ANDROID_TAP_LOOKS_MS: [u64; 1] = [0];
+
+fn tap_looks_ms() -> &'static [u64] {
+    if cfg!(target_os = "ios") {
+        &IOS_TAP_LOOKS_MS
+    } else {
+        &ANDROID_TAP_LOOKS_MS
+    }
+}
+
+fn look_for_tap(handle: &AppHandle) {
+    for wait in tap_looks_ms() {
+        std::thread::sleep(std::time::Duration::from_millis(*wait));
+        if tapped(handle) {
+            return;
+        }
+    }
+}
+
+fn look_for_tap_soon(handle: &AppHandle) {
+    let handle = handle.clone();
+    let _ = std::thread::Builder::new().name("push-tap".into()).spawn(move || look_for_tap(&handle));
 }
 
 #[tauri::command]
@@ -601,7 +621,11 @@ pub async fn take_notification_target(handle: AppHandle) -> Option<String> {
         return Some(target);
     }
     let target = tauri::async_runtime::spawn_blocking(phone::take_target).await.ok().flatten();
-    opened(&handle, target)
+    let target = opened(&handle, target);
+    if target.is_none() && cfg!(target_os = "ios") {
+        look_for_tap_soon(&handle);
+    }
+    target
 }
 
 #[cfg(mobile)]
@@ -617,9 +641,8 @@ fn ask_token(_handle: &AppHandle) {}
 pub fn on_resumed(handle: &AppHandle) {
     #[cfg(mobile)]
     phone_push::fetch_token(handle.clone());
-    if cfg!(target_os = "android") {
-        let handle = handle.clone();
-        let _ = std::thread::Builder::new().name("push-tap".into()).spawn(move || tapped(&handle));
+    if cfg!(mobile) {
+        look_for_tap_soon(handle);
     }
 }
 

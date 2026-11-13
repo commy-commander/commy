@@ -151,10 +151,24 @@ function inAppLine({ title, body }) {
   return body ? `${title}: ${body}` : title;
 }
 
+const NOTICE_ID = /^[0-9a-fA-F-]{1,64}$/;
+
+function noticeTarget(target) {
+  const parts = String(target || "").split(":");
+  const [kind, a, b] = parts;
+  if (kind === "dm" && parts.length === 2 && NOTICE_ID.test(a)) return { kind, user: a };
+  if (kind === "channel" && parts.length === 3 && NOTICE_ID.test(a) && NOTICE_ID.test(b)) return { kind, server: a, channel: b };
+  return null;
+}
+
+function quickReplyCard({ focused, viewing, phone }) {
+  return Boolean(focused) && !viewing && !phone;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
     channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter, phoneInFront,
-    alertWay, playsAppSound, inAppLine, sentBeforeFront,
+    alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard,
   };
 }

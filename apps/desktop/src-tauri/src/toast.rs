@@ -151,10 +151,13 @@ fn ios_sound(target: Option<&str>) -> &'static str {
 }
 
 #[cfg(not(any(windows, target_os = "android")))]
+const IOS_TARGET_KEY: &str = "target";
+
+#[cfg(not(any(windows, target_os = "android")))]
 pub fn show(handle: &AppHandle, title: &str, body: &str, target: Option<String>) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
     let notice = handle.notification().builder().title(title).body(body);
-    let notice = if cfg!(target_os = "ios") { notice.sound(ios_sound(target.as_deref())) } else { notice };
+    let notice = if cfg!(target_os = "ios") { notice.sound(ios_sound(target.as_deref())).extra(IOS_TARGET_KEY, target) } else { notice };
     notice.show().map_err(|e| e.to_string())
 }
 

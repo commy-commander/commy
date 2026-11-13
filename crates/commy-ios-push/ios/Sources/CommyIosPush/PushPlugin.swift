@@ -104,7 +104,80 @@ enum SharedPreviews {
   }
 }
 
+struct TargetAnswer: Encodable {
+  let target: String?
+}
+
+final class NotificationTaps: NSObject, UNUserNotificationCenterDelegate {
+  static let shared = NotificationTaps()
+
+  private let lock = NSLock()
+  private var target: String?
+  private var earlier: UNUserNotificationCenterDelegate?
+
+  func watch() {
+    if Thread.isMainThread {
+      becomeDelegate()
+    } else {
+      DispatchQueue.main.async { self.becomeDelegate() }
+    }
+  }
+
+  func take() -> String? {
+    lock.lock()
+    defer { lock.unlock() }
+    let taken = target
+    target = nil
+    return taken
+  }
+
+  private func keep(_ tapped: String?) {
+    guard let tapped = tapped else { return }
+    lock.lock()
+    target = tapped
+    lock.unlock()
+  }
+
+  private func becomeDelegate() {
+    let center = UNUserNotificationCenter.current()
+    if let current = center.delegate, current === self { return }
+    earlier = center.delegate
+    center.delegate = self
+  }
+
+  static func target(in info: [AnyHashable: Any]) -> String? {
+    if let target = info["target"] as? String { return target }
+    return (info["__EXTRA__"] as? [String: Any])?["target"] as? String
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    if earlier?.userNotificationCenter?(center, willPresent: notification, withCompletionHandler: completionHandler) == nil {
+      completionHandler([])
+    }
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+      keep(NotificationTaps.target(in: response.notification.request.content.userInfo))
+    }
+    if earlier?.userNotificationCenter?(center, didReceive: response, withCompletionHandler: completionHandler) == nil {
+      completionHandler()
+    }
+  }
+}
+
 class PushPlugin: Plugin {
+  @objc public func takeTarget(_ invoke: Invoke) {
+    NotificationTaps.shared.watch()
+    invoke.resolve(TargetAnswer(target: NotificationTaps.shared.take()))
+  }
+
   @objc public func previews(_ invoke: Invoke) {
     guard let args = try? invoke.parseArgs(PreviewsArgs.self) else {
       invoke.reject("could not read the message previews")
@@ -118,6 +191,7 @@ class PushPlugin: Plugin {
   }
 
   @objc public func token(_ invoke: Invoke) {
+    NotificationTaps.shared.watch()
     let center = UNUserNotificationCenter.current()
     center.removeAllDeliveredNotifications()
     center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
@@ -133,5 +207,6 @@ class PushPlugin: Plugin {
 
 @_cdecl("init_plugin_commy_push")
 func initPlugin() -> Plugin {
+  NotificationTaps.shared.watch()
   return PushPlugin()
 }

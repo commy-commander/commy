@@ -5718,17 +5718,39 @@ function alertNotice(way, notice, target) {
   toast(inAppLine(notice), { onClick: () => openNotificationTarget(target) });
 }
 
+function phoneLayout() {
+  return document.body.classList.contains("mobile-app") || (isPhoneWidth(window.innerWidth) && !narrowSplit());
+}
+
+async function clearWayToChat() {
+  closeDmMenu();
+  if (!phoneLayout()) return;
+  await closeSettingsLayers();
+  closeOpenPhonePanel();
+}
+
+async function openNoticeChannel(serverId, channelId) {
+  const elsewhere = state.view !== "server" || !state.currentServer || state.currentServer.id !== serverId;
+  if (elsewhere) await selectServer(serverId);
+  const channel = state.currentServer && state.currentServer.id === serverId && state.currentServer.channels.find(c => c.id === channelId);
+  const landed = elsewhere && state.currentChannel && state.currentChannel.id === channelId;
+  if (channel && !landed) await selectChannel(channel);
+}
+
+async function openNoticeDm(userId) {
+  removeDmCard(userId);
+  const thread = (await invoke("list_dm_threads")).find(t => t.user === userId);
+  state.currentDm = { user: userId, name: thread ? thread.name : "Direct Message" };
+  await enterDmMode();
+}
+
 async function openNotificationTarget(target) {
-  const [kind, a, b] = String(target || "").split(":");
+  const route = noticeTarget(target);
+  if (!route) return;
   try {
-    if (kind === "channel" && a && b) {
-      if (!state.currentServer || state.currentServer.id !== a) await selectServer(a);
-      const channel = state.currentServer && state.currentServer.channels.find(c => c.id === b);
-      if (channel) await selectChannel(channel);
-    } else if (kind === "dm" && a) {
-      const thread = (await invoke("list_dm_threads")).find(t => t.user === a);
-      await selectDm(a, thread ? thread.name : "Direct Message");
-    }
+    await clearWayToChat();
+    if (route.kind === "channel") await openNoticeChannel(route.server, route.channel);
+    else await openNoticeDm(route.user);
     phoneShowChat();
   } catch (e) {
     toast(String(e));
@@ -5747,7 +5769,7 @@ function onDmReceived(dm) {
     unread.dms.set(dm.user, (unread.dms.get(dm.user) || 0) + 1);
     syncUnreadBadge();
   }
-  const carded = appFocused() && !viewing;
+  const carded = quickReplyCard({ focused: appFocused(), viewing, phone: phoneLayout() });
   if (carded) showDmCard(dm);
   const prefs = notifyPrefs();
   const way = alertWay({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), at: Number(dm.at), frontSince: phoneFrontSince, isDm: true, mentioned: true });
