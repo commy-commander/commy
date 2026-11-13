@@ -376,8 +376,9 @@ function canOfferShare({ mobileApp, canShare, iPhone }) {
   return !iPhone && (!mobileApp || Boolean(canShare));
 }
 
-function roomKeyOffered(id, { mobileApp, finePointer }) {
-  return id !== "share" || (!mobileApp && Boolean(finePointer));
+function roomKeyOffered(id, { mobileApp, finePointer, canShare, iPhone }) {
+  if (id !== "share") return true;
+  return mobileApp ? canOfferShare({ mobileApp, canShare, iPhone }) : Boolean(finePointer);
 }
 
 function roomTileStreams(streams, me = {}) {

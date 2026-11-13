@@ -398,17 +398,37 @@ const lounge = {
 };
 const pioneers = { id: "s1", name: "Pixel Pioneers", channels: [lounge], screen_shares: [{ user: "m1", name: "ferris", channel: "v1" }, { user: "me", name: "commander", channel: "v1" }] };
 
-test("the room has five keys on a phone with the microphone in the middle and leaving at the end", () => {
-  const phoneKeys = ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: true, finePointer: false }));
+test("the room has five keys on an iPhone with the microphone in the middle and leaving at the end", () => {
+  const phoneKeys = ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: true, finePointer: false, canShare: false, iPhone: true }));
   assert.deepEqual(phoneKeys.map(key => key.id), ["sounds", "camera", "mic", "deafen", "leave"]);
   assert.equal(phoneKeys[Math.floor(phoneKeys.length / 2)].id, "mic");
   assert.match(glue, /key\.id === "leave" \? "tap danger hang"/);
 });
 
-test("a desktop or web window with a mouse gets a Share key in the room, phones and touch screens do not", () => {
-  assert.deepEqual(ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: false, finePointer: true })).map(key => key.id), ["sounds", "camera", "share", "mic", "deafen", "leave"]);
+test("a phone that can share its screen gets a Share key in the room, an iPhone does not", () => {
+  const android = { mobileApp: true, finePointer: false, canShare: true, iPhone: false };
+  assert.deepEqual(ROOM_KEYS.filter(key => roomKeyOffered(key.id, android)).map(key => key.id), ["sounds", "camera", "share", "mic", "deafen", "leave"]);
+  assert.equal(roomKeyOffered("share", { ...android, canShare: false }), false);
+  assert.equal(roomKeyOffered("share", { ...android, iPhone: true }), false);
   assert.equal(roomKeyOffered("share", { mobileApp: true, finePointer: true }), false);
+  assert.ok(glue.includes('canShare: document.body.classList.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent) };'));
+});
+
+test("six room keys fit a narrow phone: smaller keys and a slimmer edge under 384 wide, only when Share is shown", () => {
+  const narrow = css.slice(css.indexOf("@media (max-width: 383px) {"));
+  const six = 'html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden))';
+  assert.ok(narrow.startsWith(`@media (max-width: 383px) {\n  ${six} { left: 10px; right: 10px; }`));
+  assert.ok(narrow.includes(`${six} .k .key { bottom: 51px; width: 48px; height: 48px; }`));
+  assert.ok(narrow.includes(`${six} .k.big .key { bottom: 58px; width: 58px; height: 58px; }`));
+  const room = edge => 10 * 2 + 48 * 5 + 58 <= edge;
+  assert.ok(room(320));
+  assert.ok(16 * 2 + 52 * 5 + 62 + 6 * 5 <= 384);
+});
+
+test("a desktop or web window with a mouse gets a Share key in the room, touch screens there do not", () => {
+  assert.deepEqual(ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: false, finePointer: true })).map(key => key.id), ["sounds", "camera", "share", "mic", "deafen", "leave"]);
   assert.equal(roomKeyOffered("share", { mobileApp: false, finePointer: false }), false);
+  assert.equal(roomKeyOffered("share", { mobileApp: false, finePointer: false, canShare: true }), false);
   assert.deepEqual(roomKeyState("share", {}), { down: false, on: false, icon: "monitor-up", label: "Share your screen" });
   assert.deepEqual(roomKeyState("share", { sharing: true }), { down: false, on: true, icon: "monitor-up", label: "Stop sharing your screen" });
   assert.ok(glue.includes('else if (id === "share") $("share-btn").click();'));

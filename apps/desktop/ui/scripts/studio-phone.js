@@ -2326,7 +2326,7 @@ function roomOpen() {
 function syncRoomKeys() {
   const voice = roomVoice();
   const call = Boolean(state.voiceServer && state.voiceServer.call);
-  const where = { mobileApp: document.body.classList.contains("mobile-app"), finePointer: window.matchMedia("(any-pointer: fine)").matches };
+  const where = { mobileApp: document.body.classList.contains("mobile-app"), finePointer: window.matchMedia("(any-pointer: fine)").matches, canShare: document.body.classList.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent) };
   for (const key of document.querySelectorAll("[data-room-key]")) {
     const id = key.dataset.roomKey;
     if (id === "leave") continue;
