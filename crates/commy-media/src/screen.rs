@@ -149,6 +149,7 @@ pub struct ShareSource {
     pub name: String,
     pub is_primary: bool,
     pub pid: Option<u32>,
+    pub minimized: bool,
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

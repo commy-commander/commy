@@ -2219,8 +2219,10 @@ async fn list_share_sources(app: tauri::State<'_, App>) -> CmdResult<Vec<ShareSo
         .map_err(err_to_string)?
         .map_err(err_to_string)?;
     let game = app.last_game.lock().unwrap().clone();
+    let game_pid = game.as_ref().map(|(pid, _)| *pid);
     let mut views: Vec<ShareSourceView> = sources
         .into_iter()
+        .filter(|s| !s.minimized || (s.pid.is_some() && s.pid == game_pid))
         .map(|s| ShareSourceView {
             kind: match s.kind {
                 SourceKind::Monitor => "monitor".to_string(),
@@ -2232,11 +2234,7 @@ async fn list_share_sources(app: tauri::State<'_, App>) -> CmdResult<Vec<ShareSo
             is_primary: s.is_primary,
         })
         .collect();
-    if views.iter().any(|v| v.game.is_some()) {
-        views.sort_by_key(|v| v.game.is_none());
-    } else if game.is_some() {
-        *app.last_game.lock().unwrap() = None;
-    }
+    views.sort_by_key(|v| v.game.is_none());
     Ok(views)
 }
 
@@ -6746,19 +6744,17 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         tokio::time::sleep(ACTIVITY_POLL).await;
         let app = handle.state::<App>();
         let enabled = app.voice.lock().unwrap().share_activity;
-        let (seen, pid) = tokio::task::spawn_blocking(|| {
+        let held = app.last_game.lock().unwrap().clone();
+        let (seen, pid, held_running) = tokio::task::spawn_blocking(move || {
             let pid = activity::foreground_pid();
             let seen = activity::foreground_app().and_then(|(path, desc)| activity::describe(&path, desc.as_deref()));
-            (seen, pid)
+            let held_running = held.is_some_and(|(held_pid, _)| activity::process_running(held_pid));
+            (seen, pid, held_running)
         })
         .await
-        .unwrap_or((None, None));
-        if let (Some(text), Some(pid)) = (&seen, pid) {
-            if let Some(game) = text.strip_prefix("Playing ") {
-                *app.last_game.lock().unwrap() = Some((pid, game.to_string()));
-            }
-        }
-        let in_game = seen.as_deref().is_some_and(|text| text.starts_with("Playing "));
+        .unwrap_or((None, None, false));
+        let held_game = remember_game(&app, seen.as_deref(), pid, held_running);
+        let in_game = seen.as_deref().and_then(activity::game_name).is_some();
         let game_changed = app.game_in_front.swap(in_game, std::sync::atomic::Ordering::Relaxed) != in_game;
         let in_voice = app.voice_session.lock().unwrap().is_some();
         let voice_changed = std::mem::replace(&mut was_in_voice, in_voice) != in_voice;
@@ -6767,7 +6763,7 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         } else {
             overlay::hold_corner(&handle);
         }
-        let seen = if enabled { seen } else { None };
+        let seen = if enabled { activity::shown_activity(seen, held_game.as_deref()) } else { None };
         let stable = if !enabled || seen_last_poll == seen {
             seen.clone()
         } else {
@@ -6796,6 +6792,16 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         }
         let _ = handle.emit("profile-changed", &profile);
     }
+}
+
+fn remember_game(app: &App, front: Option<&str>, pid: Option<u32>, held_running: bool) -> Option<String> {
+    let mut last = app.last_game.lock().unwrap();
+    match (front.and_then(activity::game_name), pid) {
+        (Some(game), Some(pid)) => *last = Some((pid, game.to_string())),
+        _ if !held_running => *last = None,
+        _ => {}
+    }
+    last.as_ref().map(|(_, game)| game.clone())
 }
 
 async fn enrich_activity(app: &tauri::State<'_, App>, activity: Option<String>) -> (Option<String>, Option<String>) {

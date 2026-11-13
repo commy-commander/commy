@@ -115,6 +115,41 @@ pub fn foreground_pid() -> Option<u32> {
 }
 
 #[cfg(windows)]
+pub fn process_running(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    const STILL_ACTIVE: u32 = 259;
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return false;
+        }
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(process, &mut code);
+        CloseHandle(process);
+        ok != 0 && code == STILL_ACTIVE
+    }
+}
+
+#[cfg(not(windows))]
+pub fn process_running(_pid: u32) -> bool {
+    false
+}
+
+pub fn game_name(activity: &str) -> Option<&str> {
+    activity.strip_prefix("Playing ")
+}
+
+pub fn shown_activity(front: Option<String>, held_game: Option<&str>) -> Option<String> {
+    if front.as_deref().is_some_and(|text| game_name(text).is_some()) {
+        return front;
+    }
+    held_game.map(|game| format!("Playing {game}")).or(front)
+}
+
+#[cfg(windows)]
 pub fn foreground_app() -> Option<(String, Option<String>)> {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
@@ -249,6 +284,37 @@ mod tests {
             Some("Using Hollow Knight".to_string())
         );
         assert_eq!(describe("C:\\x\\tool.exe", Some("   ")), Some("Using Tool".to_string()));
+    }
+
+    #[test]
+    fn a_running_game_stays_shown_while_another_app_is_in_front() {
+        assert_eq!(
+            shown_activity(Some("Using Firefox".to_string()), Some("Hades")),
+            Some("Playing Hades".to_string())
+        );
+        assert_eq!(shown_activity(None, Some("Hades")), Some("Playing Hades".to_string()));
+    }
+
+    #[test]
+    fn the_game_in_front_wins_over_a_held_game() {
+        assert_eq!(
+            shown_activity(Some("Playing VALORANT".to_string()), Some("Hades")),
+            Some("Playing VALORANT".to_string())
+        );
+    }
+
+    #[test]
+    fn without_a_running_game_the_app_in_front_is_shown() {
+        assert_eq!(
+            shown_activity(Some("Using Firefox".to_string()), None),
+            Some("Using Firefox".to_string())
+        );
+        assert_eq!(shown_activity(None, None), None);
+    }
+
+    #[test]
+    fn this_process_counts_as_running() {
+        assert_eq!(process_running(std::process::id()), cfg!(windows));
     }
 
     #[test]

@@ -137,12 +137,10 @@ pub fn list_sources() -> Result<Vec<ShareSource>> {
             name,
             is_primary: monitor.is_primary().unwrap_or(false),
             pid: None,
+            minimized: false,
         });
     }
     for window in xcap::Window::all().context("cannot enumerate windows")? {
-        if window.is_minimized().unwrap_or(true) {
-            continue;
-        }
         let title = window.title().unwrap_or_default();
         if title.trim().is_empty() {
             continue;
@@ -153,6 +151,7 @@ pub fn list_sources() -> Result<Vec<ShareSource>> {
             name: title,
             is_primary: false,
             pid: window.pid().ok(),
+            minimized: window.is_minimized().unwrap_or(true),
         });
     }
     Ok(sources)
