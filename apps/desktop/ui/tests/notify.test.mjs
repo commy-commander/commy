@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, inAppLine, sentBeforeFront } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, playsAppSound, inAppLine, sentBeforeFront } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -203,6 +203,15 @@ test("opening the phone app stays quiet about messages its push already announce
   assert.equal(alertWay({ ...dm, phoneInFront: true, at: NaN, frontSince: 100 }), "in_app", "older backends send no time");
   assert.equal(sentBeforeFront(undefined, 100), false);
   assert.equal(sentBeforeFront(5, undefined), false);
+});
+
+test("a phone in the background lets its notification play the sound, so it never plays twice", () => {
+  assert.equal(playsAppSound("in_app", true), true);
+  assert.equal(playsAppSound("system", true), false);
+  assert.equal(playsAppSound("system", false), true, "the desktop keeps its own alert sound");
+  assert.equal(playsAppSound("in_app", false), true);
+  assert.equal(playsAppSound("none", false), false);
+  assert.equal(playsAppSound("none", true), false);
 });
 
 test("an in-app alert reads as one line", () => {

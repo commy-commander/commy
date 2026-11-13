@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 export const EXTENSION = "CommyNotifications";
 export const SPEC = "notifications.yml";
 export const SOURCES = "../../../mobile/ios/notifications";
+export const SOUNDS = "../../../mobile/sounds";
 export const KEYCHAIN_GROUP = "$(AppIdentifierPrefix)chat.commy.mobile.shared";
 
 export function appTarget(project) {
@@ -65,7 +66,10 @@ export function notificationSpec({ app, bundleId, team }) {
         settings: { base: settings },
         postBuildScripts: [{ name: "Match the app version", basedOnDependencyAnalysis: false, script: versionScript(app.dir) }],
       },
-      [app.name]: { dependencies: [{ target: EXTENSION, embed: true }] },
+      [app.name]: {
+        sources: [{ path: SOUNDS, buildPhase: "resources" }],
+        dependencies: [{ target: EXTENSION, embed: true }],
+      },
     },
   };
 }

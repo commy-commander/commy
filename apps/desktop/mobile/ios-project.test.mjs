@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appTarget, developmentTeam, notificationSpec, withInclude, versionScript, EXTENSION, SPEC, KEYCHAIN_GROUP } from "./ios-project.mjs";
+import { appTarget, developmentTeam, notificationSpec, withInclude, versionScript, EXTENSION, SPEC, SOUNDS, KEYCHAIN_GROUP } from "./ios-project.mjs";
 
 const generated = `name: Commy
 options:
@@ -36,6 +36,7 @@ test("the extension is embedded in the app and shares one keychain group with it
   assert.equal(extension.info.properties.NSExtension.NSExtensionPointIdentifier, "com.apple.usernotifications.service");
   assert.deepEqual(extension.entitlements.properties["keychain-access-groups"], [KEYCHAIN_GROUP]);
   assert.deepEqual(spec.targets.Commy_iOS.dependencies, [{ target: EXTENSION, embed: true }]);
+  assert.deepEqual(spec.targets.Commy_iOS.sources, [{ path: SOUNDS, buildPhase: "resources" }]);
   const unsigned = notificationSpec({ app: appTarget(generated), bundleId: "chat.commy.mobile", team: null });
   assert.equal("DEVELOPMENT_TEAM" in unsigned.targets[EXTENSION].settings.base, false);
 });
@@ -59,4 +60,13 @@ test("the spec is included once, whatever was there before", () => {
   const listed = withInclude(`include:\n  - other.yml\n${generated}`);
   assert.ok(listed.startsWith(`include:\n  - ${SPEC}\n  - other.yml\n`));
   assert.throws(() => withInclude(`include: [other.yml]\n${generated}`), /include/);
+});
+
+test("the app carries Commy's notification sounds and the extension picks one for each push", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const generatedProject = new URL("../src-tauri/gen/apple/", import.meta.url);
+  const sounds = readdirSync(new URL(`${SOUNDS}/`, generatedProject)).sort();
+  assert.deepEqual(sounds, ["commy_dm.wav", "commy_message.wav"]);
+  const extension = readFileSync(new URL("./ios/notifications/NotificationService.swift", import.meta.url), "utf8");
+  for (const name of sounds) assert.ok(extension.includes(`"${name}"`), name);
 });

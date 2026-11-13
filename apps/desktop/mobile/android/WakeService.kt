@@ -26,8 +26,9 @@ class WakeService : FirebaseMessagingService() {
       return
     }
     WakePreviews.ensureChannel(this)
-    val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+    val notification = NotificationCompat.Builder(this, WakePreviews.channelFor(null))
       .setSmallIcon(R.drawable.commy_notification)
+      .setSound(WakePreviews.soundFor(this, null))
       .setContentTitle("Commy")
       .setContentText("New messages in Commy")
       .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -52,7 +53,6 @@ class WakeService : FirebaseMessagingService() {
 
   companion object {
     const val NOTIFICATION_ID = 7303
-    private const val CHANNEL_ID = "messages"
     private const val TAG = "CommyWake"
   }
 }

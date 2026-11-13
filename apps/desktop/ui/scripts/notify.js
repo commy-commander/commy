@@ -143,6 +143,10 @@ function alertWay({ phoneInFront: inFront, at, frontSince, caughtUp, ...wanted }
   return caughtUp || sentBeforeFront(at, frontSince) ? "none" : "in_app";
 }
 
+function playsAppSound(way, onPhone) {
+  return way === "in_app" || (way === "system" && !onPhone);
+}
+
 function inAppLine({ title, body }) {
   return body ? `${title}: ${body}` : title;
 }
@@ -151,6 +155,6 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
     channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter, phoneInFront,
-    alertWay, inAppLine, sentBeforeFront,
+    alertWay, playsAppSound, inAppLine, sentBeforeFront,
   };
 }

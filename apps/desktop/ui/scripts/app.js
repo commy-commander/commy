@@ -5209,6 +5209,10 @@ function phoneShowing() {
   return phoneInFront(document.body.classList.contains("mobile-app"), document.visibilityState);
 }
 
+function alertSound(way, eventId) {
+  if (playsAppSound(way, document.body.classList.contains("mobile-app"))) playSound(eventId);
+}
+
 function myMentionNames() {
   if (!state.user) return [];
   const me = state.view === "server" ? currentServerMember(state.user.id) : null;
@@ -5320,7 +5324,7 @@ function onMessageCreated(msg) {
   if (way !== "none") {
     const notice = messageNotice(sensitiveNotice(msg, msg.channel, sensitiveConfirmed()), plainText);
     alertNotice(way, notice, `channel:${msg.server}:${msg.channel}`);
-    playSound("message");
+    alertSound(way, "message");
   }
   speakIncoming(msg, viewing);
 }
@@ -5687,7 +5691,8 @@ function onMessagesCaughtUp(payload) {
   for (const { way, notice, target } of notices) if (way === "system") alertNotice(way, notice, target);
   const inApp = notices.filter(n => n.way === "in_app").pop();
   if (inApp) alertNotice(inApp.way, inApp.notice, inApp.target);
-  if (notices.length) playSound("message");
+  const sounded = notices.find(n => n.way === "in_app") || notices[0];
+  if (sounded) alertSound(sounded.way, "message");
   if (!changed) return;
   syncUnreadBadge();
   if (state.currentServer && state.currentServer.id === server) renderChannels();
@@ -5737,7 +5742,7 @@ function onDmReceived(dm) {
   if (way !== "none") {
     const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
     if (way === "system" || !carded) alertNotice(way, { title: dm.name, body }, `dm:${dm.user}`);
-    playSound("dm");
+    alertSound(way, "dm");
   }
 }
 

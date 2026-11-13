@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import android.util.Base64
 import android.util.Log
@@ -27,7 +28,9 @@ object WakePreviews {
   const val EXTRA_TARGET = "target"
   const val EXTRA_ANSWER = "answer"
   private const val FILE = "wake-previews.json"
-  private const val CHANNEL_ID = "messages"
+  private const val RETIRED_CHANNEL_ID = "messages"
+  private const val MESSAGE_CHANNEL_ID = "commy-messages"
+  private const val DM_CHANNEL_ID = "commy-direct-messages"
   private const val CALL_CHANNEL_ID = "calls-ringing"
   private const val RING_FOR_MS = 45_000L
   private const val MISSED_LATE_MS = 30_000L
@@ -144,11 +147,33 @@ object WakePreviews {
   private fun sameText(text: String): String =
     text.filter { it.isLetterOrDigit() }.lowercase().take(40)
 
+  private class Kind(val channel: String, val name: String, val description: String, val sound: Int)
+
+  private val MESSAGES = Kind(MESSAGE_CHANNEL_ID, "Server messages", "New messages in your servers and group chats", R.raw.commy_message)
+  private val DIRECT = Kind(DM_CHANNEL_ID, "Direct messages", "New direct messages", R.raw.commy_dm)
+
+  private fun kindFor(target: String?): Kind = if (target?.startsWith("dm:") == true) DIRECT else MESSAGES
+
+  fun channelFor(target: String?): String = kindFor(target).channel
+
+  fun soundFor(context: Context, target: String?): Uri = soundUri(context, kindFor(target).sound)
+
+  private fun soundUri(context: Context, sound: Int): Uri = Uri.parse("android.resource://${context.packageName}/$sound")
+
   fun ensureChannel(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-    val channel = NotificationChannel(CHANNEL_ID, "New messages", NotificationManager.IMPORTANCE_DEFAULT)
-    channel.description = "Shown when something new is waiting while Commy is closed"
-    context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    val manager = context.getSystemService(NotificationManager::class.java)
+    manager.deleteNotificationChannel(RETIRED_CHANNEL_ID)
+    val attributes = AudioAttributes.Builder()
+      .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+      .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+      .build()
+    for (kind in listOf(MESSAGES, DIRECT)) {
+      val channel = NotificationChannel(kind.channel, kind.name, NotificationManager.IMPORTANCE_DEFAULT)
+      channel.description = kind.description
+      channel.setSound(soundUri(context, kind.sound), attributes)
+      manager.createNotificationChannel(channel)
+    }
   }
 
   fun tapIntent(context: Context, target: String?, answer: Boolean = false): PendingIntent {
@@ -299,8 +324,9 @@ object WakePreviews {
       style.setConversationTitle(shown.conversation)
       style.setGroupConversation(true)
     }
-    val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+    val notification = NotificationCompat.Builder(context, channelFor(shown.target))
       .setSmallIcon(R.drawable.commy_notification)
+      .setSound(soundFor(context, shown.target))
       .setStyle(style)
       .setContentTitle(shown.sender)
       .setContentText(shown.text)
@@ -322,8 +348,9 @@ object WakePreviews {
     if (target != null && seenRecently(target, body)) return
     ensureChannel(context)
     val id = target?.hashCode() ?: (System.currentTimeMillis() and 0x3fffffff).toInt()
-    val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+    val notification = NotificationCompat.Builder(context, channelFor(target))
       .setSmallIcon(R.drawable.commy_notification)
+      .setSound(soundFor(context, target))
       .setContentTitle(title)
       .setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))

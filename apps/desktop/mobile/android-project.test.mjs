@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, MAX_SDK } from "./android-project.mjs";
+import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, NOTIFICATION_SOUNDS, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -266,6 +266,28 @@ test("notifications show the star as a white shape on clear ground", () => {
     assert.ok(!source.includes("android.R.drawable.stat_notify_chat"), name);
     assert.ok(source.includes(`R.drawable.${NOTIFICATION_ICON}`), name);
   }
+});
+
+function wavSeconds(wav) {
+  assert.equal(wav.toString("latin1", 0, 4), "RIFF");
+  assert.equal(wav.toString("latin1", 8, 12), "WAVE");
+  assert.equal(wav.readUInt16LE(20), 1, "plain PCM plays on every phone");
+  const byteRate = wav.readUInt32LE(28);
+  return (wav.length - 44) / byteRate;
+}
+
+test("message notifications play Commy's own sounds, a different one for direct messages", () => {
+  assert.deepEqual(NOTIFICATION_SOUNDS, ["commy_message.wav", "commy_dm.wav"]);
+  const previews = readFileSync(new URL("./android/WakePreviews.kt", import.meta.url), "utf8");
+  for (const name of NOTIFICATION_SOUNDS) {
+    assert.match(name, /^[a-z0-9_]+\.wav$/, "Android resource names");
+    const seconds = wavSeconds(readFileSync(new URL(`./sounds/${name}`, import.meta.url)));
+    assert.ok(seconds > 0.2 && seconds < 5, `${name} is a short alert`);
+    assert.ok(previews.includes(`R.raw.${name.replace(".wav", "")}`), name);
+  }
+  const service = readFileSync(new URL("./android/WakeService.kt", import.meta.url), "utf8");
+  assert.ok(![previews, service].some(source => /\bCHANNEL_ID = "messages"/.test(source)), "a channel keeps the sound it was made with, so sounded messages need new channels");
+  assert.ok(previews.includes("deleteNotificationChannel(RETIRED_CHANNEL_ID)"), "the old silent-default channel leaves the phone's settings");
 });
 
 test("every launcher layer ships as a square picture big enough for the largest screens", () => {

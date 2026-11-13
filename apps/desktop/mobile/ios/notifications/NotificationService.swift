@@ -97,6 +97,15 @@ enum Previews {
   }
 }
 
+enum Sounds {
+  static let message = UNNotificationSound(named: UNNotificationSoundName("commy_message.wav"))
+  static let direct = UNNotificationSound(named: UNNotificationSoundName("commy_dm.wav"))
+
+  static func sound(for target: String?) -> UNNotificationSound {
+    target?.hasPrefix("dm:") == true ? direct : message
+  }
+}
+
 final class NotificationService: UNNotificationServiceExtension {
   private var deliver: ((UNNotificationContent) -> Void)?
   private var content: UNMutableNotificationContent?
@@ -121,7 +130,13 @@ final class NotificationService: UNNotificationServiceExtension {
     deliver(content)
   }
 
+  private func useCommySound(_ content: UNMutableNotificationContent, for target: String?) {
+    guard content.sound != nil else { return }
+    content.sound = Sounds.sound(for: target)
+  }
+
   private func fill(_ content: UNMutableNotificationContent, from info: [AnyHashable: Any]) {
+    useCommySound(content, for: nil)
     guard let held = Previews.held() else { return }
     var sealed: [String] = []
     if let list = info["previews"] as? String {
@@ -136,6 +151,7 @@ final class NotificationService: UNNotificationServiceExtension {
     content.subtitle = newest.conversation ?? ""
     content.body = Previews.body(lines)
     content.threadIdentifier = newest.target
+    useCommySound(content, for: newest.target)
     var userInfo = content.userInfo
     userInfo["target"] = newest.target
     content.userInfo = userInfo

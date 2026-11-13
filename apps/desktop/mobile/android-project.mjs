@@ -190,6 +190,7 @@ export function readGoogleServices(value, readFile = path => readFileSync(path, 
 export const LAUNCHER_LAYERS = { background: "commy_launcher_background", foreground: "commy_launcher_foreground", monochrome: "commy_launcher_monochrome" };
 export const LAUNCHER_NAMES = ["ic_launcher", "ic_launcher_round"];
 export const NOTIFICATION_ICON = "commy_notification";
+export const NOTIFICATION_SOUNDS = ["commy_message.wav", "commy_dm.wav"];
 
 export function launcherIcon(layers = LAUNCHER_LAYERS) {
   const lines = Object.entries(layers).map(([layer, name]) => `    <${layer} android:drawable="@drawable/${name}" />\n`).join("");
@@ -207,6 +208,8 @@ const keepRulesTo = here("../src-tauri/gen/android/app/commy-rules.pro");
 const launcherFrom = here("./android-icon/");
 const launcherLayersTo = here("../src-tauri/gen/android/app/src/main/res/drawable-nodpi/");
 const launcherIconTo = here("../src-tauri/gen/android/app/src/main/res/mipmap-anydpi-v26/");
+const soundsFrom = here("./sounds/");
+const soundsTo = here("../src-tauri/gen/android/app/src/main/res/raw/");
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const before = readFileSync(manifestPath, "utf8");
@@ -220,6 +223,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   mkdirSync(launcherIconTo, { recursive: true });
   for (const name of [...Object.values(LAUNCHER_LAYERS), NOTIFICATION_ICON]) copyFileSync(`${launcherFrom}${name}.png`, `${launcherLayersTo}${name}.png`);
   for (const name of LAUNCHER_NAMES) writeFileSync(`${launcherIconTo}${name}.xml`, launcherIcon());
+  mkdirSync(soundsTo, { recursive: true });
+  for (const name of NOTIFICATION_SOUNDS) copyFileSync(`${soundsFrom}${name}`, `${soundsTo}${name}`);
   const gradle = readFileSync(gradlePath, "utf8");
   const debugStore = process.env.ANDROID_DEBUG_KEYSTORE_FILE;
   const releaseStore = process.env.ANDROID_UPLOAD_KEYSTORE_FILE;
@@ -230,6 +235,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call and screen share services, relaunching, invite links and the sign-in return link");
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   console.log("The launcher icon is the star on night blue, with a one-colour layer for themed icons, and notifications show the white star");
+  console.log(`Notifications play Commy's own sounds: ${NOTIFICATION_SOUNDS.join(", ")}`);
   const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
   const packageName = applicationId(gradle);
   const firebase = googleServices && firebaseValues(googleServices, packageName);

@@ -141,14 +141,20 @@ pub fn show(_handle: &AppHandle, title: &str, body: &str, target: Option<String>
     crate::push_wake::show(title, body, target)
 }
 
-#[cfg(not(any(windows, target_os = "android")))]
-const IOS_DEFAULT_SOUND: &str = "default";
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+fn ios_sound(target: Option<&str>) -> &'static str {
+    if target.is_some_and(|t| t.starts_with("dm:")) {
+        "commy_dm.wav"
+    } else {
+        "commy_message.wav"
+    }
+}
 
 #[cfg(not(any(windows, target_os = "android")))]
-pub fn show(handle: &AppHandle, title: &str, body: &str, _target: Option<String>) -> Result<(), String> {
+pub fn show(handle: &AppHandle, title: &str, body: &str, target: Option<String>) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
     let notice = handle.notification().builder().title(title).body(body);
-    let notice = if cfg!(target_os = "ios") { notice.sound(IOS_DEFAULT_SOUND) } else { notice };
+    let notice = if cfg!(target_os = "ios") { notice.sound(ios_sound(target.as_deref())) } else { notice };
     notice.show().map_err(|e| e.to_string())
 }
 
@@ -167,6 +173,17 @@ mod tests {
     fn rejects_anything_else() {
         for bad in ["", "channel:x", "dm:", "dm:abc def", "open:calc.exe", "channel:a:b:c", "dm:../../x"] {
             assert!(!valid_target(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn iphone_alerts_play_the_sound_the_app_carries() {
+        let bundled = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../mobile/sounds");
+        assert_eq!(ios_sound(Some("dm:7da1b7e3")), "commy_dm.wav");
+        assert_eq!(ios_sound(Some("channel:7da1b7e3:7da1b7e3")), "commy_message.wav");
+        assert_eq!(ios_sound(None), "commy_message.wav");
+        for target in [Some("dm:7da1b7e3"), None] {
+            assert!(bundled.join(ios_sound(target)).is_file(), "{}", ios_sound(target));
         }
     }
 }

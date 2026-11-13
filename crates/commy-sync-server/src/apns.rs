@@ -17,6 +17,7 @@ const WAKE_TTL_SECS: u64 = 3600;
 const WAKE_COLLAPSE_ID: &str = "wake";
 pub const ALERT_TITLE: &str = "Commy";
 pub const ALERT_BODY: &str = "New messages in Commy";
+pub const ALERT_SOUND: &str = "commy_message.wav";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
@@ -140,7 +141,7 @@ pub fn payload(previews: &[String]) -> serde_json::Value {
     let mut body = serde_json::json!({
         "aps": {
             "alert": { "title": ALERT_TITLE, "body": ALERT_BODY },
-            "sound": "default",
+            "sound": ALERT_SOUND,
             "mutable-content": 1,
         },
         "wake": "1",
@@ -199,11 +200,18 @@ mod tests {
         assert_eq!(plain["aps"]["alert"]["title"], ALERT_TITLE);
         assert_eq!(plain["aps"]["alert"]["body"], ALERT_BODY);
         assert_eq!(plain["aps"]["mutable-content"], 1);
+        assert_eq!(plain["aps"]["sound"], ALERT_SOUND);
         assert!(plain.get("preview").is_none());
         let held = payload(&["b25l".to_string(), "dHdv".to_string()]);
         assert_eq!(held["preview"], "dHdv");
         assert_eq!(held["previews"], "b25l,dHdv");
         assert_eq!(held["aps"]["alert"]["body"], ALERT_BODY, "message text never travels in the clear");
+    }
+
+    #[test]
+    fn the_push_names_a_sound_the_iphone_app_carries() {
+        let bundled = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/desktop/mobile/sounds/");
+        assert!(std::path::Path::new(bundled).join(ALERT_SOUND).is_file(), "{ALERT_SOUND} is not in {bundled}");
     }
 
     #[test]
