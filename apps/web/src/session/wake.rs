@@ -51,7 +51,7 @@ impl Session {
         spawn_local(async move {
             n0_future::time::sleep(ring_delay()).await;
             for chunk in tags.chunks(MAX_RING_TAGS) {
-                let ring = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone() };
+                let ring = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone(), urgent: false };
                 let Ok(body) = serde_json::to_string(&ring) else { return };
                 let _ = host.request("POST", &url, Some(body)).await;
             }

@@ -143,6 +143,34 @@ function alertWay({ phoneInFront: inFront, at, frontSince, caughtUp, ...wanted }
   return caughtUp || sentBeforeFront(at, frontSince) ? "none" : "in_app";
 }
 
+const PAUSED = "do_not_disturb";
+
+function anywayWay({ presence, level, focusedOnIt, phoneInFront: inFront }) {
+  if (presence !== PAUSED) return "none";
+  return alertWay({ level, presence: "online", focusedOnIt, phoneInFront: inFront, isDm: true, mentioned: true });
+}
+
+function anywayNotice({ author_name, channel_name, server_name, content }, plain) {
+  const { title, body } = messageNotice({ author_name, channel_name, server_name, content }, plain);
+  return { title, body: body ? `Notify anyway: ${body}` : "Wants to reach you" };
+}
+
+function memberNames(member) {
+  return [member.username, member.name, member.nickname].filter(Boolean);
+}
+
+function pausedMentions(content, members, meId) {
+  return (members || []).filter(m => m.id !== meId && m.presence === PAUSED && mentionsName(content, memberNames(m)));
+}
+
+function pausedLine(names) {
+  const shown = names.filter(Boolean);
+  if (!shown.length) return "";
+  if (shown.length === 1) return `${shown[0]} has notifications paused`;
+  const listed = shown.length === 2 ? `${shown[0]} and ${shown[1]}` : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+  return `${listed} have notifications paused`;
+}
+
 function playsAppSound(way, onPhone) {
   return way === "in_app" || (way === "system" && !onPhone);
 }
@@ -169,6 +197,6 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
     channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter, phoneInFront,
-    alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard,
+    alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard, anywayWay, anywayNotice, pausedMentions, pausedLine,
   };
 }

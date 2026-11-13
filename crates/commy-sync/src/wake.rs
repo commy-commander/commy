@@ -19,6 +19,11 @@ const PREVIEW_AAD: &[u8] = b"commy-wake-preview/v1";
 const SEAT_LABEL: &str = "commy-wake-seat/v1";
 pub const SEAT_BEAT_SECS: u64 = 45;
 pub const SEAT_HOLD_SECS: u64 = 120;
+pub const MAX_QUIET_SECS: i64 = 7 * 24 * 60 * 60;
+pub const QUIET_REFRESH_SECS: u64 = 6 * 60 * 60;
+pub const MAX_URGENT_TAGS: usize = 2;
+pub const URGENT_GAP_SECS: u64 = 60;
+pub const URGENT_PER_HOUR: usize = 6;
 
 pub type WakeTag = Bytes<32>;
 
@@ -44,11 +49,63 @@ pub struct WakeRing {
     pub tags: Vec<WakeTag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub urgent: bool,
+}
+
+impl WakeRing {
+    pub fn urgent_ok(&self) -> bool {
+        !self.urgent || self.tags.len() <= MAX_URGENT_TAGS
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WakeSeat {
     pub seat: WakeTag,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WakeQuiet {
+    pub seat: WakeTag,
+    pub until_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quiet {
+    Off,
+    Until(i64),
+    UntilTurnedOff,
+}
+
+impl Quiet {
+    pub fn of(do_not_disturb: bool, back_at_ms: Option<i64>) -> Self {
+        match (do_not_disturb, back_at_ms) {
+            (false, _) => Quiet::Off,
+            (true, Some(back)) => Quiet::Until(back),
+            (true, None) => Quiet::UntilTurnedOff,
+        }
+    }
+
+    pub fn until_ms(self, now_ms: i64) -> i64 {
+        match self {
+            Quiet::Off => 0,
+            Quiet::Until(back) => back,
+            Quiet::UntilTurnedOff => now_ms + MAX_QUIET_SECS * 1000,
+        }
+    }
+}
+
+pub fn quiet_due(wanted: Quiet, sent: Option<(Quiet, i64)>, now_ms: i64) -> bool {
+    match sent {
+        None => true,
+        Some((told, _)) if told != wanted => true,
+        Some((Quiet::Off, _)) => false,
+        Some((_, at)) => now_ms - at >= QUIET_REFRESH_SECS as i64 * 1000,
+    }
+}
+
+pub fn quiet_until_ok(until_ms: i64, now_ms: i64) -> Option<i64> {
+    (until_ms > now_ms).then(|| until_ms.min(now_ms + MAX_QUIET_SECS * 1000))
 }
 
 pub fn seat_tag(account_secret: &[u8; 32], who: &str, day: i64) -> [u8; 32] {
@@ -165,6 +222,50 @@ pub fn register_until_ok(until: i64, today: i64) -> bool {
 mod tests {
     use super::*;
     use crate::StreamSecret;
+
+    #[test]
+    fn an_urgent_ring_names_one_person_at_most() {
+        let tag = Bytes([1u8; 32]);
+        let ring = |tags: usize, urgent: bool| WakeRing { tags: vec![tag.clone(); tags], preview: None, urgent };
+        assert!(ring(MAX_URGENT_TAGS, true).urgent_ok());
+        assert!(!ring(MAX_URGENT_TAGS + 1, true).urgent_ok(), "a whole server cannot be woken through quiet hours");
+        assert!(ring(MAX_RING_TAGS, false).urgent_ok());
+    }
+
+    #[test]
+    fn an_old_service_reads_an_ordinary_ring_unchanged() {
+        let plain = serde_json::to_value(WakeRing { tags: vec![Bytes([2u8; 32])], preview: None, urgent: false }).unwrap();
+        assert!(plain.get("urgent").is_none());
+        let read: WakeRing = serde_json::from_value(serde_json::json!({ "tags": plain["tags"] })).unwrap();
+        assert!(!read.urgent);
+    }
+
+    #[test]
+    fn the_service_hears_about_do_not_disturb_when_it_changes_and_now_and_then_while_it_lasts() {
+        let hour = 60 * 60 * 1000;
+        let on = Quiet::of(true, None);
+        let off = Quiet::of(false, Some(5));
+        assert_eq!(off, Quiet::Off, "a return time without do not disturb means nothing");
+        assert!(quiet_due(off, None, 0), "a fresh start clears whatever was left behind");
+        assert!(!quiet_due(off, Some((off, 0)), 100 * hour));
+        assert!(quiet_due(on, Some((off, 0)), 1));
+        assert!(!quiet_due(on, Some((on, 0)), hour));
+        assert!(quiet_due(on, Some((on, 0)), QUIET_REFRESH_SECS as i64 * 1000), "kept fresh while it lasts");
+        assert!(quiet_due(Quiet::of(true, Some(9 * hour)), Some((on, 0)), 1), "a new return time is sent");
+        assert!(quiet_due(off, Some((on, 0)), 1));
+        assert_eq!(Quiet::Until(42).until_ms(0), 42);
+        assert_eq!(Quiet::Off.until_ms(7), 0);
+        assert_eq!(on.until_ms(7), 7 + MAX_QUIET_SECS * 1000);
+    }
+
+    #[test]
+    fn quiet_hours_end_in_the_future_and_within_a_week() {
+        let now = 1_000_000;
+        assert_eq!(quiet_until_ok(now, now), None, "an end time already passed lifts the quiet");
+        assert_eq!(quiet_until_ok(0, now), None);
+        assert_eq!(quiet_until_ok(now + 60_000, now), Some(now + 60_000));
+        assert_eq!(quiet_until_ok(i64::MAX, now), Some(now + MAX_QUIET_SECS * 1000));
+    }
 
     #[test]
     fn days_start_at_midnight_utc() {

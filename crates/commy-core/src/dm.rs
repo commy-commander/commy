@@ -1,5 +1,5 @@
 use crate::identity::{Identity, IdentityKey, Signature};
-use crate::ids::{ChannelId, MessageId, UserId};
+use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::message::{Attachment, Reaction};
 use crate::user::UserProfile;
 use chrono::{DateTime, Utc};
@@ -36,18 +36,23 @@ pub enum DmAction {
     GroupInvite {
         ticket: String,
     },
+    Nudge {
+        target: MessageId,
+        server: Option<ServerId>,
+        channel: Option<ChannelId>,
+    },
 }
 
 impl DmAction {
     pub fn target(&self) -> Option<MessageId> {
         match self {
-            DmAction::Post | DmAction::Call { .. } | DmAction::GroupInvite { .. } => None,
+            DmAction::Post | DmAction::Call { .. } | DmAction::GroupInvite { .. } | DmAction::Nudge { .. } => None,
             DmAction::Edit { target } | DmAction::Delete { target } | DmAction::React { target, .. } => Some(*target),
         }
     }
 
     pub fn is_stored(&self) -> bool {
-        !matches!(self, DmAction::Call { .. })
+        !matches!(self, DmAction::Call { .. } | DmAction::Nudge { .. })
     }
 }
 
@@ -234,7 +239,7 @@ impl DmStore {
                     _ => false,
                 }
             }
-            DmAction::Post | DmAction::Call { .. } | DmAction::GroupInvite { .. } => false,
+            DmAction::Post | DmAction::Call { .. } | DmAction::GroupInvite { .. } | DmAction::Nudge { .. } => false,
         };
         if !changed {
             return false;

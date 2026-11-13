@@ -4,7 +4,7 @@ use crate::state::App;
 use commy_core::catchup::{day_number, first_day};
 use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::{
-    CallSignal, ChannelId, DmAction, Identity, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof,
+    CallSignal, ChannelId, DmAction, DmMessage, Identity, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, TombstoneProof,
     UserId, UserProfile,
 };
 use commy_net::node::IncomingDm;
@@ -324,6 +324,30 @@ pub enum Received {
     Reply { to: UserId, signal: FriendSignal },
     Call { from: UserId, call: ChannelId, signal: CallSignal },
     GroupInvite { from: UserId, ticket: String, key: Option<(KeyId, ChannelSecret)> },
+    Nudge { heard: commy_view::nudge::Heard, name: String },
+}
+
+fn nudge_from(app: &App, me: UserId, sender: &UserProfile, message: &DmMessage) -> Received {
+    let partner = sender.id;
+    let Some(heard) = commy_view::nudge::heard(message, chrono::Utc::now()) else { return Received::Dropped };
+    let welcome = match heard.server {
+        Some(server) => app
+            .servers
+            .lock()
+            .unwrap()
+            .get(&server)
+            .is_some_and(|state| commy_view::nudge::server_nudge_welcome(state, partner, me, heard.channel)),
+        None => {
+            let safety = app.safety.lock().unwrap();
+            let dms = app.dms.lock().unwrap();
+            !safety.is_blocked(partner) && dms.conversation(partner).iter().any(|m| m.id == heard.target && m.from == partner)
+        }
+    };
+    if !welcome || app.safety.lock().unwrap().is_blocked(partner) {
+        tracing::debug!("dropped a notify-anyway from {partner}");
+        return Received::Dropped;
+    }
+    Received::Nudge { heard, name: sender.visible_name().to_string() }
 }
 
 pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
@@ -360,6 +384,9 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return reply.map_or(Received::Taken, |signal| Received::Reply { to: partner, signal });
     }
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return Received::Dropped };
+    if commy_view::nudge::is_nudge(&message) {
+        return nudge_from(app, me, &sender, &message);
+    }
     if matches!(message.action, DmAction::Call { .. } | DmAction::GroupInvite { .. }) {
         let known = {
             let safety = app.safety.lock().unwrap();

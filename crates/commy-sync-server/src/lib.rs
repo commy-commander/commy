@@ -139,6 +139,7 @@ pub fn router(service: Arc<Service>) -> Router {
         .route("/sync/wake/forget", post(wake::forget).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/ring", post(wake::ring).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/seat", post(wake::seat).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
+        .route("/sync/wake/quiet", post(wake::quiet).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/pictures/{id}", get(pictures::fetch).merge(put(pictures::store).layer(DefaultBodyLimit::max(MAX_PICTURE_SEALED))))
         .route("/healthz", get(health))
         .with_state(service)
@@ -175,6 +176,9 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
             every.tick().await;
             if let Err(e) = pruning.store.prune_wakes(commy_sync::wake::wake_day(now_ms())).await {
                 tracing::warn!("sync: pruning wake registrations failed: {e}");
+            }
+            if let Err(e) = pruning.store.prune_quiet(now_ms()).await {
+                tracing::warn!("sync: pruning quiet hours failed: {e}");
             }
             if pruning.retention_days == 0 {
                 continue;

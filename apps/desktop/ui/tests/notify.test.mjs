@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard, anywayWay, anywayNotice, pausedMentions, pausedLine } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -234,4 +234,39 @@ test("phones get a tappable banner instead of the quick reply card", () => {
   assert.equal(quickReplyCard({ focused: true, viewing: false, phone: true }), false);
   assert.equal(quickReplyCard({ focused: true, viewing: true, phone: false }), false);
   assert.equal(quickReplyCard({ focused: false, viewing: false, phone: false }), false);
+});
+
+test("notify anyway gets through Do Not Disturb and only then", () => {
+  const base = { level: "mentions", focusedOnIt: false, phoneInFront: false };
+  assert.equal(anywayWay({ ...base, presence: "do_not_disturb" }), "system");
+  assert.equal(anywayWay({ ...base, presence: "do_not_disturb", phoneInFront: true }), "in_app");
+  assert.equal(anywayWay({ ...base, presence: "online" }), "none", "they already heard the message itself");
+  assert.equal(anywayWay({ ...base, presence: "do_not_disturb", level: "none" }), "none", "a muted conversation stays muted");
+  assert.equal(anywayWay({ ...base, presence: "do_not_disturb", focusedOnIt: true }), "none");
+});
+
+test("a notify anyway says what it is", () => {
+  const plain = text => text;
+  assert.deepEqual(anywayNotice({ author_name: "mia", content: "are you up?" }, plain), { title: "mia", body: "Notify anyway: are you up?" });
+  assert.deepEqual(anywayNotice({ author_name: "mia", channel_name: "general", server_name: "Hangout", content: "@sam look" }, plain), { title: "mia (#general, Hangout)", body: "Notify anyway: @sam look" });
+  assert.equal(anywayNotice({ author_name: "mia", content: "" }, plain).body, "Wants to reach you");
+});
+
+test("the prompt offers only paused people your message names", () => {
+  const members = [
+    { id: "me", username: "me", name: "Me", presence: "do_not_disturb" },
+    { id: "a", username: "sam", name: "Sam", presence: "do_not_disturb" },
+    { id: "b", username: "kit", name: "Kit", nickname: "kitty", presence: "do_not_disturb" },
+    { id: "c", username: "lee", name: "Lee", presence: "online" },
+  ];
+  assert.deepEqual(pausedMentions("@sam and @kitty and @lee and @me", members, "me").map(m => m.id), ["a", "b"]);
+  assert.deepEqual(pausedMentions("no names here", members, "me"), []);
+  assert.deepEqual(pausedMentions("@sam", undefined, "me"), []);
+});
+
+test("the prompt names who has notifications paused", () => {
+  assert.equal(pausedLine(["Sam"]), "Sam has notifications paused");
+  assert.equal(pausedLine(["Sam", "Kit"]), "Sam and Kit have notifications paused");
+  assert.equal(pausedLine(["Sam", "Kit", "Lee"]), "Sam, Kit and Lee have notifications paused");
+  assert.equal(pausedLine([]), "");
 });

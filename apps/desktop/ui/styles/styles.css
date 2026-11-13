@@ -3684,6 +3684,10 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .reply-bar .icon-btn > svg { width: 16px; height: 16px; }
 .reply-bar:not(.hidden) + .gif-picker + .composer,
 .reply-bar:not(.hidden) ~ .composer { border-top-left-radius: 0; border-top-right-radius: 0; }
+.anyway-bar { gap: 10px; }
+.anyway-bar > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.anyway-send { flex: none; padding: 3px 10px; border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: 600 12px/1.4 var(--font); cursor: pointer; }
+.anyway-send:hover { background: var(--accent-hover); }
 
 .msg.pending .msg-body > :not(.msg-head) { opacity: .6; }
 .msg-pending {

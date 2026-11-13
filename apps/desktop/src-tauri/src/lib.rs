@@ -45,6 +45,7 @@ mod pictures;
 mod pins;
 mod drive;
 mod profile_images;
+mod notify_anyway;
 mod push_wake;
 mod read_state;
 mod relaunch;
@@ -8034,6 +8035,7 @@ pub(crate) async fn take_dm(handle: &tauri::AppHandle, dm: commy_net::node::Inco
         }
         outbox::Received::Call { from, call, signal } => calls::on_signal(&app, handle, from, call, signal).await,
         outbox::Received::GroupInvite { from, ticket, key } => join_group(&app, handle, from, &ticket, key).await,
+        outbox::Received::Nudge { heard, name } => notify_anyway::heard(&app, handle, heard, name),
         outbox::Received::Taken => {
             dm_sync::noticed(handle, sender);
             let contact = app.dms.lock().unwrap().contacts.get(&sender).cloned();
@@ -8290,6 +8292,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 }
                 tauri::async_runtime::spawn(run_voice_redialer(handle.clone()));
                 tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
+                tauri::async_runtime::spawn(push_wake::run_quiet_hours(handle.clone()));
                 tauri::async_runtime::spawn(run_event_reminders(handle.clone()));
                 {
                     let handle = handle.clone();
@@ -8493,6 +8496,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             take_video_frame,
             doorbell::get_awaited,
+            notify_anyway::notify_anyway,
             link_preview::prepare_link_preview,
             link_safety::check_link,
             account::account_status,

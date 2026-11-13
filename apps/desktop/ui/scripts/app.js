@@ -10303,7 +10303,57 @@ function scrollMessageToCenter(row) {
   list.scrollTo({ top, behavior: "smooth" });
 }
 
+const ANYWAY_OFFER_MS = 5 * 60 * 1000;
+const anyway = { people: [], server: null, channel: null, timer: null };
+
+function hideAnywayBar() {
+  clearTimeout(anyway.timer);
+  anyway.people = [];
+  $("anyway-bar").classList.add("hidden");
+}
+
+function offerNotifyAnyway(people, server, channel) {
+  hideAnywayBar();
+  if (!people.length || inBrowserApp() || state.replyingTo) return;
+  Object.assign(anyway, { people, server, channel });
+  $("anyway-text").textContent = pausedLine(people.map(p => p.name));
+  $("anyway-bar").classList.remove("hidden");
+  anyway.timer = setTimeout(hideAnywayBar, ANYWAY_OFFER_MS);
+}
+
+async function notifyAnyway() {
+  const { people, server, channel } = anyway;
+  hideAnywayBar();
+  const refused = [];
+  for (const person of people) {
+    try {
+      await invoke("notify_anyway", { userId: person.id, serverId: server, channelId: channel });
+    } catch (e) {
+      refused.push(String(e));
+    }
+  }
+  if (refused.length) toast(refused[0]);
+  else toast(people.length === 1 ? `Notified ${people[0].name}` : "Notified them");
+}
+
+function onNotifyAnyway(nudge) {
+  if (isBlocked(nudge.from)) return;
+  const isDm = !nudge.server;
+  const viewing = isDm
+    ? state.view === "dm" && state.currentDm && state.currentDm.user === nudge.from
+    : state.view === "server" && state.currentChannel && state.currentChannel.id === nudge.channel;
+  const prefs = notifyPrefs();
+  const level = isDm ? prefs.level : levelForChannel(prefs, nudge.server, nudge.channel, nowSecs());
+  const focusedOnIt = Boolean(viewing) && appFocused() && chatPaneShowing();
+  const way = anywayWay({ presence: state.user?.presence, level, focusedOnIt, phoneInFront: phoneShowing() });
+  if (way === "none") return;
+  alertNotice(way, anywayNotice(nudge, plainText), isDm ? `dm:${nudge.from}` : `channel:${nudge.server}:${nudge.channel}`);
+  const eventId = isDm ? "dm" : "message";
+  if (playsAppSound(way, document.body.classList.contains("mobile-app"))) playSound(eventId, soundFor(eventId));
+}
+
 function startReply(message) {
+  hideAnywayBar();
   state.replyingTo = message;
   $("reply-bar-name").textContent = message.author_name;
   $("reply-bar").classList.remove("hidden");
@@ -20378,7 +20428,10 @@ function openGroupMenu(thread, x, y) {
 }
 
 async function selectDm(userId, name) {
-  if (!state.currentDm || state.currentDm.user !== userId) cancelReply();
+  if (!state.currentDm || state.currentDm.user !== userId) {
+    cancelReply();
+    hideAnywayBar();
+  }
   state.currentDm = { user: userId, name };
   rememberSwitcherRecent(`dm:${userId}`);
   clearDmUnread(userId);
@@ -20726,8 +20779,11 @@ async function sendDm() {
   const replyTo = state.replyingTo ? state.replyingTo.id : null;
   cancelReply();
   try {
-    await invoke("send_dm", { userId: state.currentDm.user, content: encodeCustomEmojis(content), replyTo });
-    await selectDm(state.currentDm.user, state.currentDm.name);
+    const partner = state.currentDm;
+    await invoke("send_dm", { userId: partner.user, content: encodeCustomEmojis(content), replyTo });
+    await selectDm(partner.user, partner.name);
+    const paused = personPresence(partner.user) === "do_not_disturb";
+    offerNotifyAnyway(paused ? [{ id: partner.user, name: partner.name }] : [], null, null);
   } catch (e) {
     input.value = content;
     fitComposer(input);
@@ -20739,6 +20795,7 @@ async function selectChannel(channel) {
   closeContextMenus();
   const switched = Boolean(channel) && (!state.currentChannel || channel.id !== state.currentChannel.id);
   if (switched) closeVoiceRoom();
+  if (switched) hideAnywayBar();
   if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
   if (switched && state.currentServer) await invoke("open_channel", { serverId: state.currentServer.id, channelId: channel.id }).catch(() => {});
@@ -20815,7 +20872,10 @@ async function sendMessage() {
     pushOverlayChat(state.user.id, state.user.display_name || state.user.username, outgoing, false);
     if (tts) speakIncoming({ author: state.user.id, author_name: state.user.display_name || state.user.username, content, tts: true }, true);
     noteSlowSend(state.currentChannel.id, 0);
+    const sentIn = { server: state.currentServer, channel: state.currentChannel };
     await selectChannel(state.currentChannel);
+    const paused = command ? [] : pausedMentions(content, sentIn.server.members, state.user && state.user.id);
+    offerNotifyAnyway(paused.map(m => ({ id: m.id, name: m.name })), sentIn.server.id, sentIn.channel.id);
   } catch (e) {
     input.value = typed;
     fitComposer(input);
@@ -23318,6 +23378,9 @@ function wireEvents() {
 
   setIcon($("reply-bar-cancel"), "close", 16);
   $("reply-bar-cancel").onclick = cancelReply;
+  setIcon($("anyway-close"), "close", 16);
+  $("anyway-close").onclick = hideAnywayBar;
+  $("anyway-send").onclick = notifyAnyway;
   $("awaited-icon").replaceChildren(svgIcon("clock", 16));
   setIcon($("thread-close"), "close", 20);
   $("thread-head-icon").appendChild(svgIcon("thread", 20));
@@ -24269,6 +24332,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("saved-changed", event => applySavedStore(event.payload));
     loadSyncedPrefs();
     window.__TAURI__.event.listen("dm-received", event => onDmReceived(event.payload));
+    window.__TAURI__.event.listen("notify-anyway", event => onNotifyAnyway(event.payload));
     window.__TAURI__.event.listen("dm-call", event => onDmCall(event.payload));
     invoke("get_dm_call").then(call => call && onDmCall(call)).catch(() => {});
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));

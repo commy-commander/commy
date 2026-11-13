@@ -15,6 +15,7 @@ use commy_sync::{StreamId, StreamKeys, SyncEvent};
 use tauri::{AppHandle, Manager};
 
 pub use commy_view::dms::{call_fresh, is_call, pick_partners, rings, should_ring, syncable};
+use commy_view::nudge::is_nudge;
 use commy_view::dms::{EPOCHS, RECENT_MS};
 
 use crate::catchup::AppAccess;
@@ -267,7 +268,7 @@ pub enum Route {
 pub fn route(entry: &DmEntry, here: Option<&str>, at: i64, now: i64) -> Route {
     match entry {
         DmEntry::FromPartner(envelope) if syncable(&envelope.message) => Route::Receive,
-        DmEntry::FromPartner(envelope) if is_call(&envelope.message) && call_fresh(at, now) => Route::Ring,
+        DmEntry::FromPartner(envelope) if passing(&envelope.message) && call_fresh(at, now) => Route::Ring,
         DmEntry::FromMe(envelope) if is_call(&envelope.message) => {
             if !commy_view::dms::written_on(&envelope.message, here) && call_fresh(at, now) {
                 Route::Settled
@@ -298,9 +299,9 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     if sync_link::url().is_none() {
         return false;
     }
-    let call = is_call(&envelope.message);
-    if (call || syncable(&envelope.message)) && partner_follows(app, to) {
-        return call && account_log::is_live(app) && append_pairwise(app, to, envelope).await;
+    let passes = passing(&envelope.message);
+    if (passes || syncable(&envelope.message)) && partner_follows(app, to) {
+        return passes && account_log::is_live(app) && append_pairwise(app, to, envelope).await;
     }
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return false };
     let Some(key) = partner_key(app, to) else {
@@ -310,7 +311,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     let keys = inbox_to(app, me, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
     let Some(plain) = inbox::seal(&key, envelope) else { return false };
     let stream = keys.id;
-    let wake = rings(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(&keys, &envelope.message)));
+    let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(&keys, &envelope.message)));
     let (client, borrowed) = {
         let mut guard = LIVE.lock().unwrap();
         let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return false };
@@ -330,8 +331,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
         Ok(Ok(_)) => {
             tracing::info!("left a first message for {to} on the sync service");
             if let Some((tag, preview)) = wake {
-                let http = app.http.clone();
-                tauri::async_runtime::spawn(push_wake::ring(http, vec![tag], preview));
+                ring_phones(app, &envelope.message, tag, preview);
             }
             true
         }
@@ -366,7 +366,7 @@ fn on_inbox(handle: &AppHandle, server: Option<ServerId>, plain: &[u8], at: i64,
         tracing::info!("dropped a first message from {from}, who is not a member we know with that key");
         return;
     }
-    if is_call(&envelope.message) && !call_fresh(at, now_ms()) {
+    if passing(&envelope.message) && !call_fresh(at, now_ms()) {
         return;
     }
     let Some(node) = data_encoding::HEXLOWER_PERMISSIVE
@@ -382,6 +382,23 @@ fn on_inbox(handle: &AppHandle, server: Option<ServerId>, plain: &[u8], at: i64,
     tauri::async_runtime::spawn(async move {
         crate::take_dm(&handle, IncomingDm { envelope, node }, ring).await;
     });
+}
+
+fn passing(message: &DmMessage) -> bool {
+    is_call(message) || is_nudge(message)
+}
+
+fn wakes(message: &DmMessage) -> bool {
+    rings(message) || is_nudge(message)
+}
+
+fn ring_phones(app: &App, message: &DmMessage, tag: [u8; 32], preview: Option<String>) {
+    let http = app.http.clone();
+    if is_nudge(message) {
+        tauri::async_runtime::spawn(push_wake::ring_urgent(http, vec![tag], preview));
+    } else {
+        tauri::async_runtime::spawn(push_wake::ring(http, vec![tag], preview));
+    }
 }
 
 fn wake_preview(keys: &StreamKeys, message: &DmMessage) -> Option<String> {
@@ -573,7 +590,7 @@ async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
     let epoch = sync_streams::dm_epoch(Utc::now());
     let Some(keys) = sync_streams::dm_stream(&identity, &key, &epoch) else { return false };
     let stream = keys.id;
-    let wake = rings(&envelope.message).then(|| (keys.wake_tag(&partner.to_string(), push_wake::today()), wake_preview(&keys, &envelope.message)));
+    let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&partner.to_string(), push_wake::today()), wake_preview(&keys, &envelope.message)));
     let mut new_partner = false;
     let client = {
         let mut guard = LIVE.lock().unwrap();
@@ -594,8 +611,7 @@ async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
     match tokio::time::timeout(HOLD_WAIT, sync_link::append(client, stream, plain)).await {
         Ok(Ok(_)) => {
             if let Some((tag, preview)) = wake {
-                let http = app.http.clone();
-                tauri::async_runtime::spawn(push_wake::ring(http, vec![tag], preview));
+                ring_phones(app, &envelope.message, tag, preview);
             }
             true
         }

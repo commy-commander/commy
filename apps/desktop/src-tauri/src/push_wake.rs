@@ -5,9 +5,12 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use chrono::Utc;
-use commy_sync::wake::{seat_tag, sealed_preview, wake_day, WakeForget, WakeRegister, WakeRing, WakeSeat, MAX_DAYS_AHEAD, MAX_RING_TAGS};
+use commy_sync::wake::{
+    quiet_due, seat_tag, sealed_preview, wake_day, Quiet, WakeForget, WakeQuiet, WakeRegister, WakeRing, WakeSeat, MAX_DAYS_AHEAD, MAX_RING_TAGS,
+    MAX_URGENT_TAGS,
+};
 use commy_sync::StreamKeys;
-use commy_core::ServerId;
+use commy_core::{Presence, ServerId};
 use commy_sync::wire::Bytes;
 use data_encoding::BASE64;
 use rand::Rng;
@@ -24,6 +27,7 @@ pub const KEPT_FILE: &str = "wake-tags.json";
 const SEND_RETRIES: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(10)];
 const RETRY_LATER: Duration = Duration::from_secs(60);
 const FORGET_EVERYTHING_WAIT: Duration = Duration::from_secs(15);
+const QUIET_CHECK_EVERY: Duration = Duration::from_secs(15);
 
 type Tag = ([u8; 32], i64);
 type Tagged = Vec<(Tag, Source)>;
@@ -72,14 +76,23 @@ pub fn preview(keys: &StreamKeys, author: &str, channel: Option<String>, text: &
 }
 
 pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>) {
+    send_ring(http, tags, preview, false).await;
+}
+
+pub async fn ring_urgent(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>) {
+    send_ring(http, tags, preview, true).await;
+}
+
+async fn send_ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>, urgent: bool) {
     let Some(base) = sync_link::url().as_deref().and_then(wake_url) else { return };
     if tags.is_empty() {
         return;
     }
     let delay = rand::thread_rng().gen_range(RING_DELAY_MS);
     tokio::time::sleep(Duration::from_millis(delay)).await;
-    for chunk in tags.chunks(MAX_RING_TAGS) {
-        let body = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone() };
+    let chunk_size = if urgent { MAX_URGENT_TAGS } else { MAX_RING_TAGS };
+    for chunk in tags.chunks(chunk_size) {
+        let body = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone(), urgent };
         match http.post(format!("{base}/ring")).json(&body).send().await {
             Ok(res) if res.status().is_success() => tracing::info!("rang {} wake-up tags", chunk.len()),
             Ok(res) => tracing::info!("the sync service refused a wake-up ring: {}", res.status()),
@@ -102,6 +115,42 @@ pub async fn beat_seat(app: &App) {
             Ok(res) if res.status().is_success() => tracing::debug!("told the sync service you are at this computer"),
             Ok(res) => tracing::debug!("the sync service did not take the seat beat: {}", res.status()),
             Err(e) => tracing::debug!("could not send the seat beat: {e}"),
+        }
+    }
+}
+
+fn quiet_wanted(app: &App) -> Option<Quiet> {
+    let profile = app.profile.lock().unwrap().clone()?;
+    Some(Quiet::of(profile.presence == Presence::DoNotDisturb, profile.presence_until.map(|secs| secs.saturating_mul(1000))))
+}
+
+async fn tell_quiet(app: &App, quiet: Quiet) -> bool {
+    let Some(base) = sync_link::url().as_deref().and_then(wake_url) else { return false };
+    let Some(seats) = seat_tags(app, &[today()]) else { return false };
+    let until_ms = quiet.until_ms(Utc::now().timestamp_millis());
+    let mut told = true;
+    for (seat, _) in seats {
+        match app.http.post(format!("{base}/quiet")).json(&WakeQuiet { seat: Bytes(seat), until_ms }).send().await {
+            Ok(res) if res.status().is_success() => tracing::info!("told the sync service about do not disturb: {quiet:?}"),
+            Ok(res) => tracing::info!("the sync service did not take do not disturb: {}", res.status()),
+            Err(e) => {
+                tracing::info!("could not tell the sync service about do not disturb: {e}");
+                told = false;
+            }
+        }
+    }
+    told
+}
+
+pub async fn run_quiet_hours(handle: AppHandle) {
+    let mut sent: Option<(Quiet, i64)> = None;
+    loop {
+        tokio::time::sleep(QUIET_CHECK_EVERY).await;
+        let app = handle.state::<App>();
+        let Some(wanted) = quiet_wanted(&app) else { continue };
+        let now_ms = Utc::now().timestamp_millis();
+        if quiet_due(wanted, sent, now_ms) && tell_quiet(&app, wanted).await {
+            sent = Some((wanted, now_ms));
         }
     }
 }

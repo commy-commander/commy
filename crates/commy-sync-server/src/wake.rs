@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -8,8 +8,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use commy_sync::wake::{
-    preview_ok, push_target, register_until_ok, wake_day, PushService, WakeForget, WakeRegister, WakeRing, WakeSeat, MAX_RING_TAGS, PUSH_GAP_SECS,
-    SEAT_HOLD_SECS,
+    preview_ok, push_target, quiet_until_ok, register_until_ok, wake_day, PushService, WakeForget, WakeQuiet, WakeRegister, WakeRing, WakeSeat,
+    MAX_RING_TAGS, PUSH_GAP_SECS, SEAT_HOLD_SECS, URGENT_GAP_SECS, URGENT_PER_HOUR,
 };
 use tokio::sync::mpsc;
 
@@ -50,6 +50,8 @@ impl Pusher {
 const PUSH_GAP: Duration = Duration::from_secs(PUSH_GAP_SECS);
 const SEAT_HOLD: Duration = Duration::from_secs(SEAT_HOLD_SECS);
 const RETRY_WAITS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(4)];
+const URGENT_GAP: Duration = Duration::from_secs(URGENT_GAP_SECS);
+const URGENT_WINDOW: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, PartialEq, Eq)]
 enum Plan {
@@ -65,11 +67,30 @@ pub struct Wakes {
     last: Mutex<HashMap<String, Instant>>,
     queued: Mutex<HashMap<String, Vec<String>>>,
     seated: Mutex<HashMap<String, Instant>>,
+    urgent: Mutex<HashMap<String, VecDeque<Instant>>>,
 }
 
 impl Wakes {
     pub fn new(pusher: Pusher) -> Self {
-        Self { pusher, last: Mutex::new(HashMap::new()), queued: Mutex::new(HashMap::new()), seated: Mutex::new(HashMap::new()) }
+        Self {
+            pusher,
+            last: Mutex::new(HashMap::new()),
+            queued: Mutex::new(HashMap::new()),
+            seated: Mutex::new(HashMap::new()),
+            urgent: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn take_urgent(&self, push: &str, now: Instant) -> bool {
+        let mut urgent = self.urgent.lock().unwrap();
+        let sent = urgent.entry(push.to_string()).or_default();
+        sent.retain(|at| now.saturating_duration_since(*at) < URGENT_WINDOW);
+        let too_soon = sent.back().is_some_and(|at| now.saturating_duration_since(*at) < URGENT_GAP);
+        if too_soon || sent.len() >= URGENT_PER_HOUR {
+            return false;
+        }
+        sent.push_back(now);
+        true
     }
 
     fn seat(&self, pushes: impl IntoIterator<Item = String>, now: Instant) {
@@ -127,6 +148,19 @@ impl Wakes {
         let now = Instant::now();
         self.last.lock().unwrap().retain(|_, at| now.saturating_duration_since(*at) < PUSH_GAP);
         self.seated.lock().unwrap().retain(|_, until| now < *until);
+        let mut urgent = self.urgent.lock().unwrap();
+        urgent.values_mut().for_each(|sent| sent.retain(|at| now.saturating_duration_since(*at) < URGENT_WINDOW));
+        urgent.retain(|_, sent| !sent.is_empty());
+    }
+}
+
+async fn quiet_now(service: &Service, pushes: &[String]) -> HashSet<String> {
+    match service.store.quiet_pushes(pushes, crate::now_ms()).await {
+        Ok(quiet) => quiet.into_iter().collect(),
+        Err(e) => {
+            tracing::warn!("sync: could not look up quiet hours: {e}");
+            HashSet::new()
+        }
     }
 }
 
@@ -161,7 +195,7 @@ async fn send_after(service: Arc<Service>, push: String, wait: Duration) {
     tokio::time::sleep(wait).await;
     let now = Instant::now();
     let previews = service.wakes.release_queued(&push, now);
-    if service.wakes.seated_elsewhere(&push, now) {
+    if service.wakes.seated_elsewhere(&push, now) || !quiet_now(&service, std::slice::from_ref(&push)).await.is_empty() {
         return;
     }
     send(service, push, previews).await;
@@ -275,13 +309,40 @@ pub async fn seat(
     }
 }
 
+pub async fn quiet(
+    State(service): State<Arc<Service>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(request): Json<WakeQuiet>,
+) -> Response {
+    if !service.wakes.enabled() {
+        return (StatusCode::NOT_FOUND, "wake-ups are off").into_response();
+    }
+    if limited(&service, peer, &headers) {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
+    let until = quiet_until_ok(request.until_ms, crate::now_ms());
+    let kept = match service.store.wake_targets(&[request.seat.0], today()).await {
+        Ok(pushes) if pushes.is_empty() => Ok(()),
+        Ok(pushes) => service.store.set_quiet(&pushes, until).await,
+        Err(e) => Err(e),
+    };
+    match kept {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::warn!("sync: could not keep quiet hours: {e}");
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+    }
+}
+
 pub async fn ring(
     State(service): State<Arc<Service>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<WakeRing>,
 ) -> Response {
-    if request.tags.is_empty() || request.tags.len() > MAX_RING_TAGS || request.preview.as_deref().is_some_and(|p| !preview_ok(p)) {
+    if request.tags.is_empty() || request.tags.len() > MAX_RING_TAGS || !request.urgent_ok() || request.preview.as_deref().is_some_and(|p| !preview_ok(p)) {
         return StatusCode::BAD_REQUEST.into_response();
     }
     if !service.wakes.enabled() {
@@ -299,7 +360,15 @@ pub async fn ring(
         }
     };
     let now = Instant::now();
-    for push in pushes.into_iter().filter(|push| !service.wakes.seated_elsewhere(push, now)) {
+    let pushes: Vec<String> = pushes.into_iter().filter(|push| !service.wakes.seated_elsewhere(push, now)).collect();
+    let quiet = quiet_now(&service, &pushes).await;
+    for push in pushes {
+        if quiet.contains(&push) {
+            if request.urgent && service.wakes.take_urgent(&push, now) {
+                tokio::spawn(send(service.clone(), push, request.preview.iter().cloned().collect()));
+            }
+            continue;
+        }
         match service.wakes.plan(&push, now, request.preview.as_deref()) {
             Plan::Now => {
                 tokio::spawn(send(service.clone(), push, request.preview.iter().cloned().collect()));
@@ -316,6 +385,22 @@ pub async fn ring(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notify_anyway_reaches_a_quiet_phone_a_few_times_an_hour_at_most() {
+        let wakes = Wakes::new(Pusher::Off);
+        let start = Instant::now();
+        assert!(wakes.take_urgent("fcm:a", start));
+        assert!(!wakes.take_urgent("fcm:a", start + URGENT_GAP / 2), "one at a time");
+        assert!(wakes.take_urgent("fcm:b", start), "each phone counts on its own");
+        let mut at = start;
+        for _ in 1..URGENT_PER_HOUR {
+            at += URGENT_GAP;
+            assert!(wakes.take_urgent("fcm:a", at));
+        }
+        assert!(!wakes.take_urgent("fcm:a", at + URGENT_GAP), "the hour is used up");
+        assert!(wakes.take_urgent("fcm:a", start + URGENT_WINDOW + URGENT_GAP), "and refills as the hour moves on");
+    }
 
     #[test]
     fn a_phone_is_woken_at_most_once_per_gap() {

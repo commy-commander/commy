@@ -13,6 +13,7 @@ pub mod links;
 pub mod liveness;
 pub mod manage;
 pub mod moderate;
+pub mod nudge;
 pub mod pictures;
 pub mod pins;
 pub mod profile;

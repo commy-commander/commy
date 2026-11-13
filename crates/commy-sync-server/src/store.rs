@@ -16,6 +16,7 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS sync_pictures (id BYTEA PRIMARY KEY, body BYTEA NOT NULL, touched BIGINT NOT NULL)",
     "CREATE INDEX IF NOT EXISTS sync_pictures_touched ON sync_pictures (touched)",
     "CREATE TABLE IF NOT EXISTS sync_erasers (stream BYTEA PRIMARY KEY, eraser BYTEA NOT NULL, claimed BIGINT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS sync_quiet (push TEXT PRIMARY KEY, until_ms BIGINT NOT NULL)",
 ];
 
 pub const TOUCH_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -121,6 +122,30 @@ impl Store {
         }
     }
 
+    pub async fn set_quiet(&self, pushes: &[String], until_ms: Option<i64>) -> Result<(), StoreError> {
+        match self {
+            Store::Memory(m) => {
+                m.set_quiet(pushes, until_ms);
+                Ok(())
+            }
+            Store::Postgres(p) => p.set_quiet(pushes, until_ms).await,
+        }
+    }
+
+    pub async fn quiet_pushes(&self, pushes: &[String], now_ms: i64) -> Result<Vec<String>, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.quiet_pushes(pushes, now_ms)),
+            Store::Postgres(p) => p.quiet_pushes(pushes, now_ms).await,
+        }
+    }
+
+    pub async fn prune_quiet(&self, now_ms: i64) -> Result<u64, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.prune_quiet(now_ms)),
+            Store::Postgres(p) => p.prune_quiet(now_ms).await,
+        }
+    }
+
     pub async fn put_picture(&self, id: &[u8; 32], body: &[u8], at: i64) -> Result<(), StoreError> {
         match self {
             Store::Memory(m) => {
@@ -207,6 +232,7 @@ pub struct MemoryStore {
     wakes: Mutex<HashMap<[u8; 32], HashMap<String, i64>>>,
     pictures: Mutex<HashMap<[u8; 32], StoredPicture>>,
     erasers: Mutex<HashMap<StreamId, ([u8; 32], i64)>>,
+    quiet: Mutex<HashMap<String, i64>>,
 }
 
 impl MemoryStore {
@@ -262,7 +288,30 @@ impl MemoryStore {
         }
     }
 
+    fn set_quiet(&self, pushes: &[String], until_ms: Option<i64>) {
+        let mut quiet = self.quiet.lock().unwrap();
+        for push in pushes {
+            match until_ms {
+                Some(until) => quiet.insert(push.clone(), until),
+                None => quiet.remove(push),
+            };
+        }
+    }
+
+    fn quiet_pushes(&self, pushes: &[String], now_ms: i64) -> Vec<String> {
+        let quiet = self.quiet.lock().unwrap();
+        pushes.iter().filter(|push| quiet.get(*push).is_some_and(|until| *until > now_ms)).cloned().collect()
+    }
+
+    fn prune_quiet(&self, now_ms: i64) -> u64 {
+        let mut quiet = self.quiet.lock().unwrap();
+        let had = quiet.len();
+        quiet.retain(|_, until| *until > now_ms);
+        (had - quiet.len()) as u64
+    }
+
     fn forget_push(&self, push: &str) {
+        self.quiet.lock().unwrap().remove(push);
         let mut wakes = self.wakes.lock().unwrap();
         for pushes in wakes.values_mut() {
             pushes.remove(push);
@@ -469,7 +518,40 @@ impl PgStore {
 
     async fn forget_push(&self, push: &str) -> Result<(), StoreError> {
         sqlx::query("DELETE FROM sync_wakes WHERE push = $1").bind(push).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM sync_quiet WHERE push = $1").bind(push).execute(&self.pool).await?;
         Ok(())
+    }
+
+    async fn set_quiet(&self, pushes: &[String], until_ms: Option<i64>) -> Result<(), StoreError> {
+        match until_ms {
+            Some(until) => {
+                sqlx::query(
+                    "INSERT INTO sync_quiet (push, until_ms) SELECT unnest($1::text[]), $2 \
+                     ON CONFLICT (push) DO UPDATE SET until_ms = EXCLUDED.until_ms",
+                )
+                .bind(pushes)
+                .bind(until)
+                .execute(&self.pool)
+                .await?;
+            }
+            None => {
+                sqlx::query("DELETE FROM sync_quiet WHERE push = ANY($1)").bind(pushes).execute(&self.pool).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn quiet_pushes(&self, pushes: &[String], now_ms: i64) -> Result<Vec<String>, StoreError> {
+        let rows = sqlx::query("SELECT push FROM sync_quiet WHERE push = ANY($1) AND until_ms > $2 ORDER BY push")
+            .bind(pushes)
+            .bind(now_ms)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+    }
+
+    async fn prune_quiet(&self, now_ms: i64) -> Result<u64, StoreError> {
+        Ok(sqlx::query("DELETE FROM sync_quiet WHERE until_ms <= $1").bind(now_ms).execute(&self.pool).await?.rows_affected())
     }
 
     async fn prune_wakes(&self, today: i64) -> Result<u64, StoreError> {
@@ -580,8 +662,26 @@ mod tests {
         assert!(store.ping().await);
 
         exercise_wakes(store).await;
+        exercise_quiet(store).await;
         exercise_pictures(store).await;
         exercise_erasers(store).await;
+    }
+
+    async fn exercise_quiet(store: &Store) {
+        let (a, b) = ("fcm:quiet-a".to_string(), "fcm:quiet-b".to_string());
+        let both = [a.clone(), b.clone()];
+        assert!(store.quiet_pushes(&both, 1_000).await.unwrap().is_empty());
+        store.set_quiet(std::slice::from_ref(&a), Some(5_000)).await.unwrap();
+        assert_eq!(store.quiet_pushes(&both, 1_000).await.unwrap(), vec![a.clone()], "only the phone that asked is quiet");
+        assert!(store.quiet_pushes(&both, 5_000).await.unwrap().is_empty(), "quiet ends on time");
+        store.set_quiet(std::slice::from_ref(&a), Some(9_000)).await.unwrap();
+        assert_eq!(store.quiet_pushes(&both, 6_000).await.unwrap(), vec![a.clone()], "asking again moves the end");
+        store.set_quiet(std::slice::from_ref(&a), None).await.unwrap();
+        assert!(store.quiet_pushes(&both, 6_000).await.unwrap().is_empty(), "turning it off lifts it at once");
+        store.set_quiet(&both, Some(9_000)).await.unwrap();
+        store.forget_push(&b).await.unwrap();
+        assert_eq!(store.quiet_pushes(&both, 6_000).await.unwrap(), vec![a.clone()], "a phone that is gone takes its quiet with it");
+        assert_eq!(store.prune_quiet(9_000).await.unwrap(), 1);
     }
 
     async fn exercise_erasers(store: &Store) {
