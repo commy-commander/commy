@@ -196,3 +196,4 @@ html[data-look="studio"]:not([data-fit="slim"]) .channel.dm-thread > .avatar > .
 html[data-look="studio"]:not([data-fit="slim"]) .channel.dm-thread.active > .avatar > .presence-dot { box-shadow: 0 0 0 2.5px var(--accent); }
 html[data-look="studio"]:not([data-fit="slim"]) .channel.dm-thread.active > .avatar > .presence-dot.idle { background: var(--accent); box-shadow: 0 0 0 2.5px var(--accent), inset 3.5px -3px 0 .5px var(--yellow); }
 html[data-look="studio"]:not([data-fit="slim"]) .channel.dm-thread.active > .avatar > .presence-dot:is(.offline, .invisible) { background: var(--accent); box-shadow: 0 0 0 2.5px var(--accent), inset 0 0 0 2px var(--accent-ink); }
+html[data-look="studio"]:not([data-fit="slim"]) .channel.dm-thread.active > .avatar > .presence-dot.phone::after { background: var(--accent-ink); }
