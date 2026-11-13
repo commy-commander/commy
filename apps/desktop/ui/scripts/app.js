@@ -26061,6 +26061,7 @@ function wireActivityPing() {
 const STARTUP_POLL_MS = 300;
 const STARTUP_FADE_MS = 180;
 const STARTUP_OFFLINE_LINGER_MS = 1500;
+const STARTUP_REPAINT_MS = 100;
 
 function paintStartup(view) {
   $("startup-title").textContent = startupTitle(view);
@@ -26090,23 +26091,36 @@ function closeStartupLoader() {
 
 function runStartupLoader() {
   return new Promise(resolve => {
+    const shownAt = Date.now();
     let open = true;
+    let closing = false;
     let last = null;
+    let pace = emptyStartupPace();
+    const repaint = setInterval(() => paintPaced(), STARTUP_REPAINT_MS);
     const finish = () => {
       if (!open) return;
       open = false;
+      clearInterval(repaint);
       paintOfflineChip(last);
       closeStartupLoader();
       invoke("startup_continue").catch(() => {});
       resolve();
+    };
+    const paintPaced = () => {
+      if (!open || !last || closing) return;
+      const paced = pacedStartup(last, pace, shownAt, Date.now());
+      pace = paced.pace;
+      paintStartup(paced.view);
+      if (!paced.canClose) return;
+      closing = true;
+      setTimeout(finish, last.offline ? STARTUP_OFFLINE_LINGER_MS : 0);
     };
     const apply = raw => {
       const view = readStartup(raw);
       if (!open) return paintOfflineChip(view);
       if (!view) return finish();
       last = view;
-      paintStartup(view);
-      if (view.ready) setTimeout(finish, view.offline ? STARTUP_OFFLINE_LINGER_MS : 0);
+      paintPaced();
     };
     $("startup-skip").addEventListener("click", finish);
     if (IS_TAURI) window.__TAURI__.event.listen("startup-status", event => apply(event.payload));

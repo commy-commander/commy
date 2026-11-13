@@ -141,12 +141,24 @@ pub fn update_step(signals: &UpdateSignals) -> Step {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerLink {
+    pub link: StateLink,
+    pub saved: bool,
+}
+
+impl ServerLink {
+    fn catching_up(&self) -> bool {
+        matches!(self.link, StateLink::Behind | StateLink::Lost)
+    }
+}
+
 pub struct SyncSignals {
     pub signed_in: bool,
     pub offline: bool,
     pub service: Service,
     pub account_current: bool,
-    pub servers: Vec<StateLink>,
+    pub servers: Vec<ServerLink>,
     pub waited: Duration,
 }
 
@@ -159,14 +171,18 @@ fn server_count(count: usize) -> String {
 }
 
 fn sync_progress(signals: &SyncSignals) -> Step {
-    let lost = signals.servers.iter().filter(|link| **link == StateLink::Lost).count();
-    let behind = signals.servers.iter().filter(|link| **link == StateLink::Behind).count();
+    if !signals.account_current {
+        return Step::working("Loading your account");
+    }
+    let unsaved: Vec<&ServerLink> = signals.servers.iter().filter(|server| !server.saved).collect();
+    let lost = unsaved.iter().filter(|server| server.link == StateLink::Lost).count();
+    let behind = unsaved.iter().filter(|server| server.link == StateLink::Behind).count();
     if lost > 0 {
         Step::working("Reconnecting to the sync service")
     } else if behind > 0 {
-        Step::working(format!("Catching up {}", server_count(behind)))
-    } else if !signals.account_current {
-        Step::working("Loading your account")
+        Step::working(format!("Loading {}", server_count(behind)))
+    } else if signals.servers.iter().any(ServerLink::catching_up) {
+        Step::done("Your servers finish catching up in the background")
     } else {
         Step::done("Everything is up to date")
     }
@@ -222,6 +238,10 @@ fn waited() -> Duration {
     STARTED.get_or_init(Instant::now).elapsed()
 }
 
+pub fn since_launch() -> Duration {
+    waited()
+}
+
 pub fn note_session(service: Service) {
     *SESSION.lock().unwrap() = service;
 }
@@ -253,7 +273,10 @@ fn sync_signals(app: &App, offline: bool) -> SyncSignals {
         offline,
         service: *SESSION.lock().unwrap(),
         account_current: !crate::account_log::is_live(app) || crate::account_log::caught_up(),
-        servers: servers.into_iter().map(|sid| crate::voice_gate::state_link(app, sid)).collect(),
+        servers: servers
+            .into_iter()
+            .map(|sid| ServerLink { link: crate::voice_gate::state_link(app, sid), saved: !app.awaits_snapshot(sid) })
+            .collect(),
         waited: waited(),
     }
 }
@@ -287,7 +310,9 @@ async fn publish(handle: &AppHandle) -> StartupView {
 }
 
 pub fn hand_off() {
-    HANDED_OFF.store(true, Ordering::SeqCst);
+    if !HANDED_OFF.swap(true, Ordering::SeqCst) {
+        tracing::info!("the startup screen closed {} ms after launch", waited().as_millis());
+    }
 }
 
 pub fn start(handle: &AppHandle) {
@@ -356,13 +381,21 @@ mod tests {
         UpdateSignals { auto: true, status, offline: false, restarting: false, waited: Duration::from_secs(1) }
     }
 
+    fn saved(link: StateLink) -> ServerLink {
+        ServerLink { link, saved: true }
+    }
+
+    fn not_saved(link: StateLink) -> ServerLink {
+        ServerLink { link, saved: false }
+    }
+
     fn synced() -> SyncSignals {
         SyncSignals {
             signed_in: true,
             offline: false,
             service: Service::Used,
             account_current: true,
-            servers: vec![StateLink::Current, StateLink::NotUsed],
+            servers: vec![saved(StateLink::Current), saved(StateLink::NotUsed)],
             waited: Duration::from_secs(2),
         }
     }
@@ -455,9 +488,9 @@ mod tests {
 
     #[test]
     fn sync_reports_what_it_is_waiting_for() {
-        let behind = SyncSignals { servers: vec![StateLink::Behind, StateLink::Behind, StateLink::Current], ..synced() };
-        assert_eq!(sync_step(&behind).detail, "Catching up 2 servers");
-        let lost = SyncSignals { servers: vec![StateLink::Lost, StateLink::Behind], ..synced() };
+        let behind = SyncSignals { servers: vec![not_saved(StateLink::Behind), not_saved(StateLink::Behind), saved(StateLink::Current)], ..synced() };
+        assert_eq!(sync_step(&behind).detail, "Loading 2 servers");
+        let lost = SyncSignals { servers: vec![not_saved(StateLink::Lost), not_saved(StateLink::Behind)], ..synced() };
         assert_eq!(sync_step(&lost).detail, "Reconnecting to the sync service");
         let account = SyncSignals { account_current: false, ..synced() };
         assert_eq!(sync_step(&account).detail, "Loading your account");
@@ -471,8 +504,30 @@ mod tests {
         assert_eq!(sync_step(&SyncSignals { offline: true, ..synced() }).state, StepState::Skipped);
         assert_eq!(sync_step(&SyncSignals { service: Service::NotUsed, ..synced() }).state, StepState::Skipped);
         assert_eq!(sync_step(&SyncSignals { service: Service::Unreachable, ..synced() }).state, StepState::Failed);
-        let slow = SyncSignals { servers: vec![StateLink::Behind], waited: SYNC_PATIENCE, ..synced() };
+        let slow = SyncSignals { servers: vec![not_saved(StateLink::Behind)], waited: SYNC_PATIENCE, ..synced() };
         assert_eq!(sync_step(&slow).state, StepState::Skipped);
+    }
+
+    #[test]
+    fn servers_already_on_this_device_catch_up_after_the_app_opens() {
+        let behind = SyncSignals { servers: vec![saved(StateLink::Behind), saved(StateLink::Lost), saved(StateLink::Current)], ..synced() };
+        let step = sync_step(&behind);
+        assert_eq!(step.state, StepState::Done);
+        assert_eq!(step.detail, "Your servers finish catching up in the background");
+    }
+
+    #[test]
+    fn the_account_loads_before_the_app_opens_even_with_saved_servers() {
+        let loading = SyncSignals { account_current: false, servers: vec![saved(StateLink::Behind)], ..synced() };
+        assert_eq!(sync_step(&loading).state, StepState::Working);
+    }
+
+    #[test]
+    fn a_server_with_nothing_saved_yet_still_loads_first() {
+        let fresh = SyncSignals { servers: vec![saved(StateLink::Behind), not_saved(StateLink::Behind)], ..synced() };
+        let step = sync_step(&fresh);
+        assert_eq!(step.state, StepState::Working);
+        assert_eq!(step.detail, "Loading 1 server");
     }
 
     #[test]

@@ -621,6 +621,7 @@ fn open_channel(app: tauri::State<App>, server_id: String, channel_id: String) -
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     app.channel_opens.lock().unwrap().entry(sid).or_default().insert(cid, chrono::Utc::now());
+    community_sync::focus(sid);
     Ok(())
 }
 
@@ -8131,6 +8132,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
 
     tauri::async_runtime::spawn(doorbell::run(handle.clone()));
     tauri::async_runtime::spawn(directory::keep_listings_current(handle.clone()));
+    let session_check = tauri::async_runtime::spawn(account::verify_saved_session(handle.clone()));
     tauri::async_runtime::spawn(async move {
         match CommyNode::spawn_on_port(node_key, node_port).await {
             Ok((mut node, events, media, dms)) => {
@@ -8264,7 +8266,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 {
                     let handle = handle.clone();
                     tauri::async_runtime::spawn(async move {
-                        let answered = account::verify_saved_session(handle.clone()).await;
+                        let answered = session_check.await.unwrap_or(false);
                         entry_list::schedule(&handle);
                         if !answered {
                             account::keep_checking_session(handle).await;

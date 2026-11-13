@@ -31,6 +31,48 @@ function startupTitle(view) {
   return "Starting Commy";
 }
 
+const STARTUP_MIN_SHOWN_MS = 2000;
+const STARTUP_STEP_GAP_MS = 500;
+
+function emptyStartupPace() {
+  return { revealedAt: {}, working: {} };
+}
+
+function startupStepSettled(step) {
+  return step.state !== "working" && step.state !== "waiting";
+}
+
+function earliestReveal(index, previousRevealedAt, shownAt) {
+  const own = shownAt + (index + 1) * STARTUP_STEP_GAP_MS;
+  if (index === 0) return own;
+  if (previousRevealedAt == null) return Infinity;
+  return Math.max(own, previousRevealedAt + STARTUP_STEP_GAP_MS);
+}
+
+function heldAsWorking(step, lastWorking) {
+  if (!lastWorking) return { state: "working", detail: step.detail, progress: null };
+  return { state: "working", detail: lastWorking.detail, progress: lastWorking.progress };
+}
+
+function pacedStartup(view, pace, shownAt, now) {
+  if (view.restarting) return { view, pace, canClose: false };
+  const revealedAt = { ...pace.revealedAt };
+  const working = { ...pace.working };
+  const paced = { ...view };
+  STARTUP_STEPS.forEach((key, index) => {
+    const step = view[key];
+    const settled = startupStepSettled(step);
+    if (!settled) working[key] = step;
+    const due = now >= earliestReveal(index, revealedAt[STARTUP_STEPS[index - 1]], shownAt);
+    if (revealedAt[key] == null && settled && due) revealedAt[key] = now;
+    paced[key] = revealedAt[key] == null ? heldAsWorking(step, working[key]) : step;
+  });
+  const allShownSettled = STARTUP_STEPS.every(key => revealedAt[key] != null && startupStepSettled(view[key]));
+  const canClose = view.ready && allShownSettled && now >= shownAt + STARTUP_MIN_SHOWN_MS;
+  paced.ready = canClose;
+  return { view: paced, pace: { revealedAt, working }, canClose };
+}
+
 function startupPreviewStep(state, detail, progress = null) {
   return { state, detail, progress };
 }
@@ -68,5 +110,8 @@ function startupPreview(scene, ms) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STARTUP_STEPS, STARTUP_STATES, readStartupStep, readStartup, startupTitle, startupPreview };
+  module.exports = {
+    STARTUP_STEPS, STARTUP_STATES, STARTUP_MIN_SHOWN_MS, STARTUP_STEP_GAP_MS,
+    readStartupStep, readStartup, startupTitle, startupPreview, emptyStartupPace, pacedStartup,
+  };
 }

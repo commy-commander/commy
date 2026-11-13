@@ -135,6 +135,7 @@ struct Live {
     echoes: VecDeque<[u8; 32]>,
     fresh: HashSet<StreamId>,
     reading: Option<Reading>,
+    opening: HashMap<ServerId, OpenGroup>,
     greeted: HashMap<ServerId, Instant>,
     say_again: HashSet<ServerId>,
     cursors: Cursors,
@@ -169,6 +170,9 @@ static INVITED: Mutex<Vec<(ServerId, KeyId, ChannelSecret)>> = Mutex::new(Vec::n
 static SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 static REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
 static UNSENT: Mutex<Vec<Unsent>> = Mutex::new(Vec::new());
+static FOCUS: Mutex<Option<ServerId>> = Mutex::new(None);
+
+type OpenGroup = Vec<(Lane, commy_sync::StreamKeys, u64)>;
 
 fn digest(plain: &[u8]) -> [u8; 32] {
     Sha256::digest(plain).into()
@@ -353,6 +357,7 @@ async fn tend(handle: &AppHandle) {
             echoes: VecDeque::new(),
             fresh: HashSet::new(),
             reading: None,
+            opening: HashMap::new(),
             greeted: HashMap::new(),
             say_again: HashSet::new(),
             cursors,
@@ -587,6 +592,7 @@ fn refresh(handle: &AppHandle) {
     let Some(live) = guard.as_mut() else { return };
     let gone: Vec<ServerId> = live.communities.keys().filter(|sid| !wanted.contains_key(sid)).copied().collect();
     for sid in gone {
+        live.opening.remove(&sid);
         if let Some(community) = live.communities.remove(&sid) {
             for stream in community.wants.keys() {
                 live.caught_up.remove(stream);
@@ -647,27 +653,46 @@ fn refresh(handle: &AppHandle) {
         announce_me(handle, sid);
     }
     let opening = fresh_communities.len();
+    let focus = *FOCUS.lock().unwrap();
     for (sid, group) in fresh_communities {
-        let spread = first_open_delay(sid, opening);
+        let spread = first_open_delay(sid, opening, focus);
+        if let Some(live) = LIVE.lock().unwrap().as_mut() {
+            live.opening.insert(sid, group);
+        }
+        if spread.is_zero() {
+            open_waiting(sid);
+            continue;
+        }
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(spread).await;
-            if let Some(community) = LIVE.lock().unwrap().as_mut().and_then(|l| l.communities.get_mut(&sid)) {
-                let still: Vec<_> = group.into_iter().filter(|(_, keys, _)| community.wants.contains_key(&keys.id)).collect();
-                follow_group(&mut community.pool, still);
-            }
+            open_waiting(sid);
         });
     }
     crate::push_wake::register(handle);
 }
 
-fn first_open_delay(sid: ServerId, opening: usize) -> Duration {
-    if opening <= 1 {
+fn first_open_delay(sid: ServerId, opening: usize, focus: Option<ServerId>) -> Duration {
+    if opening <= 1 || focus == Some(sid) {
         return Duration::ZERO;
     }
     Duration::from_millis(std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), sid) % FIRST_OPEN_SPREAD_MS)
 }
 
-fn follow_group(pool: &mut Pool, group: Vec<(Lane, commy_sync::StreamKeys, u64)>) {
+fn open_waiting(server: ServerId) {
+    let mut guard = LIVE.lock().unwrap();
+    let Some(live) = guard.as_mut() else { return };
+    let Some(group) = live.opening.remove(&server) else { return };
+    let Some(community) = live.communities.get_mut(&server) else { return };
+    let still: OpenGroup = group.into_iter().filter(|(_, keys, _)| community.wants.contains_key(&keys.id)).collect();
+    follow_group(&mut community.pool, still);
+}
+
+pub fn focus(server: ServerId) {
+    *FOCUS.lock().unwrap() = Some(server);
+    open_waiting(server);
+}
+
+fn follow_group(pool: &mut Pool, group: OpenGroup) {
     let (lasting, texts): (Vec<_>, Vec<_>) = group.into_iter().partition(|(lane, _, _)| *lane == Lane::State);
     for (part, tail) in [(lasting, streams::STATE_TAIL), (texts, streams::FRESH_TAIL)] {
         let part: Vec<_> = part.into_iter().map(|(_, keys, after)| (keys, after)).collect();
@@ -1147,6 +1172,9 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         let first = live.caught_up.insert(stream);
         live.current.insert(stream);
         live.lost.remove(&stream);
+        if first && want.lane == Lane::State {
+            tracing::info!("{server} is up to date from the sync service {} ms after launch", crate::startup::since_launch().as_millis());
+        }
         let held = live.snapshots.contains_key(&server);
         let due = want.writes && !live.cursors.backfilled.contains(&stream.to_hex()) && !live.backfilling.contains(&stream);
         let again = want.lane == Lane::State && want.writes && live.say_again.remove(&server);
@@ -1262,10 +1290,18 @@ mod tests {
     #[test]
     fn one_new_server_opens_at_once_and_many_spread_out() {
         let sid = ServerId::new();
-        assert_eq!(first_open_delay(sid, 1), Duration::ZERO, "a server made or joined just now is not held back");
-        let spread: Vec<Duration> = (0..20).map(|_| first_open_delay(ServerId::new(), 20)).collect();
+        assert_eq!(first_open_delay(sid, 1, None), Duration::ZERO, "a server made or joined just now is not held back");
+        let spread: Vec<Duration> = (0..20).map(|_| first_open_delay(ServerId::new(), 20, None)).collect();
         assert!(spread.iter().all(|d| *d < Duration::from_millis(FIRST_OPEN_SPREAD_MS)));
         assert!(spread.iter().any(|d| *d > Duration::ZERO));
+    }
+
+    #[test]
+    fn the_server_on_screen_opens_at_once_while_the_rest_spread_out() {
+        let shown = ServerId::new();
+        assert!((0..20).all(|_| first_open_delay(shown, 20, Some(shown)) == Duration::ZERO));
+        let others: Vec<Duration> = (0..20).map(|_| first_open_delay(ServerId::new(), 20, Some(shown))).collect();
+        assert!(others.iter().any(|d| *d > Duration::ZERO));
     }
 
     #[test]
