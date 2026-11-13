@@ -52,6 +52,17 @@ pub fn idle_voice_step(
     }
 }
 
+pub fn parked_in_afk(state: &ServerState, channel: ChannelId) -> bool {
+    state.server.afk_channel() == Some(channel)
+}
+
+pub fn idle_secs(now: i64, last_ui: i64, last_voice: Option<i64>, sharing: bool) -> i64 {
+    if sharing {
+        return 0;
+    }
+    now - last_voice.map_or(last_ui, |voice| voice.max(last_ui))
+}
+
 fn voice_is_here(state: &ServerState, me: UserId, ours: &str, current: ChannelId) -> bool {
     state.voice_states.get(&me) == Some(&current) && state.voice_device(me).is_none_or(|node| node.eq_ignore_ascii_case(ours))
 }
@@ -100,6 +111,24 @@ mod tests {
         assert_eq!(idle_voice_step(&state, perms, me, OURS, general, 15 * 3600, 600), IdleVoice::Stay, "same room, other device");
         in_voice(&mut state, me, OTHER, afk);
         assert_eq!(idle_voice_step(&state, perms, me, OURS, general, 15 * 3600, 600), IdleVoice::Stay, "other room, other device");
+    }
+
+    #[test]
+    fn only_the_afk_room_counts_as_parked() {
+        let (mut state, _, general, afk) = hangout();
+        assert!(parked_in_afk(&state, afk));
+        assert!(!parked_in_afk(&state, general));
+        let sid = state.server.id;
+        state.apply(ServerEvent::AfkChannelSet { server: sid, channel: None }).unwrap();
+        assert!(!parked_in_afk(&state, afk), "with AFK turned off the room is an ordinary voice room");
+    }
+
+    #[test]
+    fn idle_time_runs_from_the_latest_activity() {
+        assert_eq!(idle_secs(1_000, 400, Some(900), false), 100, "talking counts");
+        assert_eq!(idle_secs(1_000, 950, Some(900), false), 50, "so does using the app");
+        assert_eq!(idle_secs(1_000, 400, None, false), 600, "voice parked in AFK is not activity");
+        assert_eq!(idle_secs(1_000, 0, None, true), 0, "sharing a screen always counts");
     }
 
     #[test]

@@ -1760,15 +1760,25 @@ fn afk_timeout_secs(app: &App, env_override: Option<i64>) -> i64 {
     env_override.unwrap_or_else(|| app.voice.lock().unwrap().afk_timeout_minutes as i64 * 60)
 }
 
+fn parked_in_afk(app: &App) -> bool {
+    let Some((server, channel)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel)) else {
+        return false;
+    };
+    app.servers.lock().unwrap().get(&server).is_some_and(|state| view::afk::parked_in_afk(state, channel))
+}
+
 fn idle_secs(app: &App) -> i64 {
-    let last_voice = app.voice_session.lock().unwrap().as_ref().map_or(0, |s| s.last_activity.load(std::sync::atomic::Ordering::Relaxed));
+    let parked = parked_in_afk(app);
+    let last_voice = app
+        .voice_session
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|_| !parked)
+        .map(|s| s.last_activity.load(std::sync::atomic::Ordering::Relaxed));
     let last_ui = app.last_user_activity.load(std::sync::atomic::Ordering::Relaxed);
     let sharing = app.screen_share.lock().unwrap().is_some();
-    if sharing {
-        0
-    } else {
-        chrono::Utc::now().timestamp() - last_voice.max(last_ui)
-    }
+    view::afk::idle_secs(chrono::Utc::now().timestamp(), last_ui, last_voice, sharing)
 }
 
 async fn run_seat_beats(handle: tauri::AppHandle) {
@@ -1776,7 +1786,7 @@ async fn run_seat_beats(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(commy_sync::wake::SEAT_BEAT_SECS)).await;
         let app = handle.state::<App>();
-        if afk::in_seat(idle_secs(&app), afk_timeout_secs(&app, env_override)) {
+        if afk::beats_seat(idle_secs(&app), afk_timeout_secs(&app, env_override), parked_in_afk(&app)) {
             push_wake::beat_seat(&app).await;
         }
     }

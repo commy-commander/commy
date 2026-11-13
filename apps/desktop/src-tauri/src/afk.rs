@@ -28,6 +28,10 @@ pub fn in_seat(idle_secs: i64, timeout_secs: i64) -> bool {
     idle_secs < window
 }
 
+pub fn beats_seat(idle_secs: i64, timeout_secs: i64, parked_in_afk: bool) -> bool {
+    !parked_in_afk && in_seat(idle_secs, timeout_secs)
+}
+
 pub fn at_launch(chosen: Presence) -> Option<Presence> {
     (chosen == Presence::Online).then_some(Presence::Idle)
 }
@@ -51,6 +55,13 @@ mod tests {
         assert!(!in_seat(chrono::Utc::now().timestamp(), 600), "a fresh launch with no activity is not in the seat");
         assert!(in_seat(60, 0), "with idle turned off the usual window still applies");
         assert!(!in_seat(DEFAULT_TIMEOUT_MINUTES as i64 * 60, 0));
+    }
+
+    #[test]
+    fn sitting_in_the_afk_room_leaves_the_seat_empty() {
+        assert!(beats_seat(5, 600, false));
+        assert!(!beats_seat(5, 600, true), "phones ring for someone parked in AFK even right after the move");
+        assert!(!beats_seat(600, 600, false));
     }
 
     #[test]
