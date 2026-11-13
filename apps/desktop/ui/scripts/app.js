@@ -4041,11 +4041,9 @@ function renderChannels() {
       const row = isVoiceKind(channel.kind) ? voiceChannelRow(channel, canCreate, section.pinned) : textChannelRow(channel, canCreate, section.pinned);
       if (canCreate && !section.fixed) {
         row.draggable = !touchOnly();
-        row.addEventListener("dragstart", e => {
-          dragChannel = channel;
-          e.dataTransfer.effectAllowed = "move";
-        });
-        makeDropTarget(row, () => dropChannel(section, channel.id));
+        row.addEventListener("dragstart", e => startChannelDrag(e, channel));
+        row.addEventListener("dragend", endChannelDrag);
+        makeDropTarget(row, section, () => dropChannel(section, channel.id));
       }
       list.appendChild(row);
       if (channel.kind === "voice" && channel.voice_status) list.appendChild(voiceStatusLine(channel));
@@ -13463,8 +13461,9 @@ function channelSections(server, canCreate) {
   const sections = [];
   const looseText = loose.filter(c => holdsMessages(c) || isDriveChannel(c)).sort(byPos);
   const looseVoice = loose.filter(c => isVoiceKind(c.kind)).sort(byPos);
-  if (looseText.length || canCreate) sections.push({ key: `${server.id}:text`, title: "Text Channels", kind: "text", parent: null, channels: looseText });
-  if (looseVoice.length || canCreate) sections.push({ key: `${server.id}:voice`, title: "Voice Channels", kind: "voice", parent: null, channels: looseVoice });
+  const named = title => categories.some(c => c.name.toLowerCase() === title.toLowerCase());
+  if (looseText.length || (canCreate && !named("Text Channels"))) sections.push({ key: `${server.id}:text`, title: "Text Channels", kind: "text", parent: null, channels: looseText });
+  if (looseVoice.length || (canCreate && !named("Voice Channels"))) sections.push({ key: `${server.id}:voice`, title: "Voice Channels", kind: "voice", parent: null, channels: looseVoice });
   for (const category of categories) {
     sections.push({
       key: category.id,
@@ -13481,12 +13480,22 @@ function channelSections(server, canCreate) {
 
 let dragChannel = null;
 
+function startChannelDrag(e, item) {
+  dragChannel = item;
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", item.id);
+}
+
+function endChannelDrag() {
+  dragChannel = null;
+  for (const node of document.querySelectorAll("#channel-list .drop-over, #channel-list .drop-after")) node.classList.remove("drop-over", "drop-after");
+}
+
 async function dropChannel(section, beforeId) {
   const server = state.currentServer;
   const moving = dragChannel;
   dragChannel = null;
   if (!server || !moving) return;
-  if (moving.kind === "category") return dropCategory(beforeId);
   const siblings = section.channels.filter(c => c.id !== moving.id);
   let index = beforeId ? siblings.findIndex(c => c.id === beforeId) : siblings.length;
   if (index < 0) index = siblings.length;
@@ -13500,37 +13509,70 @@ async function dropChannel(section, beforeId) {
   }
 }
 
-async function dropCategory(beforeId) {
+function sectionSpot(section, node, e) {
+  const onHeader = node.classList.contains("section-head");
+  return { target: section.key, after: !onHeader || dropLandsAfter(e.clientY, node.getBoundingClientRect()) };
+}
+
+function movableSections(server) {
+  return channelSections(server, Boolean(server.can_manage_channels)).filter(s => !s.fixed);
+}
+
+async function categoriesFor(server, sections) {
+  const known = new Set(server.channels.map(c => c.id));
+  for (const section of sections) await invoke("create_category", { serverId: server.id, name: section.title });
+  await refreshCurrentServer();
+  const made = state.currentServer.channels.filter(c => c.kind === "category" && !known.has(c.id));
+  return new Map(sections.map(section => [section.key, made.find(c => c.name === section.title)]));
+}
+
+async function sectionMoves(server, sections, order) {
+  const loose = sections.filter(s => !s.category);
+  const ids = new Map(sections.filter(s => s.category).map(s => [s.key, s.category.id]));
+  if (looseStayFirst(order, loose.map(s => s.key))) return categoryMoves(order.filter(k => ids.has(k)), k => ids.get(k));
+  const made = await categoriesFor(server, loose);
+  const moves = [];
+  for (const section of loose) {
+    const category = made.get(section.key);
+    if (!category) throw new Error("Could not turn " + section.title + " into a category");
+    ids.set(section.key, category.id);
+    moves.push(...sectionChannelMoves(section.channels, category.id));
+  }
+  return [...categoryMoves(order, k => ids.get(k)), ...moves];
+}
+
+async function dropSection(spot) {
   const server = state.currentServer;
-  const moving = server.channels.find(c => c.id === (dragCategoryId || ""));
-  dragCategoryId = null;
-  if (!moving) return;
-  const categories = server.channels.filter(c => c.kind === "category" && c.id !== moving.id).sort((a, b) => a.position - b.position);
-  let index = beforeId ? categories.findIndex(c => c.id === beforeId) : categories.length;
-  if (index < 0) index = categories.length;
-  categories.splice(index, 0, moving);
-  const moves = categories.map((c, i) => ({ channel: c.id, parent: null, position: 1000 + i }));
+  const moving = dragChannel;
+  dragChannel = null;
+  if (!server || !moving) return;
+  const sections = movableSections(server);
+  const order = reorderKeys(sections.map(s => s.key), moving.id, spot.target, spot.after);
+  if (!order) return;
   try {
-    await invoke("move_channels", { serverId: server.id, moves });
+    await invoke("move_channels", { serverId: server.id, moves: await sectionMoves(server, sections, order) });
     await refreshCurrentServer();
   } catch (e) {
-    toast(String(e));
+    toast(String(e.message || e));
   }
 }
 
-let dragCategoryId = null;
-
-function makeDropTarget(node, onDrop) {
+function makeDropTarget(node, section, onChannelDrop) {
   node.addEventListener("dragover", e => {
-    if (!dragChannel && !dragCategoryId) return;
+    if (!dragChannel) return;
     e.preventDefault();
-    node.classList.add("drop-over");
+    e.dataTransfer.dropEffect = "move";
+    const after = dragChannel.kind === "section" && sectionSpot(section, node, e).after;
+    node.classList.toggle("drop-over", !after);
+    node.classList.toggle("drop-after", after);
   });
-  node.addEventListener("dragleave", () => node.classList.remove("drop-over"));
+  node.addEventListener("dragleave", () => node.classList.remove("drop-over", "drop-after"));
   node.addEventListener("drop", e => {
     e.preventDefault();
-    node.classList.remove("drop-over");
-    onDrop();
+    node.classList.remove("drop-over", "drop-after");
+    if (!dragChannel) return;
+    if (dragChannel.kind === "section") dropSection(sectionSpot(section, node, e));
+    else onChannelDrop();
   });
 }
 
@@ -13542,15 +13584,10 @@ function sectionHeader(section, collapsed, canCreate) {
   header.appendChild(el("span", section.fixed ? "section-title keep-case" : "section-title", section.title));
   header.onclick = () => toggleSection(section.key);
   if (canCreate) {
-    if (section.category) {
-      header.appendChild(channelGear(section.category));
-      header.draggable = !touchOnly();
-      header.addEventListener("dragstart", e => {
-        dragCategoryId = section.category.id;
-        dragChannel = { kind: "category", id: section.category.id };
-        e.dataTransfer.effectAllowed = "move";
-      });
-    }
+    if (section.category) header.appendChild(channelGear(section.category));
+    header.draggable = !touchOnly();
+    header.addEventListener("dragstart", e => startChannelDrag(e, { kind: "section", id: section.key }));
+    header.addEventListener("dragend", endChannelDrag);
     const add = el("button", "dm-group-add");
     add.title = "Create Channel";
     add.appendChild(svgIcon("plus", 16));
@@ -13559,15 +13596,7 @@ function sectionHeader(section, collapsed, canCreate) {
       openCreateChannel(section.kind, section.parent);
     };
     header.appendChild(add);
-    makeDropTarget(header, () => {
-      if (dragChannel && dragChannel.kind === "category") {
-        dragChannel = null;
-        if (section.category) dropCategory(section.category.id);
-        else dragCategoryId = null;
-      } else {
-        dropChannel(section, null);
-      }
-    });
+    makeDropTarget(header, section, () => dropChannel(section, null));
   }
   return header;
 }

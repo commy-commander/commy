@@ -4572,6 +4572,7 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .section-head .channel-gear { opacity: 0; margin-left: 4px; }
 .section-head:hover .channel-gear { opacity: 1; }
 .drop-over { box-shadow: inset 0 2px 0 var(--accent); }
+.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 
 .voice-count.limited { font-variant-numeric: tabular-nums; background: var(--bg-darkest); color: var(--text-muted); padding: 1px 6px; border-radius: 8px; font-size: 11px; }
 .voice-count.full { color: var(--red); }
