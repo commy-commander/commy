@@ -7291,7 +7291,7 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop", "game-pop"]) {
+  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "room-member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop", "game-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "pins-pop") closePinsPanel();
@@ -15331,8 +15331,7 @@ function renderBanLengths(member, server, ban) {
   $("moderate-text").textContent = banChoiceText(member.name, server.name, ban.hours);
 }
 
-function confirmKick(member) {
-  const server = state.currentServer;
+function confirmKick(member, server = state.currentServer) {
   if (!server) return;
   askModeration({
     title: `Kick ${member.name}`,
@@ -15347,8 +15346,7 @@ function confirmKick(member) {
   });
 }
 
-function confirmBan(member) {
-  const server = state.currentServer;
+function confirmBan(member, server = state.currentServer) {
   if (!server) return;
   const ban = { hours: null };
   askModeration({
@@ -15574,8 +15572,8 @@ async function confirmTimeout() {
   }
 }
 
-async function moveVoiceMember(member, channel) {
-  const serverId = state.currentServer.id;
+async function moveVoiceMember(member, channel, server = state.currentServer) {
+  const serverId = server.id;
   const roomName = channel ? channelPlainName(channel) : null;
   try {
     await invoke("move_voice_member", { serverId, userId: member.id, channelId: channel ? channel.id : null });
@@ -23231,7 +23229,7 @@ function wireEvents() {
     applyAvatar("none");
   };
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "banner-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "banner-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "room-member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     closeMenuOutside("game-pop", e.target, ".game-link");
     if (!open.length) return;
     closeMenuOutside("fp-menu", e.target, ".mc-more, .fp-more");

@@ -1,6 +1,7 @@
 html[data-look="studio"][data-fit="slim"] #server-menu:not(.hidden),
 html[data-look="studio"][data-fit="slim"] #channel-menu:not(.hidden),
-html[data-look="studio"][data-fit="slim"] #fp-menu:not(.hidden) {
+html[data-look="studio"][data-fit="slim"] #fp-menu:not(.hidden),
+html[data-look="studio"][data-fit="slim"] #room-member-menu:not(.hidden) {
   left: 0 !important;
   right: 0;
   top: auto !important;
@@ -22,10 +23,12 @@ html[data-look="studio"][data-fit="slim"] #fp-menu:not(.hidden) {
 }
 html[data-look="studio"][data-fit="slim"][data-fx="lite"] #server-menu:not(.hidden),
 html[data-look="studio"][data-fit="slim"][data-fx="lite"] #channel-menu:not(.hidden),
-html[data-look="studio"][data-fit="slim"][data-fx="lite"] #fp-menu:not(.hidden) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look="studio"][data-fit="slim"][data-fx="lite"] #fp-menu:not(.hidden),
+html[data-look="studio"][data-fit="slim"][data-fx="lite"] #room-member-menu:not(.hidden) { -webkit-backdrop-filter: none; backdrop-filter: none; }
 html[data-look="studio"][data-fit="slim"] #server-menu::before,
 html[data-look="studio"][data-fit="slim"] #channel-menu::before,
-html[data-look="studio"][data-fit="slim"] #fp-menu::before {
+html[data-look="studio"][data-fit="slim"] #fp-menu::before,
+html[data-look="studio"][data-fit="slim"] #room-member-menu::before {
   content: "";
   position: sticky;
   top: -20px;
@@ -41,7 +44,8 @@ html[data-look="studio"][data-fit="slim"] #fp-menu::before {
 }
 html[data-look="studio"][data-fit="slim"] #server-menu > .ctx-title,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .ctx-title,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-title {
+html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-title,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .ctx-title {
   height: 52px;
   padding: 0 4px 6px 20px;
   overflow: hidden;
@@ -52,13 +56,16 @@ html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-title {
 }
 html[data-look="studio"][data-fit="slim"] #server-menu > .ctx-label,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .ctx-label,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-label { padding: 14px 20px 8px; }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-label,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .ctx-label { padding: 14px 20px 8px; }
 html[data-look="studio"][data-fit="slim"] #server-menu > .ctx-sep,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .ctx-sep,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-sep { height: 1px; margin: 6px 20px; background: var(--line); }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-sep,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .ctx-sep { height: 1px; margin: 6px 20px; background: var(--line); }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow {
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -79,47 +86,63 @@ html[data-look="studio"][data-fit="slim"] #channel-menu > .arow:hover,
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow:focus,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow:focus,
 html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:hover,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:focus { background: none; color: var(--header-primary); outline: none; }
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow:hover,
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:focus,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow:focus { background: none; color: var(--header-primary); outline: none; }
 html[data-look="studio"][data-fit="slim"] #server-menu > .ctx-title + .arow,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .ctx-title + .arow,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-title + .arow { margin-bottom: 5px; background: var(--pillow-top), var(--bg-raised); box-shadow: var(--pillow-sm); }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-title + .arow,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .ctx-title + .arow { margin-bottom: 5px; background: var(--pillow-top), var(--bg-raised); box-shadow: var(--pillow-sm); }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow:active,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow:active,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:active { background: var(--bg-active); }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:active,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow:active { background: var(--bg-active); }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow:focus-visible,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow:focus-visible,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:focus-visible,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow.danger,
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow.danger:hover,
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow.danger .i,
 html[data-look="studio"][data-fit="slim"] #fp-menu > .arow.danger,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow.danger,
 html[data-look="studio"][data-fit="slim"] #fp-menu > .arow.danger:hover,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow.danger .i { color: var(--danger-text); }
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow.danger:hover,
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow.danger .i,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow.danger .i { color: var(--danger-text); }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow::after,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow::after,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow::after { content: none; }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow::after,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow::after { content: none; }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow > .i,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow > .i,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow > .i { flex: none; width: 23px; height: 23px; color: var(--text-muted); }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow > .i,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow > .i { flex: none; width: 23px; height: 23px; color: var(--text-muted); }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow > .l,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow > .l,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow > .l { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow > .l,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow > .l { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow > .tick,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow > .tick,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow > .tick { width: 22px; height: 22px; color: var(--accent-lit); opacity: 0; scale: .5; transition: opacity var(--t-hover), scale 200ms var(--ease-spring); }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow > .tick,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow > .tick { width: 22px; height: 22px; color: var(--accent-lit); opacity: 0; scale: .5; transition: opacity var(--t-hover), scale 200ms var(--ease-spring); }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow[role="menuitemradio"][aria-checked="true"],
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow[role="menuitemradio"][aria-checked="true"],
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow[role="menuitemradio"][aria-checked="true"] { font-weight: 600; }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow[role="menuitemradio"][aria-checked="true"],
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow[role="menuitemradio"][aria-checked="true"] { font-weight: 600; }
 html[data-look="studio"][data-fit="slim"] #server-menu > .arow[aria-checked="true"] > .tick,
 html[data-look="studio"][data-fit="slim"] #channel-menu > .arow[aria-checked="true"] > .tick,
-html[data-look="studio"][data-fit="slim"] #fp-menu > .arow[aria-checked="true"] > .tick { opacity: 1; scale: 1; }
+html[data-look="studio"][data-fit="slim"] #fp-menu > .arow[aria-checked="true"] > .tick,
+html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow[aria-checked="true"] > .tick { opacity: 1; scale: 1; }
 @media (hover: hover) {
   html[data-look="studio"][data-fit="slim"] #server-menu > .arow:hover,
   html[data-look="studio"][data-fit="slim"] #channel-menu > .arow:hover,
-  html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:hover { background: rgb(var(--lamp) / .06); }
+  html[data-look="studio"][data-fit="slim"] #fp-menu > .arow:hover,
+  html[data-look="studio"][data-fit="slim"] #room-member-menu > .arow:hover { background: rgb(var(--lamp) / .06); }
   html[data-look="studio"][data-fit="slim"] #server-menu > .ctx-title + .arow:hover,
   html[data-look="studio"][data-fit="slim"] #channel-menu > .ctx-title + .arow:hover,
-  html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-title + .arow:hover { background: var(--pillow-top), var(--bg-raised); }
+  html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-title + .arow:hover,
+  html[data-look="studio"][data-fit="slim"] #room-member-menu > .ctx-title + .arow:hover { background: var(--pillow-top), var(--bg-raised); }
 }
 html[data-look="studio"][data-fit="slim"] .pt-reply-cue .cue-menu { display: none; }
 html[data-look="studio"][data-fit="slim"] .pt-reply-cue.left .cue-menu { display: block; }

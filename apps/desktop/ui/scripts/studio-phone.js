@@ -6,6 +6,7 @@ const STUDIO_TABS = [
 ];
 const STUDIO_TITLES = { messages: "Messages", live: "Live", you: "You" };
 const STUDIO_LIVE_REFRESH_MS = 15000;
+const ROOM_WANTED_MS = 60000;
 const STUDIO_HOME_WORDS = { "Server Rules": "Rules", "Text Channels": "Text channels", "Voice Channels": "Voice channels" };
 
 const studioPhone = {
@@ -21,6 +22,7 @@ const studioPhone = {
   followUntil: 0,
   rooms: [],
   servers: [],
+  roomWanted: null,
   roomSeen: "",
   roomQueued: 0,
   soundsWereOpen: false,
@@ -839,6 +841,7 @@ function syncHorizonVoice() {
   h.open.setAttribute("aria-label", name ? `Open ${name}` : "Open the voice room");
   syncRoomMode();
   queueRoomPaint();
+  openWantedRoom();
 }
 
 function syncHorizonBadge() {
@@ -1063,16 +1066,36 @@ function paintLivePage() {
   paintStudioTitle();
 }
 
-async function openLiveRoom(room) {
-  await selectServer(room.serverId);
-  await setPhoneTab("home");
-  const row = document.querySelector(`#channel-list .voice-channel[data-room="${CSS.escape(room.channelId)}"]`);
-  if (row) row.scrollIntoView({ block: "center" });
+function joinRoomRow(row, stream = null) {
+  studioPhone.roomWanted = { channelId: row.dataset.room, at: Date.now(), stream };
+  if (row.onclick) row.onclick();
 }
 
-async function openLiveStream(stream) {
-  if (!state.currentServer || state.currentServer.id !== stream.room.serverId) await selectServer(stream.room.serverId);
-  await watchScreen(stream.userId, stream.name);
+function openWantedRoom() {
+  const wanted = studioPhone.roomWanted;
+  if (!wanted) return;
+  if (Date.now() - wanted.at > ROOM_WANTED_MS) {
+    studioPhone.roomWanted = null;
+    return;
+  }
+  if (state.voiceChannelId !== wanted.channelId || $("phone-voice").classList.contains("hidden") || phonePane() !== "list") return;
+  studioPhone.roomWanted = null;
+  openSheet("pt-voice-open");
+  if (wanted.stream && !wanted.stream.mine) watchScreen(wanted.stream.userId, wanted.stream.name);
+}
+
+async function openLiveRoom(room, stream = null) {
+  if (state.voiceChannelId === room.channelId) {
+    studioPhone.roomWanted = { channelId: room.channelId, at: Date.now(), stream };
+    return openWantedRoom();
+  }
+  if (!state.currentServer || state.currentServer.id !== room.serverId) await selectServer(room.serverId);
+  const row = document.querySelector(`#channel-list .voice-channel[data-room="${CSS.escape(room.channelId)}"]`);
+  if (row) joinRoomRow(row, stream);
+}
+
+function openLiveStream(stream) {
+  return openLiveRoom(stream.room, stream);
 }
 
 function paintYouPage() {
@@ -1700,10 +1723,12 @@ function wireHorizon() {
   });
   $("channel-list").addEventListener("click", e => {
     if (!studioSlim() || e.target.closest("button")) return;
-    if (!e.target.closest(".voice-channel.connected")) return;
+    const row = e.target.closest(".voice-channel");
+    if (!row) return;
     e.stopPropagation();
     e.preventDefault();
-    openSheet("pt-voice-open");
+    if (row.classList.contains("connected")) openSheet("pt-voice-open");
+    else joinRoomRow(row);
   }, true);
 }
 
@@ -2408,6 +2433,7 @@ function roomStreamTile(stream) {
 
 function roomAudienceChip(person) {
   const chip = el("div", "pt-aud-chip" + (person.hand ? " hand" : ""));
+  if (person.id) chip.dataset.user = person.id;
   chip.appendChild(makeAvatar(person.id || person.name, person.name, "avatar"));
   chip.appendChild(el("b", "", person.label));
   if (person.hand) {

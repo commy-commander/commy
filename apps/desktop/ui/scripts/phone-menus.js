@@ -32,7 +32,7 @@ const PHONE_MENU_WORD_ICONS = {
   "Remove timeout": "clock",
 };
 const PHONE_MENU_SWITCH_WORDS = { "sm-mute": "Mute Server" };
-const PHONE_MENUS = ["server-menu", "channel-menu", "fp-menu"];
+const PHONE_MENUS = ["server-menu", "channel-menu", "fp-menu", "room-member-menu"];
 
 function phoneMenuKind(button) {
   if (button.classList.contains("ctx-check")) return "switch";

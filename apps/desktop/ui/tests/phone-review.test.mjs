@@ -61,7 +61,7 @@ test("a dialog opened while another phone layer is still stepping back waits for
 test("the profile card's More menu is the same hold sheet as the server and channel menus", () => {
   const glue = read("scripts", "phone-menus.js");
   const css = read("styles", "phone-menus.css");
-  assert.match(glue, /const PHONE_MENUS = \["server-menu", "channel-menu", "fp-menu"\];/);
+  assert.match(glue, /const PHONE_MENUS = \["server-menu", "channel-menu", "fp-menu", "room-member-menu"\];/);
   assert.match(glue, /"Report": "flag",/);
   assert.ok(css.includes(`${SLIM} #fp-menu > .arow:hover`));
   assert.ok(css.includes(`${SLIM} #fp-menu > .arow.danger:hover`));

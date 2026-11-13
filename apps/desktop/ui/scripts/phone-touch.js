@@ -409,6 +409,26 @@ function roomStage(channel, tiles) {
   return { tiles: (tiles || []).filter(tile => speakers.includes(tile.id)), audience };
 }
 
+const ROOM_MEMBER_ACTION_WORDS = { move: () => "Move to another room", disconnect: () => "Disconnect from voice", kick: name => `Kick ${name}`, ban: name => `Ban ${name}` };
+
+function roomMemberActions(server, { targetId, myId, roomId } = {}) {
+  if (!server || !targetId || targetId === myId || targetId === server.owner) return [];
+  if (!(server.members || []).some(member => member.id === targetId)) return [];
+  const actions = [];
+  if (server.can_move) {
+    const rooms = (server.channels || []).filter(channel => (channel.kind === "voice" || channel.kind === "stage") && channel.id !== roomId && channel.can_view !== false);
+    if (rooms.length) actions.push({ kind: "move", rooms });
+    actions.push({ kind: "disconnect" });
+  }
+  if (server.can_kick) actions.push({ kind: "kick" });
+  if (server.can_ban) actions.push({ kind: "ban" });
+  return actions;
+}
+
+function roomMemberActionWords(kind, name) {
+  return ROOM_MEMBER_ACTION_WORDS[kind](name);
+}
+
 function audienceLabel(count) {
   return `Audience ${count}`;
 }
@@ -516,6 +536,8 @@ if (typeof module !== "undefined" && module.exports) {
     shareViewers,
     roomStage,
     audienceLabel,
+    roomMemberActions,
+    roomMemberActionWords,
     MIRROR_FRAME_MS,
     streamBubbles,
     watchPlace,
