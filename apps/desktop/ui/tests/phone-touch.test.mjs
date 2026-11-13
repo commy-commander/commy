@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const {
   PHONE_TABS, HORIZON, HORIZON_SPRINGS, horizonY, horizonPath, horizonLift, springStep,
   phoneTabAfter, badgeText, roomLine, liveSummary, liveRooms, liveStreams, stackPeople,
-  SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts,
+  SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, messageSwipePull, messageSwipeAction, edgeBackStarts,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
   WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
@@ -190,6 +190,26 @@ test("a pull from the screen edge may wander more before it stops counting as go
   assert.match(glue, /swipe\.axis = swipeAxis\(dx, dy, swipe\.kind === "back" && !swipe\.wide \? SWIPE\.edgeLean : SWIPE\.lean\);/);
 });
 
+test("swiping a message right replies and swiping it left opens its menu", () => {
+  assert.equal(messageSwipeAction(SWIPE.replyAt), "reply");
+  assert.equal(messageSwipeAction(-SWIPE.replyAt), "menu");
+  assert.equal(messageSwipeAction(0), null);
+  assert.equal(messageSwipePull(40, true), 40);
+  assert.equal(messageSwipePull(-40, true), -40);
+  assert.equal(messageSwipePull(40, false), 0);
+  assert.equal(messageSwipePull(-900, false), -SWIPE.replyMax);
+  assert.match(glue, /if \(msg && messageOfActions\.get\(msg\.querySelector\(":scope > \.msg-actions"\)\)\) return \{ kind: "reply", node: msg, replies: Boolean\(msg\.querySelector\(MESSAGE_REPLY_BUTTON\)\) \};/);
+  assert.match(glue, /setTimeout\(\(\) => finishMessageSwipe\(node, messageSwipeAction\(dx\)\), wait\(SWIPE\.chipAfterMs\)\);/);
+  assert.match(glue, /if \(action === "menu"\) return openHoldSheet\(node\);/);
+  assert.match(glue, /'<span class="rk"><i data-i="reply" class="cue-reply"><\/i><i data-i="ellipsis" class="cue-menu"><\/i><\/span>'/);
+  const menus = read("styles", "phone-menus.css");
+  assert.match(menus, /^html\[data-look="studio"\]\[data-fit="slim"\] \.pt-reply-cue \.cue-menu \{ display: none; \}$/m);
+  assert.match(menus, /^html\[data-look="studio"\]\[data-fit="slim"\] \.pt-reply-cue\.left \.cue-menu \{ display: block; \}$/m);
+  assert.match(menus, /^html\[data-look="studio"\]\[data-fit="slim"\] \.pt-reply-cue\.left \.cue-reply \{ display: none; \}$/m);
+  assert.deepEqual(SHEET_ROWS["Copy Image"], { label: "Copy image", icon: "copy" });
+  assert.deepEqual(SHEET_ROWS["Save Image"], { label: "Save image", icon: "download" });
+});
+
 test("pulling a message to either side follows the finger to 84 px and replies past 56", () => {
   assert.equal(SWIPE.replyAt, 56);
   assert.equal(SWIPE.replyMax, 84);
@@ -200,7 +220,7 @@ test("pulling a message to either side follows the finger to 84 px and replies p
   assert.equal(replyPull(NaN), 0);
   assert.equal(replyCommits(-(SWIPE.replyAt - 1)), false);
   assert.equal(replyCommits(-SWIPE.replyAt), true);
-  assert.equal(SHEET_ROWS.Reply.hint, "or swipe the message");
+  assert.equal(SHEET_ROWS.Reply.hint, "or swipe the message right");
   assert.match(glue, /\(swipe\.axis === along\(\) && pull < 0 && !swipe\.wasOpen && !swipe\.up && swipe\.kind !== "reply"\)/);
   assert.match(glue, /cue\.classList\.toggle\("left", dx < 0\);/);
   assert.match(glue, /const sends = !cancelled && swipeSettles\(Math\.abs\(dx\), dx < 0 \? -speed : speed, SWIPE\.replyAt\);/);

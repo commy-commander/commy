@@ -555,6 +555,7 @@ fn media_response(status: u16, content_type: &str, body: Vec<u8>) -> tauri::http
         .header("Content-Type", content_type)
         .header("Cache-Control", "private, max-age=86400")
         .header("X-Content-Type-Options", "nosniff")
+        .header("Access-Control-Allow-Origin", "*")
         .body(body)
         .unwrap_or_default()
 }
@@ -1823,5 +1824,12 @@ mod tests {
         assert_eq!(media_target(&format!("http://commy-media.localhost/?u={encoded}")).as_deref(), Some(gif));
         assert_eq!(media_target("commy-media://localhost/?u=file%3A%2F%2F%2Fetc%2Fpasswd"), None);
         assert_eq!(media_target("commy-media://localhost/"), None);
+    }
+
+    #[test]
+    fn relayed_pictures_can_be_read_back_to_copy_them() {
+        let response = media_response(200, "image/gif", b"GIF89a".to_vec());
+        assert_eq!(response.headers().get("Access-Control-Allow-Origin").and_then(|v| v.to_str().ok()), Some("*"));
+        assert_eq!(response.headers().get("X-Content-Type-Options").and_then(|v| v.to_str().ok()), Some("nosniff"));
     }
 }

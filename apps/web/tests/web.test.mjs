@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, SPEECH_VOICE_ORIGINS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -375,6 +375,15 @@ test("a downloaded file is saved under its own name and leaves nothing behind on
   assert.equal(link.clicks, 1);
   assert.deepEqual(doc.body.children, []);
   assert.equal(webSaveFile(fakeDocument(), urls, new Uint8Array([1]), ""), "file");
+});
+
+test("a saved chat image keeps the name the chat gave it", () => {
+  assert.equal(webSavedImageName({ headers: { "x-commy-name": encodeURIComponent("cat photo.png") } }), "cat photo.png");
+  assert.equal(webSavedImageName({ headers: { "x-commy-name": "%E0%A4%A" } }), "image");
+  assert.equal(webSavedImageName({ headers: {} }), "image");
+  assert.equal(webSavedImageName(undefined), "image");
+  const bridge = readFileSync(new URL("../ui/web-bridge.js", import.meta.url), "utf8");
+  assert.match(bridge, /if \(cmd === "save_image"\) return webSaveFile\(document, URL, args, webSavedImageName\(options\)\);/);
 });
 
 test("link checks are answered by the backend in the browser too", () => {

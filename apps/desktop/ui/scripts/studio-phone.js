@@ -202,7 +202,7 @@ function buildStudioPhone() {
   const pick = studioNode("section", "pt-sheet pt-pick", '<div class="pt-pick-step" id="pt-pick-step"></div><input type="datetime-local" class="pt-pick-time" id="pt-pick-time" tabindex="-1" aria-hidden="true">');
   pick.id = "pt-pick";
   pick.setAttribute("role", "dialog");
-  const cue = studioNode("span", "pt-reply-cue", '<span class="rk"><i data-i="reply"></i></span>');
+  const cue = studioNode("span", "pt-reply-cue", '<span class="rk"><i data-i="reply" class="cue-reply"></i><i data-i="ellipsis" class="cue-menu"></i></span>');
   cue.id = "pt-reply-cue";
   const bar = studioNode("nav", "hzn", horizonMarkup());
   bar.id = "horizon";
@@ -1814,13 +1814,23 @@ function holdRow(title, run) {
   return row;
 }
 
-function openHoldSheet(msg) {
+function holdImageRow(title, run) {
+  const row = holdRow(title, null);
+  row.onclick = () => {
+    run();
+    closeSheets();
+  };
+  return row;
+}
+
+function openHoldSheet(msg, image = null) {
   const bar = msg.querySelector(":scope > .msg-actions");
   const message = bar && messageOfActions.get(bar);
   if (!bar || !message) return false;
   const buttons = [...bar.querySelectorAll("button")];
   const rows = $("pt-hold-rows");
   rows.replaceChildren();
+  if (image) for (const { title, run } of chatImageSheetActions(image)) rows.appendChild(holdImageRow(title, run));
   for (const button of buttons) {
     if (button.title === "Add Reaction") continue;
     if (button.title === "More") {
@@ -1895,7 +1905,7 @@ function wireHoldSheet() {
     if (!studioSlim() || !e.target.closest) return;
     const msg = e.target.closest("#messages .msg");
     if (!msg || e.target.closest("a, input, textarea")) return;
-    if (!openHoldSheet(msg)) return;
+    if (!openHoldSheet(msg, chatImageAt(e.target))) return;
     e.preventDefault();
     e.stopPropagation();
   }, true);
@@ -1943,6 +1953,7 @@ function openRowSwipe(row) {
 const RAIL_UNLIT_MS = 200;
 const RAIL_FADE_MS = 140;
 const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, #pt-voice-sheet, #emoji-pop, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, #modal-accounts";
+const MESSAGE_REPLY_BUTTON = ':scope > .msg-actions button[title="Reply"]';
 
 function sheetAtTop(sheet, from) {
   for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
@@ -2040,13 +2051,14 @@ function swipeTarget(e) {
   if (pane === "chat" && studioPhone.threadStep && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: $("thread-panel"), thread: true };
   if (pane !== "list" && edgeBackStarts(touch.clientX) && !sheetOpen()) return { kind: "back", node: document.querySelector("main.main") };
   const msg = pane === "chat" && target.closest("#messages .msg");
-  if (msg && msg.querySelector(':scope > .msg-actions button[title="Reply"]')) return { kind: "reply", node: msg };
+  if (msg && messageOfActions.get(msg.querySelector(":scope > .msg-actions"))) return { kind: "reply", node: msg, replies: Boolean(msg.querySelector(MESSAGE_REPLY_BUTTON)) };
   const row = pane === "list" && studioPhone.tab === "home" && target.closest("#channel-list .channel:not(.sidebar-link):not(.voice-channel):not(.dm-thread)");
   if (row) return { kind: "row", node: row, wasOpen: Boolean(studioPhone.rowOpen && studioPhone.rowOpen.row === row) };
   return null;
 }
 
-function paintSwipe(swipe, dx) {
+function paintSwipe(swipe, moved) {
+  const dx = swipe.kind === "reply" ? messageSwipePull(moved, swipe.replies) : moved;
   if (swipe.kind === "reply") {
     const node = swipe.node;
     const cue = $("pt-reply-cue");
@@ -2125,8 +2137,9 @@ function swipeBack(swipe, dx, speed) {
   }, MOTION.paneMs);
 }
 
-function endSwipe(swipe, dx, cancelled, speed = 0) {
+function endSwipe(swipe, moved, cancelled, speed = 0) {
   const node = swipe.node;
+  const dx = swipe.kind === "reply" ? messageSwipePull(moved, swipe.replies) : moved;
   if (swipe.kind === "back") {
     if (!cancelled && backSettles(dx, speed, node.offsetWidth)) return swipeBack(swipe, dx, speed);
     node.classList.remove("pt-dragging");
@@ -2151,9 +2164,8 @@ function endSwipe(swipe, dx, cancelled, speed = 0) {
       }, wait(RAIL_FADE_MS));
     }, wait(RAIL_UNLIT_MS));
     if (sends) {
-      const reply = node.querySelector(':scope > .msg-actions button[title="Reply"]');
       if (navigator.vibrate) navigator.vibrate(6);
-      setTimeout(() => reply.click(), wait(SWIPE.chipAfterMs));
+      setTimeout(() => finishMessageSwipe(node, messageSwipeAction(dx)), wait(SWIPE.chipAfterMs));
     }
   } else if (swipe.kind === "row") {
     const pull = rowPull(dx, swipe.wasOpen);
@@ -2183,6 +2195,13 @@ function endSwipe(swipe, dx, cancelled, speed = 0) {
     node.style.translate = "0 calc(100% + 48px)";
     setTimeout(() => closeSwipedSheet(node), ms);
   }
+}
+
+function finishMessageSwipe(node, action) {
+  if (!node.isConnected) return;
+  if (action === "menu") return openHoldSheet(node);
+  const reply = node.querySelector(MESSAGE_REPLY_BUTTON);
+  if (reply) reply.click();
 }
 
 function wireSwipes() {

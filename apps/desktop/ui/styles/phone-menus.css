@@ -121,3 +121,6 @@ html[data-look="studio"][data-fit="slim"] #fp-menu > .arow[aria-checked="true"] 
   html[data-look="studio"][data-fit="slim"] #channel-menu > .ctx-title + .arow:hover,
   html[data-look="studio"][data-fit="slim"] #fp-menu > .ctx-title + .arow:hover { background: var(--pillow-top), var(--bg-raised); }
 }
+html[data-look="studio"][data-fit="slim"] .pt-reply-cue .cue-menu { display: none; }
+html[data-look="studio"][data-fit="slim"] .pt-reply-cue.left .cue-menu { display: block; }
+html[data-look="studio"][data-fit="slim"] .pt-reply-cue.left .cue-reply { display: none; }

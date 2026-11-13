@@ -136,6 +136,15 @@ function webSaveFile(doc, urls, bytes, filename) {
   return link.download;
 }
 
+function webSavedImageName(options) {
+  const raw = options && options.headers && options.headers["x-commy-name"];
+  try {
+    return decodeURIComponent(raw || "") || "image";
+  } catch {
+    return "image";
+  }
+}
+
 function webNoticeTarget(target) {
   const id = part => /^[0-9a-fA-F-]{1,64}$/.test(part);
   const parts = String(target || "").split(":");
@@ -184,5 +193,5 @@ function webReplyLine(status, text) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget };
+  module.exports = { WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget };
 }

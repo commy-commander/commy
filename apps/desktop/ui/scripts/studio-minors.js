@@ -34,9 +34,10 @@ function minorsMessageMenu(e) {
   if (window.getSelection && String(window.getSelection()).length > 0) return;
   const bar = msg.querySelector(":scope > .msg-actions");
   const message = bar && messageOfActions.get(bar);
-  if (!message || !bar.querySelector(":scope > button[title=\"More\"]")) return;
+  const image = chatImageAt(e.target);
+  if (!message || (!image && !bar.querySelector(":scope > button[title=\"More\"]"))) return;
   e.preventDefault();
-  openMessageMenu(message, minorsPointAnchor(e.clientX, e.clientY));
+  openMessageMenu(message, minorsPointAnchor(e.clientX, e.clientY), image);
 }
 
 function minorsScroller(node) {

@@ -17433,11 +17433,12 @@ function copyText(text, done) {
   navigator.clipboard.writeText(text).then(() => toast(done), () => toast("Could not copy"));
 }
 
-function openMessageMenu(message, anchor) {
+function openMessageMenu(message, anchor, image = null) {
   closeFloating();
   const menu = $("msg-menu");
   menu.replaceChildren();
-  const { item } = contextMenuBuilder(menu);
+  const { item, sep } = contextMenuBuilder(menu);
+  if (image && chatImageMenuItems(item, image)) sep();
   if (message.content) item("Copy Text", () => copyText(plainText(message.content), "Text copied"));
   if (state.view === "server" && state.currentChannel && !state.currentServer.group) {
     item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
@@ -18023,7 +18024,7 @@ function linkCardImage(preview, layout) {
 }
 
 function linkCardPicture(src, url) {
-  const img = el("img");
+  const img = markChatImage(el("img"), {});
   img.alt = "";
   img.src = src;
   img.onclick = () => openLightbox(img.src, url, null);
@@ -18070,7 +18071,7 @@ function loadEmbedFrom(img, sources, failed) {
 }
 
 function embedImage(url) {
-  const img = el("img", "chat-image");
+  const img = markChatImage(el("img", "chat-image"), { url });
   holdPlaceUntilLoaded(img);
   img.onclick = () => openLightbox(img.src, url, null);
   return img;
@@ -18182,7 +18183,7 @@ function loadImagePreview(att, clicked) {
 }
 
 function chatImage(att, src = null) {
-  const img = el("img", "chat-image");
+  const img = markChatImage(el("img", "chat-image"), { att, name: att.filename });
   keepScrolledOnLoad(img);
   if (src) img.src = src;
   else holdPlaceUntilLoaded(img);

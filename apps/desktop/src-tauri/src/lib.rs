@@ -22,6 +22,7 @@ mod directory;
 mod device_out;
 mod doorbell;
 mod expressions;
+mod image_save;
 mod frames;
 mod media_engine;
 mod ink_window;
@@ -8697,6 +8698,7 @@ pub fn run() {
             speech::speech_problem,
             sounds::sound_output,
             sounds::sound_play,
+            image_save::save_image,
             sounds::sound_stop,
             voice_pack::voice_pack_status,
             data_location::data_folder,

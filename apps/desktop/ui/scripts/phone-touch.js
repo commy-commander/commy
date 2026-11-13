@@ -169,7 +169,9 @@ const SWIPE = { slop: 10, lean: 1.2, edgeLean: 0.6, scrollSlop: 4, replyAt: 56, 
 const TRAY_PULL = 40;
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
-  "Reply": { label: "Reply", icon: "reply", hint: "or swipe the message" },
+  "Reply": { label: "Reply", icon: "reply", hint: "or swipe the message right" },
+  "Copy Image": { label: "Copy image", icon: "copy" },
+  "Save Image": { label: "Save image", icon: "download" },
   "Open Thread": { label: "Open thread", icon: "message-square-text" },
   "Pin": { label: "Pin to channel", icon: "pin" },
   "Unpin": { label: "Unpin", icon: "pin" },
@@ -202,6 +204,16 @@ function replyPull(dx) {
 
 function replyCommits(dx) {
   return Math.abs(dx) >= SWIPE.replyAt;
+}
+
+function messageSwipePull(dx, canReply) {
+  return replyPull(canReply ? dx : Math.min(0, dx));
+}
+
+function messageSwipeAction(dx) {
+  if (dx > 0) return "reply";
+  if (dx < 0) return "menu";
+  return null;
 }
 
 function edgeBackStarts(x) {
@@ -467,6 +479,8 @@ if (typeof module !== "undefined" && module.exports) {
     QUICK_REACTIONS,
     SHEET_ROWS,
     swipeAxis,
+    messageSwipePull,
+    messageSwipeAction,
     replyPull,
     replyCommits,
     edgeBackStarts,

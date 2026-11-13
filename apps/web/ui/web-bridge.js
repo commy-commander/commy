@@ -414,6 +414,7 @@
       window.location.reload();
       return new Promise(() => {});
     }
+    if (cmd === "save_image") return webSaveFile(document, URL, args, webSavedImageName(options));
     if (WEB_BYTE_COMMANDS.includes(cmd)) return fileBytes(cmd, args);
     if (WEB_PICKED_COMMANDS.includes(cmd)) return attachPicked(cmd, args);
     if (cmd === "notify") return showNotice(args);
