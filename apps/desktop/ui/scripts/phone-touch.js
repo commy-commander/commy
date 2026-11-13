@@ -1,7 +1,6 @@
 const PHONE_TABS = ["home", "messages", "live", "you"];
 const HORIZON = { baseline: 30, swell: 9, spread: 25, roomSpread: 35, hot: 62, roomHot: 70, pingSpread: 700, step: 3, overhang: 6 };
 const HORIZON_SPRINGS = { slide: { k: 230, c: 21 }, hop: { k: 420, c: 23 }, knock: { k: 260, c: 17 } };
-const HANG_UP_FUSE_MS = 3000;
 const STACK_MAX = 4;
 
 function horizonY(x, centre, swell, pingCentre, ping, spread = HORIZON.spread) {
@@ -44,10 +43,6 @@ function phoneTabAfter(tab, { pane, view }) {
   if (pane !== "list") return tabForConversation(view);
   if (known === "live" || known === "you") return known;
   return tabForConversation(view);
-}
-
-function hangUpTap(armed) {
-  return armed ? "leave" : "arm";
 }
 
 function badgeText(count) {
@@ -440,7 +435,6 @@ if (typeof module !== "undefined" && module.exports) {
     PHONE_TABS,
     HORIZON,
     HORIZON_SPRINGS,
-    HANG_UP_FUSE_MS,
     STACK_MAX,
     TILE_NAME,
     tileNameWidth,
@@ -462,7 +456,6 @@ if (typeof module !== "undefined" && module.exports) {
     springStep,
     tabForConversation,
     phoneTabAfter,
-    hangUpTap,
     badgeText,
     roomLine,
     liveSummary,

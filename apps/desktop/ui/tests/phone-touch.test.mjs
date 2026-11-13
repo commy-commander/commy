@@ -5,8 +5,8 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const {
-  PHONE_TABS, HORIZON, HORIZON_SPRINGS, HANG_UP_FUSE_MS, horizonY, horizonPath, horizonLift, springStep,
-  phoneTabAfter, hangUpTap, badgeText, roomLine, liveSummary, liveRooms, liveStreams, stackPeople,
+  PHONE_TABS, HORIZON, HORIZON_SPRINGS, horizonY, horizonPath, horizonLift, springStep,
+  phoneTabAfter, badgeText, roomLine, liveSummary, liveRooms, liveStreams, stackPeople,
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, edgeBackStarts,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
@@ -68,10 +68,11 @@ test("there are four places, and opening a conversation remembers which one it b
   assert.equal(phoneTabAfter("nonsense", { pane: "list", view: "server" }), "home");
 });
 
-test("hanging up asks twice, with three seconds to change your mind", () => {
-  assert.equal(hangUpTap(false), "arm");
-  assert.equal(hangUpTap(true), "leave");
-  assert.equal(HANG_UP_FUSE_MS, 3000);
+test("one tap on hang up or Leave leaves the call", () => {
+  assert.match(glue, /e\.target\.closest\("\.hang"\)\) \{\s+disconnectVoice\(\);\s+return;/);
+  assert.match(glue, /id === "leave"\) disconnectVoice\(\);/);
+  assert.doesNotMatch(glue, /Tap again|armHangUp|disarmHangUp/);
+  assert.doesNotMatch(css, /\.armed|hzn-fuse/);
 });
 
 test("badges and room lines read plainly", () => {
@@ -792,7 +793,7 @@ test("the room keys keep the guide's sizes, and nothing but leaving is red", () 
   assert.match(css, rule(' \\.hzn-room \\.key\\.is-down', 'background: var\\(--k-latched\\); box-shadow: var\\(--k-latched-shadow\\);'));
   assert.match(css, rule(' \\.hzn-room \\.key\\.is-off', 'background: var\\(--glass-hi\\), transparent;'));
   for (const found of css.matchAll(/\.hzn-room [^{]*\{[^}]*\}/g)) {
-    if (/danger|--red/.test(found[0])) assert.match(found[0], /\.hang|\.ask|\.hzn-fuse/, found[0].slice(0, 80));
+    if (/danger|--red/.test(found[0])) assert.match(found[0], /\.hang/, found[0].slice(0, 80));
   }
 });
 
@@ -994,7 +995,7 @@ test("over a stream the faces give way first, then the server name, and the titl
 });
 
 test("the chevron over a stream goes back to the room, and the stream tools wait for a tap", () => {
-  assert.match(glue, /e\.target\.closest\("#pt-watch-down"\)\) \{\s+disarmHangUp\(\);\s+backToRoom\(\);/);
+  assert.match(glue, /e\.target\.closest\("#pt-watch-down"\)\) backToRoom\(\);/);
   assert.match(glue, /aria-label="Back to the room"/);
   assert.equal(STREAM_TOOLS_MS, 4000);
   assert.equal(streamToolsStay("pen"), true);

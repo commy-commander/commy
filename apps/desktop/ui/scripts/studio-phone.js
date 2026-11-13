@@ -11,8 +11,6 @@ const STUDIO_HOME_WORDS = { "Server Rules": "Rules", "Text Channels": "Text chan
 const studioPhone = {
   tab: "home",
   lastServer: null,
-  armed: false,
-  fuse: 0,
   centres: [],
   centre: 0,
   swell: HORIZON.swell,
@@ -78,15 +76,13 @@ function horizonMarkup() {
 <linearGradient id="hzn-g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="390" y2="0"><stop offset="0" style="stop-color:var(--tint-1)" stop-opacity="0"/><stop offset=".14" style="stop-color:var(--tint-1)"/><stop offset=".7" style="stop-color:var(--accent-lit)"/><stop offset="1" style="stop-color:var(--tint-1)" stop-opacity="0"/></linearGradient>
 <linearGradient id="hzn-hot" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="124" y2="0"><stop offset="0" style="stop-color:var(--white)" stop-opacity="0"/><stop offset=".5" style="stop-color:var(--white)" stop-opacity=".85"/><stop offset="1" style="stop-color:var(--white)" stop-opacity="0"/></linearGradient>
 </defs><path class="glow"/><path class="core" stroke="url(#hzn-g)"/><path class="hot" stroke="url(#hzn-hot)"/></svg>
-<i class="hzn-fuse"></i>
 <div class="hzn-tabs" role="tablist" aria-label="Places">${tabs}</div>
 <i class="hzn-tick"></i>
 <div class="hzn-voice">
 <div class="ks"><button type="button" class="key sq tap mic" aria-label="Mute"><i data-i="mic"></i><i class="led"></i></button><button type="button" class="key sq tap danger hang" aria-label="Hang up"><i data-i="phone-off"></i></button></div>
 <button type="button" class="open" aria-label="Voice controls"><i data-i="bars"></i><span class="open-name"></span></button>
-<div class="ask" role="status">Tap again to leave</div>
 </div>
-<div class="hzn-room">${ROOM_KEYS.map(roomKeyMarkup).join("")}<div class="ask" role="status">Tap again to leave</div></div>`;
+<div class="hzn-room">${ROOM_KEYS.map(roomKeyMarkup).join("")}</div>`;
 }
 
 function roomKeyMarkup(key) {
@@ -455,7 +451,6 @@ function horizonParts() {
     warm: bar.querySelector(".hzn-sun.warm"),
     mic: bar.querySelector(".hzn-voice .mic"),
     hang: bar.querySelector(".hzn-voice .hang"),
-    hangs: [...bar.querySelectorAll(".hang"), ...document.querySelectorAll("#pt-watch .hang")],
     room: bar.querySelector(".hzn-room"),
     open: bar.querySelector(".open"),
     badge: bar.querySelector(".tab .badge"),
@@ -576,7 +571,6 @@ function studioRailServer() {
 
 async function setPhoneTab(tab) {
   const again = tab === studioPhone.tab;
-  disarmHangUp();
   studioPhone.tab = tab;
   $("app").dataset.tab = tab;
   paintHorizonTab(again);
@@ -681,34 +675,6 @@ function syncPhoneTab() {
   paintChatHeader();
   syncRoomMode();
   syncStreamFull();
-}
-
-function armHangUp() {
-  const h = horizonParts();
-  studioPhone.armed = true;
-  h.bar.classList.add("armed");
-  $("pt-watch").classList.add("armed");
-  paintWatchField();
-  for (const hang of h.hangs) {
-    hang.classList.add("is-down");
-    hang.setAttribute("aria-label", "Tap again to leave");
-  }
-  clearTimeout(studioPhone.fuse);
-  studioPhone.fuse = setTimeout(disarmHangUp, HANG_UP_FUSE_MS);
-}
-
-function disarmHangUp() {
-  if (!studioPhone.armed) return;
-  const h = horizonParts();
-  studioPhone.armed = false;
-  clearTimeout(studioPhone.fuse);
-  h.bar.classList.remove("armed");
-  $("pt-watch").classList.remove("armed");
-  paintWatchField();
-  for (const hang of h.hangs) {
-    hang.classList.remove("is-down");
-    hang.setAttribute("aria-label", "Hang up");
-  }
 }
 
 const HELD_COPY_ROOM = 23;
@@ -854,7 +820,6 @@ function syncHorizonVoice() {
   if (h.bar.classList.contains("in-voice") !== inVoice) {
     h.bar.classList.toggle("in-voice", inVoice);
     $("app").classList.toggle("pt-in-voice", inVoice);
-    disarmHangUp();
     if (!inVoice) closeVoiceSheet();
     paintChatHeader();
     if (studioPhone.calm) layHorizon();
@@ -1674,20 +1639,15 @@ function wireHorizon() {
     const tab = e.target.closest(".tab");
     if (tab) return openPhoneTab(tab.dataset.tab);
     if (e.target.closest(".hang")) {
-      if (hangUpTap(studioPhone.armed) === "leave") {
-        disarmHangUp();
-        disconnectVoice();
-      } else armHangUp();
+      disconnectVoice();
       return;
     }
     const roomKey = e.target.closest("[data-room-key]");
     if (roomKey) {
-      disarmHangUp();
       pressRoomKey(roomKey.dataset.roomKey);
       return;
     }
     if (e.target.closest(".mic")) {
-      disarmHangUp();
       $("mute-btn").click();
       return;
     }
@@ -1697,7 +1657,6 @@ function wireHorizon() {
     }
   });
   document.addEventListener("pointerdown", e => {
-    if (studioPhone.armed && !h.hangs.some(hang => hang.contains(e.target))) disarmHangUp();
     studioPhone.soundsWereOpen = !$("soundboard-pop").classList.contains("hidden");
     studioPhone.trayWasOpen = trayShown();
   });
@@ -1714,10 +1673,7 @@ function wireHorizon() {
     $("soundboard-pop").classList.toggle("hidden", true);
   }, true);
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") {
-      disarmHangUp();
-      closeSheets();
-    }
+    if (e.key === "Escape") closeSheets();
   });
   $("pt-scrim").onclick = () => closeSheets();
   window.addEventListener("popstate", () => {
@@ -2382,12 +2338,7 @@ function pressRoomKey(id) {
   else if (id === "sounds") {
     if (studioPhone.soundsWereOpen) closeFloating();
     else $("vp-soundboard").click();
-  } else if (id === "leave") {
-    if (hangUpTap(studioPhone.armed) === "leave") {
-      disarmHangUp();
-      disconnectVoice();
-    } else armHangUp();
-  }
+  } else if (id === "leave") disconnectVoice();
 }
 
 function roomTile(tile) {
@@ -2520,7 +2471,6 @@ function syncRoomMode() {
   const open = roomOpen();
   if (h.bar.classList.contains("rm") === open) return;
   h.bar.classList.toggle("rm", open);
-  disarmHangUp();
   closeVoiceOptions();
   if (!open) $("soundboard-pop").classList.toggle("hidden", true);
   if (open) {
@@ -2561,9 +2511,8 @@ function syncStreamFull() {
 function paintWatchField() {
   const field = $("pt-watch-field");
   if (!field) return;
-  const armed = studioPhone.armed;
-  field.textContent = armed ? "Tap again to leave" : $("message-input").placeholder || "Message";
-  field.setAttribute("aria-label", armed ? "Tap again to leave" : "Write a message");
+  field.textContent = $("message-input").placeholder || "Message";
+  field.setAttribute("aria-label", "Write a message");
 }
 
 function watchRows() {
@@ -2749,18 +2698,12 @@ function wireRoom() {
   };
   $("pt-watch").addEventListener("click", e => {
     const key = e.target.closest("[data-room-key]");
-    if (key) {
-      if (key.dataset.roomKey !== "leave") disarmHangUp();
-      pressRoomKey(key.dataset.roomKey);
-    } else if (e.target.closest("#pt-watch-down")) {
-      disarmHangUp();
-      backToRoom();
-    } else if (e.target.closest("#pt-watch-field")) {
-      const write = !studioPhone.armed;
-      disarmHangUp();
+    if (key) pressRoomKey(key.dataset.roomKey);
+    else if (e.target.closest("#pt-watch-down")) backToRoom();
+    else if (e.target.closest("#pt-watch-field")) {
       $("app").classList.remove("pt-stream-full");
       syncStreamFull();
-      if (write) $("message-input").focus();
+      $("message-input").focus();
     }
   });
   $("stage-view").addEventListener("click", e => {
