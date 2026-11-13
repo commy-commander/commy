@@ -1082,6 +1082,7 @@ function paintYouPage() {
   avatar.replaceChildren();
   paintAvatar(avatar, state.user.id, name);
   avatar.appendChild(el("span", "presence-dot " + (state.user.presence || "online")));
+  paintBarEffect(avatar.parentElement, state.user.card_effect);
   $("pt-me-name").textContent = name;
   paintPresenceLine();
   const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";

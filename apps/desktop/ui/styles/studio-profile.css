@@ -121,6 +121,7 @@ html[data-look="studio"] .mc-name-row .server-tag {
   font: 600 11px/1 var(--font);
   letter-spacing: .04em;
 }
+html[data-look="studio"] .mc-name-row .server-tag.st-fx-glow { box-shadow: var(--st-glow); }
 html[data-look="studio"] .mc-name-row .server-tag:not(:has(.server-tag-emoji))::before {
   content: "";
   flex: none;
@@ -695,6 +696,15 @@ html[data-look="studio"] .fx.confetti .k3 { --ink: var(--tx-blue); }
 html[data-look="studio"] .fx.confetti .k4 { --ink: var(--tx-teal); }
 html[data-look="studio"] .fx.confetti .k5 { --ink: var(--tx-purple); }
 html[data-look="studio"] .fx.confetti .k6 { --ink: var(--accent-2); }
+html[data-look="studio"] .pp-banner { position: relative; }
+html[data-look="studio"] .user-panel,
+html[data-look="studio"] .acct { isolation: isolate; }
+html[data-look="studio"] .user-panel > .card-effect.fx,
+html[data-look="studio"] .acct > .card-effect.fx { z-index: -1; border-radius: inherit; }
+html[data-look="studio"] .user-panel > .card-effect.fx i,
+html[data-look="studio"] .user-panel > .card-effect.fx g { animation-play-state: paused; }
+html[data-look="studio"] .user-panel:hover > .card-effect.fx i,
+html[data-look="studio"] .user-panel:hover > .card-effect.fx g { animation-play-state: running; }
 html[data-look="studio"] .pt-profile .look:not(.on) .card-effect.fx i,
 html[data-look="studio"] .pt-profile .look:not(.on) .card-effect.fx g,
 html[data-look="studio"] .look-option .card-effect.fx i,

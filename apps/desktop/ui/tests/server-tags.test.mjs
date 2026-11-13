@@ -69,3 +69,10 @@ test("the colours and effects match the app's rules and each has a look", () => 
     if (value !== "none") assert.match(css, new RegExp(`\\.server-tag\\.st-fx-${value}`));
   }
 });
+
+test("the glow keeps the tag's round shape where the tag sits in a clipped row", () => {
+  const studioProfile = readFileSync(join(ui, "styles", "studio-profile.css"), "utf8");
+  assert.match(css, /\.server-tag\.st-fx-glow \{\n  --st-glow: [^;]+;\n  box-shadow: var\(--st-glow\);/);
+  assert.ok(css.includes(".member-name:has(> .server-tag.st-fx-glow) { overflow: visible; }"));
+  assert.ok(studioProfile.includes('html[data-look="studio"] .mc-name-row .server-tag.st-fx-glow { box-shadow: var(--st-glow); }'));
+});

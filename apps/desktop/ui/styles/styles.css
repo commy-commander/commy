@@ -4842,7 +4842,12 @@ html[data-reduced-motion] .tx-shake { animation: none !important; }
 .st-purple { --st-bg: #7740c2; --st-ink: #ffffff; }
 .st-pink { --st-bg: #b3307a; --st-ink: #ffffff; }
 .st-gray { --st-bg: #5a5f73; --st-ink: #ffffff; }
-.server-tag.st-fx-glow { box-shadow: 0 0 6px color-mix(in srgb, var(--st-bg) 80%, transparent), 0 0 12px color-mix(in srgb, var(--st-bg) 45%, transparent); overflow: visible; }
+.server-tag.st-fx-glow {
+  --st-glow: 0 0 6px color-mix(in srgb, var(--st-bg) 80%, transparent), 0 0 12px color-mix(in srgb, var(--st-bg) 45%, transparent);
+  box-shadow: var(--st-glow);
+  overflow: visible;
+}
+.member-name:has(> .server-tag.st-fx-glow) { overflow: visible; }
 .server-tag.st-fx-shine::after {
   content: "";
   position: absolute;

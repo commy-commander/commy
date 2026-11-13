@@ -265,3 +265,16 @@ test("role coloured words keep the raw colour at Night and a deeper mix in Day",
   assert.match(parts, /html\[data-look="studio"\]\[data-theme="light"\] \.theme-dark \{ --role-ink-mix: 100%; \}/);
   assert.match(app, /node\.style\.color = color \? roleInk\(color, studioLook\(\)\) : "";/);
 });
+
+test("your profile effect plays in your own profile bar, behind its words", () => {
+  const phone = read("../scripts/studio-phone.js");
+  assert.match(app, /function paintBarEffect\(bar, effect\) \{/);
+  assert.match(app, /paintBarEffect\(\$\("user-chip"\)\.parentElement, state\.user\.card_effect\);/);
+  assert.match(app, /paintBarEffect\(\$\("pp-banner"\), user\.card_effect\);/);
+  assert.match(app, /state\.user = await invoke\("set_profile_look", \{ avatarBorder, cardEffect \}\);[\s\S]{0,200}renderUserPanel\(\);/);
+  assert.match(phone, /paintBarEffect\(avatar\.parentElement, state\.user\.card_effect\);/);
+  assert.ok(rule(".user-panel > .card-effect.fx").includes("z-index: -1;"));
+  assert.ok(rule(".user-panel").includes("isolation: isolate;"));
+  assert.ok(css.includes(`${SWITCH} .user-panel > .card-effect.fx g { animation-play-state: paused; }`));
+  assert.ok(css.includes(`${SWITCH} .user-panel:hover > .card-effect.fx g { animation-play-state: running; }`));
+});

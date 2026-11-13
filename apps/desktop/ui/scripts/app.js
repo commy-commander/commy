@@ -2753,6 +2753,13 @@ function paintCardEffect(banner, effect) {
   if (isCardEffect(effect)) banner.appendChild(studioEffectNode(effect));
 }
 
+function paintBarEffect(bar, effect) {
+  const shown = bar.querySelector(":scope > .card-effect");
+  const wanted = isCardEffect(effect) ? effect : null;
+  if (shown ? wanted && shown.classList.contains(wanted) : !wanted) return;
+  paintCardEffect(bar, wanted);
+}
+
 function lookOption(label, preview, checked, onPick) {
   const btn = el("button", "look-option");
   btn.type = "button";
@@ -2794,6 +2801,7 @@ async function saveProfileLook(avatarBorder, cardEffect) {
     $("account-avatar").replaceChildren();
     paintAvatar($("account-avatar"), state.user.id, state.user.display_name || state.user.username);
     paintAccountBanner();
+    renderUserPanel();
     renderProfilePopover();
     if (state.currentServer) refreshCurrentServer();
   } catch (err) {
@@ -7753,6 +7761,7 @@ function renderProfilePopover() {
   const name = user.display_name || user.username;
   $("pp-banner").dataset.banner = "";
   paintProfileBanner($("pp-banner"), user.banner, user.node, null, bannerColor(user.id));
+  paintBarEffect($("pp-banner"), user.card_effect);
   const av = $("pp-avatar");
   av.replaceChildren();
   paintAvatar(av, user.id, name);
@@ -19210,6 +19219,7 @@ function renderUserPanel() {
   $("me-avatar").replaceChildren();
   paintAvatar($("me-avatar"), state.user.id, state.user.display_name || state.user.username);
   $("me-avatar").appendChild(el("span", "presence-dot " + presence));
+  paintBarEffect($("user-chip").parentElement, state.user.card_effect);
   const back = backLine(state.user);
   const label = presence === "invisible" ? "Appearing offline" : (back || PRESENCE_LABELS[presence] || "Online");
   $("me-status").textContent = label;
