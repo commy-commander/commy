@@ -8,6 +8,7 @@ import { discoveryDocument, featureSummary, loadConfig, wellKnownFiles } from ".
 import { dropDeviceNames } from "./devices.js";
 import { createRequestHandler } from "./http.js";
 import { createLinkBlocklist } from "./link-blocklist.js";
+import { createPages } from "./pages.js";
 import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
@@ -57,15 +58,20 @@ async function migrate(attempts = 30) {
 }
 
 const linkBlocklist = createLinkBlocklist({ sources: config.linkBlocklistSources });
+const discovery = discoveryDocument(config);
+const pages = createPages({ auth, config, discovery, trustedProxies: config.trustedProxies });
+if (pages.enabled) await pages.ready;
+else config.warnings.push(pages.reason);
 
 const server = http.createServer(
   createRequestHandler({
     authHandler: toNodeHandler(auth),
     basePath: config.basePath,
-    discovery: JSON.stringify(discoveryDocument(config)),
+    discovery: JSON.stringify(discovery),
     pool,
     redis,
     linkBlocklist,
+    pages,
     trustedProxies: config.trustedProxies,
     wellKnown: wellKnownFiles(config),
   }),

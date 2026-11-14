@@ -174,7 +174,7 @@ jobs:
           docker exec -i "$STACK" sh -e <<'EOF'
           urls=""
           for host in commy.localhost staging.commy.localhost dev.commy.localhost; do
-            urls="$urls https://$host/ https://$host/.well-known/commy-auth.json"
+            urls="$urls https://$host/ https://$host/.well-known/commy-auth.json https://$host/api/auth/commy/pages/render?path=%2Faccount"
           done
           deadline=$(( $(date +%s) + 300 ))
           while :; do

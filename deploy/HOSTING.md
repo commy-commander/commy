@@ -11,8 +11,10 @@ runs all of them on one machine with Docker Compose:
 | `auth`     | built from `../auth`  | Better Auth server: accounts, desktop sign-in, devices |
 | `postgres` | `postgres:16-alpine`  | Auth database, private network only                   |
 
-Routing on `https://<DOMAIN>`: `/api/auth/*` and `/.well-known/commy-auth.json`
-go to `auth`, everything else to `web`. `docs.<DOMAIN>` redirects to `/docs`.
+Routing on `https://<DOMAIN>`: `/api/auth/*`, `/.well-known/commy-auth.json` and
+the account pages (`/account`, `/signup`, `/device`, `/i/<CODE>`,
+`/delete-account`) go to `auth`, everything else to `web`. `docs.<DOMAIN>`
+redirects to `/docs`.
 
 ## Requirements
 
@@ -116,6 +118,17 @@ Set `ALLOW_SIGNUP=false` to close registration on a private instance, or set
 before showing any page except the privacy policy, and the auth server refuses
 new accounts from anyone who has not entered it. Each browser asks once, then
 remembers it for 90 days.
+
+The auth server serves the account pages itself: sign in and sign up, account
+settings, two-step sign-in, password reset, email confirmation, account
+deletion, desktop sign-in approval and invite links. They show
+`COMMY_INSTANCE_NAME` and, when set, `COMMY_LOGO_URL`, `COMMY_TERMS_URL` and
+`COMMY_PRIVACY_URL`, so they carry your own name and legal pages. A website of
+your own can show the same pages inside its layout instead: it asks
+`/api/auth/commy/pages/render?path=<page>` for the rendered page, its title and
+the script that brings it to life, and can name its own legal links in the
+`X-Commy-Site-Links` header. `COMMY_PAGES=false` stops the auth server serving
+the pages directly while that keeps working.
 
 `ADULTS_ONLY=true` (the default) makes sign-up ask people to confirm they are
 18 or older and agree to the Terms. The auth server refuses new accounts without

@@ -21,6 +21,11 @@
 		reverse_proxy auth:3001
 	}
 
+	@pages path /account /account/* /signup /delete-account /device /i/*
+	handle @pages {
+		reverse_proxy auth:3001
+	}
+
 	@sync path /sync /sync/*
 	handle @sync {
 		reverse_proxy sync:3002
