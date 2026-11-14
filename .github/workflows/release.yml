@@ -552,8 +552,6 @@ jobs:
 
           EOF
           cat >> notes.md <<'EOF'
-          ## Downloads
-
           | Platform | File |
           |----------|------|
           | Windows 10/11 | `*_x64-setup.exe` (installer) or `*_x64-portable.zip` |
@@ -626,3 +624,19 @@ jobs:
             '{tag_name: $tag, name: "Commy \($tag)", body: $body, prerelease: $prerelease, draft: $draft}' |
             curl -fsS -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" --data @- \
               "$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY/releases" -o /dev/null
+
+  github-copy:
+    name: Copy the release to GitHub
+    needs: publish
+    if: github.ref_type == 'tag' && github.server_url != 'https://github.com' && !cancelled() && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Copy new and changed releases
+        env:
+          FORGE_TOKEN: ${{ github.token }}
+          MIRROR_GITHUB_TOKEN: ${{ secrets.MIRROR_GITHUB_TOKEN }}
+        run: node deploy/releases/github-copy.mjs

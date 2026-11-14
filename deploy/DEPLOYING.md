@@ -339,6 +339,14 @@ To pause automatic updates, `docker compose stop agent`.
   files, such as the voice pack, under `<folder>/`. It needs `R2_ACCOUNT_ID`,
   `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` (an R2 token with Object Read and
   Write on that bucket only) as repository secrets.
+- **GitHub copy.** GitHub keeps a light copy of each final release: after a release
+  publishes, `deploy/releases/github-copy.mjs` pushes `main` and the new tag to
+  github.com/commy-commander/commy and creates the GitHub release with the forge notes,
+  `latest.json` and the checksums (installers stay on releases.commy.chat). The
+  "Copy releases to GitHub" workflow repeats this when forge notes are edited and twice a
+  day, and only ever fast-forwards. Add `--dry-run` to see the plan. It needs the
+  `MIRROR_GITHUB_TOKEN` secret, a fine-grained GitHub token for that repository with
+  Contents and Workflows set to Read and write. Actions stay disabled on the GitHub copy.
 - **Desktop update signing.** Installed desktop apps update themselves from
   `https://releases.commy.chat/<channel>/latest.json` (`rc` for test builds, `stable`
   for the rest),

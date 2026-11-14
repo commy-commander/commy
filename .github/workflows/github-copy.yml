@@ -1,0 +1,31 @@
+name: Copy releases to GitHub
+
+on:
+  release:
+    types: [published, edited]
+  schedule:
+    - cron: "23 */12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-copy
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    name: Copy new and changed releases
+    if: github.server_url != 'https://github.com'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Copy new and changed releases
+        env:
+          FORGE_TOKEN: ${{ github.token }}
+          MIRROR_GITHUB_TOKEN: ${{ secrets.MIRROR_GITHUB_TOKEN }}
+        run: node deploy/releases/github-copy.mjs
