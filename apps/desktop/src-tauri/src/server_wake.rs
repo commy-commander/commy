@@ -106,7 +106,7 @@ pub fn label(state: &ServerState, me: UserId) -> Option<Label> {
     if !server.is_current_member(me) || state.is_deleted() {
         return None;
     }
-    let channels = server.channels.iter().filter(|c| c.kind.holds_messages() && server.can_view(c.id, me)).map(|c| (c.id.to_string(), c.name.clone())).collect();
+    let channels = server.channels.iter().filter(|c| c.kind.holds_messages() && server.can_view(c.id, me)).map(|c| (c.id.to_string(), commy_core::server::shown_server_name(&c.name))).collect();
     let members = server
         .members
         .iter()

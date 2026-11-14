@@ -61,6 +61,10 @@ function studioSlim() {
   return studioLook() && document.documentElement.dataset.fit === "slim";
 }
 
+function roomChannelName(room) {
+  return channelShownName({ name: room.channelName });
+}
+
 function studioNode(tag, className, html) {
   const node = el(tag, className);
   if (html) {
@@ -307,7 +311,7 @@ function decorateFriendRow(row) {
   const room = liveFriend(row.dataset.person);
   if (room) {
     row.querySelector(".dm-name").appendChild(el("span", "live", "Live"));
-    row.querySelector(".dm-preview").textContent = `In ${room.channelName}, sharing a screen`;
+    row.querySelector(".dm-preview").textContent = `In ${roomChannelName(room)}, sharing a screen`;
   }
   row.classList.toggle("pt-off", Boolean(row.querySelector(".presence-dot.offline")));
   row.appendChild(studioNode("span", "pt-dm-side", '<i data-i="chevron-right"></i>'));
@@ -1029,7 +1033,7 @@ function liveTile(stream, wide) {
   foot.appendChild(makeAvatar(stream.userId, stream.name, "avatar"));
   const text = el("span", "t");
   text.appendChild(el("b", "", stream.mine ? "Your screen" : `${stream.name}'s screen`));
-  text.appendChild(el("span", "", `${room.channelName} · ${serverShownName(room.serverName)}`));
+  text.appendChild(el("span", "", `${roomChannelName(room)} · ${serverShownName(room.serverName)}`));
   foot.appendChild(text);
   if (wide) foot.appendChild(personStack(room.people.filter(person => person.id !== stream.userId)));
   tile.append(thumb, foot);
@@ -1042,7 +1046,7 @@ function liveRoomRow(room) {
   row.type = "button";
   row.appendChild(studioNode("span", "rw-icon", '<i data-i="volume-2"></i>'));
   const text = el("span", "t");
-  text.appendChild(el("b", "", room.channelName));
+  text.appendChild(el("b", "", roomChannelName(room)));
   text.appendChild(el("span", "", `${serverShownName(room.serverName)} · ${roomLine(room.people.length, room.here)}`));
   row.append(text, personStack(room.people));
   row.onclick = () => openLiveRoom(room);

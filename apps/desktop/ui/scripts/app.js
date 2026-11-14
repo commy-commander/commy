@@ -3048,7 +3048,13 @@ function shownServerName(server) {
 function paintServerName(node, server) {
   node.replaceChildren(...serverNameParts(server.name, server.emojis).map(part => typeof part === "string"
     ? document.createTextNode(part)
-    : customEmojiImg(part.emoji.name, part.emoji.image, "custom-emoji server-name-emoji")));
+    : serverNameEmoji(part.emoji)));
+}
+
+function serverNameEmoji(emoji) {
+  const img = customEmojiImg(emoji.name, emoji.image, "custom-emoji server-name-emoji");
+  img.alt = "";
+  return img;
 }
 
 function plainServer() {
@@ -4004,6 +4010,10 @@ function channelNameNode(channel, cls = null) {
 function channelTextName(name) {
   const text = channelNameParts(name).filter(part => typeof part === "string").join("").replace(CHANNEL_EMOJI_RE, "").replace(/^-+|-+$/g, "").trim();
   return text || name;
+}
+
+function channelShownName(channel) {
+  return serverShownName(channelPlainName(channel));
 }
 
 function channelPlainName(channel) {
@@ -8236,7 +8246,7 @@ function syncLimitLabel() {
 function openDeleteChannel() {
   const channel = editingChannel();
   if (!channel) return;
-  const label = isVoiceKind(channel.kind) ? channel.name : `#${channel.name}`;
+  const label = isVoiceKind(channel.kind) ? channelShownName(channel) : `#${channelShownName(channel)}`;
   $("delete-channel-title").textContent = `Delete ${label}?`;
   $("delete-channel-name").textContent = channel.name;
   $("delete-channel-confirm").value = "";
@@ -8252,7 +8262,7 @@ async function confirmDeleteChannel() {
     await invoke("delete_channel", { serverId: state.currentServer.id, channelId: channel.id });
     hideModals();
     await closeSettingsLayers();
-    toast(`Deleted ${isVoiceKind(channel.kind) ? channel.name : "#" + channel.name}`);
+    toast(`Deleted ${isVoiceKind(channel.kind) ? channelShownName(channel) : "#" + channelShownName(channel)}`);
     editingChannelId = null;
     await refreshCurrentServer();
   } catch (e) {
@@ -11256,7 +11266,7 @@ function overlayRoster() {
   const ids = channel.voice_user_ids || [];
   return {
     server: shownServerName(server),
-    channel: channel.name,
+    channel: channelShownName(channel),
     members: channel.voice_users.map((name, i) => {
       const id = ids[i];
       const member = currentServerMember(id);
@@ -19529,11 +19539,11 @@ function narrowVoiceTile(channel) {
   const connected = channel.id === state.voiceChannelId;
   const tile = el("button", "narrow-voice-tile" + (connected ? " connected" : ""));
   tile.dataset.room = channel.id;
-  tile.title = connected ? `You are in ${channel.name}` : `Join ${channel.name}`;
+  tile.title = connected ? `You are in ${channelShownName(channel)}` : `Join ${channelShownName(channel)}`;
   const grid = el("span", "narrow-voice-grid");
   grid.append(...voiceRingCells(channel));
   const head = el("span", "narrow-voice-head");
-  head.append(voiceKindIcon(channel.kind, 12), el("span", "narrow-voice-name", channel.name));
+  head.append(voiceKindIcon(channel.kind, 12), channelNameNode(channel, "narrow-voice-name"));
   tile.append(grid, head);
   tile.onclick = () => {
     if (connected || voiceDragHoldsClick()) return;
@@ -21684,12 +21694,12 @@ async function toggleVoice(channel, back = false) {
     }
     state.voiceServer = leaving
       ? null
-      : { id: state.currentServer.id, name: shownServerName(state.currentServer), channelName: channel.name, activities_enabled: Boolean(state.currentServer.activities_enabled) };
+      : { id: state.currentServer.id, name: shownServerName(state.currentServer), channelName: channelShownName(channel), activities_enabled: Boolean(state.currentServer.activities_enabled) };
     if (leaving) {
       state.sharing = false;
       state.shareSource = null;
     }
-    if (!leaving || !voiceRoom.left) toast(leaving ? "Disconnected from voice" : back ? `Back in ${channelTextName(channel.name)}.` : isStageChannel(channel) ? `Joined the stage: ${channel.name}` : `Joined voice: ${channel.name}`);
+    if (!leaving || !voiceRoom.left) toast(leaving ? "Disconnected from voice" : back ? `Back in ${channelTextName(channel.name)}.` : isStageChannel(channel) ? `Joined the stage: ${channelShownName(channel)}` : `Joined voice: ${channelShownName(channel)}`);
     if (leaving) playSound("leave");
     else playJoinCue(state.currentServer, [state.user.id]);
     renderShareButton();
