@@ -8,13 +8,13 @@ runs all of them on one machine with Docker Compose:
 |------------|-----------------------|-------------------------------------------------------|
 | `caddy`    | `caddy:2.11-alpine`   | Public entry on ports 80/443, automatic HTTPS         |
 | `web`      | `git.commy.chat/commy/commy-web` | Website and docs (Next.js, own repository) |
-| `auth`     | built from `../auth`  | Better Auth server: accounts, desktop sign-in, devices |
+| `auth`     | built from `auth/Dockerfile` | Better Auth server: accounts, desktop sign-in, devices, web app |
 | `postgres` | `postgres:16-alpine`  | Auth database, private network only                   |
 
 Routing on `https://<DOMAIN>`: `/api/auth/*`, `/.well-known/commy-auth.json` and
 the account pages (`/account`, `/signup`, `/device`, `/i/<CODE>`,
-`/delete-account`) go to `auth`, everything else to `web`. `docs.<DOMAIN>`
-redirects to `/docs`.
+`/delete-account`) and the web app (`/web`) go to `auth`, everything else to
+`web`. `docs.<DOMAIN>` redirects to `/docs`.
 
 ## Requirements
 
@@ -136,9 +136,17 @@ that confirmation and stores when it was given, plus `TERMS_VERSION` when set.
 Set it to `false` if your instance welcomes younger people and you handle their
 accounts yourself.
 
-The website serves the web app at `/web`. It uses the production relay unless
-`COMMY_RELAY_URLS` names another one; a staging site sets it to its staging
-relay so browsers meet the test builds there.
+The auth server also serves the web app at `/web`. Its image builds the app
+from the same commit, so the web app always matches the servers. Building the
+image compiles the web app too, which takes several minutes the first time. It uses the
+production relay unless `COMMY_RELAY_URLS` names another one; a staging site
+sets it to its staging relay so browsers meet the test builds there. The
+page only lets the web app reach the relays it was built with, set by the
+`COMMY_WEB_RELAYS` build argument (the commy.chat production and staging relays
+unless you change it), so build the auth image with your own relay listed. Phones
+are sent to `COMMY_DOWNLOAD_URL` instead, since the web app is made for
+computers. Running auth from source, build the app into `auth/web` with
+`COMMY_WEB_OUT=auth/web COMMY_WEB_BASE=/web/ node apps/web/build.mjs`.
 Run `docker compose up -d` after any `.env` change.
 
 ## GIF search and Twitch

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
 import { injectWebShell, webRelayList } from "./shell.mjs";
 
 const web = import.meta.dirname;
@@ -22,10 +22,17 @@ const profile = release ? "release" : "debug";
 const wasm = join(repo, "target", "wasm32-unknown-unknown", profile, "commy_web_client.wasm");
 
 rmSync(dist, { recursive: true, force: true });
-const tracked = execFileSync("git", ["ls-files", "-z", "--", "apps/desktop/ui"], { cwd: repo })
-  .toString()
-  .split("\0")
-  .filter(path => path && !SKIPPED.some(prefix => path.startsWith(prefix)));
+function uiFiles() {
+  try {
+    return execFileSync("git", ["ls-files", "-z", "--", "apps/desktop/ui"], { cwd: repo, stdio: ["ignore", "pipe", "ignore"] }).toString().split("\0");
+  } catch {
+    return readdirSync(ui, { recursive: true, withFileTypes: true })
+      .filter(entry => entry.isFile() && !entry.parentPath.split(sep).includes("node_modules"))
+      .map(entry => relative(repo, join(entry.parentPath, entry.name)).split(sep).join("/"));
+  }
+}
+
+const tracked = uiFiles().filter(path => path && !SKIPPED.some(prefix => path.startsWith(prefix)));
 for (const path of tracked) {
   const target = join(dist, path.slice("apps/desktop/ui/".length));
   mkdirSync(dirname(target), { recursive: true });

@@ -60,7 +60,9 @@ services:
   auth:
     <<: *hardened
     mem_limit: ${AUTH_MEM_LIMIT:-768m}
-    build: ../auth
+    build:
+      context: ..
+      dockerfile: auth/Dockerfile
     image: ${AUTH_IMAGE:-commy-auth:local}
     restart: unless-stopped
     environment:
@@ -74,6 +76,7 @@ services:
       COMMY_TERMS_URL: ${COMMY_TERMS_URL:-}
       COMMY_PRIVACY_URL: ${COMMY_PRIVACY_URL:-}
       COMMY_DOWNLOAD_URL: ${COMMY_DOWNLOAD_URL:-}
+      COMMY_RELAY_URLS: ${COMMY_RELAY_URLS:-}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
       ACCESS_CODE: ${ACCESS_CODE:-}
       ADULTS_ONLY: ${ADULTS_ONLY:-true}

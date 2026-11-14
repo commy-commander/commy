@@ -6,6 +6,7 @@ on:
     tags: ["v*"]
     paths: &image-paths
       - "auth/**"
+      - "apps/web/**"
       - "deploy/**"
       - "crates/commy-sync/**"
       - "crates/commy-sync-server/**"
@@ -129,7 +130,7 @@ jobs:
 
       - name: Build the auth image and fetch the web image
         run: |
-          docker build -q -t localhost:5000/commy-auth:candidate auth
+          docker build -q -f auth/Dockerfile -t localhost:5000/commy-auth:candidate .
           docker pull -q "$IMAGES/commy-web:dev"
           docker tag "$IMAGES/commy-web:dev" localhost:5000/commy-web:candidate
 
@@ -174,7 +175,7 @@ jobs:
           docker exec -i "$STACK" sh -e <<'EOF'
           urls=""
           for host in commy.localhost staging.commy.localhost dev.commy.localhost; do
-            urls="$urls https://$host/ https://$host/.well-known/commy-auth.json https://$host/api/auth/commy/pages/render?path=%2Faccount"
+            urls="$urls https://$host/ https://$host/.well-known/commy-auth.json https://$host/api/auth/commy/pages/render?path=%2Faccount https://$host/web"
           done
           deadline=$(( $(date +%s) + 300 ))
           while :; do
@@ -322,7 +323,8 @@ jobs:
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: ${{ matrix.service }}
+          context: .
+          file: ${{ matrix.service }}/Dockerfile
           labels: ${{ steps.meta.outputs.labels }}
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name={0}/commy-{1},push-by-digest=true,name-canonical=true,push=true', env.IMAGES, matrix.service) }}
           cache-from: type=gha,scope=${{ matrix.service }}
@@ -374,7 +376,7 @@ jobs:
         run: |
           newest=true
           if [ "$GITHUB_REF" = refs/heads/main ]; then
-            images='^(auth/|deploy/|crates/commy-sync/|crates/commy-sync-server/|\.dockerignore$|\.github/workflows/images\.yml$)'
+            images='^(auth/|apps/web/|deploy/|crates/commy-sync/|crates/commy-sync-server/|\.dockerignore$|\.github/workflows/images\.yml$)'
             git fetch -q origin main
             later="$(git diff --name-only "$GITHUB_SHA" origin/main | grep -cE "$images" || true)"
             [ "$later" = 0 ] || { newest=false; echo "a later commit on main changes the images, leaving :dev to its run"; }

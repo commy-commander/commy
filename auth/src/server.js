@@ -9,6 +9,7 @@ import { dropDeviceNames } from "./devices.js";
 import { createRequestHandler } from "./http.js";
 import { createLinkBlocklist } from "./link-blocklist.js";
 import { createPages } from "./pages.js";
+import { createWebClient } from "./web-client.js";
 import { connectRedis } from "./redis.js";
 
 const config = loadConfig();
@@ -62,6 +63,8 @@ const discovery = discoveryDocument(config);
 const pages = createPages({ auth, config, discovery, trustedProxies: config.trustedProxies });
 if (pages.enabled) await pages.ready;
 else config.warnings.push(pages.reason);
+const webClient = createWebClient();
+if (!webClient.enabled) config.warnings.push(webClient.reason);
 
 const server = http.createServer(
   createRequestHandler({
@@ -72,6 +75,7 @@ const server = http.createServer(
     redis,
     linkBlocklist,
     pages,
+    webClient,
     trustedProxies: config.trustedProxies,
     wellKnown: wellKnownFiles(config),
   }),
