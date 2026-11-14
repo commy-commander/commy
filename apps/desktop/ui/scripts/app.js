@@ -4926,6 +4926,28 @@ function renderSoundSettings() {
 }
 
 let lastVoiceRoster = null;
+const heldLeaves = new Map();
+
+function holdLeaveCue(ids) {
+  const batch = new Set(ids);
+  const timer = setTimeout(() => {
+    for (const id of batch) heldLeaves.delete(id);
+    if (batch.size) playSound("leave");
+  }, LEAVE_CUE_HOLD_MS);
+  for (const id of batch) heldLeaves.set(id, { batch, timer });
+}
+
+function takeBackLeave(id) {
+  const held = heldLeaves.get(id);
+  if (!held) return;
+  heldLeaves.delete(id);
+  held.batch.delete(id);
+}
+
+function dropHeldLeaves() {
+  for (const { timer } of heldLeaves.values()) clearTimeout(timer);
+  heldLeaves.clear();
+}
 
 function playJoinCue(server, joined) {
   const board = soundboardPrefs();
@@ -4939,20 +4961,25 @@ function checkVoiceRoster(server) {
   const voiceServerId = state.voiceChannelId && state.voiceServer && state.voiceServer.id;
   if (!voiceServerId) {
     lastVoiceRoster = null;
+    dropHeldLeaves();
     return;
   }
   if (!server || server.id !== voiceServerId) return;
   const channel = server.channels.find(c => c.id === state.voiceChannelId);
   if (!channel) {
     lastVoiceRoster = null;
+    dropHeldLeaves();
     return;
   }
   const others = new Set((channel.voice_user_ids || []).filter(id => !state.user || id !== state.user.id));
   const key = `${server.id}:${channel.id}`;
   if (lastVoiceRoster && lastVoiceRoster.key === key) {
-    const { joined, left } = voiceRosterChange(lastVoiceRoster.ids, others);
+    const { joined, back, gone } = cuesAfterHold(voiceRosterChange(lastVoiceRoster.ids, others), heldLeaves);
+    back.forEach(takeBackLeave);
     if (joined.length) playJoinCue(server, joined);
-    else if (left) playSound("leave");
+    else if (gone.length) holdLeaveCue(gone);
+  } else {
+    dropHeldLeaves();
   }
   lastVoiceRoster = { key, ids: others };
 }

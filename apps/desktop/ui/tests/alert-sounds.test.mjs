@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const {
   MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND,
   isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
-  voiceRosterChange, monoSamples, soundLevel, playAlone,
+  voiceRosterChange, cuesAfterHold, monoSamples, soundLevel, playAlone,
 } = require("../scripts/alert-sounds.js");
 
 test("your own sounds have their own ids that never clash with built-in ones", () => {
@@ -56,10 +56,20 @@ test("a member's join sound plays only when one person joins and both sides allo
 });
 
 test("a voice roster change names who joined and whether anyone left", () => {
-  assert.deepEqual(voiceRosterChange(new Set(["a"]), new Set(["a", "b"])), { joined: ["b"], left: false });
-  assert.deepEqual(voiceRosterChange(new Set(["a", "b"]), new Set(["b"])), { joined: [], left: true });
-  assert.deepEqual(voiceRosterChange(new Set(["a"]), new Set(["c"])), { joined: ["c"], left: true });
-  assert.deepEqual(voiceRosterChange(new Set(), new Set()), { joined: [], left: false });
+  assert.deepEqual(voiceRosterChange(new Set(["a"]), new Set(["a", "b"])), { joined: ["b"], left: false, gone: [] });
+  assert.deepEqual(voiceRosterChange(new Set(["a", "b"]), new Set(["b"])), { joined: [], left: true, gone: ["a"] });
+  assert.deepEqual(voiceRosterChange(new Set(["a"]), new Set(["c"])), { joined: ["c"], left: true, gone: ["a"] });
+  assert.deepEqual(voiceRosterChange(new Set(), new Set()), { joined: [], left: false, gone: [] });
+});
+
+test("someone back in voice before their leave sound plays makes no sound at all", () => {
+  const held = new Map([["a", {}]]);
+  const back = cuesAfterHold(voiceRosterChange(new Set(["b"]), new Set(["a", "b"])), held);
+  assert.deepEqual(back, { joined: [], back: ["a"], gone: [] });
+  const fresh = cuesAfterHold(voiceRosterChange(new Set(["b"]), new Set(["b", "c"])), held);
+  assert.deepEqual(fresh, { joined: ["c"], back: [], gone: [] });
+  const leaving = cuesAfterHold(voiceRosterChange(new Set(["a", "b"]), new Set(["a"])), held);
+  assert.deepEqual(leaving, { joined: [], back: [], gone: ["b"] });
 });
 
 test("a decoded sound becomes one channel for the chosen output", () => {

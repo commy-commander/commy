@@ -76,10 +76,15 @@ and refusal events.
 A seat must never outlive the device holding it. `commy_view::liveness` ends
 a seat when any of these happens:
 
-- the voice device's own `PresenceUpdate` says `Offline`. This covers quitting
-  the app and the sync service's will when a connection drops. A goodbye
-  signed before something newer from that device is stale and ignored.
-  Appearing offline (`Invisible`) never ends a seat.
+- the voice device's own `PresenceUpdate` says `Offline` and nothing takes it
+  back within `GOODBYE_GRACE` (10 seconds, ended on the next sweep). This
+  covers the sync service's will when a connection drops. A short drop and
+  reconnect re-greets with the seat, and that news, or a newer presence from
+  the same device, takes the goodbye back, so nobody sees or hears the member
+  leave and join again. An audio link that is still open does not take it
+  back. Quitting the app ends the seat at once through its leave messages.
+  A goodbye signed before something newer from that device is stale and
+  ignored. Appearing offline (`Invisible`) never ends a seat.
 - nobody has heard from the member for `EXPIRE` (2 minutes), or 11 minutes
   when they were last heard only through the sync service.
 - the member is still heard from another device, but the voice device itself
@@ -160,6 +165,10 @@ channel however many devices they have. Dial their media through
 - `commy-view` `liveness`: a quiet voice device, a seat that keeps beating,
   a seat nobody confirms, news about another room, someone appearing
   offline, the sync service window, going offline on the voice device and a
-  stale goodbye, waking from sleep.
+  stale goodbye, a goodbye taken back by a reconnect, waking from sleep.
+
+The app also holds the leave sound for `LEAVE_CUE_HOLD_MS` (2.5 seconds) and
+drops it, and the join sound, when that person is back in the room by then
+(`cuesAfterHold` in `alert-sounds.js`).
 - `commy-web-client` `client`: the browser's greeting seats it for late
   joiners, a bare leave does not unseat the voice device.

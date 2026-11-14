@@ -14,6 +14,8 @@ pub const SERVICE_EXPIRE: Duration = Duration::from_secs(11 * 60);
 
 pub const SWEEP_EVERY: Duration = Duration::from_secs(15);
 
+pub const GOODBYE_GRACE: Duration = Duration::from_secs(10);
+
 type DeviceSaid = HashMap<String, (Presence, Instant, i64)>;
 
 #[derive(Debug, Default)]
@@ -23,6 +25,7 @@ pub struct Liveness {
     devices: HashMap<(ServerId, UserId), DeviceSaid>,
     device_heard: HashMap<(ServerId, UserId, String), Instant>,
     seats_heard: HashMap<(ServerId, UserId), Instant>,
+    goodbyes: HashMap<(ServerId, UserId), Instant>,
     last_sweep_ms: Option<i64>,
 }
 
@@ -69,6 +72,7 @@ impl Liveness {
         let Some((user, channel)) = news else { return };
         if state.voice_states.get(&user) == Some(&channel) {
             self.heard_seat(state.server.id, user, now);
+            self.goodbyes.remove(&(state.server.id, user));
         }
     }
 
@@ -88,22 +92,30 @@ impl Liveness {
         let said = self.devices.entry((state.server.id, user)).or_default();
         let said_at = said_at.unwrap_or(i64::MIN);
         let newest = said.get(&node).is_none_or(|(_, _, before)| said_at >= *before);
-        let voice_device_left = newest && presence == Presence::Offline && state.voice_device(user) == Some(node.as_str());
-        let left_voice = voice_device_left && state.end_voice(user);
+        let from_voice_device = newest && state.voice_device(user) == Some(node.as_str());
         if newest {
             said.insert(node, (presence, now, said_at));
         }
         said.retain(|_, (_, at, _)| now.duration_since(*at) <= SERVICE_EXPIRE);
-        if said.len() < 2 {
-            return left_voice;
+        let combined = (said.len() >= 2).then(|| devices::combined_presence(said.values().map(|(p, _, _)| *p)));
+        if from_voice_device {
+            self.note_voice_device_presence(state.server.id, user, presence, now);
         }
-        let shown = devices::combined_presence(said.values().map(|(p, _, _)| *p));
+        let Some(shown) = combined else { return false };
         match state.profiles.get_mut(&user) {
             Some(profile) if profile.presence != shown => {
                 profile.presence = shown;
                 true
             }
-            _ => left_voice,
+            _ => false,
+        }
+    }
+
+    fn note_voice_device_presence(&mut self, server: ServerId, user: UserId, presence: Presence, now: Instant) {
+        if presence == Presence::Offline {
+            self.goodbyes.entry((server, user)).or_insert(now);
+        } else {
+            self.goodbyes.remove(&(server, user));
         }
     }
 
@@ -122,6 +134,7 @@ impl Liveness {
             self.lasting.clear();
             self.device_heard.clear();
             self.seats_heard.clear();
+            self.goodbyes.clear();
         }
         self.lasting.retain(|_, until| now < *until);
         let mut changed = Vec::new();
@@ -147,7 +160,8 @@ impl Liveness {
                     continue;
                 }
                 alive.insert((*sid, user));
-                if self.voice_device_went_quiet(state, user, now, expire, lasting) || self.seat_went_unconfirmed(state, user, now, expire, lasting) {
+                if self.goodbye_stood(state, user, now)
+                    || self.voice_device_went_quiet(state, user, now, expire, lasting) || self.seat_went_unconfirmed(state, user, now, expire, lasting) {
                     gone |= state.end_voice(user);
                 }
             }
@@ -159,7 +173,22 @@ impl Liveness {
         self.devices.retain(|key, _| alive.contains(key));
         self.device_heard.retain(|(sid, user, _), _| alive.contains(&(*sid, *user)));
         self.seats_heard.retain(|key, _| alive.contains(key));
+        self.goodbyes.retain(|key, _| alive.contains(key));
         changed
+    }
+
+    fn goodbye_stood(&mut self, state: &ServerState, user: UserId, now: Instant) -> bool {
+        let key = (state.server.id, user);
+        let Some(said) = self.goodbyes.get(&key).copied() else { return false };
+        if !state.voice_states.contains_key(&user) {
+            self.goodbyes.remove(&key);
+            return false;
+        }
+        if now.duration_since(said) < GOODBYE_GRACE {
+            return false;
+        }
+        self.goodbyes.remove(&key);
+        true
     }
 
     fn seat_went_unconfirmed(&mut self, state: &ServerState, user: UserId, now: Instant, expire: Duration, lasting: bool) -> bool {
@@ -186,6 +215,7 @@ impl Liveness {
         self.devices.clear();
         self.device_heard.clear();
         self.seats_heard.clear();
+        self.goodbyes.clear();
     }
 }
 
@@ -391,9 +421,80 @@ mod tests {
         live.settle_device_presence(state, friend, &DESKTOP, Presence::Invisible, now, Some(60));
         assert_eq!(room.seated(), Some(voice), "appearing offline is not leaving");
         let state = room.servers.get_mut(&sid).unwrap();
-        assert!(live.settle_device_presence(state, friend, &DESKTOP, Presence::Offline, now, Some(70)));
+        live.settle_device_presence(state, friend, &DESKTOP, Presence::Offline, now, Some(70));
+        assert_eq!(room.seated(), Some(voice), "a goodbye waits in case the link comes straight back");
+        live.heard(sid, friend, now);
+        live.heard_device(sid, friend, &node_hex(&DESKTOP), now);
+        assert!(room.sweep(&mut live, now + GOODBYE_GRACE / 2, 0).is_empty());
+        assert_eq!(room.sweep(&mut live, now + GOODBYE_GRACE, 5_000), vec![sid]);
         assert_eq!(room.seated(), None);
         assert_eq!(room.servers[&sid].voice_device(friend), None);
+    }
+
+    #[test]
+    fn a_goodbye_from_a_dropped_link_is_taken_back_when_the_device_greets_again() {
+        let mut room = room();
+        let mut live = Liveness::default();
+        let (sid, friend, voice) = (room.sid, room.friend, room.voice);
+        let start = Instant::now();
+        room.announce(DESKTOP, Some(voice), 1_000);
+        live.heard(sid, friend, start);
+        live.heard_device(sid, friend, &node_hex(&DESKTOP), start);
+        let state = room.servers.get_mut(&sid).unwrap();
+        live.settle_device_presence(state, friend, &DESKTOP, Presence::Online, start, Some(10));
+        let state = room.servers.get_mut(&sid).unwrap();
+        live.settle_device_presence(state, friend, &DESKTOP, Presence::Offline, start, Some(20));
+
+        let back = start + Duration::from_secs(2);
+        room.announce(DESKTOP, Some(voice), 1_000);
+        live.heard_seat_news(&room.servers[&sid], Some((friend, voice)), back);
+        let state = room.servers.get_mut(&sid).unwrap();
+        live.settle_device_presence(state, friend, &DESKTOP, Presence::Online, back, Some(30));
+        live.heard(sid, friend, back);
+        live.heard_device(sid, friend, &node_hex(&DESKTOP), back);
+
+        assert!(room.sweep(&mut live, start + GOODBYE_GRACE + SWEEP_EVERY, 15_000).is_empty());
+        assert_eq!(room.seated(), Some(voice));
+    }
+
+    #[test]
+    fn a_goodbye_is_taken_back_by_seat_news_alone() {
+        let mut room = room();
+        let mut live = Liveness::default();
+        let (sid, friend, voice) = (room.sid, room.friend, room.voice);
+        let start = Instant::now();
+        room.announce(DESKTOP, Some(voice), 1_000);
+        live.heard(sid, friend, start);
+        live.heard_device(sid, friend, &node_hex(&DESKTOP), start);
+        let state = room.servers.get_mut(&sid).unwrap();
+        live.settle_device_presence(state, friend, &DESKTOP, Presence::Offline, start, Some(20));
+
+        let back = start + Duration::from_secs(1);
+        live.heard_seat_news(&room.servers[&sid], Some((friend, voice)), back);
+        live.heard(sid, friend, back);
+        live.heard_device(sid, friend, &node_hex(&DESKTOP), back);
+
+        assert!(room.sweep(&mut live, start + GOODBYE_GRACE, 15_000).is_empty());
+        assert_eq!(room.seated(), Some(voice));
+    }
+
+    #[test]
+    fn a_goodbye_stands_while_only_an_old_audio_link_is_still_open() {
+        let mut room = room();
+        let mut live = Liveness::default();
+        let (sid, friend, voice) = (room.sid, room.friend, room.voice);
+        let start = Instant::now();
+        room.announce(DESKTOP, Some(voice), 1_000);
+        let state = room.servers.get_mut(&sid).unwrap();
+        live.settle_device_presence(state, friend, &DESKTOP, Presence::Offline, start, Some(20));
+
+        let later = start + GOODBYE_GRACE;
+        live.heard_seat(sid, friend, later);
+        live.heard(sid, friend, later);
+        live.heard_device(sid, friend, &node_hex(&DESKTOP), later);
+
+        assert_eq!(room.sweep(&mut live, later, 15_000), vec![sid]);
+        assert_eq!(room.seated(), None);
     }
 
     #[test]

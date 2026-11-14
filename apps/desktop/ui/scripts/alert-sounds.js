@@ -45,10 +45,20 @@ function joinSoundToPlay({ joined, joinSounds, allowed, hearJoinSounds }) {
   return (joinSounds || {})[joined[0]] || null;
 }
 
+const LEAVE_CUE_HOLD_MS = 2500;
+
 function voiceRosterChange(before, now) {
   const joined = [...now].filter(id => !before.has(id));
-  const left = [...before].some(id => !now.has(id));
-  return { joined, left };
+  const gone = [...before].filter(id => !now.has(id));
+  return { joined, left: gone.length > 0, gone };
+}
+
+function cuesAfterHold(change, held) {
+  return {
+    joined: change.joined.filter(id => !held.has(id)),
+    back: change.joined.filter(id => held.has(id)),
+    gone: change.gone,
+  };
 }
 
 function monoSamples(channels) {
@@ -83,6 +93,6 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     ALERT_SOUND_PREFIX, MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND, RING_GAP_MS,
     isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
-    voiceRosterChange, monoSamples, soundLevel, playAlone,
+    LEAVE_CUE_HOLD_MS, voiceRosterChange, cuesAfterHold, monoSamples, soundLevel, playAlone,
   };
 }
