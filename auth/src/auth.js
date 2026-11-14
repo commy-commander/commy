@@ -6,6 +6,7 @@ import { kyselyAdapter } from "@better-auth/kysely-adapter";
 import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
 import { commyAccountDeletion } from "./account-deletion.js";
+import { cleanAccountName, cleanAccountProfile } from "./account-profile.js";
 import { androidOrigin, commyAppSignIn } from "./app-sign-in.js";
 import { appleClientSecret } from "./apple.js";
 import { hasAccess } from "./access.js";
@@ -27,6 +28,8 @@ import { redisRateLimitStorage } from "./rate-limit.js";
 
 const PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS = ["google"];
 const OAUTH_STATE_SECONDS = 600;
+
+const withAName = (user) => (user.name ? user : { ...user, name: cleanAccountName(String(user.email ?? "").split("@")[0]) });
 
 const storeSessionWithoutIpOrUserAgent = async (session) => ({ data: { ...session, ipAddress: null, userAgent: null } });
 
@@ -211,8 +214,12 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         create: {
           before: async (user, ctx) => {
             refuseWithoutAccessCode(config.accessCode, ctx);
-            return { data: await recordAdultConfirmation(user, ctx, { required: config.adultsOnly, termsVersion: config.termsVersion }) };
+            const confirmed = await recordAdultConfirmation(user, ctx, { required: config.adultsOnly, termsVersion: config.termsVersion });
+            return { data: withAName(cleanAccountProfile(confirmed)) };
           },
+        },
+        update: {
+          before: async (data) => ({ data: cleanAccountProfile(data) }),
         },
       },
       session: {
