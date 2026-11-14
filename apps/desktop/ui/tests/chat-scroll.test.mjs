@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { scrollDownShown, centeredScrollTop, landingScrollTop } = require("../scripts/chat-scroll.js");
+const { scrollDownShown, centeredScrollTop, landingScrollTop, distanceFromEnd, atListEnd, redrawnScrollTop } = require("../scripts/chat-scroll.js");
 
 test("the scroll down button stays hidden near the newest messages", () => {
   assert.equal(scrollDownShown(2000, 1500, 500), false);
@@ -45,4 +45,36 @@ test("a NEW line already on the newest screen keeps the view at the bottom", () 
 
 test("a short channel never scrolls", () => {
   assert.equal(landingScrollTop(400, 500, 100), 0);
+});
+
+test("only a list scrolled all the way down counts as sitting at the newest message", () => {
+  assert.equal(atListEnd(2000, 1500, 500), true);
+  assert.equal(atListEnd(2000, 1498.5, 500), true);
+  assert.equal(atListEnd(2000, 1460, 500), false);
+});
+
+test("the distance from the newest message never goes below zero", () => {
+  assert.equal(distanceFromEnd(2000, 1300, 500), 200);
+  assert.equal(distanceFromEnd(400, 0, 500), 0);
+});
+
+test("a redraw leaves a reader who scrolled up a little exactly where they were", () => {
+  assert.equal(redrawnScrollTop({ scrollTop: 1460, fromEnd: 40, pinned: false, newer: false }, 2000, 500), 1460);
+  assert.equal(redrawnScrollTop({ scrollTop: 1300, fromEnd: 200, pinned: false, newer: false }, 2000, 500), 1300);
+});
+
+test("a redraw keeps a reader at the newest message there as the list grows", () => {
+  assert.equal(redrawnScrollTop({ scrollTop: 1500, fromEnd: 0, pinned: true, newer: false }, 2300, 500), 1800);
+});
+
+test("a new message pulls a reader who is just above the newest message down to it", () => {
+  assert.equal(redrawnScrollTop({ scrollTop: 1460, fromEnd: 40, pinned: false, newer: true }, 2100, 500), 1600);
+});
+
+test("a new message leaves a reader further up the history in place", () => {
+  assert.equal(redrawnScrollTop({ scrollTop: 900, fromEnd: 600, pinned: false, newer: true }, 2100, 500), 900);
+});
+
+test("a redraw that shortens the list stops at its end", () => {
+  assert.equal(redrawnScrollTop({ scrollTop: 1460, fromEnd: 40, pinned: false, newer: false }, 1700, 500), 1200);
 });

@@ -19,6 +19,23 @@ function landingScrollTop(scrollHeight, clientHeight, lineTop) {
   return Math.max(0, lineTop - NEW_LINE_GAP_PX);
 }
 
+const AT_END_SLACK_PX = 2;
+const FOLLOW_NEWER_PX = 60;
+
+function distanceFromEnd(scrollHeight, scrollTop, clientHeight) {
+  return Math.max(0, scrollHeight - scrollTop - clientHeight);
+}
+
+function atListEnd(scrollHeight, scrollTop, clientHeight) {
+  return distanceFromEnd(scrollHeight, scrollTop, clientHeight) <= AT_END_SLACK_PX;
+}
+
+function redrawnScrollTop({ scrollTop, fromEnd, pinned, newer }, scrollHeight, clientHeight) {
+  const end = Math.max(0, scrollHeight - clientHeight);
+  if (pinned || (newer && fromEnd < FOLLOW_NEWER_PX)) return end;
+  return Math.min(scrollTop, end);
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { scrollDownShown, centeredScrollTop, landingScrollTop };
+  module.exports = { scrollDownShown, centeredScrollTop, landingScrollTop, distanceFromEnd, atListEnd, redrawnScrollTop };
 }

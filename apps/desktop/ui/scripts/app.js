@@ -8536,8 +8536,7 @@ function renderMessages(messages) {
   }
   const viewKey = state.view === "dm" ? `dm:${state.currentDm && state.currentDm.user}` : `ch:${state.currentChannel && state.currentChannel.id}`;
   const sameView = box.dataset.view === viewKey;
-  const prevScroll = box.scrollTop;
-  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  const before = scrollBeforeRedraw(box, messages);
   box.dataset.view = viewKey;
   box.innerHTML = "";
   if (state.view === "dm" && state.currentDm) box.appendChild(buildDmIntro());
@@ -8588,8 +8587,31 @@ function renderMessages(messages) {
     box.appendChild(historyPill());
   }
   if (!sameView) landMessageList(box);
-  else box.scrollTop = atBottom ? box.scrollHeight : prevScroll;
+  else box.scrollTop = redrawnScrollTop(before, box.scrollHeight, box.clientHeight);
+  noteChatScroll();
   if (state.threadRoot) renderThread();
+}
+
+const chatEnd = { pinned: true };
+
+function noteChatScroll() {
+  const box = $("messages");
+  chatEnd.pinned = atListEnd(box.scrollHeight, box.scrollTop, box.clientHeight);
+}
+
+function newestMessageId(messages) {
+  const last = messages && messages[messages.length - 1];
+  return last ? last.id : null;
+}
+
+function scrollBeforeRedraw(box, messages) {
+  const { scrollHeight, scrollTop, clientHeight } = box;
+  return {
+    scrollTop,
+    fromEnd: distanceFromEnd(scrollHeight, scrollTop, clientHeight),
+    pinned: chatEnd.pinned || atListEnd(scrollHeight, scrollTop, clientHeight),
+    newer: newestMessageId(messages) !== newestMessageId(state.renderedMessages),
+  };
 }
 
 const FORUM_MODE_KEY = "commy.forumMode";
@@ -8638,7 +8660,10 @@ function landHiddenMessageList(box) {
 
 function wireScrollDown() {
   setIcon($("scroll-down"), "chevronDown", 24);
-  $("messages").addEventListener("scroll", paintScrollDown, { passive: true });
+  $("messages").addEventListener("scroll", () => {
+    noteChatScroll();
+    paintScrollDown();
+  }, { passive: true });
   new ResizeObserver(() => landHiddenMessageList($("messages"))).observe($("messages"));
   $("scroll-down").onclick = () => {
     if (state.historyAnchor) return jumpToPresent();
@@ -17993,10 +18018,7 @@ function imageSourceFromHtml(html) {
 function keepScrolledOnLoad(img) {
   img.addEventListener("load", () => {
     const box = $("messages");
-    const slack = img.offsetHeight + 120;
-    if (box.scrollHeight - box.scrollTop - box.clientHeight <= slack) {
-      box.scrollTop = box.scrollHeight;
-    }
+    if (chatEnd.pinned && box.contains(img)) box.scrollTop = box.scrollHeight;
   });
 }
 
