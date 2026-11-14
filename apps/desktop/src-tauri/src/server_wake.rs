@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
 use commy_core::{ChannelId, Message, ServerId, ServerState, UserId};
+use data_encoding::BASE64;
 use commy_net::server_wake::{choice, listen_whos, ring_whos, unwanted_whos, wake_text, AllRings};
 
 use crate::state::App;
@@ -34,7 +35,7 @@ pub fn ring(app: &App, server: ServerId, message: &Message) {
     if tags.is_empty() {
         return;
     }
-    let preview = push_wake::preview(&keys, &me.to_string(), Some(message.channel.to_string()), &text, false, false);
+    let preview = push_wake::preview(app, &keys, &me.to_string(), Some(message.channel.to_string()), &text, false, false);
     tauri::async_runtime::spawn(push_wake::ring(app.http.clone(), tags, preview));
 }
 
@@ -99,6 +100,8 @@ pub struct Label {
     channels: BTreeMap<String, String>,
     #[serde(rename = "m")]
     members: BTreeMap<String, String>,
+    #[serde(rename = "k")]
+    keys: BTreeMap<String, String>,
 }
 
 pub fn label(state: &ServerState, me: UserId) -> Option<Label> {
@@ -112,7 +115,8 @@ pub fn label(state: &ServerState, me: UserId) -> Option<Label> {
         .iter()
         .filter_map(|m| commy_view::known_name_of(state, m.user).map(|name| (m.user.to_string(), name)))
         .collect();
-    Some(Label { name: commy_core::server::shown_server_name(&server.name), group: server.group, channels, members })
+    let keys = server.members.iter().filter_map(|m| state.identity_of(m.user).map(|key| (m.user.to_string(), BASE64.encode(&key.0)))).collect();
+    Some(Label { name: commy_core::server::shown_server_name(&server.name), group: server.group, channels, members, keys })
 }
 
 pub fn labels(app: &App) -> BTreeMap<String, Label> {
@@ -164,6 +168,8 @@ mod tests {
     fn a_phone_learns_only_the_channels_it_can_read() {
         let (mut state, ids) = server_with(&["kit", "sam"]);
         let (kit, sam) = (ids[1], ids[2]);
+        let kit_key = commy_core::Identity::generate().public();
+        state.profiles.get_mut(&kit).unwrap().identity = Some(kit_key);
         let role = crew(&mut state, kit);
         let mut locked = commy_core::server::Channel::new("crew", commy_core::ChannelKind::Text, 9);
         locked.view_roles = vec![role];
@@ -175,6 +181,7 @@ mod tests {
         assert!(!for_sam.channels.contains_key(&channel));
         assert_eq!(for_sam.members.get(&kit.to_string()).map(String::as_str), Some("kit"));
         assert_eq!(for_sam.name, "test");
+        assert_eq!(for_sam.keys.get(&kit.to_string()), Some(&BASE64.encode(&kit_key.0)), "previews are checked against the key the server knows");
         assert!(label(&state, UserId::new()).is_none(), "a server we are not in shows nothing");
     }
 

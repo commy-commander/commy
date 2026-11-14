@@ -40,15 +40,39 @@ enum Previews {
         nonce: nonce, ciphertext: Data(bytes.dropFirst(nonceBytes).dropLast(tagBytes)), tag: Data(bytes.suffix(tagBytes)))
     else { return nil }
     for entry in keys {
-      guard let encoded = entry["k"] as? String, let raw = Data(base64Encoded: encoded), raw.count == 32,
+      guard let raw = decoded(entry["k"], count: PreviewSignature.keyBytes),
         let plain = try? AES.GCM.open(box, using: SymmetricKey(data: raw), authenticating: aad)
       else { continue }
       guard let text = String(data: plain, encoding: .utf8),
         let preview = (try? JSONSerialization.jsonObject(with: Data(text.trimmingCharacters(in: .whitespaces).utf8))) as? [String: Any]
       else { return nil }
-      return shown(preview, server: nonEmpty(entry["s"] as? String), held: held)
+      let server = nonEmpty(entry["s"] as? String)
+      guard signedByAuthor(preview, key: raw, server: server, held: held) else { return nil }
+      return shown(preview, server: server, held: held)
     }
     return nil
+  }
+
+  private static func decoded(_ encoded: Any?, count: Int) -> Data? {
+    guard let encoded = encoded as? String, let raw = Data(base64Encoded: encoded), raw.count == count else { return nil }
+    return raw
+  }
+
+  private static func signedByAuthor(_ preview: [String: Any], key: Data, server: String?, held: [String: Any]) -> Bool {
+    let author = preview["a"] as? String ?? ""
+    let signers: [String: Any]?
+    if let server = server {
+      signers = ((held["servers"] as? [String: Any])?[server] as? [String: Any])?["k"] as? [String: Any]
+    } else {
+      signers = held["userKeys"] as? [String: Any]
+    }
+    guard let signer = decoded(signers?[author], count: PreviewSignature.keyBytes),
+      let signature = decoded(preview["s"], count: PreviewSignature.signatureBytes)
+    else { return false }
+    let signed = PreviewSignature.signedBytes(
+      key: key, author: author, channel: preview["c"] as? String ?? "", text: preview["t"] as? String ?? "",
+      call: preview["k"] as? Bool ?? false, ended: preview["e"] as? Bool ?? false)
+    return PreviewSignature.verified(signer: signer, signature: signature, signed: signed)
   }
 
   private static func valid(_ text: String) -> Bool {
@@ -94,6 +118,32 @@ enum Previews {
       return senders.count > 1 ? "\(line.sender): \(text)" : text
     }
     return texts.joined(separator: "\n")
+  }
+}
+
+enum PreviewSignature {
+  static let keyBytes = 32
+  static let signatureBytes = 64
+  private static let callFlag: UInt8 = 1
+  private static let endedFlag: UInt8 = 2
+  private static let domain = Data("commy-wake-preview-signed/v1".utf8)
+
+  static func signedBytes(key: Data, author: String, channel: String, text: String, call isCall: Bool, ended isEnded: Bool) -> Data {
+    var out = domain
+    out.append(key)
+    for field in [author, channel, text] {
+      let bytes = Data(field.utf8)
+      withUnsafeBytes(of: UInt32(bytes.count).bigEndian) { out.append(contentsOf: $0) }
+      out.append(bytes)
+    }
+    let flags: UInt8 = (isCall ? callFlag : 0) | (isEnded ? endedFlag : 0)
+    out.append(contentsOf: [flags])
+    return out
+  }
+
+  static func verified(signer: Data, signature: Data, signed: Data) -> Bool {
+    guard let key = try? Curve25519.Signing.PublicKey(rawRepresentation: signer) else { return false }
+    return key.isValidSignature(signature, for: signed)
   }
 }
 

@@ -290,6 +290,15 @@ test("message notifications play Commy's own sounds, a different one for direct 
   assert.ok(previews.includes("deleteNotificationChannel(RETIRED_CHANNEL_ID)"), "the old silent-default channel leaves the phone's settings");
 });
 
+test("a phone shows a preview only when the named sender signed it", () => {
+  assert.ok(GRADLE_DEPENDENCIES.some(coordinate => coordinate.startsWith("com.google.crypto.tink:tink-android:")));
+  const previews = readFileSync(new URL("./android/WakePreviews.kt", import.meta.url), "utf8");
+  const signature = readFileSync(new URL("./android/PreviewSignature.kt", import.meta.url), "utf8");
+  assert.ok(previews.includes("if (!signedByAuthor(held, server, key, preview))"));
+  assert.ok(previews.includes('held.optJSONObject("userKeys")') && previews.includes('optJSONObject("k")'), "direct and server senders both have keys");
+  assert.ok(signature.includes('"commy-wake-preview-signed/v1"'), "the same signed layout as the sending app");
+});
+
 test("every launcher layer ships as a square picture big enough for the largest screens", () => {
   for (const name of Object.values(LAUNCHER_LAYERS)) {
     const file = new URL(`./android-icon/${name}.png`, import.meta.url);

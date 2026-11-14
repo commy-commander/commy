@@ -78,23 +78,44 @@ object WakePreviews {
     val keys = held.optJSONArray("keys") ?: return null
     for (i in 0 until keys.length()) {
       val entry = keys.optJSONObject(i) ?: continue
-      val plain = decrypt(entry.optString("k"), bytes) ?: continue
+      val key = bytesOf(entry.optString("k"), PreviewSignature.KEY_BYTES) ?: continue
+      val plain = decrypt(key, bytes) ?: continue
       val preview = try {
         JSONObject(String(plain, Charsets.UTF_8))
       } catch (e: Exception) {
         return null
       }
-      return shown(held, entry.optString("s").ifEmpty { null }, preview)
+      val server = entry.optString("s").ifEmpty { null }
+      if (!signedByAuthor(held, server, key, preview)) {
+        Log.i(TAG, "dropped a preview its named sender did not sign")
+        return null
+      }
+      return shown(held, server, preview)
     }
     return null
   }
 
-  private fun decrypt(key: String, bytes: ByteArray): ByteArray? {
+  private fun bytesOf(encoded: String, size: Int): ByteArray? {
     return try {
-      val raw = Base64.decode(key, Base64.DEFAULT)
-      if (raw.size != 32) return null
+      Base64.decode(encoded, Base64.DEFAULT).takeIf { it.size == size }
+    } catch (e: IllegalArgumentException) {
+      null
+    }
+  }
+
+  private fun signedByAuthor(held: JSONObject, server: String?, key: ByteArray, preview: JSONObject): Boolean {
+    val author = preview.optString("a")
+    val signers = if (server == null) held.optJSONObject("userKeys") else held.optJSONObject("servers")?.optJSONObject(server)?.optJSONObject("k")
+    val signer = signers?.optString(author)?.let { bytesOf(it, PreviewSignature.KEY_BYTES) }
+    val signature = bytesOf(preview.optString("s"), PreviewSignature.SIGNATURE_BYTES)
+    val signed = PreviewSignature.signedBytes(key, author, preview.optString("c"), preview.optString("t"), preview.optBoolean("k"), preview.optBoolean("e"))
+    return PreviewSignature.verified(signer, signature, signed)
+  }
+
+  private fun decrypt(key: ByteArray, bytes: ByteArray): ByteArray? {
+    return try {
       val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-      cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(raw, "AES"), GCMParameterSpec(TAG_BITS, bytes, 0, NONCE_BYTES))
+      cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, bytes, 0, NONCE_BYTES))
       cipher.updateAAD(AAD)
       cipher.doFinal(bytes, NONCE_BYTES, bytes.size - NONCE_BYTES)
     } catch (e: Exception) {

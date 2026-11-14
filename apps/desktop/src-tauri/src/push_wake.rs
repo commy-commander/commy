@@ -71,8 +71,9 @@ pub fn today() -> i64 {
     wake_day(Utc::now().timestamp_millis())
 }
 
-pub fn preview(keys: &StreamKeys, author: &str, channel: Option<String>, text: &str, call: bool, ended: bool) -> Option<String> {
-    sealed_preview(keys, today(), author, channel, text, call, ended)
+pub fn preview(app: &App, keys: &StreamKeys, author: &str, channel: Option<String>, text: &str, call: bool, ended: bool) -> Option<String> {
+    let identity = app.identity()?;
+    sealed_preview(keys, today(), |msg| identity.sign(msg).0, author, channel, text, call, ended)
 }
 
 pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>) {
@@ -370,7 +371,7 @@ fn phone_previews(app: &App, days: &[i64]) -> serde_json::Value {
     keys.extend(server_wake::preview_keys(app, days).iter().map(|(server, key)| serde_json::json!({ "k": BASE64.encode(key), "s": server.to_string() })));
     let users: std::collections::BTreeMap<String, String> =
         app.dms.lock().unwrap().contacts.iter().map(|(id, profile)| (id.to_string(), profile.visible_name().to_string())).collect();
-    serde_json::json!({ "me": me, "keys": keys, "servers": server_wake::labels(app), "users": users })
+    serde_json::json!({ "me": me, "keys": keys, "servers": server_wake::labels(app), "users": users, "userKeys": dm_sync::signer_keys(app) })
 }
 
 fn share_previews(app: &App, today: i64) {

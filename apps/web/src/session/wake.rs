@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::time::Duration;
 
 use chrono::Utc;
-use commy_core::{Message, ServerId, UserId};
+use commy_core::{Identity, Message, ServerId, UserId};
 use commy_sync::wake::{sealed_preview, wake_day, WakeRing, MAX_RING_TAGS};
 use commy_core::dm::DmMessage;
 use commy_sync::wire::Bytes;
@@ -19,9 +19,9 @@ pub(super) fn dm_wake_tag(keys: &StreamKeys, partner: UserId) -> [u8; 32] {
     keys.wake_tag(&partner.to_string(), wake_day(Utc::now().timestamp_millis()))
 }
 
-pub(super) fn dm_wake_preview(keys: &StreamKeys, message: &DmMessage) -> Option<String> {
+pub(super) fn dm_wake_preview(identity: &Identity, keys: &StreamKeys, message: &DmMessage) -> Option<String> {
     let day = wake_day(Utc::now().timestamp_millis());
-    sealed_preview(keys, day, &message.from.to_string(), None, &commy_view::dms::wake_text(message), commy_view::dms::is_call(message), commy_view::dms::call_ended(message))
+    sealed_preview(keys, day, |msg| identity.sign(msg).0, &message.from.to_string(), None, &commy_view::dms::wake_text(message), commy_view::dms::is_call(message), commy_view::dms::call_ended(message))
 }
 
 fn ring_delay() -> Duration {
@@ -38,7 +38,9 @@ impl Session {
         let Some((private, whos, text)) = found else { return (Vec::new(), None) };
         let Some(keys) = live.book.wake_keys(server, private.then_some(message.channel)) else { return (Vec::new(), None) };
         let today = wake_day(now);
-        let preview = sealed_preview(&keys, today, &message.author.to_string(), Some(message.channel.to_string()), &text, false, false);
+        let preview = self.me_and_key().and_then(|(_, identity)| {
+            sealed_preview(&keys, today, |msg| identity.sign(msg).0, &message.author.to_string(), Some(message.channel.to_string()), &text, false, false)
+        });
         (whos.iter().map(|who| keys.wake_tag(who, today)).collect(), preview)
     }
 

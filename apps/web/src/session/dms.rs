@@ -324,7 +324,7 @@ impl Session {
         let plain = sync_streams::encode_dm(envelope);
         let stored = matches!(n0_future::time::timeout(HOLD_WAIT, client.append(keys.id, plain)).await, Ok(Ok(_)));
         if stored && dms::rings(&envelope.message) {
-            self.ring_wake(vec![dm_wake_tag(&keys, partner)], dm_wake_preview(&keys, &envelope.message));
+            self.ring_wake(vec![dm_wake_tag(&keys, partner)], dm_wake_preview(identity, &keys, &envelope.message));
         }
         stored
     }
@@ -343,7 +343,8 @@ impl Session {
         let keys = self.client.borrow().inbox_to(&given, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
         let Some(sealed) = inbox::seal(&key, envelope) else { return false };
         let stream = keys.id;
-        let wake = dms::rings(&envelope.message).then(|| (dm_wake_tag(&keys, to), dm_wake_preview(&keys, &envelope.message)));
+        let identity = self.me_and_key().map(|(_, identity)| identity);
+        let wake = dms::rings(&envelope.message).then(|| (dm_wake_tag(&keys, to), identity.and_then(|identity| dm_wake_preview(&identity, &keys, &envelope.message))));
         let (client, borrowed) = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return false };

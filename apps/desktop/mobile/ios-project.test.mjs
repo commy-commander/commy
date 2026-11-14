@@ -70,3 +70,12 @@ test("the app carries Commy's notification sounds and the extension picks one fo
   const extension = readFileSync(new URL("./ios/notifications/NotificationService.swift", import.meta.url), "utf8");
   for (const name of sounds) assert.ok(extension.includes(`"${name}"`), name);
 });
+
+test("the extension shows a preview only when the named sender signed it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const extension = readFileSync(new URL("./ios/notifications/NotificationService.swift", import.meta.url), "utf8");
+  assert.ok(extension.includes("guard signedByAuthor(preview, key: raw, server: server, held: held) else { return nil }"));
+  assert.ok(extension.includes('held["userKeys"]') && extension.includes('?["k"]'), "direct and server senders both have keys");
+  assert.ok(extension.includes('"commy-wake-preview-signed/v1"'), "the same signed layout as the sending app");
+  assert.ok(extension.includes("Curve25519.Signing.PublicKey(rawRepresentation: signer)"));
+});

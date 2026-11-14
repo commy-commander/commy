@@ -11,6 +11,7 @@ use commy_net::node::IncomingDm;
 use commy_net::sync_streams::{self, DmEntry};
 use commy_net::DmEnvelope;
 use commy_sync::wake::DAY_MS;
+use data_encoding::BASE64;
 use commy_sync::{StreamId, StreamKeys, SyncEvent};
 use tauri::{AppHandle, Manager};
 
@@ -311,7 +312,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     let keys = inbox_to(app, me, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
     let Some(plain) = inbox::seal(&key, envelope) else { return false };
     let stream = keys.id;
-    let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(&keys, &envelope.message)));
+    let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(app, &keys, &envelope.message)));
     let (client, borrowed) = {
         let mut guard = LIVE.lock().unwrap();
         let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return false };
@@ -401,8 +402,8 @@ fn ring_phones(app: &App, message: &DmMessage, tag: [u8; 32], preview: Option<St
     }
 }
 
-fn wake_preview(keys: &StreamKeys, message: &DmMessage) -> Option<String> {
-    push_wake::preview(keys, &message.from.to_string(), None, &commy_view::dms::wake_text(message), is_call(message), commy_view::dms::call_ended(message))
+fn wake_preview(app: &App, keys: &StreamKeys, message: &DmMessage) -> Option<String> {
+    push_wake::preview(app, keys, &message.from.to_string(), None, &commy_view::dms::wake_text(message), is_call(message), commy_view::dms::call_ended(message))
 }
 
 fn wake_streams(app: &App, days: &[i64]) -> Option<(String, Vec<(StreamKeys, i64)>)> {
@@ -429,6 +430,12 @@ fn wake_streams(app: &App, days: &[i64]) -> Option<(String, Vec<(StreamKeys, i64
 pub fn wake_tags(app: &App, days: &[i64]) -> Option<Vec<([u8; 32], i64)>> {
     let (who, streams) = wake_streams(app, days)?;
     Some(streams.iter().map(|(keys, day)| (keys.wake_tag(&who, *day), *day)).collect())
+}
+
+pub fn signer_keys(app: &App) -> BTreeMap<String, String> {
+    let mut users: Vec<UserId> = app.dms.lock().unwrap().contacts.keys().copied().collect();
+    users.extend(LIVE.lock().unwrap().as_ref().map(|live| live.partners.keys().copied().collect::<Vec<_>>()).unwrap_or_default());
+    users.into_iter().filter_map(|user| Some((user.to_string(), BASE64.encode(&partner_key(app, user)?.0)))).collect()
 }
 
 pub fn preview_keys(app: &App, days: &[i64]) -> Vec<[u8; 32]> {
@@ -590,7 +597,7 @@ async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
     let epoch = sync_streams::dm_epoch(Utc::now());
     let Some(keys) = sync_streams::dm_stream(&identity, &key, &epoch) else { return false };
     let stream = keys.id;
-    let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&partner.to_string(), push_wake::today()), wake_preview(&keys, &envelope.message)));
+    let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&partner.to_string(), push_wake::today()), wake_preview(app, &keys, &envelope.message)));
     let mut new_partner = false;
     let client = {
         let mut guard = LIVE.lock().unwrap();

@@ -1,6 +1,7 @@
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use data_encoding::BASE64;
+use ed25519_dalek::{Signature, VerifyingKey};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,8 @@ pub const PREVIEW_PLAIN: usize = 352;
 pub const MAX_PREVIEW_TEXT: usize = 200;
 pub const MAX_PREVIEW_ENCODED: usize = (PREVIEW_PLAIN + NONCE_BYTES + TAG_BYTES).div_ceil(3) * 4;
 const PREVIEW_AAD: &[u8] = b"commy-wake-preview/v1";
+const PREVIEW_SIGNED_DOMAIN: &[u8] = b"commy-wake-preview-signed/v1";
+pub const SIGNATURE_BYTES: usize = 64;
 const SEAT_LABEL: &str = "commy-wake-seat/v1";
 pub const SEAT_BEAT_SECS: u64 = 45;
 pub const SEAT_HOLD_SECS: u64 = 120;
@@ -124,6 +127,26 @@ pub struct Preview {
     pub call: bool,
     #[serde(rename = "e", default, skip_serializing_if = "std::ops::Not::not")]
     pub ended: bool,
+    #[serde(rename = "s", default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+pub fn preview_signed_bytes(key: &[u8; 32], preview: &Preview) -> Vec<u8> {
+    let mut out = PREVIEW_SIGNED_DOMAIN.to_vec();
+    out.extend_from_slice(key);
+    for field in [preview.author.as_str(), preview.channel.as_deref().unwrap_or(""), preview.text.as_str()] {
+        out.extend_from_slice(&(field.len() as u32).to_be_bytes());
+        out.extend_from_slice(field.as_bytes());
+    }
+    out.push(u8::from(preview.call) | u8::from(preview.ended) << 1);
+    out
+}
+
+pub fn preview_signed_by(key: &[u8; 32], preview: &Preview, author_key: &[u8; 32]) -> bool {
+    let Some(signature) = preview.signature.as_deref().and_then(|s| BASE64.decode(s.as_bytes()).ok()) else { return false };
+    let Ok(signature) = <[u8; SIGNATURE_BYTES]>::try_from(signature.as_slice()) else { return false };
+    let Ok(author_key) = VerifyingKey::from_bytes(author_key) else { return false };
+    author_key.verify_strict(&preview_signed_bytes(key, preview), &Signature::from_bytes(&signature)).is_ok()
 }
 
 pub fn preview_text(text: &str) -> String {
@@ -141,14 +164,14 @@ pub fn preview_text(text: &str) -> String {
     format!("{}...", short.trim_end())
 }
 
-pub fn seal_preview(key: &[u8; 32], preview: &Preview) -> Option<String> {
-    let mut shown = preview.clone();
-    let mut plain = serde_json::to_vec(&shown).ok()?;
-    while plain.len() > PREVIEW_PLAIN {
+pub fn seal_preview(key: &[u8; 32], preview: &Preview, sign: impl Fn(&[u8]) -> [u8; SIGNATURE_BYTES]) -> Option<String> {
+    let mut shown = Preview { signature: Some(BASE64.encode(&[0u8; SIGNATURE_BYTES])), ..preview.clone() };
+    while serde_json::to_vec(&shown).ok()?.len() > PREVIEW_PLAIN {
         let keep = shown.text.chars().count().checked_sub(8)?;
         shown.text = shown.text.chars().take(keep).collect();
-        plain = serde_json::to_vec(&shown).ok()?;
     }
+    shown.signature = Some(BASE64.encode(&sign(&preview_signed_bytes(key, &shown))));
+    let mut plain = serde_json::to_vec(&shown).ok()?;
     plain.resize(PREVIEW_PLAIN, b' ');
     let mut nonce = [0u8; NONCE_BYTES];
     rand::thread_rng().fill_bytes(&mut nonce);
@@ -159,8 +182,19 @@ pub fn seal_preview(key: &[u8; 32], preview: &Preview) -> Option<String> {
     Some(BASE64.encode(&out))
 }
 
-pub fn sealed_preview(keys: &StreamKeys, day: i64, author: &str, channel: Option<String>, text: &str, call: bool, ended: bool) -> Option<String> {
-    seal_preview(&keys.preview_key(day), &Preview { author: author.to_string(), channel, text: preview_text(text), call, ended })
+#[allow(clippy::too_many_arguments)]
+pub fn sealed_preview(
+    keys: &StreamKeys,
+    day: i64,
+    sign: impl Fn(&[u8]) -> [u8; SIGNATURE_BYTES],
+    author: &str,
+    channel: Option<String>,
+    text: &str,
+    call: bool,
+    ended: bool,
+) -> Option<String> {
+    let preview = Preview { author: author.to_string(), channel, text: preview_text(text), call, ended, signature: None };
+    seal_preview(&keys.preview_key(day), &preview, sign)
 }
 
 pub fn open_preview(key: &[u8; 32], encoded: &str) -> Option<Preview> {
@@ -222,6 +256,19 @@ pub fn register_until_ok(until: i64, today: i64) -> bool {
 mod tests {
     use super::*;
     use crate::StreamSecret;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn author(seed: u8) -> SigningKey {
+        SigningKey::from_bytes(&[seed; 32])
+    }
+
+    fn signer(key: &SigningKey) -> impl Fn(&[u8]) -> [u8; SIGNATURE_BYTES] + '_ {
+        |msg| key.sign(msg).to_bytes()
+    }
+
+    fn plain(author: &str, channel: Option<&str>, text: &str, call: bool, ended: bool) -> Preview {
+        Preview { author: author.into(), channel: channel.map(Into::into), text: text.into(), call, ended, signature: None }
+    }
 
     #[test]
     fn an_urgent_ring_names_one_person_at_most() {
@@ -347,29 +394,32 @@ mod tests {
     fn a_preview_opens_only_with_its_stream_and_day() {
         let keys = StreamSecret::from_bytes([7; 32]).keys();
         let other = StreamSecret::from_bytes([8; 32]).keys();
-        let preview = Preview { author: "alice".into(), channel: Some("general".into()), text: "hello there".into(), call: false, ended: false };
-        let sealed = seal_preview(&keys.preview_key(20_000), &preview).unwrap();
+        let alice = author(1);
+        let preview = plain("alice", Some("general"), "hello there", false, false);
+        let sealed = seal_preview(&keys.preview_key(20_000), &preview, signer(&alice)).unwrap();
         assert!(preview_ok(&sealed));
-        assert_eq!(open_preview(&keys.preview_key(20_000), &sealed), Some(preview.clone()));
+        let opened = open_preview(&keys.preview_key(20_000), &sealed).unwrap();
+        assert_eq!(Preview { signature: None, ..opened }, preview);
         assert_eq!(open_preview(&keys.preview_key(20_001), &sealed), None);
         assert_eq!(open_preview(&other.preview_key(20_000), &sealed), None);
         assert_ne!(keys.preview_key(20_000), keys.wake_tag("", 20_000), "the preview key is not a wake tag");
-        let again = seal_preview(&keys.preview_key(20_000), &preview).unwrap();
+        let again = seal_preview(&keys.preview_key(20_000), &preview, signer(&alice)).unwrap();
         assert_ne!(sealed, again, "every preview gets a fresh nonce");
     }
 
     #[test]
     fn every_preview_is_the_same_size_whatever_it_says() {
         let key = StreamSecret::from_bytes([7; 32]).keys().preview_key(1);
-        let short = seal_preview(&key, &Preview { author: "a".into(), channel: None, text: "hi".into(), call: true, ended: false }).unwrap();
-        let long = seal_preview(&key, &Preview { author: "a".into(), channel: None, text: "\"\u{1}".repeat(400), call: false, ended: false }).unwrap();
+        let alice = author(1);
+        let short = seal_preview(&key, &plain("a", None, "hi", true, false), signer(&alice)).unwrap();
+        let long = seal_preview(&key, &plain("a", None, &"\"\u{1}".repeat(400), false, false), signer(&alice)).unwrap();
         assert_eq!(short.len(), long.len());
         assert!(short.len() <= MAX_PREVIEW_ENCODED);
         assert!(!preview_ok(&"A".repeat(MAX_PREVIEW_ENCODED + 4)));
         assert!(!preview_ok("not base64!"));
         assert!(open_preview(&key, &long).is_some_and(|p| !p.call));
         assert!(open_preview(&key, &short).is_some_and(|p| p.call && !p.ended), "a call says so");
-        let missed = seal_preview(&key, &Preview { author: "a".into(), channel: None, text: "Missed call".into(), call: true, ended: true }).unwrap();
+        let missed = seal_preview(&key, &plain("a", None, "Missed call", true, true), signer(&alice)).unwrap();
         assert_eq!(missed.len(), short.len());
         assert!(open_preview(&key, &missed).is_some_and(|p| p.call && p.ended), "a call that stopped ringing says so");
     }
@@ -382,5 +432,67 @@ mod tests {
         assert!(long.ends_with("..."));
         let wide = preview_text(&"é".repeat(300));
         assert!(wide.len() <= MAX_PREVIEW_TEXT && wide.ends_with("..."));
+    }
+
+    fn opened(key: &[u8; 32], sealed: &str) -> Preview {
+        open_preview(key, sealed).expect("the preview opens")
+    }
+
+    #[test]
+    fn a_preview_carries_its_author_signature() {
+        let keys = StreamSecret::from_bytes([7; 32]).keys();
+        let key = keys.preview_key(20_000);
+        let (alice, mallory) = (author(1), author(2));
+        let alice_key = alice.verifying_key().to_bytes();
+        let sealed = sealed_preview(&keys, 20_000, signer(&alice), "alice", Some("general".into()), "hello", false, false).unwrap();
+        let preview = opened(&key, &sealed);
+        assert!(preview_signed_by(&key, &preview, &alice_key));
+        assert!(!preview_signed_by(&key, &preview, &mallory.verifying_key().to_bytes()), "only the named author's key checks out");
+        let forged = sealed_preview(&keys, 20_000, signer(&mallory), "alice", Some("general".into()), "hello", false, false).unwrap();
+        assert!(!preview_signed_by(&key, &opened(&key, &forged), &alice_key), "a member cannot speak as someone else");
+    }
+
+    #[test]
+    fn every_signed_field_is_bound_to_the_signature() {
+        let key = StreamSecret::from_bytes([7; 32]).keys().preview_key(20_000);
+        let alice = author(1);
+        let alice_key = alice.verifying_key().to_bytes();
+        let preview = opened(&key, &seal_preview(&key, &plain("alice", Some("general"), "hello", false, false), signer(&alice)).unwrap());
+        let changed = [
+            Preview { author: "bob".into(), ..preview.clone() },
+            Preview { channel: Some("other".into()), ..preview.clone() },
+            Preview { channel: None, ..preview.clone() },
+            Preview { text: "hello!".into(), ..preview.clone() },
+            Preview { call: true, ..preview.clone() },
+            Preview { ended: true, ..preview.clone() },
+        ];
+        for edit in changed {
+            assert!(!preview_signed_by(&key, &edit, &alice_key), "{edit:?}");
+        }
+        let elsewhere = StreamSecret::from_bytes([8; 32]).keys().preview_key(20_000);
+        assert!(!preview_signed_by(&elsewhere, &preview, &alice_key), "a signed preview cannot be moved to another conversation");
+        assert!(!preview_signed_by(&key, &Preview { signature: None, ..preview.clone() }, &alice_key), "an unsigned preview is never trusted");
+        assert!(!preview_signed_by(&key, &Preview { signature: Some("bad".into()), ..preview }, &alice_key));
+    }
+
+    #[test]
+    fn a_long_preview_is_shortened_before_it_is_signed() {
+        let key = StreamSecret::from_bytes([7; 32]).keys().preview_key(1);
+        let alice = author(1);
+        let (who, channel) = ("a".repeat(36), "c".repeat(36));
+        let preview = opened(&key, &seal_preview(&key, &plain(&who, Some(&channel), &"word ".repeat(40), false, false), signer(&alice)).unwrap());
+        assert!(preview.text.len() < MAX_PREVIEW_TEXT && !preview.text.is_empty(), "the text gives way to the signature");
+        assert!(preview_signed_by(&key, &preview, &alice.verifying_key().to_bytes()));
+    }
+
+    #[test]
+    fn signed_bytes_have_a_fixed_layout_that_phones_rebuild() {
+        let key = [9u8; 32];
+        let mut expected = b"commy-wake-preview-signed/v1".to_vec();
+        expected.extend_from_slice(&key);
+        expected.extend_from_slice(&[0, 0, 0, 2, b'a', b'b', 0, 0, 0, 1, b'c', 0, 0, 0, 3, b'h', 0xc3, 0xa9, 3]);
+        assert_eq!(preview_signed_bytes(&key, &plain("ab", Some("c"), "hé", true, true)), expected);
+        let dm = preview_signed_bytes(&key, &plain("ab", None, "", false, false));
+        assert!(dm.ends_with(&[0, 0, 0, 0, 0, 0, 0, 0, 0]), "a direct message signs an empty channel");
     }
 }
