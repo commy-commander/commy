@@ -146,6 +146,16 @@ test("every page renders", async () => {
   }
 });
 
+test("forms stay shut until the page script takes over", async () => {
+  for (const path of ["/account", "/signup", `/api/auth/commy/pages/render?path=${encodeURIComponent("/account")}`]) {
+    const res = await page(path);
+    const html = path.startsWith("/api/") ? JSON.parse(res.body).html : res.body;
+    const fieldset = html.match(/<fieldset[^>]*class="page-fields"[^>]*>/)?.[0] ?? "";
+    assert.match(fieldset, /\sdisabled[\s>]/, path);
+    assert.match(fieldset, /display:\s*contents/, path);
+  }
+});
+
 test("an unknown invite is a not found page", async () => {
   const res = await page("/i/no-such-invite");
   assert.equal(res.status, 404);

@@ -1404,3 +1404,7 @@ input[aria-invalid="true"]:not([type="checkbox"]) {
   color: var(--fg);
   font-weight: 700;
 }
+.page-fields:disabled :disabled {
+  opacity: 1;
+  cursor: progress;
+}
