@@ -7,7 +7,7 @@ runs all of them on one machine with Docker Compose:
 | Service    | Image                 | Role                                                  |
 |------------|-----------------------|-------------------------------------------------------|
 | `caddy`    | `caddy:2.11-alpine`   | Public entry on ports 80/443, automatic HTTPS         |
-| `web`      | `git.commy.chat/commy/commy-web` | Website and docs (Next.js, own repository) |
+| `web`      | `git.commy.chat/commy-private/commy-web` | Website and docs (Next.js, own repository) |
 | `auth`     | built from `auth/Dockerfile` | Better Auth server: accounts, desktop sign-in, devices, web app |
 | `postgres` | `postgres:16-alpine`  | Auth database, private network only                   |
 

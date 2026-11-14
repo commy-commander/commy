@@ -262,7 +262,7 @@ For a single server running only production with the stack's own Caddy, follow
 
 ```bash
 COMPOSE_FILE=docker-compose.yml:docker-compose.agent.yml
-WEB_IMAGE=git.commy.chat/commy/commy-web:prod
+WEB_IMAGE=git.commy.chat/commy-private/commy-web:prod
 AUTH_IMAGE=git.commy.chat/commy/commy-auth:prod
 ```
 
@@ -325,10 +325,13 @@ To pause automatic updates, `docker compose stop agent`.
 
 ## One-time forge setup
 
-- **Package visibility.** Images live in the forge registry under the `commy`
-  organisation, which is public, so servers pull without a login. For a private
-  registry, run `docker login git.commy.chat` on the server with a token that has
-  `read:package` and mount `/root/.docker/config.json` into the agent.
+- **Package visibility.** The auth and sync images live in the forge registry
+  under the `commy` organisation, which is public, so they pull without a login.
+  The website image lives under the private `commy-private` organisation. Run
+  `sudo docker login git.commy.chat` on the server once with a token that has
+  only `read:package`; the agent reads that login from `/root/.docker`
+  (`AGENT_DOCKER_CONFIG` points it elsewhere), and CI jobs that pull the website
+  log in with `PACKAGES_TOKEN`.
 - **Image pushes.** CI pushes with the `PACKAGES_TOKEN` secret, a token with
   `write:package`, falling back to the job token.
 - **Release hosting.** Releases publish to the Cloudflare R2 bucket `commy-releases`,

@@ -8,6 +8,7 @@ ENVS="${3:-prod staging dev}"
 REPO="${COMMY_REPO:-https://github.com/commy-commander/commy.git}"
 ROOT="${COMMY_ROOT:-/srv}"
 IMAGES="${COMMY_IMAGES:-git.commy.chat/commy}"
+WEB_IMAGES="${COMMY_WEB_IMAGES:-${COMMY_IMAGES:-git.commy.chat/commy-private}}"
 
 command -v docker >/dev/null || { echo "Docker is not installed"; exit 1; }
 docker compose version >/dev/null || { echo "Docker Compose v2 is not installed"; exit 1; }
@@ -45,7 +46,7 @@ DOMAIN=$(host_for "$env")
 ACME_EMAIL=$EMAIL
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
 BETTER_AUTH_SECRET=$(openssl rand -base64 32)
-WEB_IMAGE=$IMAGES/commy-web:$env
+WEB_IMAGE=$WEB_IMAGES/commy-web:$env
 AUTH_IMAGE=$IMAGES/commy-auth:$env
 SYNC_IMAGE=$IMAGES/commy-sync:$env
 EOF

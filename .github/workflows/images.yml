@@ -22,6 +22,7 @@ permissions:
 env:
   REGISTRY: git.commy.chat
   IMAGES: git.commy.chat/commy
+  WEB_IMAGE_REPO: git.commy.chat/commy-private/commy-web
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}
@@ -131,8 +132,8 @@ jobs:
       - name: Build the auth image and fetch the web image
         run: |
           docker build -q -f auth/Dockerfile -t localhost:5000/commy-auth:candidate .
-          docker pull -q "$IMAGES/commy-web:dev"
-          docker tag "$IMAGES/commy-web:dev" localhost:5000/commy-web:candidate
+          docker pull -q "$WEB_IMAGE_REPO:dev"
+          docker tag "$WEB_IMAGE_REPO:dev" localhost:5000/commy-web:candidate
 
       - name: Start a throwaway Docker host
         run: |
