@@ -63,6 +63,8 @@ pub enum StoreError {
     Limit,
     #[error("that member is timed out")]
     TimedOut,
+    #[error("that author is no longer a member")]
+    NotMember,
     #[error("that thread is locked")]
     ThreadLocked,
     #[error("that file is larger than this server allows")]
@@ -2339,7 +2341,14 @@ impl ServerState {
             return Err(StoreError::UnknownChannel);
         }
         let held = self.has_message(message.id);
-        if !held && self.server.timed_out_at(message.author, message.created_at) {
+        let written = message.edited_at.unwrap_or(message.created_at);
+        if self.wrote_after_leaving(message.author, written) {
+            return Err(StoreError::NotMember);
+        }
+        if !held && self.silenced(message.author, message.created_at, now) {
+            return Err(StoreError::TimedOut);
+        }
+        if held && message.edited_at.is_some_and(|at| self.silenced(message.author, at, now)) {
             return Err(StoreError::TimedOut);
         }
         if !held && !self.server.can_post_in(message.channel, message.author) {
@@ -2432,6 +2441,26 @@ impl ServerState {
         Ok(true)
     }
 
+    fn left_at(&self, user: UserId) -> Option<i64> {
+        if self.server.banned.contains(&user) {
+            return self.server.bans.get(&user).map(|b| b.at).filter(|at| *at > 0);
+        }
+        if let Some(kick) = self.server.kicked.iter().find(|k| k.user == user) {
+            return Some(kick.at);
+        }
+        let subject = format!("member:{user}");
+        let left = self.signed_actions.get(&subject).is_some_and(|s| matches!(s.event, ServerEvent::MemberLeave { .. }));
+        left.then(|| self.action_times.get(&subject).copied()).flatten()
+    }
+
+    fn wrote_after_leaving(&self, author: UserId, written: DateTime<Utc>) -> bool {
+        !self.server.is_member(author) && self.left_at(author).is_some_and(|left| written.timestamp_millis() >= left)
+    }
+
+    fn silenced(&self, author: UserId, written: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+        self.server.timed_out_at(author, written) || self.server.is_timed_out(author, now)
+    }
+
     fn may_delete(&self, proof: &TombstoneProof, author: UserId, written: DateTime<Utc>) -> bool {
         let by = proof.by;
         let at = proof.at.timestamp_millis();
@@ -2483,10 +2512,14 @@ impl ServerState {
         if !msg.verify_edit(server, &edited.content, edited_at, &sig, &key) {
             return Err(StoreError::BadSignature);
         }
-        if too_far_ahead(edited_at, Utc::now()) {
+        let now = Utc::now();
+        if too_far_ahead(edited_at, now) {
             return Err(StoreError::TooFarAhead);
         }
-        if self.server.timed_out_at(author, edited_at) {
+        if self.wrote_after_leaving(author, edited_at) {
+            return Err(StoreError::NotMember);
+        }
+        if self.silenced(author, edited_at, now) {
             return Err(StoreError::TimedOut);
         }
         let restricted = self.server.channel(channel).is_some_and(|c| c.is_restricted());
@@ -6878,12 +6911,51 @@ mod tests {
         let owners = post_at(&state, channel, owner, "fine", now + chrono::Duration::seconds(5));
         assert_eq!(state.apply(ServerEvent::MessageCreate { message: owners }), Ok(true));
         let after = post_at(&state, channel, user, "after", now + chrono::Duration::seconds(301));
-        assert_eq!(state.apply(ServerEvent::MessageCreate { message: after }), Ok(true), "the timeout ran out");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: after.clone() }), Err(StoreError::TimedOut), "dated past the end while the clock still runs the timeout");
+        let backdated = post_at(&state, channel, user, "backdated", now - chrono::Duration::seconds(1));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: backdated.clone() }), Err(StoreError::TimedOut), "dated before the timeout while it still runs");
         let late_copy = post_at(&state, channel, user, "late", now + chrono::Duration::seconds(10));
-        assert_eq!(state.apply(ServerEvent::MessageCreate { message: late_copy }), Err(StoreError::TimedOut), "sent during the timeout, delivered after");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: late_copy.clone() }), Err(StoreError::TimedOut), "sent during the timeout, delivered after");
         assert!(!crate::action::authorized(&state.server, user, &react), "still timed out by the clock");
         state.apply(timeout(&state, user, owner, now, 0)).unwrap();
         assert!(crate::action::authorized(&state.server, user, &react), "reacting works again once lifted");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: after }), Ok(true), "the timeout is over");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: backdated }), Ok(true), "written before the timeout, accepted once it is over");
+    }
+
+    fn removed_author_case(remove: impl Fn(&ServerState, ServerId, UserId, UserId, i64) -> SignedEvent) {
+        let (mut state, channel, owner) = fixture();
+        let sid = state.server.id;
+        let gone = join(&mut state, "gone");
+        let now = Utc::now();
+        let early = post_at(&state, channel, gone, "early", now - chrono::Duration::seconds(30));
+        let kept = post_at(&state, channel, gone, "kept", now - chrono::Duration::seconds(20));
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: kept.clone() }), Ok(true));
+        let removal = remove(&state, sid, owner, gone, (now - chrono::Duration::seconds(10)).timestamp_millis());
+        assert_eq!(state.apply_signed(&removal), Ok(true));
+        assert!(!state.server.is_member(gone));
+        let later = post_at(&state, channel, gone, "later", now);
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: later }), Err(StoreError::NotMember));
+        assert_eq!(state.apply(edit(&state, &kept, "rewritten", now)), Err(StoreError::NotMember));
+        assert_eq!(state.message(kept.id).unwrap().content, "kept");
+        assert_eq!(state.apply(ServerEvent::MessageCreate { message: early }), Ok(true), "written while still a member");
+    }
+
+    #[test]
+    fn a_banned_author_cannot_post_or_edit_after_the_ban() {
+        removed_author_case(|state, sid, owner, user, at| by_owner(state, owner, at, ServerEvent::MemberBan { server: sid, user }));
+    }
+
+    #[test]
+    fn a_kicked_author_cannot_post_or_edit_after_the_kick() {
+        removed_author_case(|state, sid, owner, user, at| by_owner(state, owner, at, ServerEvent::MemberLeave { server: sid, user }));
+    }
+
+    #[test]
+    fn an_author_who_left_cannot_post_or_edit_after_leaving() {
+        removed_author_case(|_, sid, _, user, at| {
+            SignedEvent::sign(sid, user, at, ServerEvent::MemberLeave { server: sid, user }, &identity_for(user))
+        });
     }
 
     #[test]
