@@ -8715,6 +8715,8 @@ pub fn run() {
             link_preview::prepare_link_preview,
             link_safety::check_link,
             server_guard::home_status,
+            server_guard::trust_sync_host,
+            server_guard::listed_servers,
             set_blocked_homes,
             account::account_status,
             account_log::sync_prefs_load,

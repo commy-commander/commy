@@ -173,6 +173,7 @@ export function createPages({ auth, config, discovery, env = process.env, dist =
       fetchAuth: (path) => fetchAuth(req, path, cookies),
       name: config.instanceName,
       providers,
+      listing: config.listing?.enabled ?? false,
       hasAccess: (cookie) => hasAccess(cookie, config.accessCode),
     });
     const loaded = await load(pathname, query, req.headers.cookie ?? "");

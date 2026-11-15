@@ -638,6 +638,8 @@ pub struct AccountView {
     needs_account_folder: bool,
     others: Vec<OtherAccount>,
     max_accounts: usize,
+    listed_homes: Vec<commy_view::listed::ListedView>,
+    server_listed: bool,
 }
 
 #[derive(Serialize)]
@@ -689,6 +691,8 @@ fn view(app: &App) -> AccountView {
             })
             .collect(),
         max_accounts: MAX_ACCOUNTS,
+        listed_homes: crate::server_guard::listed_homes(),
+        server_listed: crate::server_guard::is_listed_home(&effective_server()),
     }
 }
 

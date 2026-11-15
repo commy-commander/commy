@@ -17,6 +17,7 @@ export const SEALED_FIELDS = {
   passkey: { name: PRIVATE },
   deviceCode: { deviceCode: LOOKUP },
   linkedDevice: { nodeId: LOOKUP },
+  listedServer: { operatorEmail: PRIVATE, emergencyEmail: PRIVATE },
 };
 
 function deriveKey(secret, purpose) {

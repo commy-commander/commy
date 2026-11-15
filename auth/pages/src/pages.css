@@ -1408,3 +1408,15 @@ input[aria-invalid="true"]:not([type="checkbox"]) {
   opacity: 1;
   cursor: progress;
 }
+.listing-pledge,
+.listing-checks {
+  display: grid;
+  gap: 0.6rem;
+}
+.listing-pledge {
+  list-style: decimal;
+  padding-left: 1.4rem;
+}
+.listing-checks .check-fail strong {
+  color: var(--accent);
+}

@@ -319,6 +319,33 @@ docker compose exec sync commy-sync gateway tier https://good.example.org auto
 With `SYNC_ADMIN_PASSWORD` set, the admin page shows the same list with today's
 use per server and buttons for the same changes.
 
+## Turning on the server listing
+
+The list of community servers ([LISTING.md](LISTING.md)) runs on the official
+account servers only. Staging first; production only with the owner's go. Add
+to that environment's `deploy/.env` (staging shown):
+
+```bash
+LISTING=on
+LISTING_REVIEW_EMAIL=<the listing review inbox>
+COMMY_ABUSE_CONTACT=<the abuse contact>
+COMMY_TERMS_URL=https://staging.commy.chat/terms
+COMMY_PRIVACY_URL=https://staging.commy.chat/privacy
+```
+
+Then restart auth only:
+
+```bash
+cd /srv/commy-staging/deploy && docker compose up -d --no-deps auth
+```
+
+The discovery document then lists `serverList`, and
+`/api/auth/commy/server-list` answers a signed, empty list. The form lives at
+`/servers/apply` and the review page at `/servers/review`; on commy.chat the
+website forwards both paths to the auth server's render endpoint, like the
+account pages. `docker compose exec auth node src/listing-cli.js list` shows
+every application.
+
 ## Hardening the server
 
 After `setup-vps.sh`, run once:

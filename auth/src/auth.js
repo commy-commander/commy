@@ -20,6 +20,7 @@ import { commyDirectory } from "./directory.js";
 import { commyDoorbell } from "./doorbell.js";
 import { commyEmailPreferences } from "./email-preferences.js";
 import { commyInvites } from "./invites.js";
+import { commyListing } from "./listing.js";
 import { commyMedia } from "./media.js";
 import { commyPasswords, commySecurityNotices, commyStepUp, commyTwoFactorEverywhere, noticeWhenALoginIsLinked } from "./security.js";
 import { commyVault } from "./vault.js";
@@ -81,7 +82,7 @@ export function postgresDatabase(pool) {
   return kyselyAdapter(new Kysely({ dialect: new PostgresDialect({ pool }) }), { type: "postgres", transaction: true });
 }
 
-export function buildAuthOptions(config, { pool, send, fetch, redis = null, homeKeys = null }) {
+export function buildAuthOptions(config, { pool, send, fetch, redis = null, homeKeys = null, listing = null }) {
   const throwawayDomains = config.blockThrowawayEmails ? loadThrowawayDomains() : null;
   const plugins = [
     bearer(),
@@ -118,6 +119,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
+  if (config.listing.enabled && listing) plugins.push(commyListing({ config, send, checker: listing.checker, onChange: listing.onChange }));
   if (throwawayDomains) plugins.push(commyThrowawayEmails({ domains: throwawayDomains }));
 
   if (config.turnstile) {
@@ -300,9 +302,9 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
   };
 }
 
-export function createAuth(config, { redis = null } = {}) {
+export function createAuth(config, { redis = null, listing = null } = {}) {
   const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10 });
   const send = createMailer(config);
-  const options = buildAuthOptions(config, { pool, send, redis });
-  return { auth: betterAuth(options), options, pool };
+  const options = buildAuthOptions(config, { pool, send, redis, listing });
+  return { auth: betterAuth(options), options, pool, send };
 }

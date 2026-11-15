@@ -46,15 +46,16 @@ pub fn official_key(origin: &str) -> Option<IdentityKey> {
 
 impl Envelope {
     pub fn open(&self, origin: &str, key: &IdentityKey) -> Option<ServerBlocklist> {
+        let list: ServerBlocklist = serde_json::from_str(self.verified_text(LIST_PURPOSE, origin, key)?).ok()?;
+        (list.v == LIST_VERSION).then_some(list)
+    }
+
+    pub fn verified_text(&self, purpose: &str, origin: &str, key: &IdentityKey) -> Option<&str> {
         let published = PublishedKey::of(*key);
         if self.list.len() > MAX_LIST_BYTES || self.key != published.id {
             return None;
         }
-        if !published.verifies(LIST_PURPOSE, origin, self.list.as_bytes(), &self.sig) {
-            return None;
-        }
-        let list: ServerBlocklist = serde_json::from_str(&self.list).ok()?;
-        (list.v == LIST_VERSION).then_some(list)
+        published.verifies(purpose, origin, self.list.as_bytes(), &self.sig).then_some(self.list.as_str())
     }
 }
 

@@ -7,6 +7,7 @@ use commy_core::server_blocklist::Envelope;
 use commy_core::server_key::PublishedKey;
 use commy_core::{Identity, ServerId, UserId};
 use commy_view::homes::HomeGuard;
+use commy_view::listed::{JoinHost, ListedServers};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use wasm_bindgen_futures::spawn_local;
@@ -22,10 +23,13 @@ const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
 const CARD_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 const CARD_RETRY_AFTER: Duration = Duration::from_secs(30 * 60);
 const MAX_HOMES_PER_ASK: usize = 100;
+const TRUSTED_HOSTS_KEY: &str = "commy.trusted-sync-hosts";
+const MAX_TRUSTED_HOSTS: usize = 500;
 
 #[derive(Default)]
 pub(super) struct HomeWatch {
     guard: HomeGuard,
+    listed: ListedServers,
     next_refresh: Option<Instant>,
     refreshing: bool,
     next_card: Option<Instant>,
@@ -43,6 +47,13 @@ struct Discovery {
     issuer: String,
     #[serde(rename = "serverBlocklist")]
     server_blocklist: Option<ListPointer>,
+    #[serde(rename = "serverList")]
+    server_list: Option<ListPointer>,
+}
+
+struct OfficialLists {
+    blocklist: Option<(PublishedKey, Envelope)>,
+    listed: Option<(PublishedKey, Envelope)>,
 }
 
 #[derive(Deserialize)]
@@ -78,33 +89,77 @@ impl Session {
     }
 
     async fn refresh_server_list(self: Rc<Self>) {
-        let outcome = self.fetch_server_list().await;
-        let changed = {
+        let outcome = self.fetch_official_lists().await;
+        let (changed, listed_changed) = {
             let mut watch = self.homes.borrow_mut();
             watch.refreshing = false;
-            watch.next_refresh = Some(Instant::now() + if outcome.is_ok() { REFRESH_EVERY } else { RETRY_AFTER });
+            let fetched = outcome.as_ref().is_ok_and(|lists| lists.blocklist.is_some());
+            watch.next_refresh = Some(Instant::now() + if fetched { REFRESH_EVERY } else { RETRY_AFTER });
             match outcome {
-                Ok((key, envelope)) => watch.guard.take_list(&self.origin, &key, &envelope).unwrap_or(false),
-                Err(()) => false,
+                Ok(lists) => {
+                    let changed = lists.blocklist.is_some_and(|(key, envelope)| watch.guard.take_list(&self.origin, &key, &envelope).unwrap_or(false));
+                    let listed_changed = lists.listed.is_some_and(|(key, envelope)| watch.listed.take_list(&self.origin, &key, &envelope).unwrap_or(false));
+                    (changed, listed_changed)
+                }
+                Err(()) => (false, false),
             }
         };
         if changed {
             self.refresh_sync();
             self.emit("homes-changed", Value::Null);
         }
+        if listed_changed {
+            self.emit("listed-servers-changed", Value::Null);
+        }
     }
 
-    async fn fetch_server_list(&self) -> Result<(PublishedKey, Envelope), ()> {
+    async fn fetch_signed(&self, pointer: Option<ListPointer>) -> Option<(PublishedKey, Envelope)> {
+        let pointer = pointer?;
+        let path = pointer.url.strip_prefix(&self.origin).filter(|path| path.starts_with('/'))?;
+        let reply = self.request("GET", path, None).await.ok()?;
+        if !reply.ok() {
+            return None;
+        }
+        let envelope: Envelope = serde_json::from_str(&reply.body).ok()?;
+        Some((pointer.key, envelope))
+    }
+
+    async fn fetch_official_lists(&self) -> Result<OfficialLists, ()> {
         let reply = self.request("GET", account::DISCOVERY_PATH, None).await.map_err(|_| ())?;
         let doc: Discovery = serde_json::from_str(&reply.body).map_err(|_| ())?;
-        let pointer = doc.server_blocklist.filter(|_| doc.issuer == self.origin).ok_or(())?;
-        let path = pointer.url.strip_prefix(&self.origin).filter(|path| path.starts_with('/')).ok_or(())?;
-        let reply = self.request("GET", path, None).await.map_err(|_| ())?;
-        if !reply.ok() {
+        if doc.issuer != self.origin {
             return Err(());
         }
-        let envelope: Envelope = serde_json::from_str(&reply.body).map_err(|_| ())?;
-        Ok((pointer.key, envelope))
+        let blocklist = self.fetch_signed(doc.server_blocklist).await;
+        let listed = self.fetch_signed(doc.server_list).await;
+        Ok(OfficialLists { blocklist, listed })
+    }
+
+    fn trusted_hosts(&self) -> Vec<String> {
+        let saved = self.host.load(TRUSTED_HOSTS_KEY).and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok()).unwrap_or_default();
+        saved.into_iter().filter(|host| commy_core::sync_host::is_sync_host(host)).collect()
+    }
+
+    pub(super) fn join_host(&self, sync_host: Option<&str>) -> Option<JoinHost> {
+        let trusted = self.trusted_hosts();
+        self.homes.borrow().listed.join_host(sync_host, &self.origin, &trusted, Utc::now().timestamp_millis())
+    }
+
+    pub(super) fn trust_sync_host(&self, args: Args) -> Result<Value, String> {
+        let origin = args.host.as_deref().and_then(commy_core::sync_host::clean_sync_host).ok_or("That is not a server address")?;
+        let mut trusted = self.trusted_hosts();
+        if !trusted.contains(&origin) {
+            trusted.push(origin);
+            let excess = trusted.len().saturating_sub(MAX_TRUSTED_HOSTS);
+            trusted.drain(..excess);
+            self.host.save(TRUSTED_HOSTS_KEY, &serde_json::to_string(&trusted).map_err(|e| e.to_string())?);
+        }
+        Ok(Value::Null)
+    }
+
+    pub(super) fn listed_servers(&self) -> Result<Value, String> {
+        let watch = self.homes.borrow();
+        to_json(&watch.listed.homes(Utc::now().timestamp_millis(), |origin| watch.guard.blocks_origin(origin)))
     }
 
     pub(super) fn blocks_sync_origin(&self, origin: &str) -> bool {

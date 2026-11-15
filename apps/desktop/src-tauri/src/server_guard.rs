@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
 use commy_core::home::{fresh_card_fits, request_proof, wants_card, HomeCard};
 use commy_core::server_blocklist::Envelope;
 use commy_core::server_key::PublishedKey;
 use commy_view::homes::{HomeGuard, HomeStatus};
+use commy_view::listed::{JoinHost, ListedServers, ListedView};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -13,6 +14,9 @@ use crate::invite_link::DEFAULT_ACCOUNT_SERVER;
 use crate::state::App;
 
 pub const LIST_FILE: &str = "server-blocklist.json";
+pub const SERVER_LIST_FILE: &str = "server-list.json";
+pub const TRUSTED_HOSTS_FILE: &str = "trusted-sync-hosts.json";
+const MAX_TRUSTED_HOSTS: usize = 500;
 const FIRST_REFRESH_DELAY: Duration = Duration::from_secs(5);
 const REFRESH_EVERY: Duration = Duration::from_secs(15 * 60);
 const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
@@ -22,6 +26,69 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_HOMES_PER_ASK: usize = 100;
 
 static GUARD: RwLock<Option<HomeGuard>> = RwLock::new(None);
+static LISTED: RwLock<Option<ListedServers>> = RwLock::new(None);
+static TRUSTED: RwLock<Vec<String>> = RwLock::new(Vec::new());
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+fn listed<T>(look: impl FnOnce(&ListedServers) -> T) -> T {
+    let held = LISTED.read().unwrap();
+    match held.as_ref() {
+        Some(listed) => look(listed),
+        None => look(&ListedServers::default()),
+    }
+}
+
+fn change_listed<T>(change: impl FnOnce(&mut ListedServers) -> T) -> T {
+    let mut held = LISTED.write().unwrap();
+    change(held.get_or_insert_with(ListedServers::default))
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+pub fn listed_homes() -> Vec<ListedView> {
+    listed(|listed| listed.homes(now_ms(), blocks_origin))
+}
+
+pub fn is_listed_home(origin: &str) -> bool {
+    listed(|listed| listed.current(now_ms()).lists_home(origin))
+}
+
+pub fn join_host(sync_host: Option<&str>, account_server: &str) -> Option<JoinHost> {
+    let trusted = TRUSTED.read().unwrap().clone();
+    listed(|listed| listed.join_host(sync_host, account_server, &trusted, now_ms()))
+}
+
+fn load_trusted(dir: &Path) {
+    let Ok(text) = std::fs::read_to_string(dir.join(TRUSTED_HOSTS_FILE)) else { return };
+    let Ok(hosts) = serde_json::from_str::<Vec<String>>(&text) else { return };
+    *TRUSTED.write().unwrap() = hosts.into_iter().filter(|h| commy_core::sync_host::is_sync_host(h)).take(MAX_TRUSTED_HOSTS).collect();
+}
+
+#[tauri::command]
+pub fn trust_sync_host(host: String) -> Result<(), String> {
+    let origin = commy_core::sync_host::clean_sync_host(&host).ok_or("That is not a server address")?;
+    let saved = {
+        let mut trusted = TRUSTED.write().unwrap();
+        if trusted.contains(&origin) {
+            return Ok(());
+        }
+        trusted.push(origin);
+        let excess = trusted.len().saturating_sub(MAX_TRUSTED_HOSTS);
+        trusted.drain(..excess);
+        serde_json::to_string(&*trusted).map_err(|e| e.to_string())?
+    };
+    if let Some(dir) = DATA_DIR.get() {
+        std::fs::write(dir.join(TRUSTED_HOSTS_FILE), saved).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn listed_servers() -> Vec<ListedView> {
+    listed_homes()
+}
 
 fn read<T>(look: impl FnOnce(&HomeGuard) -> T) -> T {
     let guard = GUARD.read().unwrap();
@@ -52,16 +119,31 @@ fn list_file(dir: &Path) -> PathBuf {
     dir.join(LIST_FILE)
 }
 
+fn read_saved(path: &Path) -> Option<SavedList> {
+    let saved = serde_json::from_str::<SavedList>(&std::fs::read_to_string(path).ok()?).ok()?;
+    (saved.origin == DEFAULT_ACCOUNT_SERVER).then_some(saved)
+}
+
 fn load_saved(dir: &Path) {
-    let Ok(text) = std::fs::read_to_string(list_file(dir)) else { return };
-    let Ok(saved) = serde_json::from_str::<SavedList>(&text) else { return };
-    if saved.origin == DEFAULT_ACCOUNT_SERVER {
+    if let Some(saved) = read_saved(&list_file(dir)) {
         let _ = write(|guard| guard.take_list(&saved.origin, &saved.key, &saved.envelope));
+    }
+    if let Some(saved) = read_saved(&dir.join(SERVER_LIST_FILE)) {
+        let _ = change_listed(|listed| listed.take_list(&saved.origin, &saved.key, &saved.envelope));
+    }
+}
+
+fn save(path: &Path, origin: &str, key: PublishedKey, envelope: Envelope) {
+    let saved = SavedList { origin: origin.to_string(), key, envelope };
+    if let Ok(text) = serde_json::to_string(&saved) {
+        let _ = std::fs::write(path, text.as_bytes());
     }
 }
 
 pub fn start(handle: &AppHandle, dir: &Path) {
+    let _ = DATA_DIR.set(dir.to_path_buf());
     load_saved(dir);
+    load_trusted(dir);
     let handle = handle.clone();
     let dir = dir.to_path_buf();
     tauri::async_runtime::spawn(async move {
@@ -90,6 +172,29 @@ struct OfficialDiscovery {
     issuer: String,
     #[serde(rename = "serverBlocklist")]
     server_blocklist: Option<ListPointer>,
+    #[serde(rename = "serverList")]
+    server_list: Option<ListPointer>,
+}
+
+fn on_official_server(pointer: &ListPointer, origin: &str) -> bool {
+    pointer.url.starts_with(&format!("{origin}/"))
+}
+
+async fn fetch_envelope(app: &App, url: &str) -> Result<Envelope, String> {
+    app.http.get(url).timeout(REQUEST_TIMEOUT).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())
+}
+
+async fn refresh_listed(handle: &AppHandle, dir: &Path, pointer: Option<ListPointer>, origin: &str) -> Result<(), String> {
+    let Some(pointer) = pointer else { return Ok(()) };
+    if !on_official_server(&pointer, origin) {
+        return Err("the server list address is not on the official server".into());
+    }
+    let envelope = fetch_envelope(&handle.state::<App>(), &pointer.url).await?;
+    if change_listed(|listed| listed.take_list(origin, &pointer.key, &envelope))? {
+        save(&dir.join(SERVER_LIST_FILE), origin, pointer.key, envelope);
+        let _ = handle.emit("listed-servers-changed", ());
+    }
+    Ok(())
 }
 
 async fn refresh(handle: &AppHandle, dir: &Path) -> Result<(), String> {
@@ -105,21 +210,22 @@ async fn refresh(handle: &AppHandle, dir: &Path) -> Result<(), String> {
         .json()
         .await
         .map_err(|e| e.to_string())?;
+    if doc.issuer != origin {
+        return Err("the official discovery document names another server".into());
+    }
+    let listed = refresh_listed(handle, dir, doc.server_list, origin).await;
     let pointer = doc.server_blocklist.ok_or("the official server publishes no blocklist yet")?;
-    if doc.issuer != origin || !pointer.url.starts_with(&format!("{origin}/")) {
+    if !on_official_server(&pointer, origin) {
         return Err("the blocklist address is not on the official server".into());
     }
-    let envelope: Envelope = app.http.get(&pointer.url).timeout(REQUEST_TIMEOUT).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    let envelope = fetch_envelope(&app, &pointer.url).await?;
     let changed = write(|guard| guard.take_list(origin, &pointer.key, &envelope))?;
     if changed {
-        let saved = SavedList { origin: origin.to_string(), key: pointer.key, envelope };
-        if let Ok(text) = serde_json::to_string(&saved) {
-            let _ = std::fs::write(list_file(dir), text.as_bytes());
-        }
+        save(&list_file(dir), origin, pointer.key, envelope);
         crate::community_sync::refresh_soon(handle);
         let _ = handle.emit("homes-changed", ());
     }
-    Ok(())
+    listed
 }
 
 pub fn sign_in_refusal(server: &str, adults_only: bool) -> Option<String> {

@@ -2796,6 +2796,7 @@ function paintInviteKeys() {
   $("pt-invite-join").disabled = busy;
   $("pt-invite-later").disabled = busy;
   $("pt-invite-join").textContent = busy ? "Joining\u2026" : "Join";
+  if (!busy && inviteAsksTrust(pendingInvite)) $("pt-invite-join").textContent = "Trust and join";
 }
 
 function syncInvite() {
@@ -2816,6 +2817,7 @@ async function joinInviteHere() {
   $("pt-invite-error").classList.toggle("hidden", true);
   paintInviteKeys();
   try {
+    await trustInviteHost(invite);
     const summary = await invoke("join_server", { ticket: invite.ticket, link: invite.link });
     pendingInvite = null;
     hideModals();

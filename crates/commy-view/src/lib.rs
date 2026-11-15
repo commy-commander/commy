@@ -25,6 +25,7 @@ pub mod search;
 pub mod join_requests;
 pub mod server_tags;
 pub mod homes;
+pub mod listed;
 pub mod pet;
 pub mod removals;
 pub mod templates;

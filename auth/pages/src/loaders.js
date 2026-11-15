@@ -1,3 +1,4 @@
+import { APPLY_PAGE, cleanToken, REVIEW_PAGE } from "./lib/listing.js";
 import { safeNext } from "./lib/safe-next.js";
 import { cleanCode, cleanInviteCode } from "./lib/user-code.js";
 
@@ -67,7 +68,7 @@ function pick(list, keys) {
 }
 
 export function createLoaders(server) {
-  const { fetchAuth, name, providers, hasAccess } = server;
+  const { fetchAuth, name, providers, hasAccess, listing = false } = server;
 
   const sessionUser = async () => {
     const data = await fetchAuth("/get-session");
@@ -173,7 +174,27 @@ export function createLoaders(server) {
     };
   }
 
+  function listServer(query) {
+    if (!listing) return null;
+    return {
+      page: "list-server",
+      title: `List your server - ${name}`,
+      description: `How community servers get on ${name}'s list, the pledge their operators sign, and the checks they pass every month.`,
+      robots: query.get("confirm") ? "noindex" : null,
+      props: { confirm: cleanToken(query.get("confirm"), 200) || null },
+    };
+  }
+
+  async function listingReview(query) {
+    if (!listing) return null;
+    const token = cleanToken(query.get("token"));
+    const data = token ? await fetchAuth(`/commy/listing/review?token=${encodeURIComponent(token)}`) : null;
+    return { page: "listing-review", title: `Review a listing - ${name}`, robots: "noindex", props: { token, application: data?.application ?? null } };
+  }
+
   const routes = {
+    [APPLY_PAGE]: listServer,
+    [REVIEW_PAGE]: listingReview,
     "/account": account,
     "/signup": signUp,
     "/account/two-factor": twoFactor,
@@ -190,7 +211,7 @@ export function createLoaders(server) {
   };
 }
 
-export const PAGE_PATHS = ["/account", "/signup", "/account/two-factor", "/account/reset-password", "/account/verify-email", "/delete-account", "/device"];
+export const PAGE_PATHS = [APPLY_PAGE, REVIEW_PAGE, "/account", "/signup", "/account/two-factor", "/account/reset-password", "/account/verify-email", "/delete-account", "/device"];
 
 function inviteSegment(pathname) {
   if (!pathname.startsWith(INVITE_PREFIX)) return null;

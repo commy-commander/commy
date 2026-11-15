@@ -85,8 +85,10 @@ pub(crate) async fn account_call<T: serde::de::DeserializeOwned>(
 }
 
 #[tauri::command]
-pub async fn resolve_invite_link(app: tauri::State<'_, App>, link: String) -> Result<ResolvedInvite, String> {
-    resolve(&app, &link).await
+pub async fn resolve_invite_link(app: tauri::State<'_, App>, link: String) -> Result<commy_view::listed::InvitePreview<ResolvedInvite>, String> {
+    let invite = resolve(&app, &link).await?;
+    let community_host = crate::server_guard::join_host(invite.sync_host.as_deref(), &crate::account::effective_server());
+    Ok(commy_view::listed::InvitePreview { invite, community_host })
 }
 
 pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, String> {

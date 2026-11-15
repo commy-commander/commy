@@ -16,12 +16,10 @@ async function openInviteLink(link) {
     $("invite-link-host").textContent = `Invite from ${invite.host}` +
       (!expires ? ", never expires" : isNaN(expires) ? "" : `, expires ${expires.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`);
     const warning = $("invite-link-warning");
-    warning.classList.toggle("hidden", invite.trusted);
-    if (!invite.trusted) {
-      warning.textContent = `This invite comes from ${invite.host}, not your account server (${invite.account_server_host}). ` +
-        "Anyone can run a Commy server, so only join if you trust the person who sent this link. " +
-        "Your account stays on your own server either way.";
-    }
+    const warningText = inviteWarningText(invite);
+    warning.classList.toggle("hidden", !warningText);
+    if (warningText) warning.textContent = warningText;
+    $("invite-link-join").textContent = inviteAsksTrust(invite) ? TRUST_AND_JOIN : "Join Server";
     showModal("modal-invite-link");
   } catch (e) {
     toast(String(e));
@@ -30,12 +28,17 @@ async function openInviteLink(link) {
   }
 }
 
+async function trustInviteHost(invite) {
+  if (inviteAsksTrust(invite)) await invoke("trust_sync_host", { host: invite.community_host.origin });
+}
+
 async function joinPendingInvite() {
   const invite = pendingInvite;
   if (!invite) return;
   const button = $("invite-link-join");
   button.disabled = true;
   try {
+    await trustInviteHost(invite);
     const summary = await invoke("join_server", { ticket: invite.ticket, link: invite.link });
     pendingInvite = null;
     hideModals();

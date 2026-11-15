@@ -866,6 +866,10 @@ emails, links or tokens.
 
 ## Abuse controls
 
+To have your server shown in the apps' list of servers, sign the pledge and
+apply as [LISTING.md](LISTING.md) describes. Set `COMMY_ABUSE_CONTACT` either
+way: it is published in your discovery document.
+
 - Rate limits per IP: sign-up 5 per 10 minutes, sign-in 10 per minute, magic
   links and password resets 5 per 10 minutes, device codes 10 per minute,
   device code lookups 30 per 10 minutes, doorbell rings 300 and takes 600 per

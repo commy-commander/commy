@@ -50,7 +50,7 @@ export function isHomeOrigin(home) {
   return HOME_ORIGIN.test(text) && !PRIVATE_ENDINGS.some((ending) => text.endsWith(ending));
 }
 
-function publicOnlyLookup(hostname, options, callback) {
+export function publicOnlyLookup(hostname, options, callback) {
   dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
     if (err) return callback(err);
     const usable = addresses.filter((a) => isPublicAddress(a.address));

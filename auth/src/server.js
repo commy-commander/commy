@@ -8,7 +8,11 @@ import { discoveryDocument, featureSummary, loadConfig, wellKnownFiles } from ".
 import { dropDeviceNames } from "./devices.js";
 import { createRequestHandler } from "./http.js";
 import { createLinkBlocklist } from "./link-blocklist.js";
+import { createChecker, oldestFor } from "./listing-checks.js";
+import { createListingStore } from "./listing.js";
+import { startListingRechecks } from "./listing-rechecks.js";
 import { createServerBlocklist } from "./server-blocklist.js";
+import { createServerList } from "./server-list.js";
 import { createPages } from "./pages.js";
 import { createRelayAccess, linkedDeviceLookup, relayAccessToken } from "./relay-access.js";
 import { createWebClient } from "./web-client.js";
@@ -43,7 +47,19 @@ async function dropRetiredColumnsBeforeBetterAuthStarts(attempts = 30) {
 await dropRetiredColumnsBeforeBetterAuthStarts();
 const redis = config.redisUrl ? connectRedis(config.redisUrl) : null;
 redis?.ready.then(() => console.log("[auth] redis connected"));
-const { auth, options, pool } = createAuth(config, { redis });
+const serverBlocklist = createServerBlocklist({ listKey: config.listKey, origin: config.baseURL, serverKey: config.serverKey, file: config.serverBlocklistFile });
+const listingChecker = createChecker({ oldest: oldestFor(config), blocked: serverBlocklist.blocks });
+let serverList = null;
+const refreshServerList = () => serverList?.refresh();
+const { auth, options, pool, send } = createAuth(config, { redis, listing: { checker: listingChecker, onChange: refreshServerList } });
+if (config.listing.enabled) {
+  serverList = createServerList({
+    listKey: config.listKey,
+    origin: config.baseURL,
+    blocked: serverBlocklist.blocks,
+    loadRows: async () => createListingStore((await auth.$context).adapter).shown(),
+  });
+}
 
 function sealRowsFromOlderServers() {
   sealExistingRows(pool, config.secret)
@@ -62,7 +78,6 @@ async function migrate(attempts = 30) {
 }
 
 const linkBlocklist = createLinkBlocklist({ sources: config.linkBlocklistSources });
-const serverBlocklist = createServerBlocklist({ listKey: config.listKey, origin: config.baseURL, serverKey: config.serverKey, file: config.serverBlocklistFile });
 await serverBlocklist.start();
 const discovery = discoveryDocument(config);
 const pages = createPages({ auth, config, discovery, trustedProxies: config.trustedProxies });
@@ -81,6 +96,7 @@ const server = http.createServer(
     redis,
     linkBlocklist,
     serverBlocklist,
+    serverList,
     pages,
     webClient,
     relayAccess,
@@ -96,13 +112,19 @@ server.listen(config.port, "0.0.0.0", () => {
   for (const warning of config.warnings) console.warn(`[auth] ${warning}`);
   setTimeout(sealRowsFromOlderServers, SEAL_ONCE_OLDER_CONTAINERS_HAVE_STOPPED_MS).unref();
   linkBlocklist.start();
+  serverList?.start();
 });
+const stopListingRechecks = config.listing.enabled
+  ? startListingRechecks(auth.$context, { checker: listingChecker, send, instance: config.instanceName, onChange: refreshServerList })
+  : () => {};
 const stopUnverifiedSweeps = config.smtp ? startUnverifiedSweeps(auth.$context) : () => {};
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     server.close();
     linkBlocklist.stop();
+    serverList?.stop();
+    stopListingRechecks();
     stopUnverifiedSweeps();
     Promise.allSettled([pool.end(), redis?.close()]).then(() => process.exit(0));
   });

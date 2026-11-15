@@ -1,6 +1,7 @@
 import { nameTheClient, PRIVATE_NETWORKS, trustedProxyList } from "./client-ip.js";
 import { LINK_BLOCKLIST_PATH } from "./link-blocklist.js";
 import { SERVER_BLOCKLIST_PATH } from "./server-blocklist.js";
+import { SERVER_LIST_PATH } from "./server-list.js";
 
 function sendJson(res, status, body) {
   res.writeHead(status, {
@@ -17,7 +18,7 @@ function endOnlyThisRequest(req, res, err) {
   else sendJson(res, 500, '{"error":"internal_error"}');
 }
 
-export function createRequestHandler({ authHandler, basePath, discovery, pool, redis, linkBlocklist = null, serverBlocklist = null, pages = null, webClient = null, relayAccess = null, trustedProxies = trustedProxyList(PRIVATE_NETWORKS), wellKnown = {} }) {
+export function createRequestHandler({ authHandler, basePath, discovery, pool, redis, linkBlocklist = null, serverBlocklist = null, serverList = null, pages = null, webClient = null, relayAccess = null, trustedProxies = trustedProxyList(PRIVATE_NETWORKS), wellKnown = {} }) {
   async function route(req, res) {
     const path = (req.url ?? "/").split("?")[0];
 
@@ -41,6 +42,9 @@ export function createRequestHandler({ authHandler, basePath, discovery, pool, r
     }
     if (serverBlocklist && path === `${basePath}${SERVER_BLOCKLIST_PATH}` && (req.method === "GET" || req.method === "HEAD")) {
       return serverBlocklist.respond(req, res);
+    }
+    if (serverList && path === `${basePath}${SERVER_LIST_PATH}` && (req.method === "GET" || req.method === "HEAD")) {
+      return serverList.respond(req, res);
     }
     if (relayAccess?.enabled && relayAccess.handles(req)) {
       return relayAccess.respond(req, res);

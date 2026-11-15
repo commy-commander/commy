@@ -49,7 +49,11 @@ impl Session {
                 let name = invite::name_choice(args.name.as_deref())?;
                 to_json(&self.create_invite(server, expiry, name).await?)
             }
-            "resolve_invite_link" => to_json(&self.resolve_invite(args.link.as_deref().unwrap_or("")).await?),
+            "resolve_invite_link" => {
+                let invite = self.resolve_invite(args.link.as_deref().unwrap_or("")).await?;
+                let community_host = self.join_host(invite.sync_host.as_deref());
+                to_json(&commy_view::listed::InvitePreview { invite, community_host })
+            }
             "join_server" => self.join_invited(args.ticket.as_deref().unwrap_or(""), args.note.as_deref().unwrap_or("")).await,
             "list_invites" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;

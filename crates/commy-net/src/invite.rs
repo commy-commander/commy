@@ -217,6 +217,8 @@ pub struct ResolvedInvite {
     pub trusted: bool,
     pub account_server_host: String,
     pub background: Option<String>,
+    #[serde(skip)]
+    pub sync_host: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -508,6 +510,7 @@ pub fn resolved(link: &InviteLink, opened: &Opened, account_origin: &str, backgr
         trusted: link.origin == account_origin,
         account_server_host: host_of(account_origin),
         background,
+        sync_host: opened.sync_host.clone(),
     }
 }
 

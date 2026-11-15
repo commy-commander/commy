@@ -32,6 +32,8 @@ COPY auth/src ./src
 COPY auth/assets ./assets
 COPY --from=pages /app/pages/dist ./pages/dist
 COPY --from=web /out ./web
+ARG COMMY_VERSION=dev
+ENV COMMY_VERSION=${COMMY_VERSION}
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \

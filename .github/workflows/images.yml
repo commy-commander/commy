@@ -525,6 +525,7 @@ jobs:
           context: .
           file: ${{ matrix.service }}/Dockerfile
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: COMMY_VERSION=${{ steps.meta.outputs.version }}
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name={0}/commy-{1},push-by-digest=true,name-canonical=true,push=true', env.IMAGES, matrix.service) }}
           cache-from: |
             type=registry,ref=${{ env.IMAGES }}/commy-${{ matrix.service }}:buildcache

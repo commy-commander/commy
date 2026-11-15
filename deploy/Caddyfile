@@ -21,7 +21,7 @@
 		reverse_proxy auth:3001
 	}
 
-	@pages path /account /account/* /signup /delete-account /device /i/* /web /web/*
+	@pages path /account /account/* /signup /delete-account /device /i/* /web /web/* /servers/apply /servers/review
 	handle @pages {
 		reverse_proxy auth:3001
 	}

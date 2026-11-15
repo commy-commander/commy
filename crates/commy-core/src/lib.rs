@@ -28,6 +28,7 @@ pub mod server;
 pub mod server_tag;
 pub mod server_blocklist;
 pub mod server_key;
+pub mod server_list;
 pub mod store;
 pub mod pet;
 pub mod template;

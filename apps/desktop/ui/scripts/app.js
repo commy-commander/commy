@@ -917,8 +917,11 @@ async function mockInvoke(cmd, args = {}) {
       const background = Object.values(mock.servers).map(s => s.invite_background).find(Boolean);
       return { server_name: "Pixel Pioneers", host, trusted: host === "commy.chat", account_server_host: "commy.chat",
         expires_at: new Date(Date.now() + 6 * 86400e3).toISOString(), ticket: "mock",
-        background: background ? mock.serverImages?.[background] || null : null };
+        background: background ? mock.serverImages?.[background] || null : null,
+        community_host: /[?&]roomshost\b/.test(location.search) ? { origin: "https://rooms.example.org", host: "rooms.example.org", listed: null, ask: true } : null };
     }
+    case "trust_sync_host": return null;
+    case "listed_servers": return mock.account?.listed_homes || [];
     case "open_channel": (mock.channelOpens ||= {})[args.channelId] = Date.now(); return null;
     case "get_messages": {
       const kept = (mock.messages[args.channelId] || []).map(m => ({ ...m, pinned: (mock.pins || []).some(p => p.message === m.id) }));
@@ -1789,7 +1792,7 @@ async function mockInvoke(cmd, args = {}) {
         { user: "m1", name: "ferris", rtt_ms: 18 + Math.random() * 6, loss_pct: 0.1, lost_packets: Math.floor((mock.sent = (mock.sent || 0) + 400) / 1000), sent_packets: mock.sent, jitter_ms: 1.4, path: "direct", tx_bytes: (mock.tx = (mock.tx || 0) + 150000), rx_bytes: (mock.rx = (mock.rx || 0) + 140000) },
         { user: "m2", name: "nova", rtt_ms: 140, loss_pct: 2.3, jitter_ms: 6.8, path: "relay", tx_bytes: 0, rx_bytes: 0 },
       ] };
-    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false, unclaimed_profile: null, needs_account_folder: /[?&]claim\b/.test(location.search), others: [{ id: "u2", name: "Nova", email: "nova@example.test", server: "https://commy.chat", server_host: "commy.chat" }], max_accounts: 5 });
+    case "account_status": return mock.account || (mock.account = { signed_in: true, user: { id: "u1", name: "Commy Commander", email: "commy.cmd@commy.chat" }, server: "https://commy.chat", server_host: "commy.chat", is_default_server: true, default_server_host: "commy.chat", server_from_env: false, device_linked: true, pending_code: null, server_gifs: true, server_games: true, server_emojis: true, server_stickers: true, server_media: false, unclaimed_profile: null, needs_account_folder: /[?&]claim\b/.test(location.search), others: [{ id: "u2", name: "Nova", email: "nova@example.test", server: "https://commy.chat", server_host: "commy.chat" }], max_accounts: 5, listed_homes: [{ origin: "https://chat.example.org", host: "chat.example.org", name: "Example Chat", about: null, accounts: true, communities: true }], server_listed: false });
     case "account_open_folder": mock.account.unclaimed_profile = { username: "ferris", display_name: "Ferris", servers: 3 }; return mock.account;
     case "account_claim_profile": mock.account.unclaimed_profile = null; mock.account.needs_account_folder = false; return mock.account;
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
@@ -24726,6 +24729,13 @@ function wireEvents() {
       homeStatuses.clear();
       if (state.currentServer) askHomeStatus(state.currentServer.members);
     });
+    window.__TAURI__.event.listen("listed-servers-changed", async () => {
+      await loadAccount();
+      if (!$("modal-signin").classList.contains("hidden") && !account.signed_in) {
+        showListedHomes($("signin-server-select"));
+        syncServerNote();
+      }
+    });
     window.__TAURI__.event.listen("profile-changed", event => {
       state.user = event.payload;
       renderUserPanel();
@@ -26890,11 +26900,13 @@ async function loadAccount() {
 let signInUrl = null;
 
 function syncServerNote() {
-  const custom = $("signin-server-select").value !== "default";
+  const select = $("signin-server-select");
+  const editing = !$("signin-server-edit").classList.contains("hidden");
+  const key = signInServerNote(editing ? "custom" : select.value, account);
   const note = $("signin-server-note");
-  note.dataset.i18n = custom ? "signin.server.warning" : "signin.server.note";
-  note.textContent = t(note.dataset.i18n);
-  note.classList.toggle("warn", custom);
+  note.dataset.i18n = key;
+  note.textContent = t(key);
+  note.classList.toggle("warn", key === "signin.server.warning");
   note.classList.remove("error");
   $("signin-server-input").removeAttribute("aria-invalid");
 }
@@ -26940,6 +26952,16 @@ async function useAccountServer(server) {
   }
 }
 
+function showListedHomes(select) {
+  for (const old of [...select.querySelectorAll("option[data-listed]")]) old.remove();
+  const custom = select.querySelector('option[value="custom"]');
+  for (const home of listedHomeOptions(account.listed_homes, account.server)) {
+    const option = new Option(home.label, home.value);
+    option.dataset.listed = "1";
+    select.insertBefore(option, custom);
+  }
+}
+
 function showSignIn() {
   $("signin-start").classList.remove("hidden");
   $("signin-wait").classList.add("hidden");
@@ -26951,6 +26973,7 @@ function showSignIn() {
   if (defaultHost === "commy.chat") first.dataset.i18n = "signin.server.default";
   else delete first.dataset.i18n;
   first.text = defaultHost === "commy.chat" ? t("signin.server.default") : t("signin.server.test", { host: defaultHost });
+  showListedHomes(select);
   if (custom && ![...select.options].some(o => o.value === account.server)) {
     select.insertBefore(new Option(account.server_host, account.server), select.options[1]);
   }

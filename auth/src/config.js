@@ -4,7 +4,9 @@ import { LINK_BLOCKLIST_PATH, linkBlocklistSources } from "./link-blocklist.js";
 import { appleAppSiteAssociation, assetLinks } from "./app-sign-in.js";
 import { HOME_CARD_PATH } from "./home-card.js";
 import { HOME_KEY_PATH } from "./home-keys.js";
+import { contactKind } from "./listing-checks.js";
 import { SERVER_BLOCKLIST_PATH } from "./server-blocklist.js";
+import { SERVER_LIST_PATH } from "./server-list.js";
 import { loadListKey, loadServerKey } from "./server-key.js";
 
 export const APPLE_ORIGIN = "https://appleid.apple.com";
@@ -124,6 +126,37 @@ function trustedProxiesConfig(env, errors) {
   }
 }
 
+function absoluteLink(value, baseURL) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  try {
+    const url = new URL(text, baseURL);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function releaseVersion(env) {
+  const version = String(env.COMMY_VERSION ?? "").trim().replace(/^v/, "");
+  return /^\d+\.\d+\.\d+[0-9A-Za-z.+-]*$/.test(version) ? version : null;
+}
+
+function abuseContact(env, errors) {
+  const text = String(env.COMMY_ABUSE_CONTACT ?? "").trim();
+  if (!text) return null;
+  if (!contactKind(text)) errors.push("COMMY_ABUSE_CONTACT must be an email address or an https:// page");
+  return text;
+}
+
+function listingConfig(env, errors) {
+  const enabled = env.LISTING === "on";
+  const reviewEmail = String(env.LISTING_REVIEW_EMAIL ?? "").trim() || null;
+  if (enabled && reviewEmail && contactKind(reviewEmail)?.kind !== "email") errors.push("LISTING_REVIEW_EMAIL must be an email address");
+  const oldestVersion = String(env.LISTING_OLDEST_VERSION ?? "").trim() || null;
+  return { enabled, reviewEmail, oldestVersion };
+}
+
 function serverKeys(env, secret, errors) {
   try {
     return { serverKey: loadServerKey({ secret }, env), listKey: loadListKey({ secret }, env) };
@@ -165,6 +198,8 @@ export function loadConfig(env = process.env) {
   const trustedProxies = trustedProxiesConfig(env, errors);
 
   const keys = serverKeys(env, secret, errors);
+  const abuse = abuseContact(env, errors);
+  const listing = listingConfig(env, errors);
 
   if (errors.length > 0) {
     throw new Error(`Invalid auth server configuration:\n- ${errors.join("\n- ")}`);
@@ -192,6 +227,10 @@ export function loadConfig(env = process.env) {
     serverKey: keys.serverKey,
     listKey: keys.listKey,
     serverBlocklistFile: (env.SERVER_BLOCKLIST_FILE ?? "").trim() || null,
+    release: releaseVersion(env),
+    abuseContact: abuse,
+    legal: { terms: absoluteLink(env.COMMY_TERMS_URL, baseURL), privacy: absoluteLink(env.COMMY_PRIVACY_URL, baseURL) },
+    listing,
     databaseUrl,
     baseURL,
     basePath: "/api/auth",
@@ -251,6 +290,7 @@ export function featureSummary(config) {
     `adults_only=${on(config.adultsOnly)}`,
     `server_key=${config.serverKey.published.id}`,
     `server_blocklist=${config.serverBlocklistFile ? "file" : "empty"}`,
+    `listing=${on(config.listing.enabled)}`,
     `throwaway_emails=${config.blockThrowawayEmails ? "blocked" : "allowed"}`,
     `unverified_cleanup=${on(config.smtp)}`,
   ].join(" ");
@@ -265,6 +305,10 @@ export function discoveryDocument(config) {
     api,
     serverKey: config.serverKey.published,
     serverBlocklist: { url: `${api}${SERVER_BLOCKLIST_PATH}`, key: config.listKey.published },
+    ...(config.listing.enabled ? { serverList: { url: `${api}${SERVER_LIST_PATH}`, key: config.listKey.published } } : {}),
+    release: config.release,
+    abuseContact: config.abuseContact,
+    legal: config.legal,
     providers: {
       google: Boolean(config.google),
       twitch: Boolean(config.twitch),

@@ -585,6 +585,8 @@ impl Session {
             "set_server_public" => self.server_command(cmd, args).await,
             "set_blocked_homes" => self.server_command(cmd, args).await,
             "home_status" => self.home_status(args).await,
+            "trust_sync_host" => self.trust_sync_host(args),
+            "listed_servers" => self.listed_servers(),
             "set_channel_limit" => self.server_command(cmd, args).await,
             "set_channel_slow_mode" => self.server_command(cmd, args).await,
             "set_channel_color" => self.server_command(cmd, args).await,
