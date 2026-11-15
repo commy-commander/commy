@@ -206,6 +206,7 @@ impl Admin {
             database,
             relay,
             relay_url: service.greeting.relay.as_deref(),
+            public_relay_fallback: service.greeting.public_fallback,
             connections: service.stats.connections(),
             protocol: service.greeting.protocol,
             oldest_protocol: service.greeting.oldest_protocol,
@@ -491,6 +492,7 @@ struct Dashboard<'a> {
     database: bool,
     relay: bool,
     relay_url: Option<&'a str>,
+    public_relay_fallback: bool,
     connections: usize,
     protocol: u32,
     oldest_protocol: u32,
@@ -691,6 +693,8 @@ impl Dashboard<'_> {
         };
         rows += &row("Abuse contact", &contact, None);
         rows += &row("Relay", &esc(self.relay_url.unwrap_or("Not set")), None);
+        let fallback = if self.public_relay_fallback { "Voice uses the free public relays" } else { "Voice pauses" };
+        rows += &row("If the relay is down", fallback, None);
         let retention = if self.retention_days == 0 { "Forever".to_string() } else { format!("{} days", self.retention_days) };
         rows += &row("Keeps messages for", &retention, None);
         rows += "<p class=\"hint\">To change these, edit .env next to setup.sh and run setup.sh again.</p>";

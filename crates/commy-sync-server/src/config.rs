@@ -17,6 +17,7 @@ pub struct Config {
     pub apns: Option<ApnsSettings>,
     pub version: Option<String>,
     pub relay: Option<String>,
+    pub public_relay_fallback: bool,
     pub admin: Option<AdminSettings>,
     pub operator: Option<String>,
     pub abuse_contact: Option<Contact>,
@@ -240,6 +241,14 @@ fn relay_url(env: &impl Fn(&str) -> Option<String>) -> Result<Option<String>, St
     Ok(Some(url))
 }
 
+fn relay_fallback(env: &impl Fn(&str) -> Option<String>) -> Result<bool, String> {
+    match env("SYNC_RELAY_FALLBACK").map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("") | Some("pause") => Ok(false),
+        Some("public") => Ok(true),
+        Some(_) => Err("SYNC_RELAY_FALLBACK must be pause or public".into()),
+    }
+}
+
 fn release_version(env: &impl Fn(&str) -> Option<String>) -> Option<String> {
     env("COMMY_VERSION").map(|v| v.trim().trim_start_matches('v').to_string()).filter(|v| !v.is_empty() && v.len() <= 40)
 }
@@ -282,6 +291,7 @@ impl Config {
             apns: apns_settings(&env)?,
             version: release_version(&env),
             relay: relay_url(&env)?,
+            public_relay_fallback: relay_fallback(&env)?,
             admin: admin_settings(&env)?,
             operator: env("SYNC_OPERATOR_NAME").map(|v| v.trim().chars().take(100).collect::<String>()).filter(|v| !v.is_empty()),
             abuse_contact: env("SYNC_ABUSE_CONTACT").filter(|v| !v.trim().is_empty()).map(|v| Contact::parse(&v)).transpose()?,
@@ -430,6 +440,14 @@ mod tests {
         assert_eq!((plain.version, plain.relay), (None, None));
         assert!(config(&[("SYNC_RELAY_URL", "http://sync.example.org")]).is_err());
         assert!(config(&[("SYNC_RELAY_URL", "https://sync.example.org/relay")]).is_err());
+    }
+
+    #[test]
+    fn voice_pauses_unless_the_operator_allows_the_public_relays() {
+        assert!(!config(&[]).unwrap().public_relay_fallback);
+        assert!(!config(&[("SYNC_RELAY_FALLBACK", "pause")]).unwrap().public_relay_fallback);
+        assert!(config(&[("SYNC_RELAY_FALLBACK", "Public")]).unwrap().public_relay_fallback);
+        assert!(config(&[("SYNC_RELAY_FALLBACK", "commy")]).is_err());
     }
 
     #[test]

@@ -103,34 +103,43 @@ pub fn room_relay_config(url: RelayUrl) -> Arc<RelayConfig> {
     Arc::new(RelayConfig::new(url, Some(RelayQuicConfig::new(iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT))))
 }
 
+pub fn public_relays() -> Vec<Arc<RelayConfig>> {
+    iroh::defaults::prod::default_relay_map().relays::<Vec<Arc<RelayConfig>>>()
+}
+
 #[derive(Clone)]
 pub struct Relays {
     own: Arc<Vec<RelayUrl>>,
-    room: Arc<std::sync::RwLock<Option<RelayUrl>>>,
+    rooms: Arc<std::sync::RwLock<Vec<RelayUrl>>>,
     set_aside: Arc<tokio::sync::Mutex<Vec<Arc<RelayConfig>>>>,
     failed: Arc<std::sync::Mutex<Option<(RelayUrl, n0_future::time::Instant)>>>,
 }
 
 impl Relays {
     pub fn new(own: Vec<RelayUrl>) -> Self {
-        Self { own: Arc::new(own), room: Arc::default(), set_aside: Arc::default(), failed: Arc::default() }
+        Self { own: Arc::new(own), rooms: Arc::default(), set_aside: Arc::default(), failed: Arc::default() }
     }
 
     pub fn room(&self) -> Option<RelayUrl> {
-        self.room.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.rooms().into_iter().next()
     }
 
-    fn set_room(&self, room: Option<RelayUrl>) {
-        *self.room.write().unwrap_or_else(|e| e.into_inner()) = room;
+    fn rooms(&self) -> Vec<RelayUrl> {
+        self.rooms.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn set_rooms(&self, rooms: Vec<RelayUrl>) {
+        *self.rooms.write().unwrap_or_else(|e| e.into_inner()) = rooms;
     }
 
     pub fn hints(&self) -> Vec<RelayUrl> {
-        let room = self.room();
-        room.iter().chain(self.own.iter().filter(|url| Some(*url) != room.as_ref())).cloned().collect()
+        let rooms = self.rooms();
+        let own = self.own.iter().filter(|url| !rooms.contains(url)).cloned().collect::<Vec<_>>();
+        rooms.into_iter().chain(own).collect()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.own.is_empty() && self.room().is_none()
+        self.own.is_empty() && self.rooms().is_empty()
     }
 
     fn others(&self) -> Vec<RelayUrl> {
@@ -140,66 +149,88 @@ impl Relays {
     }
 
     pub async fn use_room(&self, endpoint: &iroh::Endpoint, room: Option<Arc<RelayConfig>>) -> Result<bool> {
+        self.use_rooms(endpoint, room.into_iter().collect()).await
+    }
+
+    pub async fn use_rooms(&self, endpoint: &iroh::Endpoint, rooms: Vec<Arc<RelayConfig>>) -> Result<bool> {
         let mut set_aside = self.set_aside.lock().await;
-        let current = self.room();
-        if current.as_ref() == room.as_ref().map(|config| &config.url) {
+        let current = self.rooms();
+        let wanted: Vec<RelayUrl> = rooms.iter().map(|config| config.url.clone()).collect();
+        if current == wanted {
             return Ok(false);
         }
-        let Some(room) = room else {
-            put_back(endpoint, &mut set_aside, current.as_ref()).await;
-            self.set_room(None);
+        let Some(first) = wanted.first().cloned() else {
+            put_back(endpoint, &mut set_aside, &current).await;
+            self.set_rooms(Vec::new());
             return Ok(true);
         };
-        let url = room.url.clone();
         if let Some((failed, at)) = self.failed.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-            if *failed == url && at.elapsed() < ROOM_RELAY_RETRY {
-                anyhow::bail!("the community's relay at {url} did not answer a moment ago");
+            if *failed == first && at.elapsed() < ROOM_RELAY_RETRY {
+                anyhow::bail!("the community's relay at {first} did not answer a moment ago");
             }
         }
-        endpoint.insert_relay(url.clone(), room).await;
-        match &current {
-            Some(old) => {
-                endpoint.remove_relay(old).await;
-            }
-            None => {
-                set_aside.clear();
-                for other in self.others().into_iter().filter(|other| *other != url) {
-                    if let Some(config) = endpoint.remove_relay(&other).await {
-                        set_aside.push(config);
-                    }
+        if current.is_empty() {
+            set_aside.clear();
+            for other in self.others().into_iter().filter(|other| !wanted.contains(other)) {
+                if let Some(config) = endpoint.remove_relay(&other).await {
+                    set_aside.push(config);
                 }
             }
         }
-        self.set_room(Some(url.clone()));
-        if home_becomes(endpoint, &url, ROOM_RELAY_WAIT).await {
+        for room in rooms {
+            let url = room.url.clone();
+            if let Some(before) = endpoint.insert_relay(url.clone(), room).await {
+                if current.is_empty() {
+                    set_aside.push(before);
+                }
+            }
+        }
+        let mut left = Vec::new();
+        for old in current.iter().filter(|old| !wanted.contains(old)) {
+            if let Some(config) = endpoint.remove_relay(old).await {
+                left.push(config);
+            }
+        }
+        self.set_rooms(wanted.clone());
+        if home_becomes(endpoint, &wanted, ROOM_RELAY_WAIT).await {
             return Ok(true);
         }
-        put_back(endpoint, &mut set_aside, Some(&url)).await;
-        self.set_room(None);
-        *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = Some((url.clone(), n0_future::time::Instant::now()));
-        anyhow::bail!("the community's relay at {url} did not answer")
+        *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = Some((first.clone(), n0_future::time::Instant::now()));
+        if current.is_empty() {
+            put_back(endpoint, &mut set_aside, &wanted).await;
+        } else {
+            for url in wanted.iter().filter(|url| !current.contains(url)) {
+                endpoint.remove_relay(url).await;
+            }
+            for config in left {
+                endpoint.insert_relay(config.url.clone(), config).await;
+            }
+        }
+        self.set_rooms(current);
+        anyhow::bail!("the community's relay at {first} did not answer")
     }
 }
 
-async fn put_back(endpoint: &iroh::Endpoint, set_aside: &mut Vec<Arc<RelayConfig>>, room: Option<&RelayUrl>) {
+async fn put_back(endpoint: &iroh::Endpoint, set_aside: &mut Vec<Arc<RelayConfig>>, rooms: &[RelayUrl]) {
+    for room in rooms {
+        endpoint.remove_relay(room).await;
+    }
     for config in set_aside.drain(..) {
         endpoint.insert_relay(config.url.clone(), config).await;
     }
-    if let Some(room) = room {
-        endpoint.remove_relay(room).await;
-    }
 }
 
-async fn home_becomes(endpoint: &iroh::Endpoint, url: &RelayUrl, wait: std::time::Duration) -> bool {
+async fn home_becomes(endpoint: &iroh::Endpoint, urls: &[RelayUrl], wait: std::time::Duration) -> bool {
     use iroh::Watcher;
     use n0_future::StreamExt;
     let mut addrs = endpoint.watch_addr().stream();
+    let home_is_one = |addr: &iroh::EndpointAddr| addr.relay_urls().next().is_some_and(|home| urls.contains(home));
     let reached = async {
-        if endpoint.addr().relay_urls().next() == Some(url) {
+        if home_is_one(&endpoint.addr()) {
             return true;
         }
         while let Some(addr) = addrs.next().await {
-            if addr.relay_urls().next() == Some(url) {
+            if home_is_one(&addr) {
                 return true;
             }
         }
@@ -270,9 +301,9 @@ mod tests {
         let relays = Relays::new(vec![own.clone()]);
         assert_eq!(relays.hints(), vec![own.clone()]);
         let room = room_relay_url("https://sync.example.org").unwrap();
-        relays.set_room(Some(room.clone()));
+        relays.set_rooms(vec![room.clone()]);
         assert_eq!(relays.hints(), vec![room.clone(), own.clone()]);
-        relays.set_room(Some(own.clone()));
+        relays.set_rooms(vec![own.clone()]);
         assert_eq!(relays.hints(), vec![own], "a relay is hinted once");
         assert!(Relays::new(Vec::new()).is_empty());
     }
@@ -298,7 +329,7 @@ mod tests {
         let (ours_map, ours, _ours) = iroh::test_utils::run_relay_server().await.unwrap();
         let (room_map, room, _room) = iroh::test_utils::run_relay_server().await.unwrap();
         let endpoint = endpoint_on(&only(&ours_map, &ours)).await;
-        assert!(home_becomes(&endpoint, &ours, ROOM_RELAY_WAIT).await);
+        assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await);
         let relays = Relays::new(vec![ours.clone()]);
 
         assert!(relays.use_room(&endpoint, Some(only(&room_map, &room))).await.unwrap());
@@ -307,19 +338,45 @@ mod tests {
         assert!(!relays.use_room(&endpoint, Some(only(&room_map, &room))).await.unwrap(), "already there");
 
         assert!(relays.use_room(&endpoint, None).await.unwrap());
-        assert!(home_becomes(&endpoint, &ours, ROOM_RELAY_WAIT).await);
+        assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await);
         assert_eq!(relays.hints(), vec![ours.clone()]);
 
         let unreachable = room_relay_config(room_relay_url("https://127.0.0.1:9").unwrap());
         let refused = relays.use_room(&endpoint, Some(unreachable)).await.unwrap_err();
         assert!(refused.to_string().contains("did not answer"));
         assert_eq!(relays.room(), None);
-        assert!(home_becomes(&endpoint, &ours, ROOM_RELAY_WAIT).await, "our relay comes back after a failed switch");
+        assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await, "our relay comes back after a failed switch");
         let unreachable = room_relay_config(room_relay_url("https://127.0.0.1:9").unwrap());
         let started = std::time::Instant::now();
         assert!(relays.use_room(&endpoint, Some(unreachable)).await.unwrap_err().to_string().contains("a moment ago"));
         assert!(started.elapsed() < std::time::Duration::from_secs(1), "a relay that just failed is not waited on again");
         assert_eq!(endpoint.addr().relay_urls().next(), Some(&ours));
+        endpoint.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_set_of_public_relays_stands_in_and_a_failed_room_keeps_it() {
+        let (ours_map, ours, _ours) = iroh::test_utils::run_relay_server().await.unwrap();
+        let (one_map, one, _one) = iroh::test_utils::run_relay_server().await.unwrap();
+        let (two_map, two, _two) = iroh::test_utils::run_relay_server().await.unwrap();
+        let endpoint = endpoint_on(&only(&ours_map, &ours)).await;
+        assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await);
+        let relays = Relays::new(vec![ours.clone()]);
+        let public = vec![only(&one_map, &one), only(&two_map, &two)];
+
+        assert!(relays.use_rooms(&endpoint, public.clone()).await.unwrap());
+        assert!(home_becomes(&endpoint, &[one.clone(), two.clone()], ROOM_RELAY_WAIT).await);
+        assert_eq!(relays.hints(), vec![one.clone(), two.clone(), ours.clone()]);
+        assert!(!relays.use_rooms(&endpoint, public.clone()).await.unwrap(), "already there");
+
+        let unreachable = room_relay_config(room_relay_url("https://127.0.0.1:9").unwrap());
+        assert!(relays.use_room(&endpoint, Some(unreachable)).await.is_err());
+        assert_eq!(relays.hints(), vec![one.clone(), two.clone(), ours.clone()], "a room that does not answer leaves the public relays in place");
+        assert!(home_becomes(&endpoint, &[one.clone(), two.clone()], ROOM_RELAY_WAIT).await);
+
+        assert!(relays.use_room(&endpoint, None).await.unwrap());
+        assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await);
+        assert_eq!(relays.hints(), vec![ours]);
         endpoint.close().await;
     }
 

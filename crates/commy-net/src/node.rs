@@ -751,6 +751,10 @@ impl RelaySwitch {
         let room = room.map(crate::relays::room_relay_url).transpose()?.map(crate::relays::room_relay_config);
         self.relays.use_room(&self.endpoint, room).await
     }
+
+    pub async fn use_public(&self) -> Result<bool> {
+        self.relays.use_rooms(&self.endpoint, crate::relays::public_relays()).await
+    }
 }
 
 pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);

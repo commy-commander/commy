@@ -20,7 +20,8 @@ pub const ROOM_RELAY_MISSING: &str = "This server's sync server runs no voice re
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoomRelay {
     Ours,
-    Theirs(String),
+    Theirs { url: String, public_fallback: bool },
+    Public,
     Unavailable(&'static str),
 }
 
@@ -63,7 +64,8 @@ pub fn room_relay(community_socket: &str, default_socket: &str, greeting: Option
     let relay = greeting.relay.as_deref().map(|r| r.trim().trim_end_matches('/'));
     let relay_host = relay.and_then(|r| r.strip_prefix("https://")).filter(|rest| !rest.contains(['/', '?', '#', '@']));
     match relay_host {
-        Some(relay_host) if relay_host.to_ascii_lowercase() == host => RoomRelay::Theirs(format!("https://{relay_host}")),
+        Some(relay_host) if relay_host.to_ascii_lowercase() == host => RoomRelay::Theirs { url: format!("https://{relay_host}"), public_fallback: greeting.public_fallback },
+        _ if greeting.public_fallback => RoomRelay::Public,
         _ => RoomRelay::Unavailable(ROOM_RELAY_MISSING),
     }
 }
@@ -99,7 +101,7 @@ mod tests {
         let with = |relay: &str| Greeting { relay: Some(relay.to_string()), ..Greeting::of(PROTOCOL) };
         let ours = "wss://commy.chat/sync";
         let theirs = "wss://Sync.Example.org/sync";
-        let own = |url: &str| RoomRelay::Theirs(url.to_string());
+        let own = |url: &str| RoomRelay::Theirs { url: url.to_string(), public_fallback: false };
         assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org"))), own("https://sync.example.org"));
         assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org/"))), own("https://sync.example.org"));
         assert_eq!(room_relay(ours, ours, Some(&with("https://commy.chat"))), RoomRelay::Ours, "communities on our host keep our relay");
@@ -117,6 +119,19 @@ mod tests {
         assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org/elsewhere"))), missing);
         assert_eq!(room_relay(theirs, ours, Some(&Greeting::of(PROTOCOL))), missing, "no relay announced");
         assert_eq!(room_relay(theirs, ours, None), RoomRelay::Unavailable(ROOM_RELAY_DOWN), "a host we cannot reach");
+    }
+
+    #[test]
+    fn an_operator_can_let_voice_fall_back_to_the_public_relays() {
+        let public = |relay: Option<&str>| Greeting { relay: relay.map(str::to_string), public_fallback: true, ..Greeting::of(PROTOCOL) };
+        let ours = "wss://commy.chat/sync";
+        let theirs = "wss://sync.example.org/sync";
+        assert_eq!(
+            room_relay(theirs, ours, Some(&public(Some("https://sync.example.org")))),
+            RoomRelay::Theirs { url: "https://sync.example.org".into(), public_fallback: true }
+        );
+        assert_eq!(room_relay(theirs, ours, Some(&public(None))), RoomRelay::Public, "no relay of its own, so the public ones");
+        assert_eq!(room_relay(ours, ours, Some(&public(None))), RoomRelay::Ours, "our own communities are unchanged");
     }
 
     use super::*;

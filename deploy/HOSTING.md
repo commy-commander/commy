@@ -33,6 +33,8 @@ While someone is in a voice channel of a community on your server, their app
 uses your relay instead of Commy's, so that community's calls and streams
 never pass through Commy. If your relay does not answer, voice in your communities
 pauses (the app says so) instead of moving to Commy's relay, so keep it running.
+With `SYNC_RELAY_FALLBACK=public`, voice moves to the free public relays instead
+until yours answers again. Commy's relay is never used for your communities.
 
 ### What you need
 
@@ -167,6 +169,7 @@ again:
 | `SYNC_ABUSE_CONTACT`   | asked                | Email or `https://` page shown to people who report |
 | `SYNC_OPERATOR_NAME`   | your domain          | The name apps show for whoever runs the server    |
 | `SYNC_RETENTION_DAYS`  | `90`                 | How long entries are kept, `0` keeps everything   |
+| `SYNC_RELAY_FALLBACK`  | `pause`              | `public` moves voice to the free public relays while yours is down |
 | `SYNC_ADMIN_PASSWORD`  | generated            | The admin page password; empty turns the page off |
 | `ADMIN_PORT`           | `8790`               | The admin page's port on `127.0.0.1`              |
 | `SMTP_*`, `EMAIL_FROM` | unset                | Email reports to your abuse contact               |

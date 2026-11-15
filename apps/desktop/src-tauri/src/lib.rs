@@ -2001,8 +2001,22 @@ fn follow_room_relay(handle: &tauri::AppHandle) {
                 }
                 None
             }
-            RoomRelay::Theirs(url) => switch.use_room(Some(&url)).await.err().map(|e| {
-                tracing::warn!("leaving voice, the server's relay is out of reach: {e:#}");
+            RoomRelay::Theirs { url, public_fallback } => match switch.use_room(Some(&url)).await {
+                Ok(_) => None,
+                Err(e) if public_fallback => {
+                    tracing::warn!("the server's relay is out of reach, using the public relays it allows: {e:#}");
+                    switch.use_public().await.err().map(|e| {
+                        tracing::warn!("leaving voice, the public relays are out of reach too: {e:#}");
+                        view::sync_host::ROOM_RELAY_DOWN
+                    })
+                }
+                Err(e) => {
+                    tracing::warn!("leaving voice, the server's relay is out of reach: {e:#}");
+                    Some(view::sync_host::ROOM_RELAY_DOWN)
+                }
+            },
+            RoomRelay::Public => switch.use_public().await.err().map(|e| {
+                tracing::warn!("leaving voice, the public relays are out of reach: {e:#}");
                 view::sync_host::ROOM_RELAY_DOWN
             }),
             RoomRelay::Unavailable(text) => Some(text),

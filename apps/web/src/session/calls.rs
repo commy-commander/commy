@@ -435,7 +435,12 @@ impl Session {
                     let _ = switch.use_room(None).await;
                     None
                 }
-                RoomRelay::Theirs(url) => switch.use_room(Some(&url)).await.err().map(|_| ROOM_RELAY_DOWN),
+                RoomRelay::Theirs { url, public_fallback } => match switch.use_room(Some(&url)).await {
+                    Ok(_) => None,
+                    Err(_) if public_fallback => switch.use_public().await.err().map(|_| ROOM_RELAY_DOWN),
+                    Err(_) => Some(ROOM_RELAY_DOWN),
+                },
+                RoomRelay::Public => switch.use_public().await.err().map(|_| ROOM_RELAY_DOWN),
                 RoomRelay::Unavailable(text) => Some(text),
             };
             if let (Some(server), Some(text)) = (server, refusal) {

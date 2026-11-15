@@ -137,7 +137,7 @@ impl Service {
             gateway: gateway::Gateway::new(config, keys),
             trust_proxy: config.trust_proxy,
             retention_days: config.retention_days,
-            greeting: Greeting { version: config.version.clone(), relay: config.relay.clone(), ..Greeting::of(PROTOCOL) },
+            greeting: Greeting { version: config.version.clone(), relay: config.relay.clone(), public_fallback: config.public_relay_fallback, ..Greeting::of(PROTOCOL) },
             server_key: config.server_key.as_ref().map_or_else(commy_core::Identity::generate, |seed| commy_core::Identity::from_bytes(&seed.0)),
         })
     }
@@ -203,6 +203,7 @@ async fn about(State(service): State<Arc<Service>>) -> Response {
     body["oldest_protocol"] = service.greeting.oldest_protocol.into();
     body["version"] = service.greeting.version.clone().into();
     body["relay"] = service.greeting.relay.clone().into();
+    body["relay_fallback"] = if service.greeting.public_fallback { "public" } else { "pause" }.into();
     body["serverKey"] = serde_json::json!(server_key::published(&service.server_key));
     Json(body).into_response()
 }
