@@ -8,7 +8,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 
-use super::protocol::{Control, DeckStatus, DenyReason, Directory, Reply, Request, SoundChoice, SoundboardList, PROTOCOL_VERSION};
+use super::protocol::{Control, DeckStatus, DenyReason, Directory, Reply, Request, SoundChoice, SoundboardList, PROTOCOL_VERSION, TOKEN_IN_HELLO_VERSION};
 
 pub const MAX_LINE_BYTES: u64 = 4096;
 pub const MAX_UPLOAD_LINE_BYTES: u64 = (commy_view::pictures::MAX_SOUND_BYTES as u64).div_ceil(3) * 4 + MAX_LINE_BYTES;
@@ -29,6 +29,7 @@ pub struct PairingAsk {
 
 pub trait Backend: Send + Sync + 'static {
     fn is_paired(&self, token: &str) -> bool;
+    fn token_for_key(&self, key: &str) -> Option<String>;
     fn ask_to_pair(&self, name: &str) -> Option<PairingAsk>;
     fn withdraw_pairing(&self, request: u64);
     fn finish_pairing(&self, name: &str) -> String;
@@ -97,21 +98,33 @@ pub async fn listen<B: Backend>(listener: TcpListener, backend: Arc<B>) {
 async fn serve<B: Backend>(stream: TcpStream, backend: Arc<B>) {
     let (read, mut write) = stream.into_split();
     let mut reader = BufReader::new(read);
-    let Ok(Some(Request::Hello { version, name, token })) =
+    let Ok(Some(Request::Hello { version, name, token, key, challenge })) =
         tokio::time::timeout(HELLO_WAIT, read_request(&mut reader, MAX_LINE_BYTES)).await
     else {
         return;
     };
-    if version != PROTOCOL_VERSION {
-        let _ = send(&mut write, &Reply::Denied { reason: DenyReason::Unsupported }).await;
-        return;
-    }
-    let token = match token.filter(|t| backend.is_paired(t)) {
-        Some(token) => token,
-        None => match pair(&*backend, name.as_deref().unwrap_or_default(), &mut reader, &mut write).await {
-            Some(token) => token,
-            None => return,
+    let token = match version {
+        PROTOCOL_VERSION => match (key, challenge) {
+            (Some(key), Some(challenge)) => match proven_deck(&*backend, &key, &challenge, &mut reader, &mut write).await {
+                Some(token) => token,
+                None => return,
+            },
+            _ => match pair(&*backend, name.as_deref().unwrap_or_default(), &mut reader, &mut write).await {
+                Some(token) => token,
+                None => return,
+            },
         },
+        TOKEN_IN_HELLO_VERSION => match token.filter(|t| backend.is_paired(t)) {
+            Some(token) => token,
+            None => match pair(&*backend, name.as_deref().unwrap_or_default(), &mut reader, &mut write).await {
+                Some(token) => token,
+                None => return,
+            },
+        },
+        _ => {
+            let _ = send(&mut write, &Reply::Denied { reason: DenyReason::Unsupported }).await;
+            return;
+        }
     };
     if send(&mut write, &Reply::Ready { version: PROTOCOL_VERSION }).await.is_err() {
         return;
@@ -135,7 +148,7 @@ where
             return;
         }
         let reply = match request {
-            Request::Hello { .. } => return,
+            Request::Hello { .. } | Request::Unlock { .. } => return,
             Request::List => Reply::Soundboards(backend.soundboards()),
             Request::Play { id, server, sound } => {
                 if last_play.is_some_and(|at| at.elapsed() < PLAY_COOLDOWN) {
@@ -168,6 +181,27 @@ where
             return;
         }
     }
+}
+
+async fn proven_deck<B: Backend, R, W>(backend: &B, key: &str, challenge: &str, reader: &mut R, write: &mut W) -> Option<String>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    if !super::protocol::valid_challenge(challenge) {
+        return None;
+    }
+    let Some(token) = backend.token_for_key(key) else {
+        let _ = send(write, &Reply::Denied { reason: DenyReason::Removed }).await;
+        return None;
+    };
+    let ours = super::protocol::new_challenge();
+    let proof = super::protocol::app_proof(&token, challenge);
+    send(write, &Reply::Prove { proof, challenge: ours.clone() }).await.ok()?;
+    let Ok(Some(Request::Unlock { proof })) = tokio::time::timeout(HELLO_WAIT, read_request(reader, MAX_LINE_BYTES)).await else {
+        return None;
+    };
+    super::protocol::same_secret(&proof, &super::protocol::plugin_proof(&token, &ours)).then_some(token)
 }
 
 async fn pair<B: Backend, R, W>(backend: &B, name: &str, reader: &mut R, write: &mut W) -> Option<String>
@@ -233,6 +267,10 @@ mod tests {
     impl Backend for FakeApp {
         fn is_paired(&self, token: &str) -> bool {
             self.tokens.lock().unwrap().iter().any(|t| t == token)
+        }
+
+        fn token_for_key(&self, key: &str) -> Option<String> {
+            self.tokens.lock().unwrap().iter().find(|t| super::super::protocol::deck_key(t) == key).cloned()
         }
 
         fn ask_to_pair(&self, name: &str) -> Option<PairingAsk> {
@@ -435,6 +473,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_paired_deck_proves_itself_without_sending_its_token() {
+        use super::super::protocol::{app_proof, deck_key, plugin_proof};
+        let (port, app) = start().await;
+        app.tokens.lock().unwrap().push("known".into());
+        let challenge = "ab".repeat(32);
+        let mut client = Client::connect(port).await;
+        client.send(&format!(r#"{{"type":"hello","version":2,"key":"{}","challenge":"{challenge}"}}"#, deck_key("known"))).await;
+        let prove = client.recv().await.unwrap();
+        assert_eq!(prove["type"], "prove");
+        assert_eq!(prove["proof"], app_proof("known", &challenge), "the app shows it knows the token first");
+        let theirs = prove["challenge"].as_str().unwrap().to_string();
+        client.send(&format!(r#"{{"type":"unlock","proof":"{}"}}"#, plugin_proof("known", &theirs))).await;
+        assert_eq!(client.recv().await.unwrap()["type"], "ready");
+        assert!(app.asked.lock().unwrap().is_empty());
+
+        let mut liar = Client::connect(port).await;
+        liar.send(&format!(r#"{{"type":"hello","version":2,"key":"{}","challenge":"{challenge}"}}"#, deck_key("known"))).await;
+        assert_eq!(liar.recv().await.unwrap()["type"], "prove");
+        liar.send(r#"{"type":"unlock","proof":"00"}"#).await;
+        assert!(liar.recv().await.is_none(), "a wrong proof closes the connection");
+
+        let mut unknown = Client::connect(port).await;
+        unknown.send(&format!(r#"{{"type":"hello","version":2,"key":"{}","challenge":"{challenge}"}}"#, deck_key("gone"))).await;
+        assert_eq!(unknown.recv().await.unwrap(), serde_json::json!({ "type": "denied", "reason": "removed" }));
+    }
+
+    #[tokio::test]
     async fn a_removed_deck_is_cut_off_at_its_next_request() {
         let (port, app) = start().await;
         app.tokens.lock().unwrap().push("known".into());
@@ -565,7 +630,7 @@ mod tests {
     async fn a_newer_protocol_is_refused() {
         let (port, app) = start().await;
         let mut client = Client::connect(port).await;
-        client.send(r#"{"type":"hello","version":2}"#).await;
+        client.send(r#"{"type":"hello","version":99}"#).await;
         assert_eq!(client.recv().await.unwrap(), serde_json::json!({ "type": "denied", "reason": "unsupported" }));
         assert!(app.asked.lock().unwrap().is_empty());
     }

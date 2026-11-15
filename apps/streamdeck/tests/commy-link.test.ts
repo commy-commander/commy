@@ -4,8 +4,24 @@ import test from "node:test";
 
 import { CommyLink, type TokenStore } from "../src/commy-link.ts";
 import { LineBuffer } from "../src/lines.ts";
+import { appProof, deckKey, pluginProof } from "../src/protocol.ts";
+
+const APP_CHALLENGE = "cd".repeat(32);
 
 type Handler = (request: Record<string, unknown>, reply: (value: object) => void, socket: net.Socket) => void;
+
+function provingAs(token: string, handler: Handler): Handler {
+  return (request, reply, socket) => {
+    if (request.type === "hello" && request.key === deckKey(token)) {
+      reply({ type: "prove", proof: appProof(token, String(request.challenge)), challenge: APP_CHALLENGE });
+    } else if (request.type === "unlock") {
+      if (request.proof === pluginProof(token, APP_CHALLENGE)) reply({ type: "ready", version: 2 });
+      else socket.destroy();
+    } else {
+      handler(request, reply, socket);
+    }
+  };
+}
 
 async function fakeCommy(handler: Handler): Promise<{ port: number; seen: Record<string, unknown>[]; close: () => void }> {
   const seen: Record<string, unknown>[] = [];
@@ -72,7 +88,7 @@ test("pairing waits for approval, then stores the token and becomes ready", asyn
       reply({ type: "waiting" });
       setTimeout(() => {
         reply({ type: "paired", token: "fresh" });
-        reply({ type: "ready", version: 1 });
+        reply({ type: "ready", version: 2 });
       }, 20);
     }
   });
@@ -82,25 +98,26 @@ test("pairing waits for approval, then stores the token and becomes ready", asyn
   assert.equal(await link.connect(), "waiting");
   await ready;
   assert.equal(tokens.values[commy.port], "fresh");
-  assert.deepEqual(commy.seen[0], { type: "hello", version: 1, name: "Desk" });
+  assert.deepEqual(commy.seen[0], { type: "hello", version: 2, name: "Desk" });
   link.close();
   commy.close();
 });
 
-test("a stored token is sent and plays resolve or fail with Commy's reason", async () => {
-  const commy = await fakeCommy((request, reply) => {
-    if (request.type === "hello") reply({ type: "ready", version: 1 });
+test("a stored token is proven without being sent and plays resolve or fail with Commy's reason", async () => {
+  const commy = await fakeCommy(provingAs("known", (request, reply) => {
     if (request.type === "play" && request.sound === "boom") reply({ type: "played", id: request.id });
     if (request.type === "play" && request.sound === "gone") reply({ type: "failed", id: request.id, message: "that sound no longer exists" });
     if (request.type === "list") reply({ type: "soundboards", voice_server: null, defaults: [], servers: [] });
-  });
+  }));
   const tokens = memoryTokens({ [commy.port]: "known" });
   const known = new CommyLink({ tokens, ports: [commy.port] });
   assert.equal(await known.connect(), "ready");
-  assert.equal(commy.seen[0].token, "known");
+  assert.equal(commy.seen[0].token, undefined);
+  assert.equal(commy.seen[0].key, deckKey("known"));
+  assert.ok(!JSON.stringify(commy.seen).includes("known"), "the token never leaves the plugin");
   await known.play("boom", "s1");
   await assert.rejects(known.play("gone"), /no longer exists/);
-  assert.deepEqual(commy.seen.slice(1, 3), [
+  assert.deepEqual(commy.seen.slice(2, 4), [
     { type: "play", id: 1, server: "s1", sound: "boom" },
     { type: "play", id: 2, sound: "gone" },
   ]);
@@ -110,21 +127,20 @@ test("a stored token is sent and plays resolve or fail with Commy's reason", asy
 });
 
 test("adding a sound sends it with its server and returns what Commy stored", async () => {
-  const commy = await fakeCommy((request, reply) => {
-    if (request.type === "hello") reply({ type: "ready", version: 1 });
+  const commy = await fakeCommy(provingAs("known", (request, reply) => {
     if (request.type === "add_sound" && request.server === "s1") {
       reply({ type: "added", id: request.id, server: "s1", sound: { name: "boom", label: "boom", emoji: "💥" } });
     }
     if (request.type === "add_sound" && request.server === "s2") {
       reply({ type: "failed", id: request.id, message: "you do not have permission to add sounds" });
     }
-  });
+  }));
   const link = new CommyLink({ tokens: memoryTokens({ [commy.port]: "known" }), ports: [commy.port] });
   assert.equal(await link.connect(), "ready");
   const sound = await link.addSound({ server: "s1", name: "Boom", emoji: "💥", data: "AA==" });
   assert.deepEqual(sound, { name: "boom", label: "boom", emoji: "💥" });
   await assert.rejects(link.addSound({ server: "s2", name: "boom", emoji: null, data: "AA==" }), /permission/);
-  assert.deepEqual(commy.seen.slice(1), [
+  assert.deepEqual(commy.seen.slice(2), [
     { type: "add_sound", id: 1, server: "s1", name: "Boom", data: "AA==", emoji: "💥" },
     { type: "add_sound", id: 2, server: "s2", name: "boom", data: "AA==" },
   ]);
@@ -134,8 +150,7 @@ test("adding a sound sends it with its server and returns what Commy stored", as
 
 test("status, directory and controls come back from Commy", async () => {
   const status = { muted: true, unread: 2 };
-  const commy = await fakeCommy((request, reply) => {
-    if (request.type === "hello") reply({ type: "ready", version: 1 });
+  const commy = await fakeCommy(provingAs("known", (request, reply) => {
     if (request.type === "status") reply({ type: "status", ...status });
     if (request.type === "directory") reply({ type: "directory", servers: [], people: [], inputs: ["Desk mic"], outputs: [] });
     if (request.type === "control" && (request.control as { action: string }).action === "toggle_mute") {
@@ -144,7 +159,7 @@ test("status, directory and controls come back from Commy", async () => {
     if (request.type === "control" && (request.control as { action: string }).action === "toggle_camera") {
       reply({ type: "failed", id: request.id, message: "join a voice channel first" });
     }
-  });
+  }));
   const link = new CommyLink({ tokens: memoryTokens({ [commy.port]: "known" }), ports: [commy.port] });
   assert.equal(await link.connect(), "ready");
   assert.deepEqual(await link.status(), status);
@@ -164,13 +179,12 @@ test("a declined deck reports it and a removed one forgets its token", async () 
   assert.equal(await new CommyLink({ tokens: memoryTokens(), ports: [declining.port] }).connect(), "declined");
   declining.close();
 
-  const removing = await fakeCommy((request, reply, socket) => {
-    if (request.type === "hello") reply({ type: "ready", version: 1 });
+  const removing = await fakeCommy(provingAs("old", (request, reply, socket) => {
     if (request.type === "list") {
       reply({ type: "denied", reason: "removed" });
       socket.end();
     }
-  });
+  }));
   const tokens = memoryTokens({ [removing.port]: "old" });
   const link = new CommyLink({ tokens, ports: [removing.port] });
   assert.equal(await link.connect(), "ready");
@@ -181,7 +195,7 @@ test("a declined deck reports it and a removed one forgets its token", async () 
 });
 
 test("the second port is tried when the first has no Commy", async () => {
-  const commy = await fakeCommy((request, reply) => reply({ type: "ready", version: 1 }));
+  const commy = await fakeCommy((request, reply) => reply({ type: "ready", version: 2 }));
   const link = new CommyLink({ tokens: memoryTokens(), ports: [await unusedPort(), commy.port] });
   assert.equal(await link.connect(), "ready");
   link.close();
@@ -190,7 +204,7 @@ test("the second port is tried when the first has no Commy", async () => {
 
 test("closing the connection goes offline and fails waiting requests", async () => {
   const commy = await fakeCommy((request, reply, socket) => {
-    if (request.type === "hello") reply({ type: "ready", version: 1 });
+    if (request.type === "hello") reply({ type: "ready", version: 2 });
     if (request.type === "play") socket.destroy();
   });
   const link = new CommyLink({ tokens: memoryTokens(), ports: [commy.port] });
@@ -198,6 +212,24 @@ test("closing the connection goes offline and fails waiting requests", async () 
   await assert.rejects(link.play("boom"), /closed/);
   assert.equal(link.state, "offline");
   commy.close();
+});
+
+test("a listener that cannot prove it knows the token never gets it", async () => {
+  const squatter = await fakeCommy((request, reply) => {
+    if (request.type === "hello") reply({ type: "prove", proof: "00".repeat(32), challenge: APP_CHALLENGE });
+  });
+  const link = new CommyLink({ tokens: memoryTokens({ [squatter.port]: "secret" }), ports: [squatter.port] });
+  assert.equal(await link.connect(), "offline");
+  assert.ok(!JSON.stringify(squatter.seen).includes("secret"));
+  assert.ok(!squatter.seen.some(request => request.type === "unlock"));
+  squatter.close();
+
+  const skipper = await fakeCommy((request, reply) => {
+    if (request.type === "hello") reply({ type: "ready", version: 2 });
+  });
+  const skipped = new CommyLink({ tokens: memoryTokens({ [skipper.port]: "secret" }), ports: [skipper.port] });
+  assert.equal(await skipped.connect(), "offline", "ready without a proof is not trusted");
+  skipper.close();
 });
 
 test("requests before connecting are refused", async () => {

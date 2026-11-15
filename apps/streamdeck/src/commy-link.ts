@@ -2,11 +2,16 @@ import net from "node:net";
 
 import { LineBuffer } from "./lines.ts";
 import {
+  appProof,
   COMMY_HOST,
   COMMY_PORTS,
+  deckKey,
   encodeRequest,
+  newChallenge,
   parseReply,
+  pluginProof,
   PROTOCOL_VERSION,
+  sameProof,
   type Reply,
   type Request,
   type Control,
@@ -39,6 +44,8 @@ export type NewSound = { server: string; name: string; emoji: string | null; dat
 type Waiter = { resolve: (reply: Reply) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 
 type Listing = "soundboards" | "status" | "directory";
+
+type Proof = { token: string; challenge: string; proven: boolean };
 
 export class CommyLink {
   #tokens: TokenStore;
@@ -146,6 +153,7 @@ export class CommyLink {
     const socket = await this.#open(port);
     if (!socket) return "offline";
     const token = await this.#tokens.load(port);
+    const proof: Proof | null = token ? { token, challenge: newChallenge(), proven: false } : null;
     return new Promise<LinkState>(resolve => {
       let settled = false;
       const settle = (state: LinkState) => {
@@ -168,7 +176,7 @@ export class CommyLink {
         }
         for (const line of received) {
           const reply = parseReply(line);
-          if (reply) this.#handle(port, reply, settle);
+          if (reply) this.#handle(port, reply, settle, socket, proof);
         }
       });
       socket.on("close", () => {
@@ -178,13 +186,24 @@ export class CommyLink {
       });
       socket.on("error", () => socket.destroy());
       const hello: Request = { type: "hello", version: PROTOCOL_VERSION, name: this.#name };
-      if (token) hello.token = token;
+      if (proof) {
+        hello.key = deckKey(proof.token);
+        hello.challenge = proof.challenge;
+      }
       socket.write(encodeRequest(hello));
     });
   }
 
-  #handle(port: number, reply: Reply, settle: (state: LinkState) => void): void {
+  #handle(port: number, reply: Reply, settle: (state: LinkState) => void, socket: net.Socket, proof: Proof | null): void {
     switch (reply.type) {
+      case "prove":
+        if (!proof || proof.proven || !sameProof(reply.proof, appProof(proof.token, proof.challenge))) {
+          socket.destroy();
+          return;
+        }
+        proof.proven = true;
+        socket.write(encodeRequest({ type: "unlock", proof: pluginProof(proof.token, reply.challenge) }));
+        break;
       case "waiting":
         settle("waiting");
         break;
@@ -192,6 +211,10 @@ export class CommyLink {
         void this.#tokens.save(port, reply.token);
         break;
       case "ready":
+        if (proof && !proof.proven) {
+          socket.destroy();
+          return;
+        }
         settle("ready");
         break;
       case "denied":

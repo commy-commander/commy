@@ -1,7 +1,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
+pub const TOKEN_IN_HELLO_VERSION: u32 = 1;
+const DECK_KEY_DOMAIN: &str = "commy-deck-key/v2";
+const APP_PROOF_DOMAIN: &str = "commy-deck-app/v2";
+const PLUGIN_PROOF_DOMAIN: &str = "commy-deck-plugin/v2";
+pub const CHALLENGE_HEX_CHARS: usize = 64;
 pub const MAX_PAIRED_DECKS: usize = 8;
 pub const MAX_DECK_NAME_CHARS: usize = 40;
 pub const DEFAULT_DECK_NAME: &str = "Stream Deck";
@@ -15,6 +20,13 @@ pub enum Request {
         name: Option<String>,
         #[serde(default)]
         token: Option<String>,
+        #[serde(default)]
+        key: Option<String>,
+        #[serde(default)]
+        challenge: Option<String>,
+    },
+    Unlock {
+        proof: String,
     },
     List,
     Play {
@@ -105,6 +117,7 @@ pub enum DenyReason {
 pub enum Reply {
     Waiting,
     Paired { token: String },
+    Prove { proof: String, challenge: String },
     Ready { version: u32 },
     Denied { reason: DenyReason },
     Soundboards(SoundboardList),
@@ -229,6 +242,10 @@ pub struct PairedDeck {
 }
 
 impl Settings {
+    pub fn token_for_key(&self, key: &str) -> Option<&str> {
+        self.decks.iter().find(|deck| same_secret(&deck_key(&deck.token), key)).map(|deck| deck.token.as_str())
+    }
+
     pub fn deck_for(&self, token: &str) -> Option<&PairedDeck> {
         self.decks.iter().find(|deck| same_secret(&deck.token, token))
     }
@@ -262,6 +279,36 @@ pub fn same_secret(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+fn digest_hex(domain: &str, token: &str, extra: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for part in [domain, token, extra] {
+        hash.update((part.len() as u32).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    data_encoding::HEXLOWER.encode(&hash.finalize())
+}
+
+pub fn deck_key(token: &str) -> String {
+    digest_hex(DECK_KEY_DOMAIN, token, "")
+}
+
+pub fn app_proof(token: &str, challenge: &str) -> String {
+    digest_hex(APP_PROOF_DOMAIN, token, challenge)
+}
+
+pub fn plugin_proof(token: &str, challenge: &str) -> String {
+    digest_hex(PLUGIN_PROOF_DOMAIN, token, challenge)
+}
+
+pub fn valid_challenge(challenge: &str) -> bool {
+    challenge.len() == CHALLENGE_HEX_CHARS && challenge.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+pub fn new_challenge() -> String {
+    random_hex(CHALLENGE_HEX_CHARS / 2)
+}
+
 fn random_token() -> String {
     data_encoding::BASE64URL_NOPAD.encode(&commy_net::CommyNode::generate_secret())
 }
@@ -275,14 +322,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn proofs_match_what_the_plugin_computes() {
+        assert_eq!(deck_key("known"), "d30771dec1f64199d6ae669e39e280fb17140dbafea0edb9bf00592c1aefe2c8");
+        assert_eq!(app_proof("known", "ab"), "6e2d91485492c994337486ed61b147f5e6f3a6cbb1c42d982c769f7594fedcc7");
+        assert_eq!(plugin_proof("known", "ab"), "393f3ae0d946ca5e66a759ec753cf61e20db8a0a97c259a36561a9b5a9c2972d");
+        assert!(valid_challenge(&new_challenge()) && !valid_challenge("ab"));
+    }
+
+    #[test]
     fn hello_list_play_and_add_sound_parse() {
         assert_eq!(
             Request::parse(r#"{"type":"hello","version":1,"name":"Deck","token":"abc"}"#),
-            Some(Request::Hello { version: 1, name: Some("Deck".into()), token: Some("abc".into()) })
+            Some(Request::Hello { version: 1, name: Some("Deck".into()), token: Some("abc".into()), key: None, challenge: None })
         );
         assert_eq!(
             Request::parse("{\"type\":\"hello\",\"version\":1}\r\n"),
-            Some(Request::Hello { version: 1, name: None, token: None })
+            Some(Request::Hello { version: 1, name: None, token: None, key: None, challenge: None })
         );
         assert_eq!(Request::parse(r#"{"type":"list"}"#), Some(Request::List));
         assert_eq!(

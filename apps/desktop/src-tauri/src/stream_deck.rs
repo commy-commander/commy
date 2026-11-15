@@ -162,6 +162,10 @@ impl Backend for AppBackend {
         self.handle.state::<App>().stream_deck.lock().unwrap().settings.deck_for(token).is_some()
     }
 
+    fn token_for_key(&self, key: &str) -> Option<String> {
+        self.handle.state::<App>().stream_deck.lock().unwrap().settings.token_for_key(key).map(str::to_string)
+    }
+
     fn ask_to_pair(&self, name: &str) -> Option<PairingAsk> {
         let request = {
             let app = self.handle.state::<App>();

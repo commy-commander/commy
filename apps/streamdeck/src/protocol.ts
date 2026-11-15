@@ -1,4 +1,6 @@
-export const PROTOCOL_VERSION = 1;
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+
+export const PROTOCOL_VERSION = 2;
 export const RELEASE_PORT = 47615;
 export const TEST_BUILD_PORT = 47616;
 export const COMMY_PORTS = [RELEASE_PORT, TEST_BUILD_PORT];
@@ -65,6 +67,7 @@ export type DenyReason = "busy" | "declined" | "removed" | "unsupported";
 export type Reply =
   | { type: "waiting" }
   | { type: "paired"; token: string }
+  | { type: "prove"; proof: string; challenge: string }
   | { type: "ready"; version: number }
   | { type: "denied"; reason: DenyReason }
   | ({ type: "soundboards" } & SoundboardList)
@@ -76,13 +79,47 @@ export type Reply =
   | { type: "failed"; id: number; message: string };
 
 export type Request =
-  | { type: "hello"; version: number; name: string; token?: string }
+  | { type: "hello"; version: number; name: string; key?: string; challenge?: string }
+  | { type: "unlock"; proof: string }
   | { type: "list" }
   | { type: "play"; id: number; server?: string; sound: string }
   | { type: "add_sound"; id: number; server: string; name: string; emoji?: string; data: string }
   | { type: "status" }
   | { type: "directory" }
   | { type: "control"; id: number; control: Control };
+
+function digestHex(domain: string, token: string, extra: string): string {
+  const hash = createHash("sha256");
+  for (const part of [domain, token, extra]) {
+    const bytes = Buffer.from(part, "utf8");
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(bytes.length);
+    hash.update(length);
+    hash.update(bytes);
+  }
+  return hash.digest("hex");
+}
+
+export function deckKey(token: string): string {
+  return digestHex("commy-deck-key/v2", token, "");
+}
+
+export function appProof(token: string, challenge: string): string {
+  return digestHex("commy-deck-app/v2", token, challenge);
+}
+
+export function pluginProof(token: string, challenge: string): string {
+  return digestHex("commy-deck-plugin/v2", token, challenge);
+}
+
+export function newChallenge(): string {
+  return randomBytes(32).toString("hex");
+}
+
+export function sameProof(a: unknown, b: string): boolean {
+  if (typeof a !== "string" || a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 export function parseReply(line: string): Reply | null {
   try {
