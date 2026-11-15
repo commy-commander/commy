@@ -1978,7 +1978,9 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .dm-thread:hover .dm-name, .dm-thread.active .dm-name { color: var(--ink-strong); }
 
 .presence-dot.inline {
-  position: static;
+  position: relative;
+  right: auto;
+  bottom: auto;
   display: inline-block;
   width: 10px;
   height: 10px;
