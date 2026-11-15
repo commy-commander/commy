@@ -1310,11 +1310,14 @@
 
     <div class="modal hidden" id="modal-report">
       <h2 id="report-title">Report</h2>
-      <p>Your report goes privately to the server owner. They will see who sent it.</p>
-      <label class="field-label hidden" id="report-server-row">Send to the owner of
+      <p id="report-goes">Your report goes privately to the server owner. They will see who sent it.</p>
+      <label class="field-label hidden" id="report-server-row">Report them in
         <select id="report-server" class="compact-select"></select>
       </label>
-      <div class="msg delete-preview hidden" id="report-preview"></div>
+      <div class="report-picks hidden" id="report-picks">
+        <div class="field-label">Messages to include</div>
+        <div class="report-pick-list" id="report-pick-list"></div>
+      </div>
       <div class="report-reasons" id="report-reasons">
         <label><input type="radio" name="report-reason" value="spam" /> <span>Spam or scams</span></label>
         <label><input type="radio" name="report-reason" value="harassment" /> <span>Harassment or hate</span></label>
@@ -1322,7 +1325,7 @@
         <label><input type="radio" name="report-reason" value="impersonation" /> <span>Impersonation</span></label>
         <label><input type="radio" name="report-reason" value="other" /> <span>Something else</span></label>
       </div>
-      <textarea id="report-note" maxlength="500" rows="3" placeholder="Anything the owner should know (optional)"></textarea>
+      <textarea id="report-note" maxlength="500" rows="3" placeholder="Anything they should know (optional)"></textarea>
       <label class="report-also-block"><input type="checkbox" id="report-block" /> <span>Also block this person</span></label>
       <div class="modal-actions">
         <button class="btn-secondary" id="report-cancel">Cancel</button>
@@ -3607,6 +3610,7 @@
   <script src="scripts/tip-jar.js"></script>
   <script src="scripts/file-store.js"></script>
   <script src="scripts/sync-host.js"></script>
+  <script src="scripts/report-picks.js"></script>
   <script src="scripts/integration-status.js"></script>
   <script src="scripts/pet.js"></script>
   <script src="scripts/voice-input.js"></script>

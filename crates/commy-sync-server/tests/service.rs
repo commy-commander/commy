@@ -672,3 +672,98 @@ async fn owner_requests_must_be_fresh_and_prove_the_stream() {
     send(&mut socket, &ClientFrame::release(keys.id, &eraser, long_ago)).await;
     assert_eq!(receive(&mut socket).await, ServerFrame::stream_error(ErrorCode::Expired, keys.id));
 }
+
+fn host_report(streams: Vec<commy_sync::StreamId>) -> commy_sync::report::HostReport {
+    use commy_sync::report::{HostReport, Person, PickedMessage};
+    let person = |id: &str, name: &str| Person { id: id.into(), name: name.into() };
+    HostReport {
+        community: "c1".into(),
+        community_name: "Night Owls".into(),
+        owner: person("u-owner", "Owl"),
+        reporter: person("u-me", "Ferris"),
+        reported: person("u-owner", "Owl"),
+        reason: "inappropriate".into(),
+        note: "the owner posts this everywhere".into(),
+        messages: vec![PickedMessage { id: "m1".into(), channel: "general".into(), author: person("u-owner", "Owl"), at: "2026-11-15T04:00:00Z".into(), text: "look".into() }],
+        streams,
+        sent_at: "2026-11-15T04:01:00Z".into(),
+    }
+}
+
+#[tokio::test]
+async fn a_report_reaches_the_operator_with_its_contact() {
+    let mut config = Config::from_env(|key| match key {
+        "SYNC_ABUSE_CONTACT" => Some("abuse@example.org".into()),
+        "SYNC_OPERATOR_NAME" => Some("Example Chat".into()),
+        _ => None,
+    })
+    .unwrap();
+    config.limits.reports = Rate { burst: 2.0, per_second: 0.0001 };
+    let (url, service) = start_with(config).await;
+    let stream = StreamSecret::random().keys().id;
+    let receipt = commy_sync::reporting::send(&url, host_report(vec![stream])).await.unwrap();
+    assert_eq!(receipt.operator, "Example Chat");
+    assert_eq!(receipt.contact.as_deref(), Some("abuse@example.org"));
+    let kept = service.store.reports(true).await.unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].id, receipt.id);
+    assert_eq!(kept[0].report.streams, vec![stream]);
+
+    let mut bad = host_report(vec![]);
+    bad.reason = "boring".into();
+    assert_eq!(commy_sync::reporting::send(&url, bad).await, Err(commy_sync::reporting::ReportError::Refused(ErrorCode::BadFrame)));
+    commy_sync::reporting::send(&url, host_report(vec![])).await.unwrap();
+    assert_eq!(
+        commy_sync::reporting::send(&url, host_report(vec![])).await,
+        Err(commy_sync::reporting::ReportError::Refused(ErrorCode::RateLimited)),
+        "one address cannot flood the operator"
+    );
+}
+
+#[tokio::test]
+async fn the_about_page_names_the_operator_and_the_abuse_contact() {
+    let config = Config::from_env(|key| (key == "SYNC_ABUSE_CONTACT").then(|| "https://example.org/abuse".to_string())).unwrap();
+    let (url, _) = start_with(config).await;
+    let address = url.trim_start_matches("ws://").trim_end_matches("/sync");
+    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    socket.write_all(format!("GET /sync/about HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+    let mut reply = String::new();
+    socket.read_to_string(&mut reply).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(reply.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(body["abuse_contact"], "https://example.org/abuse");
+    assert_eq!(body["operator"], "this sync server");
+    assert_eq!(body["takes_reports"], true);
+    assert_eq!(body["protocol"], commy_sync::wire::PROTOCOL);
+}
+
+#[tokio::test]
+async fn a_dropped_community_is_refused_and_others_carry_on() {
+    let (url, service) = start().await;
+    let dropped = StreamSecret::random().keys();
+    let kept = StreamSecret::random().keys();
+    let (writer, mut events) = SyncClient::spawn(url.clone());
+    writer.follow(dropped.clone(), 0);
+    writer.follow(kept.clone(), 0);
+    assert_eq!(writer.append(dropped.id, b"before".to_vec()).await.unwrap(), 1);
+    let receipt = commy_sync::reporting::send(&url, host_report(vec![dropped.id])).await.unwrap();
+    let said = commy_sync_server::operator::run(&service.store, commy_sync_server::operator::Command::Drop(receipt.id)).await.unwrap();
+    assert!(said.contains("1 streams refused"), "{said}");
+    commy_sync_server::learn_dropped(&service).await;
+    assert!(service.desk.is_dropped(&dropped.id));
+
+    let (late, mut late_events) = SyncClient::spawn(url.clone());
+    late.follow(dropped.clone(), 0);
+    loop {
+        match tokio::time::timeout(WAIT, late_events.recv()).await.expect("a refusal in time").expect("client running") {
+            SyncEvent::Refused { stream, code } => {
+                assert_eq!((stream, code), (dropped.id, ErrorCode::Removed));
+                break;
+            }
+            _ => continue,
+        }
+    }
+    assert!(writer.append(dropped.id, b"after".to_vec()).await.is_err(), "nothing new is stored for it");
+    assert_eq!(service.store.head(&dropped.id).await.unwrap(), 0);
+    assert_eq!(writer.append(kept.id, b"still here".to_vec()).await.unwrap(), 1);
+    drop(events.try_recv());
+}

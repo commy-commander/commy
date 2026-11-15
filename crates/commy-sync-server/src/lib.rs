@@ -4,7 +4,10 @@ pub mod config;
 pub mod fcm;
 pub mod hub;
 pub mod limits;
+pub mod mail;
+pub mod operator;
 mod pictures;
+pub mod reports;
 mod session;
 pub mod store;
 pub mod wake;
@@ -26,6 +29,7 @@ use commy_sync::wire::{MAX_CLIENT_FRAME_BYTES, PROTOCOL};
 use crate::config::Config;
 use crate::hub::Hub;
 use crate::limits::Limiter;
+use crate::reports::Desk;
 use crate::store::Store;
 use crate::wake::{Pusher, Wakes};
 
@@ -33,6 +37,7 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
 const REPORT_EVERY: Duration = Duration::from_secs(10 * 60);
 const FORGET_EVERY: Duration = Duration::from_secs(60);
+const SETTLED_REPORTS_KEPT_DAYS: i64 = 180;
 const WAKE_BODY_LIMIT: usize = 8 * 1024;
 
 #[derive(Default)]
@@ -95,6 +100,7 @@ pub struct Service {
     pub limiter: Limiter,
     pub stats: Stats,
     pub wakes: Wakes,
+    pub desk: Desk,
     pub trust_proxy: bool,
     pub retention_days: u32,
 }
@@ -111,6 +117,7 @@ impl Service {
             limiter: Limiter::new(config.limits.clone()),
             stats: Stats::default(),
             wakes: Wakes::new(pusher),
+            desk: Desk::new(config),
             trust_proxy: config.trust_proxy,
             retention_days: config.retention_days,
         })
@@ -135,6 +142,7 @@ pub fn router(service: Arc<Service>) -> Router {
     Router::new()
         .route("/sync", get(upgrade))
         .route("/sync/healthz", get(health))
+        .route("/sync/about", get(about))
         .route("/sync/wake", get(wake::info))
         .route("/sync/wake/register", post(wake::register).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/forget", post(wake::forget).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
@@ -169,6 +177,19 @@ async fn health(State(service): State<Arc<Service>>) -> Response {
     (status, Json(body)).into_response()
 }
 
+async fn about(State(service): State<Arc<Service>>) -> Response {
+    let mut body = service.desk.about();
+    body["protocol"] = PROTOCOL.into();
+    Json(body).into_response()
+}
+
+pub async fn learn_dropped(service: &Service) {
+    match service.store.dropped_streams().await {
+        Ok(streams) => service.desk.learn_dropped(streams),
+        Err(e) => tracing::warn!("sync: reading removed communities failed: {e}"),
+    }
+}
+
 pub fn spawn_housekeeping(service: Arc<Service>) {
     let pruning = service.clone();
     tokio::spawn(async move {
@@ -180,6 +201,9 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
             }
             if let Err(e) = pruning.store.prune_quiet(now_ms()).await {
                 tracing::warn!("sync: pruning quiet hours failed: {e}");
+            }
+            if let Err(e) = pruning.store.prune_reports(now_ms() - SETTLED_REPORTS_KEPT_DAYS * DAY_MS).await {
+                tracing::warn!("sync: pruning settled reports failed: {e}");
             }
             if pruning.retention_days == 0 {
                 continue;
@@ -202,6 +226,7 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
         let mut every = tokio::time::interval(FORGET_EVERY);
         loop {
             every.tick().await;
+            learn_dropped(&forgetting).await;
             forgetting.limiter.forget_idle();
             forgetting.wakes.forget_idle();
         }

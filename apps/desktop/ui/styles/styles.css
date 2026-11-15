@@ -4458,7 +4458,12 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 #report-note:focus, #join-wait-note:focus { border-color: var(--accent); }
 .report-also-block { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--text-muted); cursor: pointer; }
 .report-also-block input { accent-color: var(--accent); margin: 0; }
-#report-preview { margin-top: 10px; }
+.report-picks { margin-top: 10px; }
+.report-pick-list { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; }
+.report-pick { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+.report-pick:hover { background: var(--bg-active); }
+.report-pick input { accent-color: var(--accent); margin: 3px 0 0; flex: none; }
+.report-pick .report-pick-text { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 13px; color: var(--text-normal); }
 .report-list { display: flex; flex-direction: column; gap: 10px; }
 
 .audit-filters { display: flex; gap: 8px; margin-bottom: 12px; }

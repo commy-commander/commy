@@ -18,6 +18,9 @@ const SCHEMA: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS sync_pictures_touched ON sync_pictures (touched)",
     "CREATE TABLE IF NOT EXISTS sync_erasers (stream BYTEA PRIMARY KEY, eraser BYTEA NOT NULL, claimed BIGINT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS sync_quiet (push TEXT PRIMARY KEY, until_ms BIGINT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS sync_reports (id TEXT PRIMARY KEY, received BIGINT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS sync_reports_state ON sync_reports (state, received)",
+    "CREATE TABLE IF NOT EXISTS sync_dropped (stream BYTEA PRIMARY KEY, dropped BIGINT NOT NULL, report TEXT NOT NULL)",
 ];
 
 pub const TOUCH_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -260,9 +263,15 @@ pub struct MemoryStore {
     pictures: Mutex<HashMap<[u8; 32], StoredPicture>>,
     erasers: Mutex<HashMap<StreamId, ([u8; 32], i64)>>,
     quiet: Mutex<HashMap<String, i64>>,
+    pub(crate) reports: Mutex<crate::reports::MemoryReports>,
 }
 
 impl MemoryStore {
+    pub(crate) fn forget_stream(&self, stream: &StreamId) -> u64 {
+        self.erasers.lock().unwrap().remove(stream);
+        self.streams.lock().unwrap().remove(stream).map_or(0, |gone| gone.entries.len() as u64)
+    }
+
     fn claim(&self, stream: &StreamId, eraser: &[u8; 32], at: i64) -> bool {
         let mut erasers = self.erasers.lock().unwrap();
         let held = erasers.entry(*stream).or_insert((*eraser, at));
@@ -413,7 +422,7 @@ impl MemoryStore {
 }
 
 pub struct PgStore {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 fn code_of(e: &sqlx::Error) -> Option<String> {

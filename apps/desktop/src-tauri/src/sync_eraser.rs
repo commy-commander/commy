@@ -89,6 +89,14 @@ impl Plan {
     pub fn claims(&self) -> Vec<OwnerWork> {
         owner_work(&self.root, &self.streams, |_| Errand::Claim)
     }
+
+    pub fn stream_ids(&self) -> Vec<StreamId> {
+        self.streams.iter().map(|keys| keys.id).collect()
+    }
+
+    pub fn socket(&self, account_url: &str) -> Option<String> {
+        crate::community_sync::community_url(self.chosen_host.as_deref(), account_url)
+    }
 }
 
 pub fn plan(app: &App, sid: ServerId) -> Option<Plan> {

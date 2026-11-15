@@ -496,6 +496,35 @@ server or channel a log belongs to.
   phone wake-ups stay with each member's account server, so this service needs
   no push keys and sees only that community's logs. Copies left on the old
   service expire with its retention period.
+- **Reports and your abuse contact:** set `SYNC_ABUSE_CONTACT` to an email
+  address or an `https://` page where people can reach you about content you
+  store, and `SYNC_OPERATOR_NAME` to the name apps show for you (by default
+  `COMMY_INSTANCE_NAME`). `GET /sync/about` publishes both. When someone reports
+  a person or messages in a community on your service, their app sends the
+  report to the community's owner and to you. Your copy carries the community's
+  id and name, the owner, reporter and reported person, the reason and note,
+  up to 10 messages the reporter picked, in plain text as their app showed
+  them, and the stream ids of that community's logs. The service cannot check
+  that those messages are real: it only ever holds sealed entries. Reports are
+  kept in the `commy_sync` database, at most 5 a reporter's address per 10
+  minutes and 5,000 open at once; settled reports are removed after 180 days.
+  With `SMTP_HOST` (or `SMTP_URL`) and `EMAIL_FROM` set, as for the auth server,
+  each report is also emailed to `SYNC_ABUSE_CONTACT` when it is an email
+  address. Read and act on them from the server:
+
+  ```sh
+  docker compose exec sync commy-sync reports          # open reports
+  docker compose exec sync commy-sync show <report>    # one report in full
+  docker compose exec sync commy-sync drop <report>    # remove that community
+  docker compose exec sync commy-sync dismiss <report> # close it, no action
+  ```
+
+  `drop` deletes every stored entry of the logs the report listed and refuses
+  them from then on (running services stop within a minute), so that community
+  can no longer sync through your service. Other communities are untouched.
+  Accounts stay with their account server, so a report about an account itself
+  goes to that account server's operator. Blocking a person works on the
+  reporter's own devices and needs nothing from any server.
 
 ## iroh relay
 
@@ -570,13 +599,16 @@ who holds the `.env` can still read it all. Rows written by an older auth
 server stay readable to the new one and are encrypted ten minutes after it
 starts, once the container it replaced has stopped.
 
-The sync service database (`commy_sync`) holds only random stream ids, entry
+The sync service database (`commy_sync`) holds random stream ids, entry
 numbers, times, retry nonces and sealed, padded entries, sealed pictures under
 random-looking ids with the day they were last used, plus wake tags with push
 tokens when wake-ups are on. The operator can see how many logs exist and
 how busy each one is, not whose they are or what they say. With wake-ups on,
 the operator can also see how many tags a phone has registered and when they
 are rung, not which logs or people they stand for.
+It also holds the reports people send: these are in plain text, with the
+names and account ids of the people involved and the messages the reporter
+chose to include, because the reporter's app opens them before sending.
 
 Redis holds the message doorbell (random tokens and blinded message ids with
 the time they arrived, deleted when an app takes them or after 14 days) and

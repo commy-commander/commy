@@ -1,6 +1,7 @@
 pub mod endpoint;
 pub mod file;
 pub mod picture;
+pub mod report;
 pub mod stream;
 pub mod wake;
 pub mod wire;
@@ -11,6 +12,8 @@ pub mod client;
 pub mod errands;
 #[cfg(feature = "client")]
 pub mod pool;
+#[cfg(feature = "client")]
+pub mod reporting;
 
 pub use file::FileKey;
 pub use picture::PictureKey;

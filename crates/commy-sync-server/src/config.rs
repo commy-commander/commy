@@ -14,6 +14,76 @@ pub struct Config {
     pub limits: Limits,
     pub fcm_service_account: Option<String>,
     pub apns: Option<ApnsSettings>,
+    pub operator: Option<String>,
+    pub abuse_contact: Option<Contact>,
+    pub smtp: Option<SmtpSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Contact {
+    Email(String),
+    Page(String),
+}
+
+impl Contact {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        let text = raw.trim();
+        let plain = !text.is_empty() && text.len() <= 254 && !text.chars().any(|c| c.is_whitespace() || c.is_control() || "<>\"".contains(c));
+        if plain && text.starts_with("https://") && text.len() > "https://".len() {
+            return Ok(Contact::Page(text.to_string()));
+        }
+        let email = text.strip_prefix("mailto:").unwrap_or(text);
+        match email.split_once('@') {
+            Some((name, domain)) if plain && !name.is_empty() && domain.contains('.') && !domain.contains('@') => Ok(Contact::Email(email.to_string())),
+            _ => Err("SYNC_ABUSE_CONTACT must be an email address or an https:// page".into()),
+        }
+    }
+
+    pub fn shown(&self) -> &str {
+        match self {
+            Contact::Email(address) | Contact::Page(address) => address,
+        }
+    }
+
+    pub fn email(&self) -> Option<&str> {
+        match self {
+            Contact::Email(address) => Some(address),
+            Contact::Page(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SmtpSettings {
+    Url { url: String, from: String },
+    Host { host: String, port: u16, user: Option<String>, password: Option<String>, from: String },
+}
+
+impl SmtpSettings {
+    pub fn from(&self) -> &str {
+        match self {
+            SmtpSettings::Url { from, .. } | SmtpSettings::Host { from, .. } => from,
+        }
+    }
+}
+
+const DEFAULT_SMTP_PORT: u16 = 587;
+
+fn smtp_settings(env: &impl Fn(&str) -> Option<String>) -> Result<Option<SmtpSettings>, String> {
+    let set = |name: &str| env(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let user = set("SMTP_USER");
+    let from = || set("EMAIL_FROM").or_else(|| user.clone()).ok_or("EMAIL_FROM or SMTP_USER must be set to send reports by email".to_string());
+    if let Some(url) = set("SMTP_URL") {
+        return Ok(Some(SmtpSettings::Url { url, from: from()? }));
+    }
+    let Some(host) = set("SMTP_HOST") else {
+        return Ok(None);
+    };
+    let port = match set("SMTP_PORT") {
+        Some(text) => text.parse::<u16>().map_err(|_| "SMTP_PORT must be a TCP port".to_string())?,
+        None => DEFAULT_SMTP_PORT,
+    };
+    Ok(Some(SmtpSettings::Host { host, port, user: user.clone(), password: set("SMTP_PASSWORD"), from: from()? }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,18 +141,30 @@ impl Config {
             limits,
             fcm_service_account: env("FCM_SERVICE_ACCOUNT").filter(|v| !v.trim().is_empty()),
             apns: apns_settings(&env)?,
+            operator: env("SYNC_OPERATOR_NAME").map(|v| v.trim().chars().take(100).collect::<String>()).filter(|v| !v.is_empty()),
+            abuse_contact: env("SYNC_ABUSE_CONTACT").filter(|v| !v.trim().is_empty()).map(|v| Contact::parse(&v)).transpose()?,
+            smtp: smtp_settings(&env)?,
         })
     }
 
     pub fn summary(&self) -> String {
         format!(
-            "port={} store={} retention={} trust_proxy={} wake={}",
+            "port={} store={} retention={} trust_proxy={} wake={} reports={}",
             self.listen.port(),
             if self.database_url.is_some() { "postgres" } else { "memory" },
             if self.retention_days == 0 { "forever".to_string() } else { format!("{}d", self.retention_days) },
             self.trust_proxy,
             self.wake_summary(),
+            self.reports_summary(),
         )
+    }
+
+    fn reports_summary(&self) -> &'static str {
+        match (&self.abuse_contact, &self.smtp) {
+            (Some(Contact::Email(_)), Some(_)) => "emailed",
+            (Some(_), _) => "kept",
+            (None, _) => "kept-no-contact",
+        }
     }
 
     fn wake_summary(&self) -> &'static str {
@@ -112,7 +194,7 @@ mod tests {
         assert_eq!(c.database_url, None);
         assert_eq!(c.retention_days, 90);
         assert!(c.trust_proxy);
-        assert_eq!(c.summary(), "port=3002 store=memory retention=90d trust_proxy=true wake=off");
+        assert_eq!(c.summary(), "port=3002 store=memory retention=90d trust_proxy=true wake=off reports=kept-no-contact");
     }
 
     #[test]
@@ -147,9 +229,39 @@ mod tests {
             c.apns,
             Some(ApnsSettings { key: "k".into(), key_id: "ABC".into(), team_id: "TEAM".into(), topic: "chat.commy.mobile".into() })
         );
-        assert!(c.summary().ends_with("wake=apns"));
+        assert!(c.summary().contains("wake=apns "));
         let both = config(&[("FCM_SERVICE_ACCOUNT", "{}"), ("APNS_KEY", "k"), ("APNS_KEY_ID", "A"), ("APNS_TEAM_ID", "T"), ("APNS_TOPIC", "x.y")]).unwrap();
         assert_eq!(both.apns.unwrap().topic, "x.y");
-        assert!(config(&[("FCM_SERVICE_ACCOUNT", "{}"), ("APNS_KEY", "k"), ("APNS_KEY_ID", "A"), ("APNS_TEAM_ID", "T")]).unwrap().summary().ends_with("wake=fcm+apns"));
+        assert!(config(&[("FCM_SERVICE_ACCOUNT", "{}"), ("APNS_KEY", "k"), ("APNS_KEY_ID", "A"), ("APNS_TEAM_ID", "T")]).unwrap().summary().contains("wake=fcm+apns "));
+    }
+
+    #[test]
+    fn the_abuse_contact_is_an_email_or_an_https_page() {
+        assert_eq!(Contact::parse(" abuse@example.org "), Ok(Contact::Email("abuse@example.org".into())));
+        assert_eq!(Contact::parse("mailto:abuse@example.org"), Ok(Contact::Email("abuse@example.org".into())));
+        assert_eq!(Contact::parse("https://example.org/abuse"), Ok(Contact::Page("https://example.org/abuse".into())));
+        for bad in ["abuse", "@example.org", "abuse@localhost", "http://example.org", "a b@example.org", "<x>@example.org", "https://"] {
+            assert!(Contact::parse(bad).is_err(), "{bad}");
+        }
+        let c = config(&[("SYNC_ABUSE_CONTACT", "abuse@example.org"), ("SYNC_OPERATOR_NAME", " Example Chat ")]).unwrap();
+        assert_eq!(c.abuse_contact.as_ref().and_then(Contact::email), Some("abuse@example.org"));
+        assert_eq!(c.operator.as_deref(), Some("Example Chat"));
+        assert!(c.summary().ends_with("reports=kept"));
+        assert!(config(&[("SYNC_ABUSE_CONTACT", "nope")]).is_err());
+    }
+
+    #[test]
+    fn report_email_uses_the_shared_smtp_settings() {
+        let c = config(&[("SYNC_ABUSE_CONTACT", "abuse@example.org"), ("SMTP_HOST", "smtp.example.org"), ("SMTP_USER", "bot@example.org"), ("SMTP_PASSWORD", "pw")]).unwrap();
+        assert_eq!(
+            c.smtp,
+            Some(SmtpSettings::Host { host: "smtp.example.org".into(), port: 587, user: Some("bot@example.org".into()), password: Some("pw".into()), from: "bot@example.org".into() })
+        );
+        assert!(c.summary().ends_with("reports=emailed"));
+        assert!(!c.summary().contains("pw"));
+        let url = config(&[("SMTP_URL", "smtps://u:p@smtp.example.org"), ("EMAIL_FROM", "Commy <no-reply@example.org>")]).unwrap();
+        assert_eq!(url.smtp.unwrap().from(), "Commy <no-reply@example.org>");
+        assert!(config(&[("SMTP_HOST", "smtp.example.org")]).err().unwrap().contains("EMAIL_FROM"));
+        assert!(config(&[("SMTP_HOST", "smtp.example.org"), ("SMTP_USER", "u"), ("SMTP_PORT", "x")]).is_err());
     }
 }

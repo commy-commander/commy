@@ -106,9 +106,16 @@ async fn handle(
     open: &mut HashMap<StreamId, OpenStream>,
     out: &mpsc::Sender<ServerFrame>,
 ) {
+    if let Some(stream) = stream_of(&frame).filter(|stream| service.desk.is_dropped(stream)) {
+        let _ = out.send(ServerFrame::stream_error(ErrorCode::Removed, stream)).await;
+        return;
+    }
     match frame {
         ClientFrame::Ping => {
             let _ = out.send(ServerFrame::Pong).await;
+        }
+        ClientFrame::Report { report } => {
+            let _ = out.send(crate::reports::take(service, key, *report).await).await;
         }
         ClientFrame::Open { stream, write, read, after, tail } => {
             if StreamId::of(&write.0, &read.0) != stream {
@@ -210,6 +217,17 @@ async fn handle(
                 }
             }
         }
+    }
+}
+
+fn stream_of(frame: &ClientFrame) -> Option<StreamId> {
+    match frame {
+        ClientFrame::Open { stream, .. }
+        | ClientFrame::Append { stream, .. }
+        | ClientFrame::Signal { stream, .. }
+        | ClientFrame::Will { stream, .. }
+        | ClientFrame::Claim { stream, .. } => Some(*stream),
+        ClientFrame::Close { .. } | ClientFrame::Erase { .. } | ClientFrame::Release { .. } | ClientFrame::Report { .. } | ClientFrame::Ping => None,
     }
 }
 

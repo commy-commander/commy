@@ -3110,34 +3110,88 @@ fn decline_dm_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, user
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct ReportSent {
+    owner: bool,
+    host: Option<commy_sync::report::Receipt>,
+    host_problem: Option<String>,
+}
+
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn report_user(
     app: tauri::State<'_, App>,
     server_id: String,
     user_id: String,
     channel_id: Option<String>,
     message_id: Option<String>,
+    message_ids: Option<Vec<String>>,
     reason: String,
     note: String,
-) -> CmdResult<()> {
+) -> CmdResult<ReportSent> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let reported: UserId = user_id.parse().map_err(err_to_string)?;
     let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
-    let message: Option<MessageId> = message_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
+    let picked: Vec<String> = message_ids.unwrap_or_default().into_iter().chain(message_id).collect();
+    let messages: Vec<MessageId> = picked.iter().map(|m| m.parse()).collect::<Result<_, _>>().map_err(err_to_string)?;
     let _signing = app.signing.read().await;
     let me = current_profile(&app)?;
     refuse_while_key_may_be_replaced(&app)?;
     let keys = channel_lock::holder_of(&app);
-    let form = view::safety::ReportForm { reported, channel, message, reason, note };
+    let form = view::safety::ReportForm { reported, channel, messages, reason, note };
     let reported_name = known_name(&app, reported);
-    let (owner, report) = {
+    let plan = sync_eraser::plan(&app, sid);
+    let streams = plan.as_ref().map(sync_eraser::Plan::stream_ids).unwrap_or_default();
+    let socket = sync_link::url().and_then(|account| plan.as_ref().and_then(|p| p.socket(&account)));
+    let outgoing = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
-        view::safety::report(state, &keys, &me, form, reported_name, chrono::Utc::now())?
+        view::safety::report(state, &keys, &me, form, reported_name, streams, chrono::Utc::now())?
     };
-    let owner_hex = node_hex_for_user(&app, owner);
-    let offline = "the server owner is offline right now; try again later";
-    send_signed_dm(&app, &me, owner, owner_hex.as_deref(), report.encode(), offline).await
+    let to_host = async {
+        let socket = socket.ok_or_else(|| "this community has no sync server yet".to_string())?;
+        commy_sync::reporting::send(&socket, outgoing.host).await.map_err(|e| e.to_string())
+    };
+    let to_owner = async {
+        let Some((owner, report)) = outgoing.owner else { return None };
+        let owner_hex = node_hex_for_user(&app, owner);
+        let offline = "the server owner is offline right now; try again later";
+        Some(send_signed_dm(&app, &me, owner, owner_hex.as_deref(), report.encode(), offline).await)
+    };
+    let (host, owner) = tokio::join!(to_host, to_owner);
+    reach_of_report(owner, host)
+}
+
+fn reach_of_report(owner: Option<CmdResult<()>>, host: Result<commy_sync::report::Receipt, String>) -> CmdResult<ReportSent> {
+    let owner_reached = matches!(owner, Some(Ok(())));
+    match (owner, host) {
+        (_, Ok(receipt)) => Ok(ReportSent { owner: owner_reached, host: Some(receipt), host_problem: None }),
+        (Some(Ok(())), Err(problem)) => Ok(ReportSent { owner: true, host: None, host_problem: Some(problem) }),
+        (Some(Err(owner_problem)), Err(_)) => Err(owner_problem),
+        (None, Err(problem)) => Err(format!("the report was not sent: {problem}")),
+    }
+}
+
+#[cfg(test)]
+mod report_reach_tests {
+    use super::*;
+    use commy_sync::report::Receipt;
+
+    fn receipt() -> Receipt {
+        Receipt { id: "r1".into(), operator: "Example Chat".into(), contact: None }
+    }
+
+    #[test]
+    fn a_report_counts_as_sent_when_anyone_took_it() {
+        let both = reach_of_report(Some(Ok(())), Ok(receipt())).unwrap();
+        assert!(both.owner && both.host.is_some());
+        let host_only = reach_of_report(Some(Err("offline".into())), Ok(receipt())).unwrap();
+        assert!(!host_only.owner && host_only.host.is_some());
+        let owner_only = reach_of_report(Some(Ok(())), Err("too old".into())).unwrap();
+        assert_eq!((owner_only.owner, owner_only.host_problem.as_deref()), (true, Some("too old")));
+        assert_eq!(reach_of_report(Some(Err("offline".into())), Err("down".into())).err().as_deref(), Some("offline"));
+        assert_eq!(reach_of_report(None, Err("down".into())).err().as_deref(), Some("the report was not sent: down"));
+    }
 }
 
 fn receive_report(app: &App, handle: &tauri::AppHandle, sender: UserId, content: &str) {

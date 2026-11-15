@@ -1,12 +1,14 @@
 use data_encoding::BASE64URL_NOPAD;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::report::{HostReport, Receipt};
 use crate::stream::{Eraser, StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
 
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 pub const SIGNALS_SINCE: u32 = 2;
 pub const WILLS_SINCE: u32 = 3;
 pub const ERASE_SINCE: u32 = 4;
+pub const REPORTS_SINCE: u32 = 5;
 pub const ERASE_WINDOW_MS: i64 = 10 * 60 * 1000;
 pub const ERASE_EVERYTHING: u64 = i64::MAX as u64;
 pub const PAGE_SIZE: usize = 200;
@@ -88,6 +90,7 @@ pub enum ClientFrame {
     Claim { stream: StreamId, write: Bytes<32>, read: Bytes<32>, eraser: Bytes<32>, sig: Bytes<64> },
     Erase { stream: StreamId, through: u64, at: i64, sig: Bytes<64> },
     Release { stream: StreamId, at: i64, sig: Bytes<64> },
+    Report { report: Box<HostReport> },
     Ping,
 }
 
@@ -155,6 +158,7 @@ pub enum ErrorCode {
     Unavailable,
     NotYours,
     Expired,
+    Removed,
 }
 
 impl ErrorCode {
@@ -174,6 +178,7 @@ pub enum ServerFrame {
     Claimed { stream: StreamId, mine: bool },
     Erased { stream: StreamId, through: u64 },
     Released { stream: StreamId },
+    Reported { receipt: Receipt },
     Error {
         code: ErrorCode,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -214,6 +219,7 @@ mod tests {
             ClientFrame::claim(&keys, &Eraser::derive(&[1; 32], &keys.id)),
             ClientFrame::erase(keys.id, &Eraser::derive(&[1; 32], &keys.id), ERASE_EVERYTHING, 1_760_000_000_000),
             ClientFrame::release(keys.id, &Eraser::derive(&[1; 32], &keys.id), 1_760_000_000_000),
+            ClientFrame::Report { report: Box::new(crate::report::tests::sample()) },
             ClientFrame::Ping,
         ];
         for frame in frames {
@@ -259,7 +265,9 @@ mod tests {
             ServerFrame::Claimed { stream: id, mine: false },
             ServerFrame::Erased { stream: id, through: ERASE_EVERYTHING },
             ServerFrame::Released { stream: id },
+            ServerFrame::Reported { receipt: Receipt { id: "r1".into(), operator: "sync.example.org".into(), contact: Some("abuse@example.org".into()) } },
             ServerFrame::stream_error(ErrorCode::NotYours, id),
+            ServerFrame::stream_error(ErrorCode::Removed, id),
             ServerFrame::stream_error(ErrorCode::BadSignature, id),
             ServerFrame::Error { code: ErrorCode::RateLimited, stream: None, nonce: None, retry_after_ms: Some(900) },
             ServerFrame::Pong,

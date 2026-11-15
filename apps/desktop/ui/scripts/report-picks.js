@@ -1,0 +1,35 @@
+const REPORT_MAX_PICKS = 10;
+const REPORT_HOME_OPERATOR = "Commy.chat";
+
+function reportCandidates(messages, userId, chosenId) {
+  const theirs = (messages || []).filter(m => m && m.author_id === userId && (m.content || m.id === chosenId));
+  const recent = theirs.slice(-REPORT_MAX_PICKS);
+  const chosen = theirs.find(m => m.id === chosenId);
+  if (chosen && !recent.includes(chosen)) recent.splice(0, 1, chosen);
+  return recent.map(m => ({ id: m.id, content: m.content || "", checked: m.id === chosenId }));
+}
+
+function reportPicked(candidates) {
+  return candidates.filter(c => c.checked).map(c => c.id).slice(0, REPORT_MAX_PICKS);
+}
+
+function reportDestination(server, ownerReportable) {
+  const host = (server && server.sync_host) || REPORT_HOME_OPERATOR;
+  const operator = `the people who run ${host}, where this server's messages are stored`;
+  return ownerReportable
+    ? `Your report goes privately to the server owner and to ${operator}. They will see who sent it and the messages you include.`
+    : `Your report goes privately to ${operator}. They will see who sent it and the messages you include.`;
+}
+
+function reportSentToast(sent) {
+  const host = sent && sent.host;
+  const contact = host && host.contact ? ` Contact them at ${host.contact}.` : "";
+  if (host && sent.owner) return `Report sent to the server owner and ${host.operator}.${contact}`;
+  if (host) return `Report sent to ${host.operator}.${contact}`;
+  if (sent && sent.owner) return "Report sent to the server owner. The sync server could not take it right now.";
+  return "Report sent";
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { REPORT_MAX_PICKS, reportCandidates, reportPicked, reportDestination, reportSentToast };
+}

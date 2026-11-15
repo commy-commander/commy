@@ -445,29 +445,43 @@ impl Session {
         }
     }
 
-    async fn report_user(&self, args: Args) -> Result<(), String> {
+    async fn report_user(&self, args: Args) -> Result<Value, String> {
         let server: ServerId = parse(args.server_id.as_ref(), "server")?;
         let reported: UserId = parse(args.user_id.as_ref(), "user")?;
         let channel = args.channel_id.as_ref().map(|c| parse(Some(c), "channel")).transpose()?;
-        let message = args.message_id.as_ref().map(|m| parse(Some(m), "message")).transpose()?;
+        let picked: Vec<&String> = args.message_ids.iter().flatten().chain(args.message_id.as_ref()).collect();
+        let messages: Vec<MessageId> = picked.into_iter().map(|m| parse(Some(m), "message")).collect::<Result<_, _>>()?;
         let (me, identity) = self.me_and_key().ok_or("Your servers are not unlocked yet")?;
         let node = self.node_hex().ok_or("Your servers are not unlocked yet")?;
-        let form = safety::ReportForm { reported, channel, message, reason: args.reason.unwrap_or_default(), note: args.note.unwrap_or_default() };
-        let (owner, report) = {
+        let form = safety::ReportForm { reported, channel, messages, reason: args.reason.unwrap_or_default(), note: args.note.unwrap_or_default() };
+        let plan = self.erase_plan(server);
+        let streams: Vec<StreamId> = plan.as_ref().map(|(_, _, keys)| keys.iter().map(|k| k.id).collect()).unwrap_or_default();
+        let outgoing = {
             let client = self.client.borrow();
             let servers = client.servers.lock().unwrap();
             let state = servers.get(&server).ok_or("This server is still loading")?;
             let name = dm_book::known_name(&self.dms.borrow().store, &servers, reported);
             let keys = commy_view::keys::KeyHolder::new(Some((me.id, identity.clone())));
-            safety::report(state, &keys, &me, form, name, Utc::now())?
+            safety::report(state, &keys, &me, form, name, streams, Utc::now())?
         };
-        let mut sent = DmMessage::new(me.id, owner, report.encode());
-        sent.sign(&node, &identity);
-        let envelope = DmEnvelope::new(sent, self.profile_for(&me, owner));
-        if self.deliver_dm(owner, &envelope).await {
-            Ok(())
-        } else {
-            Err("the server owner is offline right now; try again later".into())
+        let host = match plan {
+            Some((socket, _, _)) => commy_sync::reporting::send(&socket, outgoing.host).await.map_err(|e| e.to_string()),
+            None => Err("this community has no sync server yet".to_string()),
+        };
+        let owner_reached = match outgoing.owner {
+            Some((owner, report)) => {
+                let mut sent = DmMessage::new(me.id, owner, report.encode());
+                sent.sign(&node, &identity);
+                let envelope = DmEnvelope::new(sent, self.profile_for(&me, owner));
+                Some(self.deliver_dm(owner, &envelope).await)
+            }
+            None => None,
+        };
+        match (owner_reached, host) {
+            (owner, Ok(receipt)) => Ok(json!({ "owner": owner == Some(true), "host": receipt, "host_problem": null })),
+            (Some(true), Err(problem)) => Ok(json!({ "owner": true, "host": null, "host_problem": problem })),
+            (Some(false), Err(_)) => Err("the server owner is offline right now; try again later".into()),
+            (None, Err(problem)) => Err(format!("the report was not sent: {problem}")),
         }
     }
 
@@ -632,7 +646,7 @@ impl Session {
                 self.emit("dm-changed", json!(user.to_string()));
                 Ok(Value::Null)
             }
-            "report_user" => self.report_user(args).await.map(|_| Value::Null),
+            "report_user" => self.report_user(args).await,
             "list_reports" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let me = self.me_and_key().ok_or("Your servers are not unlocked yet")?.0.id;

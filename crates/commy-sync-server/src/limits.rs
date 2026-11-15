@@ -23,6 +23,7 @@ pub struct Limits {
     pub stream_appends: Rate,
     pub wakes: Rate,
     pub signals: Rate,
+    pub reports: Rate,
     pub daily_bytes_per_address: u64,
     pub daily_bytes_total: u64,
 }
@@ -36,6 +37,7 @@ impl Default for Limits {
             stream_appends: Rate { burst: 100.0, per_second: 20.0 },
             wakes: Rate { burst: 120.0, per_second: 1.0 },
             signals: Rate { burst: 60.0, per_second: 2.0 },
+            reports: Rate { burst: 5.0, per_second: 1.0 / 600.0 },
             daily_bytes_per_address: 64 * 1024 * 1024,
             daily_bytes_total: 16 * 1024 * 1024 * 1024,
         }
@@ -76,6 +78,7 @@ struct Address {
     opens: Bucket,
     wakes: Bucket,
     signals: Bucket,
+    reports: Bucket,
     day_started: Instant,
     day_bytes: u64,
     seen: Instant,
@@ -137,6 +140,7 @@ impl Limiter {
             opens: Bucket::full(limits.opens, now),
             wakes: Bucket::full(limits.wakes, now),
             signals: Bucket::full(limits.signals, now),
+            reports: Bucket::full(limits.reports, now),
             day_started: now,
             day_bytes: 0,
             seen: now,
@@ -176,6 +180,13 @@ impl Limiter {
         let mut books = self.books.lock().unwrap();
         let rate = self.limits.wakes;
         self.address(&mut books, key, now).wakes.take(rate, now).map_err(Refusal::Wait)
+    }
+
+    pub fn report(&self, key: AddressKey) -> Result<(), Refusal> {
+        let now = Instant::now();
+        let mut books = self.books.lock().unwrap();
+        let rate = self.limits.reports;
+        self.address(&mut books, key, now).reports.take(rate, now).map_err(Refusal::Wait)
     }
 
     pub fn append(&self, key: AddressKey, stream: &[u8; 32], bytes: usize) -> Result<(), Refusal> {
@@ -254,6 +265,7 @@ mod tests {
             stream_appends: Rate { burst: 100.0, per_second: 100.0 },
             wakes: Rate { burst: 2.0, per_second: 1.0 },
             signals: Rate { burst: 2.0, per_second: 1.0 },
+            reports: Rate { burst: 2.0, per_second: 0.001 },
             daily_bytes_per_address: 10_000,
             daily_bytes_total: 25_000,
         }

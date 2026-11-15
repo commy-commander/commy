@@ -152,6 +152,7 @@ struct Args {
     code: Option<String>,
     password: Option<String>,
     message_id: Option<String>,
+    message_ids: Option<Vec<String>>,
     root_id: Option<String>,
     emoji: Option<String>,
     active: Option<bool>,

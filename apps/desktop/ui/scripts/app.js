@@ -1929,7 +1929,7 @@ async function mockInvoke(cmd, args = {}) {
     case "set_profile_privacy": mockSafety().profile_policy = args.policy; return null;
     case "accept_dm_request": if (mock.dms[args.userId]) mock.dms[args.userId].kind = "inbox"; return null;
     case "decline_dm_request": delete mock.dms[args.userId]; return null;
-    case "report_user": console.info("report", args); return null;
+    case "report_user": console.info("report", args); return { owner: true, host: { id: "r1", operator: "Commy.chat", contact: "commy.cmd@commy.chat" }, host_problem: null };
     case "list_reports": return mock.reports || [];
     case "dismiss_report": mock.reports = (mock.reports || []).filter(r => r.id !== args.reportId); return null;
     case "set_status_expiry":
@@ -16076,7 +16076,42 @@ async function moderateVoice(member, muted, deafened) {
 }
 
 function reportableIn(server, userId) {
-  return Boolean(server && state.user && server.owner !== state.user.id && userId !== server.owner && userId !== state.user.id);
+  return Boolean(server && state.user && userId && userId !== state.user.id);
+}
+
+function ownerTakesReport(server, userId) {
+  return Boolean(server && state.user && server.owner !== state.user.id && userId !== server.owner);
+}
+
+let reportChoices = [];
+
+function reportServerOf(id) {
+  return (reportTarget.servers || []).find(s => s.id === id) || (state.currentServer && state.currentServer.id === id ? state.currentServer : null);
+}
+
+function showReportDestination() {
+  const server = reportServerOf(reportTarget.serverId);
+  $("report-goes").textContent = reportDestination(server, ownerTakesReport(server, reportTarget.userId));
+  const sameChannel = state.currentServer && state.currentServer.id === reportTarget.serverId && state.currentChannel;
+  const channelId = reportTarget.channelId || (sameChannel ? state.currentChannel.id : null);
+  const shown = sameChannel && state.currentChannel.id === channelId ? state.renderedMessages : [];
+  reportTarget.pickChannelId = channelId;
+  reportChoices = reportCandidates(shown, reportTarget.userId, reportTarget.messageId);
+  const list = $("report-pick-list");
+  list.replaceChildren(...reportChoices.map(choice => {
+    const row = el("label", "report-pick");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = choice.checked;
+    box.onchange = () => {
+      choice.checked = box.checked;
+    };
+    const text = el("div", "report-pick-text");
+    text.appendChild(buildMessageContent(choice.content, reportTarget.userId));
+    row.append(box, text);
+    return row;
+  }));
+  $("report-picks").classList.toggle("hidden", !reportChoices.length);
 }
 
 let reportTarget = null;
@@ -16090,18 +16125,15 @@ function openReport(target) {
   pick.value = target.serverId;
   pick.onchange = () => {
     reportTarget.serverId = pick.value;
+    reportTarget.channelId = null;
+    reportTarget.messageId = null;
+    showReportDestination();
   };
   $("report-title").textContent = target.messageId ? `Report message from ${target.name}` : `Report ${target.name}`;
   for (const radio of document.querySelectorAll('input[name="report-reason"]')) radio.checked = false;
   $("report-note").value = "";
   $("report-block").checked = false;
-  const preview = $("report-preview");
-  preview.replaceChildren();
-  preview.classList.toggle("hidden", !target.excerpt);
-  if (target.excerpt) {
-    preview.appendChild(el("div", "msg-author", target.name));
-    preview.appendChild(buildMessageContent(target.excerpt, target.userId));
-  }
+  showReportDestination();
   showModal("modal-report");
 }
 
@@ -16115,16 +16147,17 @@ async function submitReport() {
   const go = $("report-go");
   go.disabled = true;
   try {
-    await invoke("report_user", {
+    const messageIds = reportPicked(reportChoices);
+    const sent = await invoke("report_user", {
       serverId: t.serverId,
       userId: t.userId,
-      channelId: t.channelId || null,
-      messageId: t.messageId || null,
+      channelId: messageIds.length ? t.pickChannelId : null,
+      messageIds,
       reason: reason.value,
       note: $("report-note").value,
     });
     hideModals();
-    toast("Report sent to the server owner");
+    toast(reportSentToast(sent));
     if ($("report-block").checked) await setBlocked(t.userId, t.name, true);
   } catch (e) {
     toast(String(e));

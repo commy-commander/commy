@@ -348,7 +348,7 @@ impl Link {
                 self.protocol = protocol;
                 self.wills_due = protocol >= WILLS_SINCE;
             }
-            ServerFrame::Pong | ServerFrame::Claimed { .. } | ServerFrame::Erased { .. } | ServerFrame::Released { .. } => {}
+            ServerFrame::Pong | ServerFrame::Claimed { .. } | ServerFrame::Erased { .. } | ServerFrame::Released { .. } | ServerFrame::Reported { .. } => {}
             ServerFrame::Opened { stream, head } => {
                 if let Some(followed) = self.streams.get_mut(&stream) {
                     if head < followed.after {

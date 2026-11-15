@@ -5,6 +5,8 @@ use commy_core::{ChannelId, MessageId, ServerId, ServerState, UserId, UserProfil
 use commy_core::DmStore;
 
 use crate::keys::KeyHolder;
+use commy_sync::report::{clip, HostReport, Person, PickedMessage, MAX_MESSAGE_CHARS, MAX_NAME_CHARS, MAX_PICKED_MESSAGES, MAX_REPORTED_STREAMS};
+use commy_sync::StreamId;
 use serde::{Deserialize, Serialize};
 
 fn default_true() -> bool {
@@ -88,7 +90,7 @@ pub struct Report {
     pub created_at: String,
 }
 
-pub const REPORT_REASONS: &[&str] = &["spam", "harassment", "inappropriate", "impersonation", "other"];
+pub const REPORT_REASONS: &[&str] = commy_sync::report::REASONS;
 const MAX_REPORTS: usize = 200;
 const MAX_NOTE: usize = 500;
 const MAX_EXCERPT: usize = 300;
@@ -116,50 +118,106 @@ impl Report {
 pub struct ReportForm {
     pub reported: UserId,
     pub channel: Option<ChannelId>,
-    pub message: Option<MessageId>,
+    pub messages: Vec<MessageId>,
     pub reason: String,
     pub note: String,
 }
 
-pub fn report(state: &ServerState, keys: &KeyHolder, me: &UserProfile, form: ReportForm, reported_name: String, now: DateTime<Utc>) -> Result<(UserId, Report), String> {
+pub struct OutgoingReport {
+    pub owner: Option<(UserId, Report)>,
+    pub host: HostReport,
+}
+
+fn picked_ids(form: &ReportForm) -> Result<Vec<MessageId>, String> {
+    let mut picked: Vec<MessageId> = Vec::new();
+    for id in &form.messages {
+        if !picked.contains(id) {
+            picked.push(*id);
+        }
+    }
+    if picked.len() > MAX_PICKED_MESSAGES {
+        return Err(format!("pick at most {MAX_PICKED_MESSAGES} messages"));
+    }
+    if !picked.is_empty() && form.channel.is_none() {
+        return Err("that message is no longer available".into());
+    }
+    Ok(picked)
+}
+
+fn person(id: UserId, name: &str) -> Person {
+    Person { id: id.to_string(), name: clip(name, MAX_NAME_CHARS) }
+}
+
+fn opened_messages(state: &ServerState, keys: &KeyHolder, channel: Option<ChannelId>, picked: &[MessageId]) -> Result<Vec<commy_core::Message>, String> {
+    let Some(channel) = channel else { return Ok(Vec::new()) };
+    let stored = state.messages(channel);
+    picked
+        .iter()
+        .map(|id| stored.iter().find(|m| m.id == *id).and_then(|m| keys.open(state, m)).ok_or_else(|| "that message is no longer available".to_string()))
+        .collect()
+}
+
+pub fn report(
+    state: &ServerState,
+    keys: &KeyHolder,
+    me: &UserProfile,
+    form: ReportForm,
+    reported_name: String,
+    streams: Vec<StreamId>,
+    now: DateTime<Utc>,
+) -> Result<OutgoingReport, String> {
     if !REPORT_REASONS.contains(&form.reason.as_str()) {
         return Err("pick a reason for the report".into());
     }
     if form.reported == me.id {
         return Err("you cannot report yourself".into());
     }
-    let excerpt = match (form.channel, form.message) {
-        (Some(channel), Some(message)) => state
-            .messages(channel)
-            .iter()
-            .find(|m| m.id == message && m.author == form.reported)
-            .and_then(|m| keys.open(state, m))
-            .map(|m| m.content)
-            .ok_or("that message is no longer available")?,
-        _ => String::new(),
-    };
+    let picked = picked_ids(&form)?;
+    let opened = opened_messages(state, keys, form.channel, &picked)?;
     let owner = state.server.owner;
-    if owner == me.id {
-        return Err("you own this server, so reports would come to you".into());
-    }
-    if form.reported == owner {
-        return Err("reports go to the server owner, so the owner cannot be reported here".into());
-    }
-    let report = Report {
-        id: MessageId::new().to_string(),
-        server: state.server.id.to_string(),
-        channel: form.channel.map(|c| c.to_string()),
-        message: form.message.map(|m| m.to_string()),
-        reporter: me.id.to_string(),
-        reporter_name: me.visible_name().to_string(),
-        reported: form.reported.to_string(),
-        reported_name,
+    let name_of = |user: UserId| if user == form.reported { reported_name.clone() } else { crate::display_name(state, user) };
+    let channel_name = form.channel.and_then(|c| state.server.channels.iter().find(|ch| ch.id == c)).map(|ch| ch.name.clone()).unwrap_or_default();
+    let note = truncate(form.note.trim(), MAX_NOTE);
+    let shown = opened.iter().find(|m| m.author == form.reported).or(opened.first());
+    let to_owner = (owner != me.id && form.reported != owner).then(|| {
+        let report = Report {
+            id: MessageId::new().to_string(),
+            server: state.server.id.to_string(),
+            channel: form.channel.map(|c| c.to_string()),
+            message: shown.map(|m| m.id.to_string()),
+            reporter: me.id.to_string(),
+            reporter_name: me.visible_name().to_string(),
+            reported: form.reported.to_string(),
+            reported_name: reported_name.clone(),
+            reason: form.reason.clone(),
+            note: note.clone(),
+            excerpt: truncate(shown.map(|m| m.content.as_str()).unwrap_or_default(), MAX_EXCERPT),
+            created_at: now.to_rfc3339(),
+        };
+        (owner, report)
+    });
+    let host = HostReport {
+        community: state.server.id.to_string(),
+        community_name: clip(&state.server.name, MAX_NAME_CHARS),
+        owner: person(owner, &name_of(owner)),
+        reporter: person(me.id, me.visible_name()),
+        reported: person(form.reported, &reported_name),
         reason: form.reason,
-        note: truncate(form.note.trim(), MAX_NOTE),
-        excerpt: truncate(&excerpt, MAX_EXCERPT),
-        created_at: now.to_rfc3339(),
+        note,
+        messages: opened
+            .iter()
+            .map(|m| PickedMessage {
+                id: m.id.to_string(),
+                channel: clip(&channel_name, MAX_NAME_CHARS),
+                author: person(m.author, &name_of(m.author)),
+                at: m.created_at.to_rfc3339(),
+                text: clip(&m.content, MAX_MESSAGE_CHARS),
+            })
+            .collect(),
+        streams: streams.into_iter().take(MAX_REPORTED_STREAMS).collect(),
+        sent_at: now.to_rfc3339(),
     };
-    Ok((owner, report))
+    Ok(OutgoingReport { owner: to_owner, host })
 }
 
 pub fn received_report(servers: &HashMap<ServerId, ServerState>, me: UserId, sender: UserId, content: &str) -> Option<Report> {
@@ -641,19 +699,85 @@ mod tests {
             state.apply(commy_core::ServerEvent::MemberJoin { server: sid, profile: p.clone() }).unwrap();
         }
         let keys = KeyHolder::new(None);
-        let form = |reported: UserId, reason: &str| ReportForm { reported, channel: None, message: None, reason: reason.into(), note: "  rude  ".into() };
-        let (to, made) = super::report(&state, &keys, &member, form(other.id, "spam"), "other".into(), Utc::now()).unwrap();
+        let form = |reported: UserId, reason: &str| ReportForm { reported, channel: None, messages: Vec::new(), reason: reason.into(), note: "  rude  ".into() };
+        let send = |me: &UserProfile, form: ReportForm| super::report(&state, &keys, me, form, "other".into(), Vec::new(), Utc::now());
+        let made = send(&member, form(other.id, "spam")).unwrap();
+        let (to, made) = made.owner.unwrap();
         assert_eq!((to, made.note.as_str(), made.reported.as_str()), (owner.id, "rude", other.id.to_string().as_str()));
-        assert_eq!(super::report(&state, &keys, &member, form(other.id, "nope"), String::new(), Utc::now()).unwrap_err(), "pick a reason for the report");
-        assert_eq!(super::report(&state, &keys, &member, form(member.id, "spam"), String::new(), Utc::now()).unwrap_err(), "you cannot report yourself");
-        assert!(super::report(&state, &keys, &member, form(owner.id, "spam"), String::new(), Utc::now()).is_err());
-        assert!(super::report(&state, &keys, &owner, form(other.id, "spam"), String::new(), Utc::now()).is_err());
-        let missing = ReportForm { channel: Some(ChannelId::new()), message: Some(MessageId::new()), ..form(other.id, "spam") };
-        assert_eq!(super::report(&state, &keys, &member, missing, String::new(), Utc::now()).unwrap_err(), "that message is no longer available");
-        let servers = HashMap::from([(sid, state)]);
+        assert_eq!(send(&member, form(other.id, "nope")).err().unwrap(), "pick a reason for the report");
+        assert_eq!(send(&member, form(member.id, "spam")).err().unwrap(), "you cannot report yourself");
+        let missing = ReportForm { channel: Some(ChannelId::new()), messages: vec![MessageId::new()], ..form(other.id, "spam") };
+        assert_eq!(send(&member, missing).err().unwrap(), "that message is no longer available");
+        let servers = HashMap::from([(sid, state.clone())]);
         assert_eq!(received_report(&servers, owner.id, member.id, &made.encode()), Some(made.clone()));
         assert_eq!(received_report(&servers, member.id, member.id, &made.encode()), None, "only the owner takes reports");
         assert_eq!(received_report(&servers, owner.id, other.id, &made.encode()), None, "the sender must be the reporter");
+    }
+
+    #[test]
+    fn every_report_also_reaches_the_sync_operator_even_about_the_owner() {
+        let owner = UserProfile::new("owner");
+        let member = UserProfile::new("member");
+        let mut state = ServerState::new(commy_core::Server::new("Hangout", owner.id));
+        let sid = state.server.id;
+        state.apply(commy_core::ServerEvent::MemberJoin { server: sid, profile: member.clone() }).unwrap();
+        let keys = KeyHolder::new(None);
+        let stream = commy_sync::StreamSecret::random().keys().id;
+        let form = |reported: UserId| ReportForm { reported, channel: None, messages: Vec::new(), reason: "inappropriate".into(), note: String::new() };
+        let about_owner = super::report(&state, &keys, &member, form(owner.id), "owner".into(), vec![stream], Utc::now()).unwrap();
+        assert!(about_owner.owner.is_none(), "the owner is not asked to judge themselves");
+        assert_eq!(about_owner.host.reported.id, owner.id.to_string());
+        assert_eq!(about_owner.host.owner.id, owner.id.to_string());
+        assert_eq!(about_owner.host.community, sid.to_string());
+        assert_eq!(about_owner.host.community_name, "Hangout");
+        assert_eq!(about_owner.host.streams, vec![stream]);
+        assert_eq!(about_owner.host.check(), Ok(()));
+        let by_owner = super::report(&state, &keys, &owner, form(member.id), "member".into(), Vec::new(), Utc::now()).unwrap();
+        assert!(by_owner.owner.is_none(), "an owner's report goes only to the operator");
+        assert_eq!(by_owner.host.reporter.id, owner.id.to_string());
+    }
+
+    #[test]
+    fn picked_messages_travel_as_the_reporter_saw_them() {
+        let owner = UserProfile::new("owner");
+        let (member_identity, other_identity) = (commy_core::Identity::generate(), commy_core::Identity::generate());
+        let (mut member, mut other) = (UserProfile::new("member"), UserProfile::new("other"));
+        member.identity = Some(member_identity.public());
+        other.identity = Some(other_identity.public());
+        let mut state = ServerState::new(commy_core::Server::new("Hangout", owner.id));
+        let sid = state.server.id;
+        for p in [&member, &other] {
+            state.apply(commy_core::ServerEvent::MemberJoin { server: sid, profile: p.clone() }).unwrap();
+        }
+        let channel = state.server.channels.iter().find(|c| c.kind.holds_messages()).unwrap().clone();
+        let said = |author: &UserProfile, identity: &commy_core::Identity, text: &str| {
+            let mut message = commy_core::Message::new(channel.id, author.id, text.to_string());
+            message.sign(sid, identity);
+            message
+        };
+        let (context, insult) = (said(&member, &member_identity, "please stop"), said(&other, &other_identity, &"x".repeat(MAX_MESSAGE_CHARS + 50)));
+        for m in [&context, &insult] {
+            state.apply(commy_core::ServerEvent::MessageCreate { message: m.clone() }).unwrap();
+        }
+        let keys = KeyHolder::new(None);
+        let form = ReportForm {
+            reported: other.id,
+            channel: Some(channel.id),
+            messages: vec![context.id, insult.id, context.id],
+            reason: "harassment".into(),
+            note: String::new(),
+        };
+        let made = super::report(&state, &keys, &member, form, "other".into(), Vec::new(), Utc::now()).unwrap();
+        let picked = &made.host.messages;
+        assert_eq!(picked.len(), 2, "a message picked twice is sent once");
+        assert_eq!((picked[0].text.as_str(), picked[0].author.name.as_str()), ("please stop", "member"));
+        assert_eq!(picked[1].text.chars().count(), MAX_MESSAGE_CHARS);
+        assert_eq!(picked[1].channel, channel.name);
+        let (_, to_owner) = made.owner.unwrap();
+        assert_eq!(to_owner.message, Some(insult.id.to_string()), "the owner sees the reported person's own message");
+        assert_eq!(to_owner.excerpt.chars().count(), MAX_EXCERPT);
+        let too_many = ReportForm { reported: other.id, channel: Some(channel.id), messages: (0..=MAX_PICKED_MESSAGES).map(|_| MessageId::new()).collect(), reason: "spam".into(), note: String::new() };
+        assert!(super::report(&state, &keys, &member, too_many, String::new(), Vec::new(), Utc::now()).err().unwrap().starts_with("pick at most"));
     }
 
     #[test]

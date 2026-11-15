@@ -3,7 +3,7 @@ use commy_sync_server::config::Config;
 use commy_sync_server::fcm::Fcm;
 use commy_sync_server::store::Store;
 use commy_sync_server::wake::Pusher;
-use commy_sync_server::{serve, spawn_housekeeping, Service};
+use commy_sync_server::{learn_dropped, operator, serve, spawn_housekeeping, Service};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,8 +15,11 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
-    raise_open_file_limit();
     let config = Config::from_env(|key| std::env::var(key).ok()).map_err(|e| anyhow::anyhow!("invalid sync service configuration: {e}"))?;
+    if !args.is_empty() {
+        return run_operator_command(&config, &args).await;
+    }
+    raise_open_file_limit();
     let store = match &config.database_url {
         Some(url) => Store::postgres(url).await?,
         None => {
@@ -37,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
     };
     let pusher = Pusher::live(fcm, apns);
     let service = Service::with_pusher(store, &config, pusher);
+    learn_dropped(&service).await;
     spawn_housekeeping(service.clone());
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!("sync service listening: {}", config.summary());
@@ -56,6 +60,14 @@ async fn check(args: &[String]) -> anyhow::Result<()> {
     };
     let checked = commy_sync_server::check::run(url, roots).await.map_err(|e| anyhow::anyhow!("{url}: {e}"))?;
     println!("ok: {url} stored and returned entry {} (sync protocol {})", checked.seq, checked.protocol);
+    Ok(())
+}
+
+async fn run_operator_command(config: &Config, words: &[String]) -> anyhow::Result<()> {
+    let command = operator::Command::parse(words).map_err(|usage| anyhow::anyhow!("{usage}"))?;
+    let url = config.database_url.as_deref().ok_or_else(|| anyhow::anyhow!("operator commands need DATABASE_URL"))?;
+    let store = Store::postgres(url).await?;
+    print!("{}", operator::run(&store, command).await?);
     Ok(())
 }
 

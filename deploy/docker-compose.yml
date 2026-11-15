@@ -140,6 +140,14 @@ services:
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_TOPIC: ${APNS_TOPIC:-}
+      SYNC_ABUSE_CONTACT: ${SYNC_ABUSE_CONTACT:-}
+      SYNC_OPERATOR_NAME: ${SYNC_OPERATOR_NAME:-${COMMY_INSTANCE_NAME:-}}
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
       RUST_LOG: ${SYNC_LOG:-info}
     depends_on:
       postgres:

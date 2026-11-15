@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 chrono = { workspace = true }
 commy-core = { workspace = true }
+commy-sync = { workspace = true }
 data-encoding = { workspace = true }
 idna = "1"
 serde = { workspace = true }
