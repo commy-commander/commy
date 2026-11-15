@@ -100,6 +100,16 @@ impl Thread {
     }
 }
 
+pub const MAX_ROLE_NAME_CHARS: usize = 50;
+
+pub fn checked_role(mut role: Role) -> Option<Role> {
+    let name_fits = !role.name.trim().is_empty() && role.name.chars().count() <= MAX_ROLE_NAME_CHARS && !role.name.chars().any(char::is_control);
+    let tag_fits = role.tag.as_deref().is_none_or(valid_role_tag);
+    let banner_fits = role.banner.as_deref().is_none_or(|b| ImageRef::parse(b).is_some());
+    role.color = role.color.map(|c| c.to_lowercase()).filter(|c| valid_hex_color(c));
+    (name_fits && tag_fits && banner_fits).then_some(role)
+}
+
 pub fn clean_thread_name(name: &str) -> Option<String> {
     let name = name.chars().filter(|c| !c.is_control()).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
     (!name.is_empty()).then_some(name)
@@ -737,7 +747,7 @@ impl Server {
     }
 
     pub fn role_color_for(&self, user: UserId) -> Option<String> {
-        self.top_role_with(user, |r| r.color.is_some()).and_then(|r| r.color.clone())
+        self.top_role_with(user, |r| r.color.as_deref().is_some_and(valid_hex_color)).and_then(|r| r.color.clone())
     }
 
     pub fn top_role_with(&self, user: UserId, wanted: impl Fn(&Role) -> bool) -> Option<&Role> {

@@ -2998,7 +2998,11 @@ mod tests {
         let fits = profile_of_size("fits", MAX_RELAYED_PROFILE_BYTES);
         let over = profile_of_size("over", MAX_RELAYED_PROFILE_BYTES + 1);
         join_without_key(&b, &fits);
-        join_without_key(&b, &over);
+        b.with(|s| {
+            let server = s.server.id;
+            let over = over.clone();
+            assert_eq!(s.apply(ServerEvent::MemberJoin { server, profile: over }), Err(commy_core::StoreError::TooLarge));
+        });
         let frames = vec![
             CatchupFrame::Profiles(vec![fits.clone(), over.clone()]),
             CatchupFrame::Push {

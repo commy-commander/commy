@@ -604,7 +604,7 @@ impl ServerView {
             .map(|r| RoleView {
                 id: r.id.to_string(),
                 name: r.name.clone(),
-                color: r.color.clone(),
+                color: r.color.clone().filter(|c| commy_core::server::valid_hex_color(c)),
                 position: r.position,
                 permissions: permission_names(r.permissions),
                 self_assignable: r.self_assignable,

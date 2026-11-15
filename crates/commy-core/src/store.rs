@@ -1138,6 +1138,9 @@ impl ServerState {
         if self.deleted {
             return Ok(false);
         }
+        if carried_profile(&event).is_some_and(|p| !p.fits()) {
+            return Err(StoreError::TooLarge);
+        }
         match event {
             ServerEvent::MessageCreate { message } => self.create_message(message),
             ServerEvent::MessageEdit {
@@ -2007,12 +2010,7 @@ impl ServerState {
             }
             ServerEvent::RoleUpdate { server, role } => {
                 self.same_server(server)?;
-                if role.banner.as_deref().is_some_and(|b| crate::server::ImageRef::parse(b).is_none()) {
-                    return Ok(false);
-                }
-                if role.tag.as_deref().is_some_and(|t| !crate::server::valid_role_tag(t)) || role.name.trim().is_empty() {
-                    return Ok(false);
-                }
+                let Some(role) = crate::server::checked_role(role) else { return Ok(false) };
                 let late_defaults = self.server.late_member_defaults();
                 let adopting = self.server.defaults_version < crate::server::MEMBER_DEFAULTS_VERSION;
                 let Some(existing) = self.server.roles.iter_mut().find(|r| r.id == role.id) else { return Ok(false) };
@@ -2216,6 +2214,7 @@ impl ServerState {
             }
             ServerEvent::RoleCreate { server, role } => {
                 self.same_server(server)?;
+                let Some(role) = crate::server::checked_role(role) else { return Ok(false) };
                 if self.server.roles.iter().any(|r| r.id == role.id) {
                     return Ok(false);
                 }
@@ -3099,6 +3098,13 @@ fn waits_for(event: &ServerEvent) -> Option<MessageId> {
         | E::ReactionSet { message, .. }
         | E::PollVote { message, .. }
         | E::PollClose { message, .. } => Some(*message),
+        _ => None,
+    }
+}
+
+fn carried_profile(event: &ServerEvent) -> Option<&UserProfile> {
+    match event {
+        ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } | ServerEvent::JoinAsk { profile, .. } => Some(profile),
         _ => None,
     }
 }
@@ -5451,6 +5457,45 @@ mod tests {
 
     fn by_owner(state: &ServerState, owner: UserId, at: i64, event: ServerEvent) -> SignedEvent {
         SignedEvent::sign(state.server.id, owner, at, event, &identity_for(owner))
+    }
+
+    #[test]
+    fn role_colors_from_peers_must_be_plain_hex() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let role = |color: &str| Role {
+            id: RoleId::new(),
+            name: "r".into(),
+            color: Some(color.into()),
+            permissions: Permissions::NONE,
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        };
+        let sneaky = role("0f0 url(https://example.invalid/b)");
+        let fine = role("FF4D4D");
+        state.apply(ServerEvent::RoleCreate { server: sid, role: sneaky.clone() }).unwrap();
+        state.apply(ServerEvent::RoleCreate { server: sid, role: fine.clone() }).unwrap();
+        let color_of = |id| state.server.roles.iter().find(|r| r.id == id).unwrap().color.clone();
+        assert_eq!(color_of(sneaky.id), None);
+        assert_eq!(color_of(fine.id).as_deref(), Some("ff4d4d"));
+        let renamed = Role { name: "x".repeat(51), ..fine.clone() };
+        assert_eq!(state.apply(ServerEvent::RoleUpdate { server: sid, role: renamed }), Ok(false));
+    }
+
+    #[test]
+    fn oversized_profiles_are_refused() {
+        let (mut state, _, _) = fixture();
+        let sid = state.server.id;
+        let mut profile = keyed_profile("big");
+        profile.about = Some("x".repeat(crate::user::MAX_PROFILE_BYTES));
+        assert!(!profile.fits());
+        assert_eq!(state.apply(ServerEvent::MemberJoin { server: sid, profile: profile.clone() }), Err(StoreError::TooLarge));
+        assert!(!state.server.is_member(profile.id));
+        assert!(keyed_profile("small").fits());
     }
 
     #[test]

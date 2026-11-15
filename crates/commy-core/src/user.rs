@@ -92,6 +92,7 @@ pub fn valid_card_effect(name: &str) -> bool {
 }
 
 pub const MAX_ABOUT_CHARS: usize = 190;
+pub const MAX_PROFILE_BYTES: usize = crate::message::MAX_MESSAGE_BYTES;
 pub const MAX_STATUS_CHARS: usize = 64;
 pub const MAX_PROFILE_EMOJIS: usize = 10;
 
@@ -216,6 +217,10 @@ impl UserProfile {
 
     pub fn visible_name(&self) -> &str {
         self.display_name.as_deref().unwrap_or(&self.username)
+    }
+
+    pub fn fits(&self) -> bool {
+        postcard::experimental::serialized_size(self).is_ok_and(|size| size <= MAX_PROFILE_BYTES)
     }
 
     pub fn as_seen_by_others(&self) -> UserProfile {

@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::media::{read_frame, write_frame};
+use crate::media::{read_frame, read_frame_capped, write_frame};
+
+pub const MAX_KNOCK_FRAME: u32 = 64 * 1024;
 use crate::node::accept_error;
 
 pub const KNOCK_ALPN: &[u8] = b"commy/knock/1";
@@ -106,7 +108,7 @@ impl KnockAcceptor {
     async fn answer(&self, connection: Connection) -> Result<()> {
         let peer = *connection.remote_id().as_bytes();
         let (mut send, mut recv) = connection.accept_bi().await?;
-        let request: KnockRequest = read_frame(&mut recv)
+        let request: KnockRequest = read_frame_capped(&mut recv, MAX_KNOCK_FRAME)
             .await
             .map_err(|e| anyhow::anyhow!("bad knock: {e}"))?
             .context("peer closed before knocking")?;

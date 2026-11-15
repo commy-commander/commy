@@ -3,7 +3,7 @@ use crate::catchup::{
     CATCHUP_ALPN, HANDSHAKE_TIMEOUT,
 };
 use crate::dm::{DmAck, DmEnvelope, LegacyDmEnvelope, DM_ALPN, LEGACY_DM_ALPN};
-use crate::media::{read_frame, read_frame_bytes, write_frame, MediaError, MediaHello, MediaPacket, VoiceDatagram, MAX_MEDIA_FRAME, MEDIA_ALPN};
+use crate::media::{read_frame, read_frame_bytes, write_frame, MediaError, MediaHello, MediaPacket, VoiceDatagram, MEDIA_ALPN};
 use crate::protocol::{Envelope, WirePayload};
 use crate::ticket::ServerTicket;
 use anyhow::{Context, Result};
@@ -376,10 +376,31 @@ pub struct IncomingDm {
     pub node: [u8; 32],
 }
 
+pub const MAX_DM_FRAME: u32 = 256 * 1024;
+const DM_FRAMES_PER_MINUTE: u32 = 120;
+const DM_SENDERS_REMEMBERED: usize = 4096;
+
 #[derive(Debug)]
 struct DmAcceptor {
     tx: mpsc::UnboundedSender<IncomingDm>,
     legacy: bool,
+    recent: Arc<std::sync::Mutex<HashMap<[u8; 32], (std::time::Instant, u32)>>>,
+}
+
+fn dm_rate_allows(recent: &std::sync::Mutex<HashMap<[u8; 32], (std::time::Instant, u32)>>, node: [u8; 32], now: std::time::Instant) -> bool {
+    let mut recent = recent.lock().unwrap();
+    if recent.len() >= DM_SENDERS_REMEMBERED {
+        recent.retain(|_, (since, _)| now.duration_since(*since) < std::time::Duration::from_secs(60));
+    }
+    if recent.len() >= DM_SENDERS_REMEMBERED && !recent.contains_key(&node) {
+        return false;
+    }
+    let entry = recent.entry(node).or_insert((now, 0));
+    if now.duration_since(entry.0) >= std::time::Duration::from_secs(60) {
+        *entry = (now, 0);
+    }
+    entry.1 += 1;
+    entry.1 <= DM_FRAMES_PER_MINUTE
 }
 
 impl ProtocolHandler for DmAcceptor {
@@ -394,14 +415,16 @@ impl DmAcceptor {
         let (mut send, mut recv) = connection.accept_bi().await?;
         loop {
             let envelope = if self.legacy {
-                read_frame::<_, LegacyDmEnvelope>(&mut recv).await.map(|frame| frame.map(LegacyDmEnvelope::upgrade))
+                crate::media::read_frame_capped::<_, LegacyDmEnvelope>(&mut recv, MAX_DM_FRAME).await.map(|frame| frame.map(LegacyDmEnvelope::upgrade))
             } else {
                 read_dm_frame(&mut recv).await
             };
             let Some(envelope) = envelope.map_err(|e| anyhow::anyhow!("bad dm frame: {e}"))? else {
                 return Ok(());
             };
-            let accepted = envelope.sent_from(&node) && self.tx.send(IncomingDm { envelope, node }).is_ok();
+            let accepted = envelope.sent_from(&node)
+                && dm_rate_allows(&self.recent, node, std::time::Instant::now())
+                && self.tx.send(IncomingDm { envelope, node }).is_ok();
             write_frame(&mut send, &DmAck { accepted })
                 .await
                 .map_err(|e| anyhow::anyhow!("dm ack failed: {e}"))?;
@@ -410,7 +433,7 @@ impl DmAcceptor {
 }
 
 async fn read_dm_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Option<DmEnvelope>, MediaError> {
-    let Some(bytes) = read_frame_bytes(recv, MAX_MEDIA_FRAME).await? else {
+    let Some(bytes) = read_frame_bytes(recv, MAX_DM_FRAME).await? else {
         return Ok(None);
     };
     DmEnvelope::decode(&bytes).map(Some).ok_or(MediaError::Malformed)
@@ -1287,6 +1310,7 @@ impl CommyNode {
     )> {
         let (media_tx, media_rx) = mpsc::unbounded_channel();
         let (dm_tx, dm_rx) = mpsc::unbounded_channel();
+        let dm_recent = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let (entry_key_tx, entry_key_rx) = mpsc::unbounded_channel();
         let (mirror_tx, mirror_rx) = mpsc::unbounded_channel();
         let (knock_tx, knock_rx) = mpsc::unbounded_channel();
@@ -1351,8 +1375,8 @@ impl CommyNode {
         let router = router.accept(FILES_ALPN, FilesAcceptor { shelf: shelf.clone(), gate: blob_gate.clone() });
         let router = router
             .accept(MEDIA_ALPN, MediaAcceptor { tx: media_tx, gate: media_gate.clone() })
-            .accept(DM_ALPN, DmAcceptor { tx: dm_tx.clone(), legacy: false })
-            .accept(LEGACY_DM_ALPN, DmAcceptor { tx: dm_tx, legacy: true })
+            .accept(DM_ALPN, DmAcceptor { tx: dm_tx.clone(), legacy: false, recent: dm_recent.clone() })
+            .accept(LEGACY_DM_ALPN, DmAcceptor { tx: dm_tx, legacy: true, recent: dm_recent })
             .accept(crate::entry_key::ENTRY_KEY_ALPN, crate::entry_key::EntryKeyAcceptor { tx: entry_key_tx })
             .accept(CATCHUP_ALPN, catchup)
             .accept(crate::mirror::MIRROR_ALPN, crate::mirror::MirrorAcceptor { tx: mirror_tx, local })

@@ -350,12 +350,33 @@ fn nudge_from(app: &App, me: UserId, sender: &UserProfile, message: &DmMessage) 
     Received::Nudge { heard, name: sender.visible_name().to_string() }
 }
 
+const MAX_PENDING_FRIEND_REQUESTS: usize = 50;
+
+fn friend_request_welcome(app: &App, partner: UserId, node: [u8; 32]) -> bool {
+    let shares_server = app.servers.lock().unwrap().values().any(|s| s.server.is_member(partner));
+    let safety = app.safety.lock().unwrap();
+    let known = [&safety.friends, &safety.accepted, &safety.friend_in, &safety.friend_out].iter().any(|people| people.contains(&partner));
+    if known {
+        return !safety.is_blocked(partner);
+    }
+    if safety.friend_in.len() >= MAX_PENDING_FRIEND_REQUESTS {
+        return false;
+    }
+    let from = safety::Sender { blocked: safety.is_blocked(partner), accepted: false, shares_server, node };
+    let verdict = app.dm_filter.lock().unwrap().classify(safety.dm_policy, safety.spam_filter, &from, partner, "", chrono::Utc::now().timestamp());
+    verdict != safety::Verdict::Drop && verdict != safety::Verdict::Spam
+}
+
 pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
     let app = access.app();
     let Some(sender) = screen_dm(app, &dm) else {
         tracing::warn!("dropped a DM not for us, not from the node it names, or not signed by its sender");
         return Received::Dropped;
     };
+    if !sender.fits() {
+        tracing::debug!("dropped a DM whose sender profile is too large");
+        return Received::Dropped;
+    }
     let note = dm.envelope.note;
     let message = dm.envelope.message;
     let partner = sender.id;
@@ -363,6 +384,10 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return Received::Report { from: partner, content: message.content };
     }
     if let Some(signal) = FriendSignal::decode(&message.content) {
+        if signal == FriendSignal::Request && !friend_request_welcome(app, partner, dm.node) {
+            tracing::debug!("dropped a friend request from {partner}");
+            return Received::Dropped;
+        }
         let reply = {
             let mut safety = app.safety.lock().unwrap();
             safety::note_friend_signal(&mut safety, partner, message.id, message.created_at)
