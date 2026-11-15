@@ -239,7 +239,7 @@ mod tests {
         let file = DriveFile { blob: node(1), size: 10, mime: "application/pdf".into() };
         let added = keys.seal_drive(&state, add_file(&state, owner.id, channel, None, "Q3 plans.pdf", file, &node(2), 1).unwrap()).unwrap();
         let ServerEvent::DriveAdd { item: ref sealed, .. } = added else { panic!() };
-        assert!(!sealed.name.contains("Q3") && !sealed.file.as_ref().unwrap().mime.contains("pdf"));
+        assert!(commy_core::channel_key::is_sealed(&sealed.name) && commy_core::channel_key::is_sealed(&sealed.file.as_ref().unwrap().mime));
         state.apply(added.clone()).unwrap();
         let shown = view(&state, channel, owner.id, None, &keys).unwrap();
         assert_eq!(shown.items[0].name, "Q3 plans.pdf");
@@ -249,7 +249,7 @@ mod tests {
         let item = shown.items[0].id.parse().unwrap();
         let renamed = keys.seal_drive(&state, edit(&state, owner.id, item, "Q4 plans.pdf", None).unwrap()).unwrap();
         let ServerEvent::DriveEdit { ref name, .. } = renamed else { panic!() };
-        assert!(!name.contains("Q4"));
+        assert!(commy_core::channel_key::is_sealed(name));
         state.apply(renamed).unwrap();
         assert_eq!(view(&state, channel, owner.id, None, &keys).unwrap().items[0].name, "Q4 plans.pdf");
     }
