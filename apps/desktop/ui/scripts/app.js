@@ -3797,11 +3797,18 @@ function renderVoiceTopic(vs) {
   topic.title = editable ? "Change the channel status" : text;
 }
 
-function placeMenuAt(menu, x, y) {
+function placeMenuAt(menu, x, y, flipY = null) {
   menu.classList.remove("hidden");
-  const r = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(x, window.innerWidth - r.width - 8)}px`;
-  menu.style.top = `${Math.min(y, window.innerHeight - r.height - 8)}px`;
+  menu.style.maxHeight = "";
+  menu.style.overflowY = "";
+  const fit = menuFitHeight(menu.offsetHeight, window.innerHeight);
+  if (fit !== null) {
+    menu.style.maxHeight = `${fit}px`;
+    menu.style.overflowY = "auto";
+  }
+  const { left, top } = menuSpot({ x, y, flipY, width: menu.offsetWidth, height: menu.offsetHeight, viewWidth: window.innerWidth, viewHeight: window.innerHeight });
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
 }
 
 function openServerMenu(server, x, y, folderId) {
@@ -10942,10 +10949,56 @@ function dmListShown() {
 }
 
 const messageOfActions = new WeakMap();
+const actionsOfBar = new WeakMap();
+
+function messageActionList(message, inThread = false, replies = 0) {
+  const list = [];
+  const add = (id, icon, title, run, extra = {}) => list.push({ id, icon, title, run, ...extra });
+  if (state.view === "server" || inDmView()) {
+    add("react", "smilePlus", "Add Reaction", anchor => openEmojiPop(anchor, emoji => setReaction(message, emoji, true), { custom: true }));
+    if (inThread) {
+      add("reply", "reply", "Reply", () => $("thread-input").focus());
+    } else {
+      add("reply", "reply", "Reply", () => startReply(message));
+      if (state.view === "server" && threadEntryShown({ replies, meta: threadMetaOf(message.id), canCreate: canCreateThreads(state.currentServer) })) {
+        add("thread", "thread", "Open Thread", () => openThread(message.id));
+      }
+    }
+  }
+  if ((state.view === "server" || inDmView()) && isOwnMessage(message) && message.content && !parseStickerToken(message.content)) {
+    add("edit", "pencil", "Edit", () => startEditMessage(message.id), { label: "Edit Message" });
+  }
+  if (state.view === "server" && canPinIn(state.currentServer, state.currentChannel)) {
+    if (message.pinned) add("pin", "pinOff", "Unpin", () => setPinned(message, false), { label: "Unpin Message" });
+    else add("pin", "pin", "Pin", () => setPinned(message, true), { label: "Pin Message" });
+  }
+  savedMessageActions(add, message);
+  if (!isOwnMessage(message)) add("hide", "eyeOff", "Hide for Me", () => setHidden(message.id, true));
+  if (state.view === "server" && reportableIn(state.currentServer, message.author_id)) {
+    add("report", "flag", "Report Message", () => openReport({
+      serverId: state.currentServer.id,
+      userId: message.author_id,
+      name: message.author_name,
+      channelId: state.currentChannel && state.currentChannel.id,
+      messageId: message.id,
+      excerpt: message.content,
+    }), { tail: true });
+  }
+  if (canDeleteMessage(message)) {
+    const own = isOwnMessage(message);
+    add("delete", "trash", own ? "Delete" : "Delete (Moderator)", (anchor, e) => {
+      if (e && e.shiftKey) deleteMessage(message);
+      else openDeleteMessage(message);
+    }, { label: own ? "Delete Message" : "Delete Message (Moderator)", tail: true, danger: true });
+  }
+  return list;
+}
 
 function messageActions(message, inThread = false, replies = 0) {
   const bar = el("div", "msg-actions");
+  const actions = messageActionList(message, inThread, replies);
   messageOfActions.set(bar, message);
+  actionsOfBar.set(bar, actions);
   const add = (icon, title, onClick, cls = "") => {
     const btn = el("button", cls);
     btn.title = title;
@@ -10956,43 +11009,9 @@ function messageActions(message, inThread = false, replies = 0) {
     };
     bar.appendChild(btn);
   };
-  if (state.view === "server" || inDmView()) {
-    add("smilePlus", "Add Reaction", e => openEmojiPop(e.currentTarget, emoji => setReaction(message, emoji, true), { custom: true }));
-    if (inThread) {
-      add("reply", "Reply", () => $("thread-input").focus());
-    } else {
-      add("reply", "Reply", () => startReply(message));
-      if (state.view === "server" && threadEntryShown({ replies, meta: threadMetaOf(message.id), canCreate: canCreateThreads(state.currentServer) })) {
-        add("thread", "Open Thread", () => openThread(message.id));
-      }
-    }
-  }
-  if (state.view === "server" && canPinIn(state.currentServer, state.currentChannel)) {
-    if (message.pinned) add("pinOff", "Unpin", () => setPinned(message, false));
-    else add("pin", "Pin", () => setPinned(message, true));
-  }
-  if ((state.view === "server" || inDmView()) && isOwnMessage(message) && message.content && !parseStickerToken(message.content)) {
-    add("pencil", "Edit", () => startEditMessage(message.id));
-  }
-  if (!isOwnMessage(message)) add("eyeOff", "Hide for Me", () => setHidden(message.id, true));
-  savedMessageActions(add, message);
-  if (message.content && !parseStickerToken(message.content)) add("more", "More", e => openMessageMenu(message, e.currentTarget));
-  if (state.view === "server" && reportableIn(state.currentServer, message.author_id)) {
-    add("flag", "Report Message", () => openReport({
-      serverId: state.currentServer.id,
-      userId: message.author_id,
-      name: message.author_name,
-      channelId: state.currentChannel && state.currentChannel.id,
-      messageId: message.id,
-      excerpt: message.content,
-    }));
-  }
-  if (canDeleteMessage(message)) {
-    add("trash", isOwnMessage(message) ? "Delete" : "Delete (Moderator)", e => {
-      if (e.shiftKey) deleteMessage(message);
-      else openDeleteMessage(message);
-    }, "danger");
-  }
+  const { quick, rest } = splitMessageActions(actions);
+  for (const action of quick) add(action.icon, action.title, e => action.run(e.currentTarget, e), action.danger ? "danger" : "");
+  if (rest.length || messageMenuExtras(message).length) add("more", "More", e => openMessageMenu(message, e.currentTarget, null, rest));
   return bar;
 }
 
@@ -15486,9 +15505,9 @@ function reportTargetsFor(userId) {
 function contextMenuBuilder(menu) {
   const item = (label, onClick, cls = "") => {
     const btn = el("button", cls, label);
-    btn.onclick = () => {
+    btn.onclick = e => {
       closeFloating();
-      onClick();
+      onClick(e);
     };
     menu.appendChild(btn);
     return btn;
@@ -17743,22 +17762,39 @@ function copyText(text, done) {
   navigator.clipboard.writeText(text).then(() => toast(done), () => toast("Could not copy"));
 }
 
-function openMessageMenu(message, anchor, image = null) {
+function messageMenuExtras(message) {
+  const extras = [];
+  const textual = Boolean(message.content) && !parseStickerToken(message.content);
+  if (textual) extras.push({ label: "Copy Text", run: () => copyText(plainText(message.content), "Text copied") });
+  if (state.view === "server" && state.currentChannel && !state.currentServer.group) {
+    extras.push({ label: "Copy Message Link", run: () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied") });
+  }
+  if (textual) extras.push({ label: "Forward", run: () => openForward(message) });
+  if (textual && speechUsable()) extras.push({ label: "Read Aloud", run: () => speakMessage(message) });
+  if (state.view === "server" && state.currentChannel && !message.pending) extras.push({ label: "Mark as Unread", run: () => markUnreadFrom(message) });
+  return extras;
+}
+
+function openMessageMenu(message, anchor, image = null, actions = []) {
   closeFloating();
   const menu = $("msg-menu");
   menu.replaceChildren();
   const { item, sep } = contextMenuBuilder(menu);
-  if (image && chatImageMenuItems(item, image)) sep();
-  if (message.content) item("Copy Text", () => copyText(plainText(message.content), "Text copied"));
-  if (state.view === "server" && state.currentChannel && !state.currentServer.group) {
-    item("Copy Message Link", () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied"));
-  }
-  if (message.content) item("Forward", () => openForward(message));
-  if (message.content && speechUsable()) item("Read Aloud", () => speakMessage(message));
-  savedMenuItems(item, message);
-  if (state.view === "server" && state.currentChannel && !message.pending) item("Mark as Unread", () => markUnreadFrom(message));
+  const entry = action => ({ label: messageMenuLabel(action), run: e => action.run(anchor, e), cls: action.danger ? "danger" : "" });
+  const images = [];
+  if (image) chatImageMenuItems((label, run) => images.push({ label, run }), image);
+  const groups = [
+    images,
+    actions.filter(action => !action.tail).map(entry),
+    messageMenuExtras(message),
+    actions.filter(action => action.tail).map(entry),
+  ].filter(group => group.length);
+  groups.forEach((group, index) => {
+    if (index) sep();
+    for (const { label, run, cls } of group) item(label, run, cls);
+  });
   const r = anchor.getBoundingClientRect();
-  placeMenuAt(menu, r.left, r.bottom + 4);
+  placeMenuAt(menu, r.left, r.bottom + 4, r.top - 4);
 }
 
 const savedState = { saved: [], reminders: [], open: false, timer: null };
@@ -17804,14 +17840,8 @@ async function toggleSaved(message) {
 function savedMessageActions(add, message) {
   if (message.pending || message.held) return;
   const saved = isSavedMessage(message.id);
-  add(saved ? "bookmarkOn" : "bookmark", saved ? "Unsave" : "Save", () => toggleSaved(message));
-  add("bell", "Remind Me", e => openRemindPop(message, e.currentTarget));
-}
-
-function savedMenuItems(item, message) {
-  if (message.pending || message.held) return;
-  item(isSavedMessage(message.id) ? "Remove from Saved" : "Save Message", () => toggleSaved(message));
-  item("Remind Me", () => openRemindPop(message, messageRow(message.id) || $("messages")));
+  add("save", saved ? "bookmarkOn" : "bookmark", saved ? "Unsave" : "Save", () => toggleSaved(message), { label: saved ? "Remove from Saved" : "Save Message" });
+  add("remind", "bell", "Remind Me", anchor => openRemindPop(message, anchor));
 }
 
 function openRemindPop(message, anchor) {
@@ -17852,7 +17882,7 @@ function openRemindPop(message, anchor) {
   pick.appendChild(set);
   pop.appendChild(pick);
   const r = anchor.getBoundingClientRect();
-  placeMenuAt(pop, r.left, r.bottom + 4);
+  placeMenuAt(pop, r.left, r.bottom + 4, r.top - 4);
 }
 
 function closeRemindPop() {

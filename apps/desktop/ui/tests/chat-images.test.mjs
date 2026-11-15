@@ -68,8 +68,8 @@ test("chat pictures are marked so menus can find them", () => {
 
 test("right-clicking a picture on desktop puts the picture items above the message items", () => {
   assert.match(minors, /const image = chatImageAt\(e\.target\);/);
-  assert.match(minors, /openMessageMenu\(message, minorsPointAnchor\(e\.clientX, e\.clientY\), image\);/);
-  assert.match(app, /if \(image && chatImageMenuItems\(item, image\)\) sep\(\);/);
+  assert.match(minors, /openMessageMenu\(message, minorsPointAnchor\(e\.clientX, e\.clientY\), image, actionsOfBar\.get\(bar\)\);/);
+  assert.match(app, /if \(image\) chatImageMenuItems\(\(label, run\) => images\.push\(\{ label, run \}\), image\);/);
 });
 
 test("holding a picture on a phone lists copy and save first, and copy runs inside the tap", () => {

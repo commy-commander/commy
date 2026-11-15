@@ -60,8 +60,8 @@ test("a right click on a message opens the More menu at the pointer", () => {
   assert.equal(box.bottom + 4, 200);
   assert.equal(anchor.closest(".x"), null);
   assert.ok(glue.includes('document.addEventListener("contextmenu", minorsMessageMenu, true);'));
-  assert.ok(glue.includes('openMessageMenu(message, minorsPointAnchor(e.clientX, e.clientY), image);'));
-  assert.ok(app.includes('add("more", "More", e => openMessageMenu(message, e.currentTarget));'));
+  assert.ok(glue.includes('openMessageMenu(message, minorsPointAnchor(e.clientX, e.clientY), image, actionsOfBar.get(bar));'));
+  assert.ok(app.includes('add("more", "More", e => openMessageMenu(message, e.currentTarget, null, rest));'));
 });
 
 test("the hover bar drops inside a message with no room above it", () => {

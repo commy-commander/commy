@@ -1852,30 +1852,30 @@ function holdImageRow(title, run) {
   return row;
 }
 
+function holdMoreRows(rows, message) {
+  if (message.content && !parseStickerToken(message.content)) rows.appendChild(holdRow("Copy text", () => copyText(plainText(message.content), "Text copied")));
+  if (messageMenuExtras(message).length) rows.appendChild(holdRow("More", () => openMessageMenu(message, fakeAnchor())));
+}
+
 function openHoldSheet(msg, image = null) {
   const bar = msg.querySelector(":scope > .msg-actions");
   const message = bar && messageOfActions.get(bar);
-  if (!bar || !message) return false;
-  const buttons = [...bar.querySelectorAll("button")];
+  const actions = bar && actionsOfBar.get(bar);
+  if (!message || !actions) return false;
   const rows = $("pt-hold-rows");
   rows.replaceChildren();
   if (image) for (const { title, run } of chatImageSheetActions(image)) rows.appendChild(holdImageRow(title, run));
-  for (const button of buttons) {
-    if (button.title === "Add Reaction") continue;
-    if (button.title === "More") {
-      if (message.content) rows.appendChild(holdRow("Copy text", () => copyText(plainText(message.content), "Text copied")));
-      rows.appendChild(holdRow("More", () => openMessageMenu(message, fakeAnchor())));
-      continue;
-    }
-    if (button.title === "Remind Me") {
-      rows.appendChild(holdRow("Remind Me", () => openRemindPop(message, fakeAnchor())));
-      continue;
-    }
-    rows.appendChild(holdRow(button.title, () => button.click()));
-  }
+  const react = actions.find(action => action.id === "react");
+  const listed = actions.filter(action => action !== react);
+  const moreAt = listed.some(action => action.tail) ? listed.findIndex(action => action.tail) : listed.length;
+  listed.forEach((action, index) => {
+    if (index === moreAt) holdMoreRows(rows, message);
+    rows.appendChild(holdRow(action.title, () => action.run(fakeAnchor())));
+  });
+  if (moreAt === listed.length) holdMoreRows(rows, message);
   const reactions = $("pt-hold-rx");
   reactions.replaceChildren();
-  const canReact = buttons.some(button => button.title === "Add Reaction");
+  const canReact = Boolean(react);
   reactions.classList.toggle("hidden", !canReact);
   if (canReact) {
     const mine = new Set((message.reactions || []).filter(r => state.user && r.users.includes(state.user.id)).map(r => r.emoji));
@@ -1889,7 +1889,7 @@ function openHoldSheet(msg, image = null) {
     const more = studioNode("button", "key sq lg rx-key", '<i data-i="smile-plus"></i>');
     more.type = "button";
     more.setAttribute("aria-label", "More reactions");
-    more.onclick = () => closeSheets(() => buttons.find(button => button.title === "Add Reaction").click());
+    more.onclick = () => closeSheets(() => react.run(fakeAnchor()));
     reactions.appendChild(more);
   }
   if (!rows.children.length && !canReact) return false;

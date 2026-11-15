@@ -35,9 +35,9 @@ function minorsMessageMenu(e) {
   const bar = msg.querySelector(":scope > .msg-actions");
   const message = bar && messageOfActions.get(bar);
   const image = chatImageAt(e.target);
-  if (!message || (!image && !bar.querySelector(":scope > button[title=\"More\"]"))) return;
+  if (!message || (!image && !bar.children.length)) return;
   e.preventDefault();
-  openMessageMenu(message, minorsPointAnchor(e.clientX, e.clientY), image);
+  openMessageMenu(message, minorsPointAnchor(e.clientX, e.clientY), image, actionsOfBar.get(bar));
 }
 
 function minorsScroller(node) {
