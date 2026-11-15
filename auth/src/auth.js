@@ -24,6 +24,7 @@ import { commyVault } from "./vault.js";
 import { commyVerifyEmailResult } from "./verify-email-result.js";
 import { commyFolderLock } from "./folder-lock.js";
 import { createMailer } from "./mailer.js";
+import { commyThrowawayEmails, loadThrowawayDomains, refuseThrowawayEmail } from "./throwaway-email.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
 
 const PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS = ["google"];
@@ -79,6 +80,7 @@ export function postgresDatabase(pool) {
 }
 
 export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
+  const throwawayDomains = config.blockThrowawayEmails ? loadThrowawayDomains() : null;
   const plugins = [
     bearer(),
     deviceAuthorization({
@@ -111,6 +113,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
+  if (throwawayDomains) plugins.push(commyThrowawayEmails({ domains: throwawayDomains }));
 
   if (config.turnstile) {
     plugins.push(
@@ -214,12 +217,16 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         create: {
           before: async (user, ctx) => {
             refuseWithoutAccessCode(config.accessCode, ctx);
+            refuseThrowawayEmail(user.email, throwawayDomains);
             const confirmed = await recordAdultConfirmation(user, ctx, { required: config.adultsOnly, termsVersion: config.termsVersion });
             return { data: withAName(cleanAccountProfile(confirmed)) };
           },
         },
         update: {
-          before: async (data) => ({ data: cleanAccountProfile(data) }),
+          before: async (data) => {
+            if (data.email) refuseThrowawayEmail(data.email, throwawayDomains);
+            return { data: cleanAccountProfile(data) };
+          },
         },
       },
       session: {

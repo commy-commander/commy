@@ -11,6 +11,7 @@ import { createLinkBlocklist } from "./link-blocklist.js";
 import { createPages } from "./pages.js";
 import { createWebClient } from "./web-client.js";
 import { connectRedis } from "./redis.js";
+import { startUnverifiedSweeps } from "./unverified-cleanup.js";
 
 const config = loadConfig();
 const SEAL_ONCE_OLDER_CONTAINERS_HAVE_STOPPED_MS = 10 * 60 * 1000;
@@ -89,11 +90,13 @@ server.listen(config.port, "0.0.0.0", () => {
   setTimeout(sealRowsFromOlderServers, SEAL_ONCE_OLDER_CONTAINERS_HAVE_STOPPED_MS).unref();
   linkBlocklist.start();
 });
+const stopUnverifiedSweeps = config.smtp ? startUnverifiedSweeps(auth.$context) : () => {};
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     server.close();
     linkBlocklist.stop();
+    stopUnverifiedSweeps();
     Promise.allSettled([pool.end(), redis?.close()]).then(() => process.exit(0));
   });
 }

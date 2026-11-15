@@ -109,6 +109,12 @@ and Twitch application (both accept several).
 - **Bot check**: set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` from a
   Cloudflare Turnstile widget for your domain to put a bot check on sign-up,
   sign-in, magic links and password reset. Recommended for any public instance.
+- **Throwaway email**: new accounts, magic links for new addresses and email
+  changes refuse addresses from known throwaway email services, using the list
+  bundled in `auth/assets/throwaway-email-domains.txt`. Set
+  `BLOCK_THROWAWAY_EMAILS=false` to allow them.
+- **Never-verified accounts**: with SMTP set, email and password accounts whose
+  address is still unverified after 7 days are removed every few hours.
 
 See [GIF search and Twitch](#gif-search-and-twitch) below for GIFs, game
 search and the Twitch app they share.

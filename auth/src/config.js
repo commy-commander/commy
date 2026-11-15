@@ -184,6 +184,7 @@ export function loadConfig(env = process.env) {
     allowSignup: env.ALLOW_SIGNUP !== "false",
     accessCode: normalizeAccessCode(env.ACCESS_CODE) || null,
     adultsOnly: env.ADULTS_ONLY === "true",
+    blockThrowawayEmails: env.BLOCK_THROWAWAY_EMAILS !== "false",
     termsVersion: (env.TERMS_VERSION ?? "").trim() || null,
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
@@ -230,6 +231,8 @@ export function featureSummary(config) {
     `signup=${on(config.allowSignup)}`,
     `access_code=${on(config.accessCode)}`,
     `adults_only=${on(config.adultsOnly)}`,
+    `throwaway_emails=${config.blockThrowawayEmails ? "blocked" : "allowed"}`,
+    `unverified_cleanup=${on(config.smtp)}`,
   ].join(" ");
 }
 
