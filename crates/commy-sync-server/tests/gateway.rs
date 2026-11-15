@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 use commy_sync_server::config::Config;
@@ -22,6 +23,7 @@ struct Rig {
     pushed: UnboundedReceiver<String>,
     pair: Ed25519KeyPair,
     http: reqwest::Client,
+    last_sent_at: AtomicI64,
 }
 
 fn pair(seed: u8) -> (Ed25519KeyPair, PublishedKey) {
@@ -42,7 +44,7 @@ async fn rig(pairs: &[(&str, &str)]) -> Rig {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(serve(listener, service.clone()));
-    Rig { base, service, pushed, pair: home_pair, http: reqwest::Client::new() }
+    Rig { base, service, pushed, pair: home_pair, http: reqwest::Client::new(), last_sent_at: AtomicI64::new(0) }
 }
 
 async fn gateway_on() -> Rig {
@@ -80,8 +82,19 @@ impl Rig {
         (status, response.json().await.unwrap_or(Value::Null))
     }
 
+    fn next_send_at(&self) -> i64 {
+        let mut next = 0;
+        self.last_sent_at
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |last| {
+                next = now_ms().max(last + 1);
+                Some(next)
+            })
+            .unwrap();
+        next
+    }
+
     async fn send(&self, body: &[u8]) -> (u16, Value) {
-        self.send_as(HOME, &self.pair, now_ms(), body).await
+        self.send_as(HOME, &self.pair, self.next_send_at(), body).await
     }
 
     fn delivered(&mut self) -> Vec<String> {
