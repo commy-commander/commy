@@ -81,6 +81,17 @@ impl<K: Hash + Eq + Copy> ClaimBook<K> {
         Round { given_up, claims }
     }
 
+    pub fn claims_for(&mut self, url: &str, root: [u8; 32], streams: &[StreamKeys], now: Instant) -> Vec<OwnerWork> {
+        if self.url != url || self.root != root {
+            *self = ClaimBook { url: url.to_string(), root, ..ClaimBook::default() };
+        }
+        streams
+            .iter()
+            .filter(|keys| self.due(keys.id, now))
+            .map(|keys| OwnerWork { keys: keys.clone(), eraser: Eraser::derive(&root, &keys.id), errand: Errand::Claim })
+            .collect()
+    }
+
     pub fn letting_go(&mut self, streams: impl IntoIterator<Item = StreamId>) {
         for stream in streams {
             self.done.remove(&stream);
@@ -91,8 +102,9 @@ impl<K: Hash + Eq + Copy> ClaimBook<K> {
         !std::mem::replace(&mut self.busy, true)
     }
 
-    pub fn finish(&mut self, asked: &[(StreamId, Errand)], answered: &[(StreamId, Outcome)], now: Instant) {
+    pub fn finish(&mut self, asked: &[(StreamId, Errand)], answered: &[(StreamId, Outcome)], now: Instant) -> Vec<StreamId> {
         self.busy = false;
+        let mut stolen = Vec::new();
         for ((stream, errand), (_, outcome)) in asked.iter().zip(answered) {
             match (errand, outcome) {
                 (Errand::Claim, Outcome::Done) => {
@@ -100,12 +112,14 @@ impl<K: Hash + Eq + Copy> ClaimBook<K> {
                     self.taken.remove(stream);
                 }
                 (Errand::Claim, Outcome::Theirs) => {
-                    tracing::warn!("another key holds the eraser of a server stream you own; trying again later");
+                    tracing::warn!("another key holds the eraser of a server stream you own; moving it to a fresh stream");
                     self.taken.insert(*stream, now + TAKEN_WAIT);
+                    stolen.push(*stream);
                 }
                 _ => {}
             }
         }
+        stolen
     }
 
     fn due(&self, stream: StreamId, now: Instant) -> bool {
@@ -295,6 +309,24 @@ mod tests {
         assert_eq!(again, vec![failed.id], "a held claim is not sent again, and one held by another key waits");
         let later: HashSet<StreamId> = book_with(&[1], &followed, &mut book, now + TAKEN_WAIT).claims.iter().map(|w| w.keys.id).collect();
         assert_eq!(later, HashSet::from([taken.id, failed.id]), "the previous owner may have let go by now");
+    }
+
+    #[test]
+    fn new_streams_are_claimed_once_and_a_stream_held_by_another_key_is_reported() {
+        let (fresh, known, taken) = (StreamSecret::random().keys(), StreamSecret::random().keys(), StreamSecret::random().keys());
+        let mut book: ClaimBook<u8> = ClaimBook::default();
+        let now = Instant::now();
+        let first = book.claims_for("wss://sync", [1; 32], &[known.clone()], now);
+        let asked: Vec<(StreamId, Errand)> = first.iter().map(|w| (w.keys.id, w.errand)).collect();
+        assert!(book.finish(&asked, &[(known.id, Outcome::Done)], now).is_empty());
+        let next = book.claims_for("wss://sync", [1; 32], &[known.clone(), fresh.clone(), taken.clone()], now);
+        let ids: Vec<StreamId> = next.iter().map(|w| w.keys.id).collect();
+        assert_eq!(ids, vec![fresh.id, taken.id], "a claimed stream is not claimed again");
+        assert!(next.iter().all(|w| w.errand == Errand::Claim && w.eraser == Eraser::derive(&[1; 32], &w.keys.id)));
+        let asked: Vec<(StreamId, Errand)> = next.iter().map(|w| (w.keys.id, w.errand)).collect();
+        let stolen = book.finish(&asked, &[(fresh.id, Outcome::Done), (taken.id, Outcome::Theirs)], now);
+        assert_eq!(stolen, vec![taken.id]);
+        assert!(book.claims_for("wss://other", [1; 32], &[known.clone()], now).len() == 1, "another service starts over");
     }
 
     #[test]

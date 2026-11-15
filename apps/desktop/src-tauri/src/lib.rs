@@ -3477,6 +3477,9 @@ async fn apply_and_broadcast(
         };
     }
     let changes_roles = changes_who_may_do_what(&event);
+    if matches!(event, ServerEvent::ChannelCreate { .. }) {
+        sync_eraser::claim_before_sharing(app, sid).await;
+    }
     outbox::broadcast_local(app, sid, event).await;
     app.persist_server(sid);
     directory::server_changed(app, sid);

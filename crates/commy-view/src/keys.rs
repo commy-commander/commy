@@ -138,6 +138,20 @@ impl KeyHolder {
         }
     }
 
+    pub fn rotation_events(&self, state: &ServerState, scope: KeyScope) -> Vec<ServerEvent> {
+        let Some((me, identity)) = &self.me else { return Vec::new() };
+        let mut ring = Keyring::unlock_scope(state, scope, *me, identity);
+        let heads = match scope {
+            KeyScope::Community => state.community_keys().heads(),
+            KeyScope::Channel(channel) => state.channel_keys(channel).map(|keys| keys.heads()).unwrap_or_default(),
+        };
+        let links: Vec<_> = heads.into_iter().filter(|key| ring.holds(*key)).collect();
+        if links.is_empty() {
+            return Vec::new();
+        }
+        ring.task_events(state, scope, channel_key::KeyTask::Rotate { links }, chrono::Utc::now().timestamp_millis())
+    }
+
     pub fn channels_with_work(&self, state: &ServerState) -> Vec<ChannelId> {
         self.scopes_with_work(state)
             .into_iter()
@@ -174,5 +188,34 @@ fn task_for(state: &ServerState, scope: KeyScope, me: UserId, ring: &Keyring) ->
     match scope {
         KeyScope::Channel(channel) => channel_key::key_task(state, channel, me, ring),
         KeyScope::Community => channel_key::community_key_task(state, me, ring),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commy_core::{Identity, Server, UserProfile};
+
+    #[test]
+    fn an_owner_can_move_the_community_to_a_fresh_key_on_demand() {
+        let identity = Identity::generate();
+        let mut profile = UserProfile::new("owner");
+        profile.identity = Some(identity.public());
+        let owner = profile.id;
+        let mut state = ServerState::new(Server::new("s", owner));
+        state.profiles.insert(owner, profile);
+        let holder = KeyHolder::as_user(owner, identity);
+        assert!(holder.rotation_events(&state, KeyScope::Community).is_empty(), "nothing to move on from yet");
+        for event in holder.scope_events(&state, KeyScope::Community) {
+            state.apply(event).unwrap();
+        }
+        let first = state.community_keys().newest().unwrap().id;
+        for event in holder.rotation_events(&state, KeyScope::Community) {
+            state.apply(event).unwrap();
+        }
+        let second = state.community_keys().newest().unwrap().id;
+        assert_ne!(first, second);
+        assert!(holder.community_ring(&state, None).unwrap().holds(second));
+        assert!(KeyHolder::default().rotation_events(&state, KeyScope::Community).is_empty());
     }
 }

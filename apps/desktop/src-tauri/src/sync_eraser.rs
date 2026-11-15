@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
+use std::time::Duration;
 
-use commy_core::channel_key::Keyring;
+use commy_core::channel_key::{KeyScope, Keyring};
 use commy_core::{ServerId, UserId};
 use commy_net::community_streams as streams;
 use commy_sync::errands::{self, owner_work, ClaimBook, Errand, Finished, Instant, OwnerWork};
@@ -10,6 +11,72 @@ use commy_sync::{StreamId, StreamKeys};
 use crate::state::App;
 
 static CLAIMS: Mutex<Option<ClaimBook<ServerId>>> = Mutex::new(None);
+static FRESH: Mutex<Option<HashSet<(ServerId, KeyScope)>>> = Mutex::new(None);
+const CLAIM_FIRST_WAIT: Duration = Duration::from_secs(15);
+
+pub fn wants_fresh_streams(sid: ServerId) -> Vec<KeyScope> {
+    FRESH.lock().unwrap().iter().flatten().filter(|(server, _)| *server == sid).map(|(_, scope)| *scope).collect()
+}
+
+pub fn fresh_streams_made(sid: ServerId, scope: KeyScope) {
+    if let Some(wanted) = FRESH.lock().unwrap().as_mut() {
+        wanted.remove(&(sid, scope));
+    }
+}
+
+fn want_fresh_streams(stolen: &[StreamId], scopes: &HashMap<StreamId, (ServerId, KeyScope)>) {
+    let mut guard = FRESH.lock().unwrap();
+    let wanted = guard.get_or_insert_with(HashSet::new);
+    wanted.extend(stolen.iter().filter_map(|stream| scopes.get(stream).copied()));
+}
+
+fn scopes_of_streams(app: &App, sids: impl IntoIterator<Item = ServerId>) -> HashMap<StreamId, (ServerId, KeyScope)> {
+    let Some(identity) = app.identity() else { return HashMap::new() };
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return HashMap::new() };
+    let holder = crate::channel_lock::holder_of(app);
+    let mut out = HashMap::new();
+    for sid in sids {
+        let given = crate::community_sync::given_key(app, sid);
+        let servers = app.servers.lock().unwrap();
+        let Some(state) = servers.get(&sid) else { continue };
+        let Some(community) = holder.community_ring(state, given) else { continue };
+        for (_, keys) in streams::every_stream(state, &community, |_| Keyring::default()) {
+            out.insert(keys.id, (sid, KeyScope::Community));
+        }
+        for (lane, keys) in streams::every_stream(state, &community, |channel| Keyring::unlock(state, channel, me, &identity)) {
+            if let (streams::Lane::Channel(channel), false) = (lane, out.contains_key(&keys.id)) {
+                out.insert(keys.id, (sid, KeyScope::Channel(channel)));
+            }
+        }
+    }
+    out
+}
+
+pub async fn claim_before_sharing(app: &App, sid: ServerId) {
+    let (Some(url), Some(identity)) = (crate::sync_link::url(), app.identity()) else { return };
+    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    if !owned_servers(app, me).contains(&sid) {
+        return;
+    }
+    let Some(plan) = plan(app, sid) else { return };
+    let work = CLAIMS.lock().unwrap().get_or_insert_with(ClaimBook::default).claims_for(&url, identity.to_bytes(), &plan.streams, Instant::now());
+    if work.is_empty() {
+        return;
+    }
+    let scopes = scopes_of_streams(app, [sid]);
+    let asked: Vec<(StreamId, Errand)> = work.iter().map(|w| (w.keys.id, w.errand)).collect();
+    let answered = match tokio::time::timeout(CLAIM_FIRST_WAIT, errands::run(&url, work)).await {
+        Ok(Ok(answered)) => answered,
+        _ => {
+            tracing::debug!("could not claim new server streams before sharing their keys");
+            return;
+        }
+    };
+    if let Some(book) = CLAIMS.lock().unwrap().as_mut() {
+        let stolen = book.finish(&asked, &answered, Instant::now());
+        want_fresh_streams(&stolen, &scopes);
+    }
+}
 
 pub struct Plan {
     root: [u8; 32],
@@ -53,6 +120,7 @@ pub fn tend(app: &App) {
     if work.is_empty() {
         return;
     }
+    let scopes = scopes_of_streams(app, owned_servers(app, me));
     {
         let mut guard = CLAIMS.lock().unwrap();
         let Some(book) = guard.as_mut() else { return };
@@ -67,9 +135,11 @@ pub fn tend(app: &App) {
         if let Err(e) = &answered {
             tracing::debug!("could not claim server streams on the sync service: {e}");
         }
-        if let Some(book) = CLAIMS.lock().unwrap().as_mut() {
-            book.finish(&asked, answered.as_deref().unwrap_or_default(), Instant::now());
-        }
+        let stolen = match CLAIMS.lock().unwrap().as_mut() {
+            Some(book) => book.finish(&asked, answered.as_deref().unwrap_or_default(), Instant::now()),
+            None => Vec::new(),
+        };
+        want_fresh_streams(&stolen, &scopes);
     });
 }
 

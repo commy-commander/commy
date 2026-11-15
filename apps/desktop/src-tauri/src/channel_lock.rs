@@ -26,7 +26,14 @@ pub async fn tend_scope(app: &App, handle: &tauri::AppHandle, sid: ServerId, sco
     let events = {
         let mut servers = app.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&sid) else { return };
-        let events = holder.scope_events(state, scope);
+        let fresh = crate::sync_eraser::wants_fresh_streams(sid).contains(&scope);
+        let events = match fresh {
+            true => holder.rotation_events(state, scope),
+            false => holder.scope_events(state, scope),
+        };
+        if fresh {
+            crate::sync_eraser::fresh_streams_made(sid, scope);
+        }
         let mut applied = Vec::new();
         for event in events {
             let Some(signed) = app.sign_event(sid, event.clone()) else { break };
@@ -40,6 +47,7 @@ pub async fn tend_scope(app: &App, handle: &tauri::AppHandle, sid: ServerId, sco
     if events.is_empty() {
         return;
     }
+    crate::sync_eraser::claim_before_sharing(app, sid).await;
     for event in events {
         crate::outbox::broadcast_local(app, sid, event).await;
     }
@@ -50,8 +58,16 @@ pub async fn tend_scope(app: &App, handle: &tauri::AppHandle, sid: ServerId, sco
 
 fn scopes_with_work(app: &App, sid: ServerId) -> Vec<KeyScope> {
     let holder = holder_of(app);
-    let servers = app.servers.lock().unwrap();
-    servers.get(&sid).map(|state| holder.scopes_with_work(state)).unwrap_or_default()
+    let mut scopes = {
+        let servers = app.servers.lock().unwrap();
+        servers.get(&sid).map(|state| holder.scopes_with_work(state)).unwrap_or_default()
+    };
+    for scope in crate::sync_eraser::wants_fresh_streams(sid) {
+        if !scopes.contains(&scope) {
+            scopes.push(scope);
+        }
+    }
+    scopes
 }
 
 pub async fn tend_server(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
