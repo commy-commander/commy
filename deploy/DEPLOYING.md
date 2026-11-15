@@ -310,24 +310,39 @@ AGENT_VERIFY=on
 - **Staging**: run the "Cut release" workflow in both repositories with the same version (or push a release tag such as `v0.2.0` to each). Suffixed versions like `0.2.0-rc.1` are published as pre-releases, and their desktop builds sign in to staging.commy.chat by default.
   The same tag also builds the desktop release. A tag containing `-test` (such
   as `v0.2.0-test.1`) publishes that desktop release as a draft.
-- **Prod**: Actions > **Promote images** > Run workflow > `prod`. A required
-  reviewer approves it under the run's **Review deployments** button, then prod
-  picks up the exact images staging is running. The website has the same
-  **Promote image** workflow in the commy-web repository; run both. The
-  workflow only accepts `staging`, `dev` (for staging) or a release version as
-  the source.
+- **Prod**: the owner signs the exact images staging is running with the prod
+  key in Azure Key Vault and moves the `:prod` tags, from a machine signed in
+  to Azure with `az login` (see below). The forge workflows only promote to
+  staging.
 
 ### Signed promotes
+
+Prod accepts only images signed with the prod key, an EC P-256 key that lives in
+Azure Key Vault and can be used but never downloaded. Its public key is
+`deploy/agent/cosign-prod.pub`, and the prod environment's `.env` sets
+`AGENT_COSIGN_KEY=/repo/deploy/agent/cosign-prod.pub`. To promote, for each of
+`commy/commy-auth`, `commy/commy-sync` and `commy-private/commy-web`:
+
+```bash
+digest="$(docker buildx imagetools inspect "$repo:staging" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+cosign sign --yes --key azurekms://<vault>.vault.azure.net/<key> -a tag=prod "$repo@$digest"
+docker buildx imagetools create --tag "$repo:prod" "$repo@$digest"
+cosign verify -a tag=prod --key deploy/agent/cosign-prod.pub "$repo:prod"
+```
+
+Use a release version instead of `staging` to roll back.
+
+Staging promotes run on the forge as below.
 
 **Promote images** signs the promoted digest with
 [cosign](https://github.com/sigstore/cosign) using the Commy signing key before it
 moves the tag, and the signature names the tag it was promoted to. The private key
 and its password are the forge secrets `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`;
 the public key is `deploy/agent/cosign.pub`. Only the accounts in the `PROMOTERS`
-variable (by default `commy-commander`) can run the workflow. The prod agent runs
-`cosign verify` against that public key on every new image before starting it, so
-an image retagged as `:prod` by anything else, or a staging signature moved onto
-the prod tag, is refused and logged; the running container keeps serving and the
+variable (by default `commy-commander`) can run the workflow. Each agent runs
+`cosign verify` against its environment's public key on every new image before
+starting it, so an image retagged by anything else, or a staging signature moved
+onto the prod tag, is refused and logged; the running container keeps serving and the
 image is tried again on the next cycle, in case the signature was still being
 written. Settings in that environment's `.env`:
 
