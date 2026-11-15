@@ -92,6 +92,20 @@ function levelForChannel(prefs, serverId, channelId, nowSecs) {
   return levelForServer(prefs, serverId);
 }
 
+function activeMute(mute, nowSecs) {
+  if (mute === true) return true;
+  return typeof mute === "number" && mute > nowSecs ? mute : null;
+}
+
+function channelNotifyView(prefs, serverId, channelId, nowSecs) {
+  const own = channelPref(prefs, serverId, channelId) || {};
+  const serverMuted = Boolean(prefs.muted && prefs.muted[serverId]);
+  const mute = activeMute(own.mute, nowSecs);
+  const level = own.level && own.level !== "default" ? own.level : "default";
+  const effective = levelForChannel(prefs, serverId, channelId, nowSecs);
+  return { level, mute, serverMuted, serverLevel: levelForServer({ ...prefs, muted: {} }, serverId), quiet: effective === "none" };
+}
+
 function withChannelPref(prefs, serverId, channelId, change) {
   const channels = { ...(prefs.channels || {}) };
   const own = { ...(channelPref(prefs, serverId, channelId) || {}) };
@@ -196,7 +210,7 @@ function quickReplyCard({ focused, viewing, phone }) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted,
-    channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter, phoneInFront,
+    channelPref, activeMute, channelNotifyView, withChannelPref, muteUntil, isRecent, caughtUpNotice, MENTION_FILTERS, filterOn, mentionReaches, withServerFilter, phoneInFront,
     alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard, anywayWay, anywayNotice, pausedMentions, pausedLine,
   };
 }

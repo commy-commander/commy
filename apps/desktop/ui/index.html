@@ -236,6 +236,7 @@
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2zm0 15-5-2.18L7 18V5h10z"/></svg>
             <span class="pin-count hidden" id="saved-count"></span>
           </button>
+          <button class="icon-btn hidden" id="notify-btn" title="Notification Settings" aria-label="Notification Settings" aria-haspopup="menu" aria-expanded="false"></button>
           <button class="icon-btn hidden" id="members-btn" title="Hide Members" aria-pressed="true">
             <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zM8 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05A4.2 4.2 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
           </button>
@@ -3489,6 +3490,25 @@
     <div class="ctx-sep"></div>
     <button id="chm-voice-status" class="hidden">Set Voice Status</button>
     <button id="chm-settings">Edit Channel</button>
+  </div>
+  <div class="pop-menu ctx-menu channel-notify-menu hidden" id="channel-notify-menu" role="menu" aria-labelledby="cnm-title">
+    <div class="ctx-title" id="cnm-title"></div>
+    <button class="ctx-check checked hidden" id="cnm-server-unmute" role="menuitemcheckbox" aria-checked="true">Server muted</button>
+    <div class="ctx-label">Notify me about</div>
+    <button class="ctx-radio" role="menuitemradio" data-level="default"><span class="cnm-pick"><span>Use server setting</span><span class="cnm-sub" id="cnm-default-sub"></span></span></button>
+    <button class="ctx-radio" role="menuitemradio" data-level="all">All messages</button>
+    <button class="ctx-radio" role="menuitemradio" data-level="mentions">Only @mentions</button>
+    <button class="ctx-radio" role="menuitemradio" data-level="none">Nothing</button>
+    <div class="ctx-sep"></div>
+    <div class="ctx-label">Mute Channel</div>
+    <button class="ctx-radio" role="menuitem" data-mute="15m">For 15 minutes</button>
+    <button class="ctx-radio" role="menuitem" data-mute="1h">For 1 hour</button>
+    <button class="ctx-radio" role="menuitem" data-mute="8h">For 8 hours</button>
+    <button class="ctx-radio" role="menuitem" data-mute="24h">For 24 hours</button>
+    <button class="ctx-radio" role="menuitem" data-mute="forever">Until I turn it back on</button>
+    <button class="ctx-check checked" role="menuitemcheckbox" aria-checked="true" id="cnm-unmute"></button>
+    <div class="ctx-sep"></div>
+    <button id="cnm-server" role="menuitem">Server Notification Settings</button>
   </div>
   <div class="pop-menu ctx-menu hidden" id="folder-menu" role="menu">
     <button id="fm-rename">Rename Folder</button>

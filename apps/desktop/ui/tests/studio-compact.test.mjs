@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { windowFit } = require("../scripts/look.js");
-const { STUDIO_COMPACT_MARK, STUDIO_COMPACT_ROWS, studioCompactRowStates, studioCompactDot, studioCompactEmpty, studioCompactMenuLeft } = require("../scripts/studio-compact.js");
+const { STUDIO_COMPACT_MARK, STUDIO_COMPACT_ROWS, STUDIO_COMPACT_MIXED_LABEL, studioCompactFace, studioCompactRowStates, studioCompactDot, studioCompactEmpty, studioCompactMenuLeft } = require("../scripts/studio-compact.js");
 
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
@@ -49,7 +49,7 @@ test("the compact sheet loads after the forum sheet, compact only, from the toke
 });
 
 test("the compact sheet uses the guide's own width breakpoints", () => {
-  assert.deepEqual([...css.matchAll(/@media ([^{]+) \{/g)].map(m => m[1]), ["(min-width: 1180px)", "(max-width: 1179px)", "(max-width: 1040px)"]);
+  assert.deepEqual([...css.matchAll(/@media ([^{]+) \{/g)].map(m => m[1]), ["(min-width: 1180px)", "(max-width: 1179px)"]);
   assert.equal(windowFit(1000, 650), "compact");
   assert.equal(windowFit(1100, 700), "compact");
   assert.equal(windowFit(1300, 700), "compact");
@@ -87,15 +87,16 @@ test("under 1180 the account is the face and gear, the chat bar keeps emoji, and
   assert.match(rule(`${C} .chat-header .header-actions:has(> .search-box:is(:focus-within, .open))::after`, narrow), /flex: 0 0 38px;/);
 });
 
-test("under 1040 Pinned, Threads and Saved give way, so the keys are People, More and search", () => {
-  assert.ok(block("(max-width: 1040px)").includes(`${C} .header-actions > #pins-btn,\n  ${C} .header-actions > #threads-btn,\n  ${C} .header-actions > #saved-btn { display: none; }`));
-  assert.ok(html.indexOf('id="threads-btn"') < html.indexOf('id="saved-btn"'));
+test("Pinned and Saved tuck under the Threads key at every desktop width, next to the bell", () => {
+  assert.ok(css.includes(`${R} .header-actions > #pins-btn,\n${R} .header-actions > #threads-btn,\n${R} .header-actions > #saved-btn,\n${R} .header-actions > #studio-more-btn[data-empty],\n${R} .composer-menu > #studio-cm-style { display: none; }`));
   assert.ok(html.indexOf('id="pins-btn"') < html.indexOf('id="threads-btn"'));
-  assert.ok(html.indexOf('id="saved-btn"') < html.indexOf('id="members-btn"'));
+  assert.ok(html.indexOf('id="threads-btn"') < html.indexOf('id="saved-btn"'));
+  assert.ok(html.indexOf('id="saved-btn"') < html.indexOf('id="notify-btn"'));
+  assert.ok(html.indexOf('id="notify-btn"') < html.indexOf('id="members-btn"'));
+  assert.match(glue, /actions\.insertBefore\(more, saved && saved\.parentNode === actions \? saved\.nextSibling : null\);/);
 });
 
 test("under 1180 Text Style is the last row of the plus menu and opens the same popover above the field", () => {
-  assert.ok(css.includes(`${R} .header-actions > #studio-more-btn,\n${R} .composer-menu > #studio-cm-style { display: none; }`));
   assert.ok(block("(max-width: 1179px)").includes(`${C} .composer-menu > #studio-cm-style { display: flex; }`));
   assert.match(glue, /item\.id = "studio-cm-style";/);
   assert.match(glue, /studioCompactIcon\("a-large-small", 18\)/);
@@ -104,24 +105,30 @@ test("under 1180 Text Style is the last row of the plus menu and opens the same 
   assert.match(glue, /getElementById\("text-style-btn"\)[\s\S]*button\.click\(\);[\s\S]*placePopup\(pop, field, "above"\);/);
 });
 
-test("under 1040 Pinned, Threads and Saved fold into a More key that opens the desktop menu", () => {
-  assert.ok(block("(max-width: 1040px)").includes(`${C} .header-actions > #studio-more-btn:not([data-empty]) { display: flex; }`));
+test("the Threads key opens a menu of Threads, Pinned Messages and Saved Messages", () => {
   assert.match(glue, /more\.className = "icon-btn studio-more-btn";/);
-  assert.match(glue, /more\.title = "More";/);
-  assert.match(glue, /studioCompactIcon\("ellipsis", 20\)/);
-  assert.match(glue, /actions\.insertBefore\(more, search/);
+  assert.match(glue, /studioCompactIcon\("chevronDown", 12\)/);
   assert.match(glue, /menu\.className = "pop-menu ctx-menu studio-more-menu hidden";/);
-  assert.deepEqual(STUDIO_COMPACT_ROWS.map(row => [row.label, row.button, row.icon, row.open]), [["Pinned", "pins-btn", "pin", "togglePinsPanel"], ["Threads", "threads-btn", "thread", "toggleThreadsPanel"], ["Saved", "saved-btn", "bookmark", "toggleSavedView"]]);
+  assert.deepEqual(STUDIO_COMPACT_ROWS.map(row => [row.label, row.button, row.icon, row.open]), [["Threads", "threads-btn", "thread", "toggleThreadsPanel"], ["Pinned Messages", "pins-btn", "pin", "togglePinsPanel"], ["Saved Messages", "saved-btn", "bookmark", "toggleSavedView"]]);
   assert.match(app, /\$\("pins-btn"\)\.onclick = togglePinsPanel;/);
   assert.match(app, /\$\("threads-btn"\)\.onclick = toggleThreadsPanel;/);
   assert.match(app, /\$\("saved-btn"\)\.onclick = toggleSavedView;/);
   assert.match(rule(`${R} .header-actions > #studio-more-btn[data-dot]::after`), /background: var\(--accent-2\);/);
+  assert.match(rule(`${R} .header-actions > #studio-more-btn:not([data-single])`), /width: auto;/);
+});
+
+test("the key wears Threads when it can, and opens the only row straight away when there is one", () => {
+  const states = map => STUDIO_COMPACT_ROWS.map(row => ({ key: row.key, shown: Boolean(map[row.key]), badge: "" }));
+  assert.deepEqual(studioCompactFace(STUDIO_COMPACT_ROWS, states({ threads: 1, pins: 1, saved: 1 })), { icon: "thread", label: "Threads", single: null });
+  assert.deepEqual(studioCompactFace(STUDIO_COMPACT_ROWS, states({ pins: 1, saved: 1 })), { icon: "pin", label: STUDIO_COMPACT_MIXED_LABEL, single: null });
+  assert.deepEqual(studioCompactFace(STUDIO_COMPACT_ROWS, states({ saved: 1 })), { icon: "bookmark", label: "Saved Messages", single: "saved" });
+  assert.equal(studioCompactFace(STUDIO_COMPACT_ROWS, states({})), null);
 });
 
 test("a row follows its key, carries the badge, and lights the More dot", () => {
   const read = map => row => map[row.key];
   const both = studioCompactRowStates(STUDIO_COMPACT_ROWS, read({ pins: { shown: true, badge: "1" }, threads: { shown: true }, saved: { shown: true, badge: " 3 " } }));
-  assert.deepEqual(both, [{ key: "pins", shown: true, badge: "1" }, { key: "threads", shown: true, badge: "" }, { key: "saved", shown: true, badge: "3" }]);
+  assert.deepEqual(both, [{ key: "threads", shown: true, badge: "" }, { key: "pins", shown: true, badge: "1" }, { key: "saved", shown: true, badge: "3" }]);
   assert.equal(studioCompactDot(both), true);
   assert.equal(studioCompactEmpty(both), false);
   const quiet = studioCompactRowStates(STUDIO_COMPACT_ROWS, read({ pins: { shown: false, badge: "1" }, threads: { shown: false, badge: "2" }, saved: { shown: true } }));

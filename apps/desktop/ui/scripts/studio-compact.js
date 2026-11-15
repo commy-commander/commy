@@ -1,10 +1,11 @@
 const STUDIO_COMPACT_MARK = "data-studio-compact";
 let studioCompactStarted = false;
 const STUDIO_COMPACT_ROWS = [
-  { key: "pins", button: "pins-btn", label: "Pinned", icon: "pin", open: "togglePinsPanel" },
   { key: "threads", button: "threads-btn", label: "Threads", icon: "thread", open: "toggleThreadsPanel" },
-  { key: "saved", button: "saved-btn", label: "Saved", icon: "bookmark", open: "toggleSavedView" },
+  { key: "pins", button: "pins-btn", label: "Pinned Messages", icon: "pin", open: "togglePinsPanel" },
+  { key: "saved", button: "saved-btn", label: "Saved Messages", icon: "bookmark", open: "toggleSavedView" },
 ];
+const STUDIO_COMPACT_MIXED_LABEL = "Pins and Saved";
 
 function studioCompactRowStates(rows, read) {
   return rows.map(row => {
@@ -20,6 +21,14 @@ function studioCompactDot(states) {
 
 function studioCompactEmpty(states) {
   return !states.some(state => state.shown);
+}
+
+function studioCompactFace(rows, states) {
+  const shown = rows.filter(row => states.some(state => state.key === row.key && state.shown));
+  if (!shown.length) return null;
+  const lead = shown[0];
+  if (shown.length === 1) return { icon: lead.icon, label: lead.label, single: lead.key };
+  return { icon: lead.icon, label: lead.key === "threads" ? lead.label : STUDIO_COMPACT_MIXED_LABEL, single: null };
 }
 
 function studioCompactMenuLeft(anchor, width, viewport) {
@@ -54,6 +63,7 @@ function studioCompactSync() {
     badge.textContent = state.badge;
     badge.classList.toggle("hidden", state.badge === "");
   }
+  studioCompactPaintFace(more, studioCompactFace(STUDIO_COMPACT_ROWS, states));
   more.toggleAttribute("data-empty", studioCompactEmpty(states));
   more.toggleAttribute("data-dot", studioCompactDot(states));
   const lit = !menu.classList.contains("hidden") || STUDIO_COMPACT_ROWS.some(row => {
@@ -63,6 +73,25 @@ function studioCompactSync() {
   more.classList.toggle("active", lit);
   more.setAttribute("aria-expanded", String(!menu.classList.contains("hidden")));
   if (studioCompactEmpty(states)) menu.classList.add("hidden");
+}
+
+function studioCompactPaintFace(more, face) {
+  const key = face ? `${face.icon}|${face.label}|${face.single || ""}` : "";
+  if (more.dataset.face === key) return;
+  more.dataset.face = key;
+  more.replaceChildren();
+  more.toggleAttribute("data-single", Boolean(face && face.single));
+  if (!face) return;
+  more.title = face.label;
+  more.setAttribute("aria-label", face.label);
+  more.setAttribute("aria-haspopup", face.single ? "dialog" : "menu");
+  const icon = studioCompactIcon(face.icon, 20);
+  if (icon) more.appendChild(icon);
+  if (face.single) return;
+  const caret = studioCompactIcon("chevronDown", 12);
+  if (!caret) return;
+  caret.classList.add("studio-more-caret");
+  more.appendChild(caret);
 }
 
 function studioCompactCloseMore() {
@@ -77,6 +106,9 @@ function studioCompactToggleMore() {
   const menu = document.getElementById("studio-more-menu");
   if (!more || !menu) return;
   if (!menu.classList.contains("hidden")) return studioCompactCloseMore();
+  const states = studioCompactRowStates(STUDIO_COMPACT_ROWS, studioCompactReadRow);
+  const face = studioCompactFace(STUDIO_COMPACT_ROWS, states);
+  if (face && face.single) return studioCompactPickRow(STUDIO_COMPACT_ROWS.find(row => row.key === face.single));
   if (typeof closeFloating === "function") closeFloating();
   studioCompactSync();
   menu.classList.remove("hidden");
@@ -139,16 +171,11 @@ function studioCompactAdd() {
     more.type = "button";
     more.id = "studio-more-btn";
     more.className = "icon-btn studio-more-btn";
-    more.title = "More";
-    more.setAttribute("aria-label", "More");
-    more.setAttribute("aria-haspopup", "menu");
     more.setAttribute("aria-expanded", "false");
     more.setAttribute(STUDIO_COMPACT_MARK, "");
-    const icon = studioCompactIcon("ellipsis", 20);
-    if (icon) more.appendChild(icon);
     more.addEventListener("click", studioCompactToggleMore);
-    const search = document.getElementById("search-box");
-    actions.insertBefore(more, search && search.parentNode === actions ? search : null);
+    const saved = document.getElementById("saved-btn");
+    actions.insertBefore(more, saved && saved.parentNode === actions ? saved.nextSibling : null);
   }
   if (!document.getElementById("studio-more-menu")) document.body.appendChild(studioCompactBuildMenu());
   const plus = document.getElementById("composer-menu");
@@ -199,5 +226,5 @@ function studioCompact() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_COMPACT_MARK, STUDIO_COMPACT_ROWS, studioCompactRowStates, studioCompactDot, studioCompactEmpty, studioCompactMenuLeft };
+  module.exports = { STUDIO_COMPACT_MARK, STUDIO_COMPACT_ROWS, STUDIO_COMPACT_MIXED_LABEL, studioCompactFace, studioCompactRowStates, studioCompactDot, studioCompactEmpty, studioCompactMenuLeft };
 }

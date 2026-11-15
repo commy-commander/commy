@@ -3518,7 +3518,122 @@ function isChannelMuted(serverId, channelId) {
 function updateChannelPrefs(serverId, channelId, change) {
   saveNotifyPrefs(withChannelPref(notifyPrefs(), serverId, channelId, change));
   syncUnreadBadge();
+  syncNotifyButton();
   if (state.currentServer && state.currentServer.id === serverId) renderChannels();
+}
+
+function pickChannelLevel(channel, level, label) {
+  if (!channel || !state.currentServer) return;
+  updateChannelPrefs(state.currentServer.id, channel.id, { level });
+  closeFloating();
+  toast(`#${channel.name}: ${label}`);
+}
+
+function muteChannelFor(channel, choiceId) {
+  const choice = MUTE_CHOICES.find(c => c.id === choiceId);
+  if (!channel || !state.currentServer || !choice) return;
+  updateChannelPrefs(state.currentServer.id, channel.id, { mute: muteUntil(choice, nowSecs()) });
+  closeFloating();
+  toast(`Muted #${channel.name} ${choice.label.replace(/^For /, "for ").replace(/^Until/, "until")}`);
+}
+
+function unmuteChannel(channel) {
+  if (!channel || !state.currentServer) return;
+  updateChannelPrefs(state.currentServer.id, channel.id, { mute: false });
+  closeFloating();
+  toast(`Unmuted #${channel.name}`);
+}
+
+function notifyChannel() {
+  if (state.view !== "server" || !state.currentServer || state.currentServer.group) return null;
+  return state.currentChannel || null;
+}
+
+function syncNotifyButton() {
+  const btn = $("notify-btn");
+  if (!btn) return;
+  const channel = notifyChannel();
+  btn.classList.toggle("hidden", !channel);
+  if (!channel) return closeChannelNotifyMenu();
+  const view = channelNotifyView(notifyPrefs(), state.currentServer.id, channel.id, nowSecs());
+  const icon = view.quiet ? "bellOff" : "bell";
+  if (btn.dataset.icon !== icon) {
+    btn.dataset.icon = icon;
+    setIcon(btn, icon, 20);
+  }
+  btn.classList.toggle("quiet", view.quiet);
+  if (!$("channel-notify-menu").classList.contains("hidden")) renderChannelNotifyMenu();
+}
+
+function renderChannelNotifyMenu() {
+  const channel = notifyChannel();
+  if (!channel) return;
+  const menu = $("channel-notify-menu");
+  const view = channelNotifyView(notifyPrefs(), state.currentServer.id, channel.id, nowSecs());
+  $("cnm-title").replaceChildren(document.createTextNode("Notifications for #"), channelNameNode(channel));
+  $("cnm-server-unmute").classList.toggle("hidden", !view.serverMuted);
+  $("cnm-default-sub").textContent = view.serverMuted ? "Server muted" : LEVEL_WORDS[view.serverLevel] || LEVEL_WORDS.all;
+  for (const btn of menu.querySelectorAll(".ctx-radio[data-level]")) {
+    const picked = btn.dataset.level === view.level;
+    btn.classList.toggle("checked", picked);
+    btn.setAttribute("aria-checked", String(picked));
+  }
+  for (const btn of menu.querySelectorAll(".ctx-radio[data-mute]")) btn.classList.toggle("hidden", view.mute !== null);
+  $("cnm-unmute").classList.toggle("hidden", view.mute === null);
+  $("cnm-unmute").textContent = view.mute === null ? "" : muteWords(view.mute);
+}
+
+function closeChannelNotifyMenu() {
+  const menu = $("channel-notify-menu");
+  if (!menu) return;
+  menu.classList.add("hidden");
+  $("notify-btn").classList.remove("active");
+  $("notify-btn").setAttribute("aria-expanded", "false");
+}
+
+function toggleChannelNotifyMenu() {
+  const menu = $("channel-notify-menu");
+  if (!menu.classList.contains("hidden")) return closeChannelNotifyMenu();
+  if (!notifyChannel()) return;
+  closeFloating();
+  renderChannelNotifyMenu();
+  const btn = $("notify-btn");
+  btn.classList.add("active");
+  btn.setAttribute("aria-expanded", "true");
+  placeMenuBelow(menu, btn);
+}
+
+function placeMenuBelow(menu, anchor) {
+  menu.classList.remove("hidden");
+  const a = anchor.getBoundingClientRect();
+  const room = Math.max(160, window.innerHeight - a.bottom - 16);
+  menu.style.maxHeight = `${room}px`;
+  const r = menu.getBoundingClientRect();
+  menu.style.top = `${Math.round(a.bottom + 8)}px`;
+  menu.style.left = `${Math.round(Math.max(8, Math.min(a.right - r.width, window.innerWidth - r.width - 8)))}px`;
+}
+
+function wireChannelNotifyMenu() {
+  setIcon($("notify-btn"), "bell", 20);
+  $("notify-btn").dataset.icon = "bell";
+  $("notify-btn").onclick = toggleChannelNotifyMenu;
+  const menu = $("channel-notify-menu");
+  for (const btn of menu.querySelectorAll(".ctx-radio[data-level]")) {
+    const label = btn.dataset.level === "default" ? "Use server setting" : btn.textContent;
+    btn.onclick = () => pickChannelLevel(notifyChannel(), btn.dataset.level, label);
+  }
+  for (const btn of menu.querySelectorAll(".ctx-radio[data-mute]")) btn.onclick = () => muteChannelFor(notifyChannel(), btn.dataset.mute);
+  $("cnm-unmute").onclick = () => unmuteChannel(notifyChannel());
+  $("cnm-server-unmute").onclick = () => {
+    if (!state.currentServer) return;
+    updateServerPrefs(state.currentServer.id, { muted: false });
+    toast(`Unmuted ${shownServerName(state.currentServer)}`);
+  };
+  $("cnm-server").onclick = () => {
+    const server = state.currentServer;
+    closeFloating();
+    if (server) openServerNotify(server);
+  };
 }
 
 function muteWords(mute) {
@@ -3737,6 +3852,7 @@ function updateServerPrefs(serverId, change) {
   }
   saveNotifyPrefs(prefs);
   syncUnreadBadge();
+  syncNotifyButton();
 }
 
 const LEVEL_WORDS = { all: "All messages", mentions: "Only @mentions", online: "Only while I am online", none: "Nothing" };
@@ -5013,6 +5129,7 @@ function applySyncedPrefs(set) {
   const values = syncedValues(set);
   if (absorbPinMarks(values)) syncPinButton();
   saveNotifyPrefs(prefsWithPieces(notifyPrefs(), values), { fromSync: true });
+  syncNotifyButton();
   $("notify-level").value = notifyPrefs().level;
   $("friend-online-toggle").checked = Boolean(notifyPrefs().friendOnline);
   renderServerRail();
@@ -7367,9 +7484,10 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "soundboard-pop", "member-menu", "room-member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop", "game-pop"]) {
+  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "channel-notify-menu", "soundboard-pop", "member-menu", "room-member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop", "game-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
+  if (except !== "channel-notify-menu") closeChannelNotifyMenu();
   if (except !== "pins-pop") closePinsPanel();
   if (except !== "threads-pop") closeThreadsPanel();
   if (except !== "search-pop") closeSearchPop();
@@ -9491,6 +9609,7 @@ function pinsPanelOpen() {
 }
 
 function syncPinButton() {
+  syncNotifyButton();
   const btn = $("pins-btn");
   const channel = state.view === "server" ? state.currentChannel : null;
   const { visible, count, title } = pinButtonState({ view: state.view, channel, count: channel && channel.pins });
@@ -23430,11 +23549,11 @@ function wireEvents() {
     applyAvatar("none");
   };
   document.addEventListener("mousedown", e => {
-    const open = ["emoji-pop", "avatar-menu", "banner-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "msg-menu", "remind-pop", "member-menu", "room-member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
+    const open = ["emoji-pop", "avatar-menu", "banner-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "channel-notify-menu", "msg-menu", "remind-pop", "member-menu", "room-member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     closeMenuOutside("game-pop", e.target, ".game-link");
     if (!open.length) return;
     closeMenuOutside("fp-menu", e.target, ".mc-more, .fp-more");
-    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #vp-conn-meta, #pins-btn, #threads-btn, #attach-btn, #search-box")) return;
+    if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #vp-conn-meta, #pins-btn, #threads-btn, #notify-btn, #attach-btn, #search-box")) return;
     if (e.target.closest("#emoji-pop, #mention-pop, #gif-picker")) return;
     closeFloating();
   });
@@ -23565,29 +23684,13 @@ function wireEvents() {
     closeFloating();
   };
   for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-level]")) {
-    btn.onclick = () => {
-      if (!menuChannel || !state.currentServer) return;
-      updateChannelPrefs(state.currentServer.id, menuChannel.id, { level: btn.dataset.level });
-      closeFloating();
-      toast(`#${menuChannel.name}: ${btn.textContent}`);
-    };
+    btn.onclick = () => pickChannelLevel(menuChannel, btn.dataset.level, btn.textContent);
   }
   for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-mute]")) {
-    btn.onclick = () => {
-      if (!menuChannel || !state.currentServer) return;
-      const choice = MUTE_CHOICES.find(c => c.id === btn.dataset.mute);
-      if (!choice) return;
-      updateChannelPrefs(state.currentServer.id, menuChannel.id, { mute: muteUntil(choice, nowSecs()) });
-      closeFloating();
-      toast(`Muted #${menuChannel.name} ${choice.label.replace(/^For /, "for ").replace(/^Until/, "until")}`);
-    };
+    btn.onclick = () => muteChannelFor(menuChannel, btn.dataset.mute);
   }
-  $("chm-unmute").onclick = () => {
-    if (!menuChannel || !state.currentServer) return;
-    updateChannelPrefs(state.currentServer.id, menuChannel.id, { mute: false });
-    closeFloating();
-    toast(`Unmuted #${menuChannel.name}`);
-  };
+  $("chm-unmute").onclick = () => unmuteChannel(menuChannel);
+  wireChannelNotifyMenu();
   $("chm-read").onclick = () => {
     if (menuChannel) clearChannelUnread(menuChannel.id);
     closeFloating();

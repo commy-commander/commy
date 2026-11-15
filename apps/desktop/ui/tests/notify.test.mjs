@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard, anywayWay, anywayNotice, pausedMentions, pausedLine } =
+const { DEFAULT_NOTIFY_LEVEL, RECENT_SECS, MUTE_CHOICES, shouldNotify, noticeText, messageNotice, mentionsName, levelForServer, levelForChannel, isMuted, channelPref, activeMute, channelNotifyView, withChannelPref, muteUntil, isRecent, caughtUpNotice, mentionReaches, withServerFilter, filterOn, phoneInFront, alertWay, playsAppSound, inAppLine, sentBeforeFront, noticeTarget, quickReplyCard, anywayWay, anywayNotice, pausedMentions, pausedLine } =
   require("../scripts/notify.js");
 
 const plain = s => s;
@@ -269,4 +269,22 @@ test("the prompt names who has notifications paused", () => {
   assert.equal(pausedLine(["Sam", "Kit"]), "Sam and Kit have notifications paused");
   assert.equal(pausedLine(["Sam", "Kit", "Lee"]), "Sam, Kit and Lee have notifications paused");
   assert.equal(pausedLine([]), "");
+});
+
+test("the bell reads a channel's own choice, its mute and what the server says", () => {
+  const now = 1000;
+  assert.equal(activeMute(true, now), true);
+  assert.equal(activeMute(now + 60, now), now + 60);
+  assert.equal(activeMute(now - 1, now), null);
+  assert.equal(activeMute(undefined, now), null);
+  const plainServer = { servers: { s1: "mentions" } };
+  assert.deepEqual(channelNotifyView(plainServer, "s1", "c1", now), { level: "default", mute: null, serverMuted: false, serverLevel: "mentions", quiet: false });
+  const quietChannel = withChannelPref(plainServer, "s1", "c1", { level: "none" });
+  assert.equal(channelNotifyView(quietChannel, "s1", "c1", now).quiet, true);
+  assert.equal(channelNotifyView(quietChannel, "s1", "c2", now).quiet, false, "other channels keep the server setting");
+  const muted = withChannelPref(plainServer, "s1", "c1", { level: "all", mute: now + 900 });
+  assert.deepEqual(channelNotifyView(muted, "s1", "c1", now), { level: "all", mute: now + 900, serverMuted: false, serverLevel: "mentions", quiet: true });
+  assert.equal(channelNotifyView(muted, "s1", "c1", now + 901).quiet, false, "a mute runs out by itself");
+  const serverMuted = { servers: { s1: "all" }, muted: { s1: true } };
+  assert.deepEqual(channelNotifyView(serverMuted, "s1", "c1", now), { level: "default", mute: null, serverMuted: true, serverLevel: "all", quiet: true });
 });
