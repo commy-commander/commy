@@ -264,6 +264,7 @@ pub struct MemberView {
     pub avatar_border: Option<String>,
     pub card_effect: Option<String>,
     pub phone: bool,
+    pub needs_key: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -590,6 +591,7 @@ impl ServerView {
                     avatar_border: p.avatar_border.clone().filter(|b| commy_core::user::valid_avatar_border(b)),
                     card_effect: p.card_effect.clone().filter(|e| commy_core::user::valid_card_effect(e)),
                     phone: !p.presence.is_visible_online() && commy_core::user::phone_reachable(p.phone_until, now.timestamp_millis()),
+                    needs_key: viewer == Some(state.server.owner) && !state.is_bot(p.id) && state.identity_of(p.id).is_none(),
                 }
             })
             .collect();
@@ -1548,6 +1550,35 @@ mod tests {
         assert!(permission_names(Permissions::NO_CREATE_EVENTS | Permissions::NO_EMBED_LINKS).contains(&"create_events".to_string()), "a listed name means the restriction is set");
         assert_eq!(permissions_from_names(&["send_polls".to_string(), "read_message_history".to_string()]), Permissions::NO_SEND_POLLS | Permissions::NO_READ_MESSAGE_HISTORY);
         assert!(permission_names(Permissions::default_member()).iter().all(|n| !["embed_links", "send_polls", "create_events"].contains(&n.as_str())));
+    }
+
+    #[test]
+    fn only_the_owner_sees_which_members_still_need_a_key() {
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(Identity::generate().public());
+        let server = Server::new("s", owner.id);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let legacy = UserProfile::new("legacy");
+        let legacy_id = legacy.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: legacy.clone() }).unwrap();
+        let mut keyed = UserProfile::new("keyed");
+        keyed.identity = Some(Identity::generate().public());
+        let keyed_id = keyed.id;
+        state.apply(ServerEvent::MemberJoin { server: sid, profile: keyed }).unwrap();
+        let needs = |state: &ServerState, viewer: UserId, id: UserId| {
+            let view = ServerView::for_viewer(state, Some(viewer), &KeyHolder::default());
+            view.members.iter().find(|m| m.id == id.to_string()).unwrap().needs_key
+        };
+        assert!(needs(&state, owner.id, legacy_id));
+        assert!(!needs(&state, owner.id, keyed_id));
+        assert!(!needs(&state, owner.id, owner.id));
+        assert!(!needs(&state, keyed_id, legacy_id), "other members are not told");
+        let mut updated = legacy;
+        updated.identity = Some(Identity::generate().public());
+        state.apply(ServerEvent::ProfileUpdate { profile: updated }).unwrap();
+        assert!(!needs(&state, owner.id, legacy_id), "the notice clears once their app sends its key");
     }
 
     #[test]

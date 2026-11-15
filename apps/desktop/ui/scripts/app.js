@@ -8417,6 +8417,7 @@ function renderMembers() {
       if (member.tag) nameRow.appendChild(roleTagChip(member.tag, member.tag_color));
       if (member.server_tag) nameRow.appendChild(serverTagChip(member.server_tag));
       if (timeoutActive(member.timeout_until)) nameRow.appendChild(timeoutBadge(member.timeout_until));
+      if (member.needs_key) nameRow.appendChild(needsKeyBadge());
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
         live.title = "Watch screen";
@@ -15675,6 +15676,16 @@ async function setUserVoice(userId, { volume, muted }) {
 function currentTimeoutOf(member) {
   const fresh = currentServerMember(member.id);
   return fresh ? fresh.timeout_until : member.timeout_until;
+}
+
+const NEEDS_KEY_TITLE = "Not secured yet: ask them to open the latest Commy once";
+
+function needsKeyBadge() {
+  const badge = el("span", "timeout-badge needs-key-badge");
+  badge.title = NEEDS_KEY_TITLE;
+  badge.setAttribute("aria-label", NEEDS_KEY_TITLE);
+  badge.appendChild(svgIcon("warning", 12));
+  return badge;
 }
 
 function timeoutBadge(untilMs) {
