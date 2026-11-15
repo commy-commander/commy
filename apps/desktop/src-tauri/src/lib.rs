@@ -2179,6 +2179,16 @@ async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
     }
 }
 
+fn blob_gate(handle: &tauri::AppHandle) -> commy_net::node::BlobGate {
+    let handle = handle.clone();
+    std::sync::Arc::new(move |peer, blob| {
+        let app = handle.state::<App>();
+        let node = data_encoding::HEXLOWER.encode(&peer);
+        let servers = app.servers.lock().unwrap();
+        ServerState::drive_blob_allowed(servers.values(), blob, &node)
+    })
+}
+
 fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
     let handle = handle.clone();
     std::sync::Arc::new(move |peer, hello| {
@@ -8279,6 +8289,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 }
                 node.set_catchup_store(catchup::store(&handle));
                 node.set_media_gate(media_gate(&handle));
+                node.set_blob_gate(blob_gate(&handle));
                 open_shelf(&app, &node).await;
                 *app.net.lock().await = Some(node);
                 host_unhosted(&app).await;

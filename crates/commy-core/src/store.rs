@@ -2728,6 +2728,32 @@ impl ServerState {
         self.devices.of(user)
     }
 
+    pub fn users_on_node(&self, node: &str) -> Vec<UserId> {
+        let node = node.to_ascii_lowercase();
+        self.profiles
+            .values()
+            .filter(|p| {
+                let devices = self.devices.of(p.id).iter().map(|d| d.node.as_str());
+                p.node.as_deref().into_iter().chain(devices).filter_map(devices::node_key).any(|n| n == node)
+            })
+            .map(|p| p.id)
+            .collect()
+    }
+
+    pub fn drive_blob_open_to(&self, blob: &str, node: &str) -> Option<bool> {
+        let channels: Vec<ChannelId> = self.server.drive.iter().filter(|i| i.file.as_ref().is_some_and(|f| f.blob.eq_ignore_ascii_case(blob))).map(|i| i.channel).collect();
+        if channels.is_empty() {
+            return None;
+        }
+        let users = self.users_on_node(node);
+        Some(channels.iter().any(|c| users.iter().any(|u| self.server.is_current_member(*u) && self.server.can_view(*c, *u))))
+    }
+
+    pub fn drive_blob_allowed<'a>(states: impl IntoIterator<Item = &'a ServerState>, blob: &str, node: &str) -> bool {
+        let verdicts: Vec<bool> = states.into_iter().filter_map(|state| state.drive_blob_open_to(blob, node)).collect();
+        verdicts.is_empty() || verdicts.contains(&true)
+    }
+
     pub fn member_nodes(&self) -> Vec<String> {
         let mut nodes: Vec<String> = Vec::new();
         for profile in self.profiles.values().filter(|p| self.server.is_current_member(p.id)) {
@@ -4678,6 +4704,46 @@ mod tests {
         }
         assert!(state.waiting.values().all(|list| list.len() <= MAX_WAITING_PER_MESSAGE));
         assert_eq!(state.waiting.values().map(Vec::len).sum::<usize>(), MAX_WAITING);
+    }
+
+    #[test]
+    fn a_locked_drive_file_is_sent_only_to_devices_of_people_who_can_see_it() {
+        use crate::drive::{DriveFile, DriveItem};
+        let (mut state, _general, owner) = fixture();
+        let insider = join(&mut state, "insider");
+        let outsider = join(&mut state, "outsider");
+        let role = Role {
+            id: RoleId::new(),
+            name: "insiders".into(),
+            color: None,
+            permissions: Permissions(0),
+            position: 1,
+            hoist: false,
+            self_assignable: false,
+            mentionable: false,
+            tag: None,
+            banner: None,
+        };
+        let mut drive = Channel::new("vault", ChannelKind::Drive, 9);
+        drive.view_roles = vec![role.id];
+        let vault = drive.id;
+        state.server.members.iter_mut().find(|m| m.user == insider).unwrap().roles.push(role.id);
+        state.server.roles.push(role);
+        state.server.channels.push(drive);
+        let blob = "ab".repeat(32);
+        let file = DriveFile { blob: blob.clone(), size: 3, mime: "text/plain".into() };
+        let item = DriveItem::file(vault, None, "plans.txt", file, insider, &"11".repeat(32), 1).unwrap();
+        state.server.drive.push(item);
+        let node_of = |state: &mut ServerState, user: UserId, node: &str| state.profiles.get_mut(&user).unwrap().node = Some(node.to_string());
+        node_of(&mut state, insider, &"22".repeat(32));
+        node_of(&mut state, outsider, &"33".repeat(32));
+        assert_eq!(state.drive_blob_open_to(&blob, &"22".repeat(32)), Some(true));
+        assert_eq!(state.drive_blob_open_to(&blob, &"33".repeat(32)), Some(false), "a member outside the locked drive is refused");
+        assert_eq!(state.drive_blob_open_to(&blob, &"44".repeat(32)), Some(false), "a stranger is refused");
+        assert_eq!(state.drive_blob_open_to(&"cd".repeat(32), &"33".repeat(32)), None, "other files are not drive files");
+        assert!(!ServerState::drive_blob_allowed([&state], &blob, &"33".repeat(32)));
+        assert!(ServerState::drive_blob_allowed([&state], &"cd".repeat(32), &"44".repeat(32)));
+        let _ = owner;
     }
 
     #[test]

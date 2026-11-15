@@ -6,7 +6,10 @@ use iroh_blobs::store::fs::options::Options;
 use iroh_blobs::store::fs::FsStore;
 use iroh_blobs::store::GcConfig;
 use iroh_blobs::api::remote::GetProgressItem;
+use iroh_blobs::provider::events::{AbortReason, EventMask, EventResult, EventSender, ObserveMode, ProviderMessage, RequestMode};
 use iroh_blobs::{BlobFormat, BlobsProtocol, Hash, HashAndFormat};
+
+use crate::node::BlobGate;
 use futures_lite::StreamExt;
 
 pub use crate::node::FILES_ALPN;
@@ -43,6 +46,18 @@ impl Shelf {
 
     pub fn protocol(&self) -> BlobsProtocol {
         BlobsProtocol::new(&self.store, None)
+    }
+
+    pub fn protocol_for(&self, peer: [u8; 32], gate: Option<BlobGate>) -> BlobsProtocol {
+        let Some(gate) = gate else { return self.protocol() };
+        let mask = EventMask { get: RequestMode::Intercept, get_many: RequestMode::Intercept, observe: ObserveMode::Intercept, ..EventMask::DEFAULT };
+        let (events, mut requests) = EventSender::channel(GATE_QUEUE, mask);
+        tokio::spawn(async move {
+            while let Some(request) = requests.recv().await {
+                answer(request, peer, &gate).await;
+            }
+        });
+        BlobsProtocol::new(&self.store, Some(events))
     }
 
     pub async fn share(&self, path: &Path) -> Result<(String, u64)> {
@@ -232,6 +247,38 @@ fn kept_tag(prefix: &str, at_secs: u64, hash: &Hash) -> String {
 fn kept_at(prefix: &str, name: &[u8]) -> Option<u64> {
     let name = std::str::from_utf8(name).ok()?.strip_prefix(prefix)?;
     name.split('/').next()?.parse().ok()
+}
+
+const GATE_QUEUE: usize = 32;
+
+fn verdict(open: bool) -> EventResult {
+    if open {
+        Ok(())
+    } else {
+        Err(AbortReason::Permission)
+    }
+}
+
+pub fn may_send(gate: &BlobGate, peer: [u8; 32], hashes: &[Hash]) -> bool {
+    hashes.iter().all(|hash| gate(peer, &hash.to_hex().to_string()))
+}
+
+async fn answer(request: ProviderMessage, peer: [u8; 32], gate: &BlobGate) {
+    match request {
+        ProviderMessage::GetRequestReceived(asked) => {
+            let open = may_send(gate, peer, &[asked.inner.request.hash]);
+            asked.tx.send(verdict(open)).await.ok();
+        }
+        ProviderMessage::GetManyRequestReceived(asked) => {
+            let open = may_send(gate, peer, &asked.inner.request.hashes);
+            asked.tx.send(verdict(open)).await.ok();
+        }
+        ProviderMessage::ObserveRequestReceived(asked) => {
+            let open = may_send(gate, peer, &[asked.inner.request.hash]);
+            asked.tx.send(verdict(open)).await.ok();
+        }
+        _ => {}
+    }
 }
 
 pub fn part_path(target: &Path) -> PathBuf {

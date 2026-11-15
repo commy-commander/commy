@@ -274,19 +274,34 @@ pub type MediaGate = Arc<dyn Fn([u8; 32], &MediaHello) -> bool + Send + Sync>;
 
 type GateSlot = Arc<RwLock<Option<MediaGate>>>;
 
+pub type BlobGate = Arc<dyn Fn([u8; 32], &str) -> bool + Send + Sync>;
+
+#[cfg(not(wasm_browser))]
+type BlobGateSlot = Arc<RwLock<Option<BlobGate>>>;
+
 #[cfg(not(wasm_browser))]
 type ShelfSlot = Arc<RwLock<Option<crate::shelf::Shelf>>>;
 
 #[cfg(not(wasm_browser))]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct FilesAcceptor {
     shelf: ShelfSlot,
+    gate: BlobGateSlot,
+}
+
+#[cfg(not(wasm_browser))]
+impl std::fmt::Debug for FilesAcceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilesAcceptor").finish_non_exhaustive()
+    }
 }
 
 #[cfg(not(wasm_browser))]
 impl ProtocolHandler for FilesAcceptor {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let protocol = self.shelf.read().unwrap_or_else(|e| e.into_inner()).as_ref().map(crate::shelf::Shelf::protocol);
+        let gate = self.gate.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let peer = *connection.remote_id().as_bytes();
+        let protocol = self.shelf.read().unwrap_or_else(|e| e.into_inner()).as_ref().map(|shelf| shelf.protocol_for(peer, gate));
         match protocol {
             Some(protocol) => protocol.accept(connection).await,
             None => Ok(()),
@@ -1198,6 +1213,8 @@ pub struct CommyNode {
     knock_requests: Option<mpsc::UnboundedReceiver<crate::knock::KnockAsk>>,
     catchup_store: StoreSlot,
     media_gate: GateSlot,
+    #[cfg(not(wasm_browser))]
+    blob_gate: BlobGateSlot,
 }
 
 const ADDRESS_WAIT: Duration = Duration::from_secs(5);
@@ -1329,7 +1346,9 @@ impl CommyNode {
         #[cfg(not(wasm_browser))]
         let shelf = ShelfSlot::default();
         #[cfg(not(wasm_browser))]
-        let router = router.accept(FILES_ALPN, FilesAcceptor { shelf: shelf.clone() });
+        let blob_gate = BlobGateSlot::default();
+        #[cfg(not(wasm_browser))]
+        let router = router.accept(FILES_ALPN, FilesAcceptor { shelf: shelf.clone(), gate: blob_gate.clone() });
         let router = router
             .accept(MEDIA_ALPN, MediaAcceptor { tx: media_tx, gate: media_gate.clone() })
             .accept(DM_ALPN, DmAcceptor { tx: dm_tx.clone(), legacy: false })
@@ -1359,6 +1378,8 @@ impl CommyNode {
                 knock_requests: Some(knock_rx),
                 catchup_store,
                 media_gate,
+                #[cfg(not(wasm_browser))]
+                blob_gate,
             },
             events_rx,
             media_rx,
@@ -1845,6 +1866,11 @@ impl CommyNode {
         *self.media_gate.write().unwrap_or_else(|e| e.into_inner()) = Some(gate);
     }
 
+    #[cfg(not(wasm_browser))]
+    pub fn set_blob_gate(&self, gate: BlobGate) {
+        *self.blob_gate.write().unwrap_or_else(|e| e.into_inner()) = Some(gate);
+    }
+
     pub fn leave_server(&mut self, server_id: ServerId) {
         self.topics.remove(&server_id);
     }
@@ -2244,6 +2270,33 @@ mod tests {
             CatchupError::Rejected(Refusal::Busy)
         ));
         assert!(matches!(held.unwrap_err(), CatchupError::Closed));
+    }
+
+    #[tokio::test]
+    async fn the_blob_gate_decides_who_may_fetch_a_shared_file() {
+        let within = Duration::from_secs;
+        let dir = std::env::temp_dir().join(format!("commy-blob-gate-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("plans.bin");
+        std::fs::write(&original, vec![7u8; 4096]).unwrap();
+        let (host, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        let (friend, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        let (stranger, _, _, _) = CommyNode::spawn(None).await.unwrap();
+        for (node, name) in [(&host, "host"), (&friend, "friend"), (&stranger, "stranger")] {
+            node.set_shelf(crate::shelf::Shelf::open(&dir.join(name)).await.unwrap());
+        }
+        let (hash, _) = host.share_file(&original).await.unwrap();
+        let welcome = *friend.endpoint().id().as_bytes();
+        host.set_blob_gate(Arc::new(move |peer, _| peer == welcome));
+        let addr = tokio::time::timeout(within(30), host.node_addr()).await.unwrap().unwrap();
+        friend.learn(addr.endpoint_addr().unwrap());
+        stranger.learn(addr.endpoint_addr().unwrap());
+        let source = host.node_id_hex();
+        let refused = tokio::time::timeout(within(60), stranger.blob_fetcher().download_to(&hash, [source.as_str()], u64::MAX, &dir.join("stolen.bin"), |_, _| {})).await.unwrap();
+        assert!(refused.is_err(), "the gate turns the stranger away");
+        let got = tokio::time::timeout(within(60), friend.blob_fetcher().download_to(&hash, [source.as_str()], u64::MAX, &dir.join("kept.bin"), |_, _| {})).await.unwrap().unwrap();
+        assert_eq!(got, 4096);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
