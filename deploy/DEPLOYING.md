@@ -68,6 +68,9 @@ by `docker compose up -d` in that folder. Google OAuth needs each domain's
   from the staging checkout, address discovery on 7843/udp). Both are DNS-only records, and
   `setup-vps.sh` starts both. Test builds never use the production relay or
   account server, and release builds never use staging.
+  Sites that belong to one server only go in untracked `edge/sites.d/*.caddy` files
+  (the edge imports them and runs fine when there are none), and networks the edge
+  must also join go in an untracked `edge/docker-compose.override.yml`.
 - `docker-compose.env.yml` turns off the per-stack Caddy and joins `web` and
   `auth` to that environment's own Docker network (`commy-prod`, `commy-staging`
   or `commy-dev`, named after `COMPOSE_PROJECT_NAME`) under those aliases. Only

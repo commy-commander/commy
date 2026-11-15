@@ -102,6 +102,21 @@ check "device codes are not logged" "$(logged /device)" 0
 check "sync service calls are not logged" "$(logged /sync)" 0
 check "other requests are logged" "$(logged /docs)" 1
 
+full="$work/full"
+mkdir -p "$full"
+sed -e "s#/var/log/caddy/#$full/#" "$here/Caddyfile" >"$full/Caddyfile"
+full_caddy() {
+	env ACME_EMAIL=ops@example.org PROD_DOMAIN=example.org STAGING_DOMAIN=staging.example.org \
+		DEV_DOMAIN=dev.example.org DOCS_DOMAIN=docs.example.org RELAY_DOMAIN=relay.example.org \
+		STAGING_RELAY_DOMAIN=relay-staging.example.org FORGE_DOMAIN=git.example.org \
+		"$caddy" "$@" --config "$full/Caddyfile" --adapter caddyfile
+}
+check "full edge config is valid without local sites" "$(full_caddy validate >/dev/null 2>&1 && echo valid)" valid
+mkdir -p "$full/sites.d"
+printf 'local-site.example.org {\n\trespond "local"\n}\n' >"$full/sites.d/local.caddy"
+check "full edge config is valid with a local site" "$(full_caddy validate >/dev/null 2>&1 && echo valid)" valid
+check "local sites are loaded" "$(full_caddy adapt 2>/dev/null | grep -c local-site.example.org)" 1
+
 if [ "$failures" -gt 0 ]; then
 	echo "$failures check(s) failed"
 	cat "$work/caddy.out"

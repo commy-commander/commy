@@ -25,6 +25,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./certs:/etc/caddy/certs:ro
+      - ./sites.d:/etc/caddy/sites.d:ro
       - caddy_data:/data
       - caddy_config:/config
       - /var/log/commy-caddy:/var/log/caddy

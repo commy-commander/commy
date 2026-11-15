@@ -1,1 +1,3 @@
 certs/
+sites.d/
+docker-compose.override.yml
