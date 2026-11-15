@@ -126,6 +126,9 @@ pub async fn send_note(app: &App, handle: &AppHandle, sid: ServerId, note: &str)
 }
 
 fn knock_for(app: &App, sid: ServerId, note: &str, asked_at: i64) -> CmdResult<KnockRequest> {
+    if !app.key_settled() {
+        return Err("your identity is still being set up; try again in a minute".into());
+    }
     let me = app.announced(crate::current_profile(app)?);
     let event = commy_view::join_requests::ask(sid, &me, note, asked_at)?;
     let ask = app.sign_event(sid, event).ok_or(KEY_NOT_READY)?;

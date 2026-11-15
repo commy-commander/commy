@@ -476,6 +476,7 @@ async fn answer_join_request(app: tauri::State<'_, App>, handle: tauri::AppHandl
 
 pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
     current_profile(app)?;
+    refuse_while_key_may_be_replaced(app)?;
     if app.deleted.lock().unwrap().contains(ticket.server_id) {
         return Err("This server was deleted by its owner".into());
     }

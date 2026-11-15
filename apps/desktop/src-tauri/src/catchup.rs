@@ -968,7 +968,7 @@ pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
     let Some(member) = app.servers.lock().unwrap().get(&server).map(|state| state.server.is_current_member(me.id)) else {
         return Vec::new();
     };
-    let join = member.then(|| app.wire_for(server, ServerEvent::MemberJoin { server, profile: app.announced(me) }));
+    let join = (member && app.key_settled()).then(|| app.wire_for(server, ServerEvent::MemberJoin { server, profile: app.announced(me) }));
     snapshot_for(app, server).into_iter().chain(join).collect()
 }
 
