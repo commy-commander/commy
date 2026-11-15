@@ -720,13 +720,18 @@ impl ServerState {
         &all[start..end]
     }
 
+    pub(crate) fn action_time(&self, subject: &str) -> Option<i64> {
+        self.action_times.get(subject).copied()
+    }
+
     pub fn admits_signed(&self, signed: &SignedEvent) -> Result<bool, StoreError> {
         let by = signed.action.by;
         let key = self.signer_key(signed).ok_or(StoreError::UnknownAuthorKey(by))?;
         if !signed.verify(self.server.id, &key) {
             return Err(StoreError::BadSignature);
         }
-        if signed.action.at.saturating_sub(Utc::now().timestamp_millis()) > MAX_ACTION_AHEAD_MS {
+        let ahead = signed.action.at.saturating_sub(Utc::now().timestamp_millis());
+        if ahead > MAX_ACTION_AHEAD_MS || (is_key_grant(&signed.event) && ahead > MAX_GRANT_AHEAD_MS) {
             return Err(StoreError::TooFarAhead);
         }
         if !action::authorized(&self.server, by, &signed.event) {
@@ -2150,7 +2155,13 @@ impl ServerState {
                 if self.server.channel(channel).is_none() {
                     return Err(StoreError::UnknownChannel);
                 }
-                self.channel_keys.entry(channel).or_default().set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
+                if !self.server.is_current_member(user) {
+                    return Ok(false);
+                }
+                let members = &self.server;
+                let keys = self.channel_keys.entry(channel).or_default();
+                keys.make_room(MAX_PROFILES, |u| members.is_current_member(u));
+                keys.set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
             }
             ServerEvent::CommunityKeyAdd { server, key } => {
                 self.same_server(server)?;
@@ -2158,9 +2169,11 @@ impl ServerState {
             }
             ServerEvent::CommunityKeyGrant { server, user, grant } => {
                 self.same_server(server)?;
-                if self.server.banned.contains(&user) {
+                if self.server.banned.contains(&user) || !self.server.is_current_member(user) {
                     return Ok(false);
                 }
+                let members = &self.server;
+                self.community_keys.make_room(MAX_PROFILES, |u| members.is_current_member(u));
                 self.community_keys.set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
             }
             ServerEvent::PollVote { server, channel, message, user, choices } => {
@@ -3087,6 +3100,12 @@ fn waits_for(event: &ServerEvent) -> Option<MessageId> {
         | E::PollClose { message, .. } => Some(*message),
         _ => None,
     }
+}
+
+pub const MAX_GRANT_AHEAD_MS: i64 = 120_000;
+
+fn is_key_grant(event: &ServerEvent) -> bool {
+    matches!(event, ServerEvent::ChannelKeyGrant { .. } | ServerEvent::CommunityKeyGrant { .. })
 }
 
 fn too_far_ahead(t: DateTime<Utc>, now: DateTime<Utc>) -> bool {
