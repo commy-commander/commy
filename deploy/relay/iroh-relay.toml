@@ -6,3 +6,7 @@ metrics_bind_addr = "[::]:9090"
 [limits]
 accept_conn_limit = 20.0
 accept_conn_burst = 100
+
+[limits.client.rx]
+bytes_per_second = 4000000
+max_burst_bytes = 8000000

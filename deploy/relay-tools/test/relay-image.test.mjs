@@ -23,3 +23,13 @@ test("the shared relay reads the edge certificate read only", () => {
   assert.match(read("docker-compose.relay.yml"), /- edge_caddy_data:\/caddy-data:ro/);
   assert.match(read("docker-compose.relay.yml"), /name: commy-edge_caddy_data/);
 });
+
+test("each relay client sends at most a few megabytes a second", () => {
+  const config = read("relay/iroh-relay.toml").replace(/\r/g, "");
+  const table = config.slice(config.indexOf("[limits.client.rx]"));
+  const rate = Number(/^bytes_per_second = (\d+)$/m.exec(table)?.[1]);
+  const burst = Number(/^max_burst_bytes = (\d+)$/m.exec(table)?.[1]);
+  assert.ok(config.includes("[limits.client.rx]"));
+  assert.ok(rate > 0 && rate <= 8_000_000, "one client cannot drain the monthly allowance at line speed");
+  assert.ok(burst >= rate);
+});
