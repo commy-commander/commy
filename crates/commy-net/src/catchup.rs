@@ -4,7 +4,7 @@ use commy_core::catchup::{
     ReactionChange, CATCHUP_MAX_ITEMS,
 };
 use commy_core::{
-    BucketDigest, BucketKey, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent,
+    BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent,
     ServerId, ServerState, Signature, TombstoneProof, UserId, UserProfile,
 };
 use serde::{Deserialize, Serialize};
@@ -238,6 +238,7 @@ pub trait CatchupStore {
     fn digests(&self, server: ServerId) -> Vec<BucketDigest>;
     fn items(&self, server: ServerId, keys: &[BucketKey]) -> Vec<BucketItems>;
     fn get(&self, server: ServerId, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>);
+    fn may_read(&self, server: ServerId, peer: UserId, channel: ChannelId) -> bool;
     fn profiles(&self, server: ServerId, users: &[UserId]) -> Vec<UserProfile>;
     fn apply_profiles(&self, server: ServerId, profiles: Vec<UserProfile>);
     fn apply(
@@ -441,7 +442,7 @@ where
     log_capped("fetch", cap(&mut we_want));
 
     send(&mut io, &CatchupFrame::Want(we_want.clone())).await?;
-    let pushed = send_items(&mut io, store, server, &they_lack, |key| listed.contains(&key)).await?;
+    let pushed = send_items(&mut io, store, server, peer_user, &they_lack, |key| listed.contains(&key)).await?;
     let verdict = read_applied(&mut io).await?;
 
     let wanted: HashSet<MessageId> = we_want.into_iter().collect();
@@ -606,7 +607,7 @@ where
 
     let got = receive_pages(&mut io, store, server, |_, key| answered.contains(&key)).await?;
     send(&mut io, &got.verdict()).await?;
-    let pushed = send_items(&mut io, store, server, &want, |_| true).await?;
+    let pushed = send_items(&mut io, store, server, peer, &want, |_| true).await?;
     let verdict = match n0_future::time::timeout(APPLIED_TIMEOUT, read_applied(&mut io)).await {
         Ok(Ok(verdict)) => Some(verdict),
         Ok(Err(e)) => {
@@ -949,10 +950,15 @@ async fn read_items<R: AsyncRead + Unpin>(
     }
 }
 
+pub fn readable(state: &ServerState, peer: UserId, channel: ChannelId) -> bool {
+    state.server.can_view(channel, peer)
+}
+
 async fn send_items<IO, S>(
     io: &mut IO,
     store: &S,
     server: ServerId,
+    peer: UserId,
     ids: &[MessageId],
     keep: impl Fn(BucketKey) -> bool,
 ) -> Result<Vec<MessageId>, CatchupError>
@@ -965,8 +971,8 @@ where
     } else {
         store.get(server, ids)
     };
-    messages.retain(|m| keep(message_key(m)));
-    tombstones.retain(|p| keep(tombstone_key(p)));
+    messages.retain(|m| keep(message_key(m)) && store.may_read(server, peer, m.channel));
+    tombstones.retain(|p| keep(tombstone_key(p)) && store.may_read(server, peer, p.channel));
     let (messages, tombstones) = fit_items(ids, messages, tombstones, MAX_PUSHED_ITEMS);
     let signers = dedup(signers_of(&messages, &tombstones));
     let mut profiles: HashMap<UserId, UserProfile> = if signers.is_empty() {
@@ -1650,6 +1656,38 @@ mod tests {
             }
         });
         assert!(b.has(early.id));
+    }
+
+    fn lock_to_a_role(store: &MemStore, channel: ChannelId) {
+        store.with(|s| {
+            let server = s.server.id;
+            let role = commy_core::server::Role {
+                id: commy_core::RoleId::new(),
+                name: "crew".into(),
+                color: None,
+                permissions: commy_core::Permissions::NONE,
+                position: 1,
+                hoist: false,
+                self_assignable: false,
+                mentionable: false,
+                tag: None,
+                banner: None,
+            };
+            let view = vec![role.id];
+            s.apply(ServerEvent::RoleCreate { server, role }).unwrap();
+            s.apply(ServerEvent::ChannelAccessSet { server, channel, view, send: Vec::new() }).unwrap();
+        });
+    }
+
+    #[tokio::test]
+    async fn a_locked_channel_is_not_served_to_members_who_cannot_see_it() {
+        let (a, b, channel) = pair();
+        let before_lock = a.post(channel, "said before the lock");
+        lock_to_a_role(&a, channel);
+        lock_to_a_role(&b, channel);
+        let (ra, rb) = ok_session(&a, &b).await;
+        assert!(!b.has(before_lock.id), "the member without the role gets nothing from the channel");
+        assert!(rb.received.is_empty() && ra.delivered.is_empty());
     }
 
     #[tokio::test]
@@ -2576,6 +2614,9 @@ mod tests {
         fn get(&self, server: ServerId, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>) {
             self.inner.get(server, ids)
         }
+        fn may_read(&self, server: ServerId, peer: UserId, channel: ChannelId) -> bool {
+            self.inner.may_read(server, peer, channel)
+        }
         fn profiles(&self, server: ServerId, users: &[UserId]) -> Vec<UserProfile> {
             self.inner.profiles(server, users)
         }
@@ -3070,7 +3111,7 @@ mod tests {
                 .await
                 .unwrap();
             send(&mut y, &got.verdict()).await.unwrap();
-            send_items(&mut y, &b, server, &want, |_| true).await.unwrap();
+            send_items(&mut y, &b, server, a.me, &want, |_| true).await.unwrap();
             drop(y);
             b
         };

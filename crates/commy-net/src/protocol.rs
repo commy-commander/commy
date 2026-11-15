@@ -214,7 +214,7 @@ pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: U
     server.pins.clear();
     server.drive.clear();
     let mut messages: Vec<commy_core::Message> = Vec::new();
-    for channel in &state.server.channels {
+    for channel in state.server.channels.iter().filter(|c| c.view_roles.is_empty()) {
         messages.extend(state.page(channel.id, None, per_channel).iter().cloned());
     }
     messages.sort_by_key(|m| std::cmp::Reverse(m.created_at));

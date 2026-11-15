@@ -95,6 +95,10 @@ impl CatchupStore for BotStore {
         self.with_state(server, |s| collect(s, ids)).unwrap_or_default()
     }
 
+    fn may_read(&self, server: ServerId, peer: UserId, channel: commy_core::ChannelId) -> bool {
+        self.with_state(server, |s| commy_net::catchup::readable(s, peer, channel)).unwrap_or(false)
+    }
+
     fn profiles(&self, server: ServerId, users: &[UserId]) -> Vec<UserProfile> {
         self.with_state(server, |s| profiles_of(s, users)).unwrap_or_default()
     }

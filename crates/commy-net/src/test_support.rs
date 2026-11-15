@@ -103,6 +103,10 @@ impl CatchupStore for MemStore {
         self.with(|s| collect(s, ids))
     }
 
+    fn may_read(&self, _: ServerId, peer: UserId, channel: ChannelId) -> bool {
+        self.with(|s| crate::catchup::readable(s, peer, channel))
+    }
+
     fn profiles(&self, _: ServerId, users: &[UserId]) -> Vec<UserProfile> {
         self.with(|s| profiles_of(s, users))
     }
@@ -165,6 +169,10 @@ impl CatchupStore for MultiStore {
         self.of(server)
             .map(|s| s.get(server, ids))
             .unwrap_or_default()
+    }
+
+    fn may_read(&self, server: ServerId, peer: UserId, channel: ChannelId) -> bool {
+        self.of(server).is_some_and(|s| s.may_read(server, peer, channel))
     }
 
     fn profiles(&self, server: ServerId, users: &[UserId]) -> Vec<UserProfile> {

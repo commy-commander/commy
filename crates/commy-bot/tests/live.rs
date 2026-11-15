@@ -43,6 +43,10 @@ impl CatchupStore for OwnerStore {
         collect(&self.state.lock().unwrap(), ids)
     }
 
+    fn may_read(&self, _: ServerId, peer: UserId, channel: commy_core::ChannelId) -> bool {
+        commy_net::catchup::readable(&self.state.lock().unwrap(), peer, channel)
+    }
+
     fn profiles(&self, _: ServerId, users: &[UserId]) -> Vec<UserProfile> {
         profiles_of(&self.state.lock().unwrap(), users)
     }
