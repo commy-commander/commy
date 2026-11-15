@@ -888,14 +888,20 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
         }
     }
     drop(tx);
+    let list = match fetch(&app, &s, VAULT_ITEM).await {
+        Ok(Fetched::Item(item)) => item.data,
+        _ => None,
+    };
     let mut keyless = true;
     while let Some(reply) = rx.recv().await {
         match reply {
             Ok(EntryKeyReply::Key(text)) => {
-                if let Ok(key) = SealKey::from_text(&text) {
+                let opens = |key: &SealKey| list.as_deref().is_none_or(|data| EntryList::open(key, data).is_ok());
+                if let Some(key) = SealKey::from_text(&text).ok().filter(opens) {
                     save_key(&dir, &s.server, &s.account, &key);
                     return Ok(Asked::Got);
                 }
+                tracing::info!("ignored a server list key that does not open this account's list");
             }
             Ok(EntryKeyReply::Unknown) => {}
             _ => keyless = false,
