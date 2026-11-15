@@ -14,6 +14,16 @@ pub const HOST_TAKEN: &str = "Someone else already holds this server's erase key
 pub const HOST_SLOW: &str = "That sync server did not answer in time. Try again in a moment.";
 pub const KEYS_NOT_READY: &str = "This server's keys are not ready yet. Try again in a moment.";
 
+pub const ROOM_RELAY_DOWN: &str = "This server's voice relay isn't answering, so voice here is off for now. Try again in a few minutes.";
+pub const ROOM_RELAY_MISSING: &str = "This server's sync server runs no voice relay, so voice here isn't available. Ask the server's owner to run one.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoomRelay {
+    Ours,
+    Theirs(String),
+    Unavailable(&'static str),
+}
+
 pub const HOST_NEEDS_NEWER_APP: &str = "This server's sync server needs a newer Commy. Update Commy to keep chatting here.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -44,14 +54,18 @@ fn host_release_for(greeting: &Greeting, app_protocol: u32) -> HostRelease {
     HostRelease { version, fit, text }
 }
 
-pub fn room_relay(community_socket: &str, default_socket: &str, greeting: Option<&Greeting>) -> Option<String> {
-    let host = socket_host(community_socket)?;
+pub fn room_relay(community_socket: &str, default_socket: &str, greeting: Option<&Greeting>) -> RoomRelay {
+    let Some(host) = socket_host(community_socket) else { return RoomRelay::Ours };
     if socket_host(default_socket).as_deref() == Some(host.as_str()) {
-        return None;
+        return RoomRelay::Ours;
     }
-    let relay = greeting?.relay.as_deref()?.trim().trim_end_matches('/');
-    let relay_host = relay.strip_prefix("https://").filter(|rest| !rest.contains(['/', '?', '#', '@']))?;
-    (relay_host.to_ascii_lowercase() == host).then(|| format!("https://{relay_host}"))
+    let Some(greeting) = greeting else { return RoomRelay::Unavailable(ROOM_RELAY_DOWN) };
+    let relay = greeting.relay.as_deref().map(|r| r.trim().trim_end_matches('/'));
+    let relay_host = relay.and_then(|r| r.strip_prefix("https://")).filter(|rest| !rest.contains(['/', '?', '#', '@']));
+    match relay_host {
+        Some(relay_host) if relay_host.to_ascii_lowercase() == host => RoomRelay::Theirs(format!("https://{relay_host}")),
+        _ => RoomRelay::Unavailable(ROOM_RELAY_MISSING),
+    }
 }
 
 fn socket_host(socket: &str) -> Option<String> {
@@ -85,14 +99,24 @@ mod tests {
         let with = |relay: &str| Greeting { relay: Some(relay.to_string()), ..Greeting::of(PROTOCOL) };
         let ours = "wss://commy.chat/sync";
         let theirs = "wss://Sync.Example.org/sync";
-        assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org"))).as_deref(), Some("https://sync.example.org"));
-        assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org/"))).as_deref(), Some("https://sync.example.org"));
-        assert_eq!(room_relay(theirs, ours, Some(&with("https://tracker.example.net"))), None, "another domain is ignored");
-        assert_eq!(room_relay(theirs, ours, Some(&with("http://sync.example.org"))), None);
-        assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org/elsewhere"))), None);
-        assert_eq!(room_relay(theirs, ours, Some(&Greeting::of(PROTOCOL))), None, "no relay announced");
-        assert_eq!(room_relay(theirs, ours, None), None);
-        assert_eq!(room_relay(ours, ours, Some(&with("https://commy.chat"))), None, "communities on our host keep our relay");
+        let own = |url: &str| RoomRelay::Theirs(url.to_string());
+        assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org"))), own("https://sync.example.org"));
+        assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org/"))), own("https://sync.example.org"));
+        assert_eq!(room_relay(ours, ours, Some(&with("https://commy.chat"))), RoomRelay::Ours, "communities on our host keep our relay");
+        assert_eq!(room_relay(ours, ours, None), RoomRelay::Ours);
+    }
+
+    #[test]
+    fn a_community_elsewhere_never_borrows_our_relay() {
+        let with = |relay: &str| Greeting { relay: Some(relay.to_string()), ..Greeting::of(PROTOCOL) };
+        let ours = "wss://commy.chat/sync";
+        let theirs = "wss://sync.example.org/sync";
+        let missing = RoomRelay::Unavailable(ROOM_RELAY_MISSING);
+        assert_eq!(room_relay(theirs, ours, Some(&with("https://tracker.example.net"))), missing, "another domain is ignored");
+        assert_eq!(room_relay(theirs, ours, Some(&with("http://sync.example.org"))), missing);
+        assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org/elsewhere"))), missing);
+        assert_eq!(room_relay(theirs, ours, Some(&Greeting::of(PROTOCOL))), missing, "no relay announced");
+        assert_eq!(room_relay(theirs, ours, None), RoomRelay::Unavailable(ROOM_RELAY_DOWN), "a host we cannot reach");
     }
 
     use super::*;

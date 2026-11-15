@@ -194,10 +194,12 @@ pub fn greeting_of(sid: ServerId) -> Option<commy_sync::wire::Greeting> {
     LIVE.lock().unwrap().as_ref()?.communities.get(&sid)?.pool.greeting()
 }
 
-pub fn room_relay_of(sid: ServerId) -> Option<String> {
+pub fn room_relay_of(sid: ServerId) -> commy_view::sync_host::RoomRelay {
     let live = LIVE.lock().unwrap();
-    let live = live.as_ref()?;
-    let community = live.communities.get(&sid)?;
+    let Some(community) = live.as_ref().and_then(|live| live.communities.get(&sid).map(|community| (live, community))) else {
+        return commy_view::sync_host::RoomRelay::Ours;
+    };
+    let (live, community) = community;
     commy_view::sync_host::room_relay(&community.url, &live.url, community.pool.greeting().as_ref())
 }
 static INVITED: Mutex<Vec<(ServerId, KeyId, ChannelSecret)>> = Mutex::new(Vec::new());

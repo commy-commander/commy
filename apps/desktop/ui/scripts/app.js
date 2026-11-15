@@ -24703,6 +24703,17 @@ function wireEvents() {
       renderVoicePanel();
       if (state.currentServer && state.currentServer.id === server) await refreshCurrentServer();
     });
+    window.__TAURI__.event.listen("voice-relay-down", async event => {
+      const { server, text } = event.payload || {};
+      toast(text || "This server's voice relay isn't answering, so voice here is off for now.");
+      state.voiceChannelId = null;
+      state.voiceServer = null;
+      state.sharing = false;
+      clearSpeaking();
+      playSound("leave");
+      renderVoicePanel();
+      if (state.currentServer && state.currentServer.id === server) await refreshCurrentServer();
+    });
     window.__TAURI__.event.listen("afk-moved", async event => {
       const { server, channel, name } = event.payload || {};
       toast("You were moved to AFK for inactivity");

@@ -78,6 +78,7 @@ mod toast;
 mod tray;
 mod updater;
 use commy_view as view;
+use view::sync_host::RoomRelay;
 mod voice_filter;
 mod voice_gate;
 mod voice_keys;
@@ -1991,11 +1992,35 @@ fn follow_room_relay(handle: &tauri::AppHandle) {
             Some(net) => net.relay_switch(),
             None => return,
         };
-        let wanted = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).and_then(community_sync::room_relay_of);
-        if let Err(e) = switch.use_room(wanted.as_deref()).await {
-            tracing::warn!("staying on our relay: {e:#}");
+        let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+        let wanted = server.map_or(RoomRelay::Ours, community_sync::room_relay_of);
+        let refusal = match wanted {
+            RoomRelay::Ours => {
+                if let Err(e) = switch.use_room(None).await {
+                    tracing::warn!("moving back to our relay: {e:#}");
+                }
+                None
+            }
+            RoomRelay::Theirs(url) => switch.use_room(Some(&url)).await.err().map(|e| {
+                tracing::warn!("leaving voice, the server's relay is out of reach: {e:#}");
+                view::sync_host::ROOM_RELAY_DOWN
+            }),
+            RoomRelay::Unavailable(text) => Some(text),
+        };
+        if let (Some(sid), Some(text)) = (server, refusal) {
+            leave_voice_without_a_relay(&handle, sid, text).await;
         }
     });
+}
+
+async fn leave_voice_without_a_relay(handle: &tauri::AppHandle, sid: ServerId, text: &str) {
+    let still_here = handle.state::<App>().voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
+    if !still_here {
+        return;
+    }
+    if set_voice_channel(handle.state::<App>(), handle.clone(), sid.to_string(), None).await.is_ok() {
+        let _ = handle.emit("voice-relay-down", serde_json::json!({ "server": sid.to_string(), "text": text }));
+    }
 }
 
 async fn run_voice_redialer(handle: tauri::AppHandle) {

@@ -8,6 +8,7 @@ use commy_core::{ChannelId, IdentityKey, Message, ServerEvent, ServerId, UserId}
 use commy_net::community_streams::{self as streams, Lane};
 use commy_net::entry_list::{self, EntryList};
 use commy_net::sync_streams::SharedKey;
+use commy_view::sync_host::RoomRelay;
 use commy_net::sealed::SealKey;
 use commy_net::server_wake::AllRings;
 use commy_net::{sync_streams, ServerTicket, WirePayload};
@@ -152,9 +153,9 @@ impl Session {
         }
     }
 
-    pub(super) fn room_relay_of(&self, server: ServerId) -> Option<String> {
+    pub(super) fn room_relay_of(&self, server: ServerId) -> RoomRelay {
         let guard = self.sync.borrow();
-        let live = guard.as_ref()?;
+        let Some(live) = guard.as_ref() else { return RoomRelay::Ours };
         let socket = live.socket_of(server);
         commy_view::sync_host::room_relay(&socket, &live.url, live.pool.greeting_at(&socket).as_ref())
     }

@@ -13,6 +13,7 @@ use commy_net::{DmEnvelope, MediaHello, MediaPacket, WirePayload};
 use commy_view::afk::{self, IdleVoice};
 use commy_view::calls::{self, CallBook, CallStep, DmCall, DmCallView, VoiceGates};
 use commy_view::liveness::BEAT;
+use commy_view::sync_host::{RoomRelay, ROOM_RELAY_DOWN};
 use commy_view::voice_links;
 use iroh::endpoint::Connection;
 use serde_json::{json, Value};
@@ -428,9 +429,27 @@ impl Session {
         spawn_local(async move {
             let Some(switch) = this.node.lock().await.as_ref().map(commy_net::CommyNode::relay_switch) else { return };
             let server = this.voice.borrow().link.as_ref().and_then(|link| link.server);
-            let wanted = server.and_then(|server| this.room_relay_of(server));
-            let _ = switch.use_room(wanted.as_deref()).await;
+            let wanted = server.map_or(RoomRelay::Ours, |server| this.room_relay_of(server));
+            let refusal = match wanted {
+                RoomRelay::Ours => {
+                    let _ = switch.use_room(None).await;
+                    None
+                }
+                RoomRelay::Theirs(url) => switch.use_room(Some(&url)).await.err().map(|_| ROOM_RELAY_DOWN),
+                RoomRelay::Unavailable(text) => Some(text),
+            };
+            if let (Some(server), Some(text)) = (server, refusal) {
+                this.leave_room_without_a_relay(server, text).await;
+            }
         });
+    }
+
+    async fn leave_room_without_a_relay(self: &Rc<Self>, server: ServerId, text: &str) {
+        if self.voice_here(server).is_none() {
+            return;
+        }
+        self.leave_room().await;
+        self.emit("voice-relay-down", json!({ "server": server.to_string(), "text": text }));
     }
 
     pub(super) fn moved_me(&self, server: ServerId, event: &ServerEvent) -> Option<Option<ChannelId>> {
