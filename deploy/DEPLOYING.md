@@ -174,6 +174,41 @@ With the domain's DNS on Cloudflare:
   server IP directly: allow ports 80 and 443 only from
   [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) in the hosting
   provider's firewall (Hostinger: hPanel > VPS > Security > Firewall).
+- **Require this zone's client certificate** on staging and dev. Cloudflare's IP
+  ranges are shared by every Cloudflare customer, so someone could point their
+  own Cloudflare site at this server's IP and reach staging without Access.
+  Per-hostname Authenticated Origin Pulls makes Cloudflare present a certificate
+  only this zone holds:
+
+  ```bash
+  cd /srv/commy-prod/deploy/edge/certs
+  openssl req -x509 -new -nodes -newkey rsa:4096 -keyout pull-ca.key -out pull-ca.pem -days 1826 -subj "/CN=commy.chat origin pulls"
+  openssl req -new -nodes -newkey rsa:4096 -keyout pull.key -out pull.csr -subj "/CN=staging.commy.chat"
+  printf "basicConstraints=CA:FALSE
+" > pull.ext
+  openssl x509 -req -in pull.csr -CA pull-ca.pem -CAkey pull-ca.key -CAcreateserial -out pull.pem -days 730 -sha256 -extfile pull.ext
+  chmod 600 pull-ca.key pull.key
+  ```
+
+  In Cloudflare, SSL/TLS > Origin Server > Authenticated Origin Pulls >
+  Per-hostname > Upload certificate, paste `pull.pem` and `pull.key`, and
+  associate `staging.commy.chat` and `dev.commy.chat`. Then make Caddy require
+  it and restart Caddy:
+
+  ```bash
+  cat > origin-tls.caddy <<'EOF'
+  tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key {
+  	client_auth {
+  		mode require_and_verify
+  		trust_pool file /etc/caddy/certs/pull-ca.pem
+  	}
+  }
+  EOF
+  cd .. && docker compose up -d --force-recreate caddy
+  ```
+
+  A request straight to the server IP for staging now fails the TLS handshake.
+  Keep `pull-ca.key` off the server once the certificate is made.
 
 The edge Caddy trusts `CF-Connecting-IP` from Cloudflare's ranges, so logs and
 the auth server's rate limits see the visitor's real address.
