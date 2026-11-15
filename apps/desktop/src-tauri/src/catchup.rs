@@ -202,6 +202,14 @@ impl Catchup {
         }
     }
 
+    pub fn handed_on_by(&self, server: ServerId, owner: UserId, key: &IdentityKey) -> bool {
+        self.early.get(&server).is_some_and(|queue| {
+            queue.iter().any(|(_, held)| {
+                matches!(held.event, ServerEvent::OwnerTransfer { user, .. } if user != owner) && held.action.by == owner && held.verify(server, key)
+            })
+        })
+    }
+
     pub fn take_early(&mut self, server: ServerId, now: Instant) -> Vec<SignedEvent> {
         let queue = self.early.remove(&server).unwrap_or_default();
         queue.into_iter().filter(|(at, _)| !expired(*at, now)).map(|(_, signed)| signed).collect()
@@ -1136,6 +1144,9 @@ fn snapshot_refusal(app: &App, server: ServerId, payload: &WirePayload, max_age_
     let Some((owner, key)) = app.ticket_owner(server) else { return Some(OWNER_UNKNOWN) };
     if *by != owner || remote.owner != owner {
         return Some("signed by someone else");
+    }
+    if app.catchup.lock().unwrap().handed_on_by(server, owner, &key) {
+        return Some("its owner already handed the server on");
     }
     if (Utc::now().timestamp_millis() - *at).abs() > max_age_ms {
         return Some("too old");

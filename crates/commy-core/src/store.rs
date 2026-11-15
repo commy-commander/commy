@@ -953,6 +953,7 @@ impl ServerState {
             None => {
                 !action::settles_authority(subject)
                     || action::snapshot_omits(subject)
+                    || subject == action::OWNER_SUBJECT
                     || self.missing_from_trimmed_snapshot(subject)
                     || at + MAX_ACTION_FLOOR_MS >= self.action_floor
             }
@@ -5450,6 +5451,20 @@ mod tests {
 
     fn by_owner(state: &ServerState, owner: UserId, at: i64, event: ServerEvent) -> SignedEvent {
         SignedEvent::sign(state.server.id, owner, at, event, &identity_for(owner))
+    }
+
+    #[test]
+    fn a_handover_counts_even_when_it_is_older_than_the_snapshot_floor() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let next = join(&mut state, "next");
+        let now = Utc::now().timestamp_millis();
+        state.set_action_floor(now);
+        let handover = by_owner(&state, owner, now - 3_600_000, ServerEvent::OwnerTransfer { server: sid, user: next });
+        assert_eq!(state.apply_signed(&handover), Ok(true));
+        assert_eq!(state.server.owner, next);
+        let back = by_owner(&state, owner, now - 1_000, ServerEvent::OwnerTransfer { server: sid, user: owner });
+        assert_eq!(state.apply_signed(&back), Err(StoreError::NotAllowed), "the former owner cannot take it back");
     }
 
     #[test]

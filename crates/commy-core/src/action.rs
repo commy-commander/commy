@@ -180,7 +180,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::EmoticonAdd { emoticon, .. } => format!("emoticon:{}", emoticon.name),
         E::EmoticonRemove { name, .. } => format!("emoticon:{name}"),
         E::ServerDelete { .. } => "deleted".into(),
-        E::OwnerTransfer { .. } => "owner".into(),
+        E::OwnerTransfer { .. } => OWNER_SUBJECT.into(),
         E::InviteTrack { invite, .. } => format!("invite:{}", invite.id()),
         E::InviteRevoke { origin, code, .. } => format!("invite:{}", crate::invites::invite_id(origin, code)),
         E::InviteBackgroundSet { .. } => "invite_background".into(),
@@ -221,6 +221,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
     };
     Some(s)
 }
+
+pub const OWNER_SUBJECT: &str = "owner";
 
 pub fn settles_authority(subject: &str) -> bool {
     const LIVE: [&str; 10] =
