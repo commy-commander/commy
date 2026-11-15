@@ -295,7 +295,7 @@ PATH="$PATH_WITHOUT_COSIGN"
 reset
 echo "sha256:new" >"$FAKE/remote"
 run_once
-check "prod project without cosign deploys unverified in auto mode" "$(images)" "sha256:new"
+check "prod project without cosign keeps the old image" "$(images)" "sha256:old"
 PATH="$BIN:$PATH_WITHOUT_COSIGN"
 VERIFY=off
 reset
@@ -304,6 +304,18 @@ run_once
 check "checks can be turned off for prod" "$([ -f "$FAKE/cosign_calls" ] && wc -l <"$FAKE/cosign_calls" | tr -d ' ')" ""
 unset COMPOSE_PROJECT_NAME
 VERIFY=auto
+REF="ghcr.io/commy/commy-web:prod"
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "a prod tag is verified under any project name" "$(wc -l <"$FAKE/cosign_calls" | tr -d ' ')" "1"
+PATH="$PATH_WITHOUT_COSIGN"
+reset
+echo "sha256:new" >"$FAKE/remote"
+run_once
+check "a prod tag without cosign keeps the old image" "$(images)" "sha256:old"
+PATH="$BIN:$PATH_WITHOUT_COSIGN"
+REF="ghcr.io/commy/commy-web:dev"
 
 check "website images are checked against the website's promote workflow" "$(identity_of ghcr.io/commy/commy-web)" "$COSIGN_WEB_IDENTITY"
 check "other images are checked against this repo's promote workflow" "$(identity_of ghcr.io/commy/commy-auth)" "$COSIGN_IDENTITY"

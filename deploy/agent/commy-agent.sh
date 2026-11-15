@@ -31,9 +31,9 @@ verify_enabled() {
 	off | false | no | 0) return 1 ;;
 	esac
 	case "${COMPOSE_PROJECT_NAME:-commy}" in
-	*prod*) command -v cosign >/dev/null 2>&1 ;;
-	*) return 1 ;;
+	*prod*) return 0 ;;
 	esac
+	[ "$(tag_of "${1:-}")" = prod ]
 }
 
 repo_of() {
@@ -127,8 +127,8 @@ update_service() {
 	svc="$1"
 	old="$(docker compose ps -q "$svc" 2>/dev/null)"
 	if [ -z "$old" ]; then
-		if verify_enabled; then
-			ref="$(image_of "$svc")"
+		ref="$(image_of "$svc")"
+		if verify_enabled "$ref"; then
 			if ! verified "$ref"; then
 				log "$svc: $ref failed signature verification, not starting it"
 				return 1
@@ -148,7 +148,7 @@ update_service() {
 	if [ -z "$latest" ] || [ "$latest" = "$running" ] || is_bad "$latest"; then
 		return 0
 	fi
-	if verify_enabled && ! verified "$ref"; then
+	if verify_enabled "$ref" && ! verified "$ref"; then
 		log "$svc: $latest failed signature verification, keeping $running"
 		return 1
 	fi

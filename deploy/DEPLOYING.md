@@ -264,6 +264,7 @@ For a single server running only production with the stack's own Caddy, follow
 COMPOSE_FILE=docker-compose.yml:docker-compose.agent.yml
 WEB_IMAGE=git.commy.chat/commy-private/commy-web:prod
 AUTH_IMAGE=git.commy.chat/commy/commy-auth:prod
+AGENT_VERIFY=on
 ```
 
 ## Shipping a change
@@ -295,10 +296,10 @@ the prod tag, is refused and logged; the running container keeps serving and the
 image is tried again on the next cycle, in case the signature was still being
 written. Settings in that environment's `.env`:
 
-- `AGENT_VERIFY`: `auto` (default) checks signatures when `COMPOSE_PROJECT_NAME`
-  contains `prod` and cosign is in the agent image; `on` checks everywhere and
-  fails closed; `off` never checks. A single-environment server that runs the
-  `:prod` tags under another project name should set `on`.
+- `AGENT_VERIFY`: `auto` (default) checks signatures for any image tagged
+  `:prod` and for every image when `COMPOSE_PROJECT_NAME` contains `prod`, and
+  refuses those images when cosign is missing; `on` checks everywhere; `off`
+  never checks.
 - `AGENT_COSIGN_KEY`: the public key to accept, by default
   `/repo/deploy/agent/cosign.pub` (the checkout the agent mounts). A fork signs
   with its own key pair and points this at its public key. Set it empty to fall
