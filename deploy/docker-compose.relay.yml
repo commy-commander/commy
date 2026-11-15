@@ -16,6 +16,11 @@ services:
       test-accounts:
 
 networks:
+  edge:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: ${RELAY_IPV6_SUBNET:-fd99:6513:f442:1::/64}
   public:
     external: true
     name: commy-relay

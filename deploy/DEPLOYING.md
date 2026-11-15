@@ -89,12 +89,33 @@ docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml 
 ```
 
 and this in `/srv/commy-staging/deploy` for the test build relay, which has its
-own address discovery port and a smaller monthly budget:
+own address discovery port, IPv6 subnet, image tag and a smaller monthly budget:
 
 ```bash
 RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 \
+RELAY_IMAGE=commy-relay:staging-iroh-relay-1.4.1 RELAY_IPV6_SUBNET=fd99:6513:f442::/64 \
   docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-proxy relay-meter
 ```
+
+The staging relay builds from the staging checkout under its own tag, so a
+staging rebuild never replaces the image the production relay starts from.
+
+#### Relays over IPv6
+
+`docker-compose.relay.yml` gives each relay's network IPv6 (Docker 27 or newer),
+so Docker forwards the address discovery port over IPv6 straight to the relay
+and it sees each app's real IPv6 address. Each relay project needs its own
+private subnet: `RELAY_IPV6_SUBNET` defaults to `fd99:6513:f442:1::/64` for
+production, and staging uses `fd99:6513:f442::/64`. Apps on IPv6-only networks
+also need:
+
+- an AAAA record for each relay name, DNS only like the A record;
+- the firewall to allow `8443/tcp` and each address discovery port over IPv6
+  (ufw applies its rules to both when `IPV6=yes` in `/etc/default/ufw`).
+
+Relay networks made before this have no IPv6. Recreate one by stopping and
+removing that project's relay services, `docker network rm` its `_edge`
+network, then running its command above again.
 
 #### Only commy.chat apps on our relays
 
@@ -122,6 +143,7 @@ The test build relay asks staging and dev auth, since both use it:
 ```bash
 cd /srv/commy-staging/deploy
 RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 \
+RELAY_IMAGE=commy-relay:staging-iroh-relay-1.4.1 RELAY_IPV6_SUBNET=fd99:6513:f442::/64 \
 RELAY_ACCESS_URL=http://relay-access:3342/ RELAY_ACCESS_MODE=watch \
 RELAY_ACCOUNTS_NETWORK=commy-staging RELAY_TEST_ACCOUNTS_NETWORK=commy-dev \
 RELAY_ACCESS_AUTH_URLS=http://commy-staging-auth:3001/internal/relay-access,http://commy-dev-auth:3001/internal/relay-access \
@@ -160,7 +182,7 @@ for net in commy-prod commy-staging commy-dev commy-relay; do docker network cre
 for net in commy-prod commy-staging commy-dev commy-relay; do docker network connect $net commy-edge-caddy-1; done
 for env in dev staging prod; do (cd /srv/commy-$env/deploy && docker compose up -d --build agent && docker compose up -d auth web); done
 cd /srv/commy-prod/deploy && docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
-cd /srv/commy-staging/deploy && RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
+cd /srv/commy-staging/deploy && RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 RELAY_IMAGE=commy-relay:staging-iroh-relay-1.4.1 RELAY_IPV6_SUBNET=fd99:6513:f442::/64 docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d relay-proxy
 cd /srv/commy-prod/deploy/edge && docker compose up -d
 docker network inspect commy-public --format '{{range .Containers}}{{.Name}} {{end}}'
 docker network rm commy-public

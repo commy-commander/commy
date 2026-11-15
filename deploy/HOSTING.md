@@ -778,8 +778,10 @@ apps add n0's public relays as a fallback. Relays help peers find each other and
 direct connection is impossible, always end to end encrypted.
 
 - **DNS:** an A record for `relay.<DOMAIN>`, DNS only (not proxied) in
-  Cloudflare. Open `8443/tcp` (relay over HTTPS, certificate via port 80) and
-  `7842/udp` (address discovery).
+  Cloudflare, plus an AAAA record if the server has IPv6. Open `8443/tcp`
+  (relay over HTTPS, certificate via port 80) and `7842/udp` (address
+  discovery), over IPv6 too. The shared relay in `docker-compose.relay.yml`
+  runs on an IPv6 network so apps on IPv6-only networks get address discovery.
 - **Address discovery:** apps ask the relay on `7842/udp` which public address
   their packets come from, so two apps behind home routers can connect
   directly instead of through the relay. The relay reuses Caddy's certificate
