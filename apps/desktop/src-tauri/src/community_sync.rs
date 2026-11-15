@@ -189,6 +189,17 @@ impl Live {
 }
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
+
+pub fn greeting_of(sid: ServerId) -> Option<commy_sync::wire::Greeting> {
+    LIVE.lock().unwrap().as_ref()?.communities.get(&sid)?.pool.greeting()
+}
+
+pub fn room_relay_of(sid: ServerId) -> Option<String> {
+    let live = LIVE.lock().unwrap();
+    let live = live.as_ref()?;
+    let community = live.communities.get(&sid)?;
+    commy_view::sync_host::room_relay(&community.url, &live.url, community.pool.greeting().as_ref())
+}
 static INVITED: Mutex<Vec<(ServerId, KeyId, ChannelSecret)>> = Mutex::new(Vec::new());
 static INVITED_HOSTS: Mutex<Vec<(ServerId, String)>> = Mutex::new(Vec::new());
 static SAVE_PENDING: AtomicBool = AtomicBool::new(false);

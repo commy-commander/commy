@@ -9,7 +9,6 @@ use commy_sync::stream::{
 };
 use commy_sync::wire::{
     AppendNonce, Blob, ClientFrame, ErrorCode, ServerFrame, WireEntry, ERASE_WINDOW_MS, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE,
-    PROTOCOL,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
@@ -51,7 +50,7 @@ pub(crate) async fn run(service: Arc<Service>, key: AddressKey, socket: WebSocke
     let (out, mut outgoing) = mpsc::channel::<ServerFrame>(OUTGOING_BUFFER);
     let mut open: HashMap<StreamId, OpenStream> = HashMap::new();
     let session: u64 = rand::random();
-    let _ = out.send(ServerFrame::Hello { protocol: PROTOCOL }).await;
+    let _ = out.send(service.greeting.frame()).await;
     let mut deadline = Instant::now() + IDLE_LIMIT;
     loop {
         tokio::select! {

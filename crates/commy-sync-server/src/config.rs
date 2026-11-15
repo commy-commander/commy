@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use crate::limits::Limits;
 
@@ -14,10 +15,62 @@ pub struct Config {
     pub limits: Limits,
     pub fcm_service_account: Option<String>,
     pub apns: Option<ApnsSettings>,
+    pub version: Option<String>,
+    pub relay: Option<String>,
+    pub admin: Option<AdminSettings>,
     pub operator: Option<String>,
     pub abuse_contact: Option<Contact>,
     pub smtp: Option<SmtpSettings>,
     pub server_key: Option<KeySeed>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct AdminSettings {
+    pub password: String,
+    pub listen: SocketAddr,
+    pub domain: Option<String>,
+    pub caddy_data: PathBuf,
+    pub custom_tls: PathBuf,
+    pub caddyfile: PathBuf,
+    pub caddy_admin: String,
+    pub caddy_tls: String,
+    pub relay_probe: String,
+    pub releases: String,
+}
+
+impl std::fmt::Debug for AdminSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminSettings").field("listen", &self.listen).field("domain", &self.domain).finish_non_exhaustive()
+    }
+}
+
+pub const ADMIN_PORT: u16 = 3003;
+pub const MIN_ADMIN_PASSWORD_CHARS: usize = 16;
+
+fn admin_settings(env: &impl Fn(&str) -> Option<String>) -> Result<Option<AdminSettings>, String> {
+    let set = |name: &str| env(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let Some(password) = set("SYNC_ADMIN_PASSWORD") else {
+        return Ok(None);
+    };
+    if password.chars().count() < MIN_ADMIN_PASSWORD_CHARS {
+        return Err(format!("SYNC_ADMIN_PASSWORD must be at least {MIN_ADMIN_PASSWORD_CHARS} characters"));
+    }
+    let port = match set("SYNC_ADMIN_PORT") {
+        Some(text) => text.parse::<u16>().map_err(|_| "SYNC_ADMIN_PORT must be a TCP port".to_string())?,
+        None => ADMIN_PORT,
+    };
+    Ok(Some(AdminSettings {
+        password,
+        listen: SocketAddr::from(([0, 0, 0, 0], port)),
+        domain: set("SYNC_DOMAIN").map(|d| d.to_ascii_lowercase()),
+        caddy_data: PathBuf::from(set("SYNC_CADDY_DATA").unwrap_or_else(|| "/caddy-data".into())),
+        custom_tls: PathBuf::from(set("SYNC_CUSTOM_TLS").unwrap_or_else(|| "/custom-tls".into())),
+        caddyfile: PathBuf::from(set("SYNC_CADDYFILE").unwrap_or_else(|| "/etc/commy/Caddyfile".into())),
+        caddy_admin: set("SYNC_CADDY_ADMIN").unwrap_or_else(|| "http://caddy:2019".into()),
+        caddy_tls: set("SYNC_CADDY_TLS").unwrap_or_else(|| "caddy:443".into()),
+        relay_probe: set("SYNC_RELAY_PROBE").unwrap_or_else(|| "http://relay:3340/generate_204".into()),
+        releases: set("SYNC_RELEASES_URL").unwrap_or_else(|| "https://releases.commy.chat/stable/latest.json".into()),
+    }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +177,21 @@ fn apns_settings(env: &impl Fn(&str) -> Option<String>) -> Result<Option<ApnsSet
     Ok(Some(ApnsSettings { key, key_id, team_id, topic }))
 }
 
+fn relay_url(env: &impl Fn(&str) -> Option<String>) -> Result<Option<String>, String> {
+    let Some(url) = env("SYNC_RELAY_URL").map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let host = url.strip_prefix("https://").ok_or("SYNC_RELAY_URL must start with https://")?;
+    if host.is_empty() || host.contains(['/', '?', '#', '@', ' ']) {
+        return Err("SYNC_RELAY_URL must be https:// followed by a domain, like https://sync.example.org".into());
+    }
+    Ok(Some(url))
+}
+
+fn release_version(env: &impl Fn(&str) -> Option<String>) -> Option<String> {
+    env("COMMY_VERSION").map(|v| v.trim().trim_start_matches('v').to_string()).filter(|v| !v.is_empty() && v.len() <= 40)
+}
+
 impl Config {
     pub fn from_env(env: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let port = match env("PORT") {
@@ -160,6 +228,9 @@ impl Config {
             limits,
             fcm_service_account: env("FCM_SERVICE_ACCOUNT").filter(|v| !v.trim().is_empty()),
             apns: apns_settings(&env)?,
+            version: release_version(&env),
+            relay: relay_url(&env)?,
+            admin: admin_settings(&env)?,
             operator: env("SYNC_OPERATOR_NAME").map(|v| v.trim().chars().take(100).collect::<String>()).filter(|v| !v.is_empty()),
             abuse_contact: env("SYNC_ABUSE_CONTACT").filter(|v| !v.trim().is_empty()).map(|v| Contact::parse(&v)).transpose()?,
             smtp: smtp_settings(&env)?,
@@ -293,5 +364,29 @@ mod tests {
         assert_eq!(url.smtp.unwrap().from(), "Commy <no-reply@example.org>");
         assert!(config(&[("SMTP_HOST", "smtp.example.org")]).err().unwrap().contains("EMAIL_FROM"));
         assert!(config(&[("SMTP_HOST", "smtp.example.org"), ("SMTP_USER", "u"), ("SMTP_PORT", "x")]).is_err());
+    }
+
+    #[test]
+    fn the_greeting_names_the_release_and_the_relay() {
+        let c = config(&[("COMMY_VERSION", "v0.2.5"), ("SYNC_RELAY_URL", "https://sync.example.org/")]).unwrap();
+        assert_eq!(c.version.as_deref(), Some("0.2.5"));
+        assert_eq!(c.relay.as_deref(), Some("https://sync.example.org"));
+        let plain = config(&[("SYNC_RELAY_URL", " ")]).unwrap();
+        assert_eq!((plain.version, plain.relay), (None, None));
+        assert!(config(&[("SYNC_RELAY_URL", "http://sync.example.org")]).is_err());
+        assert!(config(&[("SYNC_RELAY_URL", "https://sync.example.org/relay")]).is_err());
+    }
+
+    #[test]
+    fn the_admin_page_is_off_until_it_has_a_long_password() {
+        assert_eq!(config(&[]).unwrap().admin, None);
+        assert!(config(&[("SYNC_ADMIN_PASSWORD", "short")]).err().unwrap().contains("at least 16"));
+        let c = config(&[("SYNC_ADMIN_PASSWORD", "0123456789abcdef"), ("SYNC_DOMAIN", "Sync.Example.org"), ("SYNC_ADMIN_PORT", "4000")]).unwrap(); // gitleaks:allow
+        let admin = c.admin.clone().unwrap();
+        assert_eq!(admin.listen.port(), 4000);
+        assert_eq!(admin.domain.as_deref(), Some("sync.example.org"));
+        assert_eq!(admin.caddy_admin, "http://caddy:2019");
+        assert!(!c.summary().contains("0123456789abcdef"));
+        assert!(!format!("{c:?}").contains("0123456789abcdef"), "the password never shows in logs");
     }
 }

@@ -116,7 +116,7 @@ impl Link {
 
     async fn hello(&mut self) -> Result<u32, CheckError> {
         self.wait_for(|frame| match frame {
-            ServerFrame::Hello { protocol } => Some(*protocol),
+            ServerFrame::Hello { protocol, .. } => Some(*protocol),
             _ => None,
         })
         .await

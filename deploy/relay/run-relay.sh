@@ -3,9 +3,14 @@ FLAG=/flags/relay-paused
 BASE_CONFIG=/etc/iroh-relay.toml
 TLS_DIR=/run/relay-tls
 CADDY_DATA=${CADDY_DATA:-/caddy-data}
+CUSTOM_TLS=${CUSTOM_TLS:-/custom-tls}
 
 relay_certificate() {
   [ -n "$RELAY_DOMAIN" ] || return 0
+  if [ -f "$CUSTOM_TLS/tls.caddy" ] && [ -f "$CUSTOM_TLS/custom.crt" ] && [ -f "$CUSTOM_TLS/custom.key" ]; then
+    echo "$CUSTOM_TLS/custom.crt"
+    return 0
+  fi
   ls -t "$CADDY_DATA"/caddy/certificates/*/"$RELAY_DOMAIN"/"$RELAY_DOMAIN".crt 2>/dev/null | head -n 1
 }
 
@@ -53,6 +58,7 @@ address_discovery_config() {
   cert=$(relay_certificate)
   [ -n "$cert" ] && [ -f "${cert%.crt}.key" ] || return 1
   mkdir -p "$TLS_DIR" && chmod 0755 "$TLS_DIR" || return 1
+  rm -f "$TLS_DIR/cert.pem" "$TLS_DIR/key.pem"
   cp "$cert" "$TLS_DIR/cert.pem" && cp "${cert%.crt}.key" "$TLS_DIR/key.pem" || return 1
   chmod 0444 "$TLS_DIR/cert.pem" "$TLS_DIR/key.pem"
   {

@@ -1555,7 +1555,12 @@ async function mockInvoke(cmd, args = {}) {
     case "test_sync_host": {
       const host = cleanSyncHost(args.host);
       if (!host || host.startsWith("down.")) throw "Commy could not reach a sync server there. Check the address and that the server is running an up to date Commy sync service.";
-      return host;
+      return { host, release: { version: "0.2.5", fit: "current", text: "It runs Commy 0.2.5." } };
+    }
+    case "sync_host_release": {
+      const server = mock.servers[args.serverId];
+      if (!server || !server.sync_host) return null;
+      return { version: "0.2.5", fit: "current", text: "It runs Commy 0.2.5." };
     }
     case "home_status":
       return (args.homes || []).map(home => ({ home, key: (mock.homeKeys || {})[home] || null, checked: true, blocked: (mock.blockedServers || []).some(d => home === `https://${d}` || home.endsWith(`.${d}`)) }));
@@ -11340,9 +11345,9 @@ function onUpdateStatus(status) {
 let dismissedUpdateVersion = null;
 
 function paintUpdateChip() {
-  const notice = outdatedNotice(updateStatus);
+  const notice = outdatedNotice(updateStatus) || syncHostNotice;
   const offline = !$("offline-chip").classList.contains("hidden");
-  const dismissed = !!notice && dismissedUpdateVersion === updateStatus.version;
+  const dismissed = !!notice && dismissedUpdateVersion === (updateStatus && updateStatus.version);
   $("update-chip-text").textContent = notice || "";
   $("update-chip").classList.toggle("hidden", !notice || offline || dismissed);
 }
@@ -14124,6 +14129,11 @@ function renderSyncHostEditor(server) {
   syncHostPending = null;
   const host = server.sync_host || null;
   $("sync-host-now").textContent = syncHostNow(server);
+  invoke("sync_host_release", { serverId: server.id })
+    .then(release => {
+      if (state.currentServer && state.currentServer.id === server.id) $("sync-host-now").textContent = syncHostNow(server, release);
+    })
+    .catch(() => {});
   $("sync-host-input").value = "";
   $("sync-host-status").textContent = "";
   $("sync-host-save").textContent = "Check and Move";
@@ -14142,15 +14152,18 @@ async function moveSyncHost(home) {
   }
   const label = target || SYNC_HOST_HOME;
   const confirmed = syncHostPending && syncHostPending.label === label && Date.now() - syncHostPending.at < SYNC_HOST_CONFIRM_MS;
+  let release = null;
   save.disabled = true;
   try {
     if (!confirmed) {
       if (target) {
         status.textContent = "Checking the sync server...";
-        await invoke("test_sync_host", { host: target });
+        const checked = await invoke("test_sync_host", { host: target });
+        release = checked && checked.release;
+        if (release && release.fit === "app_behind") throw release.text;
       }
       syncHostPending = { label, at: Date.now() };
-      status.textContent = `${label} is ready. Choose ${home ? "Move back to Commy.chat" : "Move Now"} again to move this server there.`;
+      status.textContent = syncHostReady(label, release, home);
       if (!home) save.textContent = "Move Now";
       return;
     }
@@ -20411,6 +20424,19 @@ async function selectServer(serverId) {
   renderMembers();
   await selectChannel(firstText || null);
   if (state.currentServer.group) paintGroupHeader();
+  noteSyncHostRelease(serverId);
+}
+
+let syncHostNotice = null;
+
+async function noteSyncHostRelease(serverId) {
+  let release = null;
+  try {
+    release = await invoke("sync_host_release", { serverId });
+  } catch (_) {}
+  if (!state.currentServer || state.currentServer.id !== serverId) return;
+  syncHostNotice = syncHostAppNotice(release);
+  paintUpdateChip();
 }
 
 function groupVoiceChannel(server) {

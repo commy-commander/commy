@@ -7,17 +7,17 @@ use commy_sync_server::{learn_dropped, operator, serve, spawn_housekeeping, Serv
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) == Some("check") {
-        return check(&args[1..]).await;
+    let words: Vec<String> = std::env::args().skip(1).collect();
+    if words.first().map(String::as_str) == Some("check") {
+        return check(&words[1..]).await;
     }
     tracing_subscriber::fmt()
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let mut config = Config::from_env(|key| std::env::var(key).ok()).map_err(|e| anyhow::anyhow!("invalid sync service configuration: {e}"))?;
-    if !args.is_empty() {
-        return run_operator_command(&config, &args).await;
+    if !words.is_empty() {
+        return run_operator_command(&config, &words).await;
     }
     raise_open_file_limit();
     let store = match &config.database_url {
@@ -45,6 +45,16 @@ async fn main() -> anyhow::Result<()> {
     let service = Service::with_pusher(store, &config, pusher);
     learn_dropped(&service).await;
     spawn_housekeeping(service.clone());
+    if let Some(settings) = config.admin.clone() {
+        let admin = tokio::net::TcpListener::bind(settings.listen).await?;
+        tracing::info!("admin page listening on port {}", settings.listen.port());
+        let service = service.clone();
+        tokio::spawn(async move {
+            if let Err(e) = commy_sync_server::admin::serve(admin, service, settings).await {
+                tracing::error!("admin page stopped: {e}");
+            }
+        });
+    }
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!("sync service listening: {}", config.summary());
     tokio::select! {

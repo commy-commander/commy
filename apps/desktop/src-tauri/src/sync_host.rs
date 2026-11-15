@@ -18,9 +18,9 @@ fn gap(gap: ClaimGap) -> String {
     }
 }
 
-pub async fn check(origin: &str) -> Result<(), String> {
+pub async fn check(origin: &str) -> Result<commy_sync::wire::Greeting, String> {
     let url = commy_core::sync_host::socket_url(origin).ok_or(SYNC_HOST_INVALID)?;
-    errands::run(&url, Vec::new()).await.map(|_| ()).map_err(refusal)
+    errands::greet(&url).await.map_err(refusal)
 }
 
 pub async fn claim_everything(app: &App, sid: ServerId, url: &str) -> Result<(), String> {

@@ -152,6 +152,19 @@ impl Session {
         }
     }
 
+    pub(super) fn room_relay_of(&self, server: ServerId) -> Option<String> {
+        let guard = self.sync.borrow();
+        let live = guard.as_ref()?;
+        let socket = live.socket_of(server);
+        commy_view::sync_host::room_relay(&socket, &live.url, live.pool.greeting_at(&socket).as_ref())
+    }
+
+    pub(super) fn sync_greeting(&self, server: ServerId) -> Option<commy_sync::wire::Greeting> {
+        let guard = self.sync.borrow();
+        let live = guard.as_ref()?;
+        live.pool.greeting_at(&live.socket_of(server))
+    }
+
     async fn tend_sync(self: Rc<Self>) {
         loop {
             n0_future::time::sleep(REFRESH_EVERY).await;
@@ -162,6 +175,7 @@ impl Session {
             self.record_hosts();
             self.tend_owned();
             self.tend_claims();
+            self.follow_room_relay();
         }
     }
 

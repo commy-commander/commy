@@ -32,9 +32,9 @@ fn gap(gap: ClaimGap) -> String {
     }
 }
 
-async fn check_host(origin: &str) -> Result<(), String> {
+async fn check_host(origin: &str) -> Result<commy_sync::wire::Greeting, String> {
     let url = socket_url(origin).ok_or(SYNC_HOST_INVALID)?;
-    errands::run(&url, Vec::new()).await.map(|_| ()).map_err(refusal)
+    errands::greet(&url).await.map_err(refusal)
 }
 
 #[derive(Deserialize)]
@@ -94,8 +94,13 @@ impl Session {
             }
             "test_sync_host" => {
                 let origin = clean_sync_host(args.host.as_deref().unwrap_or("")).ok_or(SYNC_HOST_INVALID)?;
-                check_host(&origin).await?;
-                Ok(Value::String(display_host(&origin).unwrap_or_default().to_string()))
+                let greeting = check_host(&origin).await?;
+                let host = display_host(&origin).unwrap_or_default().to_string();
+                Ok(serde_json::json!({ "host": host, "release": commy_view::sync_host::host_release(&greeting) }))
+            }
+            "sync_host_release" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                to_json(&self.sync_greeting(server).as_ref().map(commy_view::sync_host::host_release))
             }
             "export_server_template" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;

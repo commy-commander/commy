@@ -1,4 +1,6 @@
+pub mod admin;
 pub mod apns;
+pub mod certificate;
 pub mod check;
 pub mod config;
 pub mod fcm;
@@ -25,7 +27,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use commy_sync::picture::MAX_PICTURE_SEALED;
-use commy_sync::wire::{MAX_CLIENT_FRAME_BYTES, PROTOCOL};
+use commy_sync::wire::{Greeting, MAX_CLIENT_FRAME_BYTES, PROTOCOL};
 
 use crate::config::Config;
 use crate::hub::Hub;
@@ -104,6 +106,7 @@ pub struct Service {
     pub desk: Desk,
     pub trust_proxy: bool,
     pub retention_days: u32,
+    pub greeting: Greeting,
     pub server_key: commy_core::Identity,
 }
 
@@ -122,6 +125,7 @@ impl Service {
             desk: Desk::new(config),
             trust_proxy: config.trust_proxy,
             retention_days: config.retention_days,
+            greeting: Greeting { version: config.version.clone(), relay: config.relay.clone(), ..Greeting::of(PROTOCOL) },
             server_key: config.server_key.as_ref().map_or_else(commy_core::Identity::generate, |seed| commy_core::Identity::from_bytes(&seed.0)),
         })
     }
@@ -183,6 +187,9 @@ async fn health(State(service): State<Arc<Service>>) -> Response {
 async fn about(State(service): State<Arc<Service>>) -> Response {
     let mut body = service.desk.about();
     body["protocol"] = PROTOCOL.into();
+    body["oldest_protocol"] = service.greeting.oldest_protocol.into();
+    body["version"] = service.greeting.version.clone().into();
+    body["relay"] = service.greeting.relay.clone().into();
     Json(body).into_response()
 }
 

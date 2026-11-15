@@ -16,16 +16,20 @@ domain="${SYNC_DOMAIN:-}"
 email="${ACME_EMAIL:-}"
 contact="${SYNC_ABUSE_CONTACT:-}"
 version="${COMMY_VERSION:-}"
+admin="${COMMY_ADMIN:-}"
+admin_port="${COMMY_ADMIN_PORT:-8790}"
 
 usage() {
 	cat <<EOF
 Sets up or updates a Commy sync server with Docker.
 
 usage: setup.sh [--domain sync.example.org] [--email you@example.org]
-                [--contact abuse@example.org] [--version 0.2.5] [--dir /srv/commy-sync] [--yes]
+                [--contact abuse@example.org] [--admin | --no-admin]
+                [--version 0.2.5] [--dir /srv/commy-sync] [--yes]
 
 Anything left out is asked for, or read from an earlier run's settings.
 Run it again at any time to update to the newest Commy release.
+--admin turns on a password-protected admin page that opens only through an SSH tunnel.
 EOF
 }
 
@@ -40,6 +44,8 @@ while [ $# -gt 0 ]; do
 	--domain) domain="${2:?--domain needs a value}"; shift 2 ;;
 	--email) email="${2:?--email needs a value}"; shift 2 ;;
 	--contact) contact="${2:?--contact needs a value}"; shift 2 ;;
+	--admin) admin=on; shift ;;
+	--no-admin) admin=off; shift ;;
 	--version) version="${2:?--version needs a value}"; shift 2 ;;
 	--dir) DIR="${2:?--dir needs a value}"; shift 2 ;;
 	--yes | -y) YES=1; shift ;;
@@ -135,6 +141,17 @@ pick_settings() {
 	valid_email "$email" || fail "'$email' is not an email address"
 	[ -n "$contact" ] || contact="$(ask "Abuse contact people can report to (email or https:// page)" "--contact")"
 	valid_contact "$contact" || fail "'$contact' must be an email address or an https:// page"
+	if [ -z "$admin" ]; then
+		if [ -n "$(saved SYNC_ADMIN_PASSWORD)" ]; then
+			admin=on
+		elif [ ! -f "$DIR/.env" ] && interactive && confirm "Turn on the admin page? It shows health and certificates, and opens only through an SSH tunnel"; then
+			admin=on
+		else
+			admin=off
+		fi
+	fi
+	case "$admin" in on | off) ;; *) fail "COMMY_ADMIN must be on or off" ;; esac
+	case "$admin_port" in *[!0-9]* | "") fail "COMMY_ADMIN_PORT must be a port number" ;; esac
 	if [ -z "$version" ]; then
 		version="$(newest_version)" || true
 		[ -n "$version" ] || fail "could not read the newest release from $RELEASES"
@@ -153,7 +170,7 @@ hand_off_to_release_script() {
 	fi
 	say "Running the setup script from release $version"
 	COMMY_SETUP_HANDOFF=1 SYNC_DOMAIN="$domain" ACME_EMAIL="$email" SYNC_ABUSE_CONTACT="$contact" \
-		COMMY_VERSION="$version" COMMY_DIR="$DIR" COMMY_YES="$YES" exec sh "$next"
+		COMMY_VERSION="$version" COMMY_DIR="$DIR" COMMY_YES="$YES" COMMY_ADMIN="$admin" COMMY_ADMIN_PORT="$admin_port" exec sh "$next"
 }
 
 check_dns() {
@@ -229,6 +246,30 @@ write_settings() {
 	set_setting COMMY_VERSION "$version"
 	set_setting SYNC_IMAGE "$sync_image"
 	set_setting RELAY_IMAGE "$relay_image"
+	if [ "$admin" = on ]; then
+		[ -n "$(saved SYNC_ADMIN_PASSWORD)" ] || set_setting SYNC_ADMIN_PASSWORD "$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')"
+		set_setting CADDY_ADMIN ":2019"
+	else
+		set_setting SYNC_ADMIN_PASSWORD ""
+		set_setting CADDY_ADMIN ""
+	fi
+	set_setting ADMIN_PORT "$admin_port"
+	mkdir -p "$DIR/custom-tls"
+	docker run --rm --user 0 --network none -v "$DIR/custom-tls:/custom-tls" --entrypoint sh "$sync_image" \
+		-c 'chown commy:0 /custom-tls && chmod 2750 /custom-tls' || fail "could not prepare $DIR/custom-tls"
+}
+
+admin_summary() {
+	if [ "$admin" = on ]; then
+		cat <<EOF
+  Admin page: opens only on this machine. From your own computer run
+                ssh -L $admin_port:127.0.0.1:$admin_port you@$domain
+              then open http://localhost:$admin_port
+              The password is SYNC_ADMIN_PASSWORD in $DIR/.env
+EOF
+	else
+		say "  Admin page: off (turn it on with: sh $DIR/setup.sh --admin)"
+	fi
 }
 
 start() {
@@ -276,19 +317,20 @@ self_check() {
 		|| fail "the sync server is up but a test client could not store and read an entry"
 }
 
-need_tools
-pick_settings
-hand_off_to_release_script
-check_dns
-check_ports
-write_bundle
-pull_images
-write_settings
-start
-wait_until_healthy
-self_check
+main() {
+	need_tools
+	pick_settings
+	hand_off_to_release_script
+	check_dns
+	check_ports
+	write_bundle
+	pull_images
+	write_settings
+	start
+	wait_until_healthy
+	self_check
 
-cat <<EOF
+	cat <<EOF
 
 Your Commy sync server is running release $version.
 
@@ -300,4 +342,9 @@ Your Commy sync server is running release $version.
   Settings:   $DIR/.env (keep it private, it holds the database password)
   Logs:       cd $DIR && docker compose logs -f sync
   Update:     sh $DIR/setup.sh
+
 EOF
+	admin_summary
+}
+
+main </dev/null

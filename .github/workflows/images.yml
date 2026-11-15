@@ -275,6 +275,7 @@ jobs:
           file: crates/commy-sync-server/Dockerfile
           load: true
           tags: ${{ env.CANDIDATE }}
+          build-args: COMMY_VERSION=0.0.0-ci
 
       - name: Build the relay image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -294,7 +295,7 @@ jobs:
             if [ "$(date +%s)" -ge "$deadline" ]; then docker logs "$HOST"; exit 1; fi
             sleep 2
           done
-          docker exec "$HOST" apk add -q --no-cache curl
+          docker exec "$HOST" apk add -q --no-cache curl openssl
           docker save "$CANDIDATE" "$RELAY_CANDIDATE" | docker exec -i "$HOST" docker load -q
           docker exec "$HOST" mkdir -p /srv/checkout
           docker cp "$GITHUB_WORKSPACE/deploy" "$HOST:/srv/checkout/deploy"
@@ -326,6 +327,40 @@ jobs:
             echo "FAIL - a bad version was accepted"; exit 1
           fi
           echo "ok   - a bad version is refused"
+          EOF
+
+      - name: The admin page signs in, reports health and swaps certificates
+        run: |
+          docker exec -i "$HOST" sh -e <<'EOF'
+          COMMY_BUNDLE=/srv/checkout/deploy COMMY_IMAGES=localhost:5000 COMMY_VERIFY=off COMMY_VERSION=0.0.0-ci sh /srv/commy-sync/setup.sh --yes --admin
+          password="$(sed -n 's/^SYNC_ADMIN_PASSWORD=//p' /srv/commy-sync/.env)"
+          [ "${#password}" -ge 32 ] && echo "ok   - setup made an admin password" || { echo "FAIL - no admin password"; exit 1; }
+          admin=http://127.0.0.1:8790
+          jar="$(mktemp)"
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: sync.localhost' "$admin/")" = 421 ] && echo "ok   - only loopback names reach it" || { echo "FAIL - a public name reached the admin page"; exit 1; }
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Origin: $admin" --data-urlencode 'password=wrong' "$admin/sign-in")" = 401 ] && echo "ok   - a wrong password is refused" || { echo "FAIL - a wrong password was accepted"; exit 1; }
+          curl -fs -o /dev/null -c "$jar" -H "Origin: $admin" --data-urlencode "password=$password" "$admin/sign-in"
+          page="$(curl -fs -b "$jar" "$admin/")"
+          for shown in 'Release 0.0.0-ci' 'Caddy Local Authority' 'abuse@example.org' 'https://sync.localhost'; do
+            echo "$page" | grep -qF "$shown" && echo "ok   - the dashboard shows $shown" || { echo "FAIL - the dashboard lacks $shown"; exit 1; }
+          done
+          [ "$(echo "$page" | grep -o 'Not answering' | wc -l)" = 0 ] && echo "ok   - the database and relay answer" || { echo "FAIL - something is not answering"; exit 1; }
+          cd "$(mktemp -d)"
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout own.key -out own.crt -days 30 \
+            -subj '/O=Commy CI Own Certificate/CN=sync.localhost' -addext subjectAltName=DNS:sync.localhost 2>/dev/null
+          served() { echo | openssl s_client -connect 127.0.0.1:443 -servername sync.localhost 2>/dev/null | sed -n 's/^issuer=//p'; }
+          [ "$(curl -s -o /dev/null -w '%{redirect_url}' -b "$jar" -H "Origin: $admin" --data-urlencode certificate@own.crt --data-urlencode key@own.key "$admin/certificate")" = "$admin/?done=certificate" ]
+          served | grep -q 'Commy CI Own Certificate' && echo "ok   - Caddy serves an uploaded certificate" || { echo "FAIL - Caddy still serves $(served)"; exit 1; }
+          deadline=$(( $(date +%s) + 60 ))
+          until (cd /srv/commy-sync && docker compose exec -T relay sh -c 'test "$(sha256sum </custom-tls/custom.crt)" = "$(sha256sum </run/relay-tls/cert.pem)"' </dev/null); do
+            [ "$(date +%s)" -lt "$deadline" ] || { echo "FAIL - the relay kept its old certificate"; exit 1; }
+            sleep 3
+          done
+          echo "ok   - the relay switched to the uploaded certificate"
+          curl -fs -o /dev/null -b "$jar" -H "Origin: $admin" -X POST "$admin/certificate/automatic"
+          served | grep -q 'Caddy Local Authority' && echo "ok   - back to automatic certificates" || { echo "FAIL - still serving $(served)"; exit 1; }
+          COMMY_BUNDLE=/srv/checkout/deploy COMMY_IMAGES=localhost:5000 COMMY_VERIFY=off COMMY_VERSION=0.0.0-ci sh /srv/commy-sync/setup.sh --yes --no-admin >/dev/null
+          [ "$(curl -s -o /dev/null -w '%{http_code}' "$admin/")" = 000 ] && echo "ok   - --no-admin closes the admin page" || { echo "FAIL - the admin page is still open"; exit 1; }
           EOF
 
       - name: Logs on failure
@@ -382,6 +417,7 @@ jobs:
           context: .
           file: crates/commy-sync-server/Dockerfile
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: COMMY_VERSION=${{ steps.meta.outputs.version }}
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name={0}/commy-sync,push-by-digest=true,name-canonical=true,push=true', env.IMAGES) }}
           cache-from: |
             type=registry,ref=${{ env.IMAGES }}/commy-sync:buildcache

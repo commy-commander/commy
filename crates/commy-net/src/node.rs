@@ -736,19 +736,36 @@ async fn neighbor_addr(endpoint: &Endpoint, id: [u8; 32], relay_url: Option<Stri
     addr
 }
 
+#[derive(Clone)]
+pub struct RelaySwitch {
+    endpoint: Endpoint,
+    relays: crate::relays::Relays,
+}
+
+impl RelaySwitch {
+    pub fn room(&self) -> Option<String> {
+        self.relays.room().map(|url| url.to_string())
+    }
+
+    pub async fn use_room(&self, room: Option<&str>) -> Result<bool> {
+        let room = room.map(crate::relays::room_relay_url).transpose()?.map(crate::relays::room_relay_config);
+        self.relays.use_room(&self.endpoint, room).await
+    }
+}
+
 pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct MediaDialer {
     endpoint: Endpoint,
     lookup: MemoryLookup,
-    relays: Vec<RelayUrl>,
+    relays: crate::relays::Relays,
 }
 
 impl MediaDialer {
     pub async fn connect(&self, node_hex: &str, hello: MediaHello) -> Result<MediaChannel> {
         let node_id = parse_node_hex(node_hex)?;
-        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
+        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays.hints());
         let dial = async {
             let connection = self
                 .endpoint
@@ -820,7 +837,7 @@ pub struct BlobFetcher {
     blobs: MemStore,
     endpoint: Endpoint,
     lookup: MemoryLookup,
-    relays: Vec<RelayUrl>,
+    relays: crate::relays::Relays,
     #[cfg(not(wasm_browser))]
     shelf: ShelfSlot,
 }
@@ -1173,7 +1190,7 @@ impl BlobFetcher {
 
     fn dialable(&self, source: &str) -> Option<EndpointId> {
         let node_id = parse_node_hex(source).ok().filter(|id| *id != self.endpoint.id())?;
-        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays);
+        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays.hints());
         Some(node_id)
     }
 
@@ -1226,7 +1243,7 @@ pub struct CommyNode {
     #[cfg(not(wasm_browser))]
     shelf: ShelfSlot,
     lookup: MemoryLookup,
-    relays: Vec<RelayUrl>,
+    relays: crate::relays::Relays,
     can_discover_address: bool,
     topics: HashMap<ServerId, TopicHandle>,
     returning: tokio::sync::broadcast::Sender<[u8; 32]>,
@@ -1317,7 +1334,7 @@ impl CommyNode {
         let lookup = MemoryLookup::new();
         let relay_mode = relays.map_or_else(iroh::endpoint::default_relay_mode, iroh::RelayMode::Custom);
         let can_discover_address = relay_mode.relay_map().relays::<Vec<Arc<iroh::RelayConfig>>>().iter().any(|relay| relay.quic.is_some());
-        let relays = relay_mode.relay_map().urls();
+        let relays = crate::relays::Relays::new(relay_mode.relay_map().urls());
         let build = |port: Option<u16>| -> Result<iroh::endpoint::Builder> {
             #[cfg(not(wasm_browser))]
             let builder = Endpoint::builder(iroh::endpoint::presets::N0);
@@ -1604,7 +1621,7 @@ impl CommyNode {
 
     fn learn(&self, addr: EndpointAddr) {
         #[cfg(wasm_browser)]
-        let addr = reachable_from_browser(addr, &self.relays);
+        let addr = reachable_from_browser(addr, &self.relays.hints());
         if addr.id != self.router.endpoint().id() {
             self.lookup.add_endpoint_info(addr);
         }
@@ -1907,6 +1924,10 @@ impl CommyNode {
         self.home_relay_url().map(|r| r.to_string())
     }
 
+    pub fn relay_switch(&self) -> RelaySwitch {
+        RelaySwitch { endpoint: self.endpoint(), relays: self.relays.clone() }
+    }
+
     pub fn is_joined(&self, server_id: ServerId) -> bool {
         self.topics.contains_key(&server_id)
     }
@@ -1935,7 +1956,7 @@ impl CommyNode {
             if *id.as_bytes() == our_id {
                 continue;
             }
-            self.learn(addr_via_relays(id, &self.relays));
+            self.learn(addr_via_relays(id, &self.relays.hints()));
             ids.push(id);
         }
         ids
@@ -1945,7 +1966,7 @@ impl CommyNode {
         let endpoint = self.endpoint();
         let relays = self.relays.clone();
         let node = parse_node_hex(node_hex);
-        async move { crate::wake::send(endpoint, node?, &relays).await }
+        async move { crate::wake::send(endpoint, node?, &relays.hints()).await }
     }
 
     pub async fn shutdown(self) -> Result<()> {

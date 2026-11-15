@@ -134,7 +134,7 @@ type Raw = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<
 
 async fn raw(url: &str) -> Raw {
     let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
-    assert_eq!(receive(&mut socket).await, ServerFrame::Hello { protocol: commy_sync::wire::PROTOCOL });
+    assert_eq!(receive(&mut socket).await.greeting(), Some(commy_sync::wire::Greeting::of(commy_sync::wire::PROTOCOL)));
     socket
 }
 
@@ -673,6 +673,25 @@ async fn owner_requests_must_be_fresh_and_prove_the_stream() {
     assert_eq!(receive(&mut socket).await, ServerFrame::stream_error(ErrorCode::Expired, keys.id));
 }
 
+#[tokio::test]
+async fn apps_learn_the_hosts_release_and_relay_from_its_greeting() {
+    let config = Config::from_env(|key| match key {
+        "COMMY_VERSION" => Some("0.2.5".into()),
+        "SYNC_RELAY_URL" => Some("https://sync.example.org".into()),
+        _ => None,
+    })
+    .unwrap();
+    let (url, _) = start_with(config).await;
+    let (client, mut events) = SyncClient::spawn(url);
+    assert_eq!(client.greeting(), None);
+    client.follow(StreamSecret::random().keys(), 0);
+    caught_up(&mut events).await;
+    let greeting = client.greeting().expect("greeted once connected");
+    assert_eq!(greeting.version.as_deref(), Some("0.2.5"));
+    assert_eq!(greeting.relay.as_deref(), Some("https://sync.example.org"));
+    assert_eq!(greeting.fit(commy_sync::wire::PROTOCOL), commy_sync::wire::Fit::Current);
+}
+
 fn host_report(streams: Vec<commy_sync::StreamId>) -> commy_sync::report::HostReport {
     use commy_sync::report::{HostReport, Person, PickedMessage};
     let person = |id: &str, name: &str| Person { id: id.into(), name: name.into() };
@@ -734,6 +753,9 @@ async fn the_about_page_names_the_operator_and_the_abuse_contact() {
     assert_eq!(body["operator"], "this sync server");
     assert_eq!(body["takes_reports"], true);
     assert_eq!(body["protocol"], commy_sync::wire::PROTOCOL);
+    assert_eq!(body["oldest_protocol"], commy_sync::wire::OLDEST_CLIENT_PROTOCOL);
+    assert_eq!(body["version"], serde_json::Value::Null);
+    assert_eq!(body["relay"], serde_json::Value::Null);
 }
 
 #[tokio::test]

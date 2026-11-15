@@ -1,8 +1,10 @@
 {
 	email {$ACME_EMAIL}
+	admin {$CADDY_ADMIN}
 }
 
 {$SYNC_DOMAIN} {
+	import /custom-tls/*.caddy
 	encode zstd gzip
 
 	header {

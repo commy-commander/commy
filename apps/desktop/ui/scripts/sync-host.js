@@ -20,10 +20,20 @@ function cleanSyncHost(input) {
   return syncHostOk(host) ? host.toLowerCase() : null;
 }
 
-function syncHostNow(server) {
-  return `This server syncs through ${(server && server.sync_host) || SYNC_HOST_HOME}.`;
+function syncHostNow(server, release) {
+  const now = `This server syncs through ${(server && server.sync_host) || SYNC_HOST_HOME}.`;
+  return release && release.text ? `${now} ${release.text}` : now;
+}
+
+function syncHostReady(label, release, home) {
+  const runs = release && release.text ? ` ${release.text}` : "";
+  return `${label} is ready.${runs} Choose ${home ? "Move back to Commy.chat" : "Move Now"} again to move this server there.`;
+}
+
+function syncHostAppNotice(release) {
+  return release && release.fit === "app_behind" ? release.text : null;
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { SYNC_HOST_MAX_CHARS, SYNC_HOST_HOME, SYNC_HOST_INVALID, cleanSyncHost, syncHostNow };
+  module.exports = { SYNC_HOST_MAX_CHARS, SYNC_HOST_HOME, SYNC_HOST_INVALID, cleanSyncHost, syncHostNow, syncHostReady, syncHostAppNotice };
 }

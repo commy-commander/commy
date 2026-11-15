@@ -6,7 +6,7 @@ use n0_future::time::{self, Duration, SystemTime};
 
 use crate::client::socket::{Incoming, Socket};
 use crate::stream::{Eraser, StreamId, StreamKeys};
-use crate::wire::{ClientFrame, ErrorCode, ServerFrame, ERASE_SINCE};
+use crate::wire::{ClientFrame, ErrorCode, Greeting, ServerFrame, ERASE_SINCE};
 
 const HELLO_WAIT: Duration = Duration::from_secs(10);
 const ANSWER_WAIT: Duration = Duration::from_secs(15);
@@ -189,19 +189,33 @@ pub fn claimed_all(outcomes: &[(StreamId, Outcome)]) -> Result<(), ClaimGap> {
 
 pub async fn run(url: &str, work: Vec<OwnerWork>) -> Result<Vec<(StreamId, Outcome)>, ErrandError> {
     let mut socket = Socket::connect(url).await.map_err(ErrandError::Unreachable)?;
-    let outcome = serve(&mut socket, work).await;
+    let outcome = match greeted(&mut socket).await {
+        Ok(_) => serve(&mut socket, work).await,
+        Err(e) => Err(e),
+    };
     socket.close().await;
     outcome
 }
 
-async fn serve(socket: &mut Socket, work: Vec<OwnerWork>) -> Result<Vec<(StreamId, Outcome)>, ErrandError> {
-    let protocol = match time::timeout(HELLO_WAIT, next_frame(socket)).await {
-        Ok(Some(ServerFrame::Hello { protocol })) => protocol,
+pub async fn greet(url: &str) -> Result<Greeting, ErrandError> {
+    let mut socket = Socket::connect(url).await.map_err(ErrandError::Unreachable)?;
+    let greeting = greeted(&mut socket).await;
+    socket.close().await;
+    greeting
+}
+
+async fn greeted(socket: &mut Socket) -> Result<Greeting, ErrandError> {
+    let greeting = match time::timeout(HELLO_WAIT, next_frame(socket)).await {
+        Ok(Some(frame)) => frame.greeting().ok_or_else(|| ErrandError::Unreachable("no greeting".into()))?,
         _ => return Err(ErrandError::Unreachable("no greeting".into())),
     };
-    if protocol < ERASE_SINCE {
+    if greeting.protocol < ERASE_SINCE {
         return Err(ErrandError::TooOld);
     }
+    Ok(greeting)
+}
+
+async fn serve(socket: &mut Socket, work: Vec<OwnerWork>) -> Result<Vec<(StreamId, Outcome)>, ErrandError> {
     let mut out = Vec::with_capacity(work.len());
     let mut lost = false;
     for item in work {

@@ -5,6 +5,7 @@ use crate::report::{HostReport, Receipt};
 use crate::stream::{Eraser, StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
 
 pub const PROTOCOL: u32 = 5;
+pub const OLDEST_CLIENT_PROTOCOL: u32 = 1;
 pub const SIGNALS_SINCE: u32 = 2;
 pub const WILLS_SINCE: u32 = 3;
 pub const ERASE_SINCE: u32 = 4;
@@ -170,7 +171,15 @@ impl ErrorCode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ServerFrame {
-    Hello { protocol: u32 },
+    Hello {
+        protocol: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oldest: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<String>,
+    },
     Opened { stream: StreamId, head: u64 },
     Entries { stream: StreamId, entries: Vec<WireEntry>, caught_up: bool },
     Appended { stream: StreamId, nonce: AppendNonce, seq: u64, at: i64 },
@@ -191,7 +200,63 @@ pub enum ServerFrame {
     Pong,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Greeting {
+    pub protocol: u32,
+    pub version: Option<String>,
+    pub oldest_protocol: u32,
+    pub relay: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    Current,
+    HostBehind,
+    AppBehind,
+}
+
+impl Greeting {
+    pub fn of(protocol: u32) -> Self {
+        Greeting { protocol, version: None, oldest_protocol: OLDEST_CLIENT_PROTOCOL, relay: None }
+    }
+
+    pub fn frame(&self) -> ServerFrame {
+        ServerFrame::Hello {
+            protocol: self.protocol,
+            version: self.version.clone(),
+            oldest: Some(self.oldest_protocol),
+            relay: self.relay.clone(),
+        }
+    }
+
+    pub fn fit(&self, app_protocol: u32) -> Fit {
+        if app_protocol < self.oldest_protocol {
+            Fit::AppBehind
+        } else if self.protocol < app_protocol {
+            Fit::HostBehind
+        } else {
+            Fit::Current
+        }
+    }
+}
+
 impl ServerFrame {
+    pub fn hello(protocol: u32) -> Self {
+        ServerFrame::Hello { protocol, version: None, oldest: None, relay: None }
+    }
+
+    pub fn greeting(&self) -> Option<Greeting> {
+        match self {
+            ServerFrame::Hello { protocol, version, oldest, relay } => Some(Greeting {
+                protocol: *protocol,
+                version: version.clone(),
+                oldest_protocol: oldest.unwrap_or(OLDEST_CLIENT_PROTOCOL),
+                relay: relay.clone(),
+            }),
+            _ => None,
+        }
+    }
+
     pub fn error(code: ErrorCode) -> Self {
         ServerFrame::Error { code, stream: None, nonce: None, retry_after_ms: None }
     }
@@ -257,7 +322,8 @@ mod tests {
     fn server_frames_round_trip() {
         let id = StreamSecret::random().keys().id;
         let frames = [
-            ServerFrame::Hello { protocol: PROTOCOL },
+            ServerFrame::hello(PROTOCOL),
+            Greeting { protocol: PROTOCOL, version: Some("0.2.5".into()), oldest_protocol: 2, relay: Some("https://sync.example.org".into()) }.frame(),
             ServerFrame::Opened { stream: id, head: 7 },
             ServerFrame::Entries { stream: id, entries: vec![WireEntry { seq: 1, at: 1_760_000_000_000, body: Blob(vec![4; 40]) }], caught_up: true },
             ServerFrame::Appended { stream: id, nonce: Bytes([1; APPEND_NONCE_BYTES]), seq: 8, at: 5 },
@@ -320,5 +386,24 @@ mod tests {
         assert!(ErrorCode::Unavailable.is_retryable());
         assert!(!ErrorCode::BadSignature.is_retryable());
         assert!(!ErrorCode::TooLarge.is_retryable());
+    }
+
+    #[test]
+    fn an_older_hello_still_reads_as_a_greeting() {
+        let old: ServerFrame = serde_json::from_str(r#"{"t":"hello","protocol":3}"#).unwrap();
+        assert_eq!(old.greeting(), Some(Greeting::of(3)));
+        let new = Greeting { protocol: 5, version: Some("0.2.5".into()), oldest_protocol: 4, relay: Some("https://sync.example.org".into()) };
+        let text = serde_json::to_string(&new.frame()).unwrap();
+        assert_eq!(serde_json::from_str::<ServerFrame>(&text).unwrap().greeting(), Some(new));
+        assert_eq!(serde_json::to_string(&ServerFrame::hello(4)).unwrap(), r#"{"t":"hello","protocol":4}"#);
+    }
+
+    #[test]
+    fn a_greeting_says_which_side_needs_updating() {
+        let host = Greeting { oldest_protocol: 3, ..Greeting::of(5) };
+        assert_eq!(host.fit(5), Fit::Current);
+        assert_eq!(host.fit(4), Fit::Current, "a host keeps serving apps one step behind");
+        assert_eq!(host.fit(2), Fit::AppBehind);
+        assert_eq!(host.fit(6), Fit::HostBehind);
     }
 }

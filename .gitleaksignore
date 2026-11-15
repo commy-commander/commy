@@ -4,4 +4,5 @@
 df636ee4648298a178382774f9c1e9744e41c49c:auth/src/unsubscribe-links.js:generic-api-key:7
 ffb2474b1e1f06fabe7ab6209b11d5fd80a11ea9:crates/commy-sync-server/src/apns.rs:private-key:183
 ffb2474b1e1f06fabe7ab6209b11d5fd80a11ea9:crates/commy-sync-server/src/apns.rs:private-key:230
+10c69262ea0abfe38309b183e3158192e415df42:crates/commy-sync-server/src/config.rs:generic-api-key:354
 114d17c2b0b654d8b023ddf69747ec63be4572c1:auth/test/server-guards.test.js:generic-api-key:47

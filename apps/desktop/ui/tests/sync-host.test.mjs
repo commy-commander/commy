@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { SYNC_HOST_MAX_CHARS, SYNC_HOST_INVALID, cleanSyncHost, syncHostNow } = require("../scripts/sync-host.js");
+const { SYNC_HOST_MAX_CHARS, SYNC_HOST_INVALID, cleanSyncHost, syncHostNow, syncHostReady, syncHostAppNotice } = require("../scripts/sync-host.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const core = readFileSync(join(repo, "crates", "commy-core", "src", "sync_host.rs"), "utf8");
@@ -32,4 +32,20 @@ test("the sync server page loads its script and is only for the owner's app", ()
   assert.ok(html.indexOf('src="scripts/file-store.js"') < html.indexOf('src="scripts/sync-host.js"'));
   assert.match(html, /data-tab="sync-host" id="tab-sync-host"/);
   assert.match(html, /data-page="sync-host"/);
+});
+
+test("the page says which Commy the sync server runs", () => {
+  const release = { version: "0.2.5", fit: "current", text: "It runs Commy 0.2.5." };
+  assert.equal(syncHostNow({ sync_host: "sync.example.org" }, release), "This server syncs through sync.example.org. It runs Commy 0.2.5.");
+  assert.equal(syncHostNow({ sync_host: null }, null), "This server syncs through Commy.chat.");
+  assert.equal(syncHostReady("sync.example.org", release, false), "sync.example.org is ready. It runs Commy 0.2.5. Choose Move Now again to move this server there.");
+  assert.equal(syncHostReady("Commy.chat", null, true), "Commy.chat is ready. Choose Move back to Commy.chat again to move this server there.");
+});
+
+test("members are told to update only when the sync server needs a newer app", () => {
+  const behind = { fit: "app_behind", text: "This server's sync server needs a newer Commy. Update Commy to keep chatting here." };
+  assert.equal(syncHostAppNotice(behind), behind.text);
+  assert.ok(view.includes(`"${behind.text}"`));
+  assert.equal(syncHostAppNotice({ fit: "host_behind", text: "x" }), null);
+  assert.equal(syncHostAppNotice(null), null);
 });

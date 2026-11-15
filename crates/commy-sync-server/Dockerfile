@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget && rm -rf 
   && useradd --system --uid 10002 commy
 COPY --from=build /out/commy-sync /usr/local/bin/commy-sync
 USER commy
-ENV PORT=3002
+ARG COMMY_VERSION=dev
+ENV PORT=3002 COMMY_VERSION=${COMMY_VERSION}
 EXPOSE 3002
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
   CMD wget -qO- http://127.0.0.1:3002/healthz || exit 1

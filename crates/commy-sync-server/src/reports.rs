@@ -92,6 +92,10 @@ impl Desk {
         *self.dropped.write().unwrap() = fresh;
     }
 
+    pub fn emails_reports(&self) -> bool {
+        self.mailer.is_some()
+    }
+
     pub fn about(&self) -> serde_json::Value {
         serde_json::json!({
             "operator": self.operator,

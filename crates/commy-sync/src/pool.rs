@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::client::{AppendError, SyncClient, SyncEvent};
 use crate::stream::{StreamId, StreamKeys};
-use crate::wire::MAX_STREAMS_PER_CONNECTION;
+use crate::wire::{Greeting, MAX_STREAMS_PER_CONNECTION};
 
 struct Slot {
     url: String,
@@ -88,6 +88,14 @@ impl Pool {
         for slot in &self.slots {
             slot.client.nudge();
         }
+    }
+
+    pub fn greeting(&self) -> Option<Greeting> {
+        self.greeting_at(&self.url)
+    }
+
+    pub fn greeting_at(&self, url: &str) -> Option<Greeting> {
+        self.slots.iter().filter(|slot| slot.url == url).find_map(|slot| slot.client.greeting())
     }
 
     pub fn host_of(&self, stream: StreamId) -> Option<&str> {

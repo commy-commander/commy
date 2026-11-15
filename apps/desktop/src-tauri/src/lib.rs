@@ -398,10 +398,17 @@ async fn set_sync_host(app: tauri::State<'_, App>, handle: tauri::AppHandle, ser
 }
 
 #[tauri::command]
-async fn test_sync_host(host: String) -> CmdResult<String> {
+async fn test_sync_host(host: String) -> CmdResult<serde_json::Value> {
     let origin = commy_core::sync_host::clean_sync_host(&host).ok_or(view::sync_host::SYNC_HOST_INVALID)?;
-    sync_host::check(&origin).await?;
-    Ok(commy_core::sync_host::display_host(&origin).unwrap_or_default().to_string())
+    let greeting = sync_host::check(&origin).await?;
+    let host = commy_core::sync_host::display_host(&origin).unwrap_or_default().to_string();
+    Ok(serde_json::json!({ "host": host, "release": view::sync_host::host_release(&greeting) }))
+}
+
+#[tauri::command]
+fn sync_host_release(server_id: String) -> CmdResult<Option<view::sync_host::HostRelease>> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    Ok(community_sync::greeting_of(sid).as_ref().map(view::sync_host::host_release))
 }
 
 fn storage_roster(app: &App, sid: ServerId) -> Option<commy_core::file_store::Roster> {
@@ -1655,6 +1662,7 @@ async fn set_voice_channel(
             refresh_forced_voice(&app, &handle);
             refresh_priority_speakers(&app);
             devices::announce(&app, sid).await;
+            follow_room_relay(&handle);
             dial_voice_members(&app, &handle, sid, channel, &profile);
             set_own_voice_state(&app, &handle, sid, &profile, &voice, Some(channel)).await?;
             devices::claim_profile_node(&app, sid).await;
@@ -1677,6 +1685,7 @@ async fn leave_voice(
     voice: &VoiceSettings,
 ) {
     stop_voice_here(app, sid, profile).await;
+    follow_room_relay(handle);
     if let Err(e) = set_own_voice_state(app, handle, sid, profile, voice, None).await {
         tracing::warn!("leaving voice: {e}");
     }
@@ -1974,10 +1983,28 @@ fn claim_voice_dial(app: &App, channel: ChannelId, user: UserId) -> bool {
 
 const VOICE_REDIAL_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
 
+fn follow_room_relay(handle: &tauri::AppHandle) {
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let app = handle.state::<App>();
+        let switch = match app.net.lock().await.as_ref() {
+            Some(net) => net.relay_switch(),
+            None => return,
+        };
+        let wanted = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).and_then(community_sync::room_relay_of);
+        if let Err(e) = switch.use_room(wanted.as_deref()).await {
+            tracing::warn!("staying on our relay: {e:#}");
+        }
+    });
+}
+
 async fn run_voice_redialer(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(VOICE_REDIAL_EVERY).await;
         let app = handle.state::<App>();
+        if app.voice_session.lock().unwrap().is_some() {
+            follow_room_relay(&handle);
+        }
         let call = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
         let Some((sid, channel)) = call else { continue };
         let Some(me) = app.profile.lock().unwrap().clone() else { continue };
@@ -8759,6 +8786,7 @@ pub fn run() {
             test_file_store,
             set_sync_host,
             test_sync_host,
+            sync_host_release,
             set_upload_limit,
             set_tts_allowed,
             set_pet,

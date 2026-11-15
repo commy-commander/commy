@@ -28,7 +28,7 @@ pub async fn send(url: &str, report: HostReport) -> Result<Receipt, ReportError>
 
 async fn deliver(socket: &mut Socket, report: HostReport) -> Result<Receipt, ReportError> {
     match time::timeout(HELLO_WAIT, next_frame(socket)).await {
-        Ok(Some(ServerFrame::Hello { protocol })) if protocol >= REPORTS_SINCE => {}
+        Ok(Some(ServerFrame::Hello { protocol, .. })) if protocol >= REPORTS_SINCE => {}
         Ok(Some(ServerFrame::Hello { .. })) => return Err(ReportError::TooOld),
         _ => return Err(ReportError::Unreachable("no greeting".into())),
     }

@@ -548,7 +548,7 @@ impl Session {
             "transfer_ownership" => self.server_command(cmd, args).await,
             "audit_log" => self.server_command(cmd, args).await,
             "set_sync_host" => self.server_command(cmd, args).await,
-            "test_sync_host" => self.server_command(cmd, args).await,
+            "test_sync_host" | "sync_host_release" => self.server_command(cmd, args).await,
             "create_role" => self.server_command(cmd, args).await,
             "update_role" => self.server_command(cmd, args).await,
             "delete_role" => self.server_command(cmd, args).await,

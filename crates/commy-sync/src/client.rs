@@ -4,7 +4,7 @@ use n0_future::time::{self, Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::stream::{SealError, StreamId, StreamKeys, APPEND_NONCE_BYTES};
-use crate::wire::{ClientFrame, ErrorCode, ServerFrame, KEEPALIVE_SECS, SIGNALS_SINCE, WILLS_SINCE};
+use crate::wire::{ClientFrame, ErrorCode, Greeting, ServerFrame, KEEPALIVE_SECS, SIGNALS_SINCE, WILLS_SINCE};
 
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 #[path = "client/native.rs"]
@@ -54,17 +54,25 @@ enum Command {
     Nudge,
 }
 
+type Heard = std::sync::Arc<std::sync::Mutex<Option<Greeting>>>;
+
 #[derive(Clone)]
 pub struct SyncClient {
     commands: mpsc::UnboundedSender<Command>,
+    heard: Heard,
 }
 
 impl SyncClient {
     pub fn spawn(url: impl Into<String>) -> (SyncClient, mpsc::UnboundedReceiver<SyncEvent>) {
         let (commands, inbox) = mpsc::unbounded_channel();
         let (events, received) = mpsc::unbounded_channel();
-        n0_future::task::spawn(Link::new(url.into(), events).run(inbox));
-        (SyncClient { commands }, received)
+        let heard = Heard::default();
+        n0_future::task::spawn(Link::new(url.into(), events, heard.clone()).run(inbox));
+        (SyncClient { commands, heard }, received)
+    }
+
+    pub fn greeting(&self) -> Option<Greeting> {
+        self.heard.lock().unwrap().clone()
     }
 
     pub fn follow(&self, keys: StreamKeys, after: u64) {
@@ -134,6 +142,7 @@ struct Link {
     reopen: HashMap<StreamId, Instant>,
     protocol: u32,
     wills_due: bool,
+    heard: Heard,
 }
 
 enum Ended {
@@ -142,8 +151,8 @@ enum Ended {
 }
 
 impl Link {
-    fn new(url: String, events: mpsc::UnboundedSender<SyncEvent>) -> Self {
-        Self { url, events, streams: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0, wills_due: false }
+    fn new(url: String, events: mpsc::UnboundedSender<SyncEvent>, heard: Heard) -> Self {
+        Self { url, events, streams: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0, wills_due: false, heard }
     }
 
     async fn run(mut self, mut inbox: mpsc::UnboundedReceiver<Command>) {
@@ -343,8 +352,11 @@ impl Link {
     }
 
     fn handle(&mut self, frame: ServerFrame) {
+        if let Some(greeting) = frame.greeting() {
+            *self.heard.lock().unwrap() = Some(greeting);
+        }
         match frame {
-            ServerFrame::Hello { protocol } => {
+            ServerFrame::Hello { protocol, .. } => {
                 self.protocol = protocol;
                 self.wills_due = protocol >= WILLS_SINCE;
             }

@@ -1,8 +1,240 @@
 # Hosting Commy
 
-Chat, voice, screen sharing and files in Commy are peer to peer and never touch
-a server. The only hosted pieces are accounts and the website, and this folder
-runs all of them on one machine with Docker Compose:
+Voice, video, screen shares and files in Commy go straight between people's
+apps. What a server holds is accounts, the website, and the sync service,
+which keeps each community's messages and settings sealed end to end so
+members who were offline catch up.
+
+There are two ways to host:
+
+- **Run a sync host** (most people): your server keeps your communities'
+  messages and history. People keep their Commy accounts, and the community
+  owner moves a community to your server in Server Settings > Sync Server.
+  One script sets it up in about 15 minutes.
+- **Run the whole stack** (advanced): accounts, the website and sync on your
+  own domain. See [Run the whole stack](#run-the-whole-stack-advanced) below.
+
+## Run a sync host
+
+The sync host bundle runs four containers with Docker Compose:
+
+| Service    | What it does                                                        |
+|------------|---------------------------------------------------------------------|
+| `caddy`    | HTTPS on ports 80 and 443, with certificates from Let's Encrypt     |
+| `sync`     | The sync service at `wss://<your domain>/sync`                      |
+| `relay`    | Helps members' apps reach each other in your communities' voice channels |
+| `postgres` | The sync database, on a private network only                        |
+
+Every image is built by Commy's release pipeline and signed. The setup script
+checks the signature before it starts anything and pins each image by digest,
+so nothing is built on your server.
+
+While someone is in a voice channel of a community on your server, their app
+uses your relay instead of Commy's, so that community's calls and streams
+never pass through Commy. Apps stay on Commy's relay if yours does not answer.
+
+### What you need
+
+- A Linux server with at least 1 GB of memory and 10 GB of disk, with
+  [Docker Engine](https://docs.docker.com/engine/install/) and its Compose
+  plugin installed
+- A domain or subdomain (for example `sync.example.org`) with an A record,
+  and an AAAA record if the server has IPv6, pointing at the server. Behind
+  Cloudflare, set it to DNS only (grey cloud)
+- These ports open to the internet: TCP 80 and 443, and UDP 7842
+- An email address for certificate notices, and an abuse contact (an email
+  address or an `https://` page) where people can reach you about what your
+  server stores
+
+### Set it up
+
+```sh
+curl -fsSLO https://git.commy.chat/commy/commy/raw/branch/main/deploy/sync-host/setup.sh
+sudo sh setup.sh
+```
+
+The script asks for your domain, the two email addresses, and whether to turn
+on the admin page. Then it:
+
+1. checks that your domain points at this server and that ports 80, 443 and
+   UDP 7842 are free
+2. downloads the newest Commy release's bundle into `/srv/commy-sync`
+3. downloads the images, checks they are signed by Commy for that release, and
+   pins them by digest
+4. writes every setting and generated password to `/srv/commy-sync/.env`,
+   readable only by root
+5. starts everything, waits until the sync service and relay answer over
+   HTTPS, and stores and reads back a test entry
+
+When it finishes it prints the address to use. To skip the questions, pass
+everything at once:
+
+```sh
+sudo sh setup.sh --domain sync.example.org --email you@example.org \
+  --contact abuse@example.org --admin --yes
+```
+
+Other options: `--no-admin`, `--version 0.2.5` to install a specific
+release, and `--dir` to use another folder than `/srv/commy-sync`.
+
+### Move a community to it
+
+The community's owner opens Server Settings > Sync Server in Commy and enters `https://<your domain>`. The app checks your server, copies the
+community's setup and its recent history, and every member's app follows on
+its own. People keep their accounts, direct messages and phone notifications
+where they were; your server only sees the communities that use it.
+
+Your server tells apps which release it runs. If it is older than the owner's
+app, Server Settings says so. If it is newer than a member's app can talk to,
+that member is asked to update Commy.
+
+### Update
+
+Run the script again:
+
+```sh
+sudo sh /srv/commy-sync/setup.sh
+```
+
+It keeps your settings and data, moves to the newest release, and checks the
+new images' signatures first. If a signature does not match, nothing is
+changed.
+
+### The admin page
+
+With the admin page on, the sync service serves a small page that shows:
+
+- the release you run and whether a newer one is out
+- whether the database and relay answer, how many apps are connected, and
+  totals of stored streams, entries and database size
+- the certificate in use, who issued it and when it expires
+- open reports, where you can read each one, dismiss it, or remove that
+  community from your server
+
+It only listens on the server itself (`127.0.0.1:8790`) and answers only to a
+`localhost` address. To open it, start an SSH tunnel from your own computer:
+
+```sh
+ssh -L 8790:127.0.0.1:8790 you@sync.example.org
+```
+
+then open `http://localhost:8790` and sign in with `SYNC_ADMIN_PASSWORD` from
+`/srv/commy-sync/.env`. Turn it on or off at any time with
+`sudo sh /srv/commy-sync/setup.sh --admin` or `--no-admin`. The page never
+gets control of Docker.
+
+### Use your own certificate
+
+Caddy gets and renews a certificate from Let's Encrypt on its own. To use a
+certificate of your own instead, open the admin page, choose **Use your own
+certificate**, and paste the certificate (with any intermediates after it) and
+its private key, both in PEM format. The page checks that the key belongs to
+the certificate, that it covers your domain and that it has not expired, then
+Caddy and the relay switch to it. If Caddy refuses it, the page puts the old
+setup back. **Go back to automatic certificates** undoes it. You will need to
+upload a new certificate before yours expires.
+
+### Reports
+
+People can report messages or members of a community on your server. Each
+report reaches the community's owner and you. Read them on the admin page, or
+from the server:
+
+```sh
+cd /srv/commy-sync
+docker compose exec sync commy-sync reports          # open reports
+docker compose exec sync commy-sync show <report>    # one report in full
+docker compose exec sync commy-sync drop <report>    # remove that community
+docker compose exec sync commy-sync dismiss <report> # close it, no action
+```
+
+Removing a community deletes everything it stored on your server and refuses
+it from then on. It cannot be undone. To have reports emailed to your abuse
+contact as well, add `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`
+and `EMAIL_FROM` (or `SMTP_URL`) to `.env` and run the setup script again.
+[Sync service](#sync-service) has what a report contains.
+
+### Settings
+
+Change any of these in `/srv/commy-sync/.env`, then run the setup script
+again:
+
+| Setting                | Default              | What it does                                      |
+|------------------------|----------------------|---------------------------------------------------|
+| `SYNC_DOMAIN`          | asked                | The domain your server answers on                 |
+| `ACME_EMAIL`           | asked                | Where Let's Encrypt sends certificate notices     |
+| `SYNC_ABUSE_CONTACT`   | asked                | Email or `https://` page shown to people who report |
+| `SYNC_OPERATOR_NAME`   | your domain          | The name apps show for whoever runs the server    |
+| `SYNC_RETENTION_DAYS`  | `90`                 | How long entries are kept, `0` keeps everything   |
+| `SYNC_ADMIN_PASSWORD`  | generated            | The admin page password; empty turns the page off |
+| `ADMIN_PORT`           | `8790`               | The admin page's port on `127.0.0.1`              |
+| `SMTP_*`, `EMAIL_FROM` | unset                | Email reports to your abuse contact               |
+| `SYNC_LOG`             | `info`               | Log detail for the sync service                   |
+
+`POSTGRES_PASSWORD`, `COMMY_VERSION`, `SYNC_IMAGE` and `RELAY_IMAGE` are
+managed by the setup script; leave them as they are.
+
+### Back up and restore
+
+```sh
+cd /srv/commy-sync
+docker compose exec -T postgres pg_dump -U commy commy_sync > sync-backup.sql
+```
+
+Keep that file together with `.env` and the `custom-tls` folder. To restore on
+a new server, copy `.env` (and `custom-tls`, if you use your own certificate)
+into `/srv/commy-sync` first, run the setup script, then load the backup:
+
+```sh
+cd /srv/commy-sync
+docker compose stop sync
+docker compose exec -T postgres dropdb -U commy commy_sync
+docker compose exec -T postgres createdb -U commy commy_sync
+docker compose exec -T postgres psql -q -U commy commy_sync < sync-backup.sql
+docker compose start sync
+```
+
+### Check the images yourself
+
+The setup script does this for you. To check an image by hand with
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/):
+
+```sh
+curl -fsSLO https://git.commy.chat/commy/commy/raw/branch/main/deploy/agent/cosign.pub
+cosign verify --key cosign.pub -a release=0.2.5 git.commy.chat/commy/commy-sync:0.2.5
+```
+
+### When something goes wrong
+
+- **"does not resolve yet"**: the DNS record is missing or has not spread
+  yet. Check with `getent hosts sync.example.org` and run the script again.
+- **"port 80 is already used"**: another web server runs on this machine.
+  Stop it, or use a separate server for the sync host.
+- **"did not answer within 300 seconds"**: Let's Encrypt could not reach the
+  server on port 80. Check your firewall, your provider's firewall, and any
+  router port forwarding.
+- **"is not signed by Commy"**: the image was not the one Commy published.
+  Nothing was changed; tell the Commy team.
+- **Logs**: `cd /srv/commy-sync && docker compose logs -f sync` (or `caddy`,
+  `relay`).
+- **Stop or remove**: `docker compose down` stops it and keeps the data.
+  `docker compose down -v` also deletes the database and certificates, which
+  cannot be undone.
+
+### What your server can see
+
+Messages reach your server sealed end to end, so it cannot read them or tell
+who wrote them, and it stores no IP addresses. It can see how many streams
+exist and how busy each one is. Your relay sees the addresses of apps in your
+communities' voice channels while they are connected, and how much they send;
+calls and streams through it stay encrypted end to end. Reports are the exception: they arrive in
+plain text, because the reporter's app opens the messages they chose to send
+you. [What the operator can see](#what-the-operator-can-see) has the details.
+
+# Run the whole stack (advanced)
+
+This folder can also run accounts, the website and sync on one machine with
+Docker Compose:
 
 | Service    | Image                 | Role                                                  |
 |------------|-----------------------|-------------------------------------------------------|
@@ -26,7 +258,7 @@ the account pages (`/account`, `/signup`, `/device`, `/i/<CODE>`,
 ## Install
 
 ```bash
-git clone https://github.com/commy-commander/commy.git
+git clone https://git.commy.chat/commy/commy.git
 cd commy/deploy
 cp .env.example .env
 ```
@@ -482,9 +714,9 @@ server or channel a log belongs to.
   appends, stored pictures and live signals per 10 minutes, and wake-ups when
   they are on).
 - **Syncing one community:** a Commy server's owner can move that server's
-  logs to a sync service they run, in Server Settings > Sync Server. Only the
-  `sync` service is needed for this, on its own domain at `wss://<domain>/sync`
-  on port 443; accounts stay on the members' account server. Before moving,
+  logs to a sync service they run, in Server Settings > Sync Server.
+  [Run a sync host](#run-a-sync-host) sets one up on its own domain; accounts
+  stay on the members' account server. Before moving,
   the owner's app registers the server's eraser keys on the new service,
   refusing a service too old to erase or one where someone else already holds
   a key. It then leaves a note about the move on the old service, records the
@@ -563,8 +795,9 @@ The relay must run the same iroh version as the app (`IROH_RELAY_VERSION` in
 
 ## What the operator can see
 
-Commy messages, voice, video, screen shares and files are peer to peer and
-never reach this stack. The auth database holds:
+Voice, video, screen shares and files go straight between apps and never
+reach this stack. Messages reach the sync service only sealed end to end. The
+auth database holds:
 
 - accounts: email, display name, avatar URL, password hash (scrypt)
 - Google sign-ins: provider account id, with OAuth tokens encrypted at rest

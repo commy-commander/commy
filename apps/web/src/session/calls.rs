@@ -419,7 +419,18 @@ impl Session {
         self.say_here(server);
         self.emit("server-event", json!(server.to_string()));
         spawn_local(self.clone().keep_voice(channel));
+        self.follow_room_relay();
         Ok(())
+    }
+
+    pub(super) fn follow_room_relay(self: &Rc<Self>) {
+        let this = self.clone();
+        spawn_local(async move {
+            let Some(switch) = this.node.lock().await.as_ref().map(commy_net::CommyNode::relay_switch) else { return };
+            let server = this.voice.borrow().link.as_ref().and_then(|link| link.server);
+            let wanted = server.and_then(|server| this.room_relay_of(server));
+            let _ = switch.use_room(wanted.as_deref()).await;
+        });
     }
 
     pub(super) fn moved_me(&self, server: ServerId, event: &ServerEvent) -> Option<Option<ChannelId>> {
@@ -457,6 +468,7 @@ impl Session {
         let server = self.voice.borrow().link.as_ref().and_then(|link| link.server);
         let Some(server) = server else { return };
         self.hang_up_media();
+        self.follow_room_relay();
         self.say_left(server);
     }
 

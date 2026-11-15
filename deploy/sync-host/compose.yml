@@ -25,8 +25,10 @@ services:
     environment:
       SYNC_DOMAIN: ${SYNC_DOMAIN:?set SYNC_DOMAIN in .env}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      CADDY_ADMIN: ${CADDY_ADMIN:-localhost:2019}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./custom-tls:/custom-tls:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -49,6 +51,7 @@ services:
       RELAY_DOMAIN: ${SYNC_DOMAIN}
     volumes:
       - caddy_data:/caddy-data:ro
+      - ./custom-tls:/custom-tls:ro
     networks: [edge]
     logging: *logging
 
@@ -62,13 +65,21 @@ services:
       SYNC_RETENTION_DAYS: ${SYNC_RETENTION_DAYS:-90}
       SYNC_ABUSE_CONTACT: ${SYNC_ABUSE_CONTACT:-}
       SYNC_OPERATOR_NAME: ${SYNC_OPERATOR_NAME:-${SYNC_DOMAIN}}
+      SYNC_RELAY_URL: https://${SYNC_DOMAIN}
       SMTP_URL: ${SMTP_URL:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      SYNC_DOMAIN: ${SYNC_DOMAIN}
+      SYNC_ADMIN_PASSWORD: ${SYNC_ADMIN_PASSWORD:-}
       RUST_LOG: ${SYNC_LOG:-info}
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-8790}:3003"
+    volumes:
+      - ./custom-tls:/custom-tls
+      - ./Caddyfile:/etc/commy/Caddyfile:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -74,6 +74,13 @@ pub enum Store {
     Postgres(PgStore),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Totals {
+    pub streams: u64,
+    pub entries: u64,
+    pub bytes: u64,
+}
+
 impl Store {
     pub fn memory() -> Self {
         Store::Memory(MemoryStore::default())
@@ -246,6 +253,13 @@ impl Store {
         }
     }
 
+    pub async fn totals(&self) -> Result<Totals, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.totals()),
+            Store::Postgres(p) => p.totals().await,
+        }
+    }
+
     pub async fn ping(&self) -> bool {
         match self {
             Store::Memory(_) => true,
@@ -275,6 +289,13 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
+    fn totals(&self) -> Totals {
+        let streams = self.streams.lock().unwrap();
+        let entries = streams.values().map(|s| s.entries.len() as u64).sum();
+        let bytes = streams.values().flat_map(|s| s.entries.iter()).map(|e| e.3.len() as u64).sum();
+        Totals { streams: streams.len() as u64, entries, bytes }
+    }
+
     pub(crate) fn forget_stream(&self, stream: &StreamId) -> u64 {
         self.erasers.lock().unwrap().remove(stream);
         self.streams.lock().unwrap().remove(stream).map_or(0, |gone| gone.entries.len() as u64)
@@ -471,6 +492,16 @@ impl PgStore {
             Err(e) if code_of(&e).as_deref() == Some("42P04") => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+
+    async fn totals(&self) -> Result<Totals, StoreError> {
+        let row = sqlx::query(
+            "SELECT (SELECT count(*) FROM sync_streams), (SELECT count(*) FROM sync_entries), pg_database_size(current_database())",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let count = |at: usize| row.get::<i64, _>(at).max(0) as u64;
+        Ok(Totals { streams: count(0), entries: count(1), bytes: count(2) })
     }
 
     async fn server_key_seed(&self, fresh: [u8; 32]) -> Result<[u8; 32], StoreError> {
@@ -724,6 +755,9 @@ mod tests {
         assert_eq!(store.append(&b, &[1; 16], b"other", 2_500).await.unwrap().seq, 1, "each stream counts on its own");
         assert_eq!(store.append(&a, &[3; 16], b"three", 3_000).await.unwrap().seq, 3);
         assert_eq!(store.head(&a).await.unwrap(), 3);
+        let totals = store.totals().await.unwrap();
+        assert_eq!((totals.streams, totals.entries), (2, 4));
+        assert!(totals.bytes >= 16, "the size counts what is stored");
 
         let all = store.page(&a, 0, 10).await.unwrap();
         assert_eq!(all.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
