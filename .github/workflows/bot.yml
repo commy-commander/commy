@@ -74,8 +74,11 @@ jobs:
       - name: Smoke test
         run: |
           data="$RUNNER_TEMP/commy-bot-smoke"
-          ./bin/commy-bot* --data "$data" init Smoke
-          ./bin/commy-bot* --data "$data" servers
+          smoke="$RUNNER_TEMP/smoke-bin"
+          mkdir -p "$smoke"
+          cp bin/commy-bot* "$smoke/"
+          "$smoke"/commy-bot* --data "$data" init Smoke
+          "$smoke"/commy-bot* --data "$data" servers
 
       - name: Package
         env:
@@ -87,7 +90,7 @@ jobs:
               if command -v 7z >/dev/null; then
                 7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
               else
-                powershell -NoProfile -Command "Compress-Archive -Force -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
+                powershell -NoProfile -Command "\$ErrorActionPreference = 'Stop'; Compress-Archive -Force -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
               fi
             }
             for attempt in 1 2 3 4 5 6; do
@@ -165,8 +168,11 @@ jobs:
       - name: Smoke test
         run: |
           data="$RUNNER_TEMP/commy-bot-smoke"
-          ./bin/commy-bot* --data "$data" init Smoke
-          ./bin/commy-bot* --data "$data" servers
+          smoke="$RUNNER_TEMP/smoke-bin"
+          mkdir -p "$smoke"
+          cp bin/commy-bot* "$smoke/"
+          "$smoke"/commy-bot* --data "$data" init Smoke
+          "$smoke"/commy-bot* --data "$data" servers
 
       - name: Package
         env:
@@ -178,7 +184,7 @@ jobs:
               if command -v 7z >/dev/null; then
                 7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
               else
-                powershell -NoProfile -Command "Compress-Archive -Force -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
+                powershell -NoProfile -Command "\$ErrorActionPreference = 'Stop'; Compress-Archive -Force -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
               fi
             }
             for attempt in 1 2 3 4 5 6; do
