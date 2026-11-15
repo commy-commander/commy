@@ -4,7 +4,7 @@ use commy_audio::echo::FarEndSink;
 use commy_audio::{VoiceProcessor, FRAME_SIZE, SAMPLE_RATE};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -164,6 +164,7 @@ impl Drop for StreamHandle {
 #[derive(Clone)]
 pub(crate) struct StreamFault {
     raised: Arc<AtomicBool>,
+    callbacks: Arc<AtomicU64>,
     thread: std::thread::Thread,
 }
 
@@ -171,8 +172,17 @@ impl StreamFault {
     fn for_current_thread() -> Self {
         Self {
             raised: Arc::new(AtomicBool::new(false)),
+            callbacks: Arc::new(AtomicU64::new(0)),
             thread: std::thread::current(),
         }
+    }
+
+    pub(crate) fn heard(&self) {
+        self.callbacks.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn callbacks(&self) -> u64 {
+        self.callbacks.load(Ordering::Relaxed)
     }
 
     pub(crate) fn raise(&self) {
@@ -198,11 +208,62 @@ impl AudioStream for cpal::Stream {
 const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(200);
 const REOPEN_PAUSE: std::time::Duration = std::time::Duration::from_millis(500);
 const POLLS_PER_DEVICE_CHECK: u32 = 10;
+const QUIET_POLLS_BEFORE_REOPEN: u32 = 5;
+
+struct QuietWatch {
+    limit: u32,
+    last: u64,
+    polls: u32,
+    reported: bool,
+}
+
+impl QuietWatch {
+    fn new(limit: u32) -> Self {
+        Self { limit: limit.max(1), last: 0, polls: 0, reported: false }
+    }
+
+    fn went_quiet(&mut self, callbacks: u64) -> bool {
+        if callbacks != self.last {
+            self.last = callbacks;
+            self.polls = 0;
+            self.reported = false;
+            return false;
+        }
+        self.polls += 1;
+        if self.polls < self.limit {
+            return false;
+        }
+        self.polls = 0;
+        true
+    }
+
+    fn first_report(&mut self) -> bool {
+        !std::mem::replace(&mut self.reported, true)
+    }
+}
+
+fn quiet_streams_reopen() -> Option<u32> {
+    cfg!(target_os = "ios").then_some(QUIET_POLLS_BEFORE_REOPEN)
+}
+
+fn wake_audio_before_reopen() {
+    #[cfg(target_os = "ios")]
+    crate::ios_audio::wake_session();
+}
 
 fn run_stream_thread<S: AudioStream>(
     died: &'static str,
+    build: impl FnMut(StreamFault) -> Result<S> + Send + 'static,
+    device_moved: impl FnMut() -> bool + Send + 'static,
+) -> Result<StreamHandle> {
+    watch_stream_thread(died, build, device_moved, quiet_streams_reopen())
+}
+
+fn watch_stream_thread<S: AudioStream>(
+    died: &'static str,
     mut build: impl FnMut(StreamFault) -> Result<S> + Send + 'static,
     mut device_moved: impl FnMut() -> bool + Send + 'static,
+    quiet_after: Option<u32>,
 ) -> Result<StreamHandle> {
     let stop = Arc::new(AtomicBool::new(false));
     let (ready, ready_rx) = std::sync::mpsc::channel();
@@ -221,12 +282,20 @@ fn run_stream_thread<S: AudioStream>(
         };
         let mut reported = false;
         let mut polls = 0u32;
+        let mut quiet = quiet_after.map(QuietWatch::new);
         while !stopped.load(Ordering::Relaxed) {
             if fault.take() {
                 tracing::warn!("audio stream stopped, reopening it");
                 stream = None;
             }
             if stream.is_some() {
+                if quiet.as_mut().is_some_and(|watch| watch.went_quiet(fault.callbacks())) {
+                    if quiet.as_mut().is_some_and(QuietWatch::first_report) {
+                        tracing::warn!("audio stream went quiet, reopening it");
+                    }
+                    stream = None;
+                    continue;
+                }
                 polls += 1;
                 if polls >= POLLS_PER_DEVICE_CHECK {
                     polls = 0;
@@ -243,6 +312,7 @@ fn run_stream_thread<S: AudioStream>(
             if stopped.load(Ordering::Relaxed) {
                 break;
             }
+            wake_audio_before_reopen();
             match build(fault.clone()) {
                 Ok(fresh) => {
                     stream = started(fresh);
@@ -375,12 +445,12 @@ pub fn start_microphone(
     tx: UnboundedSender<Vec<i16>>,
     device_name: Option<String>,
 ) -> Result<InputHandle> {
-    #[cfg(target_os = "ios")]
-    crate::ios_audio::prepare_session_for_voice()?;
     let opened = OpenedDevice::default();
     let watched = opened.clone();
     let wanted = device_name.clone();
     let build = move |fault: StreamFault| {
+        #[cfg(target_os = "ios")]
+        crate::ios_audio::prepare_session_for_voice()?;
         let processor = processor.clone();
         let tx = tx.clone();
         let host = cpal::default_host();
@@ -393,7 +463,9 @@ pub fn start_microphone(
         let mut assembler = FrameAssembler::for_microphone(config.sample_rate().0, config.channels());
         processor.lock().unwrap().start_fresh();
 
+        let alive = fault.clone();
         let data_cb = move |data: &[f32]| {
+            alive.heard();
             assembler.push(data);
             let mut processor = processor.lock().unwrap();
             while let Some(frame) = assembler.next_frame() {
@@ -533,9 +605,11 @@ pub fn start_playback<S: FrameSource>(
         let channels = config.channels();
         let mut shaper = OutputShaper::new(sample_rate);
 
+        let alive = fault.clone();
         let stream = device.build_output_stream(
             &config.into(),
             move |data: &mut [f32], _| {
+                alive.heard();
                 shaper.fill(data, channels, || {
                     let frame = mixer.lock().unwrap().next_frame();
                     if let Some(sink) = &far_end {
@@ -747,6 +821,59 @@ mod tests {
         std::thread::sleep(REOPEN_PAUSE * 2);
         assert_eq!(attempts.load(Ordering::SeqCst), 4);
         drop(handle);
+    }
+
+    #[test]
+    fn a_stream_that_stops_calling_back_is_reopened() {
+        let opens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = opens.clone();
+        let handle = watch_stream_thread("test", move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok(FakeStream)
+        }, || false, Some(2))
+        .unwrap();
+        wait_for("the quiet stream to reopen", || opens.load(Ordering::SeqCst) >= 2);
+        drop(handle);
+    }
+
+    #[test]
+    fn a_stream_that_keeps_calling_back_stays_open() {
+        let opens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let latest: Arc<Mutex<Option<StreamFault>>> = Arc::default();
+        let (counted, slot) = (opens.clone(), latest.clone());
+        let handle = watch_stream_thread("test", move |fault| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            *slot.lock().unwrap() = Some(fault);
+            Ok(FakeStream)
+        }, || false, Some(2))
+        .unwrap();
+        let until = std::time::Instant::now() + STOP_POLL * 8;
+        while std::time::Instant::now() < until {
+            latest.lock().unwrap().as_ref().unwrap().heard();
+            std::thread::sleep(STOP_POLL / 4);
+        }
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+        drop(handle);
+    }
+
+    #[test]
+    fn a_quiet_watch_counts_only_polls_without_callbacks() {
+        let mut watch = QuietWatch::new(3);
+        assert!(!watch.went_quiet(0));
+        assert!(!watch.went_quiet(0));
+        assert!(watch.went_quiet(0));
+        assert!(!watch.went_quiet(5));
+        assert!(!watch.went_quiet(5));
+        assert!(!watch.went_quiet(9));
+        assert!(watch.first_report());
+        assert!(!watch.first_report());
+        assert!(!watch.went_quiet(10));
+        assert!(watch.first_report());
+    }
+
+    #[test]
+    fn only_phones_reopen_quiet_streams() {
+        assert_eq!(quiet_streams_reopen().is_some(), cfg!(target_os = "ios"));
     }
 
     #[test]

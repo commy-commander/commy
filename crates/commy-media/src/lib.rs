@@ -21,6 +21,8 @@ pub use devices::{
     list_device_names, start_microphone, start_playback, start_system_audio, system_audio_supported, FrameSource,
     InputHandle, OutputHandle,
 };
+#[cfg(target_os = "ios")]
+pub use ios_audio::ask_for_microphone;
 pub use jitter::JitterBuffer;
 pub use mixer::Mixer;
 

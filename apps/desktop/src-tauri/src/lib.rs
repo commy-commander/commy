@@ -8388,6 +8388,16 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
     });
 }
 
+#[cfg(mobile)]
+fn note_phone_moved(handle: &tauri::AppHandle, to_front: bool) {
+    let in_voice = active_voice_channel(&handle.state::<App>()).is_some();
+    if to_front {
+        tracing::info!(in_voice, "Commy came back to the front");
+    } else {
+        tracing::info!(in_voice, "Commy went to the background");
+    }
+}
+
 fn on_resumed(handle: &tauri::AppHandle) {
     entry_list::on_resumed(handle);
     account_log::nudge();
@@ -8916,10 +8926,12 @@ pub fn run() {
             }
             #[cfg(mobile)]
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = &event {
+                note_phone_moved(handle, true);
                 on_resumed(handle);
             }
             #[cfg(target_os = "ios")]
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Suspended, .. } = &event {
+                note_phone_moved(handle, false);
                 if relaunch::reopen_needed() {
                     liveness::say_goodbye(&handle.state::<App>());
                     catchup::save_unsaved(&handle.state::<App>());

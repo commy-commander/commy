@@ -67,7 +67,12 @@ pub async fn ask_for_microphone() -> Option<bool> {
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "ios")]
+pub async fn ask_for_microphone() -> Option<bool> {
+    Some(commy_media::ask_for_microphone().await)
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub async fn ask_for_microphone() -> Option<bool> {
     None
 }
