@@ -48,7 +48,7 @@ impl Session {
                 let title = forum::title(args.title.as_deref().unwrap_or(""))?;
                 let (channel, message) = (channel()?, parse::<MessageId>(args.message_id.as_ref(), "message")?);
                 let tags = forum::tag_picks(&tags_of::<String>(args.tags.clone())?)?;
-                client().act(server, |state, me, _, _| forum::edit_post(state, me.perms, me.user, channel, message, title, tags))?
+                client().act(server, |state, me, _, keys| keys.seal_labels(state, forum::edit_post(state, me.perms, me.user, channel, message, title, tags)?))?
             }
             "set_voice_status" => {
                 let (channel, text) = (channel()?, args.text.clone().unwrap_or_default());
@@ -90,7 +90,7 @@ impl Session {
         let (message, view) = self.client.borrow().compose_post(server, channel, args.content.as_deref().unwrap_or(""), &tags)?;
         let root = message.id;
         let posted = self.deliver(server, message, view).await?;
-        let payload = self.client.borrow().act(server, |state, me, _, _| Ok(forum::post(state, channel, root, title, tags, me.user)))?;
+        let payload = self.client.borrow().act(server, |state, me, _, keys| keys.seal_labels(state, forum::post(state, channel, root, title, tags, me.user)))?;
         self.spread(server, &payload).await;
         self.emit("server-event", json!(server.to_string()));
         Ok(posted)

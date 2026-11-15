@@ -1309,7 +1309,7 @@ impl Session {
                 let root: MessageId = parse(args.root_id.as_ref(), "thread")?;
                 let (archived, locked) = (args.archived.unwrap_or(false), args.locked.unwrap_or(false));
                 let name = args.name;
-                self.client.borrow().act(server, |state, me, _, _| act::thread(state, me, channel, root, name.as_deref(), archived, locked))?
+                self.client.borrow().act(server, |state, me, _, keys| keys.seal_labels(state, act::thread(state, me, channel, root, name.as_deref(), archived, locked)?))?
             }
             _ => return Err(format!("{cmd} is not available in the web app yet")),
         };

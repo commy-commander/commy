@@ -21,6 +21,8 @@ const COMMUNITY_GRANT_DOMAIN: &str = "commy-community-grant/v1";
 const COMMUNITY_LINK_DOMAIN: &str = "commy-community-link/v1";
 const BODY_DOMAIN: &str = "commy-channel-body/v1";
 const SEALED_PREFIX: &str = "commy-sealed:v1:";
+const LABEL_DOMAIN: &str = "commy-channel-label/v1";
+pub const MAX_SEALED_LABEL_BYTES: usize = 1024;
 const TAG_BYTES: usize = 16;
 const SEALED_SECRET_BYTES: usize = 32 + TAG_BYTES;
 
@@ -567,6 +569,37 @@ pub fn seal_message(server: ServerId, message: &mut Message, key: KeyId, secret:
     message.content = seal_body(server, message, &message.content, &attachments, key, secret);
 }
 
+fn label_aad(server: ServerId, channel: ChannelId, root: MessageId) -> Vec<u8> {
+    encode(&(LABEL_DOMAIN, server, channel, root))
+}
+
+pub fn is_sealed_label(label: &str) -> bool {
+    is_sealed(label) && label.len() <= MAX_SEALED_LABEL_BYTES
+}
+
+pub fn seal_label(server: ServerId, channel: ChannelId, root: MessageId, label: &str, key: KeyId, secret: &ChannelSecret) -> String {
+    let nonce: [u8; 12] = rand::random();
+    let mut bytes = Vec::with_capacity(28 + label.len() + TAG_BYTES);
+    bytes.extend_from_slice(&key.0);
+    bytes.extend_from_slice(&nonce);
+    bytes.extend(seal(&secret.0, nonce, &label_aad(server, channel, root), label.as_bytes()));
+    format!("{SEALED_PREFIX}{}", BASE64URL_NOPAD.encode(&bytes))
+}
+
+pub fn read_label(server: ServerId, channel: ChannelId, root: MessageId, label: &str, ring: &Keyring) -> Option<String> {
+    let Some(encoded) = label.strip_prefix(SEALED_PREFIX) else {
+        return Some(label.to_string());
+    };
+    let bytes = BASE64URL_NOPAD.decode(encoded.as_bytes()).ok()?;
+    if bytes.len() < 28 + TAG_BYTES {
+        return None;
+    }
+    let key = KeyId(bytes[..16].try_into().ok()?);
+    let nonce: [u8; 12] = bytes[16..28].try_into().ok()?;
+    let plain = unseal(&ring.secret(key)?.0, nonce, &label_aad(server, channel, root), &bytes[28..])?;
+    String::from_utf8(plain).ok()
+}
+
 pub fn read_message(server: ServerId, message: &Message, ring: &Keyring) -> Option<Message> {
     let Some(encoded) = message.content.strip_prefix(SEALED_PREFIX) else {
         return Some(message.clone());
@@ -651,6 +684,26 @@ mod tests {
             }
         }
         panic!("key work did not settle");
+    }
+
+    #[test]
+    fn sealed_labels_open_only_for_readers_and_only_for_their_thread() {
+        let (mut state, channel, owner) = fixture();
+        let server = state.server.id;
+        let crew = private_channel(&mut state, channel);
+        let (reader, outsider) = (join(&mut state, "reader"), join(&mut state, "outsider"));
+        state.apply(ServerEvent::RoleAssign { server, user: reader, role: crew }).unwrap();
+        let ring = settle(&mut state, channel, owner);
+        let (key, secret) = ring.sending_key(&state, channel).unwrap();
+        let root = MessageId::new();
+        let sealed = seal_label(server, channel, root, "Launch plans", key, secret);
+        assert!(is_sealed_label(&sealed) && !sealed.contains("Launch"));
+        let reader_ring = Keyring::unlock(&state, channel, reader, &identity_for(reader));
+        assert_eq!(read_label(server, channel, root, &sealed, &reader_ring).as_deref(), Some("Launch plans"));
+        let outsider_ring = Keyring::unlock(&state, channel, outsider, &identity_for(outsider));
+        assert_eq!(read_label(server, channel, root, &sealed, &outsider_ring), None);
+        assert_eq!(read_label(server, channel, MessageId::new(), &sealed, &reader_ring), None, "bound to its thread");
+        assert_eq!(read_label(server, channel, root, "plain", &outsider_ring).as_deref(), Some("plain"));
     }
 
     #[test]

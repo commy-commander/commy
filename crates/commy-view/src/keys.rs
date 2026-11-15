@@ -1,5 +1,5 @@
 use commy_core::channel_key::{self, ChannelSecret, KeyId, KeyScope, Keyring};
-use commy_core::{Attachment, ChannelId, Identity, Message, Permissions, ServerEvent, ServerState, UserId};
+use commy_core::{Attachment, ChannelId, Identity, Message, MessageId, Permissions, ServerEvent, ServerState, UserId};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -54,6 +54,13 @@ impl KeyHolder {
         }
     }
 
+    pub fn open_label(&self, state: &ServerState, channel: ChannelId, root: MessageId, label: &str) -> Option<String> {
+        if !channel_key::is_sealed(label) {
+            return Some(label.to_string());
+        }
+        self.with_ring(state, channel, |ring| channel_key::read_label(state.server.id, channel, root, label, ring))?
+    }
+
     pub fn key_ready(&self, state: &ServerState, channel: ChannelId) -> bool {
         let private = state.server.channel(channel).is_some_and(|c| c.is_private());
         !private || self.with_ring(state, channel, |ring| ring.sending_key(state, channel).is_some()).unwrap_or(false)
@@ -68,6 +75,29 @@ impl KeyHolder {
     fn ring(&self, state: &ServerState, channel: ChannelId) -> Result<Keyring, String> {
         let (me, identity) = self.me.as_ref().ok_or("your identity is not ready yet")?;
         Ok(Keyring::unlock(state, channel, *me, identity))
+    }
+
+    pub fn seal_labels(&self, state: &ServerState, event: ServerEvent) -> Result<ServerEvent, String> {
+        let (channel, root) = match &event {
+            ServerEvent::ThreadSet { channel, root, name: Some(_), .. } => (*channel, *root),
+            ServerEvent::ForumPost { channel, message, .. } => (*channel, *message),
+            _ => return Ok(event),
+        };
+        if !is_private(state, channel) {
+            return Ok(event);
+        }
+        let ring = self.ring(state, channel)?;
+        let (key, secret) = ring.sending_key(state, channel).ok_or(KEY_PENDING)?;
+        let seal = |label: &str| channel_key::seal_label(state.server.id, channel, root, label, key, secret);
+        Ok(match event {
+            ServerEvent::ThreadSet { server, channel, root, name, archived, locked, by } => {
+                ServerEvent::ThreadSet { server, channel, root, name: name.map(|n| seal(&n)), archived, locked, by }
+            }
+            ServerEvent::ForumPost { server, channel, message, title, tags, by } => {
+                ServerEvent::ForumPost { server, channel, message, title: seal(&title), tags, by }
+            }
+            other => other,
+        })
     }
 
     pub fn seal_outgoing(&self, state: &ServerState, message: &mut Message) -> Result<(), String> {

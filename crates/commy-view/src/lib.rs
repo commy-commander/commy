@@ -141,12 +141,18 @@ pub struct ThreadView {
 }
 
 impl ThreadView {
-    fn list(channel: &commy_core::server::Channel, state: &ServerState) -> Vec<ThreadView> {
+    fn list(channel: &commy_core::server::Channel, state: &ServerState, keys: &KeyHolder) -> Vec<ThreadView> {
         channel
             .threads
             .iter()
             .filter(|(root, _)| state.has_message(**root))
-            .map(|(root, t)| ThreadView { root: root.to_string(), name: t.name.clone(), archived: t.archived, locked: t.locked, by: t.by.to_string() })
+            .map(|(root, t)| ThreadView {
+                root: root.to_string(),
+                name: t.name.as_deref().and_then(|n| keys.open_label(state, channel.id, *root, n)),
+                archived: t.archived,
+                locked: t.locked,
+                by: t.by.to_string(),
+            })
             .collect()
     }
 }
@@ -207,7 +213,7 @@ fn forum_posts(state: &ServerState, channel: &commy_core::Channel, keys: &KeyHol
             let excerpt = keys.open(state, root).map(|m| truncate(&m.content, POST_EXCERPT_CHARS)).unwrap_or_default();
             Some(ForumPostView {
                 message: id.to_string(),
-                title: post.title.clone(),
+                title: keys.open_label(state, channel.id, *id, &post.title).unwrap_or_default(),
                 tags: post.tags.iter().map(|t| t.to_string()).collect(),
                 author: post.author.to_string(),
                 author_name: display_name(state, post.author),
@@ -510,7 +516,7 @@ impl ServerView {
                     send_roles: c.send_roles.iter().map(|r| r.to_string()).collect(),
                     slow_mode: c.slow_mode,
                     sensitive: c.sensitive,
-                    threads: if can_view { ThreadView::list(c, state) } else { Vec::new() },
+                    threads: if can_view { ThreadView::list(c, state, keys) } else { Vec::new() },
                     voice_status: c.voice_status.clone().filter(|_| c.kind == ChannelKind::Voice),
                     can_set_voice_status: can_view && c.kind == ChannelKind::Voice && sets_voice_status(c.id),
                     tags: c.tags.iter().map(|t| ForumTagView { id: t.id.to_string(), name: t.name.clone(), emoji: t.emoji.clone() }).collect(),

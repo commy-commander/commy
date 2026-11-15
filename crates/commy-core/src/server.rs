@@ -106,7 +106,7 @@ pub fn clean_thread_name(name: &str) -> Option<String> {
 }
 
 pub fn valid_thread_name(name: &str) -> bool {
-    clean_thread_name(name).as_deref() == Some(name) && name.chars().count() <= MAX_THREAD_NAME_CHARS
+    crate::channel_key::is_sealed_label(name) || (clean_thread_name(name).as_deref() == Some(name) && name.chars().count() <= MAX_THREAD_NAME_CHARS)
 }
 
 fn emoji_code_at(name: &str, start: usize) -> Option<(usize, bool)> {
@@ -189,6 +189,9 @@ pub fn clean_forum_tags(tags: &[ForumTag]) -> Option<Vec<ForumTag>> {
 }
 
 pub fn clean_post_title(title: &str) -> Option<String> {
+    if crate::channel_key::is_sealed_label(title) {
+        return Some(title.to_string());
+    }
     let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
     let fits = (1..=MAX_POST_TITLE_CHARS).contains(&title.chars().count()) && !title.chars().any(char::is_control);
     fits.then_some(title)

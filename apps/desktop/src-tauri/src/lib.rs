@@ -731,6 +731,13 @@ fn command_marker(app: &App, sid: ServerId, used: commy_core::CommandUse) -> Cmd
     Ok(used.into_attachment())
 }
 
+fn seal_labels(app: &App, sid: ServerId, event: ServerEvent) -> CmdResult<ServerEvent> {
+    let keys = channel_lock::holder_of(app);
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    Ok(keys.seal_labels(state, event)?)
+}
+
 fn seal_and_sign(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()> {
     let keys = channel_lock::holder_of(app);
     {
@@ -5304,6 +5311,7 @@ async fn post_forum(
     let root = message.id;
     let view = commit_message(&app, &handle, sid, message).await?;
     let post = managed(&app, sid, profile.id, |state, _| Ok(view::forum::post(state, cid, root, title, tags, profile.id)))?;
+    let post = seal_labels(&app, sid, post)?;
     apply_and_broadcast(&app, &handle, sid, post).await?;
     Ok(view)
 }
@@ -5325,6 +5333,7 @@ async fn edit_forum_post(
     let tags = view::forum::tag_picks(&tags)?;
     let me = current_profile(&app)?;
     let post = managed(&app, sid, me.id, |state, perms| view::forum::edit_post(state, perms, me.id, cid, mid, title, tags))?;
+    let post = seal_labels(&app, sid, post)?;
     apply_and_broadcast(&app, &handle, sid, post).await
 }
 
@@ -5534,6 +5543,7 @@ async fn set_thread(
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::thread(state, &acting(&app, state, me.id), cid, root, name.as_deref(), archived, locked)?
     };
+    let event = seal_labels(&app, sid, event)?;
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
