@@ -1,4 +1,5 @@
 pub mod apns;
+pub mod check;
 pub mod config;
 pub mod fcm;
 pub mod hub;

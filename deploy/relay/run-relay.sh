@@ -14,6 +14,19 @@ certificate_stamp() {
   [ -n "$cert" ] && stat -c '%n %Y' "$cert" "${cert%.crt}.key" 2>/dev/null
 }
 
+with_reachable_binds() {
+  if [ -s /proc/net/if_inet6 ]; then
+    cat "$1"
+  else
+    sed 's/"\[::\]:/"0.0.0.0:/g' "$1"
+  fi
+}
+
+plain_config() {
+  mkdir -p "$TLS_DIR" && chmod 0755 "$TLS_DIR" || return 1
+  with_reachable_binds "$BASE_CONFIG" >"$TLS_DIR/plain.toml"
+}
+
 address_discovery_config() {
   cert=$(relay_certificate)
   [ -n "$cert" ] && [ -f "${cert%.crt}.key" ] || return 1
@@ -29,7 +42,8 @@ address_discovery_config() {
     echo "manual_cert_path = \"$TLS_DIR/cert.pem\""
     echo "manual_key_path = \"$TLS_DIR/key.pem\""
     echo "quic_bind_addr = \"[::]:7842\""
-  } >"$TLS_DIR/iroh-relay.toml"
+  } >"$TLS_DIR/full.toml"
+  with_reachable_binds "$TLS_DIR/full.toml" >"$TLS_DIR/iroh-relay.toml"
 }
 
 run_as_relay() {
@@ -51,7 +65,8 @@ while :; do
     run_as_relay iroh-relay --dev --config-path "$TLS_DIR/iroh-relay.toml" &
   else
     echo "[relay] started without address discovery: no certificate for ${RELAY_DOMAIN:-RELAY_DOMAIN} yet"
-    run_as_relay iroh-relay --config-path "$BASE_CONFIG" &
+    plain_config || exit 1
+    run_as_relay iroh-relay --config-path "$TLS_DIR/plain.toml" &
   fi
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do

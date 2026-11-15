@@ -1,0 +1,32 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$SYNC_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		-Server
+	}
+
+	@sync path /sync /sync/*
+	handle @sync {
+		reverse_proxy sync:3002
+	}
+
+	@relay path /relay /relay/* /ping /generate_204
+	handle @relay {
+		@upgrade_without_connection_header header Upgrade *
+		request_header @upgrade_without_connection_header Connection Upgrade
+		reverse_proxy relay:3340
+	}
+
+	handle {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "This is a Commy sync server. Community owners can choose it in Server Settings > Sync Server." 200
+	}
+}

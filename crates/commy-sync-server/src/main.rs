@@ -7,6 +7,10 @@ use commy_sync_server::{serve, spawn_housekeeping, Service};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("check") {
+        return check(&args[1..]).await;
+    }
     tracing_subscriber::fmt()
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
@@ -40,6 +44,18 @@ async fn main() -> anyhow::Result<()> {
         result = serve(listener, service) => result?,
         _ = stop_signal() => tracing::info!("sync service stopping"),
     }
+    Ok(())
+}
+
+async fn check(args: &[String]) -> anyhow::Result<()> {
+    let usage = || anyhow::anyhow!("usage: commy-sync check wss://<domain>/sync [--ca <root certificate file>]");
+    let (url, roots) = match args {
+        [url] => (url, None),
+        [url, flag, path] if flag == "--ca" => (url, Some(std::path::Path::new(path))),
+        _ => return Err(usage()),
+    };
+    let checked = commy_sync_server::check::run(url, roots).await.map_err(|e| anyhow::anyhow!("{url}: {e}"))?;
+    println!("ok: {url} stored and returned entry {} (sync protocol {})", checked.seq, checked.protocol);
     Ok(())
 }
 

@@ -1,0 +1,103 @@
+name: commy-sync
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardened: &hardened
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  pids_limit: 256
+
+services:
+  caddy:
+    <<: *hardened
+    cap_add: [NET_BIND_SERVICE]
+    mem_limit: ${CADDY_MEM_LIMIT:-256m}
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    environment:
+      SYNC_DOMAIN: ${SYNC_DOMAIN:?set SYNC_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      sync:
+        condition: service_healthy
+      relay:
+        condition: service_healthy
+    networks: [edge]
+    logging: *logging
+
+  relay:
+    <<: *hardened
+    mem_limit: ${RELAY_MEM_LIMIT:-512m}
+    image: ${RELAY_IMAGE:?set RELAY_IMAGE in .env}
+    restart: unless-stopped
+    cap_add: [SETUID, SETGID, KILL]
+    ports:
+      - "${RELAY_QAD_PORT:-7842}:7842/udp"
+    environment:
+      RELAY_DOMAIN: ${SYNC_DOMAIN}
+    volumes:
+      - caddy_data:/caddy-data:ro
+    networks: [edge]
+    logging: *logging
+
+  sync:
+    <<: *hardened
+    mem_limit: ${SYNC_MEM_LIMIT:-384m}
+    image: ${SYNC_IMAGE:?set SYNC_IMAGE in .env}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://commy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/commy_sync
+      SYNC_RETENTION_DAYS: ${SYNC_RETENTION_DAYS:-90}
+      SYNC_ABUSE_CONTACT: ${SYNC_ABUSE_CONTACT:-}
+      SYNC_OPERATOR_NAME: ${SYNC_OPERATOR_NAME:-${SYNC_DOMAIN}}
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      RUST_LOG: ${SYNC_LOG:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [edge, db]
+    logging: *logging
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: commy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: commy_sync
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commy -d commy_sync"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [db]
+    logging: *logging
+
+networks:
+  edge:
+  db:
+    internal: true
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
