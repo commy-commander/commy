@@ -1,4 +1,5 @@
-use commy_core::channel_key::{self, ChannelSecret, KeyId, KeyScope, Keyring};
+use commy_core::channel_key::{self, ChannelSecret, DriveField, KeyId, KeyScope, Keyring};
+use commy_core::ids::DriveId;
 use commy_core::{Attachment, ChannelId, Identity, Message, MessageId, Permissions, ServerEvent, ServerState, UserId};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -75,6 +76,41 @@ impl KeyHolder {
     fn ring(&self, state: &ServerState, channel: ChannelId) -> Result<Keyring, String> {
         let (me, identity) = self.me.as_ref().ok_or("your identity is not ready yet")?;
         Ok(Keyring::unlock(state, channel, *me, identity))
+    }
+
+    pub fn open_drive_text(&self, state: &ServerState, channel: ChannelId, item: DriveId, field: DriveField, text: &str) -> Option<String> {
+        if !channel_key::is_sealed(text) {
+            return Some(text.to_string());
+        }
+        self.with_ring(state, channel, |ring| channel_key::read_drive_text(state.server.id, channel, item, field, text, ring))?
+    }
+
+    pub fn seal_drive(&self, state: &ServerState, event: ServerEvent) -> Result<ServerEvent, String> {
+        let (channel, item) = match &event {
+            ServerEvent::DriveAdd { item, .. } => (item.channel, item.id),
+            ServerEvent::DriveEdit { item, .. } => match commy_core::drive::find(&state.server.drive, *item) {
+                Some(known) => (known.channel, *item),
+                None => return Ok(event),
+            },
+            _ => return Ok(event),
+        };
+        if !is_private(state, channel) {
+            return Ok(event);
+        }
+        let ring = self.ring(state, channel)?;
+        let (key, secret) = ring.sending_key(state, channel).ok_or(KEY_PENDING)?;
+        let seal = |field: DriveField, text: &str| channel_key::seal_drive_text(state.server.id, channel, item, field, text, key, secret);
+        Ok(match event {
+            ServerEvent::DriveAdd { server, mut item } => {
+                item.name = seal(DriveField::Name, &item.name);
+                if let Some(file) = item.file.as_mut() {
+                    file.mime = seal(DriveField::Mime, &file.mime);
+                }
+                ServerEvent::DriveAdd { server, item }
+            }
+            ServerEvent::DriveEdit { server, item, name, parent } => ServerEvent::DriveEdit { server, item, name: seal(DriveField::Name, &name), parent },
+            other => other,
+        })
     }
 
     pub fn seal_labels(&self, state: &ServerState, event: ServerEvent) -> Result<ServerEvent, String> {

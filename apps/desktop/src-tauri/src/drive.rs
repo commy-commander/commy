@@ -26,6 +26,13 @@ fn parent_id(raw: Option<&str>) -> CmdResult<Option<DriveId>> {
     raw.filter(|r| !r.is_empty()).map(item_id).transpose()
 }
 
+fn sealed(app: &App, sid: ServerId, event: commy_core::ServerEvent) -> CmdResult<commy_core::ServerEvent> {
+    let keys = crate::channel_lock::holder_of(app);
+    let servers = app.servers.lock().unwrap();
+    let state = servers.get(&sid).ok_or("unknown server")?;
+    keys.seal_drive(state, event)
+}
+
 async fn own_node(app: &App) -> Option<String> {
     app.net.lock().await.as_ref().map(|n| n.node_id_hex())
 }
@@ -36,7 +43,8 @@ pub async fn drive_view(app: tauri::State<'_, App>, server_id: String, channel_i
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let node = own_node(&app).await;
-    managed(&app, sid, me.id, |state, _| commy_view::drive::view(state, cid, me.id, node.as_deref()))
+    let keys = crate::channel_lock::holder_of(&app);
+    managed(&app, sid, me.id, |state, _| commy_view::drive::view(state, cid, me.id, node.as_deref(), &keys))
 }
 
 #[tauri::command]
@@ -54,6 +62,7 @@ pub async fn drive_new_folder(
     let me = current_profile(&app)?;
     let now = chrono::Utc::now().timestamp_millis();
     let event = managed(&app, sid, me.id, |state, _| commy_view::drive::new_folder(state, me.id, cid, parent, &name, now))?;
+    let event = sealed(&app, sid, event)?;
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
@@ -71,6 +80,7 @@ pub async fn drive_rename(
     let parent = self::parent_id(parent_id.as_deref())?;
     let me = current_profile(&app)?;
     let event = managed(&app, sid, me.id, |state, _| commy_view::drive::edit(state, me.id, item, &name, parent))?;
+    let event = sealed(&app, sid, event)?;
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
@@ -159,7 +169,8 @@ pub async fn drive_upload(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let parent = self::parent_id(parent_id.as_deref())?;
     let me = current_profile(&app)?;
-    managed(&app, sid, me.id, |state, _| commy_view::drive::view(state, cid, me.id, None).and_then(|v| if v.can_upload { Ok(()) } else { Err("you do not have permission to upload files here".into()) }))?;
+    let keys = crate::channel_lock::holder_of(&app);
+    managed(&app, sid, me.id, |state, _| commy_view::drive::view(state, cid, me.id, None, &keys).and_then(|v| if v.can_upload { Ok(()) } else { Err("you do not have permission to upload files here".into()) }))?;
     let Some(picked) = crate::picker::pick_attachment(&handle, "Add a file to the drive", None, 0, MAX_DRIVE_FILE_BYTES, TOO_BIG).await? else {
         return Ok(false);
     };
@@ -177,6 +188,7 @@ pub async fn drive_upload(
     let file = DriveFile { blob, size, mime };
     let now = chrono::Utc::now().timestamp_millis();
     let event = managed(&app, sid, me.id, |state, _| commy_view::drive::add_file(state, me.id, cid, parent, &name, file, &node, now))?;
+    let event = sealed(&app, sid, event)?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     Ok(true)
 }
@@ -202,6 +214,7 @@ pub async fn drive_download(app: tauri::State<'_, App>, handle: tauri::AppHandle
     let sid = ids(&server_id)?;
     let item = self::item_id(&item_id)?;
     let me = current_profile(&app)?;
+    let keys = crate::channel_lock::holder_of(&app);
     let (name, blob, holders) = {
         let servers = app.servers.lock().unwrap();
         let state = servers.get(&sid).ok_or("unknown server")?;
@@ -210,9 +223,9 @@ pub async fn drive_download(app: tauri::State<'_, App>, handle: tauri::AppHandle
         if !state.server.can_view(found.channel, me.id) {
             return Err(commy_view::drive::NO_SUCH_ITEM.into());
         }
-        let view = commy_view::drive::view(state, found.channel, me.id, None)?;
+        let view = commy_view::drive::view(state, found.channel, me.id, None, &keys)?;
         let sources = view.items.into_iter().find(|i| i.id == item_id).map(|i| i.sources).unwrap_or_default();
-        (found.name.clone(), file.blob.clone(), sources)
+        (commy_view::drive::file_name(state, found, &keys), file.blob.clone(), sources)
     };
     let Some(target) = crate::picker::save_path(&handle, &crate::safe_file_name(&name)).await else {
         return Ok(None);

@@ -6,6 +6,8 @@ use commy_core::ids::DriveId;
 use serde::Serialize;
 
 use crate::act::Act;
+use crate::keys::KeyHolder;
+use commy_core::channel_key::DriveField;
 
 pub const NOT_A_DRIVE: &str = "That channel is not a drive";
 pub const NO_SUCH_ITEM: &str = "That file or folder is no longer in the drive";
@@ -55,16 +57,23 @@ fn online(state: &ServerState, user: UserId) -> bool {
     state.profiles.get(&user).is_some_and(|p| !matches!(p.presence, Presence::Offline | Presence::Invisible))
 }
 
-fn item_view(state: &ServerState, item: &DriveItem, me: UserId, node: Option<&str>, perms: Permissions) -> DriveItemView {
+pub const PENDING_NAME: &str = "Waiting for this drive's key";
+const UNKNOWN_MIME: &str = "application/octet-stream";
+
+pub fn file_name(state: &ServerState, item: &DriveItem, keys: &KeyHolder) -> String {
+    keys.open_drive_text(state, item.channel, item.id, DriveField::Name, &item.name).unwrap_or_else(|| PENDING_NAME.to_string())
+}
+
+fn item_view(state: &ServerState, item: &DriveItem, me: UserId, node: Option<&str>, perms: Permissions, keys: &KeyHolder) -> DriveItemView {
     let mut sources: Vec<(bool, String)> = item.holders.iter().filter(|(user, _)| **user != me).map(|(user, node)| (online(state, *user), node.clone())).collect();
     sources.sort_by_key(|(on, _)| !*on);
     DriveItemView {
         id: item.id.to_string(),
         parent: item.parent.map(|p| p.to_string()),
-        name: item.name.clone(),
+        name: file_name(state, item, keys),
         folder: item.is_folder(),
         size: item.file.as_ref().map(|f| f.size),
-        mime: item.file.as_ref().map(|f| f.mime.clone()),
+        mime: item.file.as_ref().map(|f| keys.open_drive_text(state, item.channel, item.id, DriveField::Mime, &f.mime).unwrap_or_else(|| UNKNOWN_MIME.to_string())),
         blob: item.file.as_ref().map(|f| f.blob.clone()),
         by: item.by.to_string(),
         by_name: crate::display_name(state, item.by),
@@ -77,13 +86,13 @@ fn item_view(state: &ServerState, item: &DriveItem, me: UserId, node: Option<&st
     }
 }
 
-pub fn view(state: &ServerState, channel: ChannelId, me: UserId, node: Option<&str>) -> Act<DriveView> {
+pub fn view(state: &ServerState, channel: ChannelId, me: UserId, node: Option<&str>, keys: &KeyHolder) -> Act<DriveView> {
     drive_channel(state, channel, me)?;
     let perms = state.server.permissions_for(me);
     let member = state.server.is_current_member(me);
     let can_add = member && state.server.can_post_in(channel, me) && !state.server.is_timed_out(me, chrono::Utc::now());
     let mut items: Vec<DriveItemView> =
-        state.server.drive.iter().filter(|i| i.channel == channel).map(|i| item_view(state, i, me, node, perms)).collect();
+        state.server.drive.iter().filter(|i| i.channel == channel).map(|i| item_view(state, i, me, node, perms, keys)).collect();
     items.sort_by(|a, b| b.folder.cmp(&a.folder).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
     Ok(DriveView {
         channel: channel.to_string(),
@@ -205,6 +214,47 @@ mod tests {
     }
 
     #[test]
+    fn names_in_a_locked_drive_are_sealed_for_everyone_outside_it() {
+        use commy_core::channel_key::KeyScope;
+        use commy_core::{Identity, Role, RoleId};
+        let owner_identity = Identity::generate();
+        let mut owner = UserProfile::new("owner");
+        owner.identity = Some(owner_identity.public());
+        let mut server = Server::new("test", owner.id);
+        let drive = Channel::new("vault", ChannelKind::Drive, 9);
+        let channel = drive.id;
+        server.channels.push(drive);
+        let sid = server.id;
+        let mut state = ServerState::new(server);
+        state.profiles.insert(owner.id, owner.clone());
+        let role = Role { id: RoleId::new(), name: "crew".into(), color: None, permissions: Permissions::NONE, position: 1, hoist: false, self_assignable: false, mentionable: false, tag: None, banner: None };
+        let crew = role.id;
+        state.apply(ServerEvent::RoleCreate { server: sid, role }).unwrap();
+        state.apply(ServerEvent::ChannelAccessSet { server: sid, channel, view: vec![crew], send: vec![] }).unwrap();
+        let keys = KeyHolder::as_user(owner.id, owner_identity.clone());
+        for event in keys.scope_events(&state, KeyScope::Channel(channel)) {
+            state.apply(event).unwrap();
+        }
+        let keys = KeyHolder::as_user(owner.id, owner_identity);
+        let file = DriveFile { blob: node(1), size: 10, mime: "application/pdf".into() };
+        let added = keys.seal_drive(&state, add_file(&state, owner.id, channel, None, "Q3 plans.pdf", file, &node(2), 1).unwrap()).unwrap();
+        let ServerEvent::DriveAdd { item: ref sealed, .. } = added else { panic!() };
+        assert!(!sealed.name.contains("Q3") && !sealed.file.as_ref().unwrap().mime.contains("pdf"));
+        state.apply(added.clone()).unwrap();
+        let shown = view(&state, channel, owner.id, None, &keys).unwrap();
+        assert_eq!(shown.items[0].name, "Q3 plans.pdf");
+        assert_eq!(shown.items[0].mime.as_deref(), Some("application/pdf"));
+        let locked_out = view(&state, channel, owner.id, None, &KeyHolder::default()).unwrap();
+        assert_eq!(locked_out.items[0].name, PENDING_NAME);
+        let item = shown.items[0].id.parse().unwrap();
+        let renamed = keys.seal_drive(&state, edit(&state, owner.id, item, "Q4 plans.pdf", None).unwrap()).unwrap();
+        let ServerEvent::DriveEdit { ref name, .. } = renamed else { panic!() };
+        assert!(!name.contains("Q4"));
+        state.apply(renamed).unwrap();
+        assert_eq!(view(&state, channel, owner.id, None, &keys).unwrap().items[0].name, "Q4 plans.pdf");
+    }
+
+    #[test]
     fn members_build_folders_and_upload_files() {
         let (mut state, owner, channel) = fixture();
         let friend = join(&mut state, "friend");
@@ -215,12 +265,12 @@ mod tests {
         state.apply(folder).unwrap();
         let file = DriveFile { blob: node(1), size: 5_000_000_000 / 2, mime: "application/zip".into() };
         state.apply(add_file(&state, friend, channel, Some(maps), "map.zip", file, &node(9), 2).unwrap()).unwrap();
-        let shown = view(&state, channel, friend, Some(&node(9))).unwrap();
+        let shown = view(&state, channel, friend, Some(&node(9)), &KeyHolder::default()).unwrap();
         assert_eq!(shown.items.iter().map(|i| (i.name.as_str(), i.folder)).collect::<Vec<_>>(), vec![("Maps", true), ("map.zip", false)]);
         let zip = &shown.items[1];
         assert!(zip.kept_here && zip.can_edit && zip.sources.is_empty());
         assert_eq!((zip.keepers, zip.parent.as_deref()), (1, Some(maps.to_string().as_str())));
-        let seen_by_owner = view(&state, channel, owner, Some(&node(4))).unwrap();
+        let seen_by_owner = view(&state, channel, owner, Some(&node(4)), &KeyHolder::default()).unwrap();
         assert_eq!(seen_by_owner.items[1].sources, vec![node(9)]);
         assert!(!seen_by_owner.items[1].kept_here && seen_by_owner.items[1].can_edit, "managers can tidy the drive");
         assert_eq!(new_folder(&state, friend, channel, None, "a/b", 3).unwrap_err(), BAD_NAME);
@@ -253,13 +303,13 @@ mod tests {
         let id = made.id;
         state.apply(event).unwrap();
         state.apply(keep(&state, friend, id, Some(&node(3).to_uppercase())).unwrap()).unwrap();
-        let shown = view(&state, channel, friend, Some(&node(3))).unwrap();
+        let shown = view(&state, channel, friend, Some(&node(3)), &KeyHolder::default()).unwrap();
         assert!(shown.items[0].kept_here);
         assert_eq!(shown.items[0].keepers, 2);
         assert_eq!(keep(&state, friend, id, Some(&node(3))).unwrap_err(), ALREADY);
         state.apply(keep(&state, friend, id, None).unwrap()).unwrap();
         assert_eq!(keep(&state, friend, id, None).unwrap_err(), ALREADY);
-        assert_eq!(view(&state, channel, friend, Some(&node(3))).unwrap().items[0].keepers, 1);
+        assert_eq!(view(&state, channel, friend, Some(&node(3)), &KeyHolder::default()).unwrap().items[0].keepers, 1);
         let folder = new_folder(&state, owner, channel, None, "f", 2).unwrap();
         let ServerEvent::DriveAdd { item: ref f, .. } = folder else { panic!() };
         let fid = f.id;

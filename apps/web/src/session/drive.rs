@@ -25,20 +25,21 @@ impl Session {
             "drive_view" => {
                 let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
                 let node = self.blob_node().await;
-                return to_json(&self.read_state(server, |state, me| commy_view::drive::view(state, channel, me, node.as_deref()))?);
+                let keys = self.client.borrow().keys();
+                return to_json(&self.read_state(server, |state, me| commy_view::drive::view(state, channel, me, node.as_deref(), &keys))?);
             }
             "drive_new_folder" => {
                 let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
                 let parent = parent_id(args.parent_id.as_ref())?;
                 let name = args.name.as_deref().unwrap_or("");
                 let now = Utc::now().timestamp_millis();
-                client().act(server, |state, me, _, _| commy_view::drive::new_folder(state, me.user, channel, parent, name, now))?
+                client().act(server, |state, me, _, keys| keys.seal_drive(state, commy_view::drive::new_folder(state, me.user, channel, parent, name, now)?))?
             }
             "drive_rename" => {
                 let item = item_id(args.item_id.as_ref())?;
                 let parent = parent_id(args.parent_id.as_ref())?;
                 let name = args.name.as_deref().unwrap_or("");
-                client().act(server, |state, me, _, _| commy_view::drive::edit(state, me.user, item, name, parent))?
+                client().act(server, |state, me, _, keys| keys.seal_drive(state, commy_view::drive::edit(state, me.user, item, name, parent)?))?
             }
             "drive_remove" => {
                 let item = item_id(args.item_id.as_ref())?;
@@ -65,15 +66,16 @@ impl Session {
         let parent = parent_id(parent.as_ref())?;
         files::check_upload(&bytes)?;
         let name = commy_core::drive::clean_name(filename).ok_or(commy_view::drive::BAD_NAME)?;
+        let keys = self.client.borrow().keys();
         self.read_state(server, |state, me| {
-            commy_view::drive::view(state, channel, me, None).and_then(|v| if v.can_upload { Ok(()) } else { Err("you do not have permission to upload files here".into()) })
+            commy_view::drive::view(state, channel, me, None, &keys).and_then(|v| if v.can_upload { Ok(()) } else { Err("you do not have permission to upload files here".into()) })
         })?;
         let mime = mime_guess::from_path(&name).first_raw().unwrap_or("application/octet-stream").to_string();
         let size = bytes.len() as u64;
         let (blob, node) = self.store_blob(bytes).await?;
         let file = DriveFile { blob, size, mime };
         let now = Utc::now().timestamp_millis();
-        let payload = self.client.borrow().act(server, |state, me, _, _| commy_view::drive::add_file(state, me.user, channel, parent, &name, file, &node, now))?;
+        let payload = self.client.borrow().act(server, |state, me, _, keys| keys.seal_drive(state, commy_view::drive::add_file(state, me.user, channel, parent, &name, file, &node, now)?))?;
         self.publish(server, &payload);
         self.emit("server-event", json!(server.to_string()));
         Ok(Value::Bool(true))
@@ -83,13 +85,14 @@ impl Session {
         let server: ServerId = parse(args.server_id.as_ref(), "server")?;
         let item = item_id(args.item_id.as_ref())?;
         let id = item.to_string();
+        let keys = self.client.borrow().keys();
         let (blob, size, sources) = self.read_state(server, |state, me| {
             let found = commy_core::drive::find(&state.server.drive, item).ok_or(commy_view::drive::NO_SUCH_ITEM)?;
             let file = found.file.as_ref().ok_or("that is a folder")?;
             if !state.server.can_view(found.channel, me) {
                 return Err(commy_view::drive::NO_SUCH_ITEM.into());
             }
-            let view = commy_view::drive::view(state, found.channel, me, None)?;
+            let view = commy_view::drive::view(state, found.channel, me, None, &keys)?;
             let sources = view.items.into_iter().find(|i| i.id == id).map(|i| i.sources).unwrap_or_default();
             Ok((file.blob.clone(), file.size, sources))
         })?;

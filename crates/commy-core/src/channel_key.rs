@@ -22,6 +22,7 @@ const COMMUNITY_LINK_DOMAIN: &str = "commy-community-link/v1";
 const BODY_DOMAIN: &str = "commy-channel-body/v1";
 const SEALED_PREFIX: &str = "commy-sealed:v1:";
 const LABEL_DOMAIN: &str = "commy-channel-label/v1";
+const DRIVE_TEXT_DOMAIN: &str = "commy-drive-text/v1";
 pub const MAX_SEALED_LABEL_BYTES: usize = 1024;
 const TAG_BYTES: usize = 16;
 const SEALED_SECRET_BYTES: usize = 32 + TAG_BYTES;
@@ -577,18 +578,18 @@ pub fn is_sealed_label(label: &str) -> bool {
     is_sealed(label) && label.len() <= MAX_SEALED_LABEL_BYTES
 }
 
-pub fn seal_label(server: ServerId, channel: ChannelId, root: MessageId, label: &str, key: KeyId, secret: &ChannelSecret) -> String {
+fn seal_bound(aad: &[u8], text: &str, key: KeyId, secret: &ChannelSecret) -> String {
     let nonce: [u8; 12] = rand::random();
-    let mut bytes = Vec::with_capacity(28 + label.len() + TAG_BYTES);
+    let mut bytes = Vec::with_capacity(28 + text.len() + TAG_BYTES);
     bytes.extend_from_slice(&key.0);
     bytes.extend_from_slice(&nonce);
-    bytes.extend(seal(&secret.0, nonce, &label_aad(server, channel, root), label.as_bytes()));
+    bytes.extend(seal(&secret.0, nonce, aad, text.as_bytes()));
     format!("{SEALED_PREFIX}{}", BASE64URL_NOPAD.encode(&bytes))
 }
 
-pub fn read_label(server: ServerId, channel: ChannelId, root: MessageId, label: &str, ring: &Keyring) -> Option<String> {
-    let Some(encoded) = label.strip_prefix(SEALED_PREFIX) else {
-        return Some(label.to_string());
+fn read_bound(aad: &[u8], text: &str, ring: &Keyring) -> Option<String> {
+    let Some(encoded) = text.strip_prefix(SEALED_PREFIX) else {
+        return Some(text.to_string());
     };
     let bytes = BASE64URL_NOPAD.decode(encoded.as_bytes()).ok()?;
     if bytes.len() < 28 + TAG_BYTES {
@@ -596,8 +597,43 @@ pub fn read_label(server: ServerId, channel: ChannelId, root: MessageId, label: 
     }
     let key = KeyId(bytes[..16].try_into().ok()?);
     let nonce: [u8; 12] = bytes[16..28].try_into().ok()?;
-    let plain = unseal(&ring.secret(key)?.0, nonce, &label_aad(server, channel, root), &bytes[28..])?;
+    let plain = unseal(&ring.secret(key)?.0, nonce, aad, &bytes[28..])?;
     String::from_utf8(plain).ok()
+}
+
+pub fn seal_label(server: ServerId, channel: ChannelId, root: MessageId, label: &str, key: KeyId, secret: &ChannelSecret) -> String {
+    seal_bound(&label_aad(server, channel, root), label, key, secret)
+}
+
+pub fn read_label(server: ServerId, channel: ChannelId, root: MessageId, label: &str, ring: &Keyring) -> Option<String> {
+    read_bound(&label_aad(server, channel, root), label, ring)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriveField {
+    Name,
+    Mime,
+}
+
+impl DriveField {
+    fn label(self) -> &'static str {
+        match self {
+            DriveField::Name => "name",
+            DriveField::Mime => "mime",
+        }
+    }
+}
+
+fn drive_aad(server: ServerId, channel: ChannelId, item: crate::ids::DriveId, field: DriveField) -> Vec<u8> {
+    encode(&(DRIVE_TEXT_DOMAIN, server, channel, item, field.label()))
+}
+
+pub fn seal_drive_text(server: ServerId, channel: ChannelId, item: crate::ids::DriveId, field: DriveField, text: &str, key: KeyId, secret: &ChannelSecret) -> String {
+    seal_bound(&drive_aad(server, channel, item, field), text, key, secret)
+}
+
+pub fn read_drive_text(server: ServerId, channel: ChannelId, item: crate::ids::DriveId, field: DriveField, text: &str, ring: &Keyring) -> Option<String> {
+    read_bound(&drive_aad(server, channel, item, field), text, ring)
 }
 
 pub fn read_message(server: ServerId, message: &Message, ring: &Keyring) -> Option<Message> {
@@ -684,6 +720,26 @@ mod tests {
             }
         }
         panic!("key work did not settle");
+    }
+
+    #[test]
+    fn sealed_drive_text_opens_only_for_readers_and_only_for_its_item_and_field() {
+        let (mut state, channel, owner) = fixture();
+        let server = state.server.id;
+        let crew = private_channel(&mut state, channel);
+        let (reader, outsider) = (join(&mut state, "reader"), join(&mut state, "outsider"));
+        state.apply(ServerEvent::RoleAssign { server, user: reader, role: crew }).unwrap();
+        let ring = settle(&mut state, channel, owner);
+        let (key, secret) = ring.sending_key(&state, channel).unwrap();
+        let item = crate::ids::DriveId::new();
+        let sealed = seal_drive_text(server, channel, item, DriveField::Name, "Q3 plans.pdf", key, secret);
+        assert!(is_sealed_label(&sealed) && !sealed.contains("Q3"));
+        let reader_ring = Keyring::unlock(&state, channel, reader, &identity_for(reader));
+        assert_eq!(read_drive_text(server, channel, item, DriveField::Name, &sealed, &reader_ring).as_deref(), Some("Q3 plans.pdf"));
+        let outsider_ring = Keyring::unlock(&state, channel, outsider, &identity_for(outsider));
+        assert_eq!(read_drive_text(server, channel, item, DriveField::Name, &sealed, &outsider_ring), None);
+        assert_eq!(read_drive_text(server, channel, crate::ids::DriveId::new(), DriveField::Name, &sealed, &reader_ring), None, "bound to its item");
+        assert_eq!(read_drive_text(server, channel, item, DriveField::Mime, &sealed, &reader_ring), None, "bound to its field");
     }
 
     #[test]

@@ -19,11 +19,7 @@ pub struct DriveFile {
 
 impl DriveFile {
     pub fn is_valid(&self) -> bool {
-        is_hash(&self.blob)
-            && (1..=MAX_DRIVE_FILE_BYTES).contains(&self.size)
-            && !self.mime.is_empty()
-            && self.mime.len() <= MAX_MIME
-            && !self.mime.chars().any(|c| c.is_control() || c.is_whitespace())
+        is_hash(&self.blob) && (1..=MAX_DRIVE_FILE_BYTES).contains(&self.size) && is_mime(&self.mime)
     }
 }
 
@@ -65,7 +61,15 @@ impl DriveItem {
     }
 }
 
+fn is_mime(mime: &str) -> bool {
+    crate::channel_key::is_sealed_label(mime)
+        || (!mime.is_empty() && mime.len() <= MAX_MIME && !mime.chars().any(|c| c.is_control() || c.is_whitespace()))
+}
+
 pub fn is_name(name: &str) -> bool {
+    if crate::channel_key::is_sealed_label(name) {
+        return true;
+    }
     let count = name.chars().count();
     (1..=MAX_DRIVE_NAME).contains(&count)
         && name.trim() == name

@@ -52,7 +52,7 @@ impl Client {
         self.me.lock().unwrap().as_ref().map(|(profile, _)| profile.id)
     }
 
-    fn keys(&self) -> KeyHolder {
+    pub fn keys(&self) -> KeyHolder {
         KeyHolder::new(self.me.lock().unwrap().as_ref().map(|(profile, identity)| (profile.id, identity.clone())))
     }
 
