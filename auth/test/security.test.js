@@ -349,3 +349,14 @@ test("a verify link for a two-step account asks for the code before the result p
   assert.equal(page.pathname, "/account/two-factor");
   assert.deepEqual(verifyResultOf(page.searchParams.get("next")), { path: "/account/verify-email", result: "confirmed", next: "/" });
 });
+
+test("changing how an account signs in needs a recent sign-in", async () => {
+  const { signedInRecently, STEP_UP_PATHS, STEP_UP_SECONDS } = await import("../src/security.js");
+  const now = Date.now();
+  assert.ok(signedInRecently({ session: { createdAt: new Date(now - 60_000) } }, now));
+  assert.ok(!signedInRecently({ session: { createdAt: new Date(now - (STEP_UP_SECONDS + 1) * 1000) } }, now));
+  assert.ok(!signedInRecently({ session: {} }, now));
+  for (const path of ["/two-factor/get-totp-uri", "/two-factor/generate-backup-codes", "/two-factor/disable", "/link-social", "/passkey/verify-registration"]) {
+    assert.ok(STEP_UP_PATHS.includes(path), path);
+  }
+});

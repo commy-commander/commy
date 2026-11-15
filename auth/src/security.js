@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { APIError, createAuthEndpoint, createAuthMiddleware, freshSessionMiddleware } from "better-auth/api";
+import { APIError, createAuthEndpoint, createAuthMiddleware, freshSessionMiddleware, getSessionFromCtx } from "better-auth/api";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { generateRandomString } from "better-auth/crypto";
 
@@ -73,6 +73,43 @@ export const commyTwoFactorEverywhere = ({ baseURL }) => ({
   },
 });
 
+export const STEP_UP_PATHS = [
+  "/two-factor/enable",
+  "/two-factor/get-totp-uri",
+  "/two-factor/generate-backup-codes",
+  "/two-factor/disable",
+  "/link-social",
+  "/passkey/generate-register-options",
+  "/passkey/verify-registration",
+];
+export const STEP_UP_SECONDS = 15 * 60;
+
+export function signedInRecently(session, now = Date.now()) {
+  const started = new Date(session?.session?.createdAt ?? 0).getTime();
+  return Number.isFinite(started) && now - started <= STEP_UP_SECONDS * 1000;
+}
+
+export const commyStepUp = () => ({
+  id: "commy-step-up",
+  hooks: {
+    before: [
+      {
+        matcher: (ctx) => STEP_UP_PATHS.includes(ctx.path),
+        handler: createAuthMiddleware(async (ctx) => {
+          const session = await getSessionFromCtx(ctx).catch(() => null);
+          if (!session) return;
+          if (!signedInRecently(session)) {
+            throw new APIError("FORBIDDEN", {
+              code: "SIGN_IN_AGAIN",
+              message: "For your safety, sign in again before changing how this account signs in.",
+            });
+          }
+        }),
+      },
+    ],
+  },
+});
+
 export const commyPasswords = () => ({
   id: "commy-passwords",
   endpoints: {
@@ -114,6 +151,14 @@ const NOTICES = {
   "/unlink-account": {
     subject: "A sign-in method was removed",
     body: "A Google, Twitch or Apple sign-in was just unlinked from this account.",
+  },
+  "/two-factor/get-totp-uri": {
+    subject: "Your authenticator setup was viewed",
+    body: "The setup code for this account's authenticator app was just shown.",
+  },
+  "/two-factor/generate-backup-codes": {
+    subject: "New backup codes were made",
+    body: "New two-step sign-in backup codes were made for this account and the old ones stopped working.",
   },
   "/two-factor/disable": {
     subject: "Two-step sign-in was turned off",

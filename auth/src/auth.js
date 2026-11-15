@@ -19,7 +19,7 @@ import { commyDoorbell } from "./doorbell.js";
 import { commyEmailPreferences } from "./email-preferences.js";
 import { commyInvites } from "./invites.js";
 import { commyMedia } from "./media.js";
-import { commyPasswords, commySecurityNotices, commyTwoFactorEverywhere, noticeWhenALoginIsLinked } from "./security.js";
+import { commyPasswords, commySecurityNotices, commyStepUp, commyTwoFactorEverywhere, noticeWhenALoginIsLinked } from "./security.js";
 import { commyVault } from "./vault.js";
 import { commyVerifyEmailResult } from "./verify-email-result.js";
 import { commyFolderLock } from "./folder-lock.js";
@@ -103,6 +103,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     twoFactor({ issuer: config.instanceName, allowPasswordless: true }),
     commyVerifyEmailResult({ baseURL: config.baseURL }),
     commyTwoFactorEverywhere({ baseURL: config.baseURL }),
+    commyStepUp(),
     passkey({ rpID: new URL(config.baseURL).hostname, rpName: config.instanceName, origin: passkeyOrigins(config) }),
     commyPasswords(),
     commySecurityNotices({ baseURL: config.baseURL, send }),
