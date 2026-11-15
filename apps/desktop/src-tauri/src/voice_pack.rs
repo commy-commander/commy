@@ -12,6 +12,7 @@ use crate::state::App;
 const PACK_JSON: &str = include_str!("../voice-pack.json");
 pub const VOICES_DIR: &str = "voices";
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+const PACK_ON_THIS_DEVICE: bool = !cfg!(target_os = "ios");
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct PackFile {
@@ -85,6 +86,9 @@ impl Pack {
 }
 
 fn voices_dir(app: &App) -> Option<PathBuf> {
+    if !PACK_ON_THIS_DEVICE {
+        return None;
+    }
     app.base_dir().map(|base| base.join(VOICES_DIR))
 }
 
