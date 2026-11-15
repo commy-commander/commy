@@ -39,12 +39,16 @@ impl Mailer {
     }
 
     pub async fn send(&self, stored: &StoredReport) -> Result<(), String> {
+        self.send_text(&subject(stored), &body(stored)).await
+    }
+
+    pub async fn send_text(&self, subject: &str, text: &str) -> Result<(), String> {
         let message = Message::builder()
             .from(self.from.clone())
             .to(self.to.clone())
-            .subject(subject(stored))
+            .subject(subject)
             .header(ContentType::TEXT_PLAIN)
-            .body(body(stored))
+            .body(text.to_string())
             .map_err(|e| e.to_string())?;
         self.transport.send(message).await.map(|_| ()).map_err(|e| e.to_string())
     }

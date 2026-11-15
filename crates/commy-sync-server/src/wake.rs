@@ -15,12 +15,14 @@ use tokio::sync::mpsc;
 
 use crate::apns::{Apns, Environment};
 use crate::fcm::{Delivery, Fcm};
+use crate::push_via::ViaGateway;
 use crate::Service;
 
 pub enum Pusher {
     Off,
     Live { fcm: Option<Box<Fcm>>, apns: Option<Box<Apns>> },
     Recording(mpsc::UnboundedSender<String>),
+    Gateway(Box<ViaGateway>),
 }
 
 impl Pusher {
@@ -38,7 +40,7 @@ impl Pusher {
                 PushService::Fcm => fcm.is_some(),
                 PushService::Apns | PushService::ApnsSandbox => apns.is_some(),
             },
-            Pusher::Recording(_) => true,
+            Pusher::Recording(_) | Pusher::Gateway(_) => true,
         }
     }
 
@@ -60,7 +62,7 @@ enum Plan {
     AlreadyQueued,
 }
 
-const MAX_HELD_PREVIEWS: usize = 4;
+pub(crate) const MAX_HELD_PREVIEWS: usize = 4;
 
 pub struct Wakes {
     pusher: Pusher,
@@ -128,7 +130,14 @@ impl Wakes {
         };
     }
 
+    #[cfg(test)]
     fn plan(&self, push: &str, now: Instant, preview: Option<&str>) -> Plan {
+        let previews: Vec<String> = preview.into_iter().map(str::to_string).collect();
+        self.plan_with(push, now, &previews)
+    }
+
+    fn plan_with(&self, push: &str, now: Instant, previews: &[String]) -> Plan {
+        let preview = previews.last().map(String::as_str);
         let mut last = self.last.lock().unwrap();
         match last.get(push).map(|at| now.saturating_duration_since(*at)) {
             Some(since) if since < PUSH_GAP => {
@@ -138,12 +147,9 @@ impl Wakes {
                 let mut queued = self.queued.lock().unwrap();
                 let fresh = !queued.contains_key(push);
                 let held = queued.entry(push.to_string()).or_default();
-                if let Some(preview) = preview {
-                    held.push(preview.to_string());
-                    if held.len() > MAX_HELD_PREVIEWS {
-                        held.remove(0);
-                    }
-                }
+                held.extend(previews.iter().cloned());
+                let extra = held.len().saturating_sub(MAX_HELD_PREVIEWS);
+                held.drain(..extra);
                 if fresh {
                     Plan::After(PUSH_GAP - since)
                 } else {
@@ -200,6 +206,7 @@ async fn deliver(service: &Service, push: &str, previews: &[String]) -> Option<D
             let _ = sent.send(push.to_string());
             Some(Delivery::Sent)
         }
+        (Pusher::Gateway(via), _) => Some(via.wake(push, previews).await),
     }
 }
 
@@ -237,6 +244,7 @@ async fn send(service: Arc<Service>, push: String, previews: Vec<String>) {
             }
         }
         Delivery::Failed(e) => tracing::warn!("sync: push failed: {e}"),
+        Delivery::Refused(e) => tracing::warn!("sync: push not carried: {e}"),
     }
 }
 
@@ -414,19 +422,29 @@ pub async fn ring(
             return StatusCode::NO_CONTENT.into_response();
         }
     };
+    let previews: Vec<String> = request.preview.iter().cloned().collect();
+    dispatch(&service, pushes, &previews, request.urgent).await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
+pub(crate) fn offers_push(service: &Service, push: &str) -> bool {
+    service.wakes.offers(push)
+}
+
+pub(crate) async fn dispatch(service: &Arc<Service>, pushes: Vec<String>, previews: &[String], urgent: bool) {
     let now = Instant::now();
     let pushes: Vec<String> = pushes.into_iter().filter(|push| !service.wakes.seated_elsewhere(push, now)).collect();
-    let quiet = quiet_now(&service, &pushes).await;
+    let quiet = quiet_now(service, &pushes).await;
     for push in pushes {
         if quiet.contains(&push) {
-            if request.urgent && service.wakes.take_urgent(&push, now) {
-                tokio::spawn(send(service.clone(), push, request.preview.iter().cloned().collect()));
+            if urgent && service.wakes.take_urgent(&push, now) {
+                tokio::spawn(send(service.clone(), push, previews.to_vec()));
             }
             continue;
         }
-        match service.wakes.plan(&push, now, request.preview.as_deref()) {
+        match service.wakes.plan_with(&push, now, previews) {
             Plan::Now => {
-                tokio::spawn(send(service.clone(), push, request.preview.iter().cloned().collect()));
+                tokio::spawn(send(service.clone(), push, previews.to_vec()));
             }
             Plan::After(wait) => {
                 tokio::spawn(send_after(service.clone(), push, wait));
@@ -434,7 +452,6 @@ pub async fn ring(
             Plan::AlreadyQueued => {}
         }
     }
-    StatusCode::NO_CONTENT.into_response()
 }
 
 #[cfg(test)]

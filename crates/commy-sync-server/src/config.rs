@@ -22,6 +22,58 @@ pub struct Config {
     pub abuse_contact: Option<Contact>,
     pub smtp: Option<SmtpSettings>,
     pub server_key: Option<KeySeed>,
+    pub gateway: Option<GatewaySettings>,
+    pub push_via: Option<PushVia>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushVia {
+    pub gateway: String,
+    pub origin: String,
+}
+
+fn push_via(env: &impl Fn(&str) -> Option<String>) -> Result<Option<PushVia>, String> {
+    let set = |name: &str| env(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let Some(gateway) = set("SYNC_PUSH_VIA").filter(|v| v != "off") else {
+        return Ok(None);
+    };
+    if !gateway.starts_with("https://") {
+        return Err("SYNC_PUSH_VIA must be an https:// address, such as https://commy.chat".into());
+    }
+    let domain = set("SYNC_DOMAIN").ok_or("SYNC_PUSH_VIA needs SYNC_DOMAIN, the domain this server answers on")?;
+    let origin = crate::server_proof::clean_origin(&format!("https://{domain}")).ok_or("SYNC_DOMAIN must be a public domain name")?;
+    Ok(Some(PushVia { gateway: gateway.trim_end_matches('/').to_string(), origin }))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewaySettings {
+    pub daily_budget: u64,
+    pub alert_percent: u64,
+    pub alert_webhook: Option<String>,
+    pub blocklist: Option<String>,
+}
+
+pub const DEFAULT_GATEWAY_BUDGET: u64 = 100_000;
+pub const DEFAULT_GATEWAY_ALERT_PERCENT: u64 = 75;
+
+fn gateway_settings(env: &impl Fn(&str) -> Option<String>) -> Result<Option<GatewaySettings>, String> {
+    let set = |name: &str| env(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    match set("SYNC_PUSH_GATEWAY").as_deref() {
+        None | Some("off") => return Ok(None),
+        Some("on") => {}
+        Some(_) => return Err("SYNC_PUSH_GATEWAY must be on or off".into()),
+    }
+    let daily_budget = match set("SYNC_GATEWAY_DAILY_BUDGET") {
+        Some(text) => text.parse::<u64>().ok().filter(|b| *b > 0).ok_or("SYNC_GATEWAY_DAILY_BUDGET must be a whole number of pings above 0")?,
+        None => DEFAULT_GATEWAY_BUDGET,
+    };
+    let alert_percent = match set("SYNC_GATEWAY_ALERT_PERCENT") {
+        Some(text) => text.parse::<u64>().ok().filter(|p| (1..=100).contains(p)).ok_or("SYNC_GATEWAY_ALERT_PERCENT must be between 1 and 100")?,
+        None => DEFAULT_GATEWAY_ALERT_PERCENT,
+    };
+    let alert_webhook = set("ALERT_WEBHOOK_URL").filter(|url| url.starts_with("https://"));
+    let blocklist = crate::gateway_blocklist::source(set("SYNC_GATEWAY_BLOCKLIST"))?;
+    Ok(Some(GatewaySettings { daily_budget, alert_percent, alert_webhook, blocklist }))
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -235,18 +287,21 @@ impl Config {
             abuse_contact: env("SYNC_ABUSE_CONTACT").filter(|v| !v.trim().is_empty()).map(|v| Contact::parse(&v)).transpose()?,
             smtp: smtp_settings(&env)?,
             server_key: server_key_seed(&env)?,
+            gateway: gateway_settings(&env)?,
+            push_via: push_via(&env)?,
         })
     }
 
     pub fn summary(&self) -> String {
         format!(
-            "port={} store={} retention={} trust_proxy={} wake={} reports={}",
+            "port={} store={} retention={} trust_proxy={} wake={} reports={} gateway={}",
             self.listen.port(),
             if self.database_url.is_some() { "postgres" } else { "memory" },
             if self.retention_days == 0 { "forever".to_string() } else { format!("{}d", self.retention_days) },
             self.trust_proxy,
             self.wake_summary(),
             self.reports_summary(),
+            self.gateway.as_ref().map_or("off".to_string(), |g| format!("{}/day", g.daily_budget)),
         )
     }
 
@@ -285,7 +340,7 @@ mod tests {
         assert_eq!(c.database_url, None);
         assert_eq!(c.retention_days, 90);
         assert!(c.trust_proxy);
-        assert_eq!(c.summary(), "port=3002 store=memory retention=90d trust_proxy=true wake=off reports=kept-no-contact");
+        assert_eq!(c.summary(), "port=3002 store=memory retention=90d trust_proxy=true wake=off reports=kept-no-contact gateway=off");
     }
 
     #[test]
@@ -347,7 +402,7 @@ mod tests {
         let c = config(&[("SYNC_ABUSE_CONTACT", "abuse@example.org"), ("SYNC_OPERATOR_NAME", " Example Chat ")]).unwrap();
         assert_eq!(c.abuse_contact.as_ref().and_then(Contact::email), Some("abuse@example.org"));
         assert_eq!(c.operator.as_deref(), Some("Example Chat"));
-        assert!(c.summary().ends_with("reports=kept"));
+        assert!(c.summary().ends_with("reports=kept gateway=off"));
         assert!(config(&[("SYNC_ABUSE_CONTACT", "nope")]).is_err());
     }
 
@@ -358,7 +413,7 @@ mod tests {
             c.smtp,
             Some(SmtpSettings::Host { host: "smtp.example.org".into(), port: 587, user: Some("bot@example.org".into()), password: Some("pw".into()), from: "bot@example.org".into() })
         );
-        assert!(c.summary().ends_with("reports=emailed"));
+        assert!(c.summary().ends_with("reports=emailed gateway=off"));
         assert!(!c.summary().contains("pw"));
         let url = config(&[("SMTP_URL", "smtps://u:p@smtp.example.org"), ("EMAIL_FROM", "Commy <no-reply@example.org>")]).unwrap();
         assert_eq!(url.smtp.unwrap().from(), "Commy <no-reply@example.org>");
@@ -388,5 +443,38 @@ mod tests {
         assert_eq!(admin.caddy_admin, "http://caddy:2019");
         assert!(!c.summary().contains("0123456789abcdef"));
         assert!(!format!("{c:?}").contains("0123456789abcdef"), "the password never shows in logs");
+    }
+
+    #[test]
+    fn a_server_without_push_keys_can_send_through_a_gateway() {
+        assert_eq!(config(&[]).unwrap().push_via, None);
+        assert_eq!(config(&[("SYNC_PUSH_VIA", "off"), ("SYNC_DOMAIN", "sync.example.org")]).unwrap().push_via, None);
+        let via = config(&[("SYNC_PUSH_VIA", "https://commy.chat/"), ("SYNC_DOMAIN", "Sync.Example.org")]).unwrap().push_via.unwrap();
+        assert_eq!(via, PushVia { gateway: "https://commy.chat".into(), origin: "https://sync.example.org".into() });
+        assert!(config(&[("SYNC_PUSH_VIA", "https://commy.chat")]).is_err(), "it needs this server's domain");
+        assert!(config(&[("SYNC_PUSH_VIA", "http://commy.chat"), ("SYNC_DOMAIN", "sync.example.org")]).is_err());
+        assert!(config(&[("SYNC_PUSH_VIA", "https://commy.chat"), ("SYNC_DOMAIN", "localhost")]).is_err());
+    }
+
+    #[test]
+    fn the_push_gateway_is_off_unless_turned_on() {
+        assert_eq!(config(&[]).unwrap().gateway, None);
+        assert_eq!(config(&[("SYNC_PUSH_GATEWAY", "off")]).unwrap().gateway, None);
+        let on = config(&[("SYNC_PUSH_GATEWAY", "on"), ("ALERT_WEBHOOK_URL", "https://hooks.example.org/x")]).unwrap();
+        assert_eq!(
+            on.gateway,
+            Some(GatewaySettings {
+                daily_budget: DEFAULT_GATEWAY_BUDGET,
+                alert_percent: 75,
+                alert_webhook: Some("https://hooks.example.org/x".into()),
+                blocklist: Some(crate::gateway_blocklist::DEFAULT_SOURCE.into())
+            })
+        );
+        assert!(on.summary().ends_with("gateway=100000/day"));
+        let tuned = config(&[("SYNC_PUSH_GATEWAY", "on"), ("SYNC_GATEWAY_DAILY_BUDGET", "500"), ("SYNC_GATEWAY_ALERT_PERCENT", "50")]).unwrap();
+        assert_eq!(tuned.gateway.as_ref().map(|g| (g.daily_budget, g.alert_percent)), Some((500, 50)));
+        assert!(config(&[("SYNC_PUSH_GATEWAY", "yes")]).is_err());
+        assert!(config(&[("SYNC_PUSH_GATEWAY", "on"), ("SYNC_GATEWAY_DAILY_BUDGET", "0")]).is_err());
+        assert!(config(&[("SYNC_PUSH_GATEWAY", "on"), ("SYNC_GATEWAY_ALERT_PERCENT", "101")]).is_err());
     }
 }

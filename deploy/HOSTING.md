@@ -658,6 +658,13 @@ server or channel a log belongs to.
   IP address. Addresses are used in memory for rate limits only, under a keyed
   hash with a secret that changes on every restart. The edge proxy never logs
   `/sync`.
+- **Waking phones through Commy:** the official phone apps only accept
+  wake-ups sent with Commy's push keys. Set `SYNC_PUSH_VIA=https://commy.chat`
+  and your sync service asks commy.chat to send them, signed with your server
+  key. Only the push token and sealed previews go there. A new server can send
+  500 wake-ups a day to at most 25 new phones; that grows to 5,000 after a
+  week and 50,000 after a month with a clean record. A server that keeps
+  sending far past its cap is cut off.
 - **Waking phones (optional):** with `FCM_SERVICE_ACCOUNT` set to a Firebase
   service account key (the JSON, or its base64), the service can wake the
   Android app with an empty push when something new arrives. With `APNS_KEY`

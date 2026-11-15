@@ -286,6 +286,7 @@ pub struct MemoryStore {
     erasers: Mutex<HashMap<StreamId, ([u8; 32], i64)>>,
     quiet: Mutex<HashMap<String, i64>>,
     pub(crate) reports: Mutex<crate::reports::MemoryReports>,
+    pub(crate) gateway: Mutex<crate::gateway_store::MemoryGateway>,
 }
 
 impl MemoryStore {
@@ -473,7 +474,7 @@ impl PgStore {
             }
             Err(e) => return Err(e.into()),
         };
-        for statement in SCHEMA {
+        for statement in SCHEMA.iter().chain(crate::gateway_store::GATEWAY_SCHEMA) {
             sqlx::query(statement).execute(&pool).await?;
         }
         Ok(Self { pool })

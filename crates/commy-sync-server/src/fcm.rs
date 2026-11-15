@@ -32,6 +32,7 @@ pub enum Delivery {
     Sent,
     Gone,
     Failed(String),
+    Refused(String),
 }
 
 pub struct Fcm {

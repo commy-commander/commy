@@ -283,6 +283,42 @@ discovery document lists `endpoints.sync`. Behind Cloudflare Access, add
 the apps cannot complete the Access login. Production stays off until its
 `.env` gets the same three lines.
 
+### The push gateway
+
+Self-hosted sync servers cannot wake phones on their own, because the app's
+push keys stay with us. The gateway lets them ask our sync service to send a
+wake-up for them, and keeps the cost bounded:
+
+- Each request is signed with the server's published server key, so only the
+  server at that domain can send as it.
+- Only sealed previews to real phone push tokens are carried. Plain text is
+  refused.
+- Every server has a daily cap that grows with a clean record: 500 pings and 25
+  new phones a day for its first week, 5,000 and 250 after 7 clean days, and
+  50,000 and 2,500 after 30.
+- A server that keeps sending ten times past its cap is cut off on its own, and
+  stays cut off until an operator restores it.
+- Servers on the signed server blocklist are refused. It is read from
+  `SYNC_GATEWAY_BLOCKLIST` (commy.chat when empty) every 15 minutes, and the
+  last good list is kept if a read fails.
+- `SYNC_GATEWAY_DAILY_BUDGET` caps all servers together. At
+  `SYNC_GATEWAY_ALERT_PERCENT` and again when it runs out, an alert goes to
+  `ALERT_WEBHOOK_URL` and, with SMTP set, to `SYNC_ABUSE_CONTACT`.
+
+It is off until that environment's `deploy/.env` has `SYNC_PUSH_GATEWAY=on`
+(then `docker compose up -d --no-deps sync`). To see and change who uses it:
+
+```bash
+docker compose exec sync commy-sync gateway
+docker compose exec sync commy-sync gateway cut https://bad.example.org sent spam
+docker compose exec sync commy-sync gateway restore https://bad.example.org
+docker compose exec sync commy-sync gateway tier https://good.example.org trusted
+docker compose exec sync commy-sync gateway tier https://good.example.org auto
+```
+
+With `SYNC_ADMIN_PASSWORD` set, the admin page shows the same list with today's
+use per server and buttons for the same changes.
+
 ## Hardening the server
 
 After `setup-vps.sh`, run once:

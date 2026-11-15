@@ -14,6 +14,8 @@ use sha2::Sha256;
 
 use crate::certificate::{self, Facts};
 use crate::config::AdminSettings;
+use crate::gateway::{self, Overview};
+use crate::ramp::Tier;
 use crate::operator::{self, Command};
 use crate::reports::describe;
 use crate::store::Totals;
@@ -188,13 +190,14 @@ impl Admin {
 
     async fn page(&self, note: Option<&str>, problem: Option<&str>) -> String {
         let service = &self.service;
-        let (database, totals, relay, served, newest, reports) = tokio::join!(
+        let (database, totals, relay, served, newest, reports, overview) = tokio::join!(
             service.store.ping(),
             service.store.totals(),
             self.relay_answers(),
             self.served_certificate(),
             self.newest_release(),
             service.store.reports(true),
+            gateway::overview(service),
         );
         let facts = Dashboard {
             domain: self.settings.domain.as_deref(),
@@ -214,6 +217,7 @@ impl Admin {
             contact: service.desk.contact.as_ref().map(|c| c.shown()),
             emails_reports: service.desk.emails_reports(),
             reports: reports.map(|list| list.iter().map(|r| (r.id.clone(), r.report.community_name.clone(), r.report.reason.clone(), r.received, r.report.messages.len())).collect()),
+            gateway: overview.ok().filter(|o| o.enabled),
             now: now_s(),
         };
         facts.render(note, problem)
@@ -230,6 +234,9 @@ pub fn router(admin: Arc<Admin>) -> Router {
         .route("/reports/{id}", get(report))
         .route("/reports/{id}/drop", post(drop_report))
         .route("/reports/{id}/dismiss", post(dismiss_report))
+        .route("/gateway/cut", post(gateway_cut))
+        .route("/gateway/restore", post(gateway_restore))
+        .route("/gateway/tier", post(gateway_tier))
         .layer(DefaultBodyLimit::max(FORM_LIMIT))
         .layer(from_fn(guard))
         .with_state(admin)
@@ -367,12 +374,58 @@ async fn settle(admin: &Admin, headers: &HeaderMap, id: String, command: fn(Stri
     }
 }
 
+#[derive(Deserialize)]
+struct GatewayForm {
+    origin: String,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    tier: String,
+}
+
+async fn gateway_cut(State(admin): State<Arc<Admin>>, headers: HeaderMap, Form(form): Form<GatewayForm>) -> Response {
+    let reason = form.reason.trim();
+    let reason = if reason.is_empty() { "cut off from the admin page" } else { reason };
+    let command = operator::origin_of(&form.origin).map(|origin| Command::GatewayCut { origin, reason: reason.to_string() });
+    change_gateway(&admin, &headers, command, "gateway-cut").await
+}
+
+async fn gateway_restore(State(admin): State<Arc<Admin>>, headers: HeaderMap, Form(form): Form<GatewayForm>) -> Response {
+    let command = operator::origin_of(&form.origin).map(Command::GatewayRestore);
+    change_gateway(&admin, &headers, command, "gateway-restored").await
+}
+
+async fn gateway_tier(State(admin): State<Arc<Admin>>, headers: HeaderMap, Form(form): Form<GatewayForm>) -> Response {
+    let tier = match form.tier.as_str() {
+        "auto" => Ok(None),
+        text => Tier::parse(text).map(Some).ok_or("unknown tier"),
+    };
+    let command = operator::origin_of(&form.origin).and_then(|origin| tier.map(|tier| Command::GatewayTier { origin, tier }));
+    change_gateway(&admin, &headers, command, "gateway-tier").await
+}
+
+async fn change_gateway(admin: &Admin, headers: &HeaderMap, command: Result<Command, &'static str>, done: &str) -> Response {
+    if let Err(refused) = admin.allowed(headers) {
+        return refused;
+    }
+    let Ok(command) = command else {
+        return (StatusCode::BAD_REQUEST, Html(admin.page(None, Some("That server address is not one the gateway knows.")).await)).into_response();
+    };
+    match operator::run(&admin.service.store, command).await {
+        Ok(_) => Redirect::to(&format!("/?done={done}")).into_response(),
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, format!("The database did not answer: {e}")).into_response(),
+    }
+}
+
 fn done_note(key: &str) -> Option<&'static str> {
     Some(match key {
         "certificate" => "Your certificate is in use. The relay switches to it within a minute.",
         "automatic" => "Back to automatic certificates. Caddy fetches one if it needs to.",
         "dropped" => "That community is removed from this server.",
         "dismissed" => "Report dismissed.",
+        "gateway-cut" => "That server is cut off. Its pings are refused from now on.",
+        "gateway-restored" => "That server may send pings again, starting over at the new server caps.",
+        "gateway-tier" => "That server's caps are changed.",
         _ => return None,
     })
 }
@@ -449,6 +502,7 @@ struct Dashboard<'a> {
     contact: Option<&'a str>,
     emails_reports: bool,
     reports: Result<Vec<(String, String, String, i64, usize)>, crate::store::StoreError>,
+    gateway: Option<Overview>,
     now: i64,
 }
 
@@ -465,6 +519,7 @@ impl Dashboard<'_> {
         body += &self.health();
         body += &self.certificate();
         body += &self.reports();
+        body += &self.gateway();
         body += &self.settings();
         let title = self.domain.unwrap_or("Commy sync server");
         layout(
@@ -556,6 +611,75 @@ impl Dashboard<'_> {
             }
         };
         card("Reports", &list)
+    }
+
+    fn gateway(&self) -> String {
+        let Some(overview) = &self.gateway else {
+            return String::new();
+        };
+        let percent = (overview.used.saturating_mul(100)).checked_div(overview.budget).unwrap_or(100);
+        let state = if overview.used >= overview.budget {
+            "bad"
+        } else if percent >= overview.alert_percent {
+            "warn"
+        } else {
+            "good"
+        };
+        let mut rows = row("Pings today", &format!("{} of {} ({percent}%)", overview.used, overview.budget), Some(state));
+        rows += &row("Refused today", &overview.refused.to_string(), None);
+        rows += &row("Servers", &overview.servers.len().to_string(), None);
+        let blocklist = match (&overview.blocklist_from, overview.blocked) {
+            (None, _) => ("Not used".to_string(), None),
+            (Some(from), None) => (format!("Not loaded yet from {}", esc(from)), Some("warn")),
+            (Some(from), Some(count)) => (format!("{count} blocked, from {}", esc(from)), Some("good")),
+        };
+        rows += &row("Server blocklist", &blocklist.0, blocklist.1);
+        if overview.servers.is_empty() {
+            rows += "<p class=\"hint\">No server has sent a ping yet.</p>";
+            return card("Push gateway", &rows);
+        }
+        let items: String = overview.servers.iter().map(|server| self.gateway_server(server)).collect();
+        rows += &format!("<ul class=\"servers\">{items}</ul>");
+        rows += "<p class=\"hint\">A server that keeps sending far past its cap is cut off on its own. Restoring one starts it over at the new server caps.</p>";
+        card("Push gateway", &rows)
+    }
+
+    fn gateway_server(&self, server: &gateway::ServerRow) -> String {
+        let origin = esc(&server.record.origin);
+        let pinned = if server.record.pinned.is_some() { ", set by you" } else { "" };
+        let mut status = format!(
+            "{} tier{pinned} · {} of {} pings · {} of {} new phones · {} refused",
+            server.tier.as_str(),
+            server.today.pushes,
+            server.caps.pushes,
+            server.today.new_phones,
+            server.caps.new_phones,
+            server.today.refused
+        );
+        let action = match &server.record.cut_off {
+            Some(cut) => {
+                let by = if cut.automatic { "automatically" } else { "by you" };
+                status = format!("Cut off {by} on {}: {} · {status}", day(cut.at / 1000), esc(&cut.reason));
+                format!("<form method=\"post\" action=\"/gateway/restore\"><input type=\"hidden\" name=\"origin\" value=\"{origin}\"><button class=\"quiet\">Restore</button></form>")
+            }
+            None => format!(
+                "<form method=\"post\" action=\"/gateway/cut\"><input type=\"hidden\" name=\"origin\" value=\"{origin}\"><input name=\"reason\" maxlength=\"200\" placeholder=\"Reason\" aria-label=\"Reason\"><button class=\"danger\">Cut off</button></form>"
+            ),
+        };
+        let chosen = server.record.pinned.map_or("auto", Tier::as_str);
+        let options: String = ["auto", "new", "settled", "trusted"]
+            .iter()
+            .map(|tier| {
+                let label = if *tier == "auto" { "Earned" } else { tier };
+                let selected = if *tier == chosen { " selected" } else { "" };
+                format!("<option value=\"{tier}\"{selected}>{label}</option>")
+            })
+            .collect();
+        let tier = format!(
+            "<form method=\"post\" action=\"/gateway/tier\"><input type=\"hidden\" name=\"origin\" value=\"{origin}\"><select name=\"tier\" aria-label=\"Tier\">{options}</select><button class=\"quiet\">Set tier</button></form>"
+        );
+        let state = if server.record.cut_off.is_some() { "bad" } else if server.today.pushes >= server.caps.pushes { "warn" } else { "good" };
+        format!("<li><div><i class=\"dot {state}\"></i><strong>{origin}</strong><span>{status}</span></div><div class=\"actions\">{action}{tier}</div></li>")
     }
 
     fn settings(&self) -> String {
@@ -654,6 +778,8 @@ input,textarea{display:block;width:100%;margin-top:4px;padding:8px 10px;border:1
 button{border:0;border-radius:8px;padding:8px 14px;background:var(--accent);color:#fff;font:inherit;cursor:pointer;margin-top:8px}button.quiet{background:transparent;color:var(--accent);border:1px solid var(--line)}button.danger{background:var(--bad)}\
 details summary{cursor:pointer;color:var(--accent);margin-top:10px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,monospace;background:var(--bg);padding:12px;border-radius:8px}\
 .reports{list-style:none;margin:0;padding:0}.reports a{display:flex;flex-direction:column;padding:8px 0;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}.reports li:first-child a{border-top:0}.reports span{color:var(--soft);font-size:13px}\
+.servers{list-style:none;margin:10px 0 0;padding:0}.servers li{padding:10px 0;border-top:1px solid var(--line)}.servers li>div:first-child{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}.servers span{color:var(--soft);font-size:13px;overflow-wrap:anywhere}\
+.actions{display:flex;flex-wrap:wrap;gap:8px}.actions form{display:flex;gap:6px;align-items:center}.actions input{width:12em;margin:8px 0 0}select{margin-top:8px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}\
 a{color:var(--accent)}";
 
 fn esc(text: &str) -> String {

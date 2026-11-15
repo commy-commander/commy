@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::routing::post;
 use commy_sync_server::config::Config;
+use commy_sync_server::ramp::{Day, ServerRecord};
 use commy_sync_server::store::Store;
 use commy_sync_server::Service;
 use reqwest::header::{COOKIE, HOST, LOCATION, ORIGIN, SET_COOKIE};
@@ -42,6 +43,7 @@ struct Page {
     url: String,
     tls: PathBuf,
     http: reqwest::Client,
+    service: Arc<Service>,
 }
 
 impl Page {
@@ -63,6 +65,10 @@ impl Page {
 }
 
 async fn open(caddy: &Caddy) -> Page {
+    open_with(caddy, &[]).await
+}
+
+async fn open_with(caddy: &Caddy, extra: &[(&str, &str)]) -> Page {
     let tls = std::env::temp_dir().join(format!("commy-admin-{}", rand_suffix()));
     std::fs::create_dir_all(&tls).unwrap();
     let caddyfile = tls.join("Caddyfile");
@@ -78,13 +84,19 @@ async fn open(caddy: &Caddy) -> Page {
         ("SYNC_RELEASES_URL", "http://127.0.0.1:9/latest.json".to_string()),
         ("COMMY_VERSION", "0.2.5".to_string()),
     ];
+    let extra: Vec<(&str, String)> = extra.iter().map(|(k, v)| (*k, v.to_string())).collect();
+    let env: Vec<(&str, String)> = env.into_iter().chain(extra).collect();
     let config = Config::from_env(|key| env.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone())).unwrap();
     let service = Service::new(Store::memory(), &config);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(commy_sync_server::admin::serve(listener, service, config.admin.clone().unwrap()));
+    tokio::spawn(commy_sync_server::admin::serve(listener, service.clone(), config.admin.clone().unwrap()));
     let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
-    Page { url, tls, http }
+    Page { url, tls, http, service }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
 }
 
 fn rand_suffix() -> String {
@@ -175,4 +187,44 @@ async fn a_certificate_caddy_refuses_is_rolled_back() {
         assert!(!page.tls.join(name).exists(), "{name} is rolled back");
     }
     assert_eq!(caddy.loads.lock().unwrap().len(), 2, "Caddy is reloaded again without it");
+}
+
+#[tokio::test]
+async fn the_push_gateway_card_shows_each_server_and_can_cut_one_off() {
+    let caddy = caddy(true).await;
+    let plain = open(&caddy).await;
+    let cookie = plain.sign_in().await;
+    let without = plain.get("/").header(COOKIE, &cookie).send().await.unwrap().text().await.unwrap();
+    assert!(!without.contains("Push gateway"), "no card while the gateway is off");
+
+    let page = open_with(&caddy, &[("SYNC_PUSH_GATEWAY", "on"), ("SYNC_GATEWAY_DAILY_BUDGET", "1000")]).await;
+    let cookie = page.sign_in().await;
+    let origin = "https://busy.example.org";
+    let store = &page.service.store;
+    store.put_gateway_server(&ServerRecord::first(origin, now_ms())).await.unwrap();
+    let today = commy_sync::wake::wake_day(now_ms());
+    store.count_gateway(origin, today, Day { pushes: 800, refused: 12, new_phones: 20 }).await.unwrap();
+    let dashboard = page.get("/").header(COOKIE, &cookie).send().await.unwrap().text().await.unwrap();
+    for shown in ["Push gateway", "800 of 1000 (80%)", "busy.example.org", "new tier", "800 of 500 pings", "20 of 25 new phones", "12 refused", "Cut off"] {
+        assert!(dashboard.contains(shown), "the gateway card shows {shown}");
+    }
+
+    let cut = page.post("/gateway/cut").header(COOKIE, &cookie).form(&[("origin", origin), ("reason", "sent spam")]).send().await.unwrap();
+    assert_eq!(cut.headers()[LOCATION], "/?done=gateway-cut");
+    let record = store.gateway_server(origin).await.unwrap().unwrap();
+    assert_eq!(record.cut_off.as_ref().map(|c| (c.reason.as_str(), c.automatic)), Some(("sent spam", false)));
+    let shown = page.get("/?done=gateway-cut").header(COOKIE, &cookie).send().await.unwrap().text().await.unwrap();
+    assert!(shown.contains("Cut off by you") && shown.contains("Restore"));
+
+    let pinned = page.post("/gateway/tier").header(COOKIE, &cookie).form(&[("origin", origin), ("tier", "trusted")]).send().await.unwrap();
+    assert_eq!(pinned.headers()[LOCATION], "/?done=gateway-tier");
+    assert_eq!(store.gateway_server(origin).await.unwrap().unwrap().pinned, Some(commy_sync_server::ramp::Tier::Trusted));
+    let restored = page.post("/gateway/restore").header(COOKIE, &cookie).form(&[("origin", origin)]).send().await.unwrap();
+    assert_eq!(restored.headers()[LOCATION], "/?done=gateway-restored");
+    assert_eq!(store.gateway_server(origin).await.unwrap().unwrap().cut_off, None);
+
+    let bad = page.post("/gateway/cut").header(COOKIE, &cookie).form(&[("origin", "http://10.0.0.1"), ("reason", "x")]).send().await.unwrap();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+    let unsigned = page.post("/gateway/cut").form(&[("origin", origin), ("reason", "x")]).send().await.unwrap();
+    assert_eq!(unsigned.status(), StatusCode::SEE_OTHER, "forms need a session");
 }

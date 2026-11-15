@@ -2,6 +2,7 @@ use commy_sync_server::apns::{Apns, ApnsConfig};
 use commy_sync_server::config::{Config, KeySeed};
 use commy_sync_server::fcm::Fcm;
 use commy_sync_server::store::Store;
+use commy_sync_server::push_via::ViaGateway;
 use commy_sync_server::wake::Pusher;
 use commy_sync_server::{learn_dropped, operator, serve, spawn_housekeeping, Service};
 
@@ -41,7 +42,13 @@ async fn main() -> anyhow::Result<()> {
     let server_key = commy_sync_server::server_key::load(&config, &store).await?;
     config.server_key = Some(KeySeed(server_key.to_bytes()));
     tracing::info!("sync server key {}", commy_sync_server::server_key::published(&server_key).id);
-    let pusher = Pusher::live(fcm, apns);
+    let pusher = match (Pusher::live(fcm, apns), &config.push_via) {
+        (Pusher::Off, Some(via)) => {
+            tracing::info!("waking phones through the push gateway at {} as {}", via.gateway, via.origin);
+            Pusher::Gateway(Box::new(ViaGateway::new(&via.gateway, &via.origin, commy_core::Identity::from_bytes(&server_key.to_bytes()))))
+        }
+        (pusher, _) => pusher,
+    };
     let service = Service::with_pusher(store, &config, pusher);
     learn_dropped(&service).await;
     spawn_housekeeping(service.clone());

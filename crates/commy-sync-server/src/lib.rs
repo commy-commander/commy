@@ -4,13 +4,19 @@ pub mod certificate;
 pub mod check;
 pub mod config;
 pub mod fcm;
+pub mod gateway;
+pub mod gateway_blocklist;
+pub mod gateway_store;
 pub mod hub;
 pub mod limits;
 pub mod mail;
 pub mod operator;
+pub mod push_via;
+pub mod ramp;
 mod pictures;
 pub mod reports;
 pub mod server_key;
+pub mod server_proof;
 mod session;
 pub mod store;
 pub mod wake;
@@ -104,6 +110,7 @@ pub struct Service {
     pub stats: Stats,
     pub wakes: Wakes,
     pub desk: Desk,
+    pub gateway: gateway::Gateway,
     pub trust_proxy: bool,
     pub retention_days: u32,
     pub greeting: Greeting,
@@ -116,6 +123,10 @@ impl Service {
     }
 
     pub fn with_pusher(store: Store, config: &Config, pusher: Pusher) -> Arc<Self> {
+        Self::with_keys(store, config, pusher, server_proof::KeySource::Web)
+    }
+
+    pub fn with_keys(store: Store, config: &Config, pusher: Pusher, keys: server_proof::KeySource) -> Arc<Self> {
         Arc::new(Self {
             store,
             hub: Hub::default(),
@@ -123,6 +134,7 @@ impl Service {
             stats: Stats::default(),
             wakes: Wakes::new(pusher),
             desk: Desk::new(config),
+            gateway: gateway::Gateway::new(config, keys),
             trust_proxy: config.trust_proxy,
             retention_days: config.retention_days,
             greeting: Greeting { version: config.version.clone(), relay: config.relay.clone(), ..Greeting::of(PROTOCOL) },
@@ -156,6 +168,7 @@ pub fn router(service: Arc<Service>) -> Router {
         .route("/sync/wake/ring", post(wake::ring).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/seat", post(wake::seat).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/quiet", post(wake::quiet).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
+        .route(gateway::GATEWAY_PATH, post(gateway::push).layer(DefaultBodyLimit::max(gateway::MAX_GATEWAY_BODY)))
         .route("/sync/pictures/{id}", get(pictures::fetch).merge(put(pictures::store).layer(DefaultBodyLimit::max(MAX_PICTURE_SEALED))))
         .route("/healthz", get(health))
         .with_state(service)
@@ -190,6 +203,7 @@ async fn about(State(service): State<Arc<Service>>) -> Response {
     body["oldest_protocol"] = service.greeting.oldest_protocol.into();
     body["version"] = service.greeting.version.clone().into();
     body["relay"] = service.greeting.relay.clone().into();
+    body["serverKey"] = serde_json::json!(server_key::published(&service.server_key));
     Json(body).into_response()
 }
 
@@ -212,6 +226,9 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
             if let Err(e) = pruning.store.prune_quiet(now_ms()).await {
                 tracing::warn!("sync: pruning quiet hours failed: {e}");
             }
+            if let Err(e) = gateway::prune(&pruning).await {
+                tracing::warn!("sync: pruning push gateway counts failed: {e}");
+            }
             if let Err(e) = pruning.store.prune_reports(now_ms() - SETTLED_REPORTS_KEPT_DAYS * DAY_MS).await {
                 tracing::warn!("sync: pruning settled reports failed: {e}");
             }
@@ -231,6 +248,18 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
             }
         }
     });
+    if service.gateway.enabled() && service.gateway.blocklist.from().is_some() {
+        let refreshing = service.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(gateway_blocklist::REFRESH_EVERY);
+            loop {
+                every.tick().await;
+                if let Err(e) = refreshing.gateway.blocklist.refresh().await {
+                    tracing::warn!("push gateway: the server blocklist did not refresh, keeping the last one: {e}");
+                }
+            }
+        });
+    }
     let forgetting = service.clone();
     tokio::spawn(async move {
         let mut every = tokio::time::interval(FORGET_EVERY);
@@ -239,6 +268,7 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
             learn_dropped(&forgetting).await;
             forgetting.limiter.forget_idle();
             forgetting.wakes.forget_idle();
+            forgetting.gateway.forget_old(now_ms());
         }
     });
     tokio::spawn(async move {
