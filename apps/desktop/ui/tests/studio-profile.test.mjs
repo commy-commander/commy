@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows, profilePaneRows } = require("../scripts/studio-profile.js");
+const { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows, profileViewKey, memberCardLeft } = require("../scripts/studio-profile.js");
 const { STUDIO_SPARKLES, STUDIO_DUST, STUDIO_SNOW, STUDIO_BUBBLES, STUDIO_CURTAINS, STUDIO_FIREFLIES, STUDIO_RAIN, STUDIO_NIGHT, STUDIO_METEORS, STUDIO_PETALS, STUDIO_MOTES, STUDIO_CLOUDS, STUDIO_CONFETTI, studioOrnaments, studioFrame, studioSnow, studioCurtain, studioEffect } = require("../scripts/profile-look.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
@@ -80,10 +80,10 @@ test("the keys line holds Message and one friend key, and your own card holds Ed
   assert.match(app, /\} else if \(!member\.bot && !isBlocked\(member\.id\)\) \{\n      key\("key sm primary", "message-circle", "Message", "", \(\) => \{\n        closeFloating\(\);\n        messageUser\(member\.id, member\.name\);/);
 });
 
-test("More lists the profile, the invite and the friend rows first, and the red rows last", () => {
-  assert.deepEqual(profileMenuRows({}), ["profile", "invite", "block"]);
-  assert.deepEqual(profileMenuRows({ friend: true, reportable: true, canTimeOut: true }), ["profile", "invite", "notify", "unfriend", "block", "report", "timeout"]);
-  assert.deepEqual(profileMenuRows({ bot: true, reportable: true }), ["profile", "block", "report"]);
+test("More lists the invite and the friend rows first, and the red rows last", () => {
+  assert.deepEqual(profileMenuRows({}), ["invite", "block"]);
+  assert.deepEqual(profileMenuRows({ friend: true, reportable: true, canTimeOut: true }), ["invite", "notify", "unfriend", "block", "report", "timeout"]);
+  assert.deepEqual(profileMenuRows({ bot: true, reportable: true }), ["block", "report"]);
   assert.deepEqual(profileMenuRows({ me: true }), []);
   assert.deepEqual(profileMenuRows({ me: true, canNickname: true }), ["nickname"]);
   assert.match(app, /more\.classList\.toggle\("hidden", studio \? !rows\.length : isMe\);/);
@@ -218,13 +218,8 @@ test("the seven new effects are fixed drawings too, with the light gathered on t
 });
 
 test("the full profile and the DM side pane are built from the card's parts", () => {
-  const rows = profileMenuRows({ friend: true, reportable: true, canTimeOut: true });
-  assert.deepEqual(profilePaneRows(rows, "card"), rows);
-  assert.deepEqual(profilePaneRows(rows, "full"), ["invite", "notify", "unfriend", "block", "report", "timeout"]);
-  assert.deepEqual(profilePaneRows(rows, "dm"), ["invite", "notify", "unfriend", "block", "report", "timeout"]);
-  assert.deepEqual(profilePaneRows(profileMenuRows({ me: true }), "full"), []);
-  assert.deepEqual(profilePaneRows(rows, "phone"), ["invite", "notify", "unfriend", "block", "report", "timeout"]);
-  assert.match(app, /\}\), studio && document\.documentElement\.dataset\.fit === "slim" \? "phone" : "card"\);/);
+  assert.deepEqual(profileMenuRows({ friend: true, reportable: true, canTimeOut: true }), ["invite", "notify", "unfriend", "block", "report", "timeout"]);
+  assert.deepEqual(profileMenuRows({ me: true }), []);
   assert.match(app, /openUserSettings\("account"\);\n      \}\)\.id = "mc-edit";/);
   const start = app.indexOf("function studioProfilePane(");
   const pane = app.slice(start, app.indexOf("\n}\n", start));
@@ -277,4 +272,36 @@ test("your profile effect plays in your own profile bar, behind its words", () =
   assert.ok(rule(".user-panel").includes("isolation: isolate;"));
   assert.ok(css.includes(`${SWITCH} .user-panel > .card-effect.fx g { animation-play-state: paused; }`));
   assert.ok(css.includes(`${SWITCH} .user-panel:hover > .card-effect.fx g { animation-play-state: running; }`));
+});
+
+test("the card and the DM side pane carry a View profile key that opens the full profile", () => {
+  assert.deepEqual(profileViewKey("card"), { icon: "user", title: "View profile", cls: "key sq mc-view" });
+  assert.deepEqual(profileViewKey("dm"), profileViewKey("card"));
+  assert.equal(profileViewKey("full"), null);
+  assert.equal(profileViewKey("phone"), null);
+  assert.match(app, /const view = profileViewKey\(document\.documentElement\.dataset\.fit === "slim" \? "phone" : "card"\);\n    if \(view\) key\(view\.cls, view\.icon, "", view\.title, \(\) => openFullProfile\(member\)\);/);
+  const start = app.indexOf("function studioProfilePane(");
+  const pane = app.slice(start, app.indexOf("\n}\n", start));
+  assert.match(pane, /const view = profileViewKey\(place\);\n  if \(view\) key\(view\.cls, view\.icon, "", view\.title, \(\) => openFullProfile\(person\)\);/);
+  assert.equal(app.includes('"Full Profile"'), false);
+});
+
+test("the card opens beside the left of what was clicked, or to its right when the left has no room", () => {
+  assert.equal(memberCardLeft({ left: 900, right: 1100 }, 352, 1400), 536);
+  assert.equal(memberCardLeft({ left: 330, right: 400 }, 352, 1400), 412);
+  assert.equal(memberCardLeft({ left: 330 }, 352, 1400), 342);
+  assert.equal(memberCardLeft({ left: 300, right: 700 }, 352, 940), 580);
+  assert.equal(memberCardLeft({ left: 100, right: 900 }, 352, 940), 580);
+  assert.equal(memberCardLeft({ left: 4, right: 8 }, 940, 940), 8);
+  assert.match(app, /card\.style\.left = `\$\{memberCardLeft\(a, r\.width, window\.innerWidth\)\}px`;/);
+});
+
+test("clicking a message's name or picture opens the card on every fit, with a pointer and an underline on desktop", () => {
+  const glue = read("../scripts/studio-phone.js");
+  const start = glue.indexOf("function wireFaceTaps()");
+  const wire = glue.slice(start, glue.indexOf("\n}\n", start));
+  assert.ok(wire.includes('e.target.closest(".msg > .avatar:not(.spacer), .msg-head > .msg-author")'));
+  assert.equal(wire.includes("studioSlim()"), false);
+  assert.ok(css.includes(`${SWITCH} .msg > .avatar:not(.spacer),\n${SWITCH} .msg-head > .msg-author { cursor: pointer; }`));
+  assert.ok(css.includes(`${SWITCH}:not([data-fit="slim"]) .msg-head > .msg-author:hover { text-decoration: underline; }`));
 });

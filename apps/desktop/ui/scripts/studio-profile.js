@@ -4,6 +4,10 @@ const PROFILE_FRIEND_KEYS = {
   outgoing: { icon: "clock", title: "Request sent", cls: "key sq mc-sent" },
   incoming: { icon: "user-check", title: "Accept friend request", cls: "key sq primary mc-accept" },
 };
+const PROFILE_VIEW_KEY = { icon: "user", title: "View profile", cls: "key sq mc-view" };
+const PROFILE_VIEW_PLACES = ["card", "dm"];
+const CARD_GAP = 12;
+const CARD_EDGE = 8;
 
 function profileHasBanner(member) {
   return Boolean(member && ((typeof member.banner === "string" && member.banner.startsWith("blob:")) || member.role_banner));
@@ -27,8 +31,7 @@ function profileFriendKey(friendState, { me = false, bot = false } = {}) {
 
 function profileMenuRows({ me = false, bot = false, friend = false, reportable = false, canTimeOut = false, canNickname = false } = {}) {
   if (me) return canNickname ? ["nickname"] : [];
-  const rows = ["profile"];
-  if (!bot) rows.push("invite");
+  const rows = bot ? [] : ["invite"];
   if (friend) rows.push("notify", "unfriend");
   rows.push("block");
   if (reportable) rows.push("report");
@@ -42,11 +45,17 @@ function roleInk(color, studio) {
   return `color-mix(in oklab, #${color} var(--role-ink-mix, 100%), var(--header-primary))`;
 }
 
-function profilePaneRows(rows, place) {
-  if (place === "card") return rows;
-  return rows.filter(row => row !== "profile");
+function profileViewKey(place) {
+  return PROFILE_VIEW_PLACES.includes(place) ? PROFILE_VIEW_KEY : null;
+}
+
+function memberCardLeft(anchor, cardWidth, viewWidth) {
+  const before = anchor.left - cardWidth - CARD_GAP;
+  if (before >= CARD_EDGE) return before;
+  const after = (anchor.right ?? anchor.left) + CARD_GAP;
+  return Math.max(CARD_EDGE, Math.min(after, viewWidth - cardWidth - CARD_EDGE));
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows, profilePaneRows, roleInk };
+  module.exports = { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows, profileViewKey, memberCardLeft, roleInk };
 }

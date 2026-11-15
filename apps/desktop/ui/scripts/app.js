@@ -14420,14 +14420,14 @@ function studioProfilePane(person, place, reopen) {
   if (!bare) paintProfileBanner(banner, person.banner, person.avatar_provider, person.role_banner, PROFILE_WASH);
   paintCardEffect(banner, person.card_effect, person.id);
   const member = state.view === "server" ? currentServerMember(person.id) : null;
-  const rows = profilePaneRows(profileMenuRows({
+  const rows = profileMenuRows({
     me: isMe,
     bot: Boolean(person.bot),
     friend: friendState(person.id) === "friend",
     reportable: reportTargetsFor(person.id).length > 0,
     canTimeOut: Boolean(member) && canTimeOut(state.currentServer, member, state.user && state.user.id),
     canNickname: isMe && Boolean(member) && canChangeOwnNickname(),
-  }), place);
+  });
   if (rows.length) {
     const more = pane.appendChild(el("button", "key sq mc-more theme-dark"));
     more.type = "button";
@@ -14477,6 +14477,8 @@ function studioProfilePane(person, place, reopen) {
       reopen();
     });
   }
+  const view = profileViewKey(place);
+  if (view) key(view.cls, view.icon, "", view.title, () => openFullProfile(person));
   const body = pane.appendChild(el("div", "mc-body"));
   const nameRow = body.appendChild(el("div", "mc-name-row"));
   const name = nameRow.appendChild(el("span", "mc-name", person.name));
@@ -14650,7 +14652,6 @@ function openProfileMenu(person, x, y, keepOpen, card = null) {
   const blocked = isBlocked(person.id);
   const targets = reportTargetsFor(person.id);
   const rows = {
-    profile: () => item("Full Profile", "person", () => openFullProfile(person)),
     invite: () => {
       const btn = el("button");
       btn.append(svgIcon("serverAdd", 18), document.createTextNode("Invite to a server"));
@@ -14791,14 +14792,14 @@ function openMemberCard(member, anchor) {
   if (studio) card.querySelector(".mc-head").appendChild(actions);
   else $("mc-activity").after(actions);
   const moderates = state.view === "server" && canTimeOut(state.currentServer, member, state.user && state.user.id);
-  const rows = profilePaneRows(profileMenuRows({
+  const rows = profileMenuRows({
     me: isMe,
     bot: Boolean(member.bot),
     friend: friendState(member.id) === "friend",
     reportable: reportTargetsFor(member.id).length > 0,
     canTimeOut: moderates,
     canNickname: isMe && canChangeOwnNickname(),
-  }), studio && document.documentElement.dataset.fit === "slim" ? "phone" : "card");
+  });
   const more = $("mc-more");
   more.className = studio ? "key sq mc-more theme-dark" : "icon-btn mc-more";
   more.classList.toggle("hidden", studio ? !rows.length : isMe);
@@ -14843,6 +14844,8 @@ function openMemberCard(member, anchor) {
         openMemberCard(member, anchor);
       });
     }
+    const view = profileViewKey(document.documentElement.dataset.fit === "slim" ? "phone" : "card");
+    if (view) key(view.cls, view.icon, "", view.title, () => openFullProfile(member));
   }
   const action = (icon, label, onClick, cls = "") => {
     const btn = el("button", "mc-action " + cls);
@@ -14856,7 +14859,7 @@ function openMemberCard(member, anchor) {
     actions.appendChild(friendButton(member, () => openMemberCard(member, anchor)));
     action("serverAdd", "Invite", e => openInviteMenu(member, e.currentTarget));
   }
-  if (!studio) action("person", "Full Profile", () => openFullProfile(member));
+  if (!studio) action("person", "View profile", () => openFullProfile(member));
   if (!studio && moderates) {
     const active = timeoutActive(currentTimeoutOf(member));
     action("clock", timeoutActionLabel(member), () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
@@ -14871,7 +14874,7 @@ function openMemberCard(member, anchor) {
   card.classList.remove("hidden");
   const a = anchor.getBoundingClientRect();
   const r = card.getBoundingClientRect();
-  card.style.left = `${Math.max(8, a.left - r.width - 12)}px`;
+  card.style.left = `${memberCardLeft(a, r.width, window.innerWidth)}px`;
   card.style.top = `${Math.max(8, Math.min(a.top, window.innerHeight - r.height - 8))}px`;
 }
 

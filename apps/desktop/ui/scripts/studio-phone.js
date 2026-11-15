@@ -2926,7 +2926,6 @@ function wireFaceTaps() {
   $("mc-actions").addEventListener("click", editFromCard, true);
   for (const feed of [$("messages"), $("thread-messages")]) {
     feed.addEventListener("click", e => {
-      if (!studioSlim()) return;
       const hit = e.target.closest(".msg > .avatar:not(.spacer), .msg-head > .msg-author");
       const bar = hit && hit.closest(".msg").querySelector(":scope > .msg-actions");
       const author = faceTapAuthor(bar && messageOfActions.get(bar));

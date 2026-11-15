@@ -818,3 +818,6 @@ html[data-look="studio"] .game-pop .ac-steam {
 html[data-look="studio"] .game-pop .ac-steam:hover { filter: brightness(1.06); }
 html[data-look="studio"] .game-pop .ac-steam:active { scale: .96 .93; box-shadow: var(--pillow-down); }
 html[data-look="studio"] .game-pop .ac-steam:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+html[data-look="studio"] .msg > .avatar:not(.spacer),
+html[data-look="studio"] .msg-head > .msg-author { cursor: pointer; }
+html[data-look="studio"]:not([data-fit="slim"]) .msg-head > .msg-author:hover { text-decoration: underline; }

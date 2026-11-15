@@ -21,7 +21,6 @@ const PHONE_MENU_ICONS = {
   "chm-settings": "settings",
 };
 const PHONE_MENU_WORD_ICONS = {
-  "Full Profile": "user",
   "Invite to a server": "user-plus",
   "Nickname": "pencil",
   "Remove friend": "user-minus",
