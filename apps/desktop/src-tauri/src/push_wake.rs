@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use commy_sync::wake::{
-    quiet_due, seat_tag, sealed_preview, wake_day, Quiet, WakeForget, WakeQuiet, WakeRegister, WakeRing, WakeSeat, MAX_DAYS_AHEAD, MAX_RING_TAGS,
+    quiet_due, seat_tag, sealed_preview, wake_day, Quiet, RingTags, WakeForget, WakeQuiet, WakeRegister, WakeRing, WakeSeat, MAX_DAYS_AHEAD, MAX_RING_TAGS,
     MAX_URGENT_TAGS,
 };
 use commy_sync::StreamKeys;
@@ -80,6 +80,26 @@ pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<St
     send_ring(http, tags, preview, false).await;
 }
 
+pub async fn ring_tags(http: reqwest::Client, tags: RingTags, preview: Option<String>) {
+    let Some(base) = sync_link::url().as_deref().and_then(wake_url) else { return };
+    if tags.is_empty() {
+        return;
+    }
+    let delay = rand::thread_rng().gen_range(RING_DELAY_MS);
+    tokio::time::sleep(Duration::from_millis(delay)).await;
+    for body in tags.rings(preview) {
+        post_ring(&http, &base, &body).await;
+    }
+}
+
+async fn post_ring(http: &reqwest::Client, base: &str, body: &WakeRing) {
+    match http.post(format!("{base}/ring")).json(body).send().await {
+        Ok(res) if res.status().is_success() => tracing::info!("rang {} wake-up tags", body.tags.len()),
+        Ok(res) => tracing::info!("the sync service refused a wake-up ring: {}", res.status()),
+        Err(e) => tracing::info!("could not ring a wake-up: {e}"),
+    }
+}
+
 pub async fn ring_urgent(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>) {
     send_ring(http, tags, preview, true).await;
 }
@@ -93,12 +113,8 @@ async fn send_ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<S
     tokio::time::sleep(Duration::from_millis(delay)).await;
     let chunk_size = if urgent { MAX_URGENT_TAGS } else { MAX_RING_TAGS };
     for chunk in tags.chunks(chunk_size) {
-        let body = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone(), urgent };
-        match http.post(format!("{base}/ring")).json(&body).send().await {
-            Ok(res) if res.status().is_success() => tracing::info!("rang {} wake-up tags", chunk.len()),
-            Ok(res) => tracing::info!("the sync service refused a wake-up ring: {}", res.status()),
-            Err(e) => tracing::info!("could not ring a wake-up: {e}"),
-        }
+        let body = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone(), urgent, ..Default::default() };
+        post_ring(&http, &base, &body).await;
     }
 }
 
@@ -184,6 +200,11 @@ fn target() -> Option<(String, String)> {
 
 pub fn register(handle: &AppHandle) {
     let _ = HANDLE.set(handle.clone());
+    if cfg!(mobile) {
+        if let Some(app) = handle.try_state::<App>() {
+            server_wake::wake_when_mutes_end(&app, handle);
+        }
+    }
     if target().is_none() {
         ask_token(handle);
         return;

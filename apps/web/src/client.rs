@@ -843,7 +843,7 @@ impl Client {
         }))
     }
 
-    pub fn wake_whos(&self, server: ServerId, message: &Message, all_due: impl FnOnce() -> bool) -> Option<(bool, Vec<String>, String)> {
+    pub fn wake_whos(&self, server: ServerId, message: &Message, due: impl FnOnce() -> server_wake::RingDue) -> Option<(bool, server_wake::RingWhos, String)> {
         let keys = self.keys();
         let me = keys.user().filter(|me| *me == message.author)?;
         let servers = self.servers.lock().unwrap();
@@ -851,7 +851,7 @@ impl Client {
         let private = state.server.channel(message.channel).is_some_and(|c| c.is_private());
         let opened = keys.open(state, message)?;
         let text = server_wake::wake_text(&opened.content, &message.attachments);
-        Some((private, server_wake::ring_whos(state, me, &opened.content, all_due()), text))
+        Some((private, server_wake::ring_plan(state, me, message.channel, &opened.content, due()), text))
     }
 }
 
@@ -1386,16 +1386,21 @@ mod tests {
         let w = world();
         w.client.install_mirror(w.server, &mirror(&w)).unwrap();
         let (sent, _) = w.client.compose(w.server, w.channel, "hi @owner", None, false).unwrap();
-        let (private, whos, text) = w.client.wake_whos(w.server, &sent, || false).unwrap();
+        let quiet = || server_wake::RingDue { server: false, channel: false };
+        let busy = || server_wake::RingDue { server: true, channel: true };
+        let (private, whos, text) = w.client.wake_whos(w.server, &sent, quiet).unwrap();
         assert!(!private);
-        assert_eq!(whos, vec![w.owner.0.id.to_string()]);
+        assert!(whos.broad.is_empty());
+        assert_eq!(whos.direct, vec![w.owner.0.id.to_string()]);
+        assert_eq!(whos.hush, vec![server_wake::hush_who(w.channel)], "the ring names its channel so phones can hush it");
         assert_eq!(text, "hi @owner", "the sealed preview shows what was written");
-        let (_, busy, _) = w.client.wake_whos(w.server, &sent, || true).unwrap();
-        assert_eq!(busy.len(), 2, "the once a minute ring for everyone listening rides along");
+        let (_, rung, _) = w.client.wake_whos(w.server, &sent, busy).unwrap();
+        assert_eq!(rung.broad.len(), 2, "the once a minute rings for the server and the channel ride along");
+        assert_eq!(rung.direct.len(), 1);
         let (owner, identity) = &w.owner;
         let mut theirs = Message::new(w.channel, owner.id, "hi @me");
         theirs.sign(w.server, identity);
-        assert!(w.client.wake_whos(w.server, &theirs, || true).is_none(), "only the author rings");
+        assert!(w.client.wake_whos(w.server, &theirs, busy).is_none(), "only the author rings");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use commy_sync::wake::{
-    preview_ok, push_target, quiet_until_ok, register_until_ok, wake_day, PushService, WakeForget, WakeQuiet, WakeRegister, WakeRing, WakeSeat,
+    preview_ok, push_target, quiet_until_ok, register_until_ok, wake_day, PushService, WakeForget, WakeQuiet, WakeRegister, WakeRing, WakeSeat, WakeTag,
     MAX_RING_TAGS, PUSH_GAP_SECS, SEAT_HOLD_SECS, URGENT_GAP_SECS, URGENT_PER_HOUR,
 };
 use tokio::sync::mpsc;
@@ -65,6 +65,7 @@ const MAX_HELD_PREVIEWS: usize = 4;
 pub struct Wakes {
     pusher: Pusher,
     last: Mutex<HashMap<String, Instant>>,
+    sent: Mutex<HashMap<String, String>>,
     queued: Mutex<HashMap<String, Vec<String>>>,
     seated: Mutex<HashMap<String, Instant>>,
     urgent: Mutex<HashMap<String, VecDeque<Instant>>>,
@@ -75,6 +76,7 @@ impl Wakes {
         Self {
             pusher,
             last: Mutex::new(HashMap::new()),
+            sent: Mutex::new(HashMap::new()),
             queued: Mutex::new(HashMap::new()),
             seated: Mutex::new(HashMap::new()),
             urgent: Mutex::new(HashMap::new()),
@@ -112,10 +114,27 @@ impl Wakes {
         push_target(push).is_some_and(|(service, _)| self.pusher.offers(service))
     }
 
+    fn already_sent(&self, push: &str, preview: Option<&str>) -> bool {
+        let Some(preview) = preview else { return false };
+        let sent = self.sent.lock().unwrap().get(push).is_some_and(|last| last == preview);
+        sent || self.queued.lock().unwrap().get(push).is_some_and(|held| held.iter().any(|p| p == preview))
+    }
+
+    fn note_sent(&self, push: &str, preview: Option<&str>) {
+        let mut sent = self.sent.lock().unwrap();
+        match preview {
+            Some(preview) => sent.insert(push.to_string(), preview.to_string()),
+            None => sent.remove(push),
+        };
+    }
+
     fn plan(&self, push: &str, now: Instant, preview: Option<&str>) -> Plan {
         let mut last = self.last.lock().unwrap();
         match last.get(push).map(|at| now.saturating_duration_since(*at)) {
             Some(since) if since < PUSH_GAP => {
+                if self.already_sent(push, preview) {
+                    return Plan::AlreadyQueued;
+                }
                 let mut queued = self.queued.lock().unwrap();
                 let fresh = !queued.contains_key(push);
                 let held = queued.entry(push.to_string()).or_default();
@@ -133,6 +152,7 @@ impl Wakes {
             }
             _ => {
                 last.insert(push.to_string(), now);
+                self.note_sent(push, preview);
                 Plan::Now
             }
         }
@@ -141,12 +161,16 @@ impl Wakes {
     fn release_queued(&self, push: &str, now: Instant) -> Vec<String> {
         let previews = self.queued.lock().unwrap().remove(push).unwrap_or_default();
         self.last.lock().unwrap().insert(push.to_string(), now);
+        self.note_sent(push, previews.last().map(String::as_str));
         previews
     }
 
     pub fn forget_idle(&self) {
         let now = Instant::now();
-        self.last.lock().unwrap().retain(|_, at| now.saturating_duration_since(*at) < PUSH_GAP);
+        let mut last = self.last.lock().unwrap();
+        last.retain(|_, at| now.saturating_duration_since(*at) < PUSH_GAP);
+        self.sent.lock().unwrap().retain(|push, _| last.contains_key(push));
+        drop(last);
         self.seated.lock().unwrap().retain(|_, until| now < *until);
         let mut urgent = self.urgent.lock().unwrap();
         urgent.values_mut().for_each(|sent| sent.retain(|at| now.saturating_duration_since(*at) < URGENT_WINDOW));
@@ -337,13 +361,44 @@ pub async fn quiet(
     }
 }
 
+fn raw(tags: &[WakeTag]) -> Vec<[u8; 32]> {
+    tags.iter().map(|t| t.0).collect()
+}
+
+async fn targets(service: &Service, tags: &[WakeTag]) -> Result<HashSet<String>, crate::store::StoreError> {
+    if tags.is_empty() {
+        return Ok(HashSet::new());
+    }
+    Ok(service.store.wake_targets(&raw(tags), today()).await?.into_iter().collect())
+}
+
+pub fn hushed(pushes: Vec<String>, hushed: &HashSet<String>, quiet: &HashSet<String>, direct: &HashSet<String>) -> Vec<String> {
+    pushes.into_iter().filter(|push| !hushed.contains(push) && (!quiet.contains(push) || direct.contains(push))).collect()
+}
+
+async fn wanted_pushes(service: &Service, request: &WakeRing) -> Result<Vec<String>, crate::store::StoreError> {
+    let pushes = service.store.wake_targets(&raw(&request.tags), today()).await?;
+    if request.hush.is_empty() && request.quiet.is_empty() {
+        return Ok(pushes);
+    }
+    let hush = targets(service, &request.hush).await?;
+    let quiet = targets(service, &request.quiet).await?;
+    let direct = if quiet.is_empty() { HashSet::new() } else { targets(service, &request.direct_tags()).await? };
+    Ok(hushed(pushes, &hush, &quiet, &direct))
+}
+
 pub async fn ring(
     State(service): State<Arc<Service>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<WakeRing>,
 ) -> Response {
-    if request.tags.is_empty() || request.tags.len() > MAX_RING_TAGS || !request.urgent_ok() || request.preview.as_deref().is_some_and(|p| !preview_ok(p)) {
+    if request.tags.is_empty()
+        || request.tags.len() > MAX_RING_TAGS
+        || !request.urgent_ok()
+        || !request.hush_ok()
+        || request.preview.as_deref().is_some_and(|p| !preview_ok(p))
+    {
         return StatusCode::BAD_REQUEST.into_response();
     }
     if !service.wakes.enabled() {
@@ -352,8 +407,7 @@ pub async fn ring(
     if limited(&service, peer, &headers) {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
-    let tags: Vec<[u8; 32]> = request.tags.iter().map(|t| t.0).collect();
-    let pushes = match service.store.wake_targets(&tags, today()).await {
+    let pushes = match wanted_pushes(&service, &request).await {
         Ok(pushes) => pushes,
         Err(e) => {
             tracing::warn!("sync: could not look up wake registrations: {e}");
@@ -401,6 +455,25 @@ mod tests {
         }
         assert!(!wakes.take_urgent("fcm:a", at + URGENT_GAP), "the hour is used up");
         assert!(wakes.take_urgent("fcm:a", start + URGENT_WINDOW + URGENT_GAP), "and refills as the hour moves on");
+    }
+
+    #[test]
+    fn the_same_message_reaching_a_phone_through_two_rings_wakes_it_once() {
+        let wakes = Wakes::new(Pusher::Off);
+        let start = Instant::now();
+        assert_eq!(wakes.plan("fcm:a", start, Some("p1")), Plan::Now);
+        assert_eq!(wakes.plan("fcm:a", start + PUSH_GAP / 4, Some("p1")), Plan::AlreadyQueued, "a second chunk of the same ring adds nothing");
+        assert_eq!(wakes.plan("fcm:a", start + PUSH_GAP / 3, Some("p2")), Plan::After(PUSH_GAP - PUSH_GAP / 3));
+        assert_eq!(wakes.plan("fcm:a", start + PUSH_GAP / 2, Some("p2")), Plan::AlreadyQueued);
+        assert_eq!(wakes.release_queued("fcm:a", start + PUSH_GAP), vec!["p2".to_string()]);
+    }
+
+    #[test]
+    fn a_hushed_channel_drops_its_phones_and_a_quiet_one_lets_direct_mentions_through() {
+        let set = |pushes: &[&str]| pushes.iter().map(|p| p.to_string()).collect::<HashSet<String>>();
+        let pushes = vec!["fcm:a".to_string(), "fcm:b".to_string(), "fcm:c".to_string(), "fcm:d".to_string()];
+        let kept = hushed(pushes, &set(&["fcm:a"]), &set(&["fcm:b", "fcm:c"]), &set(&["fcm:a", "fcm:c"]));
+        assert_eq!(kept, vec!["fcm:c".to_string(), "fcm:d".to_string()]);
     }
 
     #[test]

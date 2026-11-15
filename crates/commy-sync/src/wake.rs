@@ -27,6 +27,7 @@ pub const QUIET_REFRESH_SECS: u64 = 6 * 60 * 60;
 pub const MAX_URGENT_TAGS: usize = 2;
 pub const URGENT_GAP_SECS: u64 = 60;
 pub const URGENT_PER_HOUR: usize = 6;
+pub const MAX_HUSH_TAGS: usize = 2;
 
 pub type WakeTag = Bytes<32>;
 
@@ -47,18 +48,66 @@ pub struct WakeForget {
     pub push: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WakeRing {
     pub tags: Vec<WakeTag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub urgent: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hush: Vec<WakeTag>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quiet: Vec<WakeTag>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub direct: Vec<u8>,
 }
 
 impl WakeRing {
     pub fn urgent_ok(&self) -> bool {
         !self.urgent || self.tags.len() <= MAX_URGENT_TAGS
+    }
+
+    pub fn hush_ok(&self) -> bool {
+        self.hush.len() <= MAX_HUSH_TAGS
+            && self.quiet.len() <= MAX_HUSH_TAGS
+            && self.direct.len() <= self.tags.len()
+            && self.direct.iter().all(|at| usize::from(*at) < self.tags.len())
+    }
+
+    pub fn direct_tags(&self) -> Vec<WakeTag> {
+        self.direct.iter().filter_map(|at| self.tags.get(usize::from(*at)).cloned()).collect()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RingTags {
+    pub broad: Vec<[u8; 32]>,
+    pub direct: Vec<[u8; 32]>,
+    pub hush: Vec<[u8; 32]>,
+    pub quiet: Vec<[u8; 32]>,
+}
+
+impl RingTags {
+    pub fn is_empty(&self) -> bool {
+        self.broad.is_empty() && self.direct.is_empty()
+    }
+
+    pub fn rings(&self, preview: Option<String>) -> Vec<WakeRing> {
+        let marked: Vec<([u8; 32], bool)> = self.broad.iter().map(|tag| (*tag, false)).chain(self.direct.iter().map(|tag| (*tag, true))).collect();
+        let hush: Vec<WakeTag> = self.hush.iter().take(MAX_HUSH_TAGS).map(|tag| Bytes(*tag)).collect();
+        let quiet: Vec<WakeTag> = self.quiet.iter().take(MAX_HUSH_TAGS).map(|tag| Bytes(*tag)).collect();
+        marked
+            .chunks(MAX_RING_TAGS)
+            .map(|chunk| WakeRing {
+                tags: chunk.iter().map(|(tag, _)| Bytes(*tag)).collect(),
+                preview: preview.clone(),
+                urgent: false,
+                hush: hush.clone(),
+                quiet: quiet.clone(),
+                direct: chunk.iter().enumerate().filter(|(_, (_, direct))| *direct).map(|(at, _)| at as u8).collect(),
+            })
+            .collect()
     }
 }
 
@@ -271,9 +320,40 @@ mod tests {
     }
 
     #[test]
+    fn a_ring_splits_into_chunks_that_each_carry_the_hush_and_mark_direct_tags() {
+        let broad: Vec<[u8; 32]> = (0..10u8).map(|n| [n; 32]).collect();
+        let tags = RingTags { broad, direct: vec![[50; 32], [51; 32]], hush: vec![[90; 32]], quiet: vec![[91; 32]] };
+        let rings = tags.rings(Some("p".into()));
+        assert_eq!(rings.len(), 2);
+        assert_eq!(rings[0].tags.len(), MAX_RING_TAGS);
+        assert!(rings[0].direct.is_empty());
+        assert_eq!(rings[1].tags.len(), 4);
+        assert_eq!(rings[1].direct, vec![2, 3]);
+        assert_eq!(rings[1].direct_tags(), vec![Bytes([50; 32]), Bytes([51; 32])]);
+        for ring in &rings {
+            assert!(ring.hush_ok());
+            assert_eq!(ring.hush, vec![Bytes([90; 32])]);
+            assert_eq!(ring.quiet, vec![Bytes([91; 32])]);
+            assert_eq!(ring.preview.as_deref(), Some("p"));
+        }
+        assert!(RingTags::default().rings(None).is_empty());
+    }
+
+    #[test]
+    fn a_ring_without_hush_reads_the_same_on_the_wire_as_before() {
+        let ring = WakeRing { tags: vec![Bytes([2u8; 32])], ..Default::default() };
+        let json = serde_json::to_value(&ring).unwrap();
+        assert!(json.get("hush").is_none() && json.get("quiet").is_none() && json.get("direct").is_none());
+        let bad = WakeRing { tags: vec![Bytes([2u8; 32])], direct: vec![1], ..Default::default() };
+        assert!(!bad.hush_ok(), "a direct mark must point at a tag in the ring");
+        let crowded = WakeRing { tags: vec![Bytes([2u8; 32])], hush: vec![Bytes([3u8; 32]); MAX_HUSH_TAGS + 1], ..Default::default() };
+        assert!(!crowded.hush_ok());
+    }
+
+    #[test]
     fn an_urgent_ring_names_one_person_at_most() {
         let tag = Bytes([1u8; 32]);
-        let ring = |tags: usize, urgent: bool| WakeRing { tags: vec![tag.clone(); tags], preview: None, urgent };
+        let ring = |tags: usize, urgent: bool| WakeRing { tags: vec![tag.clone(); tags], preview: None, urgent, ..Default::default() };
         assert!(ring(MAX_URGENT_TAGS, true).urgent_ok());
         assert!(!ring(MAX_URGENT_TAGS + 1, true).urgent_ok(), "a whole server cannot be woken through quiet hours");
         assert!(ring(MAX_RING_TAGS, false).urgent_ok());
@@ -281,7 +361,7 @@ mod tests {
 
     #[test]
     fn an_old_service_reads_an_ordinary_ring_unchanged() {
-        let plain = serde_json::to_value(WakeRing { tags: vec![Bytes([2u8; 32])], preview: None, urgent: false }).unwrap();
+        let plain = serde_json::to_value(WakeRing { tags: vec![Bytes([2u8; 32])], preview: None, urgent: false, ..Default::default() }).unwrap();
         assert!(plain.get("urgent").is_none());
         let read: WakeRing = serde_json::from_value(serde_json::json!({ "tags": plain["tags"] })).unwrap();
         assert!(!read.urgent);

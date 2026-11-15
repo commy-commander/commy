@@ -1,17 +1,41 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use commy_core::{ChannelId, Message, ServerId, ServerState, UserId};
+use commy_net::server_wake::{channel_ranks, choice, next_mute_end, point_whos, ring_plan, unwanted_whos, wake_text, AllRings, RingDue};
+use commy_sync::wake::RingTags;
 use data_encoding::BASE64;
-use commy_net::server_wake::{choice, listen_whos, ring_whos, unwanted_whos, wake_text, AllRings};
+use tauri::AppHandle;
 
 use crate::state::App;
 use crate::{account_log, channel_lock, community_sync, push_wake};
 
 static LAST_ALL: Mutex<Option<AllRings>> = Mutex::new(None);
+static MUTE_END_WATCHED: Mutex<Option<i64>> = Mutex::new(None);
+const MUTE_END_SLACK_SECS: i64 = 2;
 
-fn all_due(server: ServerId) -> bool {
-    LAST_ALL.lock().unwrap().get_or_insert_with(AllRings::default).due(server, chrono::Utc::now().timestamp_millis())
+fn ring_due(server: ServerId, channel: ChannelId) -> RingDue {
+    LAST_ALL.lock().unwrap().get_or_insert_with(AllRings::default).ring_due(server, channel, chrono::Utc::now().timestamp_millis())
+}
+
+pub fn wake_when_mutes_end(app: &App, handle: &AppHandle) {
+    let now = chrono::Utc::now().timestamp();
+    let Some(end) = next_mute_end(&account_log::pref_values(app), now) else { return };
+    {
+        let mut watched = MUTE_END_WATCHED.lock().unwrap();
+        if watched.is_some_and(|at| at > now && at <= end) {
+            return;
+        }
+        *watched = Some(end);
+    }
+    let handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let wait = (end - now + MUTE_END_SLACK_SECS).max(0) as u64;
+        tokio::time::sleep(Duration::from_secs(wait)).await;
+        *MUTE_END_WATCHED.lock().unwrap() = None;
+        push_wake::register(&handle);
+    });
 }
 
 pub fn ring(app: &App, server: ServerId, message: &Message) {
@@ -25,18 +49,27 @@ pub fn ring(app: &App, server: ServerId, message: &Message) {
             let private = state.server.channel(message.channel).is_some_and(|c| c.is_private());
             let opened = channel_lock::holder_of(app).open(state, message)?;
             let text = wake_text(&opened.content, &message.attachments);
-            Some((private, ring_whos(state, me, &opened.content, all_due(server)), text))
+            Some((private, ring_plan(state, me, message.channel, &opened.content, ring_due(server, message.channel)), text))
         })
     };
     let Some((private, whos, text)) = found else { return };
-    let Some(keys) = community_sync::wake_keys(server, private.then_some(message.channel)) else { return };
-    let today = push_wake::today();
-    let tags: Vec<[u8; 32]> = whos.iter().map(|who| keys.wake_tag(who, today)).collect();
-    if tags.is_empty() {
+    if whos.is_empty() {
         return;
     }
+    let Some(keys) = community_sync::wake_keys(server, private.then_some(message.channel)) else { return };
+    let today = push_wake::today();
+    let tagged = |whos: &[String]| -> Vec<[u8; 32]> { whos.iter().map(|who| keys.wake_tag(who, today)).collect() };
+    let tags = RingTags { broad: tagged(&whos.broad), direct: tagged(&whos.direct), hush: tagged(&whos.hush), quiet: tagged(&whos.quiet) };
     let preview = push_wake::preview(app, &keys, &me.to_string(), Some(message.channel.to_string()), &text, false, false);
-    tauri::async_runtime::spawn(push_wake::ring(app.http.clone(), tags, preview));
+    tauri::async_runtime::spawn(push_wake::ring_tags(app.http.clone(), tags, preview));
+}
+
+fn point_channels(state: &ServerState, me: UserId, point: Option<ChannelId>) -> Vec<ChannelId> {
+    if let Some(channel) = point {
+        return vec![channel];
+    }
+    let server = &state.server;
+    server.channels.iter().filter(|c| c.kind.holds_messages() && !c.is_private() && server.can_view(c.id, me)).map(|c| c.id).collect()
 }
 
 #[derive(Default)]
@@ -58,6 +91,7 @@ pub fn wake_tags(app: &App, days: &[i64]) -> ServerTags {
     let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
     let Some(me) = me else { return ServerTags { unsettled: app.servers.lock().unwrap().keys().copied().collect(), ..Default::default() } };
     let prefs = account_log::pref_values(app);
+    let now = chrono::Utc::now().timestamp();
     let points = community_sync::wake_points();
     let servers = app.servers.lock().unwrap();
     let live: HashSet<(ServerId, Option<ChannelId>)> = points.iter().map(|(server, channel, _)| (*server, *channel)).collect();
@@ -70,10 +104,11 @@ pub fn wake_tags(app: &App, days: &[i64]) -> ServerTags {
             continue;
         }
         let chosen = choice(&prefs, server);
+        let own = channel_ranks(&prefs, server, now);
         let tagged = |whos: Vec<String>| -> Vec<(ServerId, ([u8; 32], i64))> {
             whos.iter().flat_map(|who| days.iter().map(|day| (server, (keys.wake_tag(who, *day), *day)))).collect()
         };
-        tags.extend(tagged(listen_whos(state, me, &chosen)));
+        tags.extend(tagged(point_whos(state, me, &chosen, &own, &point_channels(state, me, channel))));
         unwanted.extend(tagged(unwanted_whos(state, me, &chosen)));
     }
     ServerTags { tags, unsettled, unwanted }

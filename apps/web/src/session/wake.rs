@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use commy_core::{Identity, Message, ServerId, UserId};
-use commy_sync::wake::{sealed_preview, wake_day, WakeRing, MAX_RING_TAGS};
+use commy_sync::wake::{sealed_preview, wake_day, RingTags, WakeRing, MAX_RING_TAGS};
 use commy_core::dm::DmMessage;
 use commy_sync::wire::Bytes;
 use commy_sync::StreamKeys;
@@ -30,18 +30,34 @@ fn ring_delay() -> Duration {
 }
 
 impl Session {
-    pub(super) fn server_wake_tags(&self, server: ServerId, message: &Message) -> (Vec<[u8; 32]>, Option<String>) {
+    pub(super) fn server_wake_tags(&self, server: ServerId, message: &Message) -> (RingTags, Option<String>) {
         let mut guard = self.sync.borrow_mut();
-        let Some(live) = guard.as_mut() else { return (Vec::new(), None) };
+        let Some(live) = guard.as_mut() else { return (RingTags::default(), None) };
         let now = Utc::now().timestamp_millis();
-        let found = self.client.borrow().wake_whos(server, message, || live.all_rings.due(server, now));
-        let Some((private, whos, text)) = found else { return (Vec::new(), None) };
-        let Some(keys) = live.book.wake_keys(server, private.then_some(message.channel)) else { return (Vec::new(), None) };
+        let found = self.client.borrow().wake_whos(server, message, || live.all_rings.ring_due(server, message.channel, now));
+        let Some((private, whos, text)) = found else { return (RingTags::default(), None) };
+        let Some(keys) = live.book.wake_keys(server, private.then_some(message.channel)) else { return (RingTags::default(), None) };
         let today = wake_day(now);
         let preview = self.me_and_key().and_then(|(_, identity)| {
             sealed_preview(&keys, today, |msg| identity.sign(msg).0, &message.author.to_string(), Some(message.channel.to_string()), &text, false, false)
         });
-        (whos.iter().map(|who| keys.wake_tag(who, today)).collect(), preview)
+        let tagged = |whos: &[String]| -> Vec<[u8; 32]> { whos.iter().map(|who| keys.wake_tag(who, today)).collect() };
+        (RingTags { broad: tagged(&whos.broad), direct: tagged(&whos.direct), hush: tagged(&whos.hush), quiet: tagged(&whos.quiet) }, preview)
+    }
+
+    pub(super) fn ring_server_wake(&self, tags: RingTags, preview: Option<String>) {
+        let Some(url) = self.sync.borrow().as_ref().and_then(|live| live.wake.clone()) else { return };
+        if tags.is_empty() {
+            return;
+        }
+        let host: Host = JsValue::clone(&self.host).unchecked_into();
+        spawn_local(async move {
+            n0_future::time::sleep(ring_delay()).await;
+            for ring in tags.rings(preview) {
+                let Ok(body) = serde_json::to_string(&ring) else { return };
+                let _ = host.request("POST", &url, Some(body)).await;
+            }
+        });
     }
 
     pub(super) fn ring_wake(&self, tags: Vec<[u8; 32]>, preview: Option<String>) {
@@ -53,7 +69,7 @@ impl Session {
         spawn_local(async move {
             n0_future::time::sleep(ring_delay()).await;
             for chunk in tags.chunks(MAX_RING_TAGS) {
-                let ring = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone(), urgent: false };
+                let ring = WakeRing { tags: chunk.iter().map(|tag| Bytes(*tag)).collect(), preview: preview.clone(), ..Default::default() };
                 let Ok(body) = serde_json::to_string(&ring) else { return };
                 let _ = host.request("POST", &url, Some(body)).await;
             }

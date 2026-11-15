@@ -880,7 +880,7 @@ impl Session {
             }
             if stored {
                 this.settle_delivered(server, &[id]);
-                this.ring_wake(tags, preview);
+                this.ring_server_wake(tags, preview);
             }
         });
     }
