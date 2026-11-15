@@ -71,6 +71,11 @@ export function hashRevokeSecret(secret) {
   return createHash("sha256").update(String(secret)).digest("hex");
 }
 
+export function sameMaker(existing, createdBy, revokeHash) {
+  if (createdBy !== null) return existing.createdBy === createdBy;
+  return existing.createdBy == null && (existing.revokeHash ?? null) === revokeHash;
+}
+
 export function revokeSecretMatches(secret, hash) {
   if (!secret || !REVOKE_HASH.test(hash ?? "")) return false;
   return timingSafeEqual(Buffer.from(hashRevokeSecret(secret)), Buffer.from(hash));
@@ -228,7 +233,7 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
         }
 
         const existing = await adapter.findOne({ model: MODEL, where: [{ field: "ticket", value: ticket }] });
-        if (existing && !existing.custom && (existing.createdBy ?? null) === createdBy) {
+        if (existing && !existing.custom && sameMaker(existing, createdBy, revokeHash)) {
           const updated = await adapter.update({
             model: MODEL,
             where: [{ field: "id", value: existing.id }],
@@ -289,9 +294,14 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
         if (ctx.body.secret === undefined) {
           const session = await getSessionFromCtx(ctx);
           if (!session) throw new APIError("UNAUTHORIZED", { message: "Sign in to revoke invite links" });
-          if (row && row.createdBy === session.user.id) await removeInvite(adapter, row.code);
+          if (row && row.createdBy !== session.user.id) {
+            throw new APIError("FORBIDDEN", { message: "Only the account that made this invite can revoke it this way" });
+          }
+          if (row) await removeInvite(adapter, row.code);
         } else if (row && revokeSecretMatches(ctx.body.secret, row.revokeHash)) {
           await removeInvite(adapter, row.code);
+        } else if (row) {
+          throw new APIError("FORBIDDEN", { message: "That revoke key does not match this invite" });
         }
         return ctx.json({ success: true });
       },

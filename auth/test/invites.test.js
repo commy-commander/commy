@@ -295,7 +295,7 @@ test("whoever holds the revoke secret can revoke, without an account", async () 
   assert.equal((await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "a", revokeHash: "nope" } })).status, 400);
 
   const wrong = await call("POST", "/commy/invites/revoke", { body: { code: created.json.code, secret: "s".repeat(43) } });
-  assert.equal(wrong.status, 200, "a wrong secret looks the same as a right one");
+  assert.equal(wrong.status, 403, "a wrong secret is refused so the maker knows the link still works");
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } })).status, 200);
   await call("POST", "/commy/invites/revoke", { body: { code: created.json.code, secret: SECRET } });
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: created.json.code } })).status, 404);
@@ -303,6 +303,23 @@ test("whoever holds the revoke secret can revoke, without an account", async () 
   const old = await call("POST", "/commy/invites/create", { body: { ticket: TICKET + "b" } });
   await call("POST", "/commy/invites/revoke", { body: { code: old.json.code, secret: SECRET } });
   assert.equal((await call("GET", "/commy/invites/resolve", { query: { code: old.json.code } })).status, 200, "links made without a hash need their creator");
+});
+
+test("posting someone else's ticket again never takes over its revoke key or expiry", async () => {
+  const { db, call } = makeAuth();
+  const created = await call("POST", "/commy/invites/create", { body: { ticket: TICKET, expiresIn: "7d", revokeHash: hashRevokeSecret(SECRET) } });
+  const before = db.invite.find((r) => r.code === created.json.code).expiresAt;
+  const other = "o".repeat(43);
+  const repost = await call("POST", "/commy/invites/create", { body: { ticket: TICKET, expiresIn: "30d", revokeHash: hashRevokeSecret(other) } });
+  assert.equal(repost.status, 200);
+  assert.notEqual(repost.json.code, created.json.code, "a different revoke key gets its own link");
+  const row = db.invite.find((r) => r.code === created.json.code);
+  assert.equal(row.revokeHash, hashRevokeSecret(SECRET));
+  assert.equal(String(row.expiresAt), String(before));
+  const same = await call("POST", "/commy/invites/create", { body: { ticket: TICKET, expiresIn: "30d", revokeHash: hashRevokeSecret(SECRET) } });
+  assert.equal(same.json.code, created.json.code, "the maker can refresh their own link");
+  assert.equal((await call("POST", "/commy/invites/revoke", { body: { code: created.json.code, secret: other } })).status, 403);
+  assert.equal((await call("POST", "/commy/invites/revoke", { body: { code: created.json.code, secret: SECRET } })).status, 200);
 });
 
 test("an invite background is stored sealed, needs an account and goes with its link", async () => {

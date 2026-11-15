@@ -211,8 +211,16 @@ impl Session {
 
     pub(super) async fn revoke_at_account_server(&self, invites: Vec<commy_core::TrackedInvite>) {
         for invite in invites.iter().filter(|invite| invite.origin == self.origin) {
-            let _ = self.request("POST", invite::REVOKE_PATH, Some(invite::revoke_body(invite))).await;
+            let _ = self.revoke_request(invite).await;
         }
+    }
+
+    async fn revoke_request(&self, invite: &commy_core::TrackedInvite) -> Result<crate::account::Reply, String> {
+        let reply = self.request("POST", invite::REVOKE_PATH, Some(invite::revoke_body(invite))).await?;
+        if reply.status != 403 {
+            return Ok(reply);
+        }
+        self.request("POST", invite::REVOKE_PATH, Some(invite::legacy_revoke_body(invite))).await
     }
 
     async fn revoke(&self, server: ServerId, origin: &str, code: &str) -> Result<(), String> {
@@ -226,7 +234,7 @@ impl Session {
         if invite.origin != self.origin {
             return Err(format!("This invite was made on {}. Revoke it from the desktop app.", invite::host_of(&invite.origin)));
         }
-        let reply = self.request("POST", invite::REVOKE_PATH, Some(invite::revoke_body(&invite))).await?;
+        let reply = self.revoke_request(&invite).await?;
         if !reply.ok() && reply.status != 404 {
             invite_reply::<Value>(reply)?;
         }

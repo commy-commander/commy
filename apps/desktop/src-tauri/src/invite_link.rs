@@ -244,8 +244,12 @@ pub async fn invite_full_link(app: tauri::State<'_, App>, server_id: String, ori
 }
 
 pub async fn send_revoke(app: &App, invite: &commy_core::TrackedInvite) -> Result<(), String> {
-    let request = app.http.post(format!("{}{}", invite.origin, commy_net::invite::REVOKE_PATH)).json(&commy_net::invite::revoke_body(invite));
-    let res = request.send().await.map_err(|_| format!("Could not reach {}", host_of(&invite.origin)))?;
+    let url = format!("{}{}", invite.origin, commy_net::invite::REVOKE_PATH);
+    let unreachable = || format!("Could not reach {}", host_of(&invite.origin));
+    let mut res = app.http.post(&url).json(&commy_net::invite::revoke_body(invite)).send().await.map_err(|_| unreachable())?;
+    if res.status() == reqwest::StatusCode::FORBIDDEN {
+        res = app.http.post(&url).json(&commy_net::invite::legacy_revoke_body(invite)).send().await.map_err(|_| unreachable())?;
+    }
     if !res.status().is_success() && res.status() != reqwest::StatusCode::NOT_FOUND {
         return Err(error_message(res).await);
     }

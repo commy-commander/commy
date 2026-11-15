@@ -278,9 +278,19 @@ pub fn clip(s: &str, max: usize) -> String {
     s.chars().filter(|c| !c.is_control()).take(max).collect()
 }
 
-pub fn revoke_hash(revoke_key: &str) -> String {
+const REVOKE_PROOF_DOMAIN: &str = "commy-invite-revoke-proof/v1";
+
+fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest;
-    data_encoding::HEXLOWER.encode(&sha2::Sha256::digest(revoke_key.as_bytes()))
+    data_encoding::HEXLOWER.encode(&sha2::Sha256::digest(bytes))
+}
+
+pub fn revoke_proof(revoke_key: &str) -> String {
+    sha256_hex(format!("{REVOKE_PROOF_DOMAIN}|{revoke_key}").as_bytes())
+}
+
+pub fn revoke_hash(revoke_key: &str) -> String {
+    sha256_hex(revoke_proof(revoke_key).as_bytes())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -535,6 +545,10 @@ pub fn revocable(state: &ServerState, me: UserId, origin: &str, code: &str) -> R
 }
 
 pub fn revoke_body(invite: &TrackedInvite) -> serde_json::Value {
+    serde_json::json!({ "code": invite.code, "secret": revoke_proof(&invite.revoke_key) })
+}
+
+pub fn legacy_revoke_body(invite: &TrackedInvite) -> serde_json::Value {
     serde_json::json!({ "code": invite.code, "secret": invite.revoke_key })
 }
 
