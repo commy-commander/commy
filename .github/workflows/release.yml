@@ -431,9 +431,24 @@ jobs:
     name: Bot builds
     uses: ./.github/workflows/bot.yml
 
+  tagged-from-main:
+    name: Tag is on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.ref_type == 'tag'
+        with:
+          fetch-depth: 0
+
+      - name: Refuse a tag that main does not contain
+        if: github.ref_type == 'tag'
+        run: |
+          git fetch -q origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_REF points at a commit that is not on main"; exit 1; }
+
   publish:
     name: Publish release
-    needs: [build, build-macos, macos-universal, streamdeck, bot]
+    needs: [tagged-from-main, build, build-macos, macos-universal, streamdeck, bot]
     if: github.ref_type == 'tag' && !cancelled() && !failure()
     runs-on: ubuntu-latest
     permissions:

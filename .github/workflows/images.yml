@@ -361,9 +361,24 @@ jobs:
             ${{ github.event_name == 'pull_request' && format('type=gha,scope=pr-{0}', matrix.service) || '' }}
           cache-to: ${{ github.event_name == 'pull_request' && format('type=gha,mode=max,scope=pr-{0}', matrix.service) || format('type=registry,ref={0}/commy-{1}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true', env.IMAGES, matrix.service) }}
 
+  tagged-from-main:
+    name: Tag is on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.ref_type == 'tag'
+        with:
+          fetch-depth: 0
+
+      - name: Refuse a tag that main does not contain
+        if: github.ref_type == 'tag'
+        run: |
+          git fetch -q origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_REF points at a commit that is not on main"; exit 1; }
+
   publish:
     name: Publish ${{ matrix.service }}
-    needs: [auth-tests, sync-tests, agent-tests, stack-e2e, image, sync-image]
+    needs: [tagged-from-main, auth-tests, sync-tests, agent-tests, stack-e2e, image, sync-image]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     concurrency:
