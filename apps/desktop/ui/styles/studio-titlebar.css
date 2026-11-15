@@ -1,15 +1,17 @@
 html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .app { height: 100vh; margin-top: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .rail { padding-right: calc(146px - var(--st-mr)); }
+html[data-look="studio"]:not([data-fit="slim"]) { --tb-top: var(--st-mt); --tb-row: 50px; --tb-keys: 138px; --tb-gap: 20px; --tb-tile: 36px; }
+html[data-look="studio"]:not([data-fit="slim"])[data-fit="compact"] { --tb-top: 6px; --tb-row: 48px; }
+html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .rail { padding-right: calc(var(--tb-keys) + var(--tb-gap) - var(--st-mr)); }
 html[data-look="studio"]:not([data-fit="slim"]) body.has-titlebar .offline-chip { top: calc(var(--st-mt) + 9px); }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar { left: auto; height: calc(var(--st-mt) * 2 + 50px); background: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar { left: auto; height: calc(var(--tb-top) + var(--tb-row)); background: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .titlebar-drag { display: none; }
 html[data-look="studio"] #titlebar-icon.is-logo { background: none; box-shadow: none; border-radius: 0; }
 html[data-look="studio"] #titlebar-icon.is-logo img { object-fit: contain; border-radius: 0; }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn { width: 46px; height: 100%; padding-block: calc(var(--st-mt) + 7px); background-clip: content-box; color: var(--text-muted); transition: background var(--t-hover), color var(--t-hover); }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn { width: 46px; height: 100%; padding: calc(var(--tb-top) + (var(--tb-row) - var(--tb-tile)) / 2) 0 calc((var(--tb-row) - var(--tb-tile)) / 2); background-clip: content-box; color: var(--text-muted); transition: background var(--t-hover), color var(--t-hover); }
 html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn svg { width: 10px; height: 10px; }
 html[data-look="studio"]:not([data-fit="slim"]) .titlebar.is-idle .titlebar-btn { color: var(--text-faint); }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar .titlebar-btn:hover { background: var(--bg-hover); color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .titlebar .titlebar-btn.titlebar-close:hover { background: var(--danger); color: var(--danger-ink); }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar .titlebar-btn:hover { background-color: var(--bg-hover); color: var(--header-primary); }
+html[data-look="studio"]:not([data-fit="slim"]) .titlebar .titlebar-btn.titlebar-close:hover { background-color: var(--danger); color: var(--danger-ink); }
 @media (prefers-reduced-motion: reduce) {
   html[data-look="studio"]:not([data-fit="slim"]) .titlebar-btn { transition: none; }
 }

@@ -39,11 +39,13 @@ test("the title bar loads with the new look, roomy only, from the tokens", () =>
   }
 });
 
-test("there is one top bar: the window's keys sit in the row of the servers and the profile, and the app fills the window", () => {
-  assert.match(rule(`${R} .titlebar`), /left: auto; height: calc\(var\(--st-mt\) \* 2 \+ 50px\); background: none;/);
+test("there is one top bar: the window's keys sit in the row of the servers and the profile, end where the row ends, and the app fills the window", () => {
+  assert.match(rule(`${R} .titlebar`), /left: auto; height: calc\(var\(--tb-top\) \+ var\(--tb-row\)\); background: none;/);
+  assert.match(rule(R), /--tb-top: var\(--st-mt\); --tb-row: 50px; --tb-keys: 138px; --tb-gap: 20px;/);
+  assert.match(rule(`${R}[data-fit="compact"]`), /--tb-top: 6px; --tb-row: 48px;/);
   assert.match(rule(`${R} .titlebar-drag`), /display: none;/);
   assert.match(rule(`${R} body.has-titlebar .app`), /height: 100vh; margin-top: 0;/);
-  assert.match(rule(`${R} body.has-titlebar .rail`), /padding-right: calc\(146px - var\(--st-mr\)\);/);
+  assert.match(rule(`${R} body.has-titlebar .rail`), /padding-right: calc\(var\(--tb-keys\) \+ var\(--tb-gap\) - var\(--st-mr\)\);/);
   assert.match(rule(`${R} body.has-titlebar .offline-chip`), /top: calc\(var\(--st-mt\) \+ 9px\);/);
 });
 
@@ -63,14 +65,15 @@ test("the window moves by the empty part of the top row, and a double press ther
 
 test("three caption keys 46 wide and as tall as the row, lit only in their middle, Close goes danger red on hover, faint when not in front", () => {
   assert.match(rule(`${R} .titlebar-btn`), /width: 46px;/);
-  assert.match(rule(`${R} .titlebar-btn`), /height: 100%; padding-block: calc\(var\(--st-mt\) \+ 7px\); background-clip: content-box;/);
+  assert.match(rule(`${R} .titlebar-btn`), /height: 100%; padding: calc\(var\(--tb-top\) \+ \(var\(--tb-row\) - var\(--tb-tile\)\) \/ 2\) 0 calc\(\(var\(--tb-row\) - var\(--tb-tile\)\) \/ 2\); background-clip: content-box;/);
   assert.match(rule(`${R} .titlebar-btn`), /color: var\(--text-muted\);/);
   assert.match(rule(`${R} .titlebar-btn svg`), /width: 10px;/);
-  assert.match(rule(`${R} .titlebar .titlebar-btn:hover`), /background: var\(--bg-hover\);/);
+  assert.match(rule(`${R} .titlebar .titlebar-btn:hover`), /background-color: var\(--bg-hover\);/);
   assert.match(rule(`${R} .titlebar .titlebar-btn:hover`), /color: var\(--header-primary\);/);
-  assert.match(rule(`${R} .titlebar .titlebar-btn.titlebar-close:hover`), /background: var\(--danger\);/);
+  assert.match(rule(`${R} .titlebar .titlebar-btn.titlebar-close:hover`), /background-color: var\(--danger\);/);
   assert.match(rule(`${R} .titlebar .titlebar-btn.titlebar-close:hover`), /color: var\(--danger-ink\);/);
   assert.match(rule(`${R} .titlebar.is-idle .titlebar-btn`), /color: var\(--text-faint\);/);
+  assert.doesNotMatch(css, /titlebar-btn[^{]*:hover \{[^}]*background:/);
 });
 
 test("the tile takes the server's colour and the bar knows when the window is in front", () => {
