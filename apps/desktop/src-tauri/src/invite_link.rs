@@ -93,15 +93,57 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
     let parsed = parse(link).ok_or("That is not a Commy invite link")?;
     let body: ResolveResponse = account_call(app.http.get(parsed.endpoint(commy_net::invite::RESOLVE_PATH)), &parsed.origin).await?;
     let opened = commy_net::invite::open_reply(&parsed, &body, Utc::now())?;
-    app.doorbell.lock().unwrap().note_invite_origin(opened.ticket.server_id, parsed.origin.clone());
-    if let Some((id, secret)) = opened.community.clone() {
-        crate::community_sync::remember_invite_key(opened.ticket.server_id, id, secret);
-    }
     let background = match (body.has_background, parsed.key.as_deref()) {
         (true, Some(key)) => fetch_background(app, &parsed, key).await,
         _ => None,
     };
-    Ok(commy_net::invite::resolved(&parsed, &opened, &crate::account::effective_server(), background))
+    let resolved = commy_net::invite::resolved(&parsed, &opened, &crate::account::effective_server(), background);
+    hold_resolved(ResolvedLink {
+        link: resolved.link.clone(),
+        ticket: resolved.ticket.clone(),
+        server: opened.ticket.server_id,
+        origin: parsed.origin.clone(),
+        community: opened.community.clone(),
+        at: std::time::Instant::now(),
+    });
+    Ok(resolved)
+}
+
+const RESOLVED_KEPT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const MAX_RESOLVED: usize = 8;
+
+struct ResolvedLink {
+    link: String,
+    ticket: String,
+    server: commy_core::ServerId,
+    origin: String,
+    community: Option<(commy_core::channel_key::KeyId, commy_core::channel_key::ChannelSecret)>,
+    at: std::time::Instant,
+}
+
+static RESOLVED: std::sync::Mutex<Vec<ResolvedLink>> = std::sync::Mutex::new(Vec::new());
+
+fn hold_resolved(entry: ResolvedLink) {
+    let mut held = RESOLVED.lock().unwrap();
+    held.retain(|r| r.link != entry.link && r.at.elapsed() < RESOLVED_KEPT);
+    held.push(entry);
+    let excess = held.len().saturating_sub(MAX_RESOLVED);
+    held.drain(..excess);
+}
+
+fn take_resolved(link: &str, ticket: &str) -> Option<ResolvedLink> {
+    let mut held = RESOLVED.lock().unwrap();
+    held.retain(|r| r.at.elapsed() < RESOLVED_KEPT);
+    let at = held.iter().position(|r| r.link == link && r.ticket == ticket)?;
+    Some(held.remove(at))
+}
+
+pub(crate) fn confirm_join_from_link(app: &App, link: &str, ticket: &str) {
+    let Some(resolved) = take_resolved(link, ticket) else { return };
+    app.doorbell.lock().unwrap().note_invite_origin(resolved.server, resolved.origin);
+    if let Some((id, secret)) = resolved.community {
+        crate::community_sync::remember_invite_key(resolved.server, id, secret);
+    }
 }
 
 async fn fetch_background(app: &App, link: &InviteLink, key: &str) -> Option<String> {
@@ -457,6 +499,24 @@ pub fn register_scheme() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_resolved_link_counts_only_when_joined_from_that_link_and_ticket() {
+        let server = commy_core::ServerId::new();
+        let held = |link: &str| ResolvedLink {
+            link: link.into(),
+            ticket: "ticket-a".into(),
+            server,
+            origin: "https://invites.example".into(),
+            community: None,
+            at: Instant::now(),
+        };
+        hold_resolved(held("commy://i/one"));
+        assert!(take_resolved("commy://i/one", "ticket-b").is_none(), "another ticket");
+        assert!(take_resolved("commy://i/two", "ticket-a").is_none(), "another link");
+        assert!(take_resolved("commy://i/one", "ticket-a").is_some());
+        assert!(take_resolved("commy://i/one", "ticket-a").is_none(), "taken once");
+    }
 
     #[test]
     fn handoff_reaches_a_listener() {

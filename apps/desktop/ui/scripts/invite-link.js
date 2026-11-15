@@ -36,7 +36,7 @@ async function joinPendingInvite() {
   const button = $("invite-link-join");
   button.disabled = true;
   try {
-    const summary = await invoke("join_server", { ticket: invite.ticket });
+    const summary = await invoke("join_server", { ticket: invite.ticket, link: invite.link });
     pendingInvite = null;
     hideModals();
     await enterJoinedServer(summary);

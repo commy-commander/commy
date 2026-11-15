@@ -1201,7 +1201,7 @@ test("the Accounts sheet on the phone has its own back step and closes on the sc
 
 test("joining from the invite screen says Joining, and a failure shows the app's words in red text above the keys", () => {
   assert.match(glue, /\$\("pt-invite-join"\)\.disabled = busy;\n\s+\$\("pt-invite-later"\)\.disabled = busy;\n\s+\$\("pt-invite-join"\)\.textContent = busy \? "Joining\\u2026" : "Join";/);
-  const calls = /const summary = await invoke\("join_server", \{ ticket: invite\.ticket \}\);\n\s+pendingInvite = null;\n\s+hideModals\(\);\n\s+await enterJoinedServer\(summary\);/;
+  const calls = /const summary = await invoke\("join_server", \{ ticket: invite\.ticket, link: invite\.link \}\);\n\s+pendingInvite = null;\n\s+hideModals\(\);\n\s+await enterJoinedServer\(summary\);/;
   assert.match(glue, calls);
   assert.match(read("scripts", "invite-link.js"), calls);
   assert.match(glue, /\} catch \(e\) \{\n\s+\$\("pt-invite-error"\)\.textContent = String\(e\);\n\s+\$\("pt-invite-error"\)\.classList\.toggle\("hidden", false\);\n\s+\} finally \{\n\s+studioPhone\.inviteBusy = false;\n\s+paintInviteKeys\(\);/);

@@ -277,8 +277,12 @@ async fn join_server(
     handle: tauri::AppHandle,
     ticket: String,
     note: Option<String>,
+    link: Option<String>,
 ) -> CmdResult<knock::Joined> {
     account::require_account(&app)?;
+    if let Some(link) = link.as_deref() {
+        invite_link::confirm_join_from_link(&app, link, &ticket);
+    }
     let ticket = ServerTicket::decode(&ticket).map_err(err_to_string)?;
     let id = ticket.server_id;
     let joined = knock::knock_then_join(&app, &handle, ticket, note.as_deref().unwrap_or("")).await?;

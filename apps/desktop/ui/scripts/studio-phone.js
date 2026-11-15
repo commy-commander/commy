@@ -2816,7 +2816,7 @@ async function joinInviteHere() {
   $("pt-invite-error").classList.toggle("hidden", true);
   paintInviteKeys();
   try {
-    const summary = await invoke("join_server", { ticket: invite.ticket });
+    const summary = await invoke("join_server", { ticket: invite.ticket, link: invite.link });
     pendingInvite = null;
     hideModals();
     await enterJoinedServer(summary);
