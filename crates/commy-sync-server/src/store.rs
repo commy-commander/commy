@@ -12,6 +12,7 @@ const SCHEMA: &[&str] = &[
     "CREATE UNIQUE INDEX IF NOT EXISTS sync_entries_nonce ON sync_entries (stream, nonce)",
     "CREATE INDEX IF NOT EXISTS sync_entries_at ON sync_entries (at)",
     "CREATE TABLE IF NOT EXISTS sync_wakes (tag BYTEA NOT NULL, push TEXT NOT NULL, until_day BIGINT NOT NULL, PRIMARY KEY (tag, push))",
+    "ALTER TABLE sync_wakes ADD COLUMN IF NOT EXISTS holder BIGINT NOT NULL DEFAULT 0",
     "CREATE INDEX IF NOT EXISTS sync_wakes_until ON sync_wakes (until_day)",
     "CREATE TABLE IF NOT EXISTS sync_pictures (id BYTEA PRIMARY KEY, body BYTEA NOT NULL, touched BIGINT NOT NULL)",
     "CREATE INDEX IF NOT EXISTS sync_pictures_touched ON sync_pictures (touched)",
@@ -20,6 +21,31 @@ const SCHEMA: &[&str] = &[
 ];
 
 pub const TOUCH_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
+pub const MAX_PUSHES_PER_HOLDER: usize = 2;
+
+pub enum Seat {
+    Free,
+    Evict(String),
+    Refused,
+}
+
+pub fn seat_for(others: &[(String, i64, i64)], holder: i64) -> Seat {
+    if others.len() < MAX_PUSHES_PER_TAG {
+        return Seat::Free;
+    }
+    let count = |h: i64| others.iter().filter(|(_, o, _)| *o == h).count();
+    if count(holder) >= MAX_PUSHES_PER_HOLDER {
+        return Seat::Refused;
+    }
+    let crowded = others
+        .iter()
+        .filter(|(_, h, _)| count(*h) > 1)
+        .max_by(|a, b| count(a.1).cmp(&count(b.1)).then_with(|| b.2.cmp(&a.2)).then_with(|| b.0.cmp(&a.0)));
+    match crowded {
+        Some((push, _, _)) => Seat::Evict(push.clone()),
+        None => Seat::Refused,
+    }
+}
 
 pub const MAX_PUSHES_PER_TAG: usize = 16;
 
@@ -81,10 +107,10 @@ impl Store {
         }
     }
 
-    pub async fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64) -> Result<bool, StoreError> {
+    pub async fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64, holder: i64) -> Result<bool, StoreError> {
         match self {
-            Store::Memory(m) => Ok(m.register_wake(tag, push, until, today)),
-            Store::Postgres(p) => p.register_wake(tag, push, until, today).await,
+            Store::Memory(m) => Ok(m.register_wake(tag, push, until, today, holder)),
+            Store::Postgres(p) => p.register_wake(tag, push, until, today, holder).await,
         }
     }
 
@@ -230,6 +256,7 @@ type StoredPicture = (Vec<u8>, i64);
 pub struct MemoryStore {
     streams: Mutex<HashMap<StreamId, MemoryStream>>,
     wakes: Mutex<HashMap<[u8; 32], HashMap<String, i64>>>,
+    wake_holders: Mutex<HashMap<([u8; 32], String), i64>>,
     pictures: Mutex<HashMap<[u8; 32], StoredPicture>>,
     erasers: Mutex<HashMap<StreamId, ([u8; 32], i64)>>,
     quiet: Mutex<HashMap<String, i64>>,
@@ -254,13 +281,26 @@ impl MemoryStore {
         (had - s.entries.len()) as u64
     }
 
-    fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64) -> bool {
+    fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64, holder: i64) -> bool {
         let mut wakes = self.wakes.lock().unwrap();
+        let mut holders = self.wake_holders.lock().unwrap();
         let pushes = wakes.entry(*tag).or_default();
         pushes.retain(|_, kept| *kept >= today);
-        if !pushes.contains_key(push) && pushes.len() >= MAX_PUSHES_PER_TAG {
-            return false;
+        if !pushes.contains_key(push) {
+            let others: Vec<(String, i64, i64)> = pushes
+                .iter()
+                .map(|(p, until)| (p.clone(), holders.get(&(*tag, p.clone())).copied().unwrap_or_default(), *until))
+                .collect();
+            match seat_for(&others, holder) {
+                Seat::Free => {}
+                Seat::Evict(gone) => {
+                    pushes.remove(&gone);
+                    holders.remove(&(*tag, gone));
+                }
+                Seat::Refused => return false,
+            }
         }
+        holders.insert((*tag, push.to_string()), holder);
         let kept = pushes.entry(push.to_string()).or_insert(until);
         *kept = (*kept).max(until);
         true
@@ -478,24 +518,40 @@ impl PgStore {
         Ok(row.map_or(0, |row| row.get::<i64, _>(0) as u64))
     }
 
-    async fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64) -> Result<bool, StoreError> {
-        let others: i64 = sqlx::query("SELECT count(*) FROM sync_wakes WHERE tag = $1 AND push <> $2 AND until_day >= $3")
+    async fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64, holder: i64) -> Result<bool, StoreError> {
+        let others: Vec<(String, i64, i64)> = sqlx::query("SELECT push, holder, until_day FROM sync_wakes WHERE tag = $1 AND push <> $2 AND until_day >= $3")
+            .bind(&tag[..])
+            .bind(push)
+            .bind(today)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|row| (row.get(0), row.get(1), row.get(2)))
+            .collect();
+        let renewing: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM sync_wakes WHERE tag = $1 AND push = $2 AND until_day >= $3)")
             .bind(&tag[..])
             .bind(push)
             .bind(today)
             .fetch_one(&self.pool)
             .await?
             .get(0);
-        if others as usize >= MAX_PUSHES_PER_TAG {
-            return Ok(false);
+        if !renewing {
+            match seat_for(&others, holder) {
+                Seat::Free => {}
+                Seat::Evict(gone) => {
+                    sqlx::query("DELETE FROM sync_wakes WHERE tag = $1 AND push = $2").bind(&tag[..]).bind(&gone).execute(&self.pool).await?;
+                }
+                Seat::Refused => return Ok(false),
+            }
         }
         sqlx::query(
-            "INSERT INTO sync_wakes (tag, push, until_day) VALUES ($1, $2, $3) \
-             ON CONFLICT (tag, push) DO UPDATE SET until_day = GREATEST(sync_wakes.until_day, EXCLUDED.until_day)",
+            "INSERT INTO sync_wakes (tag, push, until_day, holder) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (tag, push) DO UPDATE SET until_day = GREATEST(sync_wakes.until_day, EXCLUDED.until_day), holder = EXCLUDED.holder",
         )
         .bind(&tag[..])
         .bind(push)
         .bind(until)
+        .bind(holder)
         .execute(&self.pool)
         .await?;
         Ok(true)
@@ -732,17 +788,21 @@ mod tests {
     async fn exercise_wakes(store: &Store) {
         let (tag, other) = ([1u8; 32], [2u8; 32]);
         assert!(store.wake_targets(&[tag], 100).await.unwrap().is_empty());
-        assert!(store.register_wake(&tag, "fcm:a", 101, 100).await.unwrap());
-        assert!(store.register_wake(&tag, "fcm:b", 100, 100).await.unwrap());
-        assert!(store.register_wake(&other, "fcm:a", 101, 100).await.unwrap());
-        assert!(store.register_wake(&tag, "fcm:a", 100, 100).await.unwrap(), "a shorter renewal keeps the longer one");
+        assert!(store.register_wake(&tag, "fcm:a", 101, 100, 1).await.unwrap());
+        assert!(store.register_wake(&tag, "fcm:b", 100, 100, 2).await.unwrap());
+        assert!(store.register_wake(&other, "fcm:a", 101, 100, 1).await.unwrap());
+        assert!(store.register_wake(&tag, "fcm:a", 100, 100, 1).await.unwrap(), "a shorter renewal keeps the longer one");
         assert_eq!(store.wake_targets(&[tag, other], 100).await.unwrap(), vec!["fcm:a", "fcm:b"], "each phone once");
         assert_eq!(store.wake_targets(&[tag], 101).await.unwrap(), vec!["fcm:a"], "expired registrations are not woken");
         for n in 0..MAX_PUSHES_PER_TAG {
-            assert!(store.register_wake(&[9; 32], &format!("fcm:p{n}"), 100, 100).await.unwrap());
+            let holder = (n / MAX_PUSHES_PER_HOLDER) as i64;
+            assert!(store.register_wake(&[9; 32], &format!("fcm:p{n}"), 100, 100, holder).await.unwrap());
         }
-        assert!(!store.register_wake(&[9; 32], "fcm:extra", 100, 100).await.unwrap(), "a tag takes a bounded number of phones");
-        assert!(store.register_wake(&[9; 32], "fcm:p0", 101, 100).await.unwrap(), "renewing is always allowed");
+        assert!(!store.register_wake(&[9; 32], "fcm:extra", 100, 100, 0).await.unwrap(), "a full holder cannot add more");
+        assert!(store.register_wake(&[9; 32], "fcm:p0", 101, 100, 0).await.unwrap(), "renewing is always allowed");
+        assert!(store.register_wake(&[9; 32], "fcm:newcomer", 100, 100, 99).await.unwrap(), "a new holder takes a seat from a crowded one");
+        assert_eq!(store.wake_targets(&[[9; 32]], 100).await.unwrap().len(), MAX_PUSHES_PER_TAG);
+        assert!(store.wake_targets(&[[9; 32]], 100).await.unwrap().contains(&"fcm:newcomer".to_string()));
         store.forget_push("fcm:a").await.unwrap();
         assert_eq!(store.wake_targets(&[tag, other], 100).await.unwrap(), vec!["fcm:b"]);
         assert_eq!(store.prune_wakes(101).await.unwrap(), MAX_PUSHES_PER_TAG as u64);

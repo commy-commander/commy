@@ -24,6 +24,7 @@ pub struct Limits {
     pub wakes: Rate,
     pub signals: Rate,
     pub daily_bytes_per_address: u64,
+    pub daily_bytes_total: u64,
 }
 
 impl Default for Limits {
@@ -36,6 +37,7 @@ impl Default for Limits {
             wakes: Rate { burst: 120.0, per_second: 1.0 },
             signals: Rate { burst: 60.0, per_second: 2.0 },
             daily_bytes_per_address: 64 * 1024 * 1024,
+            daily_bytes_total: 16 * 1024 * 1024 * 1024,
         }
     }
 }
@@ -83,6 +85,7 @@ struct Address {
 struct Books {
     addresses: HashMap<AddressKey, Address>,
     streams: HashMap<[u8; 32], (Bucket, Instant)>,
+    total: Option<(Instant, u64)>,
 }
 
 pub struct Limiter {
@@ -97,6 +100,19 @@ pub enum Refusal {
     Full,
 }
 
+const IPV6_NETWORK_BYTES: usize = 8;
+
+fn network_of(mut octets: [u8; 16]) -> [u8; 16] {
+    octets[IPV6_NETWORK_BYTES..].fill(0);
+    octets
+}
+
+impl AddressKey {
+    pub fn holder(self) -> i64 {
+        self.0 as i64
+    }
+}
+
 impl Limiter {
     pub fn new(limits: Limits) -> Self {
         Self { secret: rand::random(), limits, books: Mutex::new(Books::default()) }
@@ -106,7 +122,7 @@ impl Limiter {
         let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.secret).expect("HMAC takes any key length");
         let bytes = match address {
             IpAddr::V4(v4) => v4.to_ipv6_mapped().octets(),
-            IpAddr::V6(v6) => v6.octets(),
+            IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or_else(|| network_of(v6.octets()), |v4| v4.to_ipv6_mapped().octets()),
         };
         mac.update(&bytes);
         let out = mac.finalize().into_bytes();
@@ -180,6 +196,14 @@ impl Limiter {
         }
         address.appends.take(limits.appends, now).map_err(Refusal::Wait)?;
         address.day_bytes += bytes as u64;
+        let (since, spent) = books.total.get_or_insert((now, 0));
+        if now.saturating_duration_since(*since) >= DAY {
+            (*since, *spent) = (now, 0);
+        }
+        if *spent + bytes as u64 > limits.daily_bytes_total {
+            return Err(Refusal::Wait(DAY.saturating_sub(now.saturating_duration_since(*since))));
+        }
+        *spent += bytes as u64;
         let (bucket, seen) = books.streams.entry(*stream).or_insert_with(|| (Bucket::full(limits.stream_appends, now), now));
         *seen = now;
         bucket.take(limits.stream_appends, now).map_err(Refusal::Wait)
@@ -231,6 +255,19 @@ mod tests {
             wakes: Rate { burst: 2.0, per_second: 1.0 },
             signals: Rate { burst: 2.0, per_second: 1.0 },
             daily_bytes_per_address: 10_000,
+            daily_bytes_total: 25_000,
+        }
+    }
+
+    #[test]
+    fn the_whole_service_has_a_daily_byte_budget() {
+        let limiter = Limiter::new(Limits { appends: Rate { burst: 1000.0, per_second: 1000.0 }, ..tight() });
+        let now = Instant::now();
+        let stream = [7; 32];
+        for n in 0..3u8 {
+            let key = limiter.key(std::net::IpAddr::from([10, 0, 0, n]));
+            let result = limiter.append_at(key, &stream, 9_000, now);
+            assert_eq!(result.is_ok(), n < 2, "address {n}");
         }
     }
 
@@ -255,6 +292,14 @@ mod tests {
         assert_ne!(a.key(ip), a.key("198.51.100.8".parse().unwrap()));
         assert_ne!(a.key(ip), b.key(ip), "each process hashes with its own secret");
         assert_eq!(a.key(ip), a.key("::ffff:198.51.100.7".parse().unwrap()));
+    }
+
+    #[test]
+    fn one_ipv6_network_shares_one_allowance() {
+        let limiter = Limiter::new(tight());
+        let key = |ip: &str| limiter.key(ip.parse().unwrap());
+        assert_eq!(key("2001:db8:1:2::1"), key("2001:db8:1:2:ffff::9"), "the same /64");
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
     }
 
     #[test]

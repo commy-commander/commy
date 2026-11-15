@@ -56,6 +56,9 @@ impl Config {
             limits.daily_bytes_per_address =
                 text.trim().parse().map_err(|_| "SYNC_DAILY_BYTES_PER_ADDRESS must be a number of bytes".to_string())?;
         }
+        if let Some(text) = env("SYNC_DAILY_BYTES_TOTAL") {
+            limits.daily_bytes_total = text.trim().parse().map_err(|_| "SYNC_DAILY_BYTES_TOTAL must be a number of bytes".to_string())?;
+        }
         if let Some(text) = env("SYNC_CONNECTIONS_PER_ADDRESS") {
             limits.connections_per_address =
                 text.trim().parse().map_err(|_| "SYNC_CONNECTIONS_PER_ADDRESS must be a whole number".to_string())?;

@@ -251,7 +251,8 @@ pub async fn register(
     if !service.wakes.offers(&request.push) {
         return (StatusCode::NOT_FOUND, "wake-ups are off for this kind of phone").into_response();
     }
-    match service.store.register_wake(&request.tag.0, &request.push, request.until, today).await {
+    let holder = service.limiter.key(service.address(peer, &headers)).holder();
+    match service.store.register_wake(&request.tag.0, &request.push, request.until, today, holder).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => StatusCode::CONFLICT.into_response(),
         Err(e) => {
