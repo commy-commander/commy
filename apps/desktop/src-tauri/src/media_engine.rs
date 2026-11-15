@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use commy_core::{ChannelId, ServerId, UserId};
 use commy_media::{InputHandle, Mixer, OutputHandle, StreamGuards};
 use commy_net::media::{InkMark, MediaPacket};
@@ -129,7 +130,7 @@ impl LossTracker {
 }
 
 fn worst_loss(link_loss: &LinkLoss) -> f32 {
-    link_loss.lock().unwrap().values().copied().fold(0.0, f32::max)
+    link_loss.lock_or_recover().values().copied().fold(0.0, f32::max)
 }
 
 const SPEAKING_TICK: std::time::Duration = std::time::Duration::from_millis(50);
@@ -205,7 +206,7 @@ impl VoiceSession {
                                 continue;
                             }
                             if let Some(speaking) = detector.push(&pcm) {
-                                mixer.lock().unwrap().set_speaking(my_key, speaking);
+                                mixer.lock_or_recover().set_speaking(my_key, speaking);
                                 on_speaking(me, speaking);
                             }
                             if seq % ENCODER_ADAPTS_EVERY_FRAMES == 0 {
@@ -219,7 +220,7 @@ impl VoiceSession {
                         _ = tick.tick() => {
                             if !std::mem::take(&mut heard_since_tick) {
                                 if let Some(speaking) = credit_silence(&mut detector) {
-                                    mixer.lock().unwrap().set_speaking(my_key, speaking);
+                                    mixer.lock_or_recover().set_speaking(my_key, speaking);
                                     on_speaking(me, speaking);
                                 }
                             }
@@ -227,7 +228,7 @@ impl VoiceSession {
                     }
                 }
                 if detector.reset() {
-                    mixer.lock().unwrap().set_speaking(my_key, false);
+                    mixer.lock_or_recover().set_speaking(my_key, false);
                     on_speaking(me, false);
                 }
             })
@@ -273,7 +274,7 @@ impl VoiceSession {
         input: Option<String>,
         output: Option<String>,
     ) {
-        let far_end = processor.lock().unwrap().far_end_sink();
+        let far_end = processor.lock_or_recover().far_end_sink();
         self.devices.mic = None;
         self.devices.mic = match commy_media::start_microphone(processor, self.mic_tx.clone(), input) {
             Ok(mic) => Some(mic),
@@ -372,7 +373,7 @@ impl VoiceSession {
         let key = mixer_key(user);
         if let Some(old) = self.peers.remove(&user) {
             old.abort();
-            self.mixer.lock().unwrap().remove_peer(key);
+            self.mixer.lock_or_recover().remove_peer(key);
         }
         let mixer = self.mixer.clone();
         let deafened = self.deafened.clone();
@@ -394,13 +395,13 @@ impl VoiceSession {
                     _ = loss_tick.tick(), if connection.is_some() => {
                         if let Some(stats) = connection.as_ref().map(|c| c.stats()) {
                             let pct = loss.sample(stats.lost_packets, stats.udp_tx.datagrams);
-                            link_loss.lock().unwrap().insert(user, pct);
+                            link_loss.lock_or_recover().insert(user, pct);
                         }
                     }
                     _ = tick.tick() => {
                         if !std::mem::take(&mut heard_since_tick) {
                             if let Some(speaking) = credit_silence(&mut detector) {
-                                mixer.lock().unwrap().set_speaking(key, speaking);
+                                mixer.lock_or_recover().set_speaking(key, speaking);
                                 on_speaking(user, speaking);
                             }
                         }
@@ -416,17 +417,17 @@ impl VoiceSession {
                             None => break,
                         };
                         heard_since_tick = true;
-                        meter.lock().unwrap().arrived(seq, std::time::Instant::now());
+                        meter.lock_or_recover().arrived(seq, std::time::Instant::now());
                         let level = match &heard {
                             Heard::Opus(data) => decoder.decode(data),
                             Heard::Pcm(pcm) => pcm.clone(),
                         };
                         if let Some(speaking) = detector.push(&level) {
-                            mixer.lock().unwrap().set_speaking(key, speaking);
+                            mixer.lock_or_recover().set_speaking(key, speaking);
                             on_speaking(user, speaking);
                         }
                         if !deafened.load(Ordering::Relaxed) {
-                            let mut mixer = mixer.lock().unwrap();
+                            let mut mixer = mixer.lock_or_recover();
                             match heard {
                                 Heard::Opus(data) => mixer.push_opus(key, seq, data),
                                 Heard::Pcm(pcm) => mixer.push(key, seq, pcm),
@@ -445,10 +446,10 @@ impl VoiceSession {
                 }
             }
             tracing::info!("voice link with {user} ended");
-            link_loss.lock().unwrap().remove(&user);
-            mixer.lock().unwrap().remove_peer(key);
+            link_loss.lock_or_recover().remove(&user);
+            mixer.lock_or_recover().remove_peer(key);
             if detector.reset() {
-                mixer.lock().unwrap().set_speaking(key, false);
+                mixer.lock_or_recover().set_speaking(key, false);
                 on_speaking(user, false);
             }
         });
@@ -470,7 +471,7 @@ impl VoiceSession {
                     loss_pct: stats.lost_packets as f32 * 100.0 / sent as f32,
                     lost_packets: stats.lost_packets,
                     sent_packets: stats.udp_tx.datagrams,
-                    jitter_ms: meter.lock().unwrap().jitter_ms(),
+                    jitter_ms: meter.lock_or_recover().jitter_ms(),
                     tx_bytes: stats.udp_tx.bytes,
                     rx_bytes: stats.udp_rx.bytes,
                     path: commy_net::link_path(conn),
@@ -487,7 +488,7 @@ impl VoiceSession {
         if let Some(task) = self.peers.remove(&user) {
             task.abort();
         }
-        self.mixer.lock().unwrap().remove_peer(mixer_key(user));
+        self.mixer.lock_or_recover().remove_peer(mixer_key(user));
         (self.on_speaking)(user, false);
     }
 }
@@ -622,7 +623,7 @@ impl ScreenShareSession {
             let subscribers = subscribers.clone();
             let latest = latest.clone();
             std::thread::spawn(move || loop {
-                let next = raw_rx.lock().unwrap().recv();
+                let next = raw_rx.lock_or_recover().recv();
                 let Ok((seq, captured)) = next else { break };
                 let encoding = match captured {
                     Captured::Raw(image) => commy_media::screen::encode_frame(image, max_width, JPEG_QUALITY),
@@ -637,9 +638,9 @@ impl ScreenShareSession {
                     }
                 };
                 encoded.fetch_add(1, Ordering::Relaxed);
-                *latest.lock().unwrap() = Some(frame.clone());
+                *latest.lock_or_recover() = Some(frame.clone());
                 let packet = MediaPacket::Video { seq, width: frame.width, height: frame.height, jpeg: frame.jpeg };
-                subscribers.lock().unwrap().retain(|tx| tx.send(packet.clone()).is_ok());
+                subscribers.lock_or_recover().retain(|tx| tx.send(packet.clone()).is_ok());
             });
         }
         let (audio_subscribers, audio_capture, audio_task) = match audio {
@@ -670,7 +671,7 @@ impl ScreenShareSession {
     }
 
     pub fn add_subscriber(&self, tx: mpsc::UnboundedSender<MediaPacket>) {
-        self.subscribers.lock().unwrap().push(tx);
+        self.subscribers.lock_or_recover().push(tx);
     }
 
     pub fn add_viewer(
@@ -692,7 +693,7 @@ impl ScreenShareSession {
                 match packet {
                     MediaPacket::StreamAudioWanted => {
                         if let Some(listeners) = listeners.take() {
-                            listeners.lock().unwrap().push(tx.clone());
+                            listeners.lock_or_recover().push(tx.clone());
                         }
                     }
                     MediaPacket::InkReady if !joined => {
@@ -717,11 +718,11 @@ impl ScreenShareSession {
     }
 
     pub fn latest_frame(&self) -> Option<commy_media::screen::ScreenFrame> {
-        self.latest.lock().unwrap().clone()
+        self.latest.lock_or_recover().clone()
     }
 
     pub fn viewer_count(&self) -> usize {
-        let mut subs = self.subscribers.lock().unwrap();
+        let mut subs = self.subscribers.lock_or_recover();
         subs.retain(|tx| !tx.is_closed());
         subs.len()
     }
@@ -736,7 +737,7 @@ async fn encode_stream_audio(
     while let Some(pcm) = frames.recv().await {
         if let Some(data) = encoder.encode(&pcm) {
             let packet = MediaPacket::StreamAudio { seq, data };
-            listeners.lock().unwrap().retain(|tx| tx.send(packet.clone()).is_ok());
+            listeners.lock_or_recover().retain(|tx| tx.send(packet.clone()).is_ok());
         }
         seq = seq.wrapping_add(1);
     }
@@ -766,7 +767,7 @@ impl StreamAudioSink {
 
     pub fn standalone(sharer: UserId, gain: f32, master: f32, output_device: Option<String>) -> anyhow::Result<Self> {
         let mixer = Arc::new(Mutex::new(Mixer::new()));
-        mixer.lock().unwrap().set_master(master);
+        mixer.lock_or_recover().set_master(master);
         let speaker = commy_media::start_playback(mixer.clone(), output_device, None)?;
         let sink = Self { mixer, key: stream_audio_key(sharer), _speaker: Some(speaker) };
         sink.set_gain(gain);
@@ -774,21 +775,21 @@ impl StreamAudioSink {
     }
 
     pub fn set_gain(&self, gain: f32) {
-        self.mixer.lock().unwrap().set_peer_gain(self.key, gain);
+        self.mixer.lock_or_recover().set_peer_gain(self.key, gain);
     }
 
     pub fn set_master(&self, gain: f32) {
-        self.mixer.lock().unwrap().set_master(gain);
+        self.mixer.lock_or_recover().set_master(gain);
     }
 
     fn push(&self, seq: u32, pcm: Vec<i16>) {
-        self.mixer.lock().unwrap().push(self.key, seq, pcm);
+        self.mixer.lock_or_recover().push(self.key, seq, pcm);
     }
 }
 
 impl Drop for StreamAudioSink {
     fn drop(&mut self) {
-        self.mixer.lock().unwrap().remove_peer(self.key);
+        self.mixer.lock_or_recover().remove_peer(self.key);
     }
 }
 
@@ -947,7 +948,7 @@ impl MicTest {
         output: Option<String>,
     ) -> anyhow::Result<Self> {
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<i16>>();
-        let far_end = processor.lock().unwrap().far_end_sink();
+        let far_end = processor.lock_or_recover().far_end_sink();
         let mic = commy_media::start_microphone(processor, tx, input)?;
         let mixer = Arc::new(Mutex::new(Mixer::new()));
         let speaker = commy_media::start_playback(mixer.clone(), output, Some(far_end))?;
@@ -960,7 +961,7 @@ impl MicTest {
                     Some(packet) => decoder.decode(&packet),
                     None => pcm,
                 };
-                mixer.lock().unwrap().push(0, seq, pcm);
+                mixer.lock_or_recover().push(0, seq, pcm);
                 seq = seq.wrapping_add(1);
             }
         });
@@ -985,7 +986,7 @@ impl MicTest {
                     match packets.recv().await {
                         Ok((seq, packet)) => {
                             let pcm = decoder.decode(&packet);
-                            mixer.lock().unwrap().push(MIC_TEST_KEY, seq, pcm);
+                            mixer.lock_or_recover().push(MIC_TEST_KEY, seq, pcm);
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(broadcast::error::RecvError::Closed) => break,
@@ -1005,7 +1006,7 @@ impl Drop for MicTest {
     fn drop(&mut self) {
         self.task.abort();
         if let Some(mixer) = &self.call_mixer {
-            mixer.lock().unwrap().remove_peer(MIC_TEST_KEY);
+            mixer.lock_or_recover().remove_peer(MIC_TEST_KEY);
         }
     }
 }

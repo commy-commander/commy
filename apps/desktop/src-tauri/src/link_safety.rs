@@ -1,3 +1,4 @@
+use crate::lock_or_recover::{LockOrRecover, ReadOrRecover};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -21,11 +22,11 @@ static BLOCKLIST: RwLock<Option<Arc<Blocklist>>> = RwLock::new(None);
 static LIST_ETAG: Mutex<Option<String>> = Mutex::new(None);
 
 fn current() -> Arc<Blocklist> {
-    BLOCKLIST.read().unwrap().clone().unwrap_or_default()
+    BLOCKLIST.read_or_recover().clone().unwrap_or_default()
 }
 
 fn replace(list: Blocklist) {
-    *BLOCKLIST.write().unwrap() = Some(Arc::new(list));
+    *BLOCKLIST.write_or_recover() = Some(Arc::new(list));
 }
 
 fn list_file(dir: &Path) -> PathBuf {
@@ -55,10 +56,10 @@ pub fn start(handle: &AppHandle, dir: &Path) {
 
 async fn refresh(handle: &AppHandle, dir: &Path) -> Result<(), String> {
     let app = handle.state::<App>();
-    let credentials = app.account.lock().unwrap().credentials("link_blocklist");
+    let credentials = app.account.lock_or_recover().credentials("link_blocklist");
     let Some((server, _)) = credentials else { return Err("no account server offers it".into()) };
     let mut request = app.http.get(format!("{server}{LIST_PATH}")).timeout(REQUEST_TIMEOUT);
-    if let Some(etag) = LIST_ETAG.lock().unwrap().clone() {
+    if let Some(etag) = LIST_ETAG.lock_or_recover().clone() {
         request = request.header(IF_NONE_MATCH, etag);
     }
     let res = request.send().await.map_err(|e| e.to_string())?;
@@ -83,7 +84,7 @@ async fn refresh(handle: &AppHandle, dir: &Path) -> Result<(), String> {
     }
     std::fs::write(list_file(dir), text.as_bytes()).map_err(|e| e.to_string())?;
     replace(list);
-    *LIST_ETAG.lock().unwrap() = etag;
+    *LIST_ETAG.lock_or_recover() = etag;
     Ok(())
 }
 

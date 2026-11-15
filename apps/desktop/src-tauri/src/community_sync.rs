@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -191,11 +192,11 @@ impl Live {
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 
 pub fn greeting_of(sid: ServerId) -> Option<commy_sync::wire::Greeting> {
-    LIVE.lock().unwrap().as_ref()?.communities.get(&sid)?.pool.greeting()
+    LIVE.lock_or_recover().as_ref()?.communities.get(&sid)?.pool.greeting()
 }
 
 pub fn room_relay_of(sid: ServerId) -> commy_view::sync_host::RoomRelay {
-    let live = LIVE.lock().unwrap();
+    let live = LIVE.lock_or_recover();
     let Some(community) = live.as_ref().and_then(|live| live.communities.get(&sid).map(|community| (live, community))) else {
         return commy_view::sync_host::RoomRelay::Ours;
     };
@@ -220,7 +221,7 @@ fn now_ms() -> i64 {
 }
 
 pub fn remember_invite_key(server: ServerId, key: KeyId, secret: ChannelSecret) {
-    let mut invited = INVITED.lock().unwrap();
+    let mut invited = INVITED.lock_or_recover();
     invited.retain(|(s, _, _)| *s != server);
     invited.push((server, key, secret));
     let excess = invited.len().saturating_sub(MAX_INVITED);
@@ -228,7 +229,7 @@ pub fn remember_invite_key(server: ServerId, key: KeyId, secret: ChannelSecret) 
 }
 
 pub fn remember_invite_host(server: ServerId, host: Option<String>) {
-    let mut invited = INVITED_HOSTS.lock().unwrap();
+    let mut invited = INVITED_HOSTS.lock_or_recover();
     invited.retain(|(s, _)| *s != server);
     if let Some(host) = host.filter(|h| commy_core::sync_host::is_sync_host(h)) {
         invited.push((server, host));
@@ -238,11 +239,11 @@ pub fn remember_invite_host(server: ServerId, host: Option<String>) {
 }
 
 pub fn invited_host(server: ServerId) -> Option<String> {
-    INVITED_HOSTS.lock().unwrap().iter().find(|(s, _)| *s == server).map(|(_, host)| host.clone())
+    INVITED_HOSTS.lock_or_recover().iter().find(|(s, _)| *s == server).map(|(_, host)| host.clone())
 }
 
 fn invited_key(server: ServerId) -> Option<(KeyId, ChannelSecret)> {
-    INVITED.lock().unwrap().iter().find(|(s, _, _)| *s == server).map(|(_, key, secret)| (*key, secret.clone()))
+    INVITED.lock_or_recover().iter().find(|(s, _, _)| *s == server).map(|(_, key, secret)| (*key, secret.clone()))
 }
 
 pub fn keep_invite_key(app: &App, server: ServerId, owner: Option<(UserId, commy_core::IdentityKey)>) {
@@ -254,7 +255,7 @@ pub fn keep_invite_key(app: &App, server: ServerId, owner: Option<(UserId, commy
 
 pub fn invite_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
     let holder = crate::channel_lock::holder_of(app);
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&server)?;
     let ring = holder.community_ring(state, None)?;
     ring.newest_in(state, commy_core::channel_key::KeyScope::Community).map(|(id, secret)| (id, secret.clone()))
@@ -276,15 +277,15 @@ fn save_soon() {
 }
 
 fn save() {
-    let snapshot = LIVE.lock().unwrap().as_ref().map(|live| (live.dir.clone(), live.cursors.clone()));
+    let snapshot = LIVE.lock_or_recover().as_ref().map(|live| (live.dir.clone(), live.cursors.clone()));
     if let Some((dir, mut cursors)) = snapshot {
-        cursors.unsent = UNSENT.lock().unwrap().clone();
+        cursors.unsent = UNSENT.lock_or_recover().clone();
         crate::entry_list::write(&dir.join(FILE), &cursors);
     }
 }
 
 fn hold(held: Unsent) {
-    hold_unsent(&mut UNSENT.lock().unwrap(), held, now_ms());
+    hold_unsent(&mut UNSENT.lock_or_recover(), held, now_ms());
     save_soon();
 }
 
@@ -298,9 +299,9 @@ fn worth_retrying(error: &AppendError) -> bool {
 
 fn send_unsent() {
     let due: Vec<Unsent> = {
-        let guard = LIVE.lock().unwrap();
+        let guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_ref() else { return };
-        let mut unsent = UNSENT.lock().unwrap();
+        let mut unsent = UNSENT.lock_or_recover();
         let now = now_ms();
         unsent.retain(|held| now - held.at < UNSENT_FOR_MS);
         let (ready, waiting): (Vec<Unsent>, Vec<Unsent>) = std::mem::take(&mut *unsent)
@@ -325,17 +326,17 @@ fn send_unsent() {
 
 pub fn stop() {
     save();
-    if let Some(old) = LIVE.lock().unwrap().take() {
+    if let Some(old) = LIVE.lock_or_recover().take() {
         old.task.abort();
         if let Some(reading) = old.reading {
             reading.task.abort();
         }
-        UNSENT.lock().unwrap().clear();
+        UNSENT.lock_or_recover().clear();
     }
 }
 
 pub fn nudge() {
-    if let Some(live) = LIVE.lock().unwrap().as_ref() {
+    if let Some(live) = LIVE.lock_or_recover().as_ref() {
         for community in live.communities.values() {
             community.pool.nudge();
         }
@@ -365,14 +366,14 @@ async fn tend(handle: &AppHandle) {
     let app = handle.state::<App>();
     let Some(url) = sync_link::url() else {
         stop();
-        UNSENT.lock().unwrap().retain(|held| now_ms() - held.at < UNSENT_WITHOUT_SERVICE_MS);
+        UNSENT.lock_or_recover().retain(|held| now_ms() - held.at < UNSENT_WITHOUT_SERVICE_MS);
         return;
     };
-    let (Some(dir), Some(me)) = (app.data_dir().cloned(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return };
+    let (Some(dir), Some(me)) = (app.data_dir().cloned(), app.profile.lock_or_recover().as_ref().map(|p| p.id)) else { return };
     if !app.key_settled() || app.identity().is_none() {
         return;
     }
-    let same = LIVE.lock().unwrap().as_ref().is_some_and(|l| l.url == url && l.dir == dir && l.me == me);
+    let same = LIVE.lock_or_recover().as_ref().is_some_and(|l| l.url == url && l.dir == dir && l.me == me);
     if !same {
         let Some((net, node)) = app.net.lock().await.as_ref().map(|node| (node.local_events(), node.node_id_bytes())) else { return };
         stop();
@@ -380,13 +381,13 @@ async fn tend(handle: &AppHandle) {
         let task = tauri::async_runtime::spawn(listen(handle.clone(), received));
         let mut cursors = load(&dir);
         {
-            let mut unsent = UNSENT.lock().unwrap();
+            let mut unsent = UNSENT.lock_or_recover();
             let now = now_ms();
             for held in std::mem::take(&mut cursors.unsent) {
                 hold_unsent(&mut unsent, held, now);
             }
         }
-        *LIVE.lock().unwrap() = Some(Live {
+        *LIVE.lock_or_recover() = Some(Live {
             handle: handle.clone(),
             url,
             dir,
@@ -429,7 +430,7 @@ async fn tend(handle: &AppHandle) {
 
 fn read_back(handle: &AppHandle) {
     let next = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut() else { return };
         if live.reading.as_ref().is_some_and(|r| live.route(r.stream).is_some() && !r.task.inner().is_finished()) {
             return;
@@ -469,7 +470,7 @@ fn read_back(handle: &AppHandle) {
     let (client, events) = SyncClient::spawn(url);
     client.follow(want.keys.clone(), until.saturating_sub(READ_BACK + 1));
     let task = tauri::async_runtime::spawn(read_until(handle.clone(), server, stream, want.lane, until, events));
-    if let Some(live) = LIVE.lock().unwrap().as_mut() {
+    if let Some(live) = LIVE.lock_or_recover().as_mut() {
         live.reading = Some(Reading { stream, _client: client, task });
     }
 }
@@ -489,7 +490,7 @@ async fn read_until(handle: AppHandle, server: ServerId, stream: StreamId, lane:
     }
     tracing::info!("read {} older entries for a channel of {server}", older.len());
     apply_older(&handle, server, older);
-    if let Some(live) = LIVE.lock().unwrap().as_mut() {
+    if let Some(live) = LIVE.lock_or_recover().as_mut() {
         live.cursors.older_before.remove(&stream.to_hex());
         live.cursors.read_back.insert(stream.to_hex());
     }
@@ -501,7 +502,7 @@ fn apply_older(handle: &AppHandle, server: ServerId, older: Vec<WirePayload>) {
     if handle.state::<App>().awaits_snapshot(server) {
         return;
     }
-    let Some(net) = LIVE.lock().unwrap().as_ref().map(|live| live.net.clone()) else { return };
+    let Some(net) = LIVE.lock_or_recover().as_ref().map(|live| live.net.clone()) else { return };
     let store = crate::catchup::AppStore(handle.clone());
     let mut messages = Vec::new();
     for payload in older {
@@ -524,14 +525,14 @@ fn apply_older(handle: &AppHandle, server: ServerId, older: Vec<WirePayload>) {
 fn store_pending(handle: &AppHandle) {
     let app = handle.state::<App>();
     let ready: Vec<ServerId> = {
-        let guard = LIVE.lock().unwrap();
+        let guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_ref() else { return };
         live.communities.iter().filter(|(_, c)| c.wants.values().any(|w| matches!(w.lane, Lane::Channel(_)) && w.writes)).map(|(sid, _)| *sid).collect()
     };
     for server in ready {
-        let pending = app.outbox.lock().unwrap().pending_ids(server);
+        let pending = app.outbox.lock_or_recover().pending_ids(server);
         let fresh: Vec<MessageId> = {
-            let mut guard = LIVE.lock().unwrap();
+            let mut guard = LIVE.lock_or_recover();
             let Some(live) = guard.as_mut() else { return };
             pending.into_iter().filter(|id| live.retried.insert(*id)).collect()
         };
@@ -539,7 +540,7 @@ fn store_pending(handle: &AppHandle) {
             continue;
         }
         let messages: Vec<commy_core::Message> = {
-            let servers = app.servers.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
             let Some(state) = servers.get(&server) else { continue };
             fresh.iter().filter_map(|id| state.message(*id).cloned()).collect()
         };
@@ -551,7 +552,7 @@ fn store_pending(handle: &AppHandle) {
 
 fn stored(handle: &AppHandle, server: ServerId, message: MessageId) {
     let app = handle.state::<App>();
-    let cleared = app.outbox.lock().unwrap().clear_delivered(server, [message]);
+    let cleared = app.outbox.lock_or_recover().clear_delivered(server, [message]);
     if cleared {
         app.persist_outbox();
         let _ = handle.emit("server-event", server.to_string());
@@ -564,12 +565,12 @@ pub(crate) fn given_key(app: &App, server: ServerId) -> Option<(KeyId, ChannelSe
 
 fn share_keys(app: &App) {
     let holder = crate::channel_lock::holder_of(app);
-    let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().filter(|sid| !app.awaits_snapshot(*sid)).collect();
+    let sids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().filter(|sid| !app.awaits_snapshot(*sid)).collect();
     let stored: HashMap<ServerId, KeyId> = sids.iter().filter_map(|sid| Some((*sid, crate::account_log::shared_community_key(app, *sid)?))).collect();
     let owners: HashMap<ServerId, (UserId, commy_core::IdentityKey)> = sids.iter().filter_map(|sid| Some((*sid, app.vouched_ticket(*sid)?.owner?))).collect();
     let unvouched: HashSet<ServerId> = owners.keys().copied().filter(|sid| crate::account_log::shared_owner(app, *sid).is_none()).collect();
     let due: Vec<(ServerId, KeyId, ChannelSecret)> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         sids.iter()
             .filter_map(|sid| {
                 let state = servers.get(sid)?;
@@ -595,25 +596,25 @@ fn share_keys(app: &App) {
 pub fn adopt_owner(handle: &AppHandle, server: ServerId) {
     let app = handle.state::<App>();
     let Some(owner) = crate::account_log::shared_owner(&app, server) else { return };
-    let Some(raw) = app.invites.lock().unwrap().get(&server).cloned() else { return };
+    let Some(raw) = app.invites.lock_or_recover().get(&server).cloned() else { return };
     let Ok(mut ticket) = commy_net::ServerTicket::decode(&raw) else { return };
-    let live = app.servers.lock().unwrap().contains_key(&server) && !app.awaits_snapshot(server);
+    let live = app.servers.lock_or_recover().contains_key(&server) && !app.awaits_snapshot(server);
     if ticket.owner == Some(owner) || (ticket.owner.is_some() && live) {
         return;
     }
     ticket.owner = Some(owner);
-    app.invites.lock().unwrap().insert(server, ticket.encode());
+    app.invites.lock_or_recover().insert(server, ticket.encode());
     app.persist_invites();
 }
 
 fn wanted_now(app: &App, me: UserId) -> HashMap<ServerId, Vec<Want>> {
     let Some(identity) = app.identity() else { return HashMap::new() };
     let holder = crate::channel_lock::holder_of(app);
-    let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let sids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     let awaiting: HashSet<ServerId> = sids.iter().copied().filter(|sid| app.awaits_snapshot(*sid)).collect();
     let mut given: HashMap<ServerId, (KeyId, ChannelSecret)> = sids.iter().filter_map(|sid| Some((*sid, given_key(app, *sid)?))).collect();
     let now = now_ms();
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     sids.into_iter()
         .filter_map(|sid| {
             let state = servers.get(&sid)?;
@@ -635,9 +636,9 @@ fn wanted_now(app: &App, me: UserId) -> HashMap<ServerId, Vec<Want>> {
 }
 
 fn known_hosts(app: &App) -> Vec<(ServerId, Option<String>, bool)> {
-    let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let sids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     let awaiting: HashSet<ServerId> = sids.into_iter().filter(|sid| app.awaits_snapshot(*sid)).collect();
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     servers.iter().map(|(sid, state)| (*sid, state.server.sync_host.clone(), awaiting.contains(sid))).collect()
 }
 
@@ -685,12 +686,12 @@ fn drop_community(live: &mut Live, sid: ServerId) {
 
 fn refresh(handle: &AppHandle) {
     let app = handle.state::<App>();
-    let Some(me) = LIVE.lock().unwrap().as_ref().map(|l| l.me) else { return };
+    let Some(me) = LIVE.lock_or_recover().as_ref().map(|l| l.me) else { return };
     let mut wanted = wanted_now(&app, me);
     let hosts = chosen_hosts(&app);
     let mut fresh_communities = Vec::new();
     let mut promoted = Vec::new();
-    let mut guard = LIVE.lock().unwrap();
+    let mut guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_mut() else { return };
     let gone: Vec<ServerId> = live.communities.keys().filter(|sid| !wanted.contains_key(sid)).copied().collect();
     for sid in gone {
@@ -760,10 +761,10 @@ fn refresh(handle: &AppHandle) {
         announce_me(handle, sid);
     }
     let opening = fresh_communities.len();
-    let focus = *FOCUS.lock().unwrap();
+    let focus = *FOCUS.lock_or_recover();
     for (sid, group) in fresh_communities {
         let spread = first_open_delay(sid, opening, focus);
-        if let Some(live) = LIVE.lock().unwrap().as_mut() {
+        if let Some(live) = LIVE.lock_or_recover().as_mut() {
             live.opening.insert(sid, group);
         }
         if spread.is_zero() {
@@ -786,7 +787,7 @@ fn first_open_delay(sid: ServerId, opening: usize, focus: Option<ServerId>) -> D
 }
 
 fn open_waiting(server: ServerId) {
-    let mut guard = LIVE.lock().unwrap();
+    let mut guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_mut() else { return };
     let Some(group) = live.opening.remove(&server) else { return };
     let Some(community) = live.communities.get_mut(&server) else { return };
@@ -795,8 +796,8 @@ fn open_waiting(server: ServerId) {
 }
 
 pub fn focus(server: ServerId) {
-    *FOCUS.lock().unwrap() = Some(server);
-    open_waiting(server);
+    *FOCUS.lock_or_recover() = Some(server);
+    tauri::async_runtime::spawn(async move { open_waiting(server) });
 }
 
 fn follow_group(pool: &mut Pool, group: OpenGroup) {
@@ -826,7 +827,7 @@ pub fn publish(server: ServerId, payload: &WirePayload) {
     }
     publish_held(Unsent { server, payload: payload.clone(), at: now_ms() });
     if streams::event_of(payload).is_some_and(|(event, _)| streams::changes_lanes(event)) {
-        let handle = LIVE.lock().unwrap().as_ref().map(|live| live.handle.clone());
+        let handle = LIVE.lock_or_recover().as_ref().map(|live| live.handle.clone());
         if let Some(handle) = handle {
             refresh_soon(&handle);
         }
@@ -843,7 +844,7 @@ fn publish_held(held: Unsent) {
         _ => None,
     };
     let found = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         guard.as_mut().map(|live| {
             let sends = targets(live, server, lane, key_event);
             if !sends.is_empty() {
@@ -881,7 +882,7 @@ pub fn signal(server: ServerId, payload: &WirePayload) {
     let Some((event, _)) = streams::event_of(payload) else { return };
     let lane = streams::signal_lane(event);
     let again = {
-        let guard = LIVE.lock().unwrap();
+        let guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_ref() else { return };
         let Some(plain) = streams::encode_signal(live.node, payload) else { return };
         for (stream, client) in targets(live, server, lane, false) {
@@ -898,9 +899,9 @@ pub fn signal(server: ServerId, payload: &WirePayload) {
 }
 
 pub fn leave_word(app: &App, server: ServerId) {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     let payload = app.wire_at(server, ServerEvent::PresenceUpdate { user: me, presence: Presence::Offline }, now_ms() + 1);
-    let guard = LIVE.lock().unwrap();
+    let guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_ref().filter(|live| live.me == me) else { return };
     let Some(plain) = streams::encode_signal(live.node, &payload) else { return };
     for (stream, client) in targets(live, server, Lane::State, false) {
@@ -911,7 +912,7 @@ pub fn leave_word(app: &App, server: ServerId) {
 }
 
 fn say_here(handle: &AppHandle, server: ServerId) {
-    if let Some(live) = LIVE.lock().unwrap().as_mut() {
+    if let Some(live) = LIVE.lock_or_recover().as_mut() {
         live.greeted.insert(server, Instant::now());
     }
     for payload in crate::liveness::here(&handle.state::<App>(), server) {
@@ -921,7 +922,7 @@ fn say_here(handle: &AppHandle, server: ServerId) {
 
 fn greet(handle: &AppHandle, server: ServerId) {
     {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut() else { return };
         let now = Instant::now();
         if live.greeted.get(&server).is_some_and(|at| now.duration_since(*at) < GREET_GAP) {
@@ -941,7 +942,7 @@ pub async fn publish_now(server: ServerId, payload: &WirePayload) -> Vec<(Stream
     let key_event = streams::event_of(payload).is_none_or(|(event, _)| streams::is_key_event(event));
     let Some(plain) = streams::encode_entry(payload) else { return Vec::new() };
     let sends = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut() else { return Vec::new() };
         let sends = targets(live, server, lane, key_event);
         if !sends.is_empty() {
@@ -959,25 +960,25 @@ pub async fn publish_now(server: ServerId, payload: &WirePayload) -> Vec<(Stream
 }
 
 pub fn community_hosts() -> HashMap<ServerId, String> {
-    let guard = LIVE.lock().unwrap();
+    let guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_ref() else { return HashMap::new() };
     live.communities.iter().map(|(sid, community)| (*sid, community.url.clone())).collect()
 }
 
 pub fn followed_streams() -> HashMap<ServerId, Vec<commy_sync::StreamKeys>> {
-    let guard = LIVE.lock().unwrap();
+    let guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_ref() else { return HashMap::new() };
     live.communities.iter().map(|(sid, community)| (*sid, community.wants.values().map(|want| want.keys.clone()).collect())).collect()
 }
 
 pub fn wake_keys(server: ServerId, private: Option<commy_core::ChannelId>) -> Option<commy_sync::StreamKeys> {
-    let guard = LIVE.lock().unwrap();
+    let guard = LIVE.lock_or_recover();
     let community = guard.as_ref()?.communities.get(&server)?;
     community.wants.values().find(|want| wake_point(want) == Some(private)).map(|want| want.keys.clone())
 }
 
 pub fn wake_points() -> Vec<(ServerId, Option<commy_core::ChannelId>, commy_sync::StreamKeys)> {
-    let guard = LIVE.lock().unwrap();
+    let guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_ref() else { return Vec::new() };
     live.communities
         .iter()
@@ -1002,7 +1003,7 @@ fn announce(server: ServerId, profile: &UserProfile, payload: &WirePayload) -> V
     let Some(profile) = profile_digest(profile) else { return Vec::new() };
     let Some(plain) = streams::encode_entry(payload) else { return Vec::new() };
     let sends = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut() else { return Vec::new() };
         let fresh: Vec<_> = targets(live, server, Lane::State, false)
             .into_iter()
@@ -1024,7 +1025,7 @@ fn announce(server: ServerId, profile: &UserProfile, payload: &WirePayload) -> V
             tauri::async_runtime::spawn(async move {
                 let Err(e) = sync_link::append(client, stream, plain).await else { return true };
                 tracing::debug!("could not tell the sync service where this device is: {e}");
-                if let Some(live) = LIVE.lock().unwrap().as_mut() {
+                if let Some(live) = LIVE.lock_or_recover().as_mut() {
                     live.cursors.unannounce(stream, &profile);
                 }
                 save_soon();
@@ -1036,10 +1037,10 @@ fn announce(server: ServerId, profile: &UserProfile, payload: &WirePayload) -> V
 
 fn announce_me(handle: &AppHandle, server: ServerId) {
     let app = handle.state::<App>();
-    let Some(me) = app.profile.lock().unwrap().clone() else { return };
+    let Some(me) = app.profile.lock_or_recover().clone() else { return };
     let mut profile = app.announced(me);
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server).filter(|s| s.server.is_current_member(profile.id) && !s.is_deleted()) else { return };
         crate::devices::point_at_voice(state, &mut profile);
     }
@@ -1070,7 +1071,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
     match event {
         SyncEvent::Entry { stream, seq, plain, .. } => on_entry(handle, stream, seq, &plain),
         SyncEvent::Unreadable { stream, seq } => {
-            if let Some(live) = LIVE.lock().unwrap().as_mut() {
+            if let Some(live) = LIVE.lock_or_recover().as_mut() {
                 live.cursors.advance(stream, seq);
             }
             save_soon();
@@ -1079,19 +1080,19 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
         SyncEvent::Signal { stream, plain } => on_signal(handle, stream, &plain),
         SyncEvent::Refused { stream, code } => {
             tracing::debug!("the sync service refused a server stream {stream}: {code:?}");
-            if let Some(live) = LIVE.lock().unwrap().as_mut() {
+            if let Some(live) = LIVE.lock_or_recover().as_mut() {
                 live.current.remove(&stream);
                 live.refused.insert(stream);
             }
         }
         SyncEvent::Connected => {
-            if let Some(live) = LIVE.lock().unwrap().as_mut() {
+            if let Some(live) = LIVE.lock_or_recover().as_mut() {
                 let servers: Vec<ServerId> = live.communities.keys().copied().collect();
                 live.say_again.extend(servers);
             }
         }
         SyncEvent::Disconnected { streams } => {
-            if let Some(live) = LIVE.lock().unwrap().as_mut() {
+            if let Some(live) = LIVE.lock_or_recover().as_mut() {
                 let ours: Vec<StreamId> = streams.into_iter().filter(|stream| live.route(*stream).is_some()).collect();
                 for stream in ours {
                     live.current.remove(&stream);
@@ -1104,7 +1105,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
 
 fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
     let found = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut() else { return };
         let Some((server, want)) = live.route(stream) else { return };
         live.cursors.advance(stream, seq);
@@ -1151,7 +1152,7 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
 
 fn on_signal(handle: &AppHandle, stream: StreamId, plain: &[u8]) {
     let found = {
-        let guard = LIVE.lock().unwrap();
+        let guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_ref() else { return };
         let Some((server, want)) = live.route(stream) else { return };
         let Some((node, payload)) = streams::decode_signal(plain, want.lane) else { return };
@@ -1164,7 +1165,7 @@ fn on_signal(handle: &AppHandle, stream: StreamId, plain: &[u8]) {
     }
     let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
     let (admitted, returning) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server) else { return };
         let admitted = match action {
             Some(action) => state.admits_signed(&SignedEvent { action, event: event.clone() }).is_ok(),
@@ -1198,7 +1199,7 @@ fn snapshot_time(payload: &WirePayload) -> Option<i64> {
 }
 
 fn park(server: ServerId, payload: WirePayload) {
-    let mut guard = LIVE.lock().unwrap();
+    let mut guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_mut() else { return };
     match snapshot_time(&payload) {
         Some(at) => {
@@ -1218,7 +1219,7 @@ fn park(server: ServerId, payload: WirePayload) {
 }
 
 fn adopt_snapshot(handle: &AppHandle, server: ServerId) {
-    let Some(snapshot) = LIVE.lock().unwrap().as_mut().and_then(|live| live.snapshots.remove(&server)) else { return };
+    let Some(snapshot) = LIVE.lock_or_recover().as_mut().and_then(|live| live.snapshots.remove(&server)) else { return };
     if crate::catchup::apply_service_snapshot(handle, server, snapshot) {
         tracing::info!("took the owner's copy of {server} from the sync service");
         release_parked(handle);
@@ -1229,7 +1230,7 @@ fn adopt_snapshot(handle: &AppHandle, server: ServerId) {
 fn release_parked(handle: &AppHandle) {
     let app = handle.state::<App>();
     let (released, net) = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut() else { return };
         let settled: Vec<ServerId> = live.parked.keys().copied().filter(|sid| !app.awaits_snapshot(*sid)).collect();
         let released: Vec<(ServerId, VecDeque<WirePayload>)> = settled.into_iter().filter_map(|sid| Some((sid, live.parked.remove(&sid)?))).collect();
@@ -1248,7 +1249,7 @@ fn publish_snapshots(handle: &AppHandle) {
     let app = handle.state::<App>();
     let now = now_ms();
     let (me, ready) = {
-        let guard = LIVE.lock().unwrap();
+        let guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_ref() else { return };
         let ready: Vec<ServerId> = live
             .communities
@@ -1262,12 +1263,12 @@ fn publish_snapshots(handle: &AppHandle) {
         (live.me, ready)
     };
     for server in ready {
-        let keys = app.servers.lock().unwrap().get(&server).filter(|state| state.server.owner == me).map(key_records);
+        let keys = app.servers.lock_or_recover().get(&server).filter(|state| state.server.owner == me).map(key_records);
         let snapshot = keys.is_some().then(|| crate::catchup::service_snapshot_for(&app, server)).flatten();
         if keys.is_some() && snapshot.is_none() {
             continue;
         }
-        if let Some(live) = LIVE.lock().unwrap().as_mut() {
+        if let Some(live) = LIVE.lock_or_recover().as_mut() {
             live.published.insert(server, now);
         }
         for payload in snapshot.into_iter().chain(keys.unwrap_or_default()) {
@@ -1278,7 +1279,7 @@ fn publish_snapshots(handle: &AppHandle) {
 
 fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     let found = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut() else { return };
         let Some((server, want)) = live.route(stream) else { return };
         live.cursors.advance(stream, seq);
@@ -1319,18 +1320,18 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     if !due {
         return;
     }
-    let seen = LIVE.lock().unwrap().as_mut().and_then(|live| live.seen.remove(&stream)).unwrap_or_default();
+    let seen = LIVE.lock_or_recover().as_mut().and_then(|live| live.seen.remove(&stream)).unwrap_or_default();
     let payloads = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         servers.get(&server).filter(|s| s.server.owner == me).map(|state| backfill_for(state, want.lane, &seen))
     };
     let Some(payloads) = payloads else { return };
-    if !LIVE.lock().unwrap().as_mut().is_some_and(|live| live.backfilling.insert(stream)) {
+    if !LIVE.lock_or_recover().as_mut().is_some_and(|live| live.backfilling.insert(stream)) {
         return;
     }
     tauri::async_runtime::spawn(async move {
         let done = fill(stream, payloads).await;
-        if let Some(live) = LIVE.lock().unwrap().as_mut() {
+        if let Some(live) = LIVE.lock_or_recover().as_mut() {
             live.backfilling.remove(&stream);
             if done {
                 live.cursors.backfilled.insert(stream.to_hex());
@@ -1341,7 +1342,7 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
 }
 
 pub fn state_link(server: ServerId) -> Option<StateLink> {
-    let guard = LIVE.lock().unwrap();
+    let guard = LIVE.lock_or_recover();
     let live = guard.as_ref()?;
     let Some(community) = live.communities.get(&server) else { return Some(StateLink::NotUsed) };
     let streams: Vec<StreamId> = community.wants.iter().filter(|(_, want)| want.lane == Lane::State).map(|(stream, _)| *stream).collect();
@@ -1375,7 +1376,7 @@ async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
     for payload in payloads {
         let Some(plain) = streams::encode_entry(&payload) else { continue };
         let client = {
-            let mut guard = LIVE.lock().unwrap();
+            let mut guard = LIVE.lock_or_recover();
             let Some(live) = guard.as_mut() else { return false };
             let Some(client) = live.communities.values().find_map(|c| c.wants.contains_key(&stream).then(|| c.pool.client_for(stream)).flatten())
             else {
@@ -1399,6 +1400,34 @@ async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
 mod tests {
     use super::*;
     use commy_core::{Identity, Message, Server, ServerState};
+
+    const UNREACHABLE_SYNC_URL: &str = "wss://sync.invalid";
+
+    fn one_state_stream() -> (commy_sync::StreamId, OpenGroup) {
+        let keys = commy_sync::StreamSecret::random().keys();
+        (keys.id, vec![(Lane::State, keys, 0)])
+    }
+
+    #[test]
+    #[should_panic]
+    fn a_fresh_pool_cannot_open_its_first_link_outside_the_async_runtime() {
+        let (events, _received) = mpsc::unbounded_channel();
+        let mut pool = Pool::with_events(UNREACHABLE_SYNC_URL, events);
+        let (_, group) = one_state_stream();
+        follow_group(&mut pool, group);
+    }
+
+    #[test]
+    fn a_fresh_pool_opens_its_first_link_on_the_async_runtime() {
+        let (events, _received) = mpsc::unbounded_channel();
+        let (stream, group) = one_state_stream();
+        let followed = tauri::async_runtime::block_on(tauri::async_runtime::spawn(async move {
+            let mut pool = Pool::with_events(UNREACHABLE_SYNC_URL, events);
+            follow_group(&mut pool, group);
+            pool.follows(stream)
+        }));
+        assert!(followed.unwrap());
+    }
 
     #[test]
     fn one_new_server_opens_at_once_and_many_spread_out() {

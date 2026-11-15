@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::catchup::AppAccess;
 use crate::safety::{self, FriendSignal};
 use crate::state::App;
@@ -296,14 +297,14 @@ pub fn dm_sender_trusted(app: &App, envelope: &DmEnvelope) -> bool {
         return false;
     };
     let user = envelope.sender.id;
-    if let Some(pinned) = app.dms.lock().unwrap().pinned_key(user) {
+    if let Some(pinned) = app.dms.lock_or_recover().pinned_key(user) {
         return key == pinned;
     }
-    key_matches_pins(key, member_entries(&app.servers.lock().unwrap(), user).map(|p| p.identity))
+    key_matches_pins(key, member_entries(&app.servers.lock_or_recover(), user).map(|p| p.identity))
 }
 
 pub fn screen_dm(app: &App, dm: &IncomingDm) -> Option<UserProfile> {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id)?;
     let envelope = &dm.envelope;
     if envelope.message.to != me || !envelope.sent_from(&dm.node) || !dm_sender_trusted(app, envelope) {
         return None;
@@ -333,17 +334,16 @@ fn nudge_from(app: &App, me: UserId, sender: &UserProfile, message: &DmMessage) 
     let welcome = match heard.server {
         Some(server) => app
             .servers
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .get(&server)
             .is_some_and(|state| commy_view::nudge::server_nudge_welcome(state, partner, me, heard.channel)),
         None => {
-            let safety = app.safety.lock().unwrap();
-            let dms = app.dms.lock().unwrap();
+            let safety = app.safety.lock_or_recover();
+            let dms = app.dms.lock_or_recover();
             !safety.is_blocked(partner) && dms.conversation(partner).iter().any(|m| m.id == heard.target && m.from == partner)
         }
     };
-    if !welcome || app.safety.lock().unwrap().is_blocked(partner) {
+    if !welcome || app.safety.lock_or_recover().is_blocked(partner) {
         tracing::debug!("dropped a notify-anyway from {partner}");
         return Received::Dropped;
     }
@@ -353,8 +353,8 @@ fn nudge_from(app: &App, me: UserId, sender: &UserProfile, message: &DmMessage) 
 const MAX_PENDING_FRIEND_REQUESTS: usize = 50;
 
 fn friend_request_welcome(app: &App, partner: UserId, node: [u8; 32]) -> bool {
-    let shares_server = app.servers.lock().unwrap().values().any(|s| s.server.is_member(partner));
-    let safety = app.safety.lock().unwrap();
+    let shares_server = app.servers.lock_or_recover().values().any(|s| s.server.is_member(partner));
+    let safety = app.safety.lock_or_recover();
     let known = [&safety.friends, &safety.accepted, &safety.friend_in, &safety.friend_out].iter().any(|people| people.contains(&partner));
     if known {
         return !safety.is_blocked(partner);
@@ -363,7 +363,7 @@ fn friend_request_welcome(app: &App, partner: UserId, node: [u8; 32]) -> bool {
         return false;
     }
     let from = safety::Sender { blocked: safety.is_blocked(partner), accepted: false, shares_server, node };
-    let verdict = app.dm_filter.lock().unwrap().classify(safety.dm_policy, safety.spam_filter, &from, partner, "", chrono::Utc::now().timestamp());
+    let verdict = app.dm_filter.lock_or_recover().classify(safety.dm_policy, safety.spam_filter, &from, partner, "", chrono::Utc::now().timestamp());
     verdict != safety::Verdict::Drop && verdict != safety::Verdict::Spam
 }
 
@@ -389,7 +389,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
             return Received::Dropped;
         }
         let reply = {
-            let mut safety = app.safety.lock().unwrap();
+            let mut safety = app.safety.lock_or_recover();
             safety::note_friend_signal(&mut safety, partner, message.id, message.created_at)
                 .then(|| safety::apply_friend_signal(&mut safety, partner, signal, note.as_deref()))
         };
@@ -397,37 +397,37 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
             tracing::debug!("ignored a friend signal from {partner} seen before");
             return Received::Dropped;
         };
-        app.dms.lock().unwrap().remember_contact(sender.clone());
+        app.dms.lock_or_recover().remember_contact(sender.clone());
         app.persist_dms();
         app.persist_safety();
         crate::account_log::note_relation(app, partner);
-        let note = app.safety.lock().unwrap().friend_notes.get(&partner).cloned();
+        let note = app.safety.lock_or_recover().friend_notes.get(&partner).cloned();
         access.emit(
             "friends-changed",
             serde_json::json!({ "user": partner.to_string(), "name": sender.visible_name(), "signal": signal, "note": note }),
         );
         return reply.map_or(Received::Taken, |signal| Received::Reply { to: partner, signal });
     }
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return Received::Dropped };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return Received::Dropped };
     if commy_view::nudge::is_nudge(&message) {
         return nudge_from(app, me, &sender, &message);
     }
     if matches!(message.action, DmAction::Call { .. } | DmAction::GroupInvite { .. }) {
         let known = {
-            let safety = app.safety.lock().unwrap();
-            let dms = app.dms.lock().unwrap();
-            commy_view::dms::invite_welcome(&dms, &safety, &app.servers.lock().unwrap(), me, partner)
+            let safety = app.safety.lock_or_recover();
+            let dms = app.dms.lock_or_recover();
+            commy_view::dms::invite_welcome(&dms, &safety, &app.servers.lock_or_recover(), me, partner)
         };
         if !known {
             tracing::debug!("dropped a call or group invite from {partner}, who we do not talk to");
             return Received::Dropped;
         }
-        app.dms.lock().unwrap().remember_contact(sender);
+        app.dms.lock_or_recover().remember_contact(sender);
         return match message.action.clone() {
             DmAction::Call { call, signal } => Received::Call { from: partner, call, signal },
             DmAction::GroupInvite { ticket } => {
                 let key = commy_view::dms::invite_key_of(&message);
-                if !app.dms.lock().unwrap().apply(partner, message) {
+                if !app.dms.lock_or_recover().apply(partner, message) {
                     return Received::Dropped;
                 }
                 app.persist_dms();
@@ -438,7 +438,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
     }
     if !message.is_post() {
         let applied = {
-            let mut dms = app.dms.lock().unwrap();
+            let mut dms = app.dms.lock_or_recover();
             dms.has_sent_to(me, partner) && dms.apply(partner, message)
         };
         if applied {
@@ -448,16 +448,16 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return if applied { Received::Taken } else { Received::Dropped };
     }
     let verdict = {
-        let shares_server = app.servers.lock().unwrap().values().any(|s| s.server.is_member(partner));
-        let already_talking = app.dms.lock().unwrap().has_sent_to(me, partner);
-        let safety = app.safety.lock().unwrap();
+        let shares_server = app.servers.lock_or_recover().values().any(|s| s.server.is_member(partner));
+        let already_talking = app.dms.lock_or_recover().has_sent_to(me, partner);
+        let safety = app.safety.lock_or_recover();
         let from = safety::Sender {
             blocked: safety.is_blocked(partner),
             accepted: already_talking || safety.accepted.contains(&partner) || safety.friends.contains(&partner),
             shares_server,
             node: dm.node,
         };
-        app.dm_filter.lock().unwrap().classify(
+        app.dm_filter.lock_or_recover().classify(
             safety.dm_policy,
             safety.spam_filter,
             &from,
@@ -471,7 +471,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         return Received::Dropped;
     }
     if verdict == safety::Verdict::Spam {
-        if app.safety.lock().unwrap().spam.insert(partner) {
+        if app.safety.lock_or_recover().spam.insert(partner) {
             app.persist_safety();
         }
         tracing::debug!("dropped a DM from {partner} that looked like spam");
@@ -479,13 +479,13 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
     }
     if verdict == safety::Verdict::Request {
         let known: HashSet<UserId> = {
-            let safety = app.safety.lock().unwrap();
-            let servers = app.servers.lock().unwrap();
+            let safety = app.safety.lock_or_recover();
+            let servers = app.servers.lock_or_recover();
             let members = servers.values().flat_map(|s| s.server.members.iter().map(|m| m.user));
             safety.accepted.iter().chain(safety.friends.iter()).copied().chain(members).collect()
         };
         let (open, already_open) = {
-            let dms = app.dms.lock().unwrap();
+            let dms = app.dms.lock_or_recover();
             (open_stranger_requests(&dms, me, |user| known.contains(&user)), !dms.conversation(partner).is_empty())
         };
         if !known.contains(&partner) && !already_open && open >= MAX_STRANGER_REQUESTS {
@@ -502,7 +502,7 @@ pub fn receive_dm<A: AppAccess>(access: &A, dm: IncomingDm) -> Received {
         "spam": verdict == safety::Verdict::Spam,
     });
     let inserted = {
-        let mut dms = app.dms.lock().unwrap();
+        let mut dms = app.dms.lock_or_recover();
         dms.remember_contact(sender);
         dms.apply(partner, message)
     };
@@ -528,7 +528,7 @@ fn held_for_key(app: &App, event: &ServerEvent) -> bool {
     if app.key_settled() {
         return false;
     }
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     needs_settled_key(event, me)
 }
 
@@ -548,7 +548,7 @@ pub async fn broadcast_local(app: &App, server: ServerId, event: ServerEvent) ->
         }
         Err(_) => false,
     };
-    if app.outbox.lock().unwrap().note_local(server, &event, delivered) {
+    if app.outbox.lock_or_recover().note_local(server, &event, delivered) {
         app.persist_outbox();
     }
     if let Some(payload) = &stored {
@@ -580,8 +580,8 @@ async fn send_now(
 pub async fn flush_queued(app: &App, server: ServerId) {
     let Ok(_signing) = app.signing.try_read() else { return };
     let settled = app.key_settled();
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let events = app.outbox.lock().unwrap().take_queued_where(server, |e| settled || !needs_settled_key(e, me));
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let events = app.outbox.lock_or_recover().take_queued_where(server, |e| settled || !needs_settled_key(e, me));
     if events.is_empty() {
         return;
     }
@@ -597,7 +597,7 @@ pub async fn flush_queued(app: &App, server: ServerId) {
         }
     }
     tracing::info!("re-sent {} of {total} queued events that may go now", total - left.len());
-    app.outbox.lock().unwrap().requeue(server, left);
+    app.outbox.lock_or_recover().requeue(server, left);
     app.persist_outbox();
 }
 
@@ -653,15 +653,15 @@ impl Outbox {
 }
 
 pub fn resign_held(app: &App) {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let (Some(me), Some(identity)) = (me, app.identity()) else { return };
-    let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let servers: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     for server in servers {
         let (kept, queued) = {
-            let mut servers = app.servers.lock().unwrap();
+            let mut servers = app.servers.lock_or_recover();
             let Some(state) = servers.get_mut(&server) else { continue };
             let kept = resign_ours(state, me, &identity);
-            (kept, app.outbox.lock().unwrap().resign_queued(state, me, &identity))
+            (kept, app.outbox.lock_or_recover().resign_queued(state, me, &identity))
         };
         if kept {
             tracing::info!("signed what we wrote in {server} meanwhile again with our settled key");
@@ -696,25 +696,25 @@ pub async fn try_send_dm(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
 }
 
 pub fn queue_dm(app: &App, partner: UserId, id: MessageId) {
-    if app.outbox.lock().unwrap().add_dm(partner, id) {
-        app.dm_backoff.lock().unwrap().schedule(partner, Instant::now());
+    if app.outbox.lock_or_recover().add_dm(partner, id) {
+        app.dm_backoff.lock_or_recover().schedule(partner, Instant::now());
         app.persist_outbox();
     }
 }
 
 pub fn dm_held(app: &App, partner: UserId, id: MessageId) {
-    if app.outbox.lock().unwrap().dm_stored(partner, id) {
+    if app.outbox.lock_or_recover().dm_stored(partner, id) {
         app.persist_outbox();
     }
 }
 
 pub fn dm_delivered(app: &App, partner: UserId, id: MessageId) {
     let (done, drained) = {
-        let mut outbox = app.outbox.lock().unwrap();
+        let mut outbox = app.outbox.lock_or_recover();
         (outbox.dm_done(partner, id), !outbox.has_dms(partner))
     };
     if drained {
-        app.dm_backoff.lock().unwrap().succeeded(partner);
+        app.dm_backoff.lock_or_recover().succeeded(partner);
     }
     if done {
         app.persist_outbox();
@@ -722,15 +722,15 @@ pub fn dm_delivered(app: &App, partner: UserId, id: MessageId) {
 }
 
 pub fn wake_dm(app: &App, partner: UserId) {
-    if !app.outbox.lock().unwrap().has_dms(partner) {
+    if !app.outbox.lock_or_recover().has_dms(partner) {
         return;
     }
-    app.dm_backoff.lock().unwrap().wake(partner, Instant::now());
+    app.dm_backoff.lock_or_recover().wake(partner, Instant::now());
     app.dm_wake.notify_one();
 }
 
 pub fn wake_all_dms(app: &App) {
-    let partners = app.outbox.lock().unwrap().dm_partners();
+    let partners = app.outbox.lock_or_recover().dm_partners();
     for partner in partners {
         wake_dm(app, partner);
     }
@@ -741,12 +741,11 @@ pub fn wake_dms_for_node(app: &App, peer: [u8; 32]) {
     let on_node = |p: &commy_core::UserProfile| p.node.as_deref() == Some(hex.as_str());
     let mut users: HashSet<UserId> = app
         .servers
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .values()
         .flat_map(|s| s.profiles.values().filter(|p| on_node(p)).map(|p| p.id))
         .collect();
-    users.extend(app.dms.lock().unwrap().contacts.values().filter(|p| on_node(p)).map(|p| p.id));
+    users.extend(app.dms.lock_or_recover().contacts.values().filter(|p| on_node(p)).map(|p| p.id));
     for user in users {
         wake_dm(app, user);
     }
@@ -760,9 +759,9 @@ pub async fn run_dm_outbox(handle: tauri::AppHandle) {
         }
         let app = handle.state::<App>();
         let now = Instant::now();
-        let partners = app.outbox.lock().unwrap().dm_partners();
+        let partners = app.outbox.lock_or_recover().dm_partners();
         let due: Vec<UserId> = {
-            let backoff = app.dm_backoff.lock().unwrap();
+            let backoff = app.dm_backoff.lock_or_recover();
             partners.into_iter().filter(|p| backoff.due(*p, now)).collect()
         };
         for partner in due {
@@ -790,19 +789,19 @@ where
     Fut: Future<Output = bool>,
 {
     let app = access.app();
-    let node = app.node_hex.lock().unwrap().clone();
+    let node = app.node_hex.lock_or_recover().clone();
     let (Ok(_), Some(_), Some(node)) = (crate::current_profile(app), app.identity(), node) else { return };
-    if app.safety.lock().unwrap().is_blocked(partner) {
+    if app.safety.lock_or_recover().is_blocked(partner) {
         return;
     }
     let mut changed = false;
     let mut failed = false;
     let mut unstored = false;
-    let queue = app.outbox.lock().unwrap().dm_queue(partner);
+    let queue = app.outbox.lock_or_recover().dm_queue(partner);
     for id in queue {
-        let found = app.dms.lock().unwrap().conversation(partner).iter().find(|m| m.id == id).cloned();
+        let found = app.dms.lock_or_recover().conversation(partner).iter().find(|m| m.id == id).cloned();
         let Some(mut message) = found else {
-            changed |= app.outbox.lock().unwrap().dm_done(partner, id);
+            changed |= app.outbox.lock_or_recover().dm_done(partner, id);
             continue;
         };
         let _signing = app.signing.read().await;
@@ -813,9 +812,9 @@ where
         message.sign(&node, &identity);
         let envelope = DmEnvelope::new(message, app.profile_for(&me, partner));
         let syncs = commy_view::dms::syncable(&envelope.message);
-        if syncs && !unstored && !app.outbox.lock().unwrap().is_dm_stored(partner, id) {
+        if syncs && !unstored && !app.outbox.lock_or_recover().is_dm_stored(partner, id) {
             if crate::dm_sync::publish(app, partner, &envelope).await {
-                changed |= app.outbox.lock().unwrap().dm_stored(partner, id);
+                changed |= app.outbox.lock_or_recover().dm_stored(partner, id);
             } else {
                 unstored = true;
             }
@@ -830,10 +829,10 @@ where
             failed = true;
             continue;
         }
-        changed |= app.outbox.lock().unwrap().dm_done(partner, id);
+        changed |= app.outbox.lock_or_recover().dm_done(partner, id);
     }
     {
-        let mut backoff = app.dm_backoff.lock().unwrap();
+        let mut backoff = app.dm_backoff.lock_or_recover();
         if failed {
             backoff.failed(partner, Instant::now());
         } else {

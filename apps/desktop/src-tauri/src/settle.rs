@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::catchup::{every_neighbor, AppAccess};
 use crate::outbox;
 use crate::state::App;
@@ -19,7 +20,7 @@ impl KeyNet for tauri::AppHandle {
 
     async fn neighbors(&self) -> Vec<(ServerId, Vec<[u8; 32]>)> {
         let app = self.state::<App>();
-        let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+        let servers: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
         let net = app.net.lock().await;
         let Some(node) = net.as_ref() else { return Vec::new() };
         servers.into_iter().map(|sid| (sid, node.neighbors(sid))).collect()
@@ -63,7 +64,7 @@ fn settle_after_resigning(app: &App, settle: impl FnOnce(&App) -> bool) -> std::
 
 pub async fn use_settled_key<N: KeyNet>(net: &N) {
     let app = net.app();
-    let profile = app.profile.lock().unwrap().clone();
+    let profile = app.profile.lock_or_recover().clone();
     if let Some(profile) = profile {
         net.announce(&profile).await;
         net.emit("profile-changed", serde_json::to_value(&profile).unwrap_or_default());

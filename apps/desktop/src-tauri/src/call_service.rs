@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
@@ -21,14 +22,14 @@ pub struct CallKeeper(());
 
 impl CallKeeper {
     pub fn hold() -> Self {
-        CALLS.lock().unwrap().change(1);
+        CALLS.lock_or_recover().change(1);
         CallKeeper(())
     }
 }
 
 impl Drop for CallKeeper {
     fn drop(&mut self) {
-        CALLS.lock().unwrap().change(-1);
+        CALLS.lock_or_recover().change(-1);
     }
 }
 
@@ -90,7 +91,7 @@ pub fn init() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             let _ = PLUGIN.set(plugin.clone());
             let (tx, rx) = std::sync::mpsc::channel();
             {
-                let mut calls = CALLS.lock().unwrap();
+                let mut calls = CALLS.lock_or_recover();
                 let _ = tx.send(calls.held > 0);
                 calls.keeper = Some(tx);
             }

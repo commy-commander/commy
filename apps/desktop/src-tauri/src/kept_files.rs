@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use commy_core::message::{Attachment, Message};
 use commy_core::{ServerId, UserId};
 use std::time::Duration;
@@ -56,17 +57,17 @@ pub(crate) fn has_room(stored: u64, size: u64) -> bool {
 
 pub(crate) fn store_new(handle: &tauri::AppHandle, server: ServerId, message: &Message) {
     let app = handle.state::<App>();
-    let up_to = app.storage.lock().unwrap().store_for_others_bytes();
+    let up_to = app.storage.lock_or_recover().store_for_others_bytes();
     if up_to == 0 || !cfg!(desktop) {
         return;
     }
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
-    if app.safety.lock().unwrap().blocked.iter().any(|user| *user == message.author) {
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
+    if app.safety.lock_or_recover().blocked.iter().any(|user| *user == message.author) {
         return;
     }
     let keys = crate::channel_lock::holder_of(&app);
     let files = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server) else { return };
         if !state.server.can_view(message.channel, me) || keys.hold(state, message).is_some() {
             return;
@@ -134,11 +135,11 @@ pub(crate) fn keep_opened(shelf: Option<commy_net::shelf::Shelf>, blob: &str, by
 
 pub(crate) fn only_used_by(gone: &commy_core::ServerState, app: &App) -> Vec<String> {
     let mut blobs = gone.file_blobs();
-    for state in app.servers.lock().unwrap().values() {
+    for state in app.servers.lock_or_recover().values() {
         let used = state.file_blobs();
         blobs.retain(|blob| !used.contains(blob));
     }
-    let in_dms = app.dms.lock().unwrap().file_blobs();
+    let in_dms = app.dms.lock_or_recover().file_blobs();
     blobs.retain(|blob| !in_dms.contains(blob));
     blobs.into_iter().collect()
 }

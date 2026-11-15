@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -140,11 +141,11 @@ pub async fn voice_pack_download(app: tauri::State<'_, App>, handle: AppHandle, 
     if needed.is_empty() {
         return Ok(());
     }
-    if !BUSY.lock().unwrap().get_or_insert_with(HashSet::new).insert(voice.clone()) {
+    if !BUSY.lock_or_recover().get_or_insert_with(HashSet::new).insert(voice.clone()) {
         return Err("this voice is already downloading".into());
     }
     let result = download_all(&handle, pack, &dir, &voice, &needed).await;
-    BUSY.lock().unwrap().get_or_insert_with(HashSet::new).remove(&voice);
+    BUSY.lock_or_recover().get_or_insert_with(HashSet::new).remove(&voice);
     result
 }
 

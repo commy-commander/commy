@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -373,7 +374,7 @@ fn load(dir: &Path) -> SyncState {
 
 pub fn with_state<R>(app: &App, change: impl FnOnce(&mut SyncState) -> R) -> Option<R> {
     let dir = app.data_dir()?.clone();
-    let mut guard = STATE.lock().unwrap();
+    let mut guard = STATE.lock_or_recover();
     if guard.as_ref().is_none_or(|(loaded, _)| *loaded != dir) {
         *guard = Some((dir.clone(), load(&dir)));
     }
@@ -381,7 +382,7 @@ pub fn with_state<R>(app: &App, change: impl FnOnce(&mut SyncState) -> R) -> Opt
 }
 
 fn persist(app: &App) {
-    let guard = STATE.lock().unwrap();
+    let guard = STATE.lock_or_recover();
     if let Some((dir, state)) = guard.as_ref() {
         if app.data_dir() == Some(dir) {
             entry_list::write(&dir.join(FILE), state);
@@ -400,14 +401,14 @@ pub fn ensure(handle: &AppHandle) {
 }
 
 pub fn stop() {
-    if let Some(old) = LIVE.lock().unwrap().take() {
+    if let Some(old) = LIVE.lock_or_recover().take() {
         old.task.abort();
     }
     crate::dm_sync::stop();
 }
 
 pub fn nudge() {
-    if let Some(live) = LIVE.lock().unwrap().as_ref() {
+    if let Some(live) = LIVE.lock_or_recover().as_ref() {
         live.pool.nudge();
     }
 }
@@ -421,7 +422,7 @@ fn start(handle: &AppHandle) {
     let Some(dir) = app.data_dir().cloned() else { return };
     let Some(key) = entry_list::load_key(&dir, &s.server, &s.account) else { return };
     let keys = sync_streams::account_stream(&key);
-    let mut live = LIVE.lock().unwrap();
+    let mut live = LIVE.lock_or_recover();
     if live.as_ref().is_some_and(|l| l.url == url && l.dir == dir && l.stream == keys.id) {
         return;
     }
@@ -467,7 +468,7 @@ async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver
             SyncEvent::CaughtUp { stream: from, seq } if from == stream => {
                 let first = with_state(&app, |state| state.caught_up_at(seq)).unwrap_or(false);
                 persist(&app);
-                let was = LIVE.lock().unwrap().as_mut().map(|l| std::mem::replace(&mut l.caught_up, true));
+                let was = LIVE.lock_or_recover().as_mut().map(|l| std::mem::replace(&mut l.caught_up, true));
                 if first {
                     seed(&handle);
                 }
@@ -488,11 +489,11 @@ async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver
 
 pub fn is_live(app: &App) -> bool {
     let dir = app.data_dir();
-    LIVE.lock().unwrap().as_ref().is_some_and(|l| Some(&l.dir) == dir)
+    LIVE.lock_or_recover().as_ref().is_some_and(|l| Some(&l.dir) == dir)
 }
 
 pub(crate) fn caught_up() -> bool {
-    LIVE.lock().unwrap().as_ref().is_some_and(|l| l.caught_up)
+    LIVE.lock_or_recover().as_ref().is_some_and(|l| l.caught_up)
 }
 
 fn apply(handle: &AppHandle, change: Change) {
@@ -516,10 +517,10 @@ fn apply(handle: &AppHandle, change: Change) {
 
 fn adopt_relations(handle: &AppHandle, set: BTreeMap<UserId, RelationPiece>) {
     let app = handle.state::<App>();
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let set: Vec<(UserId, RelationPiece)> = set.into_iter().filter(|(user, _)| Some(*user) != me).collect();
     let remembered = {
-        let mut dms = app.dms.lock().unwrap();
+        let mut dms = app.dms.lock_or_recover();
         let mut remembered = false;
         for (user, piece) in &set {
             if let Some(profile) = piece.profile.clone().filter(|_| !dms.contacts.contains_key(user)) {
@@ -532,7 +533,7 @@ fn adopt_relations(handle: &AppHandle, set: BTreeMap<UserId, RelationPiece>) {
         app.persist_dms();
     }
     let (changed, block_changed) = {
-        let mut safety = app.safety.lock().unwrap();
+        let mut safety = app.safety.lock_or_recover();
         let (mut changed, mut block_changed) = (false, false);
         for (user, piece) in set {
             let was_blocked = safety.is_blocked(user);
@@ -553,7 +554,7 @@ fn adopt_relations(handle: &AppHandle, set: BTreeMap<UserId, RelationPiece>) {
 
 fn relation_piece(app: &App, user: UserId, at: i64) -> RelationPiece {
     let (relation, note) = {
-        let safety = app.safety.lock().unwrap();
+        let safety = app.safety.lock_or_recover();
         (safety.relation(user), safety.friend_notes.get(&user).cloned())
     };
     let profile = crate::dm_sync::partner_profile(app, user).map(|mut p| {
@@ -604,7 +605,7 @@ fn seed_relations(app: &App) {
         return;
     }
     let mine: Vec<UserId> = {
-        let safety = app.safety.lock().unwrap();
+        let safety = app.safety.lock_or_recover();
         safety.friends.iter().chain(&safety.friend_out).chain(&safety.friend_in).chain(&safety.blocked).copied().collect()
     };
     let unsynced: Vec<UserId> =
@@ -665,7 +666,7 @@ fn seed(handle: &AppHandle) {
 
 pub fn servers(app: &App) -> Option<EntryList> {
     let dir = app.data_dir()?;
-    let live = LIVE.lock().unwrap();
+    let live = LIVE.lock_or_recover();
     let ready = live.as_ref().is_some_and(|l| l.caught_up && &l.dir == dir);
     drop(live);
     if !ready {
@@ -687,7 +688,7 @@ pub fn publish_servers(app: &App, log: &EntryList, merged: &EntryList) {
 pub fn queue(app: &App, record: Record) {
     let offered = sync_link::url().is_some();
     let keeps_settings = matches!(record, Record::Prefs { .. });
-    let busy = *IN_FLIGHT.lock().unwrap();
+    let busy = *IN_FLIGHT.lock_or_recover();
     let Some(enabled) = with_state(app, |state| {
         let enabled = offered || !state.stream.is_empty();
         if enabled || keeps_settings {
@@ -748,7 +749,7 @@ static HOSTS_WRITTEN: std::sync::Mutex<Option<BTreeMap<ServerId, Option<String>>
 
 pub fn record_sync_hosts(app: &App, hosts: Vec<(ServerId, Option<String>)>) {
     let due: Vec<(ServerId, Option<String>)> = {
-        let mut written = HOSTS_WRITTEN.lock().unwrap();
+        let mut written = HOSTS_WRITTEN.lock_or_recover();
         let written = written.get_or_insert_with(BTreeMap::new);
         let Some(due) = with_state(app, |state| {
             hosts.into_iter().filter(|(server, host)| host_to_record(state.sync_hosts.get(server), host.as_deref(), written.get(server))).collect::<Vec<_>>()
@@ -819,15 +820,15 @@ async fn flush(handle: &AppHandle) {
     loop {
         let app = handle.state::<App>();
         let Some(next) = with_state(&app, |state| state.outbox.first().cloned()).flatten() else { return };
-        let target = LIVE.lock().unwrap().as_ref().map(|l| (l.stream, l.pool.client_for(l.stream)));
+        let target = LIVE.lock_or_recover().as_ref().map(|l| (l.stream, l.pool.client_for(l.stream)));
         let Some((stream, client)) = target else { return };
         let Ok(plain) = serde_json::to_vec(&next.record) else {
             with_state(&app, |state| state.forget_queued(next.id));
             continue;
         };
-        *IN_FLIGHT.lock().unwrap() = Some(next.id);
+        *IN_FLIGHT.lock_or_recover() = Some(next.id);
         let result = sync_link::append(client, stream, plain).await;
-        *IN_FLIGHT.lock().unwrap() = None;
+        *IN_FLIGHT.lock_or_recover() = None;
         match result {
             Ok(_) => {}
             Err(AppendError::Refused(code)) if code.is_retryable() => return,

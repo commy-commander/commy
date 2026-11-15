@@ -35,9 +35,11 @@ mod knock;
 mod link_preview;
 mod link_safety;
 mod local_key;
+mod lock_or_recover;
 mod liveness;
 mod outbox;
 mod overlay;
+mod panic_log;
 mod stream_ink;
 mod persist;
 mod picker;
@@ -55,6 +57,7 @@ mod kept_files;
 mod sent_files;
 #[cfg(any(target_os = "android", test))]
 mod screen_service;
+use crate::lock_or_recover::LockOrRecover;
 use commy_view::catalog;
 use commy_view::search;
 mod server_guard;
@@ -137,21 +140,20 @@ fn init_user(app: tauri::State<App>, handle: tauri::AppHandle, username: String)
         return Err("username must be 1 to 32 characters".into());
     }
     let mut profile = UserProfile::new(username);
-    profile.node = app.node_hex.lock().unwrap().clone();
+    profile.node = app.node_hex.lock_or_recover().clone();
     profile.identity = app.identity().map(|i| i.public());
-    *app.profile.lock().unwrap() = Some(profile.clone());
+    *app.profile.lock_or_recover() = Some(profile.clone());
     app.persist_profile();
     entry_list::schedule(&handle);
     Ok(profile)
 }
 
 async fn host_unhosted(app: &App) {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let invited: std::collections::HashSet<ServerId> = app.invites.lock().unwrap().keys().copied().collect();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let invited: std::collections::HashSet<ServerId> = app.invites.lock_or_recover().keys().copied().collect();
     let missing: Vec<(ServerId, String)> = app
         .servers
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .values()
         .filter(|s| Some(s.server.owner) == me && !invited.contains(&s.server.id))
         .map(|s| (s.server.id, s.server.name.clone()))
@@ -164,7 +166,7 @@ async fn host_unhosted(app: &App) {
     for (id, name) in missing {
         match node.host_server(id, &name, app.own_key_for_tickets()).await {
             Ok(ticket) => {
-                app.invites.lock().unwrap().entry(id).or_insert_with(|| ticket.encode());
+                app.invites.lock_or_recover().entry(id).or_insert_with(|| ticket.encode());
             }
             Err(e) => tracing::warn!("hosting {name} failed: {e}"),
         }
@@ -175,18 +177,17 @@ async fn host_unhosted(app: &App) {
 
 #[tauri::command]
 fn get_user(app: tauri::State<App>) -> Option<UserProfile> {
-    app.profile.lock().unwrap().clone()
+    app.profile.lock_or_recover().clone()
 }
 
 pub(crate) fn current_profile(app: &App) -> CmdResult<UserProfile> {
     let mut profile = app
         .profile
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .clone()
         .ok_or("set a username first")?;
     if profile.node.is_none() {
-        profile.node = app.node_hex.lock().unwrap().clone();
+        profile.node = app.node_hex.lock_or_recover().clone();
     }
     if profile.identity.is_none() {
         profile.identity = app.identity().map(|i| i.public());
@@ -199,7 +200,7 @@ fn signing_key(app: &App) -> CmdResult<Identity> {
 }
 
 fn sign_dm(app: &App, message: &mut DmMessage) -> CmdResult<()> {
-    let node = app.node_hex.lock().unwrap().clone().unwrap_or_default();
+    let node = app.node_hex.lock_or_recover().clone().unwrap_or_default();
     message.sign(&node, &signing_key(app)?);
     Ok(())
 }
@@ -225,7 +226,7 @@ fn clean_server_name(name: &str) -> CmdResult<String> {
 }
 
 pub(crate) fn managed<T>(app: &App, sid: ServerId, me: UserId, build: impl FnOnce(&ServerState, Permissions) -> view::act::Act<T>) -> CmdResult<T> {
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     build(state, our_permissions(app, state, me))
 }
@@ -251,8 +252,7 @@ async fn create_server(
             match node.host_server(server_id, &name, app.own_key_for_tickets()).await {
                 Ok(ticket) => {
                     app.invites
-                        .lock()
-                        .unwrap()
+                        .lock_or_recover()
                         .insert(server_id, ticket.encode());
                 }
                 Err(e) => tracing::warn!("hosting server offline: {e}"),
@@ -263,7 +263,7 @@ async fn create_server(
     let (state, _, signing) =
         own_server_state_from(&app, server_id, hosting, |owner| template.build(&name, owner)).await?;
     let view = ServerView::for_viewer(&state, Some(state.server.owner), &channel_lock::holder_of(&app));
-    app.servers.lock().unwrap().insert(server_id, state);
+    app.servers.lock_or_recover().insert(server_id, state);
     drop(signing);
     app.persist_server(server_id);
     app.persist_invites();
@@ -381,7 +381,7 @@ async fn set_sync_host(app: tauri::State<'_, App>, handle: tauri::AppHandle, ser
         return Err("wait until this server has finished loading".into());
     }
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::sync_host::set_sync_host(state, me.id, host.as_deref())?
     };
@@ -413,7 +413,7 @@ fn sync_host_release(server_id: String) -> CmdResult<Option<view::sync_host::Hos
 }
 
 fn storage_roster(app: &App, sid: ServerId) -> Option<commy_core::file_store::Roster> {
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     commy_core::file_store::roster_of(servers.get(&sid)?, chrono::Utc::now().timestamp_millis())
 }
 
@@ -424,18 +424,18 @@ const ROSTER_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(1
 const ROSTER_RECHECK_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 fn remember_roster(sid: ServerId, base: &str, roster: &commy_core::file_store::Roster) {
-    SENT_ROSTERS.lock().unwrap().get_or_insert_with(Default::default).insert((sid, base.to_string()), (roster.clone(), std::time::Instant::now()));
+    SENT_ROSTERS.lock_or_recover().get_or_insert_with(Default::default).insert((sid, base.to_string()), (roster.clone(), std::time::Instant::now()));
 }
 
 fn roster_is_fresh(sid: ServerId, base: &str, roster: &commy_core::file_store::Roster) -> bool {
-    SENT_ROSTERS.lock().unwrap().as_ref().and_then(|sent| sent.get(&(sid, base.to_string()))).is_some_and(|(sent, at)| {
+    SENT_ROSTERS.lock_or_recover().as_ref().and_then(|sent| sent.get(&(sid, base.to_string()))).is_some_and(|(sent, at)| {
         commy_core::file_store::same_people(sent, roster) && at.elapsed() < ROSTER_RECHECK_AFTER
     })
 }
 
 fn storage_to_tend(app: &App, me: UserId) -> Vec<(ServerId, String, commy_core::file_store::Roster)> {
     let now = chrono::Utc::now().timestamp_millis();
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     servers
         .values()
         .filter(|state| commy_core::file_store::can_manage_storage(our_permissions(app, state, me)))
@@ -448,7 +448,7 @@ async fn run_storage_roster(handle: tauri::AppHandle) {
     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     loop {
         let app = handle.state::<App>();
-        let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+        let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
         if let (Some(me), Some(identity)) = (me, app.identity()) {
             for (sid, base, roster) in storage_to_tend(&app, me) {
                 match cloud_files::send_roster(&app.http, &base, &identity, &roster).await {
@@ -534,7 +534,7 @@ async fn answer_join_request(app: tauri::State<'_, App>, handle: tauri::AppHandl
 pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, ticket: ServerTicket) -> CmdResult<ServerSummary> {
     current_profile(app)?;
     refuse_while_key_may_be_replaced(app)?;
-    if app.deleted.lock().unwrap().contains(ticket.server_id) {
+    if app.deleted.lock_or_recover().contains(ticket.server_id) {
         return Err("This server was deleted by its owner".into());
     }
 
@@ -545,8 +545,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
             node.rejoin_server(&ticket).await.map_err(err_to_string)?;
         }
         app.invites
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .insert(ticket.server_id, ticket.encode());
         app.persist_invites();
         Ok(())
@@ -556,7 +555,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     state.server.sync_host = community_sync::invited_host(ticket.server_id);
     let _ = state.apply(ServerEvent::MemberJoin { server: ticket.server_id, profile: profile.clone() });
     let summary = ServerSummary::from_state(&state, Some(profile.id));
-    app.servers.lock().unwrap().insert(ticket.server_id, state);
+    app.servers.lock_or_recover().insert(ticket.server_id, state);
     for payload in catchup::await_snapshot(app, ticket.server_id, profile) {
         broadcast(app, ticket.server_id, payload).await;
     }
@@ -596,8 +595,8 @@ async fn own_server_state_from<'a>(
 
 #[tauri::command]
 fn list_servers(app: tauri::State<App>) -> Vec<ServerSummary> {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let servers = app.servers.lock().unwrap();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let servers = app.servers.lock_or_recover();
     let mut list: Vec<ServerSummary> = servers.values().map(|s| ServerSummary::from_state(s, me)).collect();
     list.sort_by(|a, b| a.name.cmp(&b.name));
     list
@@ -606,11 +605,11 @@ fn list_servers(app: tauri::State<App>) -> Vec<ServerSummary> {
 #[tauri::command]
 fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView> {
     let id = server_id.parse().map_err(err_to_string)?;
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let keys = channel_lock::holder_of(&app);
-    let friends = app.safety.lock().unwrap().friends.clone();
-    let contacts = app.dms.lock().unwrap().contacts.clone();
-    let servers = app.servers.lock().unwrap();
+    let friends = app.safety.lock_or_recover().friends.clone();
+    let contacts = app.dms.lock_or_recover().contacts.clone();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&id).ok_or("unknown server")?;
     Ok(ServerView::for_viewer(state, me, &keys).with_friend_details(&friends, &contacts))
 }
@@ -649,16 +648,16 @@ fn get_messages(
     let sid = server_id.parse().map_err(err_to_string)?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let around: Option<MessageId> = around.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
-    let pending = app.outbox.lock().unwrap().pending_ids(sid);
+    let pending = app.outbox.lock_or_recover().pending_ids(sid);
     let keys = channel_lock::holder_of(&app);
     let me = current_profile(&app)?.id;
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     if !state.server.can_view(cid, me) {
         return Ok(Vec::new());
     }
     let floor = {
-        let opens = app.channel_opens.lock().unwrap();
+        let opens = app.channel_opens.lock_or_recover();
         let none = view::ChannelOpens::new();
         view::history_floor(state, Some(me), opens.get(&sid).unwrap_or(&none), cid, chrono::Utc::now())
     };
@@ -680,7 +679,7 @@ const HISTORY_HIDDEN: &str = "you can see only new messages in this channel";
 fn open_channel(app: tauri::State<App>, server_id: String, channel_id: String) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
-    app.channel_opens.lock().unwrap().entry(sid).or_default().insert(cid, chrono::Utc::now());
+    app.channel_opens.lock_or_recover().entry(sid).or_default().insert(cid, chrono::Utc::now());
     community_sync::focus(sid);
     Ok(())
 }
@@ -701,9 +700,9 @@ fn search_messages(
     let channel: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let query = search::SearchQuery::new(&terms, from, mentions, channel);
     let keys = channel_lock::holder_of(&app);
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let opens = app.channel_opens.lock().unwrap().get(&sid).cloned().unwrap_or_default();
-    let servers = app.servers.lock().unwrap();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let opens = app.channel_opens.lock_or_recover().get(&sid).cloned().unwrap_or_default();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     Ok(search::search(state, &query, me, offset.map_or(search::Page::newest(), search::Page::at), &keys, &opens, Some(chrono::Utc::now())))
 }
@@ -723,9 +722,9 @@ fn search_dms(
     let query = search::SearchQuery::new(&terms, from, mentions, None);
     let keys = channel_lock::holder_of(&app);
     let me = current_profile(&app)?.id;
-    let blocked = app.safety.lock().unwrap().blocked.clone();
-    let servers = app.servers.lock().unwrap();
-    let dms = app.dms.lock().unwrap();
+    let blocked = app.safety.lock_or_recover().blocked.clone();
+    let servers = app.servers.lock_or_recover();
+    let dms = app.dms.lock_or_recover();
     Ok(search::search_dms(&dms, &servers, &query, me, partner, &blocked, offset.map_or(search::Page::newest(), search::Page::at), &keys))
 }
 
@@ -748,7 +747,7 @@ async fn commit_message(
     };
     let keys = channel_lock::holder_of(app);
     let view = {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         require_rules_accepted(state, message.author)?;
         require_can_post(app, state, message.author, message.channel)?;
@@ -769,7 +768,7 @@ async fn commit_message(
 
 fn command_marker(app: &App, sid: ServerId, used: commy_core::CommandUse) -> CmdResult<commy_core::Attachment> {
     let used = used.tidy().ok_or("that command's options do not fit")?;
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     if !state.is_bot(used.bot) || !state.server.is_current_member(used.bot) {
         return Err("that bot is not in this server".into());
@@ -791,7 +790,7 @@ fn command_marker(app: &App, sid: ServerId, used: commy_core::CommandUse) -> Cmd
 
 fn seal_labels(app: &App, sid: ServerId, event: ServerEvent) -> CmdResult<ServerEvent> {
     let keys = channel_lock::holder_of(app);
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     Ok(keys.seal_labels(state, event)?)
 }
@@ -799,7 +798,7 @@ fn seal_labels(app: &App, sid: ServerId, event: ServerEvent) -> CmdResult<Server
 fn seal_and_sign(app: &App, sid: ServerId, message: &mut Message) -> CmdResult<()> {
     let keys = channel_lock::holder_of(app);
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_can_post(app, state, message.author, message.channel)?;
         keys.seal_outgoing(state, message)?;
@@ -813,11 +812,11 @@ async fn send_typing(app: tauri::State<'_, App>, server_id: String, channel_id: 
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let channel: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?.id;
-    let allowed = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.channel(channel).is_some());
+    let allowed = app.servers.lock_or_recover().get(&sid).is_some_and(|s| s.server.channel(channel).is_some());
     if !allowed {
         return Err("unknown channel".into());
     }
-    let silenced = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.is_timed_out(me, chrono::Utc::now()));
+    let silenced = app.servers.lock_or_recover().get(&sid).is_some_and(|s| s.server.is_timed_out(me, chrono::Utc::now()));
     if silenced {
         return Ok(());
     }
@@ -844,7 +843,7 @@ async fn send_message(
     let content = expressions_for_server(&app, sid, profile.id, content).await?;
     let mut message = Message::new(cid, profile.id, content);
     if tts.unwrap_or(false) {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::mark_tts(state, our_permissions(&app, state, profile.id), &mut message)?;
     }
@@ -854,7 +853,7 @@ async fn send_message(
     if let Some(raw) = reply_to {
         let target: MessageId = raw.parse().map_err(err_to_string)?;
         let exists = {
-            let servers = app.servers.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
             servers
                 .get(&sid)
                 .is_some_and(|s| s.messages(cid).iter().any(|m| m.id == target))
@@ -865,7 +864,7 @@ async fn send_message(
         message.reply_to = Some(target);
     }
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::forum::inside_post(state, cid, message.reply_to)?;
     }
@@ -900,7 +899,7 @@ async fn send_poll(
     let cid = channel_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
     let poll = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::poll(our_permissions(&app, state, profile.id), question, options, multi, hours, chrono::Utc::now())?
     };
@@ -927,7 +926,7 @@ async fn vote_poll(
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::poll_vote(state, &acting(&app, state, me.id), mid, &choices)?
     };
@@ -945,7 +944,7 @@ async fn close_poll(
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::poll_close(state, &acting(&app, state, me.id), mid)?
     };
@@ -955,7 +954,7 @@ async fn close_poll(
 async fn preview_card(app: &App, sid: ServerId, message: &Message, url: Option<&str>) -> Option<Attachment> {
     let url = url.filter(|u| message.content.contains(u))?;
     let may_share_pictures = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid)?;
         let perms = our_permissions(app, state, message.author);
         if !perms.can_embed_links() {
@@ -999,7 +998,7 @@ async fn set_reaction(
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::reaction(state, &acting(&app, state, me.id), cid, mid, &emoji, active)?
     };
@@ -1013,7 +1012,7 @@ fn server_images(state: &ServerState) -> std::collections::HashSet<String> {
 
 async fn expressions_for_server(app: &App, sid: ServerId, me: UserId, content: String) -> CmdResult<String> {
     let (local, may_use_others) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         (server_images(state), our_permissions(app, state, me).allows(Permissions::USE_EXTERNAL_EMOJIS))
     };
@@ -1088,7 +1087,7 @@ async fn edit_message(
     let _signing = app.signing.read().await;
     let identity = signing_key(&app)?;
     let edit = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::edit(state, &acting(&app, state, me.id), &identity, &keys, cid, mid, content)?
     };
@@ -1110,7 +1109,7 @@ async fn delete_message(
     let _signing = app.signing.read().await;
     let identity = signing_key(&app)?;
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::delete(state, &acting(&app, state, me.id), &identity, cid, mid)?
     };
@@ -1170,7 +1169,7 @@ async fn send_attachment(
 ) -> CmdResult<MessageView> {
     let profile = current_profile(app)?;
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(app, state, profile.id, Permissions::ATTACH_FILES, "send files or images here")?;
         view::moderate::upload_fits(state, contents.size())?;
@@ -1237,19 +1236,19 @@ async fn store_blob(app: &App, bytes: Vec<u8>, picked_from: Option<&std::path::P
 
 #[tauri::command]
 async fn start_voice_recording(app: tauri::State<'_, App>) -> CmdResult<()> {
-    let stale = app.voice_recorder.lock().unwrap().take();
+    let stale = app.voice_recorder.lock_or_recover().take();
     if let Some(stale) = stale {
         stale.discard().await;
     }
-    let voice = app.voice.lock().unwrap().clone();
+    let voice = app.voice.lock_or_recover().clone();
     let recorder = voice_message::VoiceRecorder::start(&voice).map_err(|e| format!("could not start recording: {e}"))?;
-    *app.voice_recorder.lock().unwrap() = Some(recorder);
+    *app.voice_recorder.lock_or_recover() = Some(recorder);
     Ok(())
 }
 
 #[tauri::command]
 async fn cancel_voice_recording(app: tauri::State<'_, App>) -> CmdResult<()> {
-    let recorder = app.voice_recorder.lock().unwrap().take();
+    let recorder = app.voice_recorder.lock_or_recover().take();
     if let Some(recorder) = recorder {
         recorder.discard().await;
     }
@@ -1257,7 +1256,7 @@ async fn cancel_voice_recording(app: tauri::State<'_, App>) -> CmdResult<()> {
 }
 
 async fn take_recording(app: &App) -> CmdResult<voice_message::Recording> {
-    let recorder = app.voice_recorder.lock().unwrap().take().ok_or("no voice message is being recorded")?;
+    let recorder = app.voice_recorder.lock_or_recover().take().ok_or("no voice message is being recorded")?;
     let clip = recorder.stop().await.map_err(|e| format!("recording failed: {e}"))?;
     if clip.duration_ms < voice_message::MIN_VOICE_MESSAGE_MS {
         return Err("that voice message is too short to send".into());
@@ -1280,7 +1279,7 @@ async fn send_voice_message(
     let clip = take_recording(&app).await?;
     let profile = current_profile(&app)?;
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         require_permission(&app, state, profile.id, Permissions::SEND_VOICE_MESSAGES, "send voice messages here")?;
     }
@@ -1369,7 +1368,7 @@ async fn pick_upload(app: tauri::State<'_, App>, handle: tauri::AppHandle, kind:
     };
     let video = picked.contents.in_memory().is_some_and(|b| b.len() <= MAX_INLINE_VIDEO_BYTES) && is_inline_video_name(&picked.name);
     let upload = PickedUpload { token: format!("{:016x}", rand::random::<u64>()), name: picked.name.clone(), size_bytes: picked.contents.size(), video };
-    *app.picked_upload.lock().unwrap() = Some((upload.token.clone(), picked));
+    *app.picked_upload.lock_or_recover() = Some((upload.token.clone(), picked));
     Ok(Some(upload))
 }
 
@@ -1381,7 +1380,7 @@ fn is_inline_video_name(name: &str) -> bool {
 }
 
 fn take_picked_upload(app: &App, token: &str) -> CmdResult<picker::PickedFile> {
-    let mut slot = app.picked_upload.lock().unwrap();
+    let mut slot = app.picked_upload.lock_or_recover();
     match slot.take() {
         Some((held, picked)) if held == token => Ok(picked),
         other => {
@@ -1393,7 +1392,7 @@ fn take_picked_upload(app: &App, token: &str) -> CmdResult<picker::PickedFile> {
 
 #[tauri::command]
 fn picked_upload_bytes(app: tauri::State<'_, App>, token: String) -> CmdResult<tauri::ipc::Response> {
-    let slot = app.picked_upload.lock().unwrap();
+    let slot = app.picked_upload.lock_or_recover();
     let bytes = match slot.as_ref() {
         Some((held, picked)) if *held == token => picked.contents.in_memory().ok_or("that file is too large to read here")?.to_vec(),
         _ => return Err("pick the file again".into()),
@@ -1638,23 +1637,23 @@ async fn set_voice_channel(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
-    let voice = app.voice.lock().unwrap().clone();
+    let voice = app.voice.lock_or_recover().clone();
 
     match cid {
         Some(channel) => {
             {
-                let servers = app.servers.lock().unwrap();
+                let servers = app.servers.lock_or_recover();
                 let state = servers.get(&sid).ok_or("unknown server")?;
                 view::act::join_voice(state, our_permissions(&app, state, profile.id), profile.id, channel)?;
             }
-            let joining_this_server = app.voice_session.lock().unwrap().as_ref().is_none_or(|s| s.server != sid);
+            let joining_this_server = app.voice_session.lock_or_recover().as_ref().is_none_or(|s| s.server != sid);
             if joining_this_server {
                 if let Some(wait) = voice_gate::check(&app, sid).await {
                     return Err(wait.refusal());
                 }
             }
             calls::end(&app, &handle, true, "hung_up").await;
-            let previous = app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != sid);
+            let previous = app.voice_session.lock_or_recover().as_ref().map(|s| s.server).filter(|s| *s != sid);
             if let Some(previous) = previous {
                 leave_voice(&app, &handle, previous, &profile, &voice).await;
             }
@@ -1695,13 +1694,13 @@ async fn leave_voice(
 
 async fn stop_voice_here(app: &App, sid: ServerId, profile: &UserProfile) {
     let testing = pause_mic_test(app);
-    *app.voice_session.lock().unwrap() = None;
+    *app.voice_session.lock_or_recover() = None;
     voice_filter::apply(app);
     resume_mic_test(app, testing);
-    *app.camera.lock().unwrap() = None;
-    app.camera_watches.lock().unwrap().clear();
-    app.own_preview.lock().unwrap().take();
-    let share = app.screen_share.lock().unwrap().take();
+    *app.camera.lock_or_recover() = None;
+    app.camera_watches.lock_or_recover().clear();
+    app.own_preview.lock_or_recover().take();
+    let share = app.screen_share.lock_or_recover().take();
     if let Some(share) = share {
         broadcast_event(
             app,
@@ -1732,7 +1731,7 @@ async fn set_own_voice_state(
         since: channel.map(|_| chrono::Utc::now().timestamp()),
     };
     {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         state.apply(event.clone()).map_err(err_to_string)?;
     }
@@ -1742,7 +1741,7 @@ async fn set_own_voice_state(
 }
 
 fn active_voice_channel(app: &App) -> Option<ChannelId> {
-    app.voice_session.lock().unwrap().as_ref().map(|s| s.channel)
+    app.voice_session.lock_or_recover().as_ref().map(|s| s.channel)
 }
 
 fn start_voice_session(
@@ -1780,7 +1779,7 @@ fn start_voice_session(
         me,
         on_speaking,
     );
-    let far_end = app.processor.lock().unwrap().far_end_sink();
+    let far_end = app.processor.lock_or_recover().far_end_sink();
     let speaker = match commy_media::start_playback(session.mixer.clone(), voice.output_device.clone(), Some(far_end)) {
         Ok(handle) => Some(handle),
         Err(e) => {
@@ -1789,10 +1788,10 @@ fn start_voice_session(
         }
     };
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let joined_ms = app.servers.lock().unwrap().get(&sid).map_or(now_ms, |s| s.voice_join_stamp(me, now_ms));
-    let mut slot = app.voice_session.lock().unwrap();
+    let joined_ms = app.servers.lock_or_recover().get(&sid).map_or(now_ms, |s| s.voice_join_stamp(me, now_ms));
+    let mut slot = app.voice_session.lock_or_recover();
     session.set_speaker(speaker);
-    session.mixer.lock().unwrap().set_master(voice.output_volume);
+    session.mixer.lock_or_recover().set_master(voice.output_volume);
     session.joined_ms = joined_ms;
     *slot = Some(session);
     drop(slot);
@@ -1800,15 +1799,15 @@ fn start_voice_session(
 }
 
 fn open_mic_test(app: &App) -> anyhow::Result<MicTest> {
-    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
+    if let Some(session) = app.voice_session.lock_or_recover().as_ref() {
         return Ok(MicTest::within_call(session));
     }
-    let voice = app.voice.lock().unwrap().clone();
+    let voice = app.voice.lock_or_recover().clone();
     MicTest::start(app.processor.clone(), voice.input_device, voice.output_device)
 }
 
 fn pause_mic_test(app: &App) -> bool {
-    app.mic_test.lock().unwrap().take().is_some()
+    app.mic_test.lock_or_recover().take().is_some()
 }
 
 fn resume_mic_test(app: &App, was_running: bool) {
@@ -1816,7 +1815,7 @@ fn resume_mic_test(app: &App, was_running: bool) {
         return;
     }
     match open_mic_test(app) {
-        Ok(test) => *app.mic_test.lock().unwrap() = Some(test),
+        Ok(test) => *app.mic_test.lock_or_recover() = Some(test),
         Err(e) => tracing::warn!("mic test stopped: {e}"),
     }
 }
@@ -1826,27 +1825,26 @@ fn afk_env_override() -> Option<i64> {
 }
 
 fn afk_timeout_secs(app: &App, env_override: Option<i64>) -> i64 {
-    env_override.unwrap_or_else(|| app.voice.lock().unwrap().afk_timeout_minutes as i64 * 60)
+    env_override.unwrap_or_else(|| app.voice.lock_or_recover().afk_timeout_minutes as i64 * 60)
 }
 
 fn parked_in_afk(app: &App) -> bool {
-    let Some((server, channel)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel)) else {
+    let Some((server, channel)) = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel)) else {
         return false;
     };
-    app.servers.lock().unwrap().get(&server).is_some_and(|state| view::afk::parked_in_afk(state, channel))
+    app.servers.lock_or_recover().get(&server).is_some_and(|state| view::afk::parked_in_afk(state, channel))
 }
 
 fn idle_secs(app: &App) -> i64 {
     let parked = parked_in_afk(app);
     let last_voice = app
         .voice_session
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .as_ref()
         .filter(|_| !parked)
         .map(|s| s.last_activity.load(std::sync::atomic::Ordering::Relaxed));
     let last_ui = app.last_user_activity.load(std::sync::atomic::Ordering::Relaxed);
-    let sharing = app.screen_share.lock().unwrap().is_some();
+    let sharing = app.screen_share.lock_or_recover().is_some();
     view::afk::idle_secs(chrono::Utc::now().timestamp(), last_ui, last_voice, sharing)
 }
 
@@ -1867,9 +1865,9 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         let app = handle.state::<App>();
         let timeout_secs = afk_timeout_secs(&app, env_override);
-        let voice = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+        let voice = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel));
         let idle_for = idle_secs(&app);
-        let Some(presence) = app.profile.lock().unwrap().as_ref().map(|p| p.presence) else {
+        let Some(presence) = app.profile.lock_or_recover().as_ref().map(|p| p.presence) else {
             continue;
         };
         let auto_idle = app.auto_idle.load(std::sync::atomic::Ordering::Relaxed);
@@ -1885,10 +1883,10 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
         }
 
         let Some((sid, current)) = voice else { continue };
-        let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-        let ours = app.node_hex.lock().unwrap().clone().unwrap_or_default();
+        let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+        let ours = app.node_hex.lock_or_recover().clone().unwrap_or_default();
         let step = {
-            let servers = app.servers.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
             match (servers.get(&sid), me) {
                 (Some(state), Some(me)) => {
                     let voice_timeout = if env_override.is_some() {
@@ -1926,8 +1924,7 @@ async fn run_afk_watchdog(handle: tauri::AppHandle) {
 fn afk_moved_payload(app: &App, sid: ServerId, afk: ChannelId) -> serde_json::Value {
     let name = app
         .servers
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .get(&sid)
         .and_then(|state| state.server.channel(afk))
         .map(|channel| channel.name.clone());
@@ -1946,7 +1943,7 @@ fn dial_voice_members(
         return;
     };
     let targets: Vec<(UserId, String)> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&sid) else { return };
         state
             .voice_states
@@ -1963,11 +1960,11 @@ fn dial_voice_members(
 }
 
 fn drop_links_outside(app: &App, sid: ServerId, channel: ChannelId) {
-    let seated: std::collections::HashSet<UserId> = match app.servers.lock().unwrap().get(&sid) {
+    let seated: std::collections::HashSet<UserId> = match app.servers.lock_or_recover().get(&sid) {
         Some(state) => state.voice_states.iter().filter(|(_, ch)| **ch == channel).map(|(user, _)| *user).collect(),
         None => return,
     };
-    let mut session = app.voice_session.lock().unwrap();
+    let mut session = app.voice_session.lock_or_recover();
     let Some(session) = session.as_mut().filter(|s| s.server == sid && s.channel == channel) else { return };
     for user in session.linked_users().into_iter().filter(|user| !seated.contains(user)) {
         session.detach_peer(user);
@@ -1976,8 +1973,7 @@ fn drop_links_outside(app: &App, sid: ServerId, channel: ChannelId) {
 
 fn claim_voice_dial(app: &App, channel: ChannelId, user: UserId) -> bool {
     app.voice_session
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .as_mut()
         .is_some_and(|session| session.channel == channel && session.claim_dial(user))
 }
@@ -1992,7 +1988,7 @@ fn follow_room_relay(handle: &tauri::AppHandle) {
             Some(net) => net.relay_switch(),
             None => return,
         };
-        let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+        let server = app.voice_session.lock_or_recover().as_ref().map(|s| s.server);
         let wanted = server.map_or(RoomRelay::Ours, community_sync::room_relay_of);
         let refusal = match wanted {
             RoomRelay::Ours => {
@@ -2028,7 +2024,7 @@ fn follow_room_relay(handle: &tauri::AppHandle) {
 }
 
 async fn leave_voice_without_a_relay(handle: &tauri::AppHandle, sid: ServerId, text: &str) {
-    let still_here = handle.state::<App>().voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
+    let still_here = handle.state::<App>().voice_session.lock_or_recover().as_ref().is_some_and(|s| s.server == sid);
     if !still_here {
         return;
     }
@@ -2041,12 +2037,12 @@ async fn run_voice_redialer(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(VOICE_REDIAL_EVERY).await;
         let app = handle.state::<App>();
-        if app.voice_session.lock().unwrap().is_some() {
+        if app.voice_session.lock_or_recover().is_some() {
             follow_room_relay(&handle);
         }
-        let call = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+        let call = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel));
         let Some((sid, channel)) = call else { continue };
-        let Some(me) = app.profile.lock().unwrap().clone() else { continue };
+        let Some(me) = app.profile.lock_or_recover().clone() else { continue };
         if sid == commy_core::ids::CALL_SERVER {
             calls::dial_partner(&app, &handle, &me);
         } else {
@@ -2073,7 +2069,7 @@ fn dial_voice_peer(
         };
         let dialed = dial_media(&app, &their_hex, hello).await;
         let joined = voice_join_of(&app, server, user);
-        let mut session = app.voice_session.lock().unwrap();
+        let mut session = app.voice_session.lock_or_recover();
         let Some(session) = session.as_mut().filter(|s| s.channel == channel) else { return };
         match dialed {
             Ok(media) => session.attach_peer(user, media, joined),
@@ -2086,11 +2082,11 @@ fn dial_voice_peer(
 }
 
 fn voice_join_of(app: &App, server: ServerId, user: UserId) -> Option<i64> {
-    app.servers.lock().unwrap().get(&server).and_then(|state| state.voice_device_since(user))
+    app.servers.lock_or_recover().get(&server).and_then(|state| state.voice_device_since(user))
 }
 
 fn servers_using_image(app: &App, image: &str) -> Vec<ServerId> {
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     servers
         .values()
         .filter(|state| {
@@ -2164,7 +2160,7 @@ fn prefetch_emoji<A: catchup::AppAccess + Clone>(access: &A, event: &ServerEvent
 
 fn neighbor_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<WirePayload> {
     let relayed: Vec<SignedEvent> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         servers.get(&sid).map(|s| s.signed_actions().into_iter().cloned().collect()).unwrap_or_default()
     };
     let held: std::collections::HashSet<String> = relayed.iter().filter_map(|s| commy_core::action::subject(&s.event)).collect();
@@ -2177,7 +2173,7 @@ fn neighbor_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<WirePaylo
 
 fn file_store_of(app: &App, server: Option<ServerId>) -> Option<String> {
     let server = server?;
-    app.servers.lock().unwrap().get(&server).and_then(|state| state.server.file_store.clone())
+    app.servers.lock_or_recover().get(&server).and_then(|state| state.server.file_store.clone())
 }
 
 fn offer_to_file_store(app: &App, server: ServerId, blob: &str, bytes: Option<&[u8]>) {
@@ -2284,7 +2280,7 @@ async fn find_sent_file(app: tauri::State<'_, App>, handle: tauri::AppHandle, bl
 }
 
 pub(crate) fn member_nodes(app: &App, server: ServerId) -> Vec<String> {
-    app.servers.lock().unwrap().get(&server).map(ServerState::member_nodes).unwrap_or_default()
+    app.servers.lock_or_recover().get(&server).map(ServerState::member_nodes).unwrap_or_default()
 }
 
 pub const SHARED_FILES_DIR: &str = "shared-files";
@@ -2308,7 +2304,7 @@ fn blob_gate(handle: &tauri::AppHandle) -> commy_net::node::BlobGate {
     std::sync::Arc::new(move |peer, blob| {
         let app = handle.state::<App>();
         let node = data_encoding::HEXLOWER.encode(&peer);
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         ServerState::drive_blob_allowed(servers.values(), blob, &node)
     })
 }
@@ -2320,15 +2316,15 @@ fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
         let node_hex = data_encoding::HEXLOWER.encode(&peer);
         let (user, channel, voice, server) = match *hello {
             MediaHello::Voice { user, channel } => {
-                let session = app.voice_session.lock().unwrap();
+                let session = app.voice_session.lock_or_recover();
                 (user, channel, true, session.as_ref().filter(|s| s.channel == channel).map(|s| s.server))
             }
             MediaHello::ScreenSubscribe { user, channel } => {
-                let share = app.screen_share.lock().unwrap();
+                let share = app.screen_share.lock_or_recover();
                 (user, channel, false, share.as_ref().filter(|s| s.channel == channel).map(|s| s.server))
             }
             MediaHello::CameraSubscribe { user, channel } => {
-                let camera = app.camera.lock().unwrap();
+                let camera = app.camera.lock_or_recover();
                 (user, channel, false, camera.as_ref().filter(|c| c.channel == channel).map(|c| c.server))
             }
         };
@@ -2336,7 +2332,7 @@ fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
         if server == commy_core::ids::CALL_SERVER {
             return voice && calls::peer_ok(&app, user, &node_hex, channel);
         }
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         servers.get(&server).is_some_and(|state| state.media_peer_ok(user, &node_hex, channel, voice))
     })
 }
@@ -2364,7 +2360,7 @@ async fn list_share_sources(app: tauri::State<'_, App>) -> CmdResult<Vec<ShareSo
         .await
         .map_err(err_to_string)?
         .map_err(err_to_string)?;
-    let game = app.last_game.lock().unwrap().clone();
+    let game = app.last_game.lock_or_recover().clone();
     let game_pid = game.as_ref().map(|(pid, _)| *pid);
     let mut views: Vec<ShareSourceView> = sources
         .into_iter()
@@ -2425,7 +2421,7 @@ struct StreamDrawerView {
 
 #[tauri::command]
 fn own_share_frame(app: tauri::State<App>) -> CmdResult<OwnShareView> {
-    let share = app.screen_share.lock().unwrap();
+    let share = app.screen_share.lock_or_recover();
     let session = share.as_ref().ok_or("not sharing")?;
     let frame = session.latest_frame();
     Ok(OwnShareView {
@@ -2477,7 +2473,7 @@ async fn start_screen_share(
     let session = ScreenShareSession::start(sid, channel, quality.fps(), quality.max_width(), source, share_audio);
     let session = session.with_ink(profile.id, ink);
     session.ink.set_local(ink_sink(&handle, profile.id, true));
-    let blocked: Vec<UserId> = app.safety.lock().unwrap().blocked.iter().copied().collect();
+    let blocked: Vec<UserId> = app.safety.lock_or_recover().blocked.iter().copied().collect();
     for user in blocked {
         session.ink.block(user);
     }
@@ -2490,9 +2486,9 @@ async fn start_screen_share(
         frames.put(key.clone(), jpeg);
         let _ = emitter.emit("video-frame", frames::ready_payload(user, &key, Some(seq), width, height));
     }, None);
-    *app.own_preview.lock().unwrap() = Some(preview);
-    *app.screen_share.lock().unwrap() = Some(session);
-    *app.share_source.lock().unwrap() = source;
+    *app.own_preview.lock_or_recover() = Some(preview);
+    *app.screen_share.lock_or_recover() = Some(session);
+    *app.share_source.lock_or_recover() = source;
     if ink && ink_on_screen.unwrap_or(true) {
         ink_window::show(&handle, source);
     } else {
@@ -2505,7 +2501,7 @@ async fn start_screen_share(
         active: true,
     };
     {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         if let Some(state) = servers.get_mut(&sid) {
             state.apply(event.clone()).map_err(err_to_string)?;
         }
@@ -2523,9 +2519,9 @@ async fn stop_screen_share(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
-    app.own_preview.lock().unwrap().take();
+    app.own_preview.lock_or_recover().take();
     ink_window::hide(&handle);
-    let Some(session) = app.screen_share.lock().unwrap().take() else {
+    let Some(session) = app.screen_share.lock_or_recover().take() else {
         return Ok(());
     };
     let event = ServerEvent::ScreenShare {
@@ -2534,7 +2530,7 @@ async fn stop_screen_share(
         active: false,
     };
     {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         if let Some(state) = servers.get_mut(&sid) {
             let _ = state.apply(event.clone());
         }
@@ -2556,7 +2552,7 @@ async fn watch_screen(
     let profile = current_profile(&app)?;
 
     let (their_hex, channel) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         let channel = *state
             .screen_shares
@@ -2584,14 +2580,14 @@ async fn watch_screen(
         frames.put(key.clone(), jpeg);
         let _ = emitter.emit("video-frame", frames::ready_payload(user, &key, Some(seq), width, height));
     }, Some(ink_sink(&handle, user, false)));
-    app.watches.lock().unwrap().insert(user, watch);
+    app.watches.lock_or_recover().insert(user, watch);
     Ok(())
 }
 
 fn stream_audio_sink(app: &App, sharer: UserId) -> Option<StreamAudioSink> {
-    let voice = app.voice.lock().unwrap().clone();
+    let voice = app.voice.lock_or_recover().clone();
     let gain = voice.stream_gain(app.forced_deaf.load(std::sync::atomic::Ordering::Relaxed));
-    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
+    if let Some(session) = app.voice_session.lock_or_recover().as_ref() {
         return Some(StreamAudioSink::in_call(session.mixer.clone(), sharer, gain));
     }
     match StreamAudioSink::standalone(sharer, gain, voice.output_volume, voice.output_device.clone()) {
@@ -2604,9 +2600,9 @@ fn stream_audio_sink(app: &App, sharer: UserId) -> Option<StreamAudioSink> {
 }
 
 fn apply_stream_volume(app: &App) {
-    let voice = app.voice.lock().unwrap().clone();
+    let voice = app.voice.lock_or_recover().clone();
     let gain = voice.stream_gain(app.forced_deaf.load(std::sync::atomic::Ordering::Relaxed));
-    for watch in app.watches.lock().unwrap().values() {
+    for watch in app.watches.lock_or_recover().values() {
         watch.set_stream_volume(gain);
         watch.set_master_volume(voice.output_volume);
     }
@@ -2640,7 +2636,7 @@ async fn start_camera(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
     let channel = active_voice_channel(&app).ok_or("join a voice channel first")?;
-    *app.camera.lock().unwrap() = Some(CameraSession::new(sid, channel));
+    *app.camera.lock_or_recover() = Some(CameraSession::new(sid, channel));
     apply_and_broadcast(
         &app,
         &handle,
@@ -2657,7 +2653,7 @@ async fn stop_camera(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
-    let Some(session) = app.camera.lock().unwrap().take() else {
+    let Some(session) = app.camera.lock_or_recover().take() else {
         return Ok(());
     };
     apply_and_broadcast(
@@ -2676,7 +2672,7 @@ fn push_camera_frame(app: tauri::State<App>, jpeg: String, width: u32, height: u
     if bytes.len() > MAX_CAMERA_FRAME_BYTES || !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
         return Err("camera frame must be a JPEG under 400 KB".into());
     }
-    let mut camera = app.camera.lock().unwrap();
+    let mut camera = app.camera.lock_or_recover();
     let session = camera.as_mut().ok_or("camera is off")?;
     Ok(session.push(width.min(4096), height.min(4096), bytes))
 }
@@ -2691,11 +2687,11 @@ async fn watch_camera(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
-    if app.camera_watches.lock().unwrap().contains_key(&user) {
+    if app.camera_watches.lock_or_recover().contains_key(&user) {
         return Ok(());
     }
     let (their_hex, channel) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         let channel = *state.cameras.get(&user).ok_or("that camera is off")?;
         let hex = state.voice_node(user).ok_or("that member has no reachable identity")?;
@@ -2709,14 +2705,14 @@ async fn watch_camera(
         frames.put(key.clone(), jpeg);
         let _ = emitter.emit("camera-frame", frames::ready_payload(user, &key, None, width, height));
     }, None);
-    app.camera_watches.lock().unwrap().insert(user, watch);
+    app.camera_watches.lock_or_recover().insert(user, watch);
     Ok(())
 }
 
 #[tauri::command]
 fn stop_watching_camera(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
-    app.camera_watches.lock().unwrap().remove(&user);
+    app.camera_watches.lock_or_recover().remove(&user);
     app.frames.take(&frames::camera_key(user));
     Ok(())
 }
@@ -2744,7 +2740,7 @@ fn ink_sink(handle: &tauri::AppHandle, sharer: UserId, own: bool) -> stream_ink:
         }
         stream_ink::InkNews::Mark { from, mark } => {
             let app = handle.state::<App>();
-            if app.safety.lock().unwrap().blocked.contains(&from) {
+            if app.safety.lock_or_recover().blocked.contains(&from) {
                 return;
             }
             let view = StreamInkView {
@@ -2763,18 +2759,18 @@ fn ink_sink(handle: &tauri::AppHandle, sharer: UserId, own: bool) -> stream_ink:
 fn send_stream_ink(app: tauri::State<App>, user_id: String, mark: stream_ink::InkMarkInput) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let mark = stream_ink::mark_from(&mark).ok_or("that drawing could not be sent")?;
-    let watches = app.watches.lock().unwrap();
+    let watches = app.watches.lock_or_recover();
     let watch = watches.get(&user).ok_or("you are not watching that stream")?;
     watch.send_ink(mark).map_err(err_to_string)
 }
 
 #[tauri::command]
 fn set_stream_ink(app: tauri::State<App>, handle: tauri::AppHandle, on: bool, on_screen: Option<bool>) -> CmdResult<()> {
-    let share = app.screen_share.lock().unwrap();
+    let share = app.screen_share.lock_or_recover();
     let session = share.as_ref().ok_or("not sharing")?;
     session.ink.set_allowed(on);
     if on && on_screen.unwrap_or(true) {
-        ink_window::show(&handle, *app.share_source.lock().unwrap());
+        ink_window::show(&handle, *app.share_source.lock_or_recover());
     } else {
         ink_window::hide(&handle);
     }
@@ -2783,7 +2779,7 @@ fn set_stream_ink(app: tauri::State<App>, handle: tauri::AppHandle, on: bool, on
 
 #[tauri::command]
 fn clear_stream_ink(app: tauri::State<App>) -> CmdResult<()> {
-    let share = app.screen_share.lock().unwrap();
+    let share = app.screen_share.lock_or_recover();
     share.as_ref().ok_or("not sharing")?.ink.clear_all();
     Ok(())
 }
@@ -2791,7 +2787,7 @@ fn clear_stream_ink(app: tauri::State<App>) -> CmdResult<()> {
 #[tauri::command]
 fn block_stream_ink(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
-    let share = app.screen_share.lock().unwrap();
+    let share = app.screen_share.lock_or_recover();
     share.as_ref().ok_or("not sharing")?.ink.block(user);
     Ok(())
 }
@@ -2799,7 +2795,7 @@ fn block_stream_ink(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
 #[tauri::command]
 fn stop_watching(app: tauri::State<App>, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
-    app.watches.lock().unwrap().remove(&user);
+    app.watches.lock_or_recover().remove(&user);
     app.frames.take(&frames::screen_key(user));
     Ok(())
 }
@@ -2809,10 +2805,10 @@ pub(crate) fn node_hex_for_user(app: &App, user: UserId) -> Option<String> {
 }
 
 fn known_profile_field<T>(app: &App, user: UserId, field: impl Fn(&UserProfile) -> Option<T>) -> Option<T> {
-    if let Some(found) = app.dms.lock().unwrap().contacts.get(&user).and_then(&field) {
+    if let Some(found) = app.dms.lock_or_recover().contacts.get(&user).and_then(&field) {
         return Some(found);
     }
-    app.servers.lock().unwrap().values().find_map(|s| s.profiles.get(&user).and_then(&field))
+    app.servers.lock_or_recover().values().find_map(|s| s.profiles.get(&user).and_then(&field))
 }
 
 async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: &str, key: Option<(KeyId, ChannelSecret)>) {
@@ -2820,7 +2816,7 @@ async fn join_group(app: &App, handle: &tauri::AppHandle, from: UserId, ticket: 
         tracing::debug!("ignored a group invite from {from} with a bad ticket");
         return;
     };
-    if app.servers.lock().unwrap().contains_key(&ticket.server_id) {
+    if app.servers.lock_or_recover().contains_key(&ticket.server_id) {
         return;
     }
     if let Some((id, secret)) = key {
@@ -2842,7 +2838,7 @@ async fn invite_to_group(app: &App, handle: &tauri::AppHandle, me: &UserProfile,
     let key = community_sync::invite_key(app, sid);
     for raw in user_ids {
         let (_, user) = dm_partner(app, &raw)?;
-        let already = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.is_current_member(user));
+        let already = app.servers.lock_or_recover().get(&sid).is_some_and(|s| s.server.is_current_member(user));
         if already {
             continue;
         }
@@ -2864,12 +2860,12 @@ async fn create_group_dm(app: tauri::State<'_, App>, handle: tauri::AppHandle, u
         let mut net = app.net.lock().await;
         let node = net.as_mut().ok_or("network is not ready yet")?;
         let ticket = node.host_server(server_id, "", app.own_key_for_tickets()).await.map_err(err_to_string)?;
-        app.invites.lock().unwrap().insert(server_id, ticket.encode());
+        app.invites.lock_or_recover().insert(server_id, ticket.encode());
         Ok(())
     };
     let (state, _, signing) = own_server_state_from(&app, server_id, hosting, commy_core::Server::group).await?;
     let summary = ServerSummary::from_state(&state, Some(me.id));
-    app.servers.lock().unwrap().insert(server_id, state);
+    app.servers.lock_or_recover().insert(server_id, state);
     drop(signing);
     app.persist_server(server_id);
     app.persist_invites();
@@ -2884,7 +2880,7 @@ async fn create_group_dm(app: tauri::State<'_, App>, handle: tauri::AppHandle, u
 async fn add_group_members(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, user_ids: Vec<String>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let group = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.group && s.server.is_current_member(me.id));
+    let group = app.servers.lock_or_recover().get(&sid).is_some_and(|s| s.server.group && s.server.is_current_member(me.id));
     if !group {
         return Err("that is not a group you are in".into());
     }
@@ -2892,18 +2888,18 @@ async fn add_group_members(app: tauri::State<'_, App>, handle: tauri::AppHandle,
 }
 
 fn group_thread_views(app: &App, me: UserId) -> Vec<DmThreadView> {
-    commy_view::dms::group_threads(app.servers.lock().unwrap().values(), me)
+    commy_view::dms::group_threads(app.servers.lock_or_recover().values(), me)
 }
 
 #[tauri::command]
 fn list_dm_threads(app: tauri::State<App>) -> Vec<DmThreadView> {
-    let me = match app.profile.lock().unwrap().as_ref() {
+    let me = match app.profile.lock_or_recover().as_ref() {
         Some(p) => p.id,
         None => return Vec::new(),
     };
     let groups = group_thread_views(&app, me);
-    let dms = app.dms.lock().unwrap();
-    let safety = app.safety.lock().unwrap();
+    let dms = app.dms.lock_or_recover();
+    let safety = app.safety.lock_or_recover();
     let mut views = dm_thread_views(&dms, me);
     views.extend(groups);
     commy_view::dms::sort_threads(&mut views, &dms, &safety, me);
@@ -2995,7 +2991,7 @@ struct FriendsView {
 #[tauri::command]
 fn list_friends(app: tauri::State<'_, App>) -> FriendsView {
     let (friends, incoming, outgoing, notes) = {
-        let s = app.safety.lock().unwrap();
+        let s = app.safety.lock_or_recover();
         (s.friends.clone(), s.friend_in.clone(), s.friend_out.clone(), s.friend_notes.clone())
     };
     let view = |set: std::collections::HashSet<UserId>| {
@@ -3020,7 +3016,7 @@ async fn friend_action(
     note: Option<String>,
 ) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
-    if Some(user) == app.profile.lock().unwrap().as_ref().map(|p| p.id) {
+    if Some(user) == app.profile.lock_or_recover().as_ref().map(|p| p.id) {
         return Err("you cannot friend yourself".into());
     }
     let signal = match action.as_str() {
@@ -3030,7 +3026,7 @@ async fn friend_action(
         "remove" => safety::FriendSignal::Remove,
         _ => return Err("unknown friend action".into()),
     };
-    if signal == safety::FriendSignal::Request && app.safety.lock().unwrap().is_blocked(user) {
+    if signal == safety::FriendSignal::Request && app.safety.lock_or_recover().is_blocked(user) {
         return Err("unblock them first".into());
     }
     let note = match (signal, note.as_deref()) {
@@ -3047,7 +3043,7 @@ async fn friend_action(
     };
     send_friend_signal(&app, user, signal, note).await?;
     {
-        let mut s = app.safety.lock().unwrap();
+        let mut s = app.safety.lock_or_recover();
         s.friend_notes.remove(&user);
         match signal {
             safety::FriendSignal::Request => {
@@ -3099,7 +3095,7 @@ fn known_name(app: &App, user: UserId) -> String {
 #[tauri::command]
 fn get_safety(app: tauri::State<'_, App>) -> SafetyView {
     let (blocked, dm_policy, spam_filter, profile_policy) = {
-        let s = app.safety.lock().unwrap();
+        let s = app.safety.lock_or_recover();
         (s.blocked.clone(), s.dm_policy, s.spam_filter, s.profile_policy)
     };
     SafetyView {
@@ -3116,10 +3112,10 @@ fn get_safety(app: tauri::State<'_, App>) -> SafetyView {
 #[tauri::command]
 fn set_blocked(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: String, blocked: bool) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
-    if Some(user) == app.profile.lock().unwrap().as_ref().map(|p| p.id) {
+    if Some(user) == app.profile.lock_or_recover().as_ref().map(|p| p.id) {
         return Err("you cannot block yourself".into());
     }
-    if app.safety.lock().unwrap().set_blocked(user, blocked) {
+    if app.safety.lock_or_recover().set_blocked(user, blocked) {
         app.persist_safety();
         account_log::note_relation(&app, user);
         let _ = handle.emit("safety-changed", ());
@@ -3131,7 +3127,7 @@ fn set_blocked(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: St
 fn set_dm_settings(app: tauri::State<'_, App>, policy: String, spam_filter: bool) -> CmdResult<()> {
     let policy = safety::DmPolicy::parse(&policy).ok_or("unknown DM setting")?;
     {
-        let mut s = app.safety.lock().unwrap();
+        let mut s = app.safety.lock_or_recover();
         s.dm_policy = policy;
         s.spam_filter = spam_filter;
     }
@@ -3143,7 +3139,7 @@ fn set_dm_settings(app: tauri::State<'_, App>, policy: String, spam_filter: bool
 async fn set_profile_privacy(app: tauri::State<'_, App>, handle: tauri::AppHandle, policy: String) -> CmdResult<()> {
     let policy = safety::ProfilePolicy::parse(&policy).ok_or("unknown profile setting")?;
     let changed = {
-        let mut s = app.safety.lock().unwrap();
+        let mut s = app.safety.lock_or_recover();
         let changed = s.profile_policy != policy;
         s.profile_policy = policy;
         changed
@@ -3154,8 +3150,8 @@ async fn set_profile_privacy(app: tauri::State<'_, App>, handle: tauri::AppHandl
     app.persist_safety();
     let me = current_profile(&app)?;
     announce_profile(&app, &handle, &me).await;
-    let pronouns = app.voice.lock().unwrap().pronouns.clone().filter(|_| policy.shows_details_to_servers());
-    let server_ids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let pronouns = app.voice.lock_or_recover().pronouns.clone().filter(|_| policy.shows_details_to_servers());
+    let server_ids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     for sid in server_ids {
         let event = ServerEvent::PronounsSet { server: sid, user: me.id, pronouns: pronouns.clone() };
         let _ = apply_and_broadcast(&app, &handle, sid, event).await;
@@ -3168,7 +3164,7 @@ async fn set_profile_privacy(app: tauri::State<'_, App>, handle: tauri::AppHandl
 fn accept_dm_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     {
-        let mut s = app.safety.lock().unwrap();
+        let mut s = app.safety.lock_or_recover();
         s.accepted.insert(user);
         s.spam.remove(&user);
     }
@@ -3180,8 +3176,8 @@ fn accept_dm_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_
 #[tauri::command]
 fn decline_dm_request(app: tauri::State<'_, App>, handle: tauri::AppHandle, user_id: String) -> CmdResult<()> {
     let user: UserId = user_id.parse().map_err(err_to_string)?;
-    app.dms.lock().unwrap().remove_conversation(user);
-    app.safety.lock().unwrap().spam.remove(&user);
+    app.dms.lock_or_recover().remove_conversation(user);
+    app.safety.lock_or_recover().spam.remove(&user);
     app.persist_dms();
     app.persist_safety();
     let _ = handle.emit("dm-changed", user.to_string());
@@ -3222,7 +3218,7 @@ async fn report_user(
     let streams = plan.as_ref().map(sync_eraser::Plan::stream_ids).unwrap_or_default();
     let socket = sync_link::url().and_then(|account| plan.as_ref().and_then(|p| p.socket(&account)));
     let outgoing = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::safety::report(state, &keys, &me, form, reported_name, streams, chrono::Utc::now())?
     };
@@ -3273,9 +3269,9 @@ mod report_reach_tests {
 }
 
 fn receive_report(app: &App, handle: &tauri::AppHandle, sender: UserId, content: &str) {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
-    let Some(report) = view::safety::received_report(&app.servers.lock().unwrap(), me, sender, content) else { return };
-    if app.safety.lock().unwrap().is_blocked(sender) {
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
+    let Some(report) = view::safety::received_report(&app.servers.lock_or_recover(), me, sender, content) else { return };
+    if app.safety.lock_or_recover().is_blocked(sender) {
         return;
     }
     let notice = serde_json::json!({
@@ -3284,7 +3280,7 @@ fn receive_report(app: &App, handle: &tauri::AppHandle, sender: UserId, content:
         "reporter_name": report.reporter_name,
         "reason": report.reason,
     });
-    if app.safety.lock().unwrap().add_report(report) {
+    if app.safety.lock_or_recover().add_report(report) {
         app.persist_safety();
         let _ = handle.emit("report-received", notice);
     }
@@ -3294,14 +3290,13 @@ fn receive_report(app: &App, handle: &tauri::AppHandle, sender: UserId, content:
 fn list_reports(app: tauri::State<'_, App>, server_id: String) -> CmdResult<Vec<safety::Report>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let owner = app.servers.lock().unwrap().get(&sid).map(|s| s.server.owner).ok_or("unknown server")?;
+    let owner = app.servers.lock_or_recover().get(&sid).map(|s| s.server.owner).ok_or("unknown server")?;
     if owner != me.id {
         return Err("only the server owner receives reports".into());
     }
     Ok(app
         .safety
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .reports
         .iter()
         .filter(|r| r.server == server_id)
@@ -3311,7 +3306,7 @@ fn list_reports(app: tauri::State<'_, App>, server_id: String) -> CmdResult<Vec<
 
 #[tauri::command]
 fn dismiss_report(app: tauri::State<'_, App>, report_id: String) {
-    app.safety.lock().unwrap().reports.retain(|r| r.id != report_id);
+    app.safety.lock_or_recover().reports.retain(|r| r.id != report_id);
     app.persist_safety();
 }
 
@@ -3320,13 +3315,12 @@ fn get_dm_messages(app: tauri::State<App>, user_id: String) -> CmdResult<Vec<DmM
     let partner: UserId = user_id.parse().map_err(err_to_string)?;
     let me = app
         .profile
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .as_ref()
         .map(|p| p.id)
         .ok_or("set a username first")?;
     let pending = dm_sync::waiting_dms(&app, partner);
-    let dms = app.dms.lock().unwrap();
+    let dms = app.dms.lock_or_recover();
     Ok(dms
         .posts(partner)
         .map(|m| dm_message_view(m, me, &dms, pending.contains(&m.id)))
@@ -3340,8 +3334,8 @@ fn open_dm(app: tauri::State<App>, user_id: String) -> CmdResult<DmThreadView> {
     if partner == me.id {
         return Err("you cannot message yourself".into());
     }
-    let profile = commy_view::dms::reachable_profile(&app.servers.lock().unwrap(), me.id, partner);
-    let mut dms = app.dms.lock().unwrap();
+    let profile = commy_view::dms::reachable_profile(&app.servers.lock_or_recover(), me.id, partner);
+    let mut dms = app.dms.lock_or_recover();
     if let Some(profile) = profile {
         dms.remember_contact(profile);
     }
@@ -3367,7 +3361,7 @@ fn dm_partner(app: &App, user_id: &str) -> CmdResult<(UserProfile, UserId)> {
     if partner == me.id {
         return Err("you cannot message yourself".into());
     }
-    if app.safety.lock().unwrap().is_blocked(partner) {
+    if app.safety.lock_or_recover().is_blocked(partner) {
         return Err("you blocked this person; unblock them to send a message".into());
     }
     Ok((me, partner))
@@ -3375,7 +3369,7 @@ fn dm_partner(app: &App, user_id: &str) -> CmdResult<(UserProfile, UserId)> {
 
 fn known_user(app: &App, user: UserId) -> bool {
     known_profile_field(app, user, |_| Some(())).is_some()
-        || app.servers.lock().unwrap().values().any(|s| s.server.is_current_member(user))
+        || app.servers.lock_or_recover().values().any(|s| s.server.is_current_member(user))
 }
 
 fn dm_recipient(app: &App, user_id: &str) -> CmdResult<(UserProfile, UserId)> {
@@ -3415,11 +3409,11 @@ where
     let app = access.app();
     let _signing = app.signing.read().await;
     sign_dm(app, &mut message)?;
-    if !app.dms.lock().unwrap().apply(partner, message.clone()) {
+    if !app.dms.lock_or_recover().apply(partner, message.clone()) {
         return Err(if message.is_post() { "message not sent" } else { "nothing to change" }.into());
     }
     let envelope = DmEnvelope::new(message.clone(), app.profile_for(me, partner));
-    let waiting = app.outbox.lock().unwrap().has_dms(partner);
+    let waiting = app.outbox.lock_or_recover().has_dms(partner);
     outbox::queue_dm(app, partner, message.id);
     app.persist_dms();
     access.emit("dm-sending", partner.to_string().into());
@@ -3437,10 +3431,10 @@ where
     }
 
     let view = {
-        let dms = app.dms.lock().unwrap();
+        let dms = app.dms.lock_or_recover();
         message.is_post().then(|| dm_message_view(&message, me.id, &dms, !delivered && !held))
     };
-    if app.safety.lock().unwrap().accepted.insert(partner) {
+    if app.safety.lock_or_recover().accepted.insert(partner) {
         app.persist_safety();
     }
     app.persist_dms();
@@ -3462,7 +3456,7 @@ async fn send_dm(
     let mut message = DmMessage::new(me.id, partner, content);
     if let Some(raw) = reply_to {
         let target: MessageId = raw.parse().map_err(err_to_string)?;
-        if app.dms.lock().unwrap().post(partner, target).is_none() {
+        if app.dms.lock_or_recover().post(partner, target).is_none() {
             return Err("the message you replied to no longer exists".into());
         }
         message.reply_to = Some(target);
@@ -3483,7 +3477,7 @@ async fn edit_dm(
     let (me, partner) = dm_partner(&app, &user_id)?;
     let target: MessageId = message_id.parse().map_err(err_to_string)?;
     {
-        let dms = app.dms.lock().unwrap();
+        let dms = app.dms.lock_or_recover();
         let original = dms.post(partner, target).ok_or("that message no longer exists")?;
         if original.from != me.id {
             return Err("you can only edit your own messages".into());
@@ -3504,7 +3498,7 @@ async fn delete_dm(
     let (me, partner) = dm_partner(&app, &user_id)?;
     let target: MessageId = message_id.parse().map_err(err_to_string)?;
     {
-        let dms = app.dms.lock().unwrap();
+        let dms = app.dms.lock_or_recover();
         let original = dms.post(partner, target).ok_or("that message no longer exists")?;
         if original.from != me.id {
             return Err("you can only delete your own messages".into());
@@ -3639,7 +3633,7 @@ async fn apply_and_broadcast(
     event: ServerEvent,
 ) -> CmdResult<()> {
     {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         match app.sign_event(sid, event.clone()) {
             Some(signed) => state.apply_own(&signed).map_err(err_to_string)?,
@@ -3687,12 +3681,12 @@ async fn rename_server(
 }
 
 fn structure_announcements(app: &App, sid: ServerId, me: UserId) -> Vec<ServerEvent> {
-    let shows_pronouns = app.safety.lock().unwrap().profile_policy.shows_details_to_servers();
-    let pronouns = app.voice.lock().unwrap().pronouns.clone().filter(|_| shows_pronouns);
+    let shows_pronouns = app.safety.lock_or_recover().profile_policy.shows_details_to_servers();
+    let pronouns = app.voice.lock_or_recover().pronouns.clone().filter(|_| shows_pronouns);
     if app.awaits_snapshot(sid) {
         return Vec::new();
     }
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let Some(state) = servers.get(&sid) else { return Vec::new() };
     let perms = our_permissions(app, state, me);
     let mut events = Vec::new();
@@ -3928,9 +3922,9 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
             tokio::time::sleep(MESH_HEAL_EVERY).await;
             continue;
         }
-        let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+        let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
         let targets: Vec<(ServerId, Vec<String>)> = {
-            let servers = app.servers.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
             servers
                 .values()
                 .map(|s| {
@@ -3976,9 +3970,9 @@ async fn run_retention_pruner(handle: tauri::AppHandle) {
 
 fn trim_history(handle: &tauri::AppHandle) {
     let app = handle.state::<App>();
-    let storage = app.storage.lock().unwrap().clone();
+    let storage = app.storage.lock_or_recover().clone();
     let pruned: Vec<ServerId> = {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let now = chrono::Utc::now();
         servers
             .values_mut()
@@ -3997,7 +3991,7 @@ fn trim_history(handle: &tauri::AppHandle) {
 
 #[tauri::command]
 fn get_storage_settings(app: tauri::State<'_, App>) -> storage::StorageSettings {
-    app.storage.lock().unwrap().clone()
+    app.storage.lock_or_recover().clone()
 }
 
 #[tauri::command]
@@ -4013,7 +4007,7 @@ fn set_history_window(
         .map(|raw| storage::KeepWindow::parse(raw).ok_or("unknown history window"))
         .transpose()?;
     let settings = {
-        let mut storage = app.storage.lock().unwrap();
+        let mut storage = app.storage.lock_or_recover();
         storage.set(server, window)?;
         storage.clone()
     };
@@ -4025,7 +4019,7 @@ fn set_history_window(
 #[tauri::command]
 fn set_store_for_others(app: tauri::State<'_, App>, mb: u32) -> CmdResult<storage::StorageSettings> {
     let settings = {
-        let mut storage = app.storage.lock().unwrap();
+        let mut storage = app.storage.lock_or_recover();
         storage.set_store_for_others(mb)?;
         storage.clone()
     };
@@ -4034,7 +4028,7 @@ fn set_store_for_others(app: tauri::State<'_, App>, mb: u32) -> CmdResult<storag
 }
 
 fn forget_history_window(app: &App, sid: ServerId) {
-    if app.storage.lock().unwrap().forget(sid) {
+    if app.storage.lock_or_recover().forget(sid) {
         app.persist_storage();
     }
 }
@@ -4141,8 +4135,8 @@ async fn leave_server_topic(app: &App, sid: ServerId) {
 }
 
 fn forget_server_locally(app: &App, sid: ServerId) -> Option<ServerState> {
-    let removed = app.servers.lock().unwrap().remove(&sid);
-    app.invites.lock().unwrap().remove(&sid);
+    let removed = app.servers.lock_or_recover().remove(&sid);
+    app.invites.lock_or_recover().remove(&sid);
     forget_server_outbox(app, sid);
     forget_history_window(app, sid);
     if let Some(dir) = app.data_dir() {
@@ -4152,9 +4146,9 @@ fn forget_server_locally(app: &App, sid: ServerId) -> Option<ServerState> {
 }
 
 fn forget_server_outbox(app: &App, sid: ServerId) {
-    app.catchup.lock().unwrap().forget_server(sid);
+    app.catchup.lock_or_recover().forget_server(sid);
     app.set_awaiting_snapshot(sid, false);
-    if app.outbox.lock().unwrap().forget_server(sid) {
+    if app.outbox.lock_or_recover().forget_server(sid) {
         app.persist_outbox();
     }
 }
@@ -4196,10 +4190,10 @@ async fn set_pronouns(
     let me = current_profile(&app)?;
     let cleaned = view::profile::pronouns(pronouns.as_deref())?;
     let settings = app.update_voice(|voice| voice.pronouns = cleaned.clone());
-    if !app.safety.lock().unwrap().profile_policy.shows_details_to_servers() {
+    if !app.safety.lock_or_recover().profile_policy.shows_details_to_servers() {
         return Ok(settings);
     }
-    let server_ids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let server_ids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     for sid in server_ids {
         let event = ServerEvent::PronounsSet { server: sid, user: me.id, pronouns: cleaned.clone() };
         let _ = apply_and_broadcast(&app, &handle, sid, event).await;
@@ -4318,7 +4312,7 @@ async fn set_status_expiry(
         voice.status_until = view::profile::future(status_until, now);
     });
     let profile = {
-        let mut guard = app.profile.lock().unwrap();
+        let mut guard = app.profile.lock_or_recover();
         match guard.as_mut() {
             Some(profile) if profile.presence_until != settings.presence_until => {
                 profile.presence_until = settings.presence_until;
@@ -4342,7 +4336,7 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         let app = handle.state::<App>();
         let now = chrono::Utc::now().timestamp();
-        let (presence, status) = expired_status(&app.voice.lock().unwrap(), now);
+        let (presence, status) = expired_status(&app.voice.lock_or_recover(), now);
         if !presence && !status {
             continue;
         }
@@ -4355,7 +4349,7 @@ async fn run_status_expiry(handle: tauri::AppHandle) {
             }
         });
         let profile = {
-            let mut guard = app.profile.lock().unwrap();
+            let mut guard = app.profile.lock_or_recover();
             let Some(profile) = guard.as_mut() else { continue };
             view::profile::expire(profile, presence, status);
             profile.clone()
@@ -4859,23 +4853,23 @@ fn register_hotkeys(handle: &tauri::AppHandle, voice: &VoiceSettings) {
             taken.push(key.to_string());
         }
     }
-    *handle.state::<App>().overlay_hotkeys_taken.lock().unwrap() = taken;
+    *handle.state::<App>().overlay_hotkeys_taken.lock_or_recover() = taken;
 }
 
 fn taken_hotkeys(app: &App, keys: &[&str]) -> Vec<String> {
-    let taken = app.overlay_hotkeys_taken.lock().unwrap();
+    let taken = app.overlay_hotkeys_taken.lock_or_recover();
     keys.iter().filter(|k| taken.iter().any(|t| t.eq_ignore_ascii_case(k))).map(|k| k.to_string()).collect()
 }
 
 #[tauri::command]
 fn overlay_hotkey_problems(app: tauri::State<'_, App>) -> Vec<String> {
-    let overlay = app.voice.lock().unwrap().overlay.clone();
+    let overlay = app.voice.lock_or_recover().overlay.clone();
     taken_hotkeys(&app, &[&overlay.toggle_hotkey, &overlay.chat_hotkey])
 }
 
 #[tauri::command]
 fn voice_hotkey_problems(app: tauri::State<'_, App>) -> Vec<String> {
-    let keys = app.voice.lock().unwrap().voice_keys();
+    let keys = app.voice.lock_or_recover().voice_keys();
     taken_hotkeys(&app, &keys.registered())
 }
 
@@ -4887,7 +4881,7 @@ fn hotkey_id(key: &str) -> Option<u32> {
 #[cfg(desktop)]
 fn on_hotkey(handle: &tauri::AppHandle, id: u32, pressed: bool) {
     let app = handle.state::<App>();
-    let voice = app.voice.lock().unwrap().clone();
+    let voice = app.voice.lock_or_recover().clone();
     let keys = voice.voice_keys();
     if keys.talk.as_deref().and_then(hotkey_id) == Some(id) {
         set_talk_key(handle, pressed, voice.talk_release_ms);
@@ -4896,7 +4890,7 @@ fn on_hotkey(handle: &tauri::AppHandle, id: u32, pressed: bool) {
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
             let app = handle.state::<App>();
-            let muted = !app.voice.lock().unwrap().muted;
+            let muted = !app.voice.lock_or_recover().muted;
             match set_muted(app, handle.clone(), muted).await {
                 Ok(snapshot) => emit_voice_settings(&handle, &snapshot),
                 Err(e) => tracing::warn!("mute hotkey: {e}"),
@@ -4906,7 +4900,7 @@ fn on_hotkey(handle: &tauri::AppHandle, id: u32, pressed: bool) {
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
             let app = handle.state::<App>();
-            let deafened = !app.voice.lock().unwrap().deafened;
+            let deafened = !app.voice.lock_or_recover().deafened;
             match set_deafened(app, handle.clone(), deafened).await {
                 Ok(snapshot) => emit_voice_settings(&handle, &snapshot),
                 Err(e) => tracing::warn!("deafen hotkey: {e}"),
@@ -4926,7 +4920,7 @@ fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
     let app = handle.state::<App>();
     let press = app.talk_press.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     if pressed {
-        app.processor.lock().unwrap().set_talk_key_down(true);
+        app.processor.lock_or_recover().set_talk_key_down(true);
         let _ = handle.emit("talk-key", true);
         return;
     }
@@ -4937,14 +4931,14 @@ fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
         if app.talk_press.load(std::sync::atomic::Ordering::SeqCst) != press {
             return;
         }
-        app.processor.lock().unwrap().set_talk_key_down(false);
+        app.processor.lock_or_recover().set_talk_key_down(false);
         let _ = handle.emit("talk-key", false);
     });
 }
 
 #[tauri::command]
 fn press_talk(handle: tauri::AppHandle, pressed: bool) {
-    let voice = handle.state::<App>().voice.lock().unwrap().clone();
+    let voice = handle.state::<App>().voice.lock_or_recover().clone();
     if voice.input_mode == voice_keys::InputMode::PushToTalk || !pressed {
         set_talk_key(&handle, pressed, voice.talk_release_ms);
     }
@@ -4972,7 +4966,7 @@ fn set_input_mode(
         return Err(format!("{clash} is already used by another Commy hotkey"));
     }
     let _ = app.talk_press.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    app.processor.lock().unwrap().set_push_to_talk(mode == voice_keys::InputMode::PushToTalk);
+    app.processor.lock_or_recover().set_push_to_talk(mode == voice_keys::InputMode::PushToTalk);
     register_hotkeys(&handle, &snapshot);
     Ok(snapshot)
 }
@@ -5011,15 +5005,15 @@ fn set_sensitivity(app: tauri::State<'_, App>, auto: bool, threshold_db: f32) ->
         voice.auto_sensitivity = auto;
         voice.sensitivity_db = voice_keys::clamp_sensitivity_db(threshold_db);
     });
-    app.processor.lock().unwrap().set_sensitivity(snapshot.sensitivity());
+    app.processor.lock_or_recover().set_sensitivity(snapshot.sensitivity());
     snapshot
 }
 
 #[tauri::command]
 fn mic_level(app: tauri::State<'_, App>) -> f32 {
-    let listening = app.mic_test.lock().unwrap().is_some() || app.voice_session.lock().unwrap().is_some();
+    let listening = app.mic_test.lock_or_recover().is_some() || app.voice_session.lock_or_recover().is_some();
     if listening {
-        app.processor.lock().unwrap().last_level_db()
+        app.processor.lock_or_recover().last_level_db()
     } else {
         commy_audio::SILENCE_DB
     }
@@ -5028,7 +5022,7 @@ fn mic_level(app: tauri::State<'_, App>) -> f32 {
 #[cfg(desktop)]
 fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
     let app = handle.state::<App>();
-    let settings = app.voice.lock().unwrap().overlay.clone();
+    let settings = app.voice.lock_or_recover().overlay.clone();
     if hotkey_id(&settings.toggle_hotkey) == Some(id) {
         let visible = !app.overlay_visible.load(std::sync::atomic::Ordering::Relaxed);
         tracing::info!("overlay hotkey: {}", if visible { "show" } else { "hide" });
@@ -5043,7 +5037,7 @@ fn on_overlay_hotkey(handle: &tauri::AppHandle, id: u32) {
 
 #[tauri::command]
 fn get_overlay_settings(app: tauri::State<'_, App>) -> overlay::OverlaySettings {
-    app.voice.lock().unwrap().overlay.clone()
+    app.voice.lock_or_recover().overlay.clone()
 }
 
 #[tauri::command]
@@ -5076,7 +5070,7 @@ async fn set_overlay_settings(
 #[tauri::command]
 fn preview_overlay(app: tauri::State<'_, App>, handle: tauri::AppHandle) {
     use std::sync::atomic::Ordering::Relaxed;
-    if !app.voice.lock().unwrap().overlay.enabled {
+    if !app.voice.lock_or_recover().overlay.enabled {
         return;
     }
     app.overlay_preview.store(true, Relaxed);
@@ -5127,7 +5121,7 @@ async fn set_server_image(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::manage::server_images(state, our_permissions(&app, state, me.id), &which, None)?;
     }
@@ -5142,7 +5136,7 @@ async fn set_server_image(
         Some(bytes) => Some(store_shared_blob(&app, bytes).await?),
     };
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::manage::server_images(state, our_permissions(&app, state, me.id), &which, image)?
     };
@@ -5153,12 +5147,12 @@ async fn set_server_image(
 
 fn pictures_only_used_by(gone: &ServerState, app: &App) -> Vec<String> {
     let mut blobs = gone.own_picture_blobs();
-    for state in app.servers.lock().unwrap().values() {
+    for state in app.servers.lock_or_recover().values() {
         let used = state.picture_blobs_in_use();
         blobs.retain(|blob| !used.contains(blob));
     }
-    let profile = app.profile.lock().unwrap().as_ref().and_then(|p| serde_json::to_string(p).ok()).unwrap_or_default();
-    let dms = serde_json::to_string(&*app.dms.lock().unwrap()).unwrap_or_default();
+    let profile = app.profile.lock_or_recover().as_ref().and_then(|p| serde_json::to_string(p).ok()).unwrap_or_default();
+    let dms = serde_json::to_string(&*app.dms.lock_or_recover()).unwrap_or_default();
     blobs.retain(|blob| !profile.contains(blob.as_str()) && !dms.contains(blob.as_str()));
     blobs.into_iter().collect()
 }
@@ -5198,7 +5192,7 @@ pub(crate) async fn server_image_bytes(app: &App, image: &str) -> CmdResult<Vec<
 }
 
 fn manage_check(app: &App, sid: ServerId, user: UserId, needed: Permissions, action: &str) -> CmdResult<()> {
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     require_permission(app, state, user, needed, action)
 }
@@ -5412,14 +5406,14 @@ async fn set_voice_status(app: tauri::State<'_, App>, handle: tauri::AppHandle, 
 }
 
 fn refresh_priority_speakers(app: &App) {
-    let Some((sid, channel, me)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel, s.me())) else {
+    let Some((sid, channel, me)) = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel, s.me())) else {
         return;
     };
     if sid == commy_core::ids::CALL_SERVER {
         return;
     }
     let flags: Vec<(UserId, bool)> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&sid) else { return };
         let holders: std::collections::HashSet<UserId> = state.priority_speakers(channel).into_iter().collect();
         state
@@ -5429,8 +5423,8 @@ fn refresh_priority_speakers(app: &App) {
             .map(|user| (user, holders.contains(&user) || (user == me && our_permissions(app, state, me).is_priority_speaker())))
             .collect()
     };
-    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
-        let mut mixer = session.mixer.lock().unwrap();
+    if let Some(session) = app.voice_session.lock_or_recover().as_ref() {
+        let mut mixer = session.mixer.lock_or_recover();
         for (user, priority) in flags {
             mixer.set_priority(media_engine::mixer_key(user), priority);
         }
@@ -5469,7 +5463,7 @@ async fn post_forum(
     let tags = view::forum::tag_picks(&tags)?;
     let profile = current_profile(&app)?;
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::forum::can_post(state, cid, &tags)?;
         require_can_post(&app, state, profile.id, cid)?;
@@ -5545,7 +5539,7 @@ async fn set_role_banner(
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::manage::role_banner(state, our_permissions(&app, state, me.id), rid, None)?;
     }
@@ -5557,7 +5551,7 @@ async fn set_role_banner(
         }
     };
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::manage::role_banner(state, our_permissions(&app, state, me.id), rid, banner)?
     };
@@ -5576,7 +5570,7 @@ async fn set_channel_banner(
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::manage::channel_banner(state, our_permissions(&app, state, me.id), cid, None)?;
     }
@@ -5588,7 +5582,7 @@ async fn set_channel_banner(
         }
     };
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::manage::channel_banner(state, our_permissions(&app, state, me.id), cid, banner)?
     };
@@ -5663,13 +5657,13 @@ async fn set_channel_access(
 }
 
 async fn leave_unseen_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId) {
-    let Some(channel) = app.voice_session.lock().unwrap().as_ref().filter(|s| s.server == sid).map(|s| s.channel) else {
+    let Some(channel) = app.voice_session.lock_or_recover().as_ref().filter(|s| s.server == sid).map(|s| s.channel) else {
         return;
     };
     let Ok(profile) = current_profile(app) else { return };
-    let sees = app.servers.lock().unwrap().get(&sid).is_some_and(|s| s.server.can_view(channel, profile.id));
+    let sees = app.servers.lock_or_recover().get(&sid).is_some_and(|s| s.server.can_view(channel, profile.id));
     if !sees {
-        let voice = app.voice.lock().unwrap().clone();
+        let voice = app.voice.lock_or_recover().clone();
         leave_voice(app, handle, sid, &profile, &voice).await;
         let _ = handle.emit("voice-left", &sid.to_string());
     }
@@ -5689,7 +5683,7 @@ async fn pin_message(
     let mid: MessageId = message_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::pin(state, &acting(&app, state, me.id), cid, mid, pinned)?
     };
@@ -5712,7 +5706,7 @@ async fn set_thread(
     let root: MessageId = root_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::act::thread(state, &acting(&app, state, me.id), cid, root, name.as_deref(), archived, locked)?
     };
@@ -5726,7 +5720,7 @@ fn get_pins(app: tauri::State<App>, server_id: String, channel_id: Option<String
     let cid: Option<ChannelId> = channel_id.as_deref().map(str::parse).transpose().map_err(err_to_string)?;
     let keys = channel_lock::holder_of(&app);
     let me = current_profile(&app)?.id;
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     Ok(view::pin_views(state, cid, me, &keys))
 }
@@ -5766,13 +5760,13 @@ struct VoiceStatsView {
 #[tauri::command]
 async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
     let (stats, sid) = {
-        let session = app.voice_session.lock().unwrap();
+        let session = app.voice_session.lock_or_recover();
         let session = session.as_ref().ok_or("not in voice")?;
         (session.link_stats(), session.server)
     };
     let checker = app.net.lock().await.as_ref().map(CommyNode::connection_checker);
     let me = current_profile(&app).ok().zip(checker).map(|(profile, checker)| {
-        let name = app.servers.lock().unwrap().get(&sid).map(|st| view::display_name(st, profile.id));
+        let name = app.servers.lock_or_recover().get(&sid).map(|st| view::display_name(st, profile.id));
         OwnLinkView {
             user: profile.id.to_string(),
             name: name.unwrap_or_else(|| profile.visible_name().to_string()),
@@ -5780,7 +5774,7 @@ async fn voice_stats(app: tauri::State<'_, App>) -> CmdResult<VoiceStatsView> {
         }
     });
     let server_names: Vec<Option<String>> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         stats.iter().map(|s| servers.get(&sid).map(|st| view::display_name(st, s.user))).collect()
     };
     let names: Vec<String> = stats
@@ -5859,8 +5853,7 @@ async fn raise_hand(app: tauri::State<'_, App>, handle: tauri::AppHandle, server
     let me = current_profile(&app)?;
     let channel = app
         .voice_session
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .as_ref()
         .filter(|s| s.server == sid)
         .map(|s| s.channel)
@@ -5942,14 +5935,14 @@ async fn unban_member(app: tauri::State<'_, App>, handle: tauri::AppHandle, serv
 }
 
 fn end_voice_in(app: &App, sid: ServerId) {
-    let in_voice_there = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
+    let in_voice_there = app.voice_session.lock_or_recover().as_ref().is_some_and(|s| s.server == sid);
     if in_voice_there {
         let testing = pause_mic_test(app);
-        *app.voice_session.lock().unwrap() = None;
+        *app.voice_session.lock_or_recover() = None;
         voice_filter::apply(app);
         resume_mic_test(app, testing);
-        app.own_preview.lock().unwrap().take();
-        *app.screen_share.lock().unwrap() = None;
+        app.own_preview.lock_or_recover().take();
+        *app.screen_share.lock_or_recover() = None;
     }
 }
 
@@ -5975,7 +5968,7 @@ async fn on_removed(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice:
 }
 
 fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: SignedEvent, owned: bool) -> String {
-    let ticket = (!owned).then(|| app.invites.lock().unwrap().get(&sid).cloned()).flatten();
+    let ticket = (!owned).then(|| app.invites.lock_or_recover().get(&sid).cloned()).flatten();
     let gone = forget_server_locally(app, sid);
     let name = gone.as_ref().map(|s| s.server.name.clone()).unwrap_or_default();
     if let Some(gone) = &gone {
@@ -5986,7 +5979,7 @@ fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, no
     let later = handle.clone();
     tauri::async_runtime::spawn(async move { refresh_worn_tag(&later.state::<App>(), &later).await });
     let kept = deleted::DeletedServer { name: name.clone(), notice, ticket };
-    app.deleted.lock().unwrap().insert(sid, kept);
+    app.deleted.lock_or_recover().insert(sid, kept);
     app.persist_deleted();
     directory::server_changed(app, sid);
     entry_list::record_leave(app, sid);
@@ -6029,7 +6022,7 @@ async fn delete_server(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let (notice, invites) = {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let state = servers.get_mut(&sid).ok_or("unknown server")?;
         let event = view::moderate::delete(state, me.id, &confirm_name)?;
         let notice = app
@@ -6071,9 +6064,9 @@ fn effective_volume(voice: &VoiceSettings, user: &str) -> f32 {
 }
 
 fn apply_personal_volumes(app: &App) {
-    let voice = app.voice.lock().unwrap().clone();
-    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
-        let mut mixer = session.mixer.lock().unwrap();
+    let voice = app.voice.lock_or_recover().clone();
+    if let Some(session) = app.voice_session.lock_or_recover().as_ref() {
+        let mut mixer = session.mixer.lock_or_recover();
         let users = voice.user_volumes.keys().chain(voice.muted_users.iter());
         for user in users {
             if let Ok(id) = user.parse::<UserId>() {
@@ -6103,8 +6096,8 @@ fn set_user_voice(app: tauri::State<'_, App>, user_id: String, volume: Option<f3
             }
         }
     });
-    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
-        session.mixer.lock().unwrap().set_peer_gain(media_engine::mixer_key(user), effective_volume(&settings, &key));
+    if let Some(session) = app.voice_session.lock_or_recover().as_ref() {
+        session.mixer.lock_or_recover().set_peer_gain(media_engine::mixer_key(user), effective_volume(&settings, &key));
     }
     Ok(settings)
 }
@@ -6115,16 +6108,16 @@ async fn run_share_heartbeat(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(BEAT).await;
         let app = handle.state::<App>();
-        let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { continue };
-        let ours = app.screen_share.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+        let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { continue };
+        let ours = app.screen_share.lock_or_recover().as_ref().map(|s| (s.server, s.channel));
         if let Some((sid, channel)) = ours {
             broadcast_event(&app, sid, ServerEvent::ScreenShare { user: me, channel, active: true }).await;
         }
         let now = std::time::Instant::now();
         let mut expired = Vec::new();
         {
-            let servers = app.servers.lock().unwrap();
-            let mut seen = app.share_seen.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
+            let mut seen = app.share_seen.lock_or_recover();
             for (sid, state) in servers.iter() {
                 for user in state.screen_shares.keys().filter(|u| **u != me) {
                     let last = *seen.entry((*sid, *user)).or_insert(now);
@@ -6136,7 +6129,7 @@ async fn run_share_heartbeat(handle: tauri::AppHandle) {
         }
         for (sid, user) in expired {
             let changed = {
-                let mut servers = app.servers.lock().unwrap();
+                let mut servers = app.servers.lock_or_recover();
                 servers.get_mut(&sid).map(|state| {
                     let channel = state.screen_shares.get(&user).copied();
                     channel.is_some_and(|channel| {
@@ -6144,7 +6137,7 @@ async fn run_share_heartbeat(handle: tauri::AppHandle) {
                     })
                 })
             };
-            app.share_seen.lock().unwrap().remove(&(sid, user));
+            app.share_seen.lock_or_recover().remove(&(sid, user));
             if changed == Some(true) {
                 tracing::info!("expired a screen share nobody has announced recently");
                 let _ = handle.emit("server-event", &sid.to_string());
@@ -6168,15 +6161,14 @@ async fn run_event_reminders(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         let app = handle.state::<App>();
-        let Some(profile) = app.profile.lock().unwrap().clone() else { continue };
+        let Some(profile) = app.profile.lock_or_recover().clone() else { continue };
         if profile.presence == Presence::DoNotDisturb {
             continue;
         }
         let now = chrono::Utc::now();
         let due: Vec<(ServerId, String, String, String, i64)> = app
             .servers
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .values()
             .flat_map(|s| {
                 s.server.events.iter().filter_map(|e| {
@@ -6535,7 +6527,7 @@ async fn wear_server_tag(app: tauri::State<'_, App>, handle: tauri::AppHandle, s
         None => None,
         Some(id) => {
             let sid: ServerId = id.parse().map_err(err_to_string)?;
-            let servers = app.servers.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
             let state = servers.get(&sid).ok_or("unknown server")?;
             Some(view::server_tags::wear(state, me.id)?)
         }
@@ -6546,11 +6538,11 @@ async fn wear_server_tag(app: tauri::State<'_, App>, handle: tauri::AppHandle, s
 }
 
 async fn refresh_worn_tag(app: &App, handle: &tauri::AppHandle) {
-    let Some((me, worn)) = app.profile.lock().unwrap().as_ref().and_then(|p| p.server_tag.clone().map(|w| (p.id, w))) else {
+    let Some((me, worn)) = app.profile.lock_or_recover().as_ref().and_then(|p| p.server_tag.clone().map(|w| (p.id, w))) else {
         return;
     };
     let fresh = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         worn.refreshed(servers.get(&worn.server).map(|s| &s.server), me)
     };
     if fresh.as_ref() == Some(&worn) {
@@ -6639,7 +6631,7 @@ async fn play_sound_in_voice(app: &App, handle: &tauri::AppHandle, sid: ServerId
 }
 
 fn voice_channel_in(app: &App, sid: ServerId) -> CmdResult<ChannelId> {
-    let session = app.voice_session.lock().unwrap();
+    let session = app.voice_session.lock_or_recover();
     let s = session.as_ref().ok_or("join a voice channel first")?;
     if s.server != sid {
         return Err("join a voice channel in this server first".into());
@@ -6649,7 +6641,7 @@ fn voice_channel_in(app: &App, sid: ServerId) -> CmdResult<ChannelId> {
 
 #[tauri::command]
 fn list_shareable_sounds(app: tauri::State<'_, App>) -> Vec<view::expressions::SharedSound> {
-    view::expressions::shareable_sounds(app.servers.lock().unwrap().values())
+    view::expressions::shareable_sounds(app.servers.lock_or_recover().values())
 }
 
 #[tauri::command]
@@ -6665,7 +6657,7 @@ async fn play_shared_sound(
     let me = current_profile(&app)?;
     let channel = voice_channel_in(&app, sid)?;
     let (event, view) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         let from = servers.get(&source).ok_or("unknown server")?;
         view::expressions::play_shared(state, our_permissions(&app, state, me.id), me.id, channel, &from.server, name)?
@@ -6676,9 +6668,9 @@ async fn play_shared_sound(
 }
 
 fn on_remote_sound(app: &App, handle: &tauri::AppHandle, sid: ServerId, event: &ServerEvent) {
-    let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+    let mine = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel));
     let Some((_, channel)) = mine.filter(|(server, _)| *server == sid) else { return };
-    let view = app.servers.lock().unwrap().get(&sid).and_then(|state| view::expressions::heard(state, channel, event));
+    let view = app.servers.lock_or_recover().get(&sid).and_then(|state| view::expressions::heard(state, channel, event));
     if let Some(view) = view {
         let _ = handle.emit("soundboard-play", view);
     }
@@ -6706,7 +6698,7 @@ fn activity_set_view(sid: ServerId, channel: ChannelId, activity: &Option<Activi
 }
 
 fn my_voice_channel(app: &App, sid: ServerId) -> CmdResult<ChannelId> {
-    let session = app.voice_session.lock().unwrap();
+    let session = app.voice_session.lock_or_recover();
     let s = session.as_ref().ok_or("join a voice channel first")?;
     if s.server != sid {
         return Err("join a voice channel in this server first".into());
@@ -6725,7 +6717,7 @@ async fn set_activity(
     let me = current_profile(&app)?;
     let channel = my_voice_channel(&app, sid)?;
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::activities::set(state, me.id, channel, activity.clone(), chrono::Utc::now())?
     };
@@ -6745,7 +6737,7 @@ async fn send_activity_input(
     let me = current_profile(&app)?;
     let channel = my_voice_channel(&app, sid)?;
     let event = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::activities::input(state, me.id, channel, seq, input, chrono::Utc::now())?
     };
@@ -6754,12 +6746,12 @@ async fn send_activity_input(
 }
 
 fn on_remote_activity_input(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, seq: u64, input: &ActivityInput, by: UserId) {
-    let mine = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+    let mine = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel));
     if mine != Some((sid, channel)) {
         return;
     }
     let allowed = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         servers.get(&sid).is_some_and(|state| commy_core::activity::admits_input(state, by, channel, input))
     };
     if allowed {
@@ -6770,7 +6762,7 @@ fn on_remote_activity_input(app: &tauri::State<'_, App>, handle: &tauri::AppHand
 
 #[tauri::command]
 fn list_shareable_expressions(app: tauri::State<'_, App>) -> view::expressions::Shared {
-    view::expressions::shareable(app.servers.lock().unwrap().values())
+    view::expressions::shareable(app.servers.lock_or_recover().values())
 }
 
 #[tauri::command]
@@ -6892,7 +6884,7 @@ async fn store_profile_image(app: &App, bytes: Vec<u8>, file: &str) -> CmdResult
 
 async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
     let (wants_avatar, wants_banner) = {
-        let guard = app.profile.lock().unwrap();
+        let guard = app.profile.lock_or_recover();
         let profile = guard.as_ref();
         let avatar = profile
             .and_then(|p| p.avatar.as_deref().and_then(commy_core::Avatar::parse))
@@ -6918,7 +6910,7 @@ async fn restore_avatar_blob(app: &tauri::State<'_, App>, node: &CommyNode) {
 
 async fn announce_profile(app: &App, handle: &tauri::AppHandle, profile: &UserProfile) {
     let server_ids: Vec<ServerId> = {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         for state in servers.values_mut() {
             let _ = state.apply(ServerEvent::ProfileUpdate { profile: profile.clone() });
         }
@@ -6933,7 +6925,7 @@ async fn announce_profile(app: &App, handle: &tauri::AppHandle, profile: &UserPr
 }
 
 fn edit_profile(app: &App, edit: impl FnOnce(&mut UserProfile)) -> CmdResult<UserProfile> {
-    let mut guard = app.profile.lock().unwrap();
+    let mut guard = app.profile.lock_or_recover();
     let profile = guard.as_mut().ok_or("set a username first")?;
     edit(profile);
     Ok(profile.clone())
@@ -6952,7 +6944,7 @@ pub(crate) async fn set_home_card(app: &App, handle: &tauri::AppHandle, card: co
 
 pub(crate) async fn note_phone_reachable(app: &App, handle: &tauri::AppHandle) {
     let now = chrono::Utc::now().timestamp_millis();
-    let due = app.profile.lock().unwrap().as_ref().is_some_and(|p| commy_core::user::phone_mark_due(p.phone_until, now));
+    let due = app.profile.lock_or_recover().as_ref().is_some_and(|p| commy_core::user::phone_mark_due(p.phone_until, now));
     if !due {
         return;
     }
@@ -6962,7 +6954,7 @@ pub(crate) async fn note_phone_reachable(app: &App, handle: &tauri::AppHandle) {
 
 async fn set_auto_presence(app: &App, handle: &tauri::AppHandle, presence: Presence, auto_idle: bool) {
     let profile = {
-        let mut guard = app.profile.lock().unwrap();
+        let mut guard = app.profile.lock_or_recover();
         let Some(profile) = guard.as_mut() else { return };
         profile.presence = presence;
         profile.clone()
@@ -6974,7 +6966,7 @@ async fn set_auto_presence(app: &App, handle: &tauri::AppHandle, presence: Prese
 
 fn start_away(app: &App) {
     let (me, presence) = {
-        let mut guard = app.profile.lock().unwrap();
+        let mut guard = app.profile.lock_or_recover();
         let Some(profile) = guard.as_mut() else { return };
         if let Some(away) = afk::at_launch(profile.presence) {
             profile.presence = away;
@@ -6983,7 +6975,7 @@ fn start_away(app: &App) {
         }
         (profile.id, profile.presence)
     };
-    for state in app.servers.lock().unwrap().values_mut() {
+    for state in app.servers.lock_or_recover().values_mut() {
         let _ = state.apply(ServerEvent::PresenceUpdate { user: me, presence });
     }
 }
@@ -6996,8 +6988,8 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(ACTIVITY_POLL).await;
         let app = handle.state::<App>();
-        let enabled = app.voice.lock().unwrap().share_activity;
-        let held = app.last_game.lock().unwrap().clone();
+        let enabled = app.voice.lock_or_recover().share_activity;
+        let held = app.last_game.lock_or_recover().clone();
         let (seen, pid, held_running) = tokio::task::spawn_blocking(move || {
             let pid = activity::foreground_pid();
             let seen = activity::foreground_app().and_then(|(path, desc)| activity::describe(&path, desc.as_deref()));
@@ -7009,7 +7001,7 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         let held_game = remember_game(&app, seen.as_deref(), pid, held_running);
         let in_game = seen.as_deref().and_then(activity::game_name).is_some();
         let game_changed = app.game_in_front.swap(in_game, std::sync::atomic::Ordering::Relaxed) != in_game;
-        let in_voice = app.voice_session.lock().unwrap().is_some();
+        let in_voice = app.voice_session.lock_or_recover().is_some();
         let voice_changed = std::mem::replace(&mut was_in_voice, in_voice) != in_voice;
         if game_changed || voice_changed {
             overlay::refresh(&handle);
@@ -7025,13 +7017,13 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         };
         seen_last_poll = stable.clone();
         let (stable, cover) = enrich_activity(&app, stable).await;
-        let current = app.profile.lock().unwrap().as_ref().map(|p| (p.activity.clone(), p.activity_cover.clone()));
+        let current = app.profile.lock_or_recover().as_ref().map(|p| (p.activity.clone(), p.activity_cover.clone()));
         let Some(current) = current else { continue };
         if current == (stable.clone(), cover.clone()) {
             continue;
         }
         let profile = {
-            let mut guard = app.profile.lock().unwrap();
+            let mut guard = app.profile.lock_or_recover();
             let Some(profile) = guard.as_mut() else { continue };
             if profile.activity != stable {
                 profile.activity_since = stable.as_ref().map(|_| chrono::Utc::now().timestamp());
@@ -7048,7 +7040,7 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
 }
 
 fn remember_game(app: &App, front: Option<&str>, pid: Option<u32>, held_running: bool) -> Option<String> {
-    let mut last = app.last_game.lock().unwrap();
+    let mut last = app.last_game.lock_or_recover();
     match (front.and_then(activity::game_name), pid) {
         (Some(game), Some(pid)) => *last = Some((pid, game.to_string())),
         _ if !held_running => *last = None,
@@ -7137,7 +7129,7 @@ async fn set_gif_key(
 
 fn game_db_of(app: &App, server: Option<&str>) -> Option<igdb::IgdbCredentials> {
     let sid: ServerId = server?.parse().ok()?;
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     servers.get(&sid)?.server.game_db.as_ref().map(igdb::IgdbCredentials::of)
 }
 
@@ -7168,7 +7160,7 @@ async fn set_share_activity(
     let settings = app.update_voice(|voice| voice.share_activity = enabled);
     if !enabled {
         let profile = {
-            let mut guard = app.profile.lock().unwrap();
+            let mut guard = app.profile.lock_or_recover();
             guard.as_mut().filter(|p| p.activity.is_some()).map(|p| {
                 p.activity = None;
                 p.activity_cover = None;
@@ -7212,7 +7204,7 @@ async fn set_audio_devices(
         voice.output_device = clean(output);
     });
     let testing = pause_mic_test(&app);
-    if let Some(session) = app.voice_session.lock().unwrap().as_mut() {
+    if let Some(session) = app.voice_session.lock_or_recover().as_mut() {
         session.switch_devices(
             app.processor.clone(),
             settings.input_device.clone(),
@@ -7221,7 +7213,7 @@ async fn set_audio_devices(
     }
     if testing {
         let test = open_mic_test(&app).map_err(err_to_string)?;
-        *app.mic_test.lock().unwrap() = Some(test);
+        *app.mic_test.lock_or_recover() = Some(test);
     }
     Ok(settings)
 }
@@ -7238,14 +7230,12 @@ fn set_volumes(app: tauri::State<App>, output_volume: f32, input_gain: f32) -> V
         voice.input_gain = input_gain.clamp(0.0, 2.0);
     });
     app.processor
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .set_input_gain(snapshot.input_gain);
-    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
+    if let Some(session) = app.voice_session.lock_or_recover().as_ref() {
         session
             .mixer
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .set_master(snapshot.output_volume);
     }
     apply_stream_volume(&app);
@@ -7309,11 +7299,11 @@ async fn set_member_role(
 
 #[tauri::command]
 async fn start_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
-    if app.mic_test.lock().unwrap().is_some() {
+    if app.mic_test.lock_or_recover().is_some() {
         return Ok(());
     }
     let test = open_mic_test(&app).map_err(err_to_string)?;
-    *app.mic_test.lock().unwrap() = Some(test);
+    *app.mic_test.lock_or_recover() = Some(test);
     Ok(())
 }
 
@@ -7324,7 +7314,7 @@ async fn ask_for_microphone() -> Option<bool> {
 
 #[tauri::command]
 async fn stop_mic_test(app: tauri::State<'_, App>) -> CmdResult<()> {
-    *app.mic_test.lock().unwrap() = None;
+    *app.mic_test.lock_or_recover() = None;
     Ok(())
 }
 
@@ -7386,7 +7376,7 @@ async fn get_attachment_preview(
 }
 
 fn servers_showing_profile_image(app: &App, blob: &str) -> Vec<ServerId> {
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     servers
         .values()
         .filter(|state| state.profiles.values().any(|p| profile_images::image_blobs(p).iter().any(|b| b == blob)))
@@ -7436,7 +7426,7 @@ async fn get_profile_image(app: tauri::State<'_, App>, blob: String, provider: O
 
 #[tauri::command]
 fn get_voice_settings(app: tauri::State<App>) -> VoiceSettings {
-    app.voice.lock().unwrap().clone()
+    app.voice.lock_or_recover().clone()
 }
 
 #[tauri::command]
@@ -7444,8 +7434,7 @@ fn set_noise_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSetting
     app.update_voice(|voice| {
         voice.noise_cancellation = enabled;
         app.processor
-            .lock()
-            .unwrap()
+            .lock_or_recover()
             .set_noise_cancellation(enabled);
     })
 }
@@ -7454,7 +7443,7 @@ fn set_noise_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSetting
 fn set_echo_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| {
         voice.echo_cancellation = enabled;
-        app.processor.lock().unwrap().set_echo_cancellation(enabled);
+        app.processor.lock_or_recover().set_echo_cancellation(enabled);
     })
 }
 
@@ -7462,7 +7451,7 @@ fn set_echo_cancellation(app: tauri::State<App>, enabled: bool) -> VoiceSettings
 fn set_voice_filter(app: tauri::State<App>, handle: tauri::AppHandle, filter: String) -> CmdResult<VoiceSettings> {
     let chosen = commy_audio::filters::VoiceFilter::from_name(&filter).ok_or("unknown voice filter")?;
     let snapshot = app.update_voice(|voice| voice.voice_filter = chosen.name().to_string());
-    let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+    let server = app.voice_session.lock_or_recover().as_ref().map(|s| s.server);
     announce_voice_filter(&app, &handle, server, false);
     Ok(snapshot)
 }
@@ -7479,7 +7468,7 @@ fn announce_voice_filter(app: &App, handle: &tauri::AppHandle, server: Option<Se
 fn set_auto_level(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
     app.update_voice(|voice| {
         voice.auto_level = enabled;
-        app.processor.lock().unwrap().set_auto_level(enabled);
+        app.processor.lock_or_recover().set_auto_level(enabled);
     })
 }
 
@@ -7492,14 +7481,14 @@ async fn set_muted(app: tauri::State<'_, App>, handle: tauri::AppHandle, muted: 
 }
 
 async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHandle) {
-    let Some((sid, channel)) = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel)) else { return };
+    let Some((sid, channel)) = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel)) else { return };
     let Ok(profile) = current_profile(app) else { return };
     let (muted, deafened) = {
-        let voice = app.voice.lock().unwrap();
+        let voice = app.voice.lock_or_recover();
         (voice.muted, voice.deafened)
     };
     let (event, hand) = {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let Some(state) = servers.get_mut(&sid) else { return };
         let since = state.voice_since(profile.id).unwrap_or_else(|| chrono::Utc::now().timestamp());
         let event = ServerEvent::VoiceState {
@@ -7523,24 +7512,24 @@ async fn announce_voice_state(app: &tauri::State<'_, App>, handle: &tauri::AppHa
 
 fn apply_voice_gates(app: &App) {
     let (muted, deafened) = {
-        let voice = app.voice.lock().unwrap();
+        let voice = app.voice.lock_or_recover();
         (voice.muted, voice.deafened)
     };
     let forced_mute = app.forced_mute.load(std::sync::atomic::Ordering::Relaxed);
     let forced_deaf = app.forced_deaf.load(std::sync::atomic::Ordering::Relaxed);
     let audience = app.audience.load(std::sync::atomic::Ordering::Relaxed);
     let deaf = deafened || forced_deaf;
-    app.processor.lock().unwrap().set_muted(muted || deaf || forced_mute || audience);
-    if let Some(session) = app.voice_session.lock().unwrap().as_ref() {
+    app.processor.lock_or_recover().set_muted(muted || deaf || forced_mute || audience);
+    if let Some(session) = app.voice_session.lock_or_recover().as_ref() {
         session.deafened.store(deaf, std::sync::atomic::Ordering::Relaxed);
     }
     apply_stream_volume(app);
 }
 
 fn announce_new_owner(app: &App, handle: &tauri::AppHandle, sid: ServerId, user: UserId) {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let (name, who) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&sid) else { return };
         (state.server.name.clone(), view::display_name(state, user))
     };
@@ -7552,12 +7541,12 @@ fn announce_new_owner(app: &App, handle: &tauri::AppHandle, sid: ServerId, user:
 
 async fn follow_voice_move(handle: &tauri::AppHandle, sid: ServerId, channel: Option<ChannelId>) {
     let app = handle.state::<App>();
-    let in_voice_here = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == sid);
+    let in_voice_here = app.voice_session.lock_or_recover().as_ref().is_some_and(|s| s.server == sid);
     if !in_voice_here {
         return;
     }
     let name = channel.and_then(|c| {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         servers.get(&sid).and_then(|s| s.server.channel(c)).map(|c| c.name.clone())
     });
     if channel.is_some() && name.is_none() {
@@ -7574,14 +7563,14 @@ async fn follow_voice_move(handle: &tauri::AppHandle, sid: ServerId, channel: Op
 }
 
 fn refresh_forced_voice(app: &App, handle: &tauri::AppHandle) {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let session = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let session = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel));
     let gates = match (me, session) {
-        (Some(me), Some((sid, channel))) => app.servers.lock().unwrap().get(&sid).map(|s| view::calls::VoiceGates::of(s, channel, me, chrono::Utc::now())),
+        (Some(me), Some((sid, channel))) => app.servers.lock_or_recover().get(&sid).map(|s| view::calls::VoiceGates::of(s, channel, me, chrono::Utc::now())),
         _ => None,
     };
     let (muted, deafened, audience) = gates.as_ref().map_or((false, false, false), |g| (g.muted, g.deafened, g.audience));
-    if let (Some(session), Some(gates)) = (app.voice_session.lock().unwrap().as_mut(), gates) {
+    if let (Some(session), Some(gates)) = (app.voice_session.lock_or_recover().as_mut(), gates) {
         session.set_timeouts(gates.timeouts);
     }
     let was = (
@@ -7626,7 +7615,7 @@ async fn broadcast_event(app: &App, server: ServerId, event: ServerEvent) {
 }
 
 fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Option<commy_core::Action>) -> bool {
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let Some(state) = servers.get(&server) else { return false };
     match action {
         Some(action) => state.admits_signed(&SignedEvent { action, event: event.clone() }).is_ok(),
@@ -7682,7 +7671,7 @@ async fn run_net_loop(
                     continue;
                 }
                 if let ServerEvent::ScreenShare { user, active: true, .. } = &event {
-                    app.share_seen.lock().unwrap().insert((server, *user), std::time::Instant::now());
+                    app.share_seen.lock_or_recover().insert((server, *user), std::time::Instant::now());
                 }
                 let moderation = changes_who_may_do_what(&event)
                     || matches!(event, ServerEvent::VoiceModerate { .. } | ServerEvent::MemberTimeout { .. } | ServerEvent::StageSet { .. });
@@ -7698,7 +7687,7 @@ async fn run_net_loop(
                 );
                 let my_timeout = match &event {
                     ServerEvent::MemberTimeout { user, until, .. }
-                        if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user) =>
+                        if app.profile.lock_or_recover().as_ref().is_some_and(|p| p.id == *user) =>
                     {
                         Some(until.map(|t| t.timestamp_millis()))
                     }
@@ -7711,7 +7700,7 @@ async fn run_net_loop(
                         | ServerEvent::RoleDelete { .. }
                         | ServerEvent::RoleUpdate { .. }
                 );
-                let my_id = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+                let my_id = app.profile.lock_or_recover().as_ref().map(|p| p.id);
                 let removal = removal_of_me(&event, action.as_ref(), my_id);
                 let new_owner = match &event {
                     ServerEvent::OwnerTransfer { user, .. } => Some(*user),
@@ -7719,7 +7708,7 @@ async fn run_net_loop(
                 };
                 let moved_me = match &event {
                     ServerEvent::VoiceMove { user, channel, .. }
-                        if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == *user) =>
+                        if app.profile.lock_or_recover().as_ref().is_some_and(|p| p.id == *user) =>
                     {
                         Some(*channel)
                     }
@@ -7753,7 +7742,7 @@ async fn run_net_loop(
                 let lanes_changed = commy_net::community_streams::changes_lanes(&event);
                 let speaker = liveness::speaker(&event, action.as_ref()).filter(|_| !replayed);
                 let (applied, was_online, new_message, pinned) = {
-                    let mut servers = app.servers.lock().unwrap();
+                    let mut servers = app.servers.lock_or_recover();
                     match servers.get_mut(&server) {
                         Some(state) => {
                             let was_online = presence.map(|(user, _)| {
@@ -7823,7 +7812,7 @@ async fn run_net_loop(
                             prefetch_emoji(&handle, event);
                         }
                         if let Some(user) = profile_changed {
-                            let stored = app.servers.lock().unwrap().get(&server).and_then(|s| s.profiles.get(&user).cloned());
+                            let stored = app.servers.lock_or_recover().get(&server).and_then(|s| s.profiles.get(&user).cloned());
                             if let Some(profile) = stored {
                                 profile_images::prefetch(&handle, &profile);
                             }
@@ -7862,14 +7851,14 @@ async fn run_net_loop(
                     Ok(false) => {}
                     Err(e) => match (e, kept, action) {
                         (_, Some(event), Some(action)) if early => {
-                            app.catchup.lock().unwrap().hold_early(server, SignedEvent { action, event }, std::time::Instant::now())
+                            app.catchup.lock_or_recover().hold_early(server, SignedEvent { action, event }, std::time::Instant::now())
                         }
                         (StoreError::UnknownAuthorKey(signer), Some(event), _) if holdable => {
                             catchup::hold(&app, server, signer, event)
                         }
                         (StoreError::UnknownAuthorKey(_), Some(event), Some(action)) => {
                             let signed = SignedEvent { action, event };
-                            app.catchup.lock().unwrap().hold_action(server, signed, std::time::Instant::now())
+                            app.catchup.lock_or_recover().hold_action(server, signed, std::time::Instant::now())
                         }
                         (e, _, _) => tracing::warn!("rejected remote event about {}: {e}", about.as_deref().unwrap_or("something")),
                     },
@@ -7888,17 +7877,17 @@ async fn run_net_loop(
             }
             NetEvent::VoiceDial { .. } => {}
             NetEvent::NeighborUp { server, peer } => {
-                let notice = app.deleted.lock().unwrap().notice(server);
+                let notice = app.deleted.lock_or_recover().notice(server);
                 if let Some(notice) = notice {
                     broadcast(&app, server, WirePayload::Signed(notice)).await;
                     continue;
                 }
-                let me = app.profile.lock().unwrap().clone();
+                let me = app.profile.lock_or_recover().clone();
                 let Some(me) = me else { continue };
                 let my_id = me.id;
                 let needs_sync = app.awaits_snapshot(server);
                 let mut profile = app.announced(me);
-                let member = match app.servers.lock().unwrap().get(&server) {
+                let member = match app.servers.lock_or_recover().get(&server) {
                     Some(state) => {
                         devices::point_at_voice(state, &mut profile);
                         state.server.is_current_member(my_id)
@@ -7915,7 +7904,7 @@ async fn run_net_loop(
                     broadcast(&app, server, payload).await;
                 }
                 devices::announce(&app, server).await;
-                if app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == server) {
+                if app.voice_session.lock_or_recover().as_ref().is_some_and(|s| s.server == server) {
                     announce_voice_state(&app, &handle).await;
                 }
                 outbox::flush_queued(&app, server).await;
@@ -7939,35 +7928,35 @@ fn react_to_voice_change(
     channel: Option<ChannelId>,
 ) {
     let session_channel = {
-        let session = app.voice_session.lock().unwrap();
+        let session = app.voice_session.lock_or_recover();
         match session.as_ref() {
             Some(s) if s.server == server => Some(s.channel),
             _ => None,
         }
     };
     let Some(our_channel) = session_channel else { return };
-    if app.profile.lock().unwrap().as_ref().is_some_and(|p| p.id == user) {
+    if app.profile.lock_or_recover().as_ref().is_some_and(|p| p.id == user) {
         return;
     }
 
     match channel {
         Some(ch) if ch == our_channel => {
             let (me, our_hex) = {
-                let profile = app.profile.lock().unwrap().clone();
-                let hex = app.node_hex.lock().unwrap().clone();
+                let profile = app.profile.lock_or_recover().clone();
+                let hex = app.node_hex.lock_or_recover().clone();
                 match (profile, hex) {
                     (Some(p), Some(h)) => (p, h),
                     _ => return,
                 }
             };
-            let their_hex = app.servers.lock().unwrap().get(&server).and_then(|s| s.voice_node(user));
+            let their_hex = app.servers.lock_or_recover().get(&server).and_then(|s| s.voice_node(user));
             let Some(their_hex) = their_hex else { return };
             if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, our_channel, user) {
                 dial_voice_peer(handle, server, user, their_hex, our_channel, me.id);
             }
         }
         _ => {
-            if let Some(session) = app.voice_session.lock().unwrap().as_mut() {
+            if let Some(session) = app.voice_session.lock_or_recover().as_mut() {
                 session.detach_peer(user);
             }
         }
@@ -7976,9 +7965,9 @@ fn react_to_voice_change(
 
 fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, message: &Message) {
     let keys = channel_lock::holder_of(app);
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     let payload = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&sid) else { return };
         if !state.server.can_view(message.channel, me) {
             return;
@@ -7990,7 +7979,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             return;
         }
         let Some(message) = keys.open(state, message) else { return };
-        let mut names = app.profile.lock().unwrap().as_ref().map(catchup::mention_names).unwrap_or_default();
+        let mut names = app.profile.lock_or_recover().as_ref().map(catchup::mention_names).unwrap_or_default();
         names.extend(view::nickname_of(state, me));
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         let mentions = state.server.mentions_of(message.author, &message.content, me, &names);
@@ -8099,7 +8088,7 @@ fn set_close_to_tray(app: tauri::State<App>, enabled: bool) -> VoiceSettings {
 
 #[tauri::command]
 fn tray_prompt_due(app: tauri::State<App>) -> bool {
-    cfg!(desktop) && !app.voice.lock().unwrap().tray_prompt_seen
+    cfg!(desktop) && !app.voice.lock_or_recover().tray_prompt_seen
 }
 
 #[tauri::command]
@@ -8169,7 +8158,7 @@ fn autostart_default_due(voice: &VoiceSettings, allowed: bool) -> bool {
 
 #[cfg(desktop)]
 fn start_with_computer_by_default(handle: &tauri::AppHandle) {
-    let due = autostart_default_due(&handle.state::<App>().voice.lock().unwrap(), instance::autostart_allowed_here());
+    let due = autostart_default_due(&handle.state::<App>().voice.lock_or_recover(), instance::autostart_allowed_here());
     if !due {
         return;
     }
@@ -8240,7 +8229,7 @@ pub(crate) async fn take_dm(handle: &tauri::AppHandle, dm: commy_net::node::Inco
         outbox::Received::Nudge { heard, name } => notify_anyway::heard(&app, handle, heard, name),
         outbox::Received::Taken => {
             dm_sync::noticed(handle, sender);
-            let contact = app.dms.lock().unwrap().contacts.get(&sender).cloned();
+            let contact = app.dms.lock_or_recover().contacts.get(&sender).cloned();
             if let Some(profile) = contact {
                 profile_images::prefetch(handle, &profile);
             }
@@ -8257,16 +8246,16 @@ async fn run_media_loop(
         let app = handle.state::<App>();
         match media.hello.clone() {
             MediaHello::Voice { user, channel } => {
-                let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+                let server = app.voice_session.lock_or_recover().as_ref().map(|s| s.server);
                 let joined = server.and_then(|server| voice_join_of(&app, server, user));
-                let mut session = app.voice_session.lock().unwrap();
+                let mut session = app.voice_session.lock_or_recover();
                 match session.as_mut() {
                     Some(s) if s.channel == channel => s.attach_peer(user, media, joined),
                     _ => tracing::debug!("voice call for a channel we are not in"),
                 }
             }
             MediaHello::CameraSubscribe { user, channel } => {
-                let mut camera = app.camera.lock().unwrap();
+                let mut camera = app.camera.lock_or_recover();
                 match camera.as_mut() {
                     Some(c) if c.channel == channel => {
                         c.add_subscriber(media.outgoing.clone());
@@ -8276,7 +8265,7 @@ async fn run_media_loop(
                 }
             }
             MediaHello::ScreenSubscribe { user, channel } => {
-                let share = app.screen_share.lock().unwrap();
+                let share = app.screen_share.lock_or_recover();
                 match share.as_ref() {
                     Some(s) if s.channel == channel => {
                         let MediaChannel { incoming, outgoing, .. } = media;
@@ -8302,70 +8291,70 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
         profile.activity = None;
         profile.activity_cover = None;
         profile.activity_since = None;
-        *app.profile.lock().unwrap() = Some(profile);
+        *app.profile.lock_or_recover() = Some(profile);
     }
     if let Some(dms) = persist::load_dms(&dir) {
-        *app.dms.lock().unwrap() = dms;
+        *app.dms.lock_or_recover() = dms;
     }
     stream_deck::load(&app, &handle);
     if let Some(storage) = persist::load_storage(&dir) {
-        *app.storage.lock().unwrap() = storage;
+        *app.storage.lock_or_recover() = storage;
     }
-    *app.listings.lock().unwrap() = directory::load(&dir);
+    *app.listings.lock_or_recover() = directory::load(&dir);
     match persist::load_safety(&dir) {
-        Some(safety) => *app.safety.lock().unwrap() = safety,
+        Some(safety) => *app.safety.lock_or_recover() = safety,
         None => {
-            let partners = app.dms.lock().unwrap().partners();
-            app.safety.lock().unwrap().accepted.extend(partners);
+            let partners = app.dms.lock_or_recover().partners();
+            app.safety.lock_or_recover().accepted.extend(partners);
         }
     }
     if let Some(voice) = persist::load_voice(&dir) {
-        voice.apply_to(&mut app.processor.lock().unwrap());
+        voice.apply_to(&mut app.processor.lock_or_recover());
         let (app_choice, tray_choice) = (voice.app_icon.clone(), voice.tray_icon.clone());
-        *app.voice.lock().unwrap() = voice;
+        *app.voice.lock_or_recover() = voice;
         app_icon::apply(&handle, Some(dir.as_path()), &app_choice, &tray_choice);
     }
     #[cfg(desktop)]
     start_with_computer_by_default(handle);
     {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         for state in persist::load_servers(&dir) {
             servers.insert(state.server.id, state);
         }
     }
     start_away(&app);
-    *app.deleted.lock().unwrap() = deleted::DeletedServers::load(&dir, chrono::Utc::now().timestamp_millis());
+    *app.deleted.lock_or_recover() = deleted::DeletedServers::load(&dir, chrono::Utc::now().timestamp_millis());
     let mut awaiting = persist::load_awaiting(&dir);
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         awaiting.retain(|id| servers.contains_key(id));
     }
-    *app.awaiting_snapshot.lock().unwrap() = awaiting;
+    *app.awaiting_snapshot.lock_or_recover() = awaiting;
     let mut queue = outbox::Outbox::load(&dir);
     let now = chrono::Utc::now();
-    let pruned = app.servers.lock().unwrap().values().fold(false, |acc, s| queue.prune(s, now) | acc);
-    *app.outbox.lock().unwrap() = queue;
+    let pruned = app.servers.lock_or_recover().values().fold(false, |acc, s| queue.prune(s, now) | acc);
+    *app.outbox.lock_or_recover() = queue;
     if pruned {
         app.persist_outbox();
     }
     let mut bell = doorbell::Doorbell::load(&dir);
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         bell.retain_servers(|id| servers.contains_key(id));
     }
-    *app.doorbell.lock().unwrap() = bell;
-    *app.knocks.lock().unwrap() = knock::Knocks::load(&dir);
+    *app.doorbell.lock_or_recover() = bell;
+    *app.knocks.lock_or_recover() = knock::Knocks::load(&dir);
     {
         let handle = handle.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let voice = handle.state::<App>().voice.lock().unwrap().clone();
+            let voice = handle.state::<App>().voice.lock_or_recover().clone();
             register_hotkeys(&handle, &voice);
             overlay::refresh(&handle);
         });
     }
     let handle = handle.clone();
-    let signed_in = account::is_signed_in(&app.account.lock().unwrap());
+    let signed_in = account::is_signed_in(&app.account.lock_or_recover());
     let key_file = app.data_dir().map(|dir| dir.join(commy_core::identity::IDENTITY_FILE));
     if signed_in && key_file.as_ref().is_some_and(|path| !path.exists()) {
         app.mark_key_unsettled();
@@ -8409,16 +8398,16 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 }
                 tauri::async_runtime::spawn(knock::run(handle.clone()));
 
-                let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+                let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
                 let stored_invites = app
                     .data_dir()
                     .map(|d| persist::load_invites(d))
                     .unwrap_or_default();
                 catchup::mark_joined_placeholders(&app, &stored_invites, node.node_id_bytes());
                 catchup::release_own_servers(&app, &stored_invites);
-                let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
+                let awaiting = app.awaiting_snapshot.lock_or_recover().clone();
                 let to_restore: Vec<(ServerId, String, bool)> = {
-                    let servers = app.servers.lock().unwrap();
+                    let servers = app.servers.lock_or_recover();
                     servers
                         .values()
                         .map(|s| {
@@ -8432,7 +8421,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                     if owned {
                         match node.host_server(id, &name, app.own_key_for_tickets()).await {
                             Ok(ticket) => {
-                                app.invites.lock().unwrap().insert(id, ticket.encode());
+                                app.invites.lock_or_recover().insert(id, ticket.encode());
                             }
                             Err(e) => tracing::warn!("re-host failed for {name}: {e}"),
                         }
@@ -8442,14 +8431,14 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                                 if let Err(e) = node.rejoin_server(&ticket).await {
                                     tracing::warn!("rejoin failed for {name}: {e}");
                                 }
-                                app.invites.lock().unwrap().insert(id, raw.clone());
+                                app.invites.lock_or_recover().insert(id, raw.clone());
                             }
                             Err(e) => tracing::warn!("stored invite corrupt for {name}: {e}"),
                         }
                     }
                 }
                 app.persist_invites();
-                let retired = app.deleted.lock().unwrap().to_rejoin();
+                let retired = app.deleted.lock_or_recover().to_rejoin();
                 for (id, gone) in retired {
                     let rejoined = match gone.ticket.as_deref().map(ServerTicket::decode) {
                         Some(Ok(ticket)) => node.rejoin_server(&ticket).await,
@@ -8461,9 +8450,9 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                     }
                 }
 
-                *app.node_hex.lock().unwrap() = Some(hex.clone());
+                *app.node_hex.lock_or_recover() = Some(hex.clone());
                 let me = {
-                    let mut profile = app.profile.lock().unwrap();
+                    let mut profile = app.profile.lock_or_recover();
                     if let Some(p) = profile.as_mut() {
                         p.node = Some(hex);
                     }
@@ -8471,7 +8460,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 };
                 app.persist_profile();
                 if let Some(me) = me {
-                    let mut servers = app.servers.lock().unwrap();
+                    let mut servers = app.servers.lock_or_recover();
                     for state in servers.values_mut() {
                         let sid = state.server.id;
                         let _ = state.apply(ServerEvent::MemberJoin {
@@ -8549,6 +8538,7 @@ fn on_resumed(handle: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    panic_log::install();
     debug_log::init();
 
     #[cfg(desktop)]
@@ -8613,7 +8603,7 @@ pub fn run() {
                 if window.label() != "main" {
                     return;
                 }
-                let to_tray = window.state::<App>().voice.lock().unwrap().close_to_tray;
+                let to_tray = window.state::<App>().voice.lock_or_recover().close_to_tray;
                 if to_tray {
                     api.prevent_close();
                     let _ = window.hide();
@@ -8698,7 +8688,7 @@ pub fn run() {
                 server_guard::start(&handle, &dir);
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
-                *app.account.lock().unwrap() = account::load(&dir);
+                *app.account.lock_or_recover() = account::load(&dir);
                 tauri::async_runtime::spawn(account::resume_sign_in(handle.clone()));
                 account_folder::set_aside_unowned_data(&dir);
                 if let Some(folder) = account::ready_folder(&app) {

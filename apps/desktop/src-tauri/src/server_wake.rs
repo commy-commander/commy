@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -16,14 +17,14 @@ static MUTE_END_WATCHED: Mutex<Option<i64>> = Mutex::new(None);
 const MUTE_END_SLACK_SECS: i64 = 2;
 
 fn ring_due(server: ServerId, channel: ChannelId) -> RingDue {
-    LAST_ALL.lock().unwrap().get_or_insert_with(AllRings::default).ring_due(server, channel, chrono::Utc::now().timestamp_millis())
+    LAST_ALL.lock_or_recover().get_or_insert_with(AllRings::default).ring_due(server, channel, chrono::Utc::now().timestamp_millis())
 }
 
 pub fn wake_when_mutes_end(app: &App, handle: &AppHandle) {
     let now = chrono::Utc::now().timestamp();
     let Some(end) = next_mute_end(&account_log::pref_values(app), now) else { return };
     {
-        let mut watched = MUTE_END_WATCHED.lock().unwrap();
+        let mut watched = MUTE_END_WATCHED.lock_or_recover();
         if watched.is_some_and(|at| at > now && at <= end) {
             return;
         }
@@ -33,18 +34,18 @@ pub fn wake_when_mutes_end(app: &App, handle: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let wait = (end - now + MUTE_END_SLACK_SECS).max(0) as u64;
         tokio::time::sleep(Duration::from_secs(wait)).await;
-        *MUTE_END_WATCHED.lock().unwrap() = None;
+        *MUTE_END_WATCHED.lock_or_recover() = None;
         push_wake::register(&handle);
     });
 }
 
 pub fn ring(app: &App, server: ServerId, message: &Message) {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     if message.author != me {
         return;
     }
     let found = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         servers.get(&server).and_then(|state| {
             let private = state.server.channel(message.channel).is_some_and(|c| c.is_private());
             let opened = channel_lock::holder_of(app).open(state, message)?;
@@ -88,12 +89,12 @@ fn settled(state: &ServerState, me: UserId, live: impl Fn(Option<ChannelId>) -> 
 }
 
 pub fn wake_tags(app: &App, days: &[i64]) -> ServerTags {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let Some(me) = me else { return ServerTags { unsettled: app.servers.lock().unwrap().keys().copied().collect(), ..Default::default() } };
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let Some(me) = me else { return ServerTags { unsettled: app.servers.lock_or_recover().keys().copied().collect(), ..Default::default() } };
     let prefs = account_log::pref_values(app);
     let now = chrono::Utc::now().timestamp();
     let points = community_sync::wake_points();
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let live: HashSet<(ServerId, Option<ChannelId>)> = points.iter().map(|(server, channel, _)| (*server, *channel)).collect();
     let unsettled = servers.iter().filter(|(server, state)| !settled(state, me, |channel| live.contains(&(**server, channel)))).map(|(server, _)| *server).collect();
     let mut tags = Vec::new();
@@ -115,9 +116,9 @@ pub fn wake_tags(app: &App, days: &[i64]) -> ServerTags {
 }
 
 pub fn preview_keys(app: &App, days: &[i64]) -> Vec<(ServerId, [u8; 32])> {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return Vec::new() };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return Vec::new() };
     let points = community_sync::wake_points();
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     points
         .into_iter()
         .filter(|(server, channel, _)| servers.get(server).is_some_and(|state| channel.is_none_or(|c| state.server.can_view(c, me))))
@@ -155,8 +156,8 @@ pub fn label(state: &ServerState, me: UserId) -> Option<Label> {
 }
 
 pub fn labels(app: &App) -> BTreeMap<String, Label> {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return BTreeMap::new() };
-    app.servers.lock().unwrap().iter().filter_map(|(id, state)| label(state, me).map(|l| (id.to_string(), l))).collect()
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return BTreeMap::new() };
+    app.servers.lock_or_recover().iter().filter_map(|(id, state)| label(state, me).map(|l| (id.to_string(), l))).collect()
 }
 
 #[cfg(test)]

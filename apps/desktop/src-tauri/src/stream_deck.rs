@@ -2,6 +2,7 @@ mod controls;
 mod protocol;
 mod server;
 
+use crate::lock_or_recover::LockOrRecover;
 use std::sync::Arc;
 
 use commy_core::{Permissions, ServerId, ServerState};
@@ -91,7 +92,7 @@ pub fn load(app: &App, handle: &AppHandle) {
     let Some(dir) = app.data_dir() else { return };
     let Some(settings) = crate::persist::read_json::<Settings>(&dir.join(SETTINGS_FILE)) else { return };
     let enabled = settings.enabled;
-    app.stream_deck.lock().unwrap().settings = settings;
+    app.stream_deck.lock_or_recover().settings = settings;
     if enabled {
         start(handle);
     }
@@ -105,14 +106,14 @@ fn save(app: &App, settings: &Settings) {
 }
 
 fn notify_changed(handle: &AppHandle) {
-    let view = handle.state::<App>().stream_deck.lock().unwrap().view();
+    let view = handle.state::<App>().stream_deck.lock_or_recover().view();
     let _ = handle.emit("stream-deck-changed", view);
 }
 
 fn start(handle: &AppHandle) {
     {
         let app = handle.state::<App>();
-        let mut deck = app.stream_deck.lock().unwrap();
+        let mut deck = app.stream_deck.lock_or_recover();
         if deck.listener.is_some() || deck.status == Status::Starting {
             return;
         }
@@ -123,7 +124,7 @@ fn start(handle: &AppHandle) {
         let bound = server::bind(port()).await;
         let app = handle.state::<App>();
         {
-            let mut deck = app.stream_deck.lock().unwrap();
+            let mut deck = app.stream_deck.lock_or_recover();
             if !deck.settings.enabled {
                 deck.status = Status::Off;
                 return;
@@ -159,17 +160,17 @@ struct AppBackend {
 
 impl Backend for AppBackend {
     fn is_paired(&self, token: &str) -> bool {
-        self.handle.state::<App>().stream_deck.lock().unwrap().settings.deck_for(token).is_some()
+        self.handle.state::<App>().stream_deck.lock_or_recover().settings.deck_for(token).is_some()
     }
 
     fn token_for_key(&self, key: &str) -> Option<String> {
-        self.handle.state::<App>().stream_deck.lock().unwrap().settings.token_for_key(key).map(str::to_string)
+        self.handle.state::<App>().stream_deck.lock_or_recover().settings.token_for_key(key).map(str::to_string)
     }
 
     fn ask_to_pair(&self, name: &str) -> Option<PairingAsk> {
         let request = {
             let app = self.handle.state::<App>();
-            let mut deck = app.stream_deck.lock().unwrap();
+            let mut deck = app.stream_deck.lock_or_recover();
             if deck.pending.is_some() {
                 return None;
             }
@@ -186,7 +187,7 @@ impl Backend for AppBackend {
 
     fn withdraw_pairing(&self, request: u64) {
         let app = self.handle.state::<App>();
-        let mut deck = app.stream_deck.lock().unwrap();
+        let mut deck = app.stream_deck.lock_or_recover();
         if deck.pending.as_ref().is_some_and(|p| p.request == request) {
             deck.pending = None;
         }
@@ -197,7 +198,7 @@ impl Backend for AppBackend {
     fn finish_pairing(&self, name: &str) -> String {
         let app = self.handle.state::<App>();
         let (token, settings) = {
-            let mut deck = app.stream_deck.lock().unwrap();
+            let mut deck = app.stream_deck.lock_or_recover();
             let token = deck.settings.pair(name, chrono::Utc::now()).token;
             (token, deck.settings.clone())
         };
@@ -246,11 +247,11 @@ impl Backend for AppBackend {
 }
 
 fn has_sound(app: &App, sid: ServerId, name: &str) -> bool {
-    app.servers.lock().unwrap().get(&sid).is_some_and(|state| state.server.soundboard.iter().any(|s| s.name == name))
+    app.servers.lock_or_recover().get(&sid).is_some_and(|state| state.server.soundboard.iter().any(|s| s.name == name))
 }
 
 fn voice_server(app: &App) -> Option<ServerId> {
-    app.voice_session.lock().unwrap().as_ref().map(|s| s.server)
+    app.voice_session.lock_or_recover().as_ref().map(|s| s.server)
 }
 
 fn default_choices() -> Vec<SoundChoice> {
@@ -280,9 +281,9 @@ fn key_emoji(emoji: Option<&str>) -> Option<String> {
 }
 
 fn soundboard_list(app: &App) -> SoundboardList {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let mut servers: Vec<SoundboardServer> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         servers
             .values()
             .map(|state| {
@@ -299,13 +300,13 @@ fn soundboard_list(app: &App) -> SoundboardList {
 
 #[tauri::command]
 pub fn get_stream_deck(app: tauri::State<'_, App>) -> StreamDeckView {
-    app.stream_deck.lock().unwrap().view()
+    app.stream_deck.lock_or_recover().view()
 }
 
 #[tauri::command]
 pub fn set_stream_deck_enabled(app: tauri::State<'_, App>, handle: AppHandle, enabled: bool) -> StreamDeckView {
     let (settings, withdrawn) = {
-        let mut deck = app.stream_deck.lock().unwrap();
+        let mut deck = app.stream_deck.lock_or_recover();
         deck.settings.enabled = enabled;
         let withdrawn = if enabled { None } else { stop(&mut deck) };
         (deck.settings.clone(), withdrawn)
@@ -317,25 +318,25 @@ pub fn set_stream_deck_enabled(app: tauri::State<'_, App>, handle: AppHandle, en
     if enabled {
         start(&handle);
     }
-    app.stream_deck.lock().unwrap().view()
+    app.stream_deck.lock_or_recover().view()
 }
 
 #[tauri::command]
 pub fn forget_stream_deck(app: tauri::State<'_, App>, id: String) -> CmdResult<StreamDeckView> {
     let settings = {
-        let mut deck = app.stream_deck.lock().unwrap();
+        let mut deck = app.stream_deck.lock_or_recover();
         if !deck.settings.forget(&id) {
             return Err("that Stream Deck is not connected".into());
         }
         deck.settings.clone()
     };
     save(&app, &settings);
-    Ok(app.stream_deck.lock().unwrap().view())
+    Ok(app.stream_deck.lock_or_recover().view())
 }
 
 #[tauri::command]
 pub fn answer_stream_deck_pairing(app: tauri::State<'_, App>, request: u64, allow: bool) {
-    let mut deck = app.stream_deck.lock().unwrap();
+    let mut deck = app.stream_deck.lock_or_recover();
     if deck.pending.as_ref().is_some_and(|p| p.request == request) {
         if let Some(pending) = deck.pending.take() {
             let _ = pending.answer.send(allow);

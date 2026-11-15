@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -45,7 +46,7 @@ pub fn first_copy(dir: &Path, request: &str) -> bool {
     match claim(dir, || hand_off(dir, request), WAIT_FOR_RUNNING_COPY, RETRY_EVERY) {
         Outcome::First(lock) => {
             if let Some(lock) = lock {
-                *HELD.lock().unwrap() = Some(lock);
+                *HELD.lock_or_recover() = Some(lock);
             }
             true
         }
@@ -59,9 +60,9 @@ pub fn first_copy(dir: &Path, request: &str) -> bool {
 
 pub fn hold_instead(dir: &Path) {
     match try_hold(dir) {
-        Lock::Held(file) => *HELD.lock().unwrap() = Some(file),
+        Lock::Held(file) => *HELD.lock_or_recover() = Some(file),
         Lock::Busy => tracing::warn!("another copy of Commy holds {}; keeping the old lock", dir.display()),
-        Lock::Unavailable => *HELD.lock().unwrap() = None,
+        Lock::Unavailable => *HELD.lock_or_recover() = None,
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::sync::Mutex;
 
 use chrono::Utc;
@@ -25,14 +26,14 @@ fn latest_message(app: &App, me: UserId, person: UserId, server: Option<ServerId
     let now = Utc::now();
     match (server, channel) {
         (Some(server), Some(channel)) => {
-            let servers = app.servers.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
             let state = servers.get(&server)?;
             if !nudge::server_nudge_welcome(state, me, person, Some(channel)) {
                 return None;
             }
             nudge::latest_mention(state, me, person, channel, now).map(|m| Target { message: m.id, text: m.content.clone() })
         }
-        (None, None) => nudge::latest_dm(&app.dms.lock().unwrap(), me, person, now).map(|m| Target { message: m.id, text: m.content.clone() }),
+        (None, None) => nudge::latest_dm(&app.dms.lock_or_recover(), me, person, now).map(|m| Target { message: m.id, text: m.content.clone() }),
         _ => None,
     }
 }
@@ -49,11 +50,11 @@ pub async fn notify_anyway(
     let channel: Option<ChannelId> = parse(channel_id)?;
     let _signing = app.signing.read().await;
     let me = crate::current_profile(&app)?;
-    if person == me.id || app.safety.lock().unwrap().is_blocked(person) {
+    if person == me.id || app.safety.lock_or_recover().is_blocked(person) {
         return Err("you cannot notify that person".into());
     }
     let target = latest_message(&app, me.id, person, server, channel).ok_or("there is no recent message of yours for them to see")?;
-    SENT.lock().unwrap().take(person, Utc::now().timestamp(), SENDING).map_err(nudge::wait_line)?;
+    SENT.lock_or_recover().take(person, Utc::now().timestamp(), SENDING).map_err(nudge::wait_line)?;
     let message = nudge::nudge(me.id, person, target.message, server, channel, &target.text);
     let hex = crate::node_hex_for_user(&app, person);
     crate::send_direct_dm(&app, &me, hex.as_deref(), message, OFFLINE, None).await
@@ -61,14 +62,14 @@ pub async fn notify_anyway(
 
 fn names(app: &App, heard: &Heard) -> (Option<String>, Option<String>) {
     let Some(server) = heard.server else { return (None, None) };
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let Some(state) = servers.get(&server) else { return (None, None) };
     let channel = heard.channel.and_then(|c| state.server.channel(c)).map(|c| c.name.clone());
     (Some(commy_core::server::shown_server_name(&state.server.name)), channel)
 }
 
 pub fn heard(app: &App, handle: &AppHandle, heard: Heard, name: String) {
-    if HEARD.lock().unwrap().take(heard.from, Utc::now().timestamp(), HEARING).is_err() {
+    if HEARD.lock_or_recover().take(heard.from, Utc::now().timestamp(), HEARING).is_err() {
         tracing::info!("let a notify-anyway from {} pass quietly; they sent several just now", heard.from);
         return;
     }

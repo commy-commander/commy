@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 #[cfg(desktop)]
 use commy_core::drive::{DriveFile, MAX_DRIVE_FILE_BYTES};
 use commy_core::ids::DriveId;
@@ -28,7 +29,7 @@ fn parent_id(raw: Option<&str>) -> CmdResult<Option<DriveId>> {
 
 fn sealed(app: &App, sid: ServerId, event: commy_core::ServerEvent) -> CmdResult<commy_core::ServerEvent> {
     let keys = crate::channel_lock::holder_of(app);
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     keys.seal_drive(state, event)
 }
@@ -85,13 +86,13 @@ pub async fn drive_rename(
 }
 
 fn blob_of(app: &App, sid: ServerId, item: DriveId) -> Option<String> {
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid)?;
     commy_core::drive::find(&state.server.drive, item).and_then(|i| i.file.as_ref()).map(|f| f.blob.clone())
 }
 
 fn kept_elsewhere(app: &App, sid: ServerId, item: DriveId, blob: &str, me: commy_core::UserId) -> bool {
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     servers.iter().any(|(id, state)| {
         state.server.drive.iter().any(|i| {
             (*id != sid || i.id != item) && i.holders.contains_key(&me) && i.file.as_ref().is_some_and(|f| f.blob == blob)
@@ -117,7 +118,7 @@ pub async fn drive_remove(app: tauri::State<'_, App>, handle: tauri::AppHandle, 
     let item = self::item_id(&item_id)?;
     let me = current_profile(&app)?;
     let mine: Vec<(DriveId, String)> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         let drive = &state.server.drive;
         let inside = |i: &commy_core::drive::DriveItem| {
@@ -216,7 +217,7 @@ pub async fn drive_download(app: tauri::State<'_, App>, handle: tauri::AppHandle
     let me = current_profile(&app)?;
     let keys = crate::channel_lock::holder_of(&app);
     let (name, blob, holders) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         let found = commy_core::drive::find(&state.server.drive, item).ok_or(commy_view::drive::NO_SUCH_ITEM)?;
         let file = found.file.as_ref().ok_or("that is a folder")?;

@@ -1,5 +1,6 @@
 #![cfg_attr(mobile, allow(dead_code))]
 
+use crate::lock_or_recover::LockOrRecover;
 use crate::state::App;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
@@ -104,11 +105,11 @@ pub enum Pending {
 static CURRENT: Mutex<Option<Location>> = Mutex::new(None);
 
 pub fn current() -> Option<Location> {
-    CURRENT.lock().unwrap().clone()
+    CURRENT.lock_or_recover().clone()
 }
 
 fn set_current(location: Location) {
-    *CURRENT.lock().unwrap() = Some(location);
+    *CURRENT.lock_or_recover() = Some(location);
 }
 
 pub fn folder_from_environment() -> Option<String> {

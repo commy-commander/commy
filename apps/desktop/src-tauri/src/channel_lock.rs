@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::state::App;
 use commy_core::channel_key::KeyScope;
 use commy_core::{ChannelId, ServerId, ServerState, UserId};
@@ -9,7 +10,7 @@ use tauri::{Emitter, Manager};
 const TEND_EVERY: Duration = Duration::from_secs(3);
 
 pub fn holder_of(app: &App) -> KeyHolder {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     KeyHolder::new(me.zip(app.identity()))
 }
 
@@ -24,7 +25,7 @@ pub async fn tend_scope(app: &App, handle: &tauri::AppHandle, sid: ServerId, sco
     let holder = holder_of(app);
     let _signing = app.signing.read().await;
     let events = {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let Some(state) = servers.get_mut(&sid) else { return };
         let fresh = crate::sync_eraser::wants_fresh_streams(sid).contains(&scope);
         let events = match fresh {
@@ -59,7 +60,7 @@ pub async fn tend_scope(app: &App, handle: &tauri::AppHandle, sid: ServerId, sco
 fn scopes_with_work(app: &App, sid: ServerId) -> Vec<KeyScope> {
     let holder = holder_of(app);
     let mut scopes = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         servers.get(&sid).map(|state| holder.scopes_with_work(state)).unwrap_or_default()
     };
     for scope in crate::sync_eraser::wants_fresh_streams(sid) {
@@ -96,15 +97,15 @@ pub async fn run(handle: tauri::AppHandle) {
         if crate::wake::is_resting(&app) {
             continue;
         }
-        let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { continue };
-        let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+        let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { continue };
+        let sids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
         let now = Instant::now();
         let mut pending = HashMap::new();
         let mut due = Vec::new();
         for sid in sids {
             for scope in scopes_with_work(&app, sid) {
                 let since = *noticed.get(&(sid, scope)).unwrap_or(&now);
-                let wait = app.servers.lock().unwrap().get(&sid).map(|s| patience(s, me, scope)).unwrap_or_default();
+                let wait = app.servers.lock_or_recover().get(&sid).map(|s| patience(s, me, scope)).unwrap_or_default();
                 if now.duration_since(since) >= wait {
                     due.push((sid, scope));
                 } else {

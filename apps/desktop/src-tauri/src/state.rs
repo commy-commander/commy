@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::media_engine::{CameraSession, MicTest, ScreenShareSession, ScreenWatch, VoiceSession};
 use commy_audio::VoiceProcessor;
 use commy_core::identity::IdentityKey;
@@ -334,23 +335,23 @@ impl App {
     }
 
     pub fn identity(&self) -> Option<Identity> {
-        self.identity.lock().unwrap().clone()
+        self.identity.lock_or_recover().clone()
     }
 
     pub fn hold_key(&self, until: Instant) {
-        *self.key_hold.lock().unwrap() = Some(until);
+        *self.key_hold.lock_or_recover() = Some(until);
     }
 
     pub fn key_settled(&self) -> bool {
-        self.key_hold.lock().unwrap().is_none_or(|until| Instant::now() >= until)
+        self.key_hold.lock_or_recover().is_none_or(|until| Instant::now() >= until)
     }
 
     pub fn settle_pending(&self) -> bool {
-        self.key_hold.lock().unwrap().is_some()
+        self.key_hold.lock_or_recover().is_some()
     }
 
     pub fn settle_key(&self) -> bool {
-        let held = self.key_hold.lock().unwrap().take().is_some();
+        let held = self.key_hold.lock_or_recover().take().is_some();
         if let Some(dir) = self.data_dir() {
             if let Err(e) = std::fs::remove_file(dir.join(UNSETTLED_FILE)) {
                 if e.kind() != std::io::ErrorKind::NotFound {
@@ -386,7 +387,7 @@ impl App {
     }
 
     fn signer(&self) -> Option<(UserId, Identity)> {
-        let me = self.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+        let me = self.profile.lock_or_recover().as_ref().map(|p| p.id)?;
         Some((me, self.identity()?))
     }
 
@@ -412,12 +413,12 @@ impl App {
         if !self.key_settled() {
             return None;
         }
-        let me = self.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+        let me = self.profile.lock_or_recover().as_ref().map(|p| p.id)?;
         Some((me, self.identity()?.public()))
     }
 
     pub fn ticket_owner(&self, server: ServerId) -> Option<(UserId, IdentityKey)> {
-        let raw = self.invites.lock().unwrap().get(&server).cloned()?;
+        let raw = self.invites.lock_or_recover().get(&server).cloned()?;
         ServerTicket::decode(&raw).ok()?.owner
     }
 
@@ -426,13 +427,13 @@ impl App {
             return None;
         }
         let (owner, known) = {
-            let servers = self.servers.lock().unwrap();
+            let servers = self.servers.lock_or_recover();
             let state = servers.get(&server)?;
             let owner = state.server.owner;
             (owner, state.identity_of(owner))
         };
         let key = known.or_else(|| self.own_key_for_tickets().filter(|(id, _)| *id == owner).map(|(_, key)| key))?;
-        let mut invites = self.invites.lock().unwrap();
+        let mut invites = self.invites.lock_or_recover();
         let mut ticket = ServerTicket::decode(invites.get(&server)?).ok()?;
         if ticket.owner.is_none_or(|(held, _)| held == owner) {
             return None;
@@ -449,11 +450,11 @@ impl App {
 
     pub fn vouched_ticket(&self, server: ServerId) -> Option<ServerTicket> {
         self.follow_owner(server);
-        let raw = self.invites.lock().unwrap().get(&server).cloned()?;
+        let raw = self.invites.lock_or_recover().get(&server).cloned()?;
         let mut ticket = ServerTicket::decode(&raw).ok()?;
         if ticket.owner.is_none() && !self.awaits_snapshot(server) {
             let (owns, owner) = {
-                let servers = self.servers.lock().unwrap();
+                let servers = self.servers.lock_or_recover();
                 let state = servers.get(&server)?;
                 let owner = state.server.owner;
                 (owner, state.identity_of(owner).map(|key| (owner, key)))
@@ -461,7 +462,7 @@ impl App {
             let owner = owner.or_else(|| self.own_key_for_tickets().filter(|(id, _)| *id == owns));
             if let Some(owner) = owner {
                 ticket.owner = Some(owner);
-                self.invites.lock().unwrap().insert(server, ticket.encode());
+                self.invites.lock_or_recover().insert(server, ticket.encode());
                 self.persist_invites();
             }
         }
@@ -470,12 +471,12 @@ impl App {
 
     pub fn persist_invites(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let _ = crate::persist::save_invites(dir, &self.invites.lock().unwrap());
+        let _ = crate::persist::save_invites(dir, &self.invites.lock_or_recover());
     }
 
     pub fn persist_listings(&self) {
         let Some(dir) = self.data_dir() else { return };
-        warn_unsaved("directory listings", crate::persist::save_listings(dir, &self.listings.lock().unwrap()));
+        warn_unsaved("directory listings", crate::persist::save_listings(dir, &self.listings.lock_or_recover()));
     }
 
     pub fn announced(&self, profile: UserProfile) -> UserProfile {
@@ -483,15 +484,15 @@ impl App {
         if !self.key_settled() {
             profile.identity = None;
         }
-        if !self.safety.lock().unwrap().profile_policy.shows_details_to_servers() {
+        if !self.safety.lock_or_recover().profile_policy.shows_details_to_servers() {
             profile = profile.without_details();
         }
         profile
     }
 
     pub fn profile_for(&self, me: &UserProfile, partner: UserId) -> UserProfile {
-        let shares_server = self.servers.lock().unwrap().values().any(|s| s.server.is_member(partner));
-        let shown = self.safety.lock().unwrap().shows_details_to(partner, shares_server);
+        let shares_server = self.servers.lock_or_recover().values().any(|s| s.server.is_member(partner));
+        let shown = self.safety.lock_or_recover().shows_details_to(partner, shares_server);
         let profile = me.as_seen_by_others();
         if shown {
             profile
@@ -501,12 +502,12 @@ impl App {
     }
 
     pub fn awaits_snapshot(&self, server: ServerId) -> bool {
-        self.awaiting_snapshot.lock().unwrap().contains(&server)
+        self.awaiting_snapshot.lock_or_recover().contains(&server)
     }
 
     pub fn set_awaiting_snapshot(&self, server: ServerId, awaiting: bool) {
         let changed = {
-            let mut set = self.awaiting_snapshot.lock().unwrap();
+            let mut set = self.awaiting_snapshot.lock_or_recover();
             if awaiting {
                 set.insert(server)
             } else {
@@ -520,7 +521,7 @@ impl App {
 
     pub fn persist_awaiting(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let set = self.awaiting_snapshot.lock().unwrap();
+        let set = self.awaiting_snapshot.lock_or_recover();
         warn_unsaved("servers awaiting a snapshot", crate::persist::save_awaiting(dir, &set));
     }
 
@@ -530,9 +531,9 @@ impl App {
             None => self.identity().unwrap_or_else(Identity::generate),
         };
         let key = identity.public();
-        *self.identity.lock().unwrap() = Some(identity);
+        *self.identity.lock_or_recover() = Some(identity);
         let (profile, changed) = {
-            let mut guard = self.profile.lock().unwrap();
+            let mut guard = self.profile.lock_or_recover();
             let Some(profile) = guard.as_mut() else { return Ok(None) };
             let changed = profile.identity != Some(key);
             profile.identity = Some(key);
@@ -542,7 +543,7 @@ impl App {
             self.persist_profile();
         }
         let updated: Vec<ServerId> = {
-            let mut servers = self.servers.lock().unwrap();
+            let mut servers = self.servers.lock_or_recover();
             servers
                 .values_mut()
                 .filter_map(|state| {
@@ -565,7 +566,7 @@ impl App {
 
     pub fn persist_server(&self, id: ServerId) {
         let Some(dir) = self.data_dir() else { return };
-        let servers = self.servers.lock().unwrap();
+        let servers = self.servers.lock_or_recover();
         if let Some(state) = servers.get(&id) {
             warn_unsaved("server", crate::persist::save_server(dir, state));
         }
@@ -579,7 +580,7 @@ impl App {
     }
 
     pub fn chosen_profile(&self) -> Option<UserProfile> {
-        let mut profile = self.profile.lock().unwrap().clone()?;
+        let mut profile = self.profile.lock_or_recover().clone()?;
         if self.auto_idle.load(std::sync::atomic::Ordering::Relaxed) {
             profile.presence = commy_core::Presence::Online;
         }
@@ -587,7 +588,7 @@ impl App {
     }
 
     pub fn update_voice(&self, edit: impl FnOnce(&mut VoiceSettings)) -> VoiceSettings {
-        let mut voice = self.voice.lock().unwrap();
+        let mut voice = self.voice.lock_or_recover();
         edit(&mut voice);
         if let Some(dir) = self.data_dir() {
             warn_unsaved("voice settings", crate::persist::save_voice(dir, &voice));
@@ -597,19 +598,19 @@ impl App {
 
     pub fn persist_safety(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let json = serde_json::to_vec_pretty(&*self.safety.lock().unwrap()).map_err(anyhow::Error::from);
+        let json = serde_json::to_vec_pretty(&*self.safety.lock_or_recover()).map_err(anyhow::Error::from);
         warn_unsaved("safety settings", json.and_then(|json| crate::persist::save_safety(dir, &json)));
     }
 
     pub fn persist_storage(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let storage = self.storage.lock().unwrap().clone();
+        let storage = self.storage.lock_or_recover().clone();
         warn_unsaved("storage settings", crate::persist::save_storage(dir, &storage));
     }
 
     pub fn persist_deleted(&self) {
         let Some(dir) = self.data_dir() else { return };
-        self.deleted.lock().unwrap().save(dir);
+        self.deleted.lock_or_recover().save(dir);
     }
 
     pub fn persist_outbox(&self) {
@@ -618,13 +619,13 @@ impl App {
     }
 
     fn write_outbox(&self, write: impl FnOnce(&crate::outbox::Outbox) -> anyhow::Result<()>) {
-        let outbox = self.outbox.lock().unwrap();
+        let outbox = self.outbox.lock_or_recover();
         warn_unsaved("outbox", write(&outbox));
     }
 
     pub fn persist_dms(&self) {
         let Some(dir) = self.data_dir() else { return };
-        let json = serde_json::to_vec_pretty(&*self.dms.lock().unwrap()).map_err(anyhow::Error::from);
+        let json = serde_json::to_vec_pretty(&*self.dms.lock_or_recover()).map_err(anyhow::Error::from);
         warn_unsaved("dms", json.and_then(|json| crate::persist::save_dms(dir, &json)));
     }
 }

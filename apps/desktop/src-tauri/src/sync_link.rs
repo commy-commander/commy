@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::sync::Mutex;
 
 use commy_sync::endpoint::accepted_url;
@@ -8,18 +9,18 @@ static URL: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn set_url(server: &str, offered: Option<&str>) -> bool {
     let next = accepted_url(server, offered);
-    let mut url = URL.lock().unwrap();
+    let mut url = URL.lock_or_recover();
     let changed = *url != next;
     *url = next;
     changed
 }
 
 pub fn clear_url() {
-    *URL.lock().unwrap() = None;
+    *URL.lock_or_recover() = None;
 }
 
 pub fn url() -> Option<String> {
-    URL.lock().unwrap().clone()
+    URL.lock_or_recover().clone()
 }
 
 pub async fn append(client: Option<SyncClient>, stream: StreamId, plain: Vec<u8>) -> Result<u64, AppendError> {

@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::catchup::AppAccess;
 use crate::state::App;
 use commy_core::doorbell::{self as bell, DoorbellKey};
@@ -247,7 +248,7 @@ fn endpoints_of(doc: Discovery, origin: &str) -> Option<Endpoints> {
 }
 
 pub(crate) async fn endpoints(app: &App, origin: &str) -> Option<Endpoints> {
-    if let Some((at, found)) = app.doorbell.lock().unwrap().origins.get(origin) {
+    if let Some((at, found)) = app.doorbell.lock_or_recover().origins.get(origin) {
         if at.elapsed() < DOORBELL_SUPPORT_TTL {
             return found.clone();
         }
@@ -268,19 +269,19 @@ pub(crate) async fn endpoints(app: &App, origin: &str) -> Option<Endpoints> {
     .await;
     let doc = fetched?;
     let found = doc.and_then(|doc| endpoints_of(doc, origin));
-    app.doorbell.lock().unwrap().origins.insert(origin.to_string(), (Instant::now(), found.clone()));
+    app.doorbell.lock_or_recover().origins.insert(origin.to_string(), (Instant::now(), found.clone()));
     found
 }
 
 pub(crate) fn record_join(app: &App, server: ServerId) {
-    if app.doorbell.lock().unwrap().adopt_invite_origin(server) {
+    if app.doorbell.lock_or_recover().adopt_invite_origin(server) {
         persist(app);
     }
 }
 
 fn persist(app: &App) {
     let Some(dir) = app.data_dir() else { return };
-    let doorbell = app.doorbell.lock().unwrap();
+    let doorbell = app.doorbell.lock_or_recover();
     if let Err(e) = doorbell.save(dir) {
         tracing::warn!("failed to persist doorbell: {e}");
     }
@@ -306,13 +307,13 @@ pub(crate) async fn announcement(app: &App, server: ServerId) -> Option<ServerEv
     if !app.key_settled() {
         return None;
     }
-    let node = app.node_hex.lock().unwrap().clone()?;
-    let user = app.profile.lock().unwrap().as_ref()?.id;
+    let node = app.node_hex.lock_or_recover().clone()?;
+    let user = app.profile.lock_or_recover().as_ref()?.id;
     let identity = app.identity()?;
     let origin = crate::account::effective_server();
     let (url, key) = match endpoints(app, &origin).await {
         Some(_) => {
-            let (key, new) = app.doorbell.lock().unwrap().own_key(server);
+            let (key, new) = app.doorbell.lock_or_recover().own_key(server);
             if new {
                 persist(app);
             }
@@ -344,12 +345,12 @@ pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
     if *named != server || node.len() != 64 || !node.bytes().all(|b| b.is_ascii_hexdigit()) {
         return;
     }
-    if app.node_hex.lock().unwrap().as_deref() == Some(node.as_str()) {
+    if app.node_hex.lock_or_recover().as_deref() == Some(node.as_str()) {
         return;
     }
     let own_origin = crate::account::effective_server();
     let changed = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server) else { return };
         let signer = state.profiles.get(user).and_then(|p| p.identity);
         if !state.server.is_current_member(*user)
@@ -358,7 +359,7 @@ pub fn on_announce(app: &App, server: ServerId, event: &ServerEvent) {
             tracing::debug!("dropped a doorbell announcement that does not verify");
             return;
         }
-        let mut doorbell = app.doorbell.lock().unwrap();
+        let mut doorbell = app.doorbell.lock_or_recover();
         let known = peer_origin_ok(url, &own_origin) && doorbell.origin_allowed(server, url, &own_origin);
         let peer = key.filter(|_| known).map(|key| Peer { user: *user, url: url.clone(), key });
         let pruned = doorbell.retain_members(server, |u| state.server.is_current_member(u));
@@ -377,12 +378,12 @@ pub fn ring<A: AppAccess + Clone>(access: &A, server: ServerId, message: Message
 }
 
 pub(crate) fn ring_targets(app: &App, server: ServerId, message: MessageId, everyone: bool) -> Vec<(String, String, String)> {
-    let our_node = app.node_hex.lock().unwrap().clone();
+    let our_node = app.node_hex.lock_or_recover().clone();
     let own_origin = crate::account::effective_server();
     let day = bell::day_of(chrono::Utc::now());
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let Some(state) = servers.get(&server) else { return Vec::new() };
-    let doorbell = app.doorbell.lock().unwrap();
+    let doorbell = app.doorbell.lock_or_recover();
     doorbell
         .ringable(state, server, our_node.as_deref(), &own_origin)
         .filter(|p| everyone || !state.profiles.get(&p.user).is_some_and(|u| u.presence.is_visible_online()))
@@ -394,7 +395,7 @@ fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: 
     let app = access.app();
     let key = (url, token);
     let start = {
-        let mut doorbell = app.doorbell.lock().unwrap();
+        let mut doorbell = app.doorbell.lock_or_recover();
         let start = !doorbell.ringing.contains_key(&key);
         let ids = doorbell.ringing.entry(key.clone()).or_default();
         ids.extend(id);
@@ -406,12 +407,12 @@ fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: 
     let access = access.clone();
     spawn(async move {
         let app = access.app();
-        let wait = app.doorbell.lock().unwrap().rung_at.get(&key).map_or(RING_DEBOUNCE, |at| {
+        let wait = app.doorbell.lock_or_recover().rung_at.get(&key).map_or(RING_DEBOUNCE, |at| {
             RING_SPACING.saturating_sub(at.elapsed()).max(RING_DEBOUNCE)
         });
         tokio::time::sleep(wait).await;
         let ids = {
-            let mut doorbell = app.doorbell.lock().unwrap();
+            let mut doorbell = app.doorbell.lock_or_recover();
             doorbell.rung_at.retain(|_, at| at.elapsed() < RING_SPACING);
             doorbell.rung_at.insert(key.clone(), Instant::now());
             doorbell.ringing.remove(&key)
@@ -429,7 +430,7 @@ fn queue_ring<A: AppAccess + Clone>(access: &A, url: String, token: String, id: 
         let mut retried = false;
         let mut chunks = chunks.into_iter().peekable();
         while let Some(chunk) = chunks.peek() {
-            let over = app.doorbell.lock().unwrap().spend(&origin, Instant::now());
+            let over = app.doorbell.lock_or_recover().spend(&origin, Instant::now());
             if let Some(wait) = over {
                 tokio::time::sleep(wait).await;
                 continue;
@@ -456,9 +457,9 @@ pub fn ring_device<A: AppAccess + Clone>(access: &A, server: ServerId, node: &st
     let target = {
         let app = access.app();
         let own_origin = crate::account::effective_server();
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server) else { return };
-        let doorbell = app.doorbell.lock().unwrap();
+        let doorbell = app.doorbell.lock_or_recover();
         let Some(peer) = doorbell.saved.peers.get(&server).and_then(|p| p.get(node)) else { return };
         if !state.server.is_current_member(peer.user) || !doorbell.origin_allowed(server, &peer.url, &own_origin) {
             return;
@@ -478,13 +479,13 @@ pub(crate) async fn send_ring(app: &App, ring: &str, token: &str, ids: &[String]
 
 fn hello<A: AppAccess + Clone>(access: &A, server: ServerId) {
     let app = access.app();
-    let our_node = app.node_hex.lock().unwrap().clone();
+    let our_node = app.node_hex.lock_or_recover().clone();
     let own_origin = crate::account::effective_server();
     let day = bell::day_of(chrono::Utc::now());
     let targets: Vec<(String, String)> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server) else { return };
-        let mut doorbell = app.doorbell.lock().unwrap();
+        let mut doorbell = app.doorbell.lock_or_recover();
         if doorbell.hello_at.get(&server).is_some_and(|at| at.elapsed() < HELLO_EVERY) {
             return;
         }
@@ -504,9 +505,9 @@ pub async fn run<A: AppAccess + Clone>(access: A) {
     let mut hello_at: Option<Instant> = None;
     loop {
         let app = access.app();
-        let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+        let servers: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
         for server in &servers {
-            let start = app.doorbell.lock().unwrap().listening.insert(*server);
+            let start = app.doorbell.lock_or_recover().listening.insert(*server);
             if start {
                 spawn(listen(access.clone(), *server));
             }
@@ -522,7 +523,7 @@ pub async fn run<A: AppAccess + Clone>(access: A) {
                 }
             };
             for server in lonely {
-                if app.outbox.lock().unwrap().has_pending(server) {
+                if app.outbox.lock_or_recover().has_pending(server) {
                     hello(&access, server);
                 }
             }
@@ -570,8 +571,8 @@ async fn listen<A: AppAccess + Clone>(access: A, server: ServerId) {
     let mut failures: u32 = 0;
     loop {
         let app = access.app();
-        if !app.servers.lock().unwrap().contains_key(&server) {
-            app.doorbell.lock().unwrap().listening.remove(&server);
+        if !app.servers.lock_or_recover().contains_key(&server) {
+            app.doorbell.lock_or_recover().listening.remove(&server);
             return;
         }
         let origin = crate::account::effective_server();
@@ -579,13 +580,13 @@ async fn listen<A: AppAccess + Clone>(access: A, server: ServerId) {
             tokio::time::sleep(Duration::from_secs(5 * 60)).await;
             continue;
         };
-        let (key, new) = app.doorbell.lock().unwrap().own_key(server);
+        let (key, new) = app.doorbell.lock_or_recover().own_key(server);
         if new {
             persist(app);
             announce(&access, server);
         }
         let today = bell::day_of(chrono::Utc::now());
-        let first = app.doorbell.lock().unwrap().saved.last_take.get(&server).copied().unwrap_or(today);
+        let first = app.doorbell.lock_or_recover().saved.last_take.get(&server).copied().unwrap_or(today);
         let first = first.max(today.saturating_sub(bell::KEEP_DAYS - 1));
         let first = if chrono::Utc::now().timestamp().rem_euclid(86_400) < YESTERDAY_TOKEN_GRACE_SECS {
             first.min(today.saturating_sub(1))
@@ -597,7 +598,7 @@ async fn listen<A: AppAccess + Clone>(access: A, server: ServerId) {
             let wait = if day == today { SERVER_MAX_TAKE_WAIT_SECS } else { 0 };
             match take(app, &endpoints, &bell::token(&key, day), wait).await {
                 Ok(taken) => {
-                    let changed = app.doorbell.lock().unwrap().saved.last_take.insert(server, day) != Some(day);
+                    let changed = app.doorbell.lock_or_recover().saved.last_take.insert(server, day) != Some(day);
                     if changed {
                         persist(app);
                     }
@@ -609,7 +610,7 @@ async fn listen<A: AppAccess + Clone>(access: A, server: ServerId) {
                 }
             }
         }
-        if app.doorbell.lock().unwrap().awaited_count(server) > 0 {
+        if app.doorbell.lock_or_recover().awaited_count(server) > 0 {
             nudge(&access, server).await;
         }
         match result {
@@ -632,7 +633,7 @@ fn rand_jitter(base: u64) -> u64 {
 
 fn on_taken<A: AppAccess + Clone>(access: &A, server: ServerId, key: &DoorbellKey, taken: Taken) {
     let app = access.app();
-    if !app.servers.lock().unwrap().contains_key(&server) {
+    if !app.servers.lock_or_recover().contains_key(&server) {
         return;
     }
     let changed = note_taken(app, server, key, taken.ids);
@@ -640,7 +641,7 @@ fn on_taken<A: AppAccess + Clone>(access: &A, server: ServerId, key: &DoorbellKe
         access.emit("server-event", serde_json::json!(server.to_string()));
     }
     if changed || taken.hello {
-        app.doorbell.lock().unwrap().nudged_at.remove(&server);
+        app.doorbell.lock_or_recover().nudged_at.remove(&server);
         let access = access.clone();
         spawn(async move { nudge(&access, server).await });
     }
@@ -652,11 +653,11 @@ pub(crate) fn note_taken(app: &App, server: ServerId, key: &DoorbellKey, ids: Ve
         return false;
     }
     let held = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server) else { return false };
         held_ids(state, key)
     };
-    let changed = app.doorbell.lock().unwrap().add_awaited(server, ids, &held, now_secs());
+    let changed = app.doorbell.lock_or_recover().add_awaited(server, ids, &held, now_secs());
     if changed {
         persist(app);
     }
@@ -666,7 +667,7 @@ pub(crate) fn note_taken(app: &App, server: ServerId, key: &DoorbellKey, ids: Ve
 async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
     let app = access.app();
     {
-        let mut doorbell = app.doorbell.lock().unwrap();
+        let mut doorbell = app.doorbell.lock_or_recover();
         let fresh = doorbell.newest_awaited(server).is_some_and(|at| now_secs() - at < 3600);
         let every = if fresh { NUDGE_EVERY } else { NUDGE_SLOW };
         if doorbell.nudged_at.get(&server).is_some_and(|at| at.elapsed() < every) {
@@ -674,9 +675,9 @@ async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
         }
         doorbell.nudged_at.insert(server, Instant::now());
     }
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let members: Vec<String> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server) else { return };
         state.profiles.values().filter(|p| Some(p.id) != me).filter_map(|p| p.node.clone()).collect()
     };
@@ -699,8 +700,8 @@ async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
 pub fn settle<A: AppAccess>(access: &A, server: ServerId) {
     let app = access.app();
     let changed = {
-        let servers = app.servers.lock().unwrap();
-        let mut doorbell = app.doorbell.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
+        let mut doorbell = app.doorbell.lock_or_recover();
         let Some(key) = doorbell.saved.own.get(&server).copied() else { return };
         if doorbell.awaited_count(server) == 0 {
             return;
@@ -717,7 +718,7 @@ pub fn settle<A: AppAccess>(access: &A, server: ServerId) {
 pub fn arrived<A: AppAccess>(access: &A, server: ServerId, message: MessageId) {
     let app = access.app();
     let changed = {
-        let mut doorbell = app.doorbell.lock().unwrap();
+        let mut doorbell = app.doorbell.lock_or_recover();
         let Some(key) = doorbell.saved.own.get(&server).copied() else { return };
         let id = bell::blinded_id(&key, message);
         doorbell.saved.awaited.get_mut(&server).is_some_and(|a| a.remove(&id).is_some())
@@ -736,8 +737,8 @@ pub fn get_awaited(app: tauri::State<'_, App>, server_id: String) -> Result<u32,
 
 pub(crate) fn awaited(app: &App, server: ServerId) -> u32 {
     let (changed, count) = {
-        let servers = app.servers.lock().unwrap();
-        let mut doorbell = app.doorbell.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
+        let mut doorbell = app.doorbell.lock_or_recover();
         let key = doorbell.saved.own.get(&server).copied();
         let held = match (key, servers.get(&server)) {
             (Some(key), Some(state)) if doorbell.awaited_count(server) > 0 => held_ids(state, &key),

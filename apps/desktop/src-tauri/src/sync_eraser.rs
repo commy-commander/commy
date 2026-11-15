@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -15,29 +16,29 @@ static FRESH: Mutex<Option<HashSet<(ServerId, KeyScope)>>> = Mutex::new(None);
 const CLAIM_FIRST_WAIT: Duration = Duration::from_secs(15);
 
 pub fn wants_fresh_streams(sid: ServerId) -> Vec<KeyScope> {
-    FRESH.lock().unwrap().iter().flatten().filter(|(server, _)| *server == sid).map(|(_, scope)| *scope).collect()
+    FRESH.lock_or_recover().iter().flatten().filter(|(server, _)| *server == sid).map(|(_, scope)| *scope).collect()
 }
 
 pub fn fresh_streams_made(sid: ServerId, scope: KeyScope) {
-    if let Some(wanted) = FRESH.lock().unwrap().as_mut() {
+    if let Some(wanted) = FRESH.lock_or_recover().as_mut() {
         wanted.remove(&(sid, scope));
     }
 }
 
 fn want_fresh_streams(stolen: &[StreamId], scopes: &HashMap<StreamId, (ServerId, KeyScope)>) {
-    let mut guard = FRESH.lock().unwrap();
+    let mut guard = FRESH.lock_or_recover();
     let wanted = guard.get_or_insert_with(HashSet::new);
     wanted.extend(stolen.iter().filter_map(|stream| scopes.get(stream).copied()));
 }
 
 fn scopes_of_streams(app: &App, sids: impl IntoIterator<Item = ServerId>) -> HashMap<StreamId, (ServerId, KeyScope)> {
     let Some(identity) = app.identity() else { return HashMap::new() };
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return HashMap::new() };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return HashMap::new() };
     let holder = crate::channel_lock::holder_of(app);
     let mut out = HashMap::new();
     for sid in sids {
         let given = crate::community_sync::given_key(app, sid);
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&sid) else { continue };
         let Some(community) = holder.community_ring(state, given) else { continue };
         for (_, keys) in streams::every_stream(state, &community, |_| Keyring::default()) {
@@ -54,13 +55,13 @@ fn scopes_of_streams(app: &App, sids: impl IntoIterator<Item = ServerId>) -> Has
 
 pub async fn claim_before_sharing(app: &App, sid: ServerId) {
     let (Some(account_url), Some(identity)) = (crate::sync_link::url(), app.identity()) else { return };
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     if !owned_servers(app, me).contains(&sid) {
         return;
     }
     let Some(plan) = plan(app, sid) else { return };
     let Some(url) = crate::community_sync::community_url(plan.chosen_host.as_deref(), &account_url) else { return };
-    let work = CLAIMS.lock().unwrap().get_or_insert_with(HashMap::new).entry(url.clone()).or_default().claims_for(&url, identity.to_bytes(), &plan.streams, Instant::now());
+    let work = CLAIMS.lock_or_recover().get_or_insert_with(HashMap::new).entry(url.clone()).or_default().claims_for(&url, identity.to_bytes(), &plan.streams, Instant::now());
     if work.is_empty() {
         return;
     }
@@ -73,7 +74,7 @@ pub async fn claim_before_sharing(app: &App, sid: ServerId) {
             return;
         }
     };
-    if let Some(book) = CLAIMS.lock().unwrap().as_mut().and_then(|books| books.get_mut(&url)) {
+    if let Some(book) = CLAIMS.lock_or_recover().as_mut().and_then(|books| books.get_mut(&url)) {
         let stolen = book.finish(&asked, &answered, Instant::now());
         want_fresh_streams(&stolen, &scopes);
     }
@@ -101,10 +102,10 @@ impl Plan {
 
 pub fn plan(app: &App, sid: ServerId) -> Option<Plan> {
     let identity = app.identity()?;
-    let me = app.profile.lock().unwrap().as_ref()?.id;
+    let me = app.profile.lock_or_recover().as_ref()?.id;
     let holder = crate::channel_lock::holder_of(app);
     let given = crate::community_sync::given_key(app, sid);
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid)?;
     let community = holder.community_ring(state, given)?;
     let every = streams::every_stream(state, &community, |channel| Keyring::unlock(state, channel, me, &identity));
@@ -112,11 +113,11 @@ pub fn plan(app: &App, sid: ServerId) -> Option<Plan> {
 }
 
 fn owned_servers(app: &App, me: UserId) -> HashSet<ServerId> {
-    app.servers.lock().unwrap().iter().filter(|(_, state)| state.server.owner == me && !state.is_deleted()).map(|(sid, _)| *sid).collect()
+    app.servers.lock_or_recover().iter().filter(|(_, state)| state.server.owner == me && !state.is_deleted()).map(|(sid, _)| *sid).collect()
 }
 
 fn still_here(app: &App, sid: ServerId) -> bool {
-    app.servers.lock().unwrap().get(&sid).is_some_and(|state| !state.is_deleted())
+    app.servers.lock_or_recover().get(&sid).is_some_and(|state| !state.is_deleted())
 }
 
 fn host_of(sid: ServerId, hosts: &HashMap<ServerId, String>, account_url: &str) -> String {
@@ -133,7 +134,7 @@ pub fn by_host<V>(items: HashMap<ServerId, V>, hosts: &HashMap<ServerId, String>
 
 pub fn tend(app: &App) {
     let (Some(account_url), Some(identity)) = (crate::sync_link::url(), app.identity()) else { return };
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     let hosts = crate::community_sync::community_hosts();
     let owned = owned_servers(app, me);
     let followed = by_host(crate::community_sync::followed_streams(), &hosts, &account_url);
@@ -149,7 +150,7 @@ pub fn tend(app: &App) {
 fn tend_host(app: &App, url: String, root: [u8; 32], owned: HashSet<ServerId>, followed: HashMap<ServerId, Vec<StreamKeys>>) {
     let owned_here = owned.clone();
     let round = {
-        let mut guard = CLAIMS.lock().unwrap();
+        let mut guard = CLAIMS.lock_or_recover();
         let books = guard.get_or_insert_with(HashMap::new);
         books.entry(url.clone()).or_default().round(&url, root, owned, &followed, Instant::now())
     };
@@ -166,7 +167,7 @@ fn tend_host(app: &App, url: String, root: [u8; 32], owned: HashSet<ServerId>, f
     }
     let scopes = scopes_of_streams(app, owned_here);
     {
-        let mut guard = CLAIMS.lock().unwrap();
+        let mut guard = CLAIMS.lock_or_recover();
         let Some(book) = guard.as_mut().and_then(|books| books.get_mut(&url)) else { return };
         book.letting_go(work.iter().filter(|w| w.errand == Errand::Release).map(|w| w.keys.id));
         if !book.start() {
@@ -179,7 +180,7 @@ fn tend_host(app: &App, url: String, root: [u8; 32], owned: HashSet<ServerId>, f
         if let Err(e) = &answered {
             tracing::debug!("could not claim server streams on the sync service: {e}");
         }
-        let stolen = match CLAIMS.lock().unwrap().as_mut().and_then(|books| books.get_mut(&url)) {
+        let stolen = match CLAIMS.lock_or_recover().as_mut().and_then(|books| books.get_mut(&url)) {
             Some(book) => book.finish(&asked, answered.as_deref().unwrap_or_default(), Instant::now()),
             None => Vec::new(),
         };

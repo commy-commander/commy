@@ -1,12 +1,13 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::state::App;
 use commy_core::ids::CALL_SERVER;
 use commy_core::{ChannelId, ServerEvent, ServerId, ServerState, UserId, UserProfile};
 use tauri::{Emitter, Manager};
 
 pub(crate) fn announcement(app: &App, server: ServerId) -> Option<ServerEvent> {
-    let user = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
-    let node = app.node_hex.lock().unwrap().clone()?;
-    let (voice, since) = match app.voice_session.lock().unwrap().as_ref().filter(|s| s.server == server) {
+    let user = app.profile.lock_or_recover().as_ref().map(|p| p.id)?;
+    let node = app.node_hex.lock_or_recover().clone()?;
+    let (voice, since) = match app.voice_session.lock_or_recover().as_ref().filter(|s| s.server == server) {
         Some(session) => (Some(session.channel), Some(session.joined_ms)),
         None => (None, None),
     };
@@ -18,7 +19,7 @@ pub(crate) async fn announce(app: &App, server: ServerId) {
         return;
     }
     let Some(event) = announcement(app, server) else { return };
-    if let Some(state) = app.servers.lock().unwrap().get_mut(&server) {
+    if let Some(state) = app.servers.lock_or_recover().get_mut(&server) {
         let _ = state.apply(event.clone());
     }
     crate::broadcast_event(app, server, event).await;
@@ -29,9 +30,9 @@ fn has_sibling(state: &ServerState, me: UserId, ours: &str) -> bool {
 }
 
 pub(crate) async fn claim_profile_node(app: &App, server: ServerId) {
-    let Some(me) = app.profile.lock().unwrap().clone() else { return };
-    let Some(ours) = app.node_hex.lock().unwrap().clone() else { return };
-    let siblings = app.servers.lock().unwrap().get(&server).is_some_and(|s| has_sibling(s, me.id, &ours));
+    let Some(me) = app.profile.lock_or_recover().clone() else { return };
+    let Some(ours) = app.node_hex.lock_or_recover().clone() else { return };
+    let siblings = app.servers.lock_or_recover().get(&server).is_some_and(|s| has_sibling(s, me.id, &ours));
     if siblings {
         let profile = app.announced(UserProfile { node: Some(ours), ..me });
         crate::broadcast_event(app, server, ServerEvent::MemberJoin { server, profile }).await;
@@ -52,9 +53,9 @@ pub(crate) fn takes_over(me: UserId, ours: &str, joined_ms: i64, event: &ServerE
 pub(crate) async fn on_announce(handle: &tauri::AppHandle, server: ServerId, event: &ServerEvent) {
     let ServerEvent::DeviceAnnounce { user, node, voice, .. } = event else { return };
     let app = handle.state::<App>();
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
-    let ours = app.node_hex.lock().unwrap().clone().unwrap_or_default();
-    let joined = app.voice_session.lock().unwrap().as_ref().filter(|s| s.server != CALL_SERVER).map(|s| s.joined_ms);
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
+    let ours = app.node_hex.lock_or_recover().clone().unwrap_or_default();
+    let joined = app.voice_session.lock_or_recover().as_ref().filter(|s| s.server != CALL_SERVER).map(|s| s.joined_ms);
     if let Some(joined_ms) = joined {
         if takes_over(me, &ours, joined_ms, event) {
             hand_over(&app, handle).await;
@@ -86,7 +87,7 @@ fn follow_device(
     since: Option<i64>,
 ) -> bool {
     let (here, answer) = {
-        let mut session = app.voice_session.lock().unwrap();
+        let mut session = app.voice_session.lock_or_recover();
         let Some(session) = session.as_mut().filter(|s| s.server == server) else { return false };
         let here = Some(session.channel) == voice;
         let answer = session.owes_answer(user, voice, since);
@@ -104,8 +105,8 @@ fn follow_device(
 }
 
 async fn hand_over(app: &App, handle: &tauri::AppHandle) {
-    let Some(server) = app.voice_session.lock().unwrap().as_ref().map(|s| s.server) else { return };
-    let Some(me) = app.profile.lock().unwrap().clone() else { return };
+    let Some(server) = app.voice_session.lock_or_recover().as_ref().map(|s| s.server) else { return };
+    let Some(me) = app.profile.lock_or_recover().clone() else { return };
     crate::stop_voice_here(app, server, &me).await;
     announce(app, server).await;
     let _ = handle.emit("voice-elsewhere", server.to_string());

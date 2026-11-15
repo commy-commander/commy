@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use commy_core::link_preview::{read_page_meta, LinkPreview, PreviewImage};
 use image::{DynamicImage, ImageFormat};
 use reqwest::header::{ACCEPT, LOCATION};
@@ -29,11 +30,11 @@ pub struct Prepared {
 static PREPARED: Mutex<Vec<(String, Prepared)>> = Mutex::new(Vec::new());
 
 pub fn prepared(url: &str) -> Option<Prepared> {
-    PREPARED.lock().unwrap().iter().find(|(u, _)| u == url).map(|(_, p)| p.clone())
+    PREPARED.lock_or_recover().iter().find(|(u, _)| u == url).map(|(_, p)| p.clone())
 }
 
 fn remember(url: &str, prepared: Prepared) {
-    let mut all = PREPARED.lock().unwrap();
+    let mut all = PREPARED.lock_or_recover();
     all.retain(|(u, _)| u != url);
     all.push((url.to_string(), prepared));
     let extra = all.len().saturating_sub(REMEMBERED_PREVIEWS);

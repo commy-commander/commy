@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -10,11 +11,11 @@ pub struct FrameStore {
 
 impl FrameStore {
     pub fn put(&self, key: String, jpeg: Vec<u8>) {
-        self.latest.lock().unwrap().insert(key, jpeg);
+        self.latest.lock_or_recover().insert(key, jpeg);
     }
 
     pub fn take(&self, key: &str) -> Option<Vec<u8>> {
-        self.latest.lock().unwrap().remove(key)
+        self.latest.lock_or_recover().remove(key)
     }
 }
 

@@ -1,5 +1,6 @@
 #![cfg_attr(mobile, allow(dead_code))]
 
+use crate::lock_or_recover::LockOrRecover;
 use crate::state::default_true;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -210,10 +211,10 @@ pub fn refresh(app: &AppHandle) {
 fn wanted_now(app: &AppHandle) -> (OverlaySettings, bool) {
     use std::sync::atomic::Ordering::Relaxed;
     let state = app.state::<crate::state::App>();
-    let settings = state.voice.lock().unwrap().overlay.clone();
+    let settings = state.voice.lock_or_recover().overlay.clone();
     let visible = wanted(
         state.overlay_visible.load(Relaxed),
-        state.voice_session.lock().unwrap().is_some(),
+        state.voice_session.lock_or_recover().is_some(),
         state.game_in_front.load(Relaxed),
         state.overlay_preview.load(Relaxed),
         cfg!(windows),
@@ -264,7 +265,7 @@ fn apply(app: &AppHandle, settings: &OverlaySettings, visible: bool) {
             None => {
                 if let Some(window) = app.get_webview_window(label) {
                     hide_window(app, &window);
-                    if app.state::<crate::state::App>().voice_session.lock().unwrap().is_none() {
+                    if app.state::<crate::state::App>().voice_session.lock_or_recover().is_none() {
                         let _ = app.emit_to(label, "overlay-reset", ());
                     }
                 }

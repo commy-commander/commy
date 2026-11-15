@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::catchup::AppAccess;
 use crate::state::App;
 use commy_core::ids::CALL_SERVER;
@@ -14,19 +15,19 @@ const FAREWELL_WAIT: Duration = Duration::from_millis(1500);
 const FAREWELL_LINGER: Duration = Duration::from_millis(300);
 
 pub fn heard(app: &App, server: ServerId, user: UserId, at: Instant) {
-    app.liveness.lock().unwrap().heard(server, user, at);
+    app.liveness.lock_or_recover().heard(server, user, at);
 }
 
 pub fn heard_through_service(app: &App, server: ServerId, user: UserId, now: Instant) {
-    app.liveness.lock().unwrap().heard_through_service(server, user, now);
+    app.liveness.lock_or_recover().heard_through_service(server, user, now);
 }
 
 pub fn heard_device(app: &App, server: ServerId, user: UserId, node: &str, now: Instant) {
-    app.liveness.lock().unwrap().heard_device(server, user, node, now);
+    app.liveness.lock_or_recover().heard_device(server, user, node, now);
 }
 
 pub fn heard_seat_news(app: &App, state: &ServerState, news: Option<(UserId, ChannelId)>, now: Instant) {
-    app.liveness.lock().unwrap().heard_seat_news(state, news, now);
+    app.liveness.lock_or_recover().heard_seat_news(state, news, now);
 }
 
 pub fn settle_device_presence(
@@ -38,22 +39,22 @@ pub fn settle_device_presence(
     now: Instant,
     said_at: Option<i64>,
 ) -> bool {
-    app.liveness.lock().unwrap().settle_device_presence(state, user, sender, presence, now, said_at)
+    app.liveness.lock_or_recover().settle_device_presence(state, user, sender, presence, now, said_at)
 }
 
 pub fn sweep(app: &App, me: UserId, now: Instant, wall_ms: i64, expire: Duration) -> Vec<ServerId> {
-    let mut servers = app.servers.lock().unwrap();
-    let mut live = app.liveness.lock().unwrap();
+    let mut servers = app.servers.lock_or_recover();
+    let mut live = app.liveness.lock_or_recover();
     live.sweep(servers.iter_mut(), me, now, wall_ms, expire)
 }
 
 fn hear_voice_peers(app: &App, now: Instant) {
-    let voice = app.voice_session.lock().unwrap().as_ref().map(|s| {
+    let voice = app.voice_session.lock_or_recover().as_ref().map(|s| {
         let peers: Vec<(UserId, Option<String>)> = s.live_peers().into_iter().map(|user| (user, s.peer_node(user))).collect();
         (s.server, peers)
     });
     let Some((server, peers)) = voice else { return };
-    let mut live = app.liveness.lock().unwrap();
+    let mut live = app.liveness.lock_or_recover();
     for (user, node) in peers {
         live.heard(server, user, now);
         live.heard_seat(server, user, now);
@@ -64,17 +65,17 @@ fn hear_voice_peers(app: &App, now: Instant) {
 }
 
 pub fn rest(app: &App) {
-    app.liveness.lock().unwrap().rest();
+    app.liveness.lock_or_recover().rest();
 }
 
 fn own_beat(app: &App) -> Option<(UserId, Presence)> {
-    let profile = app.profile.lock().unwrap();
+    let profile = app.profile.lock_or_recover();
     let profile = profile.as_ref()?;
     (profile.presence != Presence::Invisible).then_some((profile.id, profile.presence))
 }
 
 fn server_ids(app: &App) -> Vec<ServerId> {
-    app.servers.lock().unwrap().keys().copied().collect()
+    app.servers.lock_or_recover().keys().copied().collect()
 }
 
 pub fn here(app: &App, server: ServerId) -> Vec<WirePayload> {
@@ -86,21 +87,21 @@ pub fn here(app: &App, server: ServerId) -> Vec<WirePayload> {
 }
 
 fn own_seat(app: &App, me: UserId, server: ServerId) -> Option<ServerEvent> {
-    let channel = app.voice_session.lock().unwrap().as_ref().filter(|s| s.server == server).map(|s| s.channel)?;
+    let channel = app.voice_session.lock_or_recover().as_ref().filter(|s| s.server == server).map(|s| s.channel)?;
     let (muted, deafened) = {
-        let voice = app.voice.lock().unwrap();
+        let voice = app.voice.lock_or_recover();
         (voice.muted, voice.deafened)
     };
-    let since = app.servers.lock().unwrap().get(&server).and_then(|s| s.voice_since(me));
+    let since = app.servers.lock_or_recover().get(&server).and_then(|s| s.voice_since(me));
     Some(ServerEvent::VoiceState { user: me, channel: Some(channel), muted, deafened, since })
 }
 
 fn voice_server(app: &App) -> Option<ServerId> {
-    app.voice_session.lock().unwrap().as_ref().map(|s| s.server).filter(|s| *s != CALL_SERVER)
+    app.voice_session.lock_or_recover().as_ref().map(|s| s.server).filter(|s| *s != CALL_SERVER)
 }
 
 fn me(app: &App) -> Option<UserId> {
-    app.profile.lock().unwrap().as_ref().map(|p| p.id)
+    app.profile.lock_or_recover().as_ref().map(|p| p.id)
 }
 
 pub(crate) async fn keep_seat(app: &App) {
@@ -113,7 +114,7 @@ pub(crate) async fn keep_seat(app: &App) {
 
 async fn leave_seat(app: &App) {
     let (Some(me), Some(server)) = (me(app), voice_server(app)) else { return };
-    let Some(node) = app.node_hex.lock().unwrap().clone() else { return };
+    let Some(node) = app.node_hex.lock_or_recover().clone() else { return };
     let device = ServerEvent::DeviceAnnounce { server, user: me, node, voice: None, since: None };
     let seat = ServerEvent::VoiceState { user: me, channel: None, muted: false, deafened: false, since: None };
     for event in [device, seat] {
@@ -187,7 +188,7 @@ pub async fn run(access: impl AppAccess) {
             }
             beat(app, through_service).await;
         }
-        let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { continue };
+        let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { continue };
         hear_voice_peers(app, Instant::now());
         for sid in sweep(app, me, Instant::now(), chrono::Utc::now().timestamp_millis(), EXPIRE) {
             tracing::info!("a member went quiet and is shown offline");

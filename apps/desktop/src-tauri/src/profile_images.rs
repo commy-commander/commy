@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::catchup::AppAccess;
 use crate::state::App;
 use commy_core::{Avatar, ServerState, UserId, UserProfile};
@@ -40,10 +41,10 @@ pub fn people_to_keep<'a>(
 }
 
 pub fn kept_blobs(app: &App) -> HashSet<String> {
-    let friends = app.safety.lock().unwrap().friends.clone();
-    let contacts = app.dms.lock().unwrap().contacts.clone();
-    let own = app.profile.lock().unwrap().as_ref().map(image_blobs).unwrap_or_default();
-    let servers = app.servers.lock().unwrap();
+    let friends = app.safety.lock_or_recover().friends.clone();
+    let contacts = app.dms.lock_or_recover().contacts.clone();
+    let own = app.profile.lock_or_recover().as_ref().map(image_blobs).unwrap_or_default();
+    let servers = app.servers.lock_or_recover();
     people_to_keep(servers.values(), &friends, &contacts)
         .into_values()
         .flat_map(image_blobs)

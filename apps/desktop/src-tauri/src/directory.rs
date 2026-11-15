@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -23,12 +24,12 @@ fn signed_in_token(app: &App) -> Result<String, String> {
 }
 
 fn reusable_link(app: &App, sid: ServerId, origin: &str) -> Option<String> {
-    let listing = app.listings.lock().unwrap().get(&sid).cloned()?;
+    let listing = app.listings.lock_or_recover().get(&sid).cloned()?;
     if listing.origin != origin {
         return None;
     }
     let link = invite_link::parse(&listing.link)?;
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     servers.get(&sid)?.tracked_invite(&link.origin, &link.code)?;
     Some(listing.link)
 }
@@ -56,7 +57,7 @@ pub async fn publish_listing(
     let category = clean_category(&category)?;
     let description = clean_description(&description)?;
     let (name, members, public) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         (listing_name(&state.server.name), member_bucket(state.server.members.len()), state.server.public)
     };
@@ -79,7 +80,7 @@ pub async fn publish_listing(
     };
     let _serial = LISTING_CHANGES.lock().await;
     listing.code = send_listing(&app, &listing, &token).await?;
-    app.listings.lock().unwrap().insert(sid, listing.clone());
+    app.listings.lock_or_recover().insert(sid, listing.clone());
     app.persist_listings();
     Ok(listing)
 }
@@ -92,7 +93,7 @@ async fn send_listing(app: &App, listing: &Listing, token: &str) -> Result<Strin
 }
 
 pub fn server_changed(app: &App, sid: ServerId) {
-    if app.listings.lock().unwrap().contains_key(&sid) {
+    if app.listings.lock_or_recover().contains_key(&sid) {
         app.listing_wake.notify_one();
     }
 }
@@ -147,9 +148,9 @@ pub async fn take_down_now(app: &App) {
 }
 
 fn listings_to_take_down(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
-    let listings = app.listings.lock().unwrap().clone();
-    let deleted = app.deleted.lock().unwrap();
-    let servers = app.servers.lock().unwrap();
+    let listings = app.listings.lock_or_recover().clone();
+    let deleted = app.deleted.lock_or_recover();
+    let servers = app.servers.lock_or_recover();
     let gone_private = |sid: &ServerId| servers.get(sid).is_some_and(|state| !state.server.public);
     listings
         .into_iter()
@@ -158,7 +159,7 @@ fn listings_to_take_down(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
 }
 
 fn forget_listing(app: &App, sid: ServerId) {
-    app.listings.lock().unwrap().remove(&sid);
+    app.listings.lock_or_recover().remove(&sid);
     app.persist_listings();
 }
 
@@ -176,8 +177,8 @@ async fn send_unlist(app: &App, listing: &Listing, token: &str) -> Result<(), St
 }
 
 fn outdated_listings(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
-    let listings = app.listings.lock().unwrap().clone();
-    let servers = app.servers.lock().unwrap();
+    let listings = app.listings.lock_or_recover().clone();
+    let servers = app.servers.lock_or_recover();
     listings
         .into_iter()
         .filter(|(_, listing)| listing.origin == origin)
@@ -190,7 +191,7 @@ fn outdated_listings(app: &App, origin: &str) -> Vec<(ServerId, Listing)> {
 }
 
 fn store_refreshed(app: &App, sid: ServerId, refreshed: Listing) {
-    if let Some(stored) = app.listings.lock().unwrap().get_mut(&sid) {
+    if let Some(stored) = app.listings.lock_or_recover().get_mut(&sid) {
         *stored = refreshed;
     }
     app.persist_listings();
@@ -202,7 +203,7 @@ pub async fn unlist_server(app: tauri::State<'_, App>, server_id: String) -> Res
     crate::require_manage_server(&app, sid, "change this server's Discover listing")?;
     let token = signed_in_token(&app)?;
     let _serial = LISTING_CHANGES.lock().await;
-    let listing = app.listings.lock().unwrap().get(&sid).cloned().ok_or("This server was not listed from this device")?;
+    let listing = app.listings.lock_or_recover().get(&sid).cloned().ok_or("This server was not listed from this device")?;
     send_unlist(&app, &listing, &token).await?;
     forget_listing(&app, sid);
     Ok(())
@@ -211,7 +212,7 @@ pub async fn unlist_server(app: tauri::State<'_, App>, server_id: String) -> Res
 #[tauri::command]
 pub fn server_listing(app: tauri::State<'_, App>, server_id: String) -> Option<Listing> {
     let sid: ServerId = server_id.parse().ok()?;
-    let listing = app.listings.lock().unwrap().get(&sid).cloned()?;
+    let listing = app.listings.lock_or_recover().get(&sid).cloned()?;
     (listing.origin == crate::account::effective_server()).then_some(listing)
 }
 

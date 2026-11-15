@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -47,7 +48,7 @@ pub async fn fetch(http: &reqwest::Client, blob: &str, max: u64) -> Option<Vec<u
 }
 
 fn first_offer(blob: &str) -> bool {
-    let mut guard = OFFERED.lock().unwrap();
+    let mut guard = OFFERED.lock_or_recover();
     let offered = guard.get_or_insert_with(HashSet::new);
     if offered.len() >= MAX_OFFERED {
         offered.clear();
@@ -56,7 +57,7 @@ fn first_offer(blob: &str) -> bool {
 }
 
 fn withdraw_offer(blob: &str) {
-    if let Some(offered) = OFFERED.lock().unwrap().as_mut() {
+    if let Some(offered) = OFFERED.lock_or_recover().as_mut() {
         offered.remove(blob);
     }
 }

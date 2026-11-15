@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::state::App;
 use commy_audio::filters::VoiceFilter;
 use commy_core::{ServerId, ServerState, UserId};
@@ -16,23 +17,23 @@ pub fn sent_filter(chosen: VoiceFilter, allowed: bool) -> VoiceFilter {
 }
 
 fn allowed_in(app: &App, server: Option<ServerId>) -> bool {
-    let (Some(sid), Some(me)) = (server, app.profile.lock().unwrap().as_ref().map(|p| p.id)) else {
+    let (Some(sid), Some(me)) = (server, app.profile.lock_or_recover().as_ref().map(|p| p.id)) else {
         return true;
     };
-    allowed_by(app.servers.lock().unwrap().get(&sid), me)
+    allowed_by(app.servers.lock_or_recover().get(&sid), me)
 }
 
 pub fn apply_for(app: &App, server: Option<ServerId>) -> Option<bool> {
-    let chosen = app.voice.lock().unwrap().voice_filter();
+    let chosen = app.voice.lock_or_recover().voice_filter();
     let allowed = allowed_in(app, server);
-    app.processor.lock().unwrap().set_voice_filter(sent_filter(chosen, allowed));
+    app.processor.lock_or_recover().set_voice_filter(sent_filter(chosen, allowed));
     let held_back = chosen.is_on() && !allowed;
     let was = app.voice_filter_held_back.swap(held_back, Ordering::Relaxed);
     (was != held_back).then_some(held_back)
 }
 
 pub fn apply(app: &App) -> Option<bool> {
-    let server = app.voice_session.lock().unwrap().as_ref().map(|s| s.server);
+    let server = app.voice_session.lock_or_recover().as_ref().map(|s| s.server);
     apply_for(app, server)
 }
 

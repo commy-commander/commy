@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -48,7 +49,7 @@ struct Live {
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 
 pub fn nudge() {
-    if let Some(live) = LIVE.lock().unwrap().as_ref() {
+    if let Some(live) = LIVE.lock_or_recover().as_ref() {
         live.pool.nudge();
     }
 }
@@ -59,22 +60,22 @@ fn now_ms() -> i64 {
 }
 
 fn partner_key(app: &App, user: UserId) -> Option<IdentityKey> {
-    let pinned = app.dms.lock().unwrap().pinned_key(user);
-    pinned.or_else(|| outbox::member_profile(&app.servers.lock().unwrap(), user).and_then(|p| p.identity))
+    let pinned = app.dms.lock_or_recover().pinned_key(user);
+    pinned.or_else(|| outbox::member_profile(&app.servers.lock_or_recover(), user).and_then(|p| p.identity))
 }
 
 pub(crate) fn partner_profile(app: &App, user: UserId) -> Option<UserProfile> {
-    let known = app.dms.lock().unwrap().contacts.get(&user).cloned();
-    known.or_else(|| outbox::member_profile(&app.servers.lock().unwrap(), user)).filter(|p| p.identity.is_some())
+    let known = app.dms.lock_or_recover().contacts.get(&user).cloned();
+    known.or_else(|| outbox::member_profile(&app.servers.lock_or_recover(), user)).filter(|p| p.identity.is_some())
 }
 
 fn last_message_ms(app: &App, user: UserId) -> Option<i64> {
-    app.dms.lock().unwrap().conversation(user).last().map(|m| m.created_at.timestamp_millis())
+    app.dms.lock_or_recover().conversation(user).last().map(|m| m.created_at.timestamp_millis())
 }
 
 
 fn wanted(app: &App) -> Vec<(UserId, IdentityKey)> {
-    let partners = app.dms.lock().unwrap().partners();
+    let partners = app.dms.lock_or_recover().partners();
     let local: Vec<(UserId, i64)> = partners.into_iter().filter_map(|user| Some((user, last_message_ms(app, user)?))).collect();
     pick_partners(&account_log::partners(app), &local, now_ms())
         .into_iter()
@@ -88,7 +89,7 @@ pub fn ensure(handle: &AppHandle) {
 }
 
 pub fn stop() {
-    if let Some(old) = LIVE.lock().unwrap().take() {
+    if let Some(old) = LIVE.lock_or_recover().take() {
         old.task.abort();
     }
 }
@@ -100,13 +101,13 @@ fn start(handle: &AppHandle) {
         return;
     };
     let (Some(dir), Some(me), Some(identity)) =
-        (app.data_dir().cloned(), app.profile.lock().unwrap().as_ref().map(|p| p.id), app.identity())
+        (app.data_dir().cloned(), app.profile.lock_or_recover().as_ref().map(|p| p.id), app.identity())
     else {
         return;
     };
     let me_key = identity.public();
     let fresh = {
-        let mut live = LIVE.lock().unwrap();
+        let mut live = LIVE.lock_or_recover();
         let same = live.as_ref().is_some_and(|l| l.url == url && l.dir == dir && l.me == me && l.me_key == me_key);
         if !same {
             if let Some(old) = live.take() {
@@ -143,7 +144,7 @@ fn refresh(handle: &AppHandle) {
     let Some(identity) = app.identity() else { return };
     let wanted = wanted(&app);
     let epochs = sync_streams::recent_dm_epochs(Utc::now(), EPOCHS);
-    let mut guard = LIVE.lock().unwrap();
+    let mut guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_mut() else { return };
     if live.me_key != identity.public() {
         return;
@@ -199,10 +200,10 @@ fn own_inboxes(app: &App, me: UserId) -> Vec<(Option<ServerId>, StreamKeys)> {
         inbox::personal_inboxes(me, &identity.public(), &epochs)
     });
     let holder = crate::channel_lock::holder_of(app);
-    let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let sids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     let settled: Vec<ServerId> = sids.into_iter().filter(|sid| !app.awaits_snapshot(*sid)).collect();
     let now = now_ms();
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     settled
         .into_iter()
         .filter_map(|sid| {
@@ -216,7 +217,7 @@ fn own_inboxes(app: &App, me: UserId) -> Vec<(Option<ServerId>, StreamKeys)> {
 }
 
 pub fn tend(handle: &AppHandle) {
-    if LIVE.lock().unwrap().is_none() {
+    if LIVE.lock_or_recover().is_none() {
         start(handle);
     } else {
         tend_inboxes(handle);
@@ -225,10 +226,10 @@ pub fn tend(handle: &AppHandle) {
 
 pub fn tend_inboxes(handle: &AppHandle) {
     let app = handle.state::<App>();
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     let mine = own_inboxes(&app, me);
     let changed = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return };
         let keep: HashSet<StreamId> = mine.iter().map(|(_, keys)| keys.id).collect();
         let gone: Vec<StreamId> = live.inboxes.keys().filter(|stream| !keep.contains(stream)).copied().collect();
@@ -285,10 +286,10 @@ pub fn route(entry: &DmEntry, here: Option<&str>, at: i64, now: i64) -> Route {
 
 fn inbox_to(app: &App, me: UserId, to: UserId) -> Option<StreamKeys> {
     let holder = crate::channel_lock::holder_of(app);
-    let mut sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let mut sids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     sids.sort();
     let settled: Vec<ServerId> = sids.into_iter().filter(|sid| !app.awaits_snapshot(*sid)).collect();
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     settled.into_iter().find_map(|sid| {
         let state = servers.get(&sid)?;
         let ring = holder.community_ring(state, None)?;
@@ -304,7 +305,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     if (passes || syncable(&envelope.message)) && partner_follows(app, to) {
         return passes && account_log::is_live(app) && append_pairwise(app, to, envelope).await;
     }
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return false };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return false };
     let Some(key) = partner_key(app, to) else {
         tracing::info!("no key to seal a first message for {to} with");
         return false;
@@ -314,7 +315,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     let stream = keys.id;
     let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(app, &keys, &envelope.message)));
     let (client, borrowed) = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return false };
         let borrowed = !live.pool.follows(stream);
         if borrowed {
@@ -324,7 +325,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     };
     let sent = tokio::time::timeout(HOLD_WAIT, sync_link::append(client, stream, plain)).await;
     if borrowed {
-        if let Some(live) = LIVE.lock().unwrap().as_mut() {
+        if let Some(live) = LIVE.lock_or_recover().as_mut() {
             live.pool.unfollow(stream);
         }
     }
@@ -350,7 +351,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
 fn known_sender(app: &App, server: Option<ServerId>, envelope: &DmEnvelope) -> bool {
     let Some(server) = server else { return true };
     let from = envelope.message.from;
-    app.servers.lock().unwrap().get(&server).is_some_and(|state| {
+    app.servers.lock_or_recover().get(&server).is_some_and(|state| {
         state.server.is_current_member(from) && state.profiles.get(&from).and_then(|p| p.identity) == envelope.sender.identity
     })
 }
@@ -407,13 +408,13 @@ fn wake_preview(app: &App, keys: &StreamKeys, message: &DmMessage) -> Option<Str
 }
 
 fn wake_streams(app: &App, days: &[i64]) -> Option<(String, Vec<(StreamKeys, i64)>)> {
-    let (Some(identity), Some(me)) = (app.identity(), app.profile.lock().unwrap().as_ref().map(|p| p.id)) else { return None };
-    let partners: Vec<IdentityKey> = match LIVE.lock().unwrap().as_ref() {
+    let (Some(identity), Some(me)) = (app.identity(), app.profile.lock_or_recover().as_ref().map(|p| p.id)) else { return None };
+    let partners: Vec<IdentityKey> = match LIVE.lock_or_recover().as_ref() {
         Some(live) if live.me_key == identity.public() => live.partners.values().map(|p| p.key).collect(),
         _ => return None,
     };
     let inboxes: Vec<StreamKeys> =
-        LIVE.lock().unwrap().as_ref().map(|live| live.inboxes.values().map(|(_, keys)| keys.clone()).collect()).unwrap_or_default();
+        LIVE.lock_or_recover().as_ref().map(|live| live.inboxes.values().map(|(_, keys)| keys.clone()).collect()).unwrap_or_default();
     let mut streams: Vec<(StreamKeys, i64)> = days.iter().flat_map(|day| inboxes.iter().map(move |keys| (keys.clone(), *day))).collect();
     for day in days {
         let Some(start) = DateTime::from_timestamp_millis(day * DAY_MS) else { continue };
@@ -433,8 +434,8 @@ pub fn wake_tags(app: &App, days: &[i64]) -> Option<Vec<([u8; 32], i64)>> {
 }
 
 pub fn signer_keys(app: &App) -> BTreeMap<String, String> {
-    let mut users: Vec<UserId> = app.dms.lock().unwrap().contacts.keys().copied().collect();
-    users.extend(LIVE.lock().unwrap().as_ref().map(|live| live.partners.keys().copied().collect::<Vec<_>>()).unwrap_or_default());
+    let mut users: Vec<UserId> = app.dms.lock_or_recover().contacts.keys().copied().collect();
+    users.extend(LIVE.lock_or_recover().as_ref().map(|live| live.partners.keys().copied().collect::<Vec<_>>()).unwrap_or_default());
     users.into_iter().filter_map(|user| Some((user.to_string(), BASE64.encode(&partner_key(app, user)?.0)))).collect()
 }
 
@@ -462,7 +463,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
     match event {
         SyncEvent::Entry { stream, seq, at, plain } => {
             let inbox = {
-                let live = LIVE.lock().unwrap();
+                let live = LIVE.lock_or_recover();
                 live.as_ref().and_then(|l| l.inboxes.get(&stream).map(|(server, _)| (*server, l.caught_up.contains(&stream))))
             };
             if let Some((server, live_now)) = inbox {
@@ -471,7 +472,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
                 return;
             }
             let found = {
-                let live = LIVE.lock().unwrap();
+                let live = LIVE.lock_or_recover();
                 live.as_ref().and_then(|l| {
                     let partner = *l.owners.get(&stream)?;
                     let key = l.partners.get(&partner)?.key;
@@ -483,7 +484,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
                 account_log::set_dm_cursor(&app, stream.to_hex(), seq, live_now);
                 return;
             };
-            let here = app.node_hex.lock().unwrap().clone();
+            let here = app.node_hex.lock_or_recover().clone();
             match route(&entry, here.as_deref(), at, now_ms()) {
                 Route::Receive => receive(handle, entry.into_envelope(), live_now),
                 Route::Ring => ring(handle, entry.into_envelope()),
@@ -498,7 +499,7 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
             account_log::set_dm_cursor(&app, stream.to_hex(), seq, live_now);
         }
         SyncEvent::CaughtUp { stream, seq } => {
-            let ours = match LIVE.lock().unwrap().as_mut() {
+            let ours = match LIVE.lock_or_recover().as_mut() {
                 Some(live) if live.owners.contains_key(&stream) || live.inboxes.contains_key(&stream) => {
                     live.caught_up.insert(stream);
                     true
@@ -560,7 +561,7 @@ fn ring(handle: &AppHandle, envelope: DmEnvelope) {
 
 fn take_mine(handle: &AppHandle, partner: UserId, message: DmMessage) {
     let app = handle.state::<App>();
-    let applied = app.dms.lock().unwrap().apply(partner, message);
+    let applied = app.dms.lock_or_recover().apply(partner, message);
     if applied {
         app.persist_dms();
         handle.emit("dm-changed", partner.to_string().into());
@@ -568,13 +569,13 @@ fn take_mine(handle: &AppHandle, partner: UserId, message: DmMessage) {
 }
 
 pub fn partner_follows(app: &App, partner: UserId) -> bool {
-    let queued = app.outbox.lock().unwrap().pending_dms(partner);
-    commy_view::dms::follows(&app.dms.lock().unwrap(), partner, &queued, now_ms())
+    let queued = app.outbox.lock_or_recover().pending_dms(partner);
+    commy_view::dms::follows(&app.dms.lock_or_recover(), partner, &queued, now_ms())
 }
 
 pub fn waiting_dms(app: &App, partner: UserId) -> HashSet<MessageId> {
     let follows = partner_follows(app, partner);
-    let outbox = app.outbox.lock().unwrap();
+    let outbox = app.outbox.lock_or_recover();
     if follows {
         outbox.unstored_dms(partner)
     } else {
@@ -600,7 +601,7 @@ async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
     let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&partner.to_string(), push_wake::today()), wake_preview(app, &keys, &envelope.message)));
     let mut new_partner = false;
     let client = {
-        let mut guard = LIVE.lock().unwrap();
+        let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut().filter(|l| l.me_key == identity.public()) else { return false };
         if !live.pool.follows(stream) {
             new_partner = true;
@@ -634,9 +635,9 @@ async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
 }
 
 fn talks_with(app: &App, partner: UserId) -> bool {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let sent = me.is_some_and(|me| app.dms.lock().unwrap().has_sent_to(me, partner));
-    let safety = app.safety.lock().unwrap();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let sent = me.is_some_and(|me| app.dms.lock_or_recover().has_sent_to(me, partner));
+    let safety = app.safety.lock_or_recover();
     !safety.is_blocked(partner) && (sent || safety.accepted.contains(&partner) || safety.friends.contains(&partner))
 }
 
@@ -653,20 +654,20 @@ pub fn noticed(handle: &AppHandle, partner: UserId) {
 
 pub fn adopt_partner(handle: &AppHandle, profile: UserProfile, accepted: bool) {
     let app = handle.state::<App>();
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     if Some(profile.id) == me {
         return;
     }
     let partner = profile.id;
     let changed = {
-        let mut dms = app.dms.lock().unwrap();
+        let mut dms = app.dms.lock_or_recover();
         !dms.contacts.contains_key(&partner) && dms.remember_contact(profile)
     };
     if changed {
         app.persist_dms();
     }
     let accepted = {
-        let mut safety = app.safety.lock().unwrap();
+        let mut safety = app.safety.lock_or_recover();
         accepted && !safety.is_blocked(partner) && safety.accepted.insert(partner)
     };
     if accepted {
@@ -678,7 +679,7 @@ pub fn adopt_partner(handle: &AppHandle, profile: UserProfile, accepted: bool) {
 pub fn seed(handle: &AppHandle) {
     let app = handle.state::<App>();
     let now = now_ms();
-    let partners = app.dms.lock().unwrap().partners();
+    let partners = app.dms.lock_or_recover().partners();
     for user in partners {
         if last_message_ms(&app, user).is_some_and(|at| now - at < RECENT_MS) {
             if let Some(profile) = partner_profile(&app, user) {

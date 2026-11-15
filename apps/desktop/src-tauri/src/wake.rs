@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::catchup::AppAccess;
 use crate::state::App;
 use commy_core::{Presence, ServerId, UserId};
@@ -21,7 +22,7 @@ pub struct Rest {
 }
 
 pub(crate) fn is_resting(app: &App) -> bool {
-    app.rest.lock().unwrap().resting
+    app.rest.lock_or_recover().resting
 }
 
 fn may_rest(presence: Presence) -> bool {
@@ -29,16 +30,16 @@ fn may_rest(presence: Presence) -> bool {
 }
 
 pub(crate) fn targets(app: &App, server: ServerId) -> Vec<String> {
-    let our_node = app.node_hex.lock().unwrap().clone();
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let servers = app.servers.lock().unwrap();
+    let our_node = app.node_hex.lock_or_recover().clone();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let servers = app.servers.lock_or_recover();
     let Some(state) = servers.get(&server) else { return Vec::new() };
     let resting = state
         .profiles
         .values()
         .filter(|p| Some(p.id) != me && may_rest(p.presence) && state.server.is_current_member(p.id));
     let ids: HashSet<UserId> = resting.clone().map(|p| p.id).collect();
-    let doorbell = app.doorbell.lock().unwrap();
+    let doorbell = app.doorbell.lock_or_recover();
     let mut nodes: Vec<String> = resting
         .filter_map(|p| p.node.as_deref())
         .chain(doorbell.devices(server).filter(|(_, user)| ids.contains(user)).map(|(node, _)| node))
@@ -57,7 +58,7 @@ pub(crate) async fn wake_members(app: &App, server: ServerId) -> Vec<(String, bo
         let Some(node) = net.as_ref() else { return Vec::new() };
         let now = Instant::now();
         let due: Vec<String> = {
-            let mut rest = app.rest.lock().unwrap();
+            let mut rest = app.rest.lock_or_recover();
             rest.woken_at.retain(|_, at| now.duration_since(*at) < WAKE_SPACING_PER_DEVICE);
             targets(app, server)
                 .into_iter()
@@ -103,8 +104,8 @@ pub(crate) fn on_wake(app: &App, from: [u8; 32]) -> Vec<ServerId> {
     }
     let from = data_encoding::HEXLOWER.encode(&from);
     let mut shared: Vec<ServerId> = {
-        let servers = app.servers.lock().unwrap();
-        let doorbell = app.doorbell.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
+        let doorbell = app.doorbell.lock_or_recover();
         servers
             .values()
             .filter(|state| {
@@ -126,7 +127,7 @@ pub(crate) fn on_wake(app: &App, from: [u8; 32]) -> Vec<ServerId> {
         return shared;
     }
     let now = Instant::now();
-    let mut rest = app.rest.lock().unwrap();
+    let mut rest = app.rest.lock_or_recover();
     shared.retain(|s| {
         let due = rest.handled_at.get(s).is_none_or(|at| now.duration_since(*at) >= WAKE_HANDLING_SPACING_PER_SERVER);
         if due {
@@ -142,9 +143,9 @@ pub(crate) fn on_wake(app: &App, from: [u8; 32]) -> Vec<ServerId> {
 }
 
 fn members_by_server(app: &App) -> Vec<(ServerId, Vec<String>)> {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let servers = app.servers.lock().unwrap();
-    let doorbell = app.doorbell.lock().unwrap();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let servers = app.servers.lock_or_recover();
+    let doorbell = app.doorbell.lock_or_recover();
     servers
         .values()
         .map(|s| {
@@ -166,13 +167,13 @@ pub(crate) async fn rest(app: &App) -> usize {
     let mut net = app.net.lock().await;
     let Some(node) = net.as_mut() else { return 0 };
     let left = node.rest();
-    app.rest.lock().unwrap().resting = true;
+    app.rest.lock_or_recover().resting = true;
     tracing::info!("resting: left the mesh of {} servers, still reachable for wake-ups", left.len());
     left.len()
 }
 
 pub(crate) async fn unrest(app: &App) -> usize {
-    if !app.rest.lock().unwrap().resting {
+    if !app.rest.lock_or_recover().resting {
         return 0;
     }
     let targets = members_by_server(app);
@@ -185,7 +186,7 @@ pub(crate) async fn unrest(app: &App) -> usize {
             Err(e) => tracing::warn!("could not rejoin a server after resting: {e:#}"),
         }
     }
-    app.rest.lock().unwrap().resting = false;
+    app.rest.lock_or_recover().resting = false;
     tracing::info!("awake: rejoined the mesh of {joined} servers");
     joined
 }
@@ -249,11 +250,11 @@ pub async fn run_watchdog(handle: tauri::AppHandle) {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let app = handle.app();
         let away = app.auto_idle.load(std::sync::atomic::Ordering::Relaxed);
-        let busy = app.voice_session.lock().unwrap().is_some() || app.screen_share.lock().unwrap().is_some();
+        let busy = app.voice_session.lock_or_recover().is_some() || app.screen_share.lock_or_recover().is_some();
         let last = app.last_user_activity.load(std::sync::atomic::Ordering::Relaxed);
         let idle = Duration::from_secs((chrono::Utc::now().timestamp() - last).max(0) as u64);
         let (resting, held_awake) = {
-            let rest = app.rest.lock().unwrap();
+            let rest = app.rest.lock_or_recover();
             (rest.resting, rest.awake_until.is_some_and(|t| Instant::now() < t))
         };
         match decide(resting, away, busy, idle, after, held_awake) {

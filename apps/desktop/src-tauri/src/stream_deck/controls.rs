@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use commy_core::server::ChannelKind;
 use commy_core::{ChannelId, ServerId, ServerState, UserId};
 use tauri::{AppHandle, Emitter, Manager};
@@ -11,14 +12,13 @@ use crate::voice_keys::InputMode;
 use crate::CmdResult;
 
 pub fn deck_status(app: &App) -> DeckStatus {
-    let voice = app.voice.lock().unwrap().clone();
+    let voice = app.voice.lock_or_recover().clone();
     let spot = app
         .voice_session
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .as_ref()
         .map(|s| VoiceSpot { server: s.server.to_string(), channel: s.channel.to_string() });
-    let mut servers: Vec<ServerStats> = app.servers.lock().unwrap().values().map(server_stats).collect();
+    let mut servers: Vec<ServerStats> = app.servers.lock_or_recover().values().map(server_stats).collect();
     servers.sort_by(|a, b| a.id.cmp(&b.id));
     let mut user_volumes: Vec<UserVolume> =
         voice.user_volumes.iter().map(|(user, volume)| UserVolume { user: user.clone(), volume: *volume }).collect();
@@ -28,8 +28,8 @@ pub fn deck_status(app: &App) -> DeckStatus {
         deafened: voice.deafened,
         push_to_talk: voice.input_mode == InputMode::PushToTalk,
         voice: spot,
-        camera: app.camera.lock().unwrap().is_some(),
-        sharing: app.screen_share.lock().unwrap().is_some(),
+        camera: app.camera.lock_or_recover().is_some(),
+        sharing: app.screen_share.lock_or_recover().is_some(),
         output_volume: voice.output_volume,
         input_gain: voice.input_gain,
         input_device: voice.input_device,
@@ -51,9 +51,9 @@ pub fn server_stats(state: &ServerState) -> ServerStats {
 }
 
 pub fn directory(app: &App) -> Directory {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let wanted = people_to_list(app, me);
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let mut listed: Vec<DirectoryServer> = servers.values().map(|state| directory_server(state, me)).collect();
     listed.sort_by_key(|s| s.name.to_lowercase());
     let mut people: Vec<Person> = wanted
@@ -88,10 +88,10 @@ fn directory_server(state: &ServerState, me: Option<UserId>) -> DirectoryServer 
 
 fn people_to_list(app: &App, me: Option<UserId>) -> Vec<UserId> {
     let mut people: Vec<UserId> =
-        app.voice.lock().unwrap().user_volumes.keys().filter_map(|u| u.parse().ok()).collect();
-    let spot = app.voice_session.lock().unwrap().as_ref().map(|s| (s.server, s.channel));
+        app.voice.lock_or_recover().user_volumes.keys().filter_map(|u| u.parse().ok()).collect();
+    let spot = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel));
     if let Some((sid, channel)) = spot {
-        if let Some(state) = app.servers.lock().unwrap().get(&sid) {
+        if let Some(state) = app.servers.lock_or_recover().get(&sid) {
             people.extend(state.voice_states.iter().filter(|(_, c)| **c == channel).map(|(u, _)| *u));
         }
     }
@@ -105,17 +105,17 @@ pub async fn run(handle: &AppHandle, control: Control) -> CmdResult<()> {
     let app = handle.state::<App>();
     match control {
         Control::ToggleMute => {
-            let muted = !app.voice.lock().unwrap().muted;
+            let muted = !app.voice.lock_or_recover().muted;
             let voice = crate::set_muted(app, handle.clone(), muted).await?;
             voice_changed(handle, &voice);
         }
         Control::ToggleDeafen => {
-            let deafened = !app.voice.lock().unwrap().deafened;
+            let deafened = !app.voice.lock_or_recover().deafened;
             let voice = crate::set_deafened(app, handle.clone(), deafened).await?;
             voice_changed(handle, &voice);
         }
         Control::Talk { down } => {
-            if down && app.voice.lock().unwrap().input_mode != InputMode::PushToTalk {
+            if down && app.voice.lock_or_recover().input_mode != InputMode::PushToTalk {
                 return Err("turn on push to talk in Commy first".into());
             }
             hold_talk(handle, down);
@@ -123,7 +123,7 @@ pub async fn run(handle: &AppHandle, control: Control) -> CmdResult<()> {
         Control::HoldMute { down } => hold_mute(handle, down).await?,
         Control::ToggleInputMode => {
             let (mode, talk_key, release_ms) = {
-                let voice = app.voice.lock().unwrap();
+                let voice = app.voice.lock_or_recover();
                 let next = if voice.input_mode == InputMode::PushToTalk { "voice_activity" } else { "push_to_talk" };
                 (next.to_string(), voice.talk_key.clone(), voice.talk_release_ms)
             };
@@ -132,7 +132,7 @@ pub async fn run(handle: &AppHandle, control: Control) -> CmdResult<()> {
         }
         Control::Volume { target, change } => {
             let (output, input) = {
-                let voice = app.voice.lock().unwrap();
+                let voice = app.voice.lock_or_recover();
                 (voice.output_volume, voice.input_gain)
             };
             let (output, input) = match target {
@@ -143,13 +143,13 @@ pub async fn run(handle: &AppHandle, control: Control) -> CmdResult<()> {
             voice_synced(handle, &voice);
         }
         Control::UserVolume { user, change } => {
-            let current = app.voice.lock().unwrap().user_volumes.get(&user).copied().unwrap_or(1.0);
+            let current = app.voice.lock_or_recover().user_volumes.get(&user).copied().unwrap_or(1.0);
             let voice = crate::set_user_voice(app, user, Some(change.apply(current)), None)?;
             voice_synced(handle, &voice);
         }
         Control::Device { target, device } => {
             let (mut input, mut output) = {
-                let voice = app.voice.lock().unwrap();
+                let voice = app.voice.lock_or_recover();
                 (voice.input_device.clone(), voice.output_device.clone())
             };
             let chosen = Some(device).filter(|d| !d.trim().is_empty());
@@ -166,7 +166,7 @@ pub async fn run(handle: &AppHandle, control: Control) -> CmdResult<()> {
         }
         Control::ToggleStream => {
             in_voice(&app)?;
-            if app.screen_share.lock().unwrap().is_none() {
+            if app.screen_share.lock_or_recover().is_none() {
                 crate::tray::show_main_window(handle);
             }
             ask_app(handle, serde_json::json!({ "action": "toggle_stream" }));
@@ -198,14 +198,14 @@ fn ask_app(handle: &AppHandle, command: serde_json::Value) {
 }
 
 fn in_voice(app: &App) -> CmdResult<()> {
-    app.voice_session.lock().unwrap().as_ref().map(|_| ()).ok_or_else(|| "join a voice channel first".to_string())
+    app.voice_session.lock_or_recover().as_ref().map(|_| ()).ok_or_else(|| "join a voice channel first".to_string())
 }
 
 fn find_channel(app: &App, server: &str, channel: &str, kinds: &[ChannelKind], noun: &str) -> CmdResult<()> {
     let sid: ServerId = server.parse().map_err(|_| "unknown server".to_string())?;
     let cid: ChannelId = channel.parse().map_err(|_| "unknown channel".to_string())?;
     let me = crate::current_profile(app)?.id;
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     channel_fits(state, cid, me, kinds, noun)
 }
@@ -222,9 +222,9 @@ fn channel_fits(state: &ServerState, cid: ChannelId, me: UserId, kinds: &[Channe
 async fn hold_mute(handle: &AppHandle, down: bool) -> CmdResult<()> {
     let app = handle.state::<App>();
     let unmute_after = {
-        let mut deck = app.stream_deck.lock().unwrap();
+        let mut deck = app.stream_deck.lock_or_recover();
         if down {
-            deck.holding_mute = !app.voice.lock().unwrap().muted;
+            deck.holding_mute = !app.voice.lock_or_recover().muted;
             if !deck.holding_mute {
                 return Ok(());
             }
@@ -243,7 +243,7 @@ async fn hold_mute(handle: &AppHandle, down: bool) -> CmdResult<()> {
 
 #[cfg(desktop)]
 fn hold_talk(handle: &AppHandle, down: bool) {
-    let release_ms = handle.state::<App>().voice.lock().unwrap().talk_release_ms;
+    let release_ms = handle.state::<App>().voice.lock_or_recover().talk_release_ms;
     crate::set_talk_key(handle, down, release_ms);
 }
 

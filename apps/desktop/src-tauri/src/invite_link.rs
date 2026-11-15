@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -128,7 +129,7 @@ struct ResolvedLink {
 static RESOLVED: std::sync::Mutex<Vec<ResolvedLink>> = std::sync::Mutex::new(Vec::new());
 
 fn hold_resolved(entry: ResolvedLink) {
-    let mut held = RESOLVED.lock().unwrap();
+    let mut held = RESOLVED.lock_or_recover();
     held.retain(|r| r.link != entry.link && r.at.elapsed() < RESOLVED_KEPT);
     held.push(entry);
     let excess = held.len().saturating_sub(MAX_RESOLVED);
@@ -136,7 +137,7 @@ fn hold_resolved(entry: ResolvedLink) {
 }
 
 fn take_resolved(link: &str, ticket: &str) -> Option<ResolvedLink> {
-    let mut held = RESOLVED.lock().unwrap();
+    let mut held = RESOLVED.lock_or_recover();
     held.retain(|r| r.at.elapsed() < RESOLVED_KEPT);
     let at = held.iter().position(|r| r.link == link && r.ticket == ticket)?;
     Some(held.remove(at))
@@ -144,7 +145,7 @@ fn take_resolved(link: &str, ticket: &str) -> Option<ResolvedLink> {
 
 pub(crate) fn confirm_join_from_link(app: &App, link: &str, ticket: &str) {
     let Some(resolved) = take_resolved(link, ticket) else { return };
-    app.doorbell.lock().unwrap().note_invite_origin(resolved.server, resolved.origin);
+    app.doorbell.lock_or_recover().note_invite_origin(resolved.server, resolved.origin);
     if let Some((id, secret)) = resolved.community {
         crate::community_sync::remember_invite_key(resolved.server, id, secret);
     }
@@ -171,12 +172,12 @@ pub async fn create_invite_link(
 }
 
 pub(crate) fn signed_in_token(app: &App) -> Option<String> {
-    let state = app.account.lock().unwrap();
+    let state = app.account.lock_or_recover();
     crate::account::is_signed_in(&state).then(|| state.token.clone()).flatten()
 }
 
 async fn sealed_background(app: &App, server: commy_core::ServerId, key: &SealKey) -> Option<String> {
-    let image = app.servers.lock().unwrap().get(&server)?.invite_background()?.to_string();
+    let image = app.servers.lock_or_recover().get(&server)?.invite_background()?.to_string();
     match crate::server_image_bytes(app, &image).await {
         Ok(bytes) if bytes.len() <= MAX_INVITE_BACKGROUND_BYTES => Some(key.seal(Purpose::InviteBackground, &bytes)),
         Ok(_) => None,
@@ -199,16 +200,16 @@ pub(crate) async fn create(
     if name.is_some() {
         crate::require_manage_server(app, id, "pick a custom invite name")?;
     }
-    if expiry == Expiry::Never && !app.servers.lock().unwrap().get(&id).is_some_and(|s| s.server.public) {
+    if expiry == Expiry::Never && !app.servers.lock_or_recover().get(&id).is_some_and(|s| s.server.public) {
         return Err("Only links to a public server can last forever".into());
     }
     let ticket = crate::owner_vouched_ticket(app, id)?;
     let origin = crate::account::effective_server();
-    let sync_host = app.servers.lock().unwrap().get(&id).and_then(|s| s.server.sync_host.clone());
+    let sync_host = app.servers.lock_or_recover().get(&id).and_then(|s| s.server.sync_host.clone());
     let cache_key = format!("{origin} {} {} {}", expiry.as_str(), sync_host.as_deref().unwrap_or_default(), ticket.encode());
-    let cached = if name.is_some() { None } else { CREATED.lock().unwrap().get(&cache_key).cloned() };
+    let cached = if name.is_some() { None } else { CREATED.lock_or_recover().get(&cache_key).cloned() };
     let cached = cached.filter(|(created, _)| {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let tracked = |l: InviteLink| servers.get(&id).is_some_and(|s| s.tracked_invite(&l.origin, &l.code).is_some());
         parse(&created.url).is_some_and(tracked)
     });
@@ -228,7 +229,7 @@ pub(crate) async fn create(
     if crate::community_sync::invite_key(app, id).is_none() {
         crate::channel_lock::tend_scope(app, handle, id, commy_core::channel_key::KeyScope::Community).await;
     }
-    let asks_to_join = app.servers.lock().unwrap().get(&id).is_some_and(|s| s.server.join_approval);
+    let asks_to_join = app.servers.lock_or_recover().get(&id).is_some_and(|s| s.server.join_approval);
     let community = crate::community_sync::invite_key(app, id).filter(|_| !asks_to_join);
     let needs_account = expiry == Expiry::Never || name.is_some() || background.is_some();
     let token = needs_account.then(|| signed_in_token(app)).flatten();
@@ -254,14 +255,14 @@ pub(crate) async fn create(
     let reply: CreateResponse = account_call(request, &origin).await?;
     let made = commy_net::invite::created(&origin, name.as_deref(), key_text, reply, sealed_at)?;
     if name.is_none() {
-        CREATED.lock().unwrap().insert(cache_key, (made.invite.clone(), Instant::now()));
+        CREATED.lock_or_recover().insert(cache_key, (made.invite.clone(), Instant::now()));
     }
     track(app, handle, id, origin, &made, revoke_key).await;
     Ok(made.invite)
 }
 
 async fn track(app: &App, handle: &AppHandle, server: commy_core::ServerId, origin: String, made: &commy_net::invite::Created, revoke_key: String) {
-    let Some(creator) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(creator) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     let event = commy_net::invite::track_event(server, creator, origin, made, revoke_key, Utc::now().timestamp_millis());
     if let Err(e) = crate::apply_and_broadcast(app, handle, server, event).await {
         tracing::warn!("could not list the new invite for the server's admins: {e}");
@@ -271,8 +272,8 @@ async fn track(app: &App, handle: &AppHandle, server: commy_core::ServerId, orig
 #[tauri::command]
 pub fn list_invites(app: tauri::State<'_, App>, server_id: String) -> Result<Vec<InviteView>, String> {
     let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id).ok_or("no profile yet")?;
-    let servers = app.servers.lock().unwrap();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id).ok_or("no profile yet")?;
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&id).ok_or("unknown server")?;
     Ok(commy_net::invite::invite_views(state, me, Utc::now().timestamp_millis()))
 }
@@ -280,9 +281,9 @@ pub fn list_invites(app: tauri::State<'_, App>, server_id: String) -> Result<Vec
 #[tauri::command]
 pub async fn invite_full_link(app: tauri::State<'_, App>, server_id: String, origin: String, code: String) -> Result<String, String> {
     let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id).ok_or("no profile yet")?;
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id).ok_or("no profile yet")?;
     let invite = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&id).ok_or("unknown server")?;
         commy_net::invite::revocable(state, me, &origin, &code)?
     };
@@ -322,14 +323,14 @@ pub async fn revoke_invite(
     code: String,
 ) -> Result<(), String> {
     let id: commy_core::ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id).ok_or("no profile yet")?;
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id).ok_or("no profile yet")?;
     let invite = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&id).ok_or("unknown server")?;
         commy_net::invite::revocable(state, me, &origin, &code)?
     };
     send_revoke(&app, &invite).await?;
-    CREATED.lock().unwrap().retain(|_, (created, _)| parse(&created.url).is_none_or(|l| l.code != invite.code));
+    CREATED.lock_or_recover().retain(|_, (created, _)| parse(&created.url).is_none_or(|l| l.code != invite.code));
     crate::apply_and_broadcast(&app, &handle, id, commy_net::invite::revoke_event(id, invite)).await
 }
 
@@ -348,7 +349,7 @@ pub fn account_server_info() -> AccountServerInfo {
 
 #[tauri::command]
 pub fn take_pending_invite_link() -> Option<String> {
-    PENDING.lock().unwrap().take()
+    PENDING.lock_or_recover().take()
 }
 
 pub fn link_from_args() -> Option<String> {
@@ -403,7 +404,7 @@ fn answer(line: &str) -> Option<Handoff> {
 }
 
 fn deliver(handle: &AppHandle, link: String) {
-    *PENDING.lock().unwrap() = Some(link.clone());
+    *PENDING.lock_or_recover() = Some(link.clone());
     crate::tray::show_main_window(handle);
     let _ = handle.emit("invite-link", link);
 }
@@ -424,7 +425,7 @@ pub fn on_run_event(handle: &AppHandle, event: &tauri::RunEvent) {
 
 pub fn start(handle: &AppHandle, data_dir: &Path, launch_link: Option<String>) {
     if let Some(link) = launch_link {
-        *PENDING.lock().unwrap() = Some(link);
+        *PENDING.lock_or_recover() = Some(link);
     }
     let listener = match TcpListener::bind(("127.0.0.1", 0)) {
         Ok(l) => l,

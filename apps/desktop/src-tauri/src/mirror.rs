@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
@@ -15,8 +16,8 @@ pub async fn run_mirror_requests(handle: AppHandle, mut asks: tokio::sync::mpsc:
     while let Some(ask) = asks.recv().await {
         let app = handle.state::<App>();
         let own = app.identity().map(|identity| identity.public());
-        let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
-        let servers = app.servers.lock().unwrap();
+        let awaiting = app.awaiting_snapshot.lock_or_recover().clone();
+        let servers = app.servers.lock_or_recover();
         let reply = answer(own, &servers, &awaiting, &ask.request, Utc::now().timestamp_millis());
         drop(servers);
         if reply.is_none() {

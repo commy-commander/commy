@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use commy_core::UserId;
 pub use commy_net::media::{mark_from, mark_view, InkMarkInput, InkMarkView};
 use commy_net::media::{InkMark, MediaPacket};
@@ -71,19 +72,19 @@ impl InkHub {
     }
 
     pub fn set_local(&self, sink: InkSink) {
-        self.inner.lock().unwrap().local = Some(sink);
+        self.inner.lock_or_recover().local = Some(sink);
     }
 
     pub fn allowed(&self) -> bool {
-        self.inner.lock().unwrap().allowed
+        self.inner.lock_or_recover().allowed
     }
 
     pub fn drawers(&self) -> Vec<UserId> {
-        self.inner.lock().unwrap().drawers.clone()
+        self.inner.lock_or_recover().drawers.clone()
     }
 
     pub fn set_allowed(&self, on: bool) {
-        let mut hub = self.inner.lock().unwrap();
+        let mut hub = self.inner.lock_or_recover();
         if hub.allowed == on {
             return;
         }
@@ -97,7 +98,7 @@ impl InkHub {
     }
 
     pub fn join(&self, user: UserId, tx: mpsc::UnboundedSender<MediaPacket>) {
-        let mut hub = self.inner.lock().unwrap();
+        let mut hub = self.inner.lock_or_recover();
         let on = hub.allowed && !hub.blocked.contains(&user);
         if tx.send(MediaPacket::InkAllowed { on }).is_ok() {
             hub.viewers.retain(|(_, tx)| !tx.is_closed());
@@ -106,7 +107,7 @@ impl InkHub {
     }
 
     pub fn draw(&self, user: UserId, mark: InkMark, bucket: &mut Bucket, now: Instant) -> bool {
-        let mut hub = self.inner.lock().unwrap();
+        let mut hub = self.inner.lock_or_recover();
         if !hub.allowed || user == self.owner || hub.blocked.contains(&user) || !mark.is_valid() || !bucket.take(now) {
             return false;
         }
@@ -119,13 +120,13 @@ impl InkHub {
     }
 
     pub fn clear_all(&self) {
-        let mut hub = self.inner.lock().unwrap();
+        let mut hub = self.inner.lock_or_recover();
         hub.send_all(&MediaPacket::InkFrom { user: self.owner, mark: InkMark::Clear }, None);
         hub.tell_local(InkNews::Mark { from: self.owner, mark: InkMark::Clear });
     }
 
     pub fn block(&self, user: UserId) {
-        let mut hub = self.inner.lock().unwrap();
+        let mut hub = self.inner.lock_or_recover();
         if user == self.owner || !hub.blocked.insert(user) {
             return;
         }

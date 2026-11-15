@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use commy_net::voice_gate::StateLink;
 use crate::state::App;
 use crate::updater::{self, Phase, UpdateStatus};
@@ -243,7 +244,7 @@ pub fn since_launch() -> Duration {
 }
 
 pub fn note_session(service: Service) {
-    *SESSION.lock().unwrap() = service;
+    *SESSION.lock_or_recover() = service;
 }
 
 pub fn handed_off() -> bool {
@@ -266,12 +267,12 @@ async fn relay(app: &App) -> Option<RelayLink> {
 }
 
 fn sync_signals(app: &App, offline: bool) -> SyncSignals {
-    let signed_in = crate::account::is_signed_in(&app.account.lock().unwrap());
-    let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let signed_in = crate::account::is_signed_in(&app.account.lock_or_recover());
+    let servers: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     SyncSignals {
         signed_in,
         offline,
-        service: *SESSION.lock().unwrap(),
+        service: *SESSION.lock_or_recover(),
         account_current: !crate::account_log::is_live(app) || crate::account_log::caught_up(),
         servers: servers
             .into_iter()
@@ -283,12 +284,12 @@ fn sync_signals(app: &App, offline: bool) -> SyncSignals {
 
 async fn view(handle: &AppHandle) -> StartupView {
     let app = handle.state::<App>();
-    let account_server = *PROBE.lock().unwrap();
+    let account_server = *PROBE.lock_or_recover();
     let signals = ConnectionSignals { account_server, relay: relay(&app).await };
     let (connection, offline) = connection_step(&signals);
     let restarting = RESTARTING.load(Ordering::SeqCst);
     let status = updater::status(handle);
-    let auto = app.voice.lock().unwrap().auto_update;
+    let auto = app.voice.lock_or_recover().auto_update;
     let update = update_step(&UpdateSignals { auto, status: &status, offline, restarting, waited: waited() });
     let sync = sync_step(&sync_signals(&app, offline));
     view_of(connection, offline, update, sync, restarting, waited())
@@ -296,13 +297,13 @@ async fn view(handle: &AppHandle) -> StartupView {
 
 pub async fn current(handle: &AppHandle) -> StartupView {
     let fresh = view(handle).await;
-    *LAST.lock().unwrap() = Some(fresh.clone());
+    *LAST.lock_or_recover() = Some(fresh.clone());
     fresh
 }
 
 async fn publish(handle: &AppHandle) -> StartupView {
     let fresh = view(handle).await;
-    let changed = LAST.lock().unwrap().replace(fresh.clone()).as_ref() != Some(&fresh);
+    let changed = LAST.lock_or_recover().replace(fresh.clone()).as_ref() != Some(&fresh);
     if changed {
         let _ = handle.emit("startup-status", &fresh);
     }
@@ -320,14 +321,14 @@ pub fn start(handle: &AppHandle) {
     let probing = handle.clone();
     tauri::async_runtime::spawn(async move {
         let reach = probe(&probing.state::<App>()).await;
-        *PROBE.lock().unwrap() = reach;
+        *PROBE.lock_or_recover() = reach;
     });
     tauri::async_runtime::spawn(update_at_launch(handle.clone()));
     tauri::async_runtime::spawn(run(handle.clone()));
 }
 
 async fn update_at_launch(handle: AppHandle) {
-    let auto = handle.state::<App>().voice.lock().unwrap().auto_update;
+    let auto = handle.state::<App>().voice.lock_or_recover().auto_update;
     if !wants_update_at_launch(auto, &updater::status(&handle)) {
         return;
     }
@@ -362,7 +363,7 @@ async fn run(handle: AppHandle) {
                 crate::account::recheck_session_now();
                 crate::community_sync::nudge();
             }
-            *PROBE.lock().unwrap() = reach;
+            *PROBE.lock_or_recover() = reach;
             continue;
         }
         tokio::time::sleep(TICK).await;

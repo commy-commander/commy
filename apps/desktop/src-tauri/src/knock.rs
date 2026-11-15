@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
@@ -92,7 +93,7 @@ pub enum Joined {
 }
 
 fn edit(app: &App, change: impl FnOnce(&mut Knocks)) {
-    let mut knocks = app.knocks.lock().unwrap();
+    let mut knocks = app.knocks.lock_or_recover();
     change(&mut knocks);
     if let Some(dir) = app.data_dir() {
         knocks.save(dir);
@@ -100,7 +101,7 @@ fn edit(app: &App, change: impl FnOnce(&mut Knocks)) {
 }
 
 pub fn list(app: &App) -> Vec<WaitingView> {
-    let knocks = app.knocks.lock().unwrap();
+    let knocks = app.knocks.lock_or_recover();
     let mut list: Vec<WaitingView> = knocks.servers.iter().map(|(id, k)| view_of(*id, k)).collect();
     list.sort_by_key(|v| v.asked_at);
     list
@@ -115,7 +116,7 @@ pub fn cancel(app: &App, handle: &AppHandle, sid: ServerId) {
 
 pub async fn send_note(app: &App, handle: &AppHandle, sid: ServerId, note: &str) -> CmdResult<()> {
     let note = commy_core::join_request::clean_note(note).ok_or(commy_view::join_requests::NOTE_TOO_LONG)?;
-    let mut knock = app.knocks.lock().unwrap().servers.get(&sid).cloned().ok_or("You are not waiting to join that server")?;
+    let mut knock = app.knocks.lock_or_recover().servers.get(&sid).cloned().ok_or("You are not waiting to join that server")?;
     knock.note = note;
     edit(app, |knocks| {
         knocks.servers.insert(sid, knock.clone());
@@ -145,7 +146,7 @@ async fn send(app: &App, ticket: &ServerTicket, request: KnockRequest) -> Option
 
 pub async fn knock_then_join(app: &App, handle: &AppHandle, ticket: ServerTicket, note: &str) -> CmdResult<Joined> {
     let sid = ticket.server_id;
-    if app.servers.lock().unwrap().contains_key(&sid) {
+    if app.servers.lock_or_recover().contains_key(&sid) {
         return crate::join_ticket(app, handle, ticket).await.map(Joined::Server);
     }
     let asked_at = chrono::Utc::now().timestamp_millis();
@@ -192,7 +193,7 @@ async fn recheck(handle: &AppHandle, sid: ServerId, knock: Knocking) {
             let _ = handle.emit("join-waits-changed", ());
         }
         Some(KnockReply::Admitted | KnockReply::Open) => {
-            if !app.knocks.lock().unwrap().servers.contains_key(&sid) {
+            if !app.knocks.lock_or_recover().servers.contains_key(&sid) {
                 return;
             }
             match crate::join_ticket(&app, handle, ticket).await {
@@ -216,7 +217,7 @@ async fn recheck(handle: &AppHandle, sid: ServerId, knock: Knocking) {
 pub async fn run(handle: AppHandle) {
     tokio::time::sleep(FIRST_CHECK_AFTER).await;
     loop {
-        let waiting = handle.state::<App>().knocks.lock().unwrap().waiting();
+        let waiting = handle.state::<App>().knocks.lock_or_recover().waiting();
         for (sid, knock) in waiting {
             recheck(&handle, sid, knock).await;
         }
@@ -232,9 +233,9 @@ fn worth_recording(state: &ServerState, ask: &SignedEvent) -> bool {
 pub async fn run_requests(handle: AppHandle, mut asks: tokio::sync::mpsc::UnboundedReceiver<KnockAsk>) {
     while let Some(ask) = asks.recv().await {
         let app = handle.state::<App>();
-        let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+        let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
         let (reply, record) = {
-            let servers = app.servers.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
             match (me, servers.get(&ask.request.server)) {
                 (Some(me), Some(state)) => {
                     let reply = commy_net::knock::answer(state, me, &ask.request);
@@ -252,7 +253,7 @@ pub async fn run_requests(handle: AppHandle, mut asks: tokio::sync::mpsc::Unboun
 }
 
 async fn record_ask(app: &App, handle: &AppHandle, sid: ServerId, ask: SignedEvent) {
-    let applied = app.servers.lock().unwrap().get_mut(&sid).map(|state| state.apply_signed(&ask));
+    let applied = app.servers.lock_or_recover().get_mut(&sid).map(|state| state.apply_signed(&ask));
     match applied {
         Some(Ok(true)) => {}
         Some(Err(e)) => {
@@ -273,15 +274,15 @@ pub fn must_wait(state: &ServerState, me: commy_core::UserId) -> bool {
 }
 
 pub async fn wait_outside(app: &App, handle: &AppHandle, sid: ServerId) {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     let lobby = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         match servers.get(&sid) {
             Some(state) if must_wait(state, me) => commy_net::knock::lobby(state),
             _ => return,
         }
     };
-    let Some(ticket) = app.invites.lock().unwrap().get(&sid).cloned() else { return };
+    let Some(ticket) = app.invites.lock_or_recover().get(&sid).cloned() else { return };
     let asked_at = chrono::Utc::now().timestamp_millis();
     let mut knock = Knocking { ticket, name: String::new(), rules: None, members: 0, note: String::new(), asked_at, turned_away: false };
     knock.learn(lobby);

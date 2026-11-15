@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -29,7 +30,7 @@ fn dir_of(app: &App) -> Result<std::path::PathBuf, String> {
 
 fn update(app: &App, change: impl FnOnce(&mut SavedStore) -> Result<(), String>) -> Result<SavedStore, String> {
     let dir = dir_of(app)?;
-    let _guard = LOCK.lock().unwrap();
+    let _guard = LOCK.lock_or_recover();
     let mut saved = load(&dir);
     change(&mut saved)?;
     store(&saved, &dir)?;
@@ -39,7 +40,7 @@ fn update(app: &App, change: impl FnOnce(&mut SavedStore) -> Result<(), String>)
 #[tauri::command]
 pub fn saved_list(app: tauri::State<'_, App>) -> Result<SavedStore, String> {
     let dir = dir_of(&app)?;
-    let _guard = LOCK.lock().unwrap();
+    let _guard = LOCK.lock_or_recover();
     Ok(load(&dir))
 }
 

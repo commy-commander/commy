@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -33,7 +34,7 @@ pub struct Hearing {
 
 impl Hearing {
     pub fn of(app: &App) -> Self {
-        let voice = app.voice.lock().unwrap();
+        let voice = app.voice.lock_or_recover();
         Self { device: voice.output_device.clone(), volume: voice.output_volume }
     }
 }
@@ -56,11 +57,11 @@ impl<S: Drains> DeviceOut<S> {
     }
 
     pub fn source(&self) -> MutexGuard<'_, S> {
-        self.source.lock().unwrap()
+        self.source.lock_or_recover()
     }
 
     pub fn open(&'static self, device: Option<String>) -> Result<(), String> {
-        let mut output = self.output.lock().unwrap();
+        let mut output = self.output.lock_or_recover();
         if output.as_ref().is_some_and(|o| o.device == device) {
             return Ok(());
         }
@@ -76,7 +77,7 @@ impl<S: Drains> DeviceOut<S> {
     fn close_when_idle(&self, id: u64) {
         loop {
             std::thread::sleep(IDLE_CHECK);
-            let mut output = self.output.lock().unwrap();
+            let mut output = self.output.lock_or_recover();
             if output.as_ref().map(|o| o.id) != Some(id) {
                 return;
             }

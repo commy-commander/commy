@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -120,7 +121,7 @@ async fn send_ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<S
 
 fn seat_tags(app: &App, days: &[i64]) -> Option<Vec<Tag>> {
     let identity = app.identity()?;
-    let me = app.profile.lock().unwrap().as_ref()?.id.to_string();
+    let me = app.profile.lock_or_recover().as_ref()?.id.to_string();
     Some(days.iter().map(|day| (seat_tag(&identity.to_bytes(), &me, *day), *day)).collect())
 }
 
@@ -137,7 +138,7 @@ pub async fn beat_seat(app: &App) {
 }
 
 fn quiet_wanted(app: &App) -> Option<Quiet> {
-    let profile = app.profile.lock().unwrap().clone()?;
+    let profile = app.profile.lock_or_recover().clone()?;
     Some(Quiet::of(profile.presence == Presence::DoNotDisturb, profile.presence_until.map(|secs| secs.saturating_mul(1000))))
 }
 
@@ -176,7 +177,7 @@ pub async fn run_quiet_hours(handle: AppHandle) {
 pub fn set_token(handle: &AppHandle, push: Option<String>) {
     let token = push.filter(|push| commy_sync::wake::push_target(push).is_some());
     let changed = {
-        let mut held = TOKEN.lock().unwrap();
+        let mut held = TOKEN.lock_or_recover();
         let changed = *held != token;
         *held = token;
         changed
@@ -193,7 +194,7 @@ pub fn register_again() {
 }
 
 fn target() -> Option<(String, String)> {
-    let push = TOKEN.lock().unwrap().clone()?;
+    let push = TOKEN.lock_or_recover().clone()?;
     let base = sync_link::url().as_deref().and_then(wake_url)?;
     Some((push, base))
 }
@@ -239,7 +240,7 @@ pub async fn forget_everything(app: &App) {
     let Some((push, base)) = target() else { return };
     let today = today();
     let held: Vec<Tag> = {
-        let guard = REGISTERED.lock().unwrap();
+        let guard = REGISTERED.lock_or_recover();
         let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return };
         let all: HashSet<Tag> = registered.tags.keys().chain(registered.earlier.keys()).filter(|tag| tag.1 >= today).copied().collect();
         all.into_iter().collect()
@@ -258,7 +259,7 @@ fn days_from(today: i64) -> Vec<i64> {
 }
 
 fn begin(push: &str, base: &str, earlier: impl FnOnce() -> Option<HashMap<Tag, Source>>) {
-    let mut guard = REGISTERED.lock().unwrap();
+    let mut guard = REGISTERED.lock_or_recover();
     if guard.as_ref().is_none_or(|r| r.push != push || r.base != base) {
         let earlier = earlier();
         let kept_whole = earlier.is_some();
@@ -275,7 +276,7 @@ fn begin(push: &str, base: &str, earlier: impl FnOnce() -> Option<HashMap<Tag, S
 }
 
 fn still_needed(push: &str, today: i64, wanted: Vec<(Tag, Source)>) -> Vec<(Tag, Source)> {
-    let mut guard = REGISTERED.lock().unwrap();
+    let mut guard = REGISTERED.lock_or_recover();
     let Some(registered) = guard.as_mut().filter(|r| r.push == push) else { return Vec::new() };
     if registered.off_on == Some(today) {
         return Vec::new();
@@ -285,13 +286,13 @@ fn still_needed(push: &str, today: i64, wanted: Vec<(Tag, Source)>) -> Vec<(Tag,
 }
 
 fn fresh_first(push: &str, needed: Vec<(Tag, Source)>) -> (Tagged, Tagged) {
-    let guard = REGISTERED.lock().unwrap();
+    let guard = REGISTERED.lock_or_recover();
     let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return (needed, Vec::new()) };
     needed.into_iter().partition(|(tag, _)| !registered.earlier.contains_key(tag))
 }
 
 fn no_longer_wanted(push: &str, today: i64, wanted: &[(Tag, Source)], settled: impl Fn(&Source) -> bool) -> Vec<Tag> {
-    let guard = REGISTERED.lock().unwrap();
+    let guard = REGISTERED.lock_or_recover();
     let Some(registered) = guard.as_ref().filter(|r| r.push == push) else { return Vec::new() };
     let wanted: HashSet<&Tag> = wanted.iter().map(|(tag, _)| tag).collect();
     let stale: HashSet<Tag> = registered
@@ -305,7 +306,7 @@ fn no_longer_wanted(push: &str, today: i64, wanted: &[(Tag, Source)], settled: i
 }
 
 fn to_sweep(push: &str, today: i64, wanted: &[(Tag, Source)], unwanted: Vec<Tag>) -> Vec<Tag> {
-    let guard = REGISTERED.lock().unwrap();
+    let guard = REGISTERED.lock_or_recover();
     let Some(registered) = guard.as_ref().filter(|r| r.push == push && !r.kept_whole) else { return Vec::new() };
     let wanted: HashSet<&Tag> = wanted.iter().map(|(tag, _)| tag).collect();
     let sweep: HashSet<Tag> = unwanted.into_iter().filter(|tag| tag.1 >= today && !wanted.contains(tag) && !registered.swept.contains(tag)).collect();
@@ -313,7 +314,7 @@ fn to_sweep(push: &str, today: i64, wanted: &[(Tag, Source)], unwanted: Vec<Tag>
 }
 
 fn kept_now(push: &str, today: i64) -> Option<Kept> {
-    let guard = REGISTERED.lock().unwrap();
+    let guard = REGISTERED.lock_or_recover();
     let registered = guard.as_ref().filter(|r| r.push == push)?;
     let held: HashMap<&Tag, &Source> = registered.earlier.iter().chain(&registered.tags).filter(|(tag, _)| tag.1 >= today).collect();
     Some(Kept { push: registered.push.clone(), base: registered.base.clone(), tags: held.into_iter().map(|((tag, day), source)| (Bytes(*tag), *day, *source)).collect() })
@@ -341,7 +342,7 @@ fn save_kept(app: &App, push: &str, today: i64) {
 }
 
 fn note(push: &str, update: impl FnOnce(&mut Registered)) {
-    if let Some(registered) = REGISTERED.lock().unwrap().as_mut().filter(|r| r.push == push) {
+    if let Some(registered) = REGISTERED.lock_or_recover().as_mut().filter(|r| r.push == push) {
         update(registered);
     }
 }
@@ -387,11 +388,11 @@ async fn register_now(handle: &AppHandle, push: String, base: String) -> bool {
 }
 
 fn phone_previews(app: &App, days: &[i64]) -> serde_json::Value {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id.to_string());
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id.to_string());
     let mut keys: Vec<serde_json::Value> = dm_sync::preview_keys(app, days).iter().map(|key| serde_json::json!({ "k": BASE64.encode(key) })).collect();
     keys.extend(server_wake::preview_keys(app, days).iter().map(|(server, key)| serde_json::json!({ "k": BASE64.encode(key), "s": server.to_string() })));
     let users: std::collections::BTreeMap<String, String> =
-        app.dms.lock().unwrap().contacts.iter().map(|(id, profile)| (id.to_string(), profile.visible_name().to_string())).collect();
+        app.dms.lock_or_recover().contacts.iter().map(|(id, profile)| (id.to_string(), profile.visible_name().to_string())).collect();
     serde_json::json!({ "me": me, "keys": keys, "servers": server_wake::labels(app), "users": users, "userKeys": dm_sync::signer_keys(app) })
 }
 
@@ -506,6 +507,7 @@ async fn forget(app: &App, http: &reqwest::Client, push: &str, base: &str, today
 
 #[cfg(mobile)]
 mod phone_push {
+    use crate::lock_or_recover::LockOrRecover;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
@@ -543,7 +545,7 @@ mod phone_push {
                 let plugin = api.register_android_plugin("chat.commy.mobile", "PushPlugin")?;
                 #[cfg(target_os = "ios")]
                 let plugin = commy_ios_push::register(&api)?;
-                *PLUGIN.lock().unwrap() = Some(plugin);
+                *PLUGIN.lock_or_recover() = Some(plugin);
                 fetch_token(app.clone());
                 Ok(())
             })
@@ -551,7 +553,7 @@ mod phone_push {
     }
 
     fn plugin() -> Option<PluginHandle<Wry>> {
-        PLUGIN.lock().unwrap().clone()
+        PLUGIN.lock_or_recover().clone()
     }
 
     #[derive(Deserialize, Default)]
@@ -655,7 +657,7 @@ fn tapped(handle: &AppHandle) -> bool {
         use tauri::Emitter;
         let _ = handle.emit("notification-clicked", target);
     } else {
-        *TARGET.lock().unwrap() = Some(target);
+        *TARGET.lock_or_recover() = Some(target);
     }
     true
 }
@@ -688,7 +690,7 @@ fn look_for_tap_soon(handle: &AppHandle) {
 #[tauri::command]
 pub async fn take_notification_target(handle: AppHandle) -> Option<String> {
     UI_TAKES_TARGETS.store(true, Ordering::SeqCst);
-    if let Some(target) = TARGET.lock().unwrap().take() {
+    if let Some(target) = TARGET.lock_or_recover().take() {
         return Some(target);
     }
     let target = tauri::async_runtime::spawn_blocking(phone::take_target).await.ok().flatten();
@@ -701,7 +703,7 @@ pub async fn take_notification_target(handle: AppHandle) -> Option<String> {
 
 #[cfg(mobile)]
 fn ask_token(handle: &AppHandle) {
-    if TOKEN.lock().unwrap().is_none() {
+    if TOKEN.lock_or_recover().is_none() {
         phone_push::fetch_token(handle.clone());
     }
 }

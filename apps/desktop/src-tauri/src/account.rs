@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
@@ -176,7 +177,7 @@ pub fn effective_server() -> String {
     if let Some(env) = ENV_SERVER.clone() {
         return env;
     }
-    CHOSEN_SERVER.lock().unwrap().clone().unwrap_or_else(|| DEFAULT_ACCOUNT_SERVER.to_string())
+    CHOSEN_SERVER.lock_or_recover().clone().unwrap_or_else(|| DEFAULT_ACCOUNT_SERVER.to_string())
 }
 
 fn path(dir: &Path) -> PathBuf {
@@ -188,7 +189,7 @@ pub fn load(dir: &Path) -> AccountState {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+    *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
     state
 }
 
@@ -204,7 +205,7 @@ pub fn is_signed_in(state: &AccountState) -> bool {
 }
 
 fn signed_in_folder(app: &App) -> Option<(PathBuf, String, String)> {
-    let state = app.account.lock().unwrap();
+    let state = app.account.lock_or_recover();
     if !is_signed_in(&state) {
         return None;
     }
@@ -232,7 +233,7 @@ enum Unlock {
 }
 
 fn quick_unlock(app: &App, dir: &Path) -> Unlock {
-    let server_locks = app.account.lock().unwrap().features.is_some_and(|f| f.folder_lock);
+    let server_locks = app.account.lock_or_recover().features.is_some_and(|f| f.folder_lock);
     unlock_step(account_folder::cached_key(dir), account_folder::is_locked(dir), server_locks)
 }
 
@@ -312,7 +313,7 @@ fn may_claim(unclaimed_node: Option<&str>, linked_devices: &[String]) -> bool {
 }
 
 fn claim_allowed(account: &str) -> bool {
-    MAY_CLAIM.lock().unwrap().as_deref() == Some(account)
+    MAY_CLAIM.lock_or_recover().as_deref() == Some(account)
 }
 
 fn unclaimed_profile(app: &App) -> Option<account_folder::UnclaimedProfile> {
@@ -353,7 +354,7 @@ fn leave_account(app: &App, handle: &AppHandle, switched: bool) {
 }
 
 pub fn require_account(app: &App) -> Result<(), String> {
-    if is_signed_in(&app.account.lock().unwrap()) {
+    if is_signed_in(&app.account.lock_or_recover()) {
         Ok(())
     } else {
         Err(format!("Sign in to your Commy account on {} first", host_of(&effective_server())))
@@ -534,7 +535,7 @@ pub async fn server_search_with<T: serde::de::DeserializeOwned>(
     kind: &str,
     query: &[(&str, &str)],
 ) -> Result<Option<T>, String> {
-    let credentials = app.account.lock().unwrap().credentials(kind);
+    let credentials = app.account.lock_or_recover().credentials(kind);
     let Some((server, token)) = credentials else { return Ok(None) };
     let host = host_of(&server);
     let res = app
@@ -588,7 +589,7 @@ pub async fn media_image(app: &App, request_uri: &str) -> tauri::http::Response<
 }
 
 pub async fn fetch_media(app: &App, target: &str) -> Result<(String, Vec<u8>), u16> {
-    let credentials = app.account.lock().unwrap().credentials("media");
+    let credentials = app.account.lock_or_recover().credentials("media");
     let Some((server, token)) = credentials else { return Err(404) };
     let res = app
         .http
@@ -653,11 +654,11 @@ struct OtherAccount {
 
 fn view(app: &App) -> AccountView {
     let unclaimed_profile = unclaimed_profile(app);
-    let (pending_code, pending_url) = match app.sign_in.lock().unwrap().as_ref() {
+    let (pending_code, pending_url) = match app.sign_in.lock_or_recover().as_ref() {
         Some(p) => (Some(p.user_code.clone()), Some(p.url.clone())),
         None => (None, None),
     };
-    let state = app.account.lock().unwrap();
+    let state = app.account.lock_or_recover();
     let server = effective_server();
     let signed_in = is_signed_in(&state);
     AccountView {
@@ -703,7 +704,7 @@ pub fn account_status(app: tauri::State<'_, App>) -> AccountView {
 
 #[tauri::command]
 pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) -> Result<AccountView, String> {
-    if is_signed_in(&app.account.lock().unwrap()) {
+    if is_signed_in(&app.account.lock_or_recover()) {
         return Err("Sign out before changing the account server".into());
     }
     let server = match server.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
@@ -712,11 +713,11 @@ pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) ->
     }
     .filter(|s| s != DEFAULT_ACCOUNT_SERVER);
     {
-        let mut state = app.account.lock().unwrap();
+        let mut state = app.account.lock_or_recover();
         state.server = server.clone();
         store(&app, &state);
     }
-    *CHOSEN_SERVER.lock().unwrap() = server;
+    *CHOSEN_SERVER.lock_or_recover() = server;
     Ok(view(&app))
 }
 
@@ -759,7 +760,7 @@ fn forget_pending_sign_in(app: &App) {
 fn watch_sign_in(app: &App, user_code: &str, url: &str) -> tokio::sync::watch::Receiver<bool> {
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
     let pending = PendingSignIn { user_code: user_code.to_string(), url: url.to_string(), cancel: cancel_tx };
-    if let Some(old) = app.sign_in.lock().unwrap().replace(pending) {
+    if let Some(old) = app.sign_in.lock_or_recover().replace(pending) {
         let _ = old.cancel.send(true);
     }
     cancel_rx
@@ -770,7 +771,7 @@ pub async fn resume_sign_in(handle: AppHandle) {
     let Some(dir) = app.base_dir().cloned() else { return };
     let Some(saved) = crate::persist::read_json::<SavedSignIn>(&dir.join(PENDING_SIGN_IN_FILE)) else { return };
     let left = saved.remaining_secs(chrono::Utc::now().timestamp());
-    if is_signed_in(&app.account.lock().unwrap()) || saved.server != effective_server() || left.is_none() {
+    if is_signed_in(&app.account.lock_or_recover()) || saved.server != effective_server() || left.is_none() {
         forget_pending_sign_in(&app);
         return;
     }
@@ -856,7 +857,7 @@ pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle
 #[tauri::command]
 pub fn account_cancel_sign_in(app: tauri::State<'_, App>) {
     crate::app_sign_in::forget();
-    if let Some(pending) = app.sign_in.lock().unwrap().take() {
+    if let Some(pending) = app.sign_in.lock_or_recover().take() {
         let _ = pending.cancel.send(true);
     }
     forget_pending_sign_in(&app);
@@ -925,7 +926,7 @@ async fn poll_for_token(
             }
         }
     };
-    app.sign_in.lock().unwrap().take();
+    app.sign_in.lock_or_recover().take();
     forget_pending_sign_in(&app);
     let Some(token) = token else { return };
     if let Err(e) = complete_sign_in(&handle, &server, &doc, &token).await {
@@ -941,7 +942,7 @@ pub(crate) async fn complete_sign_in(handle: &AppHandle, server: &str, doc: &Dis
 }
 
 pub(crate) fn room_for_another_account(app: &App) -> Result<(), String> {
-    let state = app.account.lock().unwrap();
+    let state = app.account.lock_or_recover();
     if is_signed_in(&state) && state.others.len() + 1 >= MAX_ACCOUNTS {
         return Err(format!("This computer keeps up to {MAX_ACCOUNTS} accounts. Sign out of one first."));
     }
@@ -994,7 +995,7 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
         _ => Ok(()),
     };
     {
-        let mut state = app.account.lock().unwrap();
+        let mut state = app.account.lock_or_recover();
         state.keep_previous(server, &user.id);
         state.signed_in_server = Some(server.to_string());
         state.token = Some(token.to_string());
@@ -1071,7 +1072,7 @@ async fn link_device(app: &App, dir: &Path, server: &str, doc: &Discovery, token
 
 pub async fn ensure_linked(app: &App) -> bool {
     let (token, server, linked) = {
-        let state = app.account.lock().unwrap();
+        let state = app.account.lock_or_recover();
         (state.token.clone(), state.signed_in_server.clone(), state.device_linked)
     };
     if linked {
@@ -1083,7 +1084,7 @@ pub async fn ensure_linked(app: &App) -> bool {
         tracing::warn!("could not link this device to the account yet: {e}");
         return false;
     }
-    let mut state = app.account.lock().unwrap();
+    let mut state = app.account.lock_or_recover();
     if state.signed_in_server.as_deref() != Some(server.as_str()) || state.token.as_deref() != Some(token.as_str()) {
         return false;
     }
@@ -1095,7 +1096,7 @@ pub async fn ensure_linked(app: &App) -> bool {
 #[tauri::command]
 pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> Result<AccountView, String> {
     let (token, server) = {
-        let state = app.account.lock().unwrap();
+        let state = app.account.lock_or_recover();
         (state.token.clone(), state.signed_in_server.clone())
     };
     if let (Some(token), Some(server)) = (token, server) {
@@ -1104,10 +1105,10 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
         }
     }
     let switched = {
-        let mut state = app.account.lock().unwrap();
+        let mut state = app.account.lock_or_recover();
         let switched = state.sign_out_current();
         store(&app, &state);
-        *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+        *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
         switched
     };
     if let Some(dir) = app.data_dir() {
@@ -1120,7 +1121,7 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
 
 pub async fn sign_out_everyone_here(app: &App) {
     let sessions: Vec<SavedAccount> = {
-        let state = app.account.lock().unwrap();
+        let state = app.account.lock_or_recover();
         state.current().into_iter().chain(state.others.iter().cloned()).collect()
     };
     for saved in sessions {
@@ -1164,7 +1165,7 @@ fn deletion_problem(status: reqwest::StatusCode, body: &str) -> String {
 
 async fn deletion_post(app: &App, pick: fn(&Endpoints) -> Option<String>, body: serde_json::Value) -> Result<String, String> {
     let (token, server) = {
-        let state = app.account.lock().unwrap();
+        let state = app.account.lock_or_recover();
         if !is_signed_in(&state) {
             return Err("Sign in first".into());
         }
@@ -1226,10 +1227,10 @@ async fn forget_deleted_account(app: &App, handle: &AppHandle) -> Result<Account
         }
     }
     let switched = {
-        let mut state = app.account.lock().unwrap();
+        let mut state = app.account.lock_or_recover();
         let switched = state.sign_out_current();
         store(app, &state);
-        *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+        *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
         switched
     };
     if let Some(dir) = app.data_dir() {
@@ -1242,7 +1243,7 @@ async fn forget_deleted_account(app: &App, handle: &AppHandle) -> Result<Account
 
 #[tauri::command]
 pub async fn account_switch(app: tauri::State<'_, App>, handle: AppHandle, server: String, id: String) -> Result<AccountView, String> {
-    let saved = app.account.lock().unwrap().others.iter().find(|o| o.is(&server, &id)).cloned();
+    let saved = app.account.lock_or_recover().others.iter().find(|o| o.is(&server, &id)).cloned();
     let saved = saved.ok_or("That account is no longer on this computer.")?;
     if !switchable(&saved.server) {
         return Err(format!("This copy of Commy only uses {}.", host_of(&effective_server())));
@@ -1257,19 +1258,19 @@ pub async fn account_switch(app: tauri::State<'_, App>, handle: AppHandle, serve
         }
     }
     {
-        let mut state = app.account.lock().unwrap();
+        let mut state = app.account.lock_or_recover();
         if !state.switch_to(&server, &id) {
             return Err("That account is no longer on this computer.".into());
         }
         store(&app, &state);
-        *CHOSEN_SERVER.lock().unwrap() = state.server.clone();
+        *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
     }
     restart_signed_in_as_someone_else(&handle)
 }
 
 #[tauri::command]
 pub async fn account_sign_out_other(app: tauri::State<'_, App>, server: String, id: String) -> Result<AccountView, String> {
-    let saved = app.account.lock().unwrap().others.iter().find(|o| o.is(&server, &id)).cloned();
+    let saved = app.account.lock_or_recover().others.iter().find(|o| o.is(&server, &id)).cloned();
     let Some(saved) = saved else { return Ok(view(&app)) };
     forget_other(&app, &saved);
     if let Ok(doc) = discover(&app.http, &saved.server).await {
@@ -1280,7 +1281,7 @@ pub async fn account_sign_out_other(app: tauri::State<'_, App>, server: String, 
 
 fn forget_other(app: &App, saved: &SavedAccount) {
     {
-        let mut state = app.account.lock().unwrap();
+        let mut state = app.account.lock_or_recover();
         state.others.retain(|o| !o.is(&saved.server, &saved.user.id));
         store(app, &state);
     }
@@ -1307,7 +1308,7 @@ pub async fn account_open_folder(app: tauri::State<'_, App>, handle: AppHandle) 
             }
         };
         if may_claim(unclaimed_node.as_deref(), &linked) {
-            *MAY_CLAIM.lock().unwrap() = Some(account);
+            *MAY_CLAIM.lock_or_recover() = Some(account);
             return Ok(view(&app));
         }
     }
@@ -1339,7 +1340,7 @@ async fn sign_in_again_if_signed_out(app: &App, handle: &AppHandle, problem: Str
     if let Some((base, server, account)) = signed_in_folder(app) {
         account_folder::forget_key(&account_folder::folder(&base, &server, &account));
     }
-    *MAY_CLAIM.lock().unwrap() = None;
+    *MAY_CLAIM.lock_or_recover() = None;
     drop_rejected_session(app, handle);
     Ok(view(app))
 }
@@ -1354,8 +1355,8 @@ async fn open_folder(
 ) -> Result<AccountView, String> {
     let dir = account_folder::claim(base, server, account, keep)
         .map_err(|e| format!("Could not set up this account's folder: {e}"))?;
-    *MAY_CLAIM.lock().unwrap() = None;
-    let token = app.account.lock().unwrap().token.clone().ok_or("Sign in first")?;
+    *MAY_CLAIM.lock_or_recover() = None;
+    let token = app.account.lock_or_recover().token.clone().ok_or("Sign in first")?;
     if let Some(key) = unlock_folder(app, &dir, server, &token).await? {
         use_folder_key(&dir, &key);
     }
@@ -1370,7 +1371,7 @@ async fn open_folder(
         Err(_) => false,
     };
     {
-        let mut state = app.account.lock().unwrap();
+        let mut state = app.account.lock_or_recover();
         state.device_linked = linked;
         store(app, &state);
     }
@@ -1395,7 +1396,7 @@ fn session_answer(status: reqwest::StatusCode, session: Option<SessionResponse>)
 
 async fn check_saved_session(app: &App) -> SessionCheck {
     let (token, server) = {
-        let state = app.account.lock().unwrap();
+        let state = app.account.lock_or_recover();
         if !is_signed_in(&state) {
             return SessionCheck::Unknown;
         }
@@ -1417,7 +1418,7 @@ async fn check_saved_session(app: &App) -> SessionCheck {
 
 fn drop_rejected_session(app: &App, handle: &AppHandle) {
     {
-        let mut state = app.account.lock().unwrap();
+        let mut state = app.account.lock_or_recover();
         state.clear_session();
         store(app, &state);
     }
@@ -1453,7 +1454,7 @@ pub async fn keep_checking_session(handle: AppHandle) {
             _ = SESSION_RECHECK.notified() => {}
         }
         tries += 1;
-        if !is_signed_in(&handle.state::<App>().account.lock().unwrap()) {
+        if !is_signed_in(&handle.state::<App>().account.lock_or_recover()) {
             break;
         }
         if verify_saved_session(handle.clone()).await {
@@ -1467,7 +1468,7 @@ pub async fn keep_checking_session(handle: AppHandle) {
 
 pub async fn verify_saved_session(handle: AppHandle) -> bool {
     let app = handle.state::<App>();
-    let server = app.account.lock().unwrap().signed_in_server.clone();
+    let server = app.account.lock_or_recover().signed_in_server.clone();
     let check = check_saved_session(&app).await;
     let answered = !matches!(check, SessionCheck::Unknown);
     if let SessionCheck::Valid(doc) = &check {
@@ -1479,7 +1480,7 @@ pub async fn verify_saved_session(handle: AppHandle) -> bool {
     match check {
         SessionCheck::Valid(doc) => {
             let changed = {
-                let mut state = app.account.lock().unwrap();
+                let mut state = app.account.lock_or_recover();
                 let changed = state.features != doc.features;
                 if changed {
                     state.features = doc.features;

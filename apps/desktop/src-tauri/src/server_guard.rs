@@ -1,3 +1,4 @@
+use crate::lock_or_recover::{LockOrRecover, ReadOrRecover};
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
@@ -91,12 +92,12 @@ pub fn listed_servers() -> Vec<ListedView> {
 }
 
 fn read<T>(look: impl FnOnce(&HomeGuard) -> T) -> T {
-    let guard = GUARD.read().unwrap();
+    let guard = GUARD.read_or_recover();
     look(guard.as_ref().unwrap_or(&HomeGuard::default()))
 }
 
 fn write<T>(change: impl FnOnce(&mut HomeGuard) -> T) -> T {
-    let mut guard = GUARD.write().unwrap();
+    let mut guard = GUARD.write_or_recover();
     change(guard.get_or_insert_with(HomeGuard::default))
 }
 
@@ -243,7 +244,7 @@ struct HomeKeyReply {
 }
 
 async fn look_up(app: &App, home: &str) -> Option<PublishedKey> {
-    let (server, token) = app.account.lock().unwrap().credentials("home_key")?;
+    let (server, token) = app.account.lock_or_recover().credentials("home_key")?;
     let res = app
         .http
         .get(format!("{server}/api/auth/commy/home-key"))
@@ -280,9 +281,9 @@ struct CardReply {
 }
 
 async fn fetch_card(app: &App) -> Result<Option<HomeCard>, String> {
-    let Some((server, token)) = app.account.lock().unwrap().credentials("home_card") else { return Ok(None) };
+    let Some((server, token)) = app.account.lock_or_recover().credentials("home_card") else { return Ok(None) };
     let Some(identity) = app.identity() else { return Ok(None) };
-    let Some((user, current)) = app.profile.lock().unwrap().as_ref().map(|p| (p.id, p.home.clone())) else { return Ok(None) };
+    let Some((user, current)) = app.profile.lock_or_recover().as_ref().map(|p| (p.id, p.home.clone())) else { return Ok(None) };
     let now = chrono::Utc::now().timestamp_millis();
     let current = current.filter(|card| card.user == user && card.identity == identity.public());
     if !wants_card(current.as_ref(), &server, now) {

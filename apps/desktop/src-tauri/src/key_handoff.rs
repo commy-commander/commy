@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -35,7 +36,7 @@ pub fn ensure(handle: &AppHandle) {
         stop();
         return;
     }
-    let mut live = LIVE.lock().unwrap();
+    let mut live = LIVE.lock_or_recover();
     if live.as_ref().is_some_and(|l| l.url == url && l.account == s.account) {
         return;
     }
@@ -47,7 +48,7 @@ pub fn ensure(handle: &AppHandle) {
 }
 
 pub fn stop() {
-    if let Some(old) = LIVE.lock().unwrap().take() {
+    if let Some(old) = LIVE.lock_or_recover().take() {
         old.task.abort();
     }
 }

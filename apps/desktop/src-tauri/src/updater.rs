@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -115,20 +116,20 @@ pub(crate) fn current_version() -> String {
 pub fn init(handle: &AppHandle) {
     let reason = if VERSION.is_none() { Some("dev") } else { install_blocker(handle) };
     let updates = handle.state::<Updates>();
-    let mut status = updates.status.lock().unwrap();
+    let mut status = updates.status.lock_or_recover();
     status.current = current_version();
     status.can_install = reason.is_none();
     status.reason = reason.map(str::to_string);
 }
 
 pub fn status(handle: &AppHandle) -> UpdateStatus {
-    handle.state::<Updates>().status.lock().unwrap().clone()
+    handle.state::<Updates>().status.lock_or_recover().clone()
 }
 
 fn set(handle: &AppHandle, change: impl FnOnce(&mut UpdateStatus)) {
     let status = {
         let updates = handle.state::<Updates>();
-        let mut status = updates.status.lock().unwrap();
+        let mut status = updates.status.lock_or_recover();
         change(&mut status);
         status.clone()
     };
@@ -143,7 +144,7 @@ pub fn start(handle: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_CHECK).await;
         loop {
-            let auto = handle.state::<crate::App>().voice.lock().unwrap().auto_update;
+            let auto = handle.state::<crate::App>().voice.lock_or_recover().auto_update;
             if check_due(&status(&handle), chrono::Utc::now().timestamp()) {
                 run(&handle, Mode::when_auto_update(auto)).await;
             }
@@ -190,7 +191,7 @@ async fn run(handle: &AppHandle, mode: Mode) -> UpdateStatus {
         return status(handle);
     }
     let updates = handle.state::<Updates>();
-    let phase = updates.status.lock().unwrap().phase;
+    let phase = updates.status.lock_or_recover().phase;
     if phase == Phase::Ready || updates.busy.swap(true, Ordering::SeqCst) {
         return status(handle);
     }
@@ -235,7 +236,7 @@ async fn run_check(handle: &AppHandle, mode: Mode) -> Result<(), String> {
     };
     let found = version.to_string();
     let page = DOWNLOAD_PAGE.to_string();
-    let can_install = handle.state::<Updates>().status.lock().unwrap().can_install;
+    let can_install = handle.state::<Updates>().status.lock_or_recover().can_install;
     if !can_install || mode == Mode::LookOnly {
         set(handle, |s| {
             s.phase = Phase::Available;
@@ -295,7 +296,7 @@ async fn install(handle: &AppHandle, manifest: &str, current: semver::Version, f
         .await
         .map_err(|e| e.to_string())?;
     if cfg!(windows) {
-        *handle.state::<Updates>().pending.lock().unwrap() = Some((update, bytes));
+        *handle.state::<Updates>().pending.lock_or_recover() = Some((update, bytes));
     } else {
         update.install(&bytes).map_err(|e| e.to_string())?;
     }
@@ -323,13 +324,13 @@ async fn fetch_manifest(url: &str) -> Result<Manifest, String> {
 }
 
 pub fn restart(handle: &AppHandle) -> Result<(), String> {
-    let phase = handle.state::<Updates>().status.lock().unwrap().phase;
+    let phase = handle.state::<Updates>().status.lock_or_recover().phase;
     if phase != Phase::Ready {
         return Err("No update is ready yet.".into());
     }
     #[cfg(desktop)]
     {
-        let pending = handle.state::<Updates>().pending.lock().unwrap().take();
+        let pending = handle.state::<Updates>().pending.lock_or_recover().take();
         if let Some((update, bytes)) = pending {
             update.install(&bytes).map_err(|e| e.to_string())?;
         }

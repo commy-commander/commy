@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::state::App;
 use chrono::Utc;
 use commy_core::catchup::{apply_reaction_changes, digests, items, reaction_changes, BucketItems, ReactionChange};
@@ -384,11 +385,11 @@ pub struct Unread {
 
 impl Unread {
     pub fn of(app: &App, server: ServerId) -> Self {
-        let profile = app.profile.lock().unwrap().clone();
+        let profile = app.profile.lock_or_recover().clone();
         Self {
             me: profile.as_ref().map(|p| p.id),
             names: profile.as_ref().map(mention_names).unwrap_or_default(),
-            blocked: app.safety.lock().unwrap().blocked.iter().copied().collect(),
+            blocked: app.safety.lock_or_recover().blocked.iter().copied().collect(),
             silent: app.awaits_snapshot(server),
             keys: crate::channel_lock::holder_of(app),
         }
@@ -545,7 +546,7 @@ pub fn sweep_targets(state: &ServerState, me: Option<UserId>, ours: [u8; 32]) ->
 }
 
 pub fn sweep_all<A: AppAccess>(access: &A) {
-    let servers: Vec<ServerId> = access.app().servers.lock().unwrap().keys().copied().collect();
+    let servers: Vec<ServerId> = access.app().servers.lock_or_recover().keys().copied().collect();
     for server in servers {
         sweep(access, server, true);
     }
@@ -555,17 +556,17 @@ fn sweep<A: AppAccess>(access: &A, server: ServerId, always: bool) {
     let app = access.app();
     let Some(ours) = our_node(app) else { return };
     let now = Instant::now();
-    if !app.catchup.lock().unwrap().sweep_due(server, now) && !always {
+    if !app.catchup.lock_or_recover().sweep_due(server, now) && !always {
         return;
     }
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let targets = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&server) else { return };
         sweep_targets(state, me, ours)
     };
     let targets: Vec<[u8; 32]> = {
-        let catchup = app.catchup.lock().unwrap();
+        let catchup = app.catchup.lock_or_recover();
         targets.into_iter().filter(|peer| catchup.needs_session((server, *peer), now)).collect()
     };
     for peer in targets {
@@ -607,7 +608,7 @@ impl AppAccess for tauri::AppHandle {
 }
 
 pub fn save_unsaved(app: &App) {
-    let servers = app.catchup.lock().unwrap().take_unsaved();
+    let servers = app.catchup.lock_or_recover().take_unsaved();
     for server in servers {
         app.persist_server(server);
     }
@@ -629,7 +630,7 @@ impl TestHandle {
     }
 
     pub fn take_events(&self) -> Vec<(String, serde_json::Value)> {
-        std::mem::take(&mut *self.events.lock().unwrap())
+        std::mem::take(&mut *self.events.lock_or_recover())
     }
 }
 
@@ -640,7 +641,7 @@ impl AppAccess for TestHandle {
     }
 
     fn emit(&self, event: &str, payload: serde_json::Value) {
-        self.events.lock().unwrap().push((event.to_string(), payload));
+        self.events.lock_or_recover().push((event.to_string(), payload));
     }
 
     fn save_later(&self) {
@@ -653,7 +654,7 @@ impl AppAccess for TestHandle {
     }
 
     fn catch_up(&self, server: ServerId, peer: [u8; 32]) {
-        self.catch_ups.lock().unwrap().push((server, peer));
+        self.catch_ups.lock_or_recover().push((server, peer));
     }
 }
 
@@ -661,7 +662,7 @@ pub struct AppStore<A>(pub A);
 
 impl<A: AppAccess> AppStore<A> {
     fn with_state<T>(&self, server: ServerId, f: impl FnOnce(&ServerState) -> T) -> Option<T> {
-        self.0.app().servers.lock().unwrap().get(&server).map(f)
+        self.0.app().servers.lock_or_recover().get(&server).map(f)
     }
 }
 
@@ -671,7 +672,7 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
         if !app.key_settled() {
             return None;
         }
-        let me = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+        let me = app.profile.lock_or_recover().as_ref().map(|p| p.id)?;
         if !self.with_state(server, |s| s.server.is_member(me))? {
             return None;
         }
@@ -705,14 +706,14 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
     fn apply_profiles(&self, server: ServerId, profiles: Vec<UserProfile>) {
         let app = self.0.app();
         let learned = {
-            let mut servers = app.servers.lock().unwrap();
+            let mut servers = app.servers.lock_or_recover();
             let Some(state) = servers.get_mut(&server) else { return };
             apply_profiles(state, profiles)
         };
         if learned.is_empty() {
             return;
         }
-        app.catchup.lock().unwrap().note_applied(server, []);
+        app.catchup.lock_or_recover().note_applied(server, []);
         release_held(&self.0, server, &learned);
     }
 
@@ -720,7 +721,7 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
         let app = self.0.app();
         let unread = Unread::of(app, server);
         let (report, held, fresh) = {
-            let mut servers = app.servers.lock().unwrap();
+            let mut servers = app.servers.lock_or_recover();
             let Some(state) = servers.get_mut(&server) else {
                 let rejected = messages.iter().map(|m| m.id).chain(tombstones.iter().map(|p| p.message));
                 return ApplyReport { rejected: dedup(rejected), ..Default::default() };
@@ -729,7 +730,7 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
         };
         let now = Instant::now();
         {
-            let mut catchup = app.catchup.lock().unwrap();
+            let mut catchup = app.catchup.lock_or_recover();
             for (signer, event) in held {
                 catchup.hold(server, signer, event, now);
             }
@@ -750,12 +751,12 @@ impl<A: AppAccess> CatchupStore for AppStore<A> {
     fn apply_reaction_changes(&self, server: ServerId, user: UserId, changes: Vec<ReactionChange>) -> usize {
         let app = self.0.app();
         let changed = {
-            let mut servers = app.servers.lock().unwrap();
+            let mut servers = app.servers.lock_or_recover();
             let Some(state) = servers.get_mut(&server) else { return 0 };
             apply_reaction_changes(state, user, changes, Utc::now())
         };
         if changed > 0 {
-            app.catchup.lock().unwrap().note_applied(server, []);
+            app.catchup.lock_or_recover().note_applied(server, []);
             flush(&self.0, server, false);
         }
         changed
@@ -772,14 +773,14 @@ pub fn store(handle: &tauri::AppHandle) -> SharedCatchupStore {
 }
 
 fn our_node(app: &App) -> Option<[u8; 32]> {
-    let hex = app.node_hex.lock().unwrap().clone()?;
+    let hex = app.node_hex.lock_or_recover().clone()?;
     data_encoding::HEXLOWER.decode(hex.as_bytes()).ok()?.try_into().ok()
 }
 
 pub fn on_neighbor_up(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32]) {
     let app = handle.state::<App>();
     let Some(ours) = our_node(&app) else { return };
-    let pending = app.outbox.lock().unwrap().has_pending(server);
+    let pending = app.outbox.lock_or_recover().has_pending(server);
     spawn_session(handle.clone(), server, peer, start_delay(ours, peer, pending), true);
 }
 
@@ -787,7 +788,7 @@ pub fn spawn_session(handle: tauri::AppHandle, server: ServerId, peer: [u8; 32],
     tauri::async_runtime::spawn(async move {
         if let Some(delay) = delay {
             tokio::time::sleep(delay).await;
-            let recent = handle.state::<App>().catchup.lock().unwrap().completed_recently((server, peer), Instant::now());
+            let recent = handle.state::<App>().catchup.lock_or_recover().completed_recently((server, peer), Instant::now());
             if recent {
                 return;
             }
@@ -798,7 +799,7 @@ pub fn spawn_session(handle: tauri::AppHandle, server: ServerId, peer: [u8; 32],
 
 async fn run_session(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32], retry: bool) {
     let app = handle.state::<App>();
-    if !app.catchup.lock().unwrap().begin((server, peer)) {
+    if !app.catchup.lock_or_recover().begin((server, peer)) {
         return;
     }
     let session = {
@@ -809,7 +810,7 @@ async fn run_session(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32]
         Some(session) => session.await,
         None => Err(anyhow::anyhow!("network is not ready")),
     };
-    app.catchup.lock().unwrap().finish((server, peer), Instant::now(), result.is_ok());
+    app.catchup.lock_or_recover().finish((server, peer), Instant::now(), result.is_ok());
     match result {
         Ok(report) => {
             tracing::info!(
@@ -833,15 +834,15 @@ async fn run_session(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32]
 }
 
 pub fn on_caught_up(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32], report: &SessionReport) {
-    handle.state::<App>().catchup.lock().unwrap().record_completed((server, peer), Instant::now());
+    handle.state::<App>().catchup.lock_or_recover().record_completed((server, peer), Instant::now());
     after_session(handle, server, Some(report));
 }
 
 pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<&SessionReport>) {
     let app = access.app();
     let outbox_changed = {
-        let servers = app.servers.lock().unwrap();
-        let mut outbox = app.outbox.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
+        let mut outbox = app.outbox.lock_or_recover();
         let delivered = report.is_some_and(|r| outbox.clear_delivered(server, r.delivered.iter().copied()));
         let pruned = servers.get(&server).is_some_and(|state| outbox.prune(state, Utc::now()));
         delivered | pruned
@@ -849,7 +850,7 @@ pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<
     if outbox_changed {
         app.persist_outbox();
     }
-    if app.catchup.lock().unwrap().take_unsaved_server(server) {
+    if app.catchup.lock_or_recover().take_unsaved_server(server) {
         app.persist_server(server);
     }
     crate::doorbell::settle(access, server);
@@ -862,7 +863,7 @@ pub fn after_session<A: AppAccess>(access: &A, server: ServerId, report: Option<
 fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
     let app = access.app();
     let (changes, save) = {
-        let mut catchup = app.catchup.lock().unwrap();
+        let mut catchup = app.catchup.lock_or_recover();
         (catchup.take_changes(server), catchup.schedule_save())
     };
     if save {
@@ -873,7 +874,7 @@ fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
     }
     if !changes.fresh.is_empty() {
         let payload = {
-            let servers = app.servers.lock().unwrap();
+            let servers = app.servers.lock_or_recover();
             caught_up_payload(server, &changes.fresh, servers.get(&server))
         };
         access.emit("messages-caught-up", payload);
@@ -881,7 +882,7 @@ fn flush<A: AppAccess>(access: &A, server: ServerId, redraw: bool) {
 }
 
 pub fn hold(app: &App, server: ServerId, signer: UserId, event: ServerEvent) {
-    app.catchup.lock().unwrap().hold(server, signer, event, Instant::now());
+    app.catchup.lock_or_recover().hold(server, signer, event, Instant::now());
 }
 
 pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserId]) {
@@ -890,7 +891,7 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserI
     let (events, actions) = if signers.is_empty() {
         (Vec::new(), Vec::new())
     } else {
-        let mut catchup = app.catchup.lock().unwrap();
+        let mut catchup = app.catchup.lock_or_recover();
         let now = Instant::now();
         (catchup.take_held(server, &signers, now), catchup.take_held_actions(server, &signers, now))
     };
@@ -898,7 +899,7 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserI
         let mut still = Vec::new();
         let mut changed = false;
         {
-            let mut servers = app.servers.lock().unwrap();
+            let mut servers = app.servers.lock_or_recover();
             if let Some(state) = servers.get_mut(&server) {
                 for (at, signed) in actions {
                     match state.apply_signed(&signed) {
@@ -910,7 +911,7 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserI
                 }
             }
         }
-        let mut catchup = app.catchup.lock().unwrap();
+        let mut catchup = app.catchup.lock_or_recover();
         catchup.restore_held_actions(server, still);
         if changed {
             catchup.note_applied(server, []);
@@ -922,12 +923,12 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserI
     }
     let unread = Unread::of(app, server);
     let retried = {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let Some(state) = servers.get_mut(&server) else { return };
         retry_held(state, &unread, events)
     };
     {
-        let mut catchup = app.catchup.lock().unwrap();
+        let mut catchup = app.catchup.lock_or_recover();
         catchup.restore_held(server, retried.still);
         if retried.changed {
             catchup.note_applied(server, retried.fresh);
@@ -943,9 +944,9 @@ pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
     if !app.key_settled() {
         return None;
     }
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id)?;
     let identity = app.identity()?;
-    let mut payload = commy_net::protocol::build_sync_response(app.servers.lock().unwrap().get(&server)?, 50, me);
+    let mut payload = commy_net::protocol::build_sync_response(app.servers.lock_or_recover().get(&server)?, 50, me);
     commy_net::protocol::sign_sync_response(&mut payload, Utc::now().timestamp_millis(), &identity);
     Some(payload)
 }
@@ -954,10 +955,10 @@ pub fn service_snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> 
     if app.awaits_snapshot(server) || !app.key_settled() {
         return None;
     }
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id)?;
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id)?;
     let identity = app.identity()?;
     let budget = commy_net::community_streams::SNAPSHOT_BYTES;
-    let mut payload = commy_net::protocol::build_sync_response_within(app.servers.lock().unwrap().get(&server)?, 0, me, budget);
+    let mut payload = commy_net::protocol::build_sync_response_within(app.servers.lock_or_recover().get(&server)?, 0, me, budget);
     commy_net::protocol::sign_sync_response(&mut payload, Utc::now().timestamp_millis(), &identity);
     Some(payload)
 }
@@ -972,8 +973,8 @@ pub fn learn_service_profiles(handle: &tauri::AppHandle, server: ServerId, paylo
 }
 
 pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
-    let Some(me) = app.profile.lock().unwrap().clone() else { return Vec::new() };
-    let Some(member) = app.servers.lock().unwrap().get(&server).map(|state| state.server.is_current_member(me.id)) else {
+    let Some(me) = app.profile.lock_or_recover().clone() else { return Vec::new() };
+    let Some(member) = app.servers.lock_or_recover().get(&server).map(|state| state.server.is_current_member(me.id)) else {
         return Vec::new();
     };
     let join = (member && app.key_settled()).then(|| app.wire_for(server, ServerEvent::MemberJoin { server, profile: app.announced(me) }));
@@ -1014,14 +1015,14 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
         return false;
     }
     remote_server.members = members.into_iter().map(member_of).collect();
-    let me = app.profile.lock().unwrap().clone();
+    let me = app.profile.lock_or_recover().clone();
     let me_id = me.as_ref().map(|p| p.id);
     let mut held = Vec::new();
     let mut waiting = Vec::new();
     let learned: Vec<UserId>;
-    let early = app.catchup.lock().unwrap().take_early(server, Instant::now());
+    let early = app.catchup.lock_or_recover().take_early(server, Instant::now());
     {
-        let mut servers = app.servers.lock().unwrap();
+        let mut servers = app.servers.lock_or_recover();
         let Some(old) = servers.remove(&server) else { return false };
         let pinned: HashMap<UserId, IdentityKey> = old.profiles.values().filter_map(|p| Some((p.id, p.identity?))).collect();
         let mut state = ServerState::new(remote_server);
@@ -1116,7 +1117,7 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
         hold(app, server, signer, event);
     }
     {
-        let mut catchup = app.catchup.lock().unwrap();
+        let mut catchup = app.catchup.lock_or_recover();
         let now = Instant::now();
         for signed in waiting {
             catchup.hold_action(server, signed, now);
@@ -1145,7 +1146,7 @@ fn snapshot_refusal(app: &App, server: ServerId, payload: &WirePayload, max_age_
     if *by != owner || remote.owner != owner {
         return Some("signed by someone else");
     }
-    if app.catchup.lock().unwrap().handed_on_by(server, owner, &key) {
+    if app.catchup.lock_or_recover().handed_on_by(server, owner, &key) {
         return Some("its owner already handed the server on");
     }
     if (Utc::now().timestamp_millis() - *at).abs() > max_age_ms {
@@ -1176,11 +1177,10 @@ pub fn joined_placeholder(state: &ServerState, me: UserId, invite: Option<&[[u8;
 }
 
 pub fn mark_joined_placeholders(app: &App, invites: &HashMap<ServerId, String>, our_node: [u8; 32]) {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     let found: Vec<ServerId> = app
         .servers
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .values()
         .filter(|state| {
             let nodes = invites.get(&state.server.id).and_then(|raw| someone_elses_invite_nodes(raw, me));
@@ -1206,17 +1206,17 @@ pub fn settled_own_server(state: &ServerState, me: UserId, invite: Option<&str>)
 }
 
 pub fn release_own_servers(app: &App, invites: &HashMap<ServerId, String>) {
-    let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
-    let awaiting = app.awaiting_snapshot.lock().unwrap().clone();
+    let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
+    let awaiting = app.awaiting_snapshot.lock_or_recover().clone();
     let settled: Vec<ServerId> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         awaiting
             .into_iter()
             .filter(|id| servers.get(id).is_some_and(|state| settled_own_server(state, me, invites.get(id).map(String::as_str))))
             .collect()
     };
     for server in settled {
-        let made_up = app.servers.lock().unwrap().get_mut(&server).map(|state| state.drop_channels_nobody_announced(me)).unwrap_or_default();
+        let made_up = app.servers.lock_or_recover().get_mut(&server).map(|state| state.drop_channels_nobody_announced(me)).unwrap_or_default();
         if !made_up.is_empty() {
             tracing::warn!("{server} drops {} channels this device made up while it waited", made_up.len());
             app.persist_server(server);
@@ -1238,7 +1238,7 @@ pub async fn run_periodic(handle: tauri::AppHandle) {
     sweep_all(&handle);
     loop {
         tokio::time::sleep(PERIODIC_INTERVAL).await;
-        handle.state::<App>().catchup.lock().unwrap().expire_held(Instant::now());
+        handle.state::<App>().catchup.lock_or_recover().expire_held(Instant::now());
         let neighbors = crate::settle::KeyNet::neighbors(&handle).await;
         let nanos = std::time::UNIX_EPOCH.elapsed().map(|d| d.subsec_nanos() as u64).unwrap_or(0);
         for (i, (sid, list)) in neighbors.into_iter().enumerate() {

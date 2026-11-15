@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -40,9 +41,9 @@ fn save_local(app: &App, state: &ReadState) {
 }
 
 fn view_of(app: &App, state: &ReadState, only: Option<&[String]>) -> ReadView {
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let blocked: HashSet<UserId> = app.safety.lock().unwrap().blocked.iter().copied().collect();
-    let servers = app.servers.lock().unwrap();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let blocked: HashSet<UserId> = app.safety.lock_or_recover().blocked.iter().copied().collect();
+    let servers = app.servers.lock_or_recover();
     commy_view::reads::view(servers.values(), state, only, me, &blocked)
 }
 
@@ -109,7 +110,7 @@ pub fn read_state_mark_read(
     let sid: ServerId = server_id.parse().map_err(|_| "unknown server".to_string())?;
     let now = now_ms();
     let marks: BTreeMap<String, ReadMark> = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid).ok_or("unknown server")?;
         state
             .server
@@ -177,7 +178,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     let _guard = SYNC.lock().await;
     let app = handle.state::<App>();
     let Some(s) = entry_list::session(&app) else { return Ok(()) };
-    if app.account.lock().unwrap().features.is_some_and(|f| !f.vault) {
+    if app.account.lock_or_recover().features.is_some_and(|f| !f.vault) {
         return Ok(());
     }
     let Some(key) = key_for(&app, &s) else { return Ok(()) };

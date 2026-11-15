@@ -69,6 +69,7 @@ pub fn attach(base_dir: &Path) {
         }
         sink.written = opened.as_ref().map_or(0, |(_, written)| *written);
         sink.file = opened.map(|(file, _)| file);
+        crate::panic_log::write_to(folder.join(LOG_FILE));
         sink.folder = Some(folder);
     }
     apply_filter(verbose);

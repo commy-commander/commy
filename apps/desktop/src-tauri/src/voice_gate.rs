@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::state::App;
 use commy_core::ServerId;
 use commy_net::voice_gate::{wait_for, GateView, Signals, StateLink, Wait, WaitView};
@@ -28,7 +29,7 @@ async fn net_signals(app: &App, servers: &[ServerId]) -> NetSignals {
 }
 
 fn online_for(up: bool) -> Duration {
-    let mut since = ONLINE_SINCE.lock().unwrap();
+    let mut since = ONLINE_SINCE.lock_or_recover();
     if !up {
         *since = None;
         return Duration::ZERO;
@@ -47,9 +48,9 @@ pub(crate) fn state_link(app: &App, server: ServerId) -> StateLink {
 async fn waits(app: &App, servers: &[ServerId]) -> BTreeMap<ServerId, Wait> {
     let net = net_signals(app, servers).await;
     let online_for = online_for(net.up);
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
     let others: BTreeMap<ServerId, bool> = {
-        let states = app.servers.lock().unwrap();
+        let states = app.servers.lock_or_recover();
         servers
             .iter()
             .map(|sid| {
@@ -78,15 +79,15 @@ async fn waits(app: &App, servers: &[ServerId]) -> BTreeMap<ServerId, Wait> {
 }
 
 pub async fn check(app: &App, server: ServerId) -> Option<Wait> {
-    if !app.voice.lock().unwrap().wait_for_connection {
+    if !app.voice.lock_or_recover().wait_for_connection {
         return None;
     }
     waits(app, &[server]).await.remove(&server)
 }
 
 async fn view(app: &App) -> GateView {
-    let servers: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
-    let enabled = app.voice.lock().unwrap().wait_for_connection;
+    let servers: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
+    let enabled = app.voice.lock_or_recover().wait_for_connection;
     let waits = waits(app, &servers)
         .await
         .into_iter()
@@ -97,14 +98,14 @@ async fn view(app: &App) -> GateView {
 
 pub async fn current(app: &App) -> GateView {
     let fresh = view(app).await;
-    *LAST.lock().unwrap() = Some(fresh.clone());
+    *LAST.lock_or_recover() = Some(fresh.clone());
     fresh
 }
 
 pub async fn run(handle: AppHandle) {
     loop {
         let fresh = view(&handle.state::<App>()).await;
-        let changed = LAST.lock().unwrap().replace(fresh.clone()).as_ref() != Some(&fresh);
+        let changed = LAST.lock_or_recover().replace(fresh.clone()).as_ref() != Some(&fresh);
         if changed {
             let _ = handle.emit("voice-gate", &fresh);
         }

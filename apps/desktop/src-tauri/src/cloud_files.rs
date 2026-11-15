@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -25,12 +26,12 @@ static ANSWERS: Mutex<Option<HashMap<String, (bool, Instant)>>> = Mutex::new(Non
 static OFFERED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 fn remembered(base: &str, now: Instant) -> Option<bool> {
-    let answers = ANSWERS.lock().unwrap();
+    let answers = ANSWERS.lock_or_recover();
     answers.as_ref()?.get(base).filter(|(_, at)| now.saturating_duration_since(*at) < ASK_AGAIN_AFTER).map(|(on, _)| *on)
 }
 
 fn remember(base: &str, on: bool) {
-    let mut guard = ANSWERS.lock().unwrap();
+    let mut guard = ANSWERS.lock_or_recover();
     let answers = guard.get_or_insert_with(HashMap::new);
     if answers.len() >= MAX_ANSWERS {
         answers.clear();
@@ -39,7 +40,7 @@ fn remember(base: &str, on: bool) {
 }
 
 pub fn forget_answer(base: &str) {
-    if let Some(answers) = ANSWERS.lock().unwrap().as_mut() {
+    if let Some(answers) = ANSWERS.lock_or_recover().as_mut() {
         answers.remove(base);
     }
 }
@@ -114,7 +115,7 @@ async fn fetch_copy(http: &reqwest::Client, base: &str, identity: &Identity, id:
 }
 
 fn first_offer(base: &str, blob: &str) -> bool {
-    let mut guard = OFFERED.lock().unwrap();
+    let mut guard = OFFERED.lock_or_recover();
     let offered = guard.get_or_insert_with(HashSet::new);
     if offered.len() >= MAX_OFFERED {
         offered.clear();
@@ -123,7 +124,7 @@ fn first_offer(base: &str, blob: &str) -> bool {
 }
 
 fn withdraw_offer(base: &str, blob: &str) {
-    if let Some(offered) = OFFERED.lock().unwrap().as_mut() {
+    if let Some(offered) = OFFERED.lock_or_recover().as_mut() {
         offered.remove(&format!("{base} {blob}"));
     }
 }

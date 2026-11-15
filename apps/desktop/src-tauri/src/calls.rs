@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::state::App;
 use crate::{current_profile, node_hex_for_user, CmdResult};
 use commy_core::ids::CALL_SERVER;
@@ -47,16 +48,16 @@ fn announce(app: &App, handle: &tauri::AppHandle, call: &DmCall, state: &str, re
 }
 
 pub fn current(app: &App) -> Option<DmCallView> {
-    let call = app.dm_call.lock().unwrap().clone()?;
+    let call = app.dm_call.lock_or_recover().clone()?;
     Some(view(app, &call, if call.active { "active" } else { "ringing" }, None))
 }
 
 fn busy(app: &App) -> bool {
-    app.voice_session.lock().unwrap().is_some() || app.dm_call.lock().unwrap().is_some()
+    app.voice_session.lock_or_recover().is_some() || app.dm_call.lock_or_recover().is_some()
 }
 
 fn matching(app: &App, partner: UserId, channel: ChannelId) -> Option<DmCall> {
-    app.dm_call.lock().unwrap().clone().filter(|c| c.partner == partner && c.channel == channel)
+    app.dm_call.lock_or_recover().clone().filter(|c| c.partner == partner && c.channel == channel)
 }
 
 async fn send_signal(app: &App, to: UserId, call: ChannelId, signal: CallSignal) -> CmdResult<()> {
@@ -72,22 +73,22 @@ async fn send_signal_then(app: &App, to: UserId, call: ChannelId, signal: CallSi
 }
 
 pub fn peer_ok(app: &App, user: UserId, node_hex: &str, channel: ChannelId) -> bool {
-    let active = app.dm_call.lock().unwrap().as_ref().is_some_and(|c| c.active && c.partner == user && c.channel == channel);
+    let active = app.dm_call.lock_or_recover().as_ref().is_some_and(|c| c.active && c.partner == user && c.channel == channel);
     active && node_hex_for_user(app, user).is_some_and(|hex| hex.eq_ignore_ascii_case(node_hex))
 }
 
 fn stop_session(app: &App, channel: ChannelId) {
-    let mine = app.voice_session.lock().unwrap().as_ref().is_some_and(|s| s.server == CALL_SERVER && s.channel == channel);
+    let mine = app.voice_session.lock_or_recover().as_ref().is_some_and(|s| s.server == CALL_SERVER && s.channel == channel);
     if mine {
         let testing = crate::pause_mic_test(app);
-        *app.voice_session.lock().unwrap() = None;
+        *app.voice_session.lock_or_recover() = None;
         crate::voice_filter::apply(app);
         crate::resume_mic_test(app, testing);
     }
 }
 
 pub async fn end(app: &App, handle: &tauri::AppHandle, notify: bool, reason: &str) {
-    let Some(call) = app.dm_call.lock().unwrap().take() else { return };
+    let Some(call) = app.dm_call.lock_or_recover().take() else { return };
     stop_session(app, call.channel);
     announce(app, handle, &call, "ended", Some(reason));
     if notify {
@@ -99,7 +100,7 @@ pub async fn end(app: &App, handle: &tauri::AppHandle, notify: bool, reason: &st
 }
 
 pub fn dial_partner(app: &App, handle: &tauri::AppHandle, me: &UserProfile) {
-    let Some(call) = app.dm_call.lock().unwrap().clone().filter(|c| c.active) else { return };
+    let Some(call) = app.dm_call.lock_or_recover().clone().filter(|c| c.active) else { return };
     let (Some(ours), Some(theirs)) = (me.node.clone(), node_hex_for_user(app, call.partner)) else { return };
     if should_dial(&ours, &theirs) && crate::claim_voice_dial(app, call.channel, call.partner) {
         crate::dial_voice_peer(handle, commy_core::ids::CALL_SERVER, call.partner, theirs, call.channel, me.id);
@@ -108,11 +109,11 @@ pub fn dial_partner(app: &App, handle: &tauri::AppHandle, me: &UserProfile) {
 
 async fn connect(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, call: DmCall) -> CmdResult<()> {
     let me = current_profile(app)?;
-    let voice = app.voice.lock().unwrap().clone();
+    let voice = app.voice.lock_or_recover().clone();
     crate::start_voice_session(app, handle, CALL_SERVER, call.channel, &voice, me.id);
     crate::apply_personal_volumes(app);
     let still_on = {
-        let mut slot = app.dm_call.lock().unwrap();
+        let mut slot = app.dm_call.lock_or_recover();
         match slot.as_mut() {
             Some(c) if c.channel == call.channel => {
                 c.active = true;
@@ -135,7 +136,7 @@ fn ring_timeout(handle: tauri::AppHandle, channel: ChannelId) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(RING_FOR).await;
         let app = handle.state::<App>();
-        let stale = app.dm_call.lock().unwrap().clone().filter(|c| c.channel == channel && !c.active);
+        let stale = app.dm_call.lock_or_recover().clone().filter(|c| c.channel == channel && !c.active);
         if let Some(call) = stale {
             let reason = if call.outgoing { "unanswered" } else { "missed" };
             end(&app, &handle, call.outgoing, reason).await;
@@ -154,7 +155,7 @@ pub async fn on_signal(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, f
                 return;
             }
             let call = DmCall { partner: from, channel, outgoing: false, active: false, since: Instant::now() };
-            *app.dm_call.lock().unwrap() = Some(call.clone());
+            *app.dm_call.lock_or_recover() = Some(call.clone());
             announce(app, handle, &call, "ringing", None);
             ring_timeout(handle.clone(), channel);
             answer_if_tapped(handle);
@@ -189,8 +190,8 @@ fn tapped_for(tapped: &mut Option<(UserId, Instant)>, partner: UserId) -> bool {
 
 fn answer_if_tapped(handle: &tauri::AppHandle) {
     let app = handle.state::<App>();
-    let Some(partner) = app.dm_call.lock().unwrap().as_ref().filter(|c| !c.outgoing && !c.active).map(|c| c.partner) else { return };
-    if !tapped_for(&mut ANSWER_TAPPED.lock().unwrap(), partner) {
+    let Some(partner) = app.dm_call.lock_or_recover().as_ref().filter(|c| !c.outgoing && !c.active).map(|c| c.partner) else { return };
+    if !tapped_for(&mut ANSWER_TAPPED.lock_or_recover(), partner) {
         return;
     }
     let handle = handle.clone();
@@ -203,7 +204,7 @@ fn answer_if_tapped(handle: &tauri::AppHandle) {
 
 pub fn answer_from_notification(handle: &tauri::AppHandle, user: &str) {
     let Ok(partner) = user.parse::<UserId>() else { return };
-    *ANSWER_TAPPED.lock().unwrap() = Some((partner, Instant::now()));
+    *ANSWER_TAPPED.lock_or_recover() = Some((partner, Instant::now()));
     answer_if_tapped(handle);
 }
 
@@ -212,7 +213,7 @@ pub fn settled_elsewhere(app: &App, handle: &tauri::AppHandle, partner: UserId, 
         return;
     }
     let ringing = {
-        let mut slot = app.dm_call.lock().unwrap();
+        let mut slot = app.dm_call.lock_or_recover();
         match slot.as_ref() {
             Some(c) if c.partner == partner && c.channel == channel && !c.outgoing && !c.active => slot.take(),
             _ => None,
@@ -231,7 +232,7 @@ pub async fn start_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle,
     }
     let channel = ChannelId::new();
     let call = DmCall { partner, channel, outgoing: true, active: false, since: Instant::now() };
-    *app.dm_call.lock().unwrap() = Some(call.clone());
+    *app.dm_call.lock_or_recover() = Some(call.clone());
     ring_timeout(handle.clone(), channel);
     let ringing = announce(&app, &handle, &call, "ringing", None);
     let sender = handle.clone();
@@ -241,7 +242,7 @@ pub async fn start_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle,
         let rung = send_signal_then(&app, partner, channel, CallSignal::Ring, move || drop(sending)).await;
         if let Err(e) = rung {
             tracing::info!("could not ring {partner}: {e}");
-            let ours = app.dm_call.lock().unwrap().as_ref().is_some_and(|c| c.channel == channel && !c.active);
+            let ours = app.dm_call.lock_or_recover().as_ref().is_some_and(|c| c.channel == channel && !c.active);
             if ours {
                 end(&app, &sender, false, "offline").await;
             }
@@ -254,13 +255,12 @@ pub async fn start_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle,
 pub async fn answer_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle, accept: bool) -> CmdResult<()> {
     let call = app
         .dm_call
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .clone()
         .filter(|c| !c.outgoing && !c.active)
         .ok_or("nobody is calling")?;
     if !accept {
-        app.dm_call.lock().unwrap().take();
+        app.dm_call.lock_or_recover().take();
         let _ = send_signal(&app, call.partner, call.channel, CallSignal::Decline).await;
         announce(&app, &handle, &call, "ended", Some("declined"));
         return Ok(());

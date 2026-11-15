@@ -1,5 +1,6 @@
 #![cfg_attr(mobile, allow(dead_code))]
 
+use crate::lock_or_recover::LockOrRecover;
 use commy_media::screen::SourceKind;
 #[cfg(desktop)]
 use commy_media::screen::SourceRect;
@@ -21,10 +22,10 @@ pub fn show(_app: &AppHandle, _source: Option<(SourceKind, u32)>) {}
 #[cfg(desktop)]
 pub fn show(app: &AppHandle, source: Option<(SourceKind, u32)>) {
     let Some(source) = source else { return hide(app) };
-    if *TARGET.lock().unwrap() == Some(source) {
+    if *TARGET.lock_or_recover() == Some(source) {
         return;
     }
-    *TARGET.lock().unwrap() = Some(source);
+    *TARGET.lock_or_recover() = Some(source);
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -47,7 +48,7 @@ pub fn show(app: &AppHandle, source: Option<(SourceKind, u32)>) {
 }
 
 pub fn hide(app: &AppHandle) {
-    *TARGET.lock().unwrap() = None;
+    *TARGET.lock_or_recover() = None;
     GENERATION.fetch_add(1, Ordering::SeqCst);
     #[cfg(desktop)]
     if let Some(window) = app.get_webview_window(LABEL) {

@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -51,15 +52,15 @@ struct AppleAttempt {
 }
 
 fn pending_for(server: &str) -> Pending {
-    PENDING.lock().unwrap().clone().filter(|p| p.fresh_for(server)).unwrap_or_else(|| Pending::new(server))
+    PENDING.lock_or_recover().clone().filter(|p| p.fresh_for(server)).unwrap_or_else(|| Pending::new(server))
 }
 
 fn keep(pending: Pending) {
-    *PENDING.lock().unwrap() = Some(pending);
+    *PENDING.lock_or_recover() = Some(pending);
 }
 
 pub fn forget() {
-    PENDING.lock().unwrap().take();
+    PENDING.lock_or_recover().take();
 }
 
 #[derive(Serialize)]

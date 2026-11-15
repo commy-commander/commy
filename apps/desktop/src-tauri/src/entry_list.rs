@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -209,10 +210,10 @@ fn identity_step(local: &EntryList, shared: &EntryList) -> IdentityStep {
 fn local_list(app: &App, dir: &Path) -> EntryList {
     let path = dir.join(LOCAL_FILE);
     let mut record: LocalRecord = read(&path).unwrap_or_default();
-    let invites = app.invites.lock().unwrap().clone();
+    let invites = app.invites.lock_or_recover().clone();
     let mut servers = BTreeMap::new();
     let mut recorded = false;
-    for state in app.servers.lock().unwrap().values() {
+    for state in app.servers.lock_or_recover().values() {
         let id = state.server.id;
         let Some(ticket) = invites.get(&id) else { continue };
         let since = *record.joined.entry(id).or_insert_with(|| {
@@ -224,7 +225,7 @@ fn local_list(app: &App, dir: &Path) -> EntryList {
     if recorded {
         write(&path, &record);
     }
-    let profile = app.profile.lock().unwrap().as_ref().map(commy_view::profile::for_list);
+    let profile = app.profile.lock_or_recover().as_ref().map(commy_view::profile::for_list);
     EntryList { profile, profile_at: record.profile_edited, identity: read_identity(dir), servers, left: record.left }
 }
 
@@ -242,13 +243,13 @@ static ASKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 
 fn set_status(handle: &AppHandle, state: &str, detail: impl Into<String>, servers: usize, has_key: bool) {
     let status = EntryStatus { state: state.into(), detail: detail.into(), servers, has_key };
-    *STATUS.lock().unwrap() = Some(status.clone());
+    *STATUS.lock_or_recover() = Some(status.clone());
     let _ = handle.emit("entry-list-changed", status);
 }
 
 #[tauri::command]
 pub fn entry_list_status() -> EntryStatus {
-    STATUS.lock().unwrap().clone().unwrap_or_else(|| EntryStatus { state: "off".into(), ..Default::default() })
+    STATUS.lock_or_recover().clone().unwrap_or_else(|| EntryStatus { state: "off".into(), ..Default::default() })
 }
 
 fn worth_retrying_on_resume(status: &EntryStatus) -> bool {
@@ -274,7 +275,7 @@ fn signed_in(app: &App) -> Result<(PathBuf, Session), String> {
 }
 
 pub(crate) fn session(app: &App) -> Option<Session> {
-    let state = app.account.lock().unwrap();
+    let state = app.account.lock_or_recover();
     if !crate::account::is_signed_in(&state) {
         return None;
     }
@@ -385,10 +386,10 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     let Some(s) = session(&app) else {
         return finish(handle, "off", "Sign in to your Commy account to sync your servers.", 0, false).await;
     };
-    if app.account.lock().unwrap().features.is_some_and(|f| !f.vault) {
+    if app.account.lock_or_recover().features.is_some_and(|f| !f.vault) {
         return finish(handle, "unsupported", NO_VAULT, 0, false).await;
     }
-    if app.profile.lock().unwrap().is_none() {
+    if app.profile.lock_or_recover().is_none() {
         return Ok(());
     }
 
@@ -631,7 +632,7 @@ fn keep_held_servers(step: IdentityStep, shared: &EntryList) -> IdentityStep {
 
 async fn identity_part(app: &App, dir: &Path, local: &EntryList, shared: &EntryList, wait: &KeyWait) -> (AfterStep, bool) {
     let step = identity_step(local, shared);
-    let holds = !app.servers.lock().unwrap().is_empty();
+    let holds = !app.servers.lock_or_recover().is_empty();
     let step = if holds { keep_held_servers(step, shared) } else { step };
     let after = take_identity_step(app, dir, step, shared).await;
     let retry = after == AfterStep::Wait && wait.start();
@@ -680,8 +681,8 @@ fn adopt_identity(app: &App, dir: &Path, shared: &EntryList) -> bool {
     if !write_identity(dir, identity) {
         return false;
     }
-    let node = app.node_hex.lock().unwrap().clone();
-    *app.profile.lock().unwrap() = Some(UserProfile { node, ..profile });
+    let node = app.node_hex.lock_or_recover().clone();
+    *app.profile.lock_or_recover() = Some(UserProfile { node, ..profile });
     app.persist_profile();
     true
 }
@@ -701,7 +702,7 @@ async fn opened_account_list(app: &App, dir: &Path, s: &Session) -> Result<Optio
 #[tauri::command]
 pub async fn adopt_account_profile(handle: AppHandle) -> Result<Option<UserProfile>, String> {
     let app = handle.state::<App>();
-    if let Some(profile) = app.profile.lock().unwrap().clone() {
+    if let Some(profile) = app.profile.lock_or_recover().clone() {
         return Ok(Some(profile));
     }
     let adopted = {
@@ -713,7 +714,7 @@ pub async fn adopt_account_profile(handle: AppHandle) -> Result<Option<UserProfi
             return Ok(None);
         }
         crate::settle::settle_loaded_key(&app, &swap).map_err(|e| format!("could not load the account's identity: {e}"))?;
-        app.profile.lock().unwrap().clone()
+        app.profile.lock_or_recover().clone()
     };
     crate::settle::use_settled_key(&handle).await;
     schedule(&handle);
@@ -731,7 +732,7 @@ fn same_shared_fields(a: Option<&UserProfile>, b: Option<&UserProfile>) -> bool 
 fn take_profile_edits(handle: &AppHandle, app: &App, shared: Option<&UserProfile>) -> bool {
     let Some(shared) = shared else { return false };
     let updated = {
-        let mut current = app.profile.lock().unwrap();
+        let mut current = app.profile.lock_or_recover();
         let Some(profile) = current.as_mut() else { return false };
         if profile.id != shared.id {
             return false;
@@ -745,7 +746,7 @@ fn take_profile_edits(handle: &AppHandle, app: &App, shared: Option<&UserProfile
 }
 
 async fn join_missing(handle: &AppHandle, app: &App, merged: &EntryList, local: &EntryList) {
-    let present: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let present: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     for (id, entry) in &merged.servers {
         if present.contains(id) || local.left.contains_key(id) {
             continue;

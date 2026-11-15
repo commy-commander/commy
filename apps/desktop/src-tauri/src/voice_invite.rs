@@ -1,3 +1,4 @@
+use crate::lock_or_recover::LockOrRecover;
 use crate::invite_link::{self, Expiry};
 use crate::view::voice_invite::{invite_from, invite_target, presence_of, VoicePresenceView};
 use crate::view::{DmMessageView, MessageView};
@@ -10,14 +11,14 @@ use commy_core::{ChannelId, DmMessage, Message, ServerId, UserId, VoiceInvite};
 fn build_invite(app: &App, server_id: &str, channel_id: &str, me: UserId) -> CmdResult<VoiceInvite> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
-    let servers = app.servers.lock().unwrap();
+    let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid).ok_or("unknown server")?;
     invite_from(state, sid, cid, me)
 }
 
 async fn link_for_outsiders(app: &App, handle: &tauri::AppHandle, server_id: &str, sid: ServerId) -> Option<String> {
     let (group, public) = {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&sid)?;
         (state.server.group, state.server.public)
     };
@@ -42,7 +43,7 @@ pub async fn send_voice_invite(
     let to_sid: ServerId = to_server_id.parse().map_err(err_to_string)?;
     let to_cid: ChannelId = to_channel_id.parse().map_err(err_to_string)?;
     {
-        let servers = app.servers.lock().unwrap();
+        let servers = app.servers.lock_or_recover();
         let state = servers.get(&to_sid).ok_or("unknown server")?;
         invite_target(state, profile.id, to_cid)?;
     }
@@ -66,7 +67,7 @@ pub async fn send_dm_voice_invite(
 ) -> CmdResult<DmMessageView> {
     let (me, partner) = dm_partner(&app, &user_id)?;
     let mut invite = build_invite(&app, &server_id, &channel_id, me.id)?;
-    let already_in = app.servers.lock().unwrap().get(&invite.server).is_some_and(|s| s.server.member(partner).is_some());
+    let already_in = app.servers.lock_or_recover().get(&invite.server).is_some_and(|s| s.server.member(partner).is_some());
     if !already_in {
         invite.invite_link = link_for_outsiders(&app, &handle, &server_id, invite.server).await;
     }
@@ -84,8 +85,8 @@ pub fn voice_channel_presence(
 ) -> CmdResult<Option<VoicePresenceView>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let cid: ChannelId = channel_id.parse().map_err(err_to_string)?;
-    let me = app.profile.lock().unwrap().as_ref().map(|p| p.id);
-    let servers = app.servers.lock().unwrap();
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let servers = app.servers.lock_or_recover();
     let Some(state) = servers.get(&sid) else {
         return Ok(None);
     };
