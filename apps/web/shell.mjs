@@ -7,12 +7,13 @@ export function relayOrigins(relay) {
 export const FILE_STORAGE_ORIGINS = ["https://*.workers.dev"];
 export const GIF_SEARCH_ORIGINS = ["https://api.klipy.com", "https://api.giphy.com"];
 export const SPEECH_VOICE_ORIGINS = ["https://cdn.jsdelivr.net", "https://huggingface.co", "https://*.hf.co"];
+export const SYNC_HOST_ORIGINS = ["wss:"];
 
 export function contentSecurityPolicy(relays) {
   return [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
-    `connect-src 'self' blob: ${[...relays, ...FILE_STORAGE_ORIGINS, ...GIF_SEARCH_ORIGINS, ...SPEECH_VOICE_ORIGINS].join(" ")}`,
+    `connect-src 'self' blob: ${[...relays, ...FILE_STORAGE_ORIGINS, ...GIF_SEARCH_ORIGINS, ...SPEECH_VOICE_ORIGINS, ...SYNC_HOST_ORIGINS].join(" ")}`,
     "img-src 'self' data: blob:",
     "media-src 'self' data: blob:",
     "style-src 'self' 'unsafe-inline'",

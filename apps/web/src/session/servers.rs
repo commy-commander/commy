@@ -4,7 +4,10 @@ use chrono::Utc;
 use commy_core::channel_key::KeyScope;
 use commy_core::server::{GameTagMeta, ImageRef};
 use commy_core::{ChannelId, Permissions, RoleId, ServerEvent, ServerId, ServerState, UserId};
+use commy_core::sync_host::{chosen_socket, clean_sync_host, display_host, socket_url};
 use commy_net::{invite, WirePayload};
+use commy_sync::errands::{self, owner_work, ClaimGap, Errand, ErrandError};
+use commy_view::sync_host::{HOST_SLOW, HOST_TAKEN, HOST_TOO_OLD, HOST_UNREACHABLE, KEYS_NOT_READY, SYNC_HOST_INVALID};
 use commy_view::act::Act;
 use commy_view::pictures::MAX_SERVER_IMAGE_BYTES;
 use commy_view::{manage, moderate, profile, roles, templates};
@@ -14,6 +17,25 @@ use wasm_bindgen_futures::spawn_local;
 
 use super::{parse, to_json, Args, Session};
 use crate::sync_book::left_record;
+
+fn refusal(error: ErrandError) -> String {
+    match error {
+        ErrandError::Unreachable(_) => HOST_UNREACHABLE.into(),
+        ErrandError::TooOld => HOST_TOO_OLD.into(),
+    }
+}
+
+fn gap(gap: ClaimGap) -> String {
+    match gap {
+        ClaimGap::Taken => HOST_TAKEN.into(),
+        ClaimGap::Unanswered => HOST_SLOW.into(),
+    }
+}
+
+async fn check_host(origin: &str) -> Result<(), String> {
+    let url = socket_url(origin).ok_or(SYNC_HOST_INVALID)?;
+    errands::run(&url, Vec::new()).await.map(|_| ()).map_err(refusal)
+}
 
 #[derive(Deserialize)]
 pub(super) struct MoveArg {
@@ -66,6 +88,15 @@ impl Session {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 to_json(&self.read_state(server, |state, me| roles::audit_log(state, state.server.permissions_for(me)))?)
             }
+            "set_sync_host" => {
+                let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+                self.set_sync_host(server, args.host.as_deref()).await
+            }
+            "test_sync_host" => {
+                let origin = clean_sync_host(args.host.as_deref().unwrap_or("")).ok_or(SYNC_HOST_INVALID)?;
+                check_host(&origin).await?;
+                Ok(Value::String(display_host(&origin).unwrap_or_default().to_string()))
+            }
             "export_server_template" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 Ok(Value::String(self.read_state(server, |state, me| templates::export(state, state.server.permissions_for(me)))?))
@@ -111,6 +142,34 @@ impl Session {
         if cmd == "set_server_image" {
             self.emit("servers-changed", Value::Null);
         }
+        Ok(Value::Null)
+    }
+
+    async fn set_sync_host(self: &Rc<Self>, server: ServerId, host: Option<&str>) -> Result<Value, String> {
+        let me = self.client.borrow().profile().ok_or("Your servers are not unlocked yet")?.id;
+        let (home, ready) = {
+            let guard = self.sync.borrow();
+            let live = guard.as_ref().ok_or("Commy is not connected to its sync service yet")?;
+            (live.home().to_string(), live.book.holds_state(server))
+        };
+        if !ready {
+            return Err("wait until this server has finished loading".into());
+        }
+        let event = self.read_state(server, |state, _| commy_view::sync_host::set_sync_host(state, me, host))?;
+        let ServerEvent::SyncHostSet { url, .. } = &event else { return Err(SYNC_HOST_INVALID.into()) };
+        let target = chosen_socket(url.as_deref(), Some(&home)).ok_or(SYNC_HOST_INVALID)?;
+        let (_, root, streams) = self.erase_plan(server).ok_or(KEYS_NOT_READY)?;
+        let outcomes = errands::run(&target, owner_work(&root, &streams, |_| Errand::Claim)).await.map_err(refusal)?;
+        errands::claimed_all(&outcomes).map_err(gap)?;
+        let payload = self.client.borrow().act(server, |_, _, _, _| Ok(event))?;
+        self.publish_stored(server, &payload).await;
+        self.refresh_sync();
+        for payload in self.client.borrow().owner_copy(server) {
+            self.publish(server, &payload);
+        }
+        self.tend_keys(server, None);
+        self.emit("server-event", json!(server.to_string()));
+        self.emit("servers-changed", Value::Null);
         Ok(Value::Null)
     }
 

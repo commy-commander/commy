@@ -171,6 +171,22 @@ pub async fn keep_at(url: &str, mut work: Vec<OwnerWork>, waits: &[Duration]) ->
     finished
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimGap {
+    Taken,
+    Unanswered,
+}
+
+pub fn claimed_all(outcomes: &[(StreamId, Outcome)]) -> Result<(), ClaimGap> {
+    if outcomes.iter().any(|(_, outcome)| *outcome == Outcome::Theirs) {
+        return Err(ClaimGap::Taken);
+    }
+    if outcomes.iter().any(|(_, outcome)| *outcome != Outcome::Done) {
+        return Err(ClaimGap::Unanswered);
+    }
+    Ok(())
+}
+
 pub async fn run(url: &str, work: Vec<OwnerWork>) -> Result<Vec<(StreamId, Outcome)>, ErrandError> {
     let mut socket = Socket::connect(url).await.map_err(ErrandError::Unreachable)?;
     let outcome = serve(&mut socket, work).await;
@@ -395,5 +411,16 @@ mod tests {
         assert!(matches!(outcome_of(ServerFrame::stream_error(ErrorCode::Expired, a)), Settled(Outcome::Refused(ErrorCode::Expired))));
         let limited = ServerFrame::Error { code: ErrorCode::RateLimited, stream: Some(a), nonce: None, retry_after_ms: Some(60_000) };
         assert!(matches!(outcome_of(limited), Retry(wait) if wait == Duration::from_millis(LONGEST_PAUSE_MS)));
+    }
+
+    #[test]
+    fn a_move_needs_every_eraser_claimed_by_the_owner() {
+        let (a, b) = (StreamSecret::random().keys().id, StreamSecret::random().keys().id);
+        assert_eq!(claimed_all(&[]), Ok(()));
+        assert_eq!(claimed_all(&[(a, Outcome::Done), (b, Outcome::Done)]), Ok(()));
+        assert_eq!(claimed_all(&[(a, Outcome::Done), (b, Outcome::Theirs)]), Err(ClaimGap::Taken));
+        assert_eq!(claimed_all(&[(a, Outcome::Unanswered), (b, Outcome::Theirs)]), Err(ClaimGap::Taken), "someone else holding one is the bigger worry");
+        assert_eq!(claimed_all(&[(a, Outcome::Done), (b, Outcome::Unanswered)]), Err(ClaimGap::Unanswered));
+        assert_eq!(claimed_all(&[(a, Outcome::Refused(ErrorCode::BadFrame))]), Err(ClaimGap::Unanswered));
     }
 }

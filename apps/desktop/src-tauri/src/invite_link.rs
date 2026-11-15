@@ -104,6 +104,7 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
         server: opened.ticket.server_id,
         origin: parsed.origin.clone(),
         community: opened.community.clone(),
+        sync_host: opened.sync_host.clone(),
         at: std::time::Instant::now(),
     });
     Ok(resolved)
@@ -118,6 +119,7 @@ struct ResolvedLink {
     server: commy_core::ServerId,
     origin: String,
     community: Option<(commy_core::channel_key::KeyId, commy_core::channel_key::ChannelSecret)>,
+    sync_host: Option<String>,
     at: std::time::Instant,
 }
 
@@ -144,6 +146,7 @@ pub(crate) fn confirm_join_from_link(app: &App, link: &str, ticket: &str) {
     if let Some((id, secret)) = resolved.community {
         crate::community_sync::remember_invite_key(resolved.server, id, secret);
     }
+    crate::community_sync::remember_invite_host(resolved.server, resolved.sync_host);
 }
 
 async fn fetch_background(app: &App, link: &InviteLink, key: &str) -> Option<String> {
@@ -199,7 +202,8 @@ pub(crate) async fn create(
     }
     let ticket = crate::owner_vouched_ticket(app, id)?;
     let origin = crate::account::effective_server();
-    let cache_key = format!("{origin} {} {}", expiry.as_str(), ticket.encode());
+    let sync_host = app.servers.lock().unwrap().get(&id).and_then(|s| s.server.sync_host.clone());
+    let cache_key = format!("{origin} {} {} {}", expiry.as_str(), sync_host.as_deref().unwrap_or_default(), ticket.encode());
     let cached = if name.is_some() { None } else { CREATED.lock().unwrap().get(&cache_key).cloned() };
     let cached = cached.filter(|(created, _)| {
         let servers = app.servers.lock().unwrap();
@@ -236,6 +240,7 @@ pub(crate) async fn create(
         expiry,
         custom: name.as_deref(),
         community: community.as_ref().map(|(id, secret)| (*id, secret)),
+        sync_host: sync_host.as_deref(),
         background: background.as_deref(),
         revoke_key: &revoke_key,
     };
@@ -509,6 +514,7 @@ mod tests {
             server,
             origin: "https://invites.example".into(),
             community: None,
+            sync_host: None,
             at: Instant::now(),
         };
         hold_resolved(held("commy://i/one"));

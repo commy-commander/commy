@@ -7,6 +7,7 @@ use crate::stream::{StreamId, StreamKeys};
 use crate::wire::MAX_STREAMS_PER_CONNECTION;
 
 struct Slot {
+    url: String,
     client: SyncClient,
     streams: usize,
 }
@@ -32,11 +33,11 @@ impl Pool {
         self.home.contains_key(&stream)
     }
 
-    fn slot_with_room(&mut self, needed: usize) -> usize {
-        if let Some(at) = self.slots.iter().position(|s| s.streams + needed <= MAX_STREAMS_PER_CONNECTION) {
+    fn slot_with_room(&mut self, url: &str, needed: usize) -> usize {
+        if let Some(at) = room_at(self.slots.iter().map(|s| (s.url.as_str(), s.streams)), url, needed) {
             return at;
         }
-        let (client, mut received) = SyncClient::spawn(self.url.clone());
+        let (client, mut received) = SyncClient::spawn(url.to_string());
         let events = self.events.clone();
         n0_future::task::spawn(async move {
             while let Some(event) = received.recv().await {
@@ -45,7 +46,7 @@ impl Pool {
                 }
             }
         });
-        self.slots.push(Slot { client, streams: 0 });
+        self.slots.push(Slot { url: url.to_string(), client, streams: 0 });
         self.slots.len() - 1
     }
 
@@ -54,13 +55,18 @@ impl Pool {
     }
 
     pub fn follow_together_tail(&mut self, group: Vec<(StreamKeys, u64)>, tail: Option<u32>) {
+        let url = self.url.clone();
+        self.follow_together_tail_at(&url, group, tail);
+    }
+
+    pub fn follow_together_tail_at(&mut self, url: &str, group: Vec<(StreamKeys, u64)>, tail: Option<u32>) {
         let fresh: Vec<(StreamKeys, u64)> = group.into_iter().filter(|(keys, _)| !self.home.contains_key(&keys.id)).collect();
         if fresh.is_empty() {
             return;
         }
-        let at = self.slot_with_room(fresh.len().min(MAX_STREAMS_PER_CONNECTION));
+        let at = self.slot_with_room(url, fresh.len().min(MAX_STREAMS_PER_CONNECTION));
         for (keys, after) in fresh {
-            let at = if self.slots[at].streams < MAX_STREAMS_PER_CONNECTION { at } else { self.slot_with_room(1) };
+            let at = if self.slots[at].streams < MAX_STREAMS_PER_CONNECTION { at } else { self.slot_with_room(url, 1) };
             self.home.insert(keys.id, at);
             self.slots[at].streams += 1;
             self.slots[at].client.follow_tail(keys, after, tail);
@@ -84,11 +90,35 @@ impl Pool {
         }
     }
 
+    pub fn host_of(&self, stream: StreamId) -> Option<&str> {
+        self.home.get(&stream).map(|at| self.slots[*at].url.as_str())
+    }
+
     pub fn client_for(&self, stream: StreamId) -> Option<SyncClient> {
         self.home.get(&stream).map(|at| self.slots[*at].client.clone())
     }
 
     pub async fn append(&self, stream: StreamId, plain: Vec<u8>) -> Result<u64, AppendError> {
         self.client_for(stream).ok_or(AppendError::NotFollowed)?.append(stream, plain).await
+    }
+}
+
+fn room_at<'a>(slots: impl Iterator<Item = (&'a str, usize)>, url: &str, needed: usize) -> Option<usize> {
+    slots.enumerate().find(|(_, (at, streams))| *at == url && streams + needed <= MAX_STREAMS_PER_CONNECTION).map(|(index, _)| index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streams_share_a_connection_only_with_streams_on_the_same_host() {
+        let slots = [("wss://commy.chat/sync", 3), ("wss://sync.example.org/sync", 1), ("wss://commy.chat/sync", 0)];
+        assert_eq!(room_at(slots.into_iter(), "wss://commy.chat/sync", 2), Some(0));
+        assert_eq!(room_at(slots.into_iter(), "wss://sync.example.org/sync", 2), Some(1));
+        assert_eq!(room_at(slots.into_iter(), "wss://other.example.org/sync", 1), None, "a new host gets its own connection");
+        let full = [("wss://commy.chat/sync", MAX_STREAMS_PER_CONNECTION), ("wss://commy.chat/sync", MAX_STREAMS_PER_CONNECTION - 1)];
+        assert_eq!(room_at(full.into_iter(), "wss://commy.chat/sync", 1), Some(1));
+        assert_eq!(room_at(full.into_iter(), "wss://commy.chat/sync", 2), None);
     }
 }

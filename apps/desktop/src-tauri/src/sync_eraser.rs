@@ -10,7 +10,7 @@ use commy_sync::{StreamId, StreamKeys};
 
 use crate::state::App;
 
-static CLAIMS: Mutex<Option<ClaimBook<ServerId>>> = Mutex::new(None);
+static CLAIMS: Mutex<Option<HashMap<String, ClaimBook<ServerId>>>> = Mutex::new(None);
 static FRESH: Mutex<Option<HashSet<(ServerId, KeyScope)>>> = Mutex::new(None);
 const CLAIM_FIRST_WAIT: Duration = Duration::from_secs(15);
 
@@ -53,13 +53,14 @@ fn scopes_of_streams(app: &App, sids: impl IntoIterator<Item = ServerId>) -> Has
 }
 
 pub async fn claim_before_sharing(app: &App, sid: ServerId) {
-    let (Some(url), Some(identity)) = (crate::sync_link::url(), app.identity()) else { return };
+    let (Some(account_url), Some(identity)) = (crate::sync_link::url(), app.identity()) else { return };
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
     if !owned_servers(app, me).contains(&sid) {
         return;
     }
     let Some(plan) = plan(app, sid) else { return };
-    let work = CLAIMS.lock().unwrap().get_or_insert_with(ClaimBook::default).claims_for(&url, identity.to_bytes(), &plan.streams, Instant::now());
+    let Some(url) = crate::community_sync::community_url(plan.chosen_host.as_deref(), &account_url) else { return };
+    let work = CLAIMS.lock().unwrap().get_or_insert_with(HashMap::new).entry(url.clone()).or_default().claims_for(&url, identity.to_bytes(), &plan.streams, Instant::now());
     if work.is_empty() {
         return;
     }
@@ -72,7 +73,7 @@ pub async fn claim_before_sharing(app: &App, sid: ServerId) {
             return;
         }
     };
-    if let Some(book) = CLAIMS.lock().unwrap().as_mut() {
+    if let Some(book) = CLAIMS.lock().unwrap().as_mut().and_then(|books| books.get_mut(&url)) {
         let stolen = book.finish(&asked, &answered, Instant::now());
         want_fresh_streams(&stolen, &scopes);
     }
@@ -81,6 +82,13 @@ pub async fn claim_before_sharing(app: &App, sid: ServerId) {
 pub struct Plan {
     root: [u8; 32],
     streams: Vec<StreamKeys>,
+    chosen_host: Option<String>,
+}
+
+impl Plan {
+    pub fn claims(&self) -> Vec<OwnerWork> {
+        owner_work(&self.root, &self.streams, |_| Errand::Claim)
+    }
 }
 
 pub fn plan(app: &App, sid: ServerId) -> Option<Plan> {
@@ -92,7 +100,7 @@ pub fn plan(app: &App, sid: ServerId) -> Option<Plan> {
     let state = servers.get(&sid)?;
     let community = holder.community_ring(state, given)?;
     let every = streams::every_stream(state, &community, |channel| Keyring::unlock(state, channel, me, &identity));
-    Some(Plan { root: identity.to_bytes(), streams: every.into_iter().map(|(_, keys)| keys).collect() })
+    Some(Plan { root: identity.to_bytes(), streams: every.into_iter().map(|(_, keys)| keys).collect(), chosen_host: state.server.sync_host.clone() })
 }
 
 fn owned_servers(app: &App, me: UserId) -> HashSet<ServerId> {
@@ -103,12 +111,40 @@ fn still_here(app: &App, sid: ServerId) -> bool {
     app.servers.lock().unwrap().get(&sid).is_some_and(|state| !state.is_deleted())
 }
 
+fn host_of(sid: ServerId, hosts: &HashMap<ServerId, String>, account_url: &str) -> String {
+    hosts.get(&sid).cloned().unwrap_or_else(|| account_url.to_string())
+}
+
+pub fn by_host<V>(items: HashMap<ServerId, V>, hosts: &HashMap<ServerId, String>, account_url: &str) -> HashMap<String, HashMap<ServerId, V>> {
+    let mut grouped: HashMap<String, HashMap<ServerId, V>> = HashMap::new();
+    for (sid, value) in items {
+        grouped.entry(host_of(sid, hosts, account_url)).or_default().insert(sid, value);
+    }
+    grouped
+}
+
 pub fn tend(app: &App) {
-    let (Some(url), Some(identity)) = (crate::sync_link::url(), app.identity()) else { return };
+    let (Some(account_url), Some(identity)) = (crate::sync_link::url(), app.identity()) else { return };
     let Some(me) = app.profile.lock().unwrap().as_ref().map(|p| p.id) else { return };
+    let hosts = crate::community_sync::community_hosts();
     let owned = owned_servers(app, me);
-    let followed = crate::community_sync::followed_streams();
-    let round = CLAIMS.lock().unwrap().get_or_insert_with(ClaimBook::default).round(&url, identity.to_bytes(), owned, &followed, Instant::now());
+    let followed = by_host(crate::community_sync::followed_streams(), &hosts, &account_url);
+    let mut every_host: HashSet<String> = followed.keys().cloned().collect();
+    every_host.insert(account_url.clone());
+    for url in every_host {
+        let owned_here: HashSet<ServerId> = owned.iter().copied().filter(|sid| host_of(*sid, &hosts, &account_url) == url).collect();
+        let followed_here = followed.get(&url).cloned().unwrap_or_default();
+        tend_host(app, url, identity.to_bytes(), owned_here, followed_here);
+    }
+}
+
+fn tend_host(app: &App, url: String, root: [u8; 32], owned: HashSet<ServerId>, followed: HashMap<ServerId, Vec<StreamKeys>>) {
+    let owned_here = owned.clone();
+    let round = {
+        let mut guard = CLAIMS.lock().unwrap();
+        let books = guard.get_or_insert_with(HashMap::new);
+        books.entry(url.clone()).or_default().round(&url, root, owned, &followed, Instant::now())
+    };
     let mut work: Vec<OwnerWork> = Vec::new();
     for sid in round.given_up.into_iter().filter(|sid| still_here(app, *sid)) {
         if let Some(plan) = plan(app, sid) {
@@ -120,10 +156,10 @@ pub fn tend(app: &App) {
     if work.is_empty() {
         return;
     }
-    let scopes = scopes_of_streams(app, owned_servers(app, me));
+    let scopes = scopes_of_streams(app, owned_here);
     {
         let mut guard = CLAIMS.lock().unwrap();
-        let Some(book) = guard.as_mut() else { return };
+        let Some(book) = guard.as_mut().and_then(|books| books.get_mut(&url)) else { return };
         book.letting_go(work.iter().filter(|w| w.errand == Errand::Release).map(|w| w.keys.id));
         if !book.start() {
             return;
@@ -135,7 +171,7 @@ pub fn tend(app: &App) {
         if let Err(e) = &answered {
             tracing::debug!("could not claim server streams on the sync service: {e}");
         }
-        let stolen = match CLAIMS.lock().unwrap().as_mut() {
+        let stolen = match CLAIMS.lock().unwrap().as_mut().and_then(|books| books.get_mut(&url)) {
             Some(book) => book.finish(&asked, answered.as_deref().unwrap_or_default(), Instant::now()),
             None => Vec::new(),
         };
@@ -144,7 +180,8 @@ pub fn tend(app: &App) {
 }
 
 pub fn erase_deleted(plan: Plan, sid: ServerId, notices: Vec<(StreamId, u64)>) {
-    let Some(url) = crate::sync_link::url() else { return };
+    let Some(account_url) = crate::sync_link::url() else { return };
+    let Some(url) = crate::community_sync::community_url(plan.chosen_host.as_deref(), &account_url) else { return };
     let work = owner_work(&plan.root, &plan.streams, |stream| Errand::Erase { through: streams::erase_through(stream, &notices) });
     tauri::async_runtime::spawn(async move {
         let finished = errands::keep_at(&url, work, &errands::ERASE_WAITS).await;
@@ -156,4 +193,20 @@ pub fn erase_deleted(plan: Plan, sid: ServerId, notices: Vec<(StreamId, u64)>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_community_is_tended_on_its_own_sync_host() {
+        let (home, away, moved) = (ServerId::new(), ServerId::new(), ServerId::new());
+        let hosts = HashMap::from([(away, "wss://sync.example.org/sync".to_string()), (moved, "wss://commy.chat/sync".to_string())]);
+        let items = HashMap::from([(home, 1), (away, 2), (moved, 3)]);
+        let grouped = by_host(items, &hosts, "wss://commy.chat/sync");
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped["wss://commy.chat/sync"], HashMap::from([(home, 1), (moved, 3)]));
+        assert_eq!(grouped["wss://sync.example.org/sync"], HashMap::from([(away, 2)]));
+    }
 }

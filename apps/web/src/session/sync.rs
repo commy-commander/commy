@@ -22,7 +22,7 @@ use wasm_bindgen_futures::spawn_local;
 
 use super::Session;
 use crate::client::Applied;
-use crate::sync_book::{community_key_record, joined_record, prefs_record, read_record, saved_record, Book, Change, Record};
+use crate::sync_book::{community_key_record, joined_record, prefs_record, read_record, saved_record, sync_host_record, Book, Change, Record};
 
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
 const STORE_WAIT: Duration = Duration::from_secs(5);
@@ -48,7 +48,8 @@ fn chunks(marks: BTreeMap<String, ReadMark>, size: usize) -> Vec<BTreeMap<String
 pub(super) struct Live {
     pub(super) pool: Pool,
     url: String,
-    claims: ClaimBook<ServerId>,
+    claims: HashMap<String, ClaimBook<ServerId>>,
+    written_hosts: HashMap<ServerId, Option<String>>,
     account: StreamId,
     account_live: bool,
     pub(super) book: Book,
@@ -61,6 +62,16 @@ pub(super) struct Live {
     pub(super) wake: Option<String>,
     pub(super) all_rings: AllRings,
     deepened: HashSet<(ServerId, Option<ChannelId>)>,
+}
+
+impl Live {
+    pub(super) fn home(&self) -> &str {
+        &self.url
+    }
+
+    pub(super) fn socket_of(&self, server: ServerId) -> String {
+        self.book.host_of(server).unwrap_or_else(|| self.url.clone())
+    }
 }
 
 impl Session {
@@ -81,7 +92,8 @@ impl Session {
         *self.sync.borrow_mut() = Some(Live {
             pool,
             url: service,
-            claims: ClaimBook::default(),
+            claims: HashMap::new(),
+            written_hosts: HashMap::new(),
             account,
             account_live: false,
             book: Book::new(list),
@@ -147,6 +159,7 @@ impl Session {
                 return;
             }
             self.refresh_sync();
+            self.record_hosts();
             self.tend_owned();
             self.tend_claims();
         }
@@ -155,12 +168,30 @@ impl Session {
     fn tend_claims(self: &Rc<Self>) {
         let Some(root) = self.client.borrow().identity_secret() else { return };
         let owned: HashSet<ServerId> = self.client.borrow().owned_servers().into_iter().collect();
-        let (url, given, round) = {
+        let by_host: HashMap<String, (HashSet<ServerId>, HashMap<ServerId, Vec<StreamKeys>>)> = {
+            let guard = self.sync.borrow();
+            let Some(live) = guard.as_ref() else { return };
+            let mut grouped: HashMap<String, (HashSet<ServerId>, HashMap<ServerId, Vec<StreamKeys>>)> = HashMap::new();
+            grouped.entry(live.url.clone()).or_default();
+            for (server, keys) in live.book.streams_by_server() {
+                grouped.entry(live.socket_of(server)).or_default().1.insert(server, keys);
+            }
+            for server in &owned {
+                grouped.entry(live.socket_of(*server)).or_default().0.insert(*server);
+            }
+            grouped
+        };
+        for (url, (owned, followed)) in by_host {
+            self.tend_claims_on(url, root, owned, followed);
+        }
+    }
+
+    fn tend_claims_on(self: &Rc<Self>, url: String, root: [u8; 32], owned: HashSet<ServerId>, followed: HashMap<ServerId, Vec<StreamKeys>>) {
+        let (given, round) = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
-            let followed = live.book.streams_by_server();
-            let round = live.claims.round(&live.url, root, owned, &followed, Instant::now());
-            (live.url.clone(), live.book.given(), round)
+            let round = live.claims.entry(url.clone()).or_default().round(&url, root, owned, &followed, Instant::now());
+            (live.book.given(), round)
         };
         let mut work = Vec::new();
         for server in round.given_up {
@@ -173,9 +204,9 @@ impl Session {
         }
         {
             let mut guard = self.sync.borrow_mut();
-            let Some(live) = guard.as_mut() else { return };
-            live.claims.letting_go(work.iter().filter(|w| w.errand == Errand::Release).map(|w| w.keys.id));
-            if !live.claims.start() {
+            let Some(book) = guard.as_mut().and_then(|live| live.claims.get_mut(&url)) else { return };
+            book.letting_go(work.iter().filter(|w| w.errand == Errand::Release).map(|w| w.keys.id));
+            if !book.start() {
                 return;
             }
         }
@@ -183,15 +214,15 @@ impl Session {
         spawn_local(async move {
             let asked: Vec<(StreamId, Errand)> = work.iter().map(|w| (w.keys.id, w.errand)).collect();
             let answered = errands::run(&url, work).await;
-            if let Some(live) = this.sync.borrow_mut().as_mut() {
-                live.claims.finish(&asked, answered.as_deref().unwrap_or_default(), Instant::now());
+            if let Some(book) = this.sync.borrow_mut().as_mut().and_then(|live| live.claims.get_mut(&url)) {
+                book.finish(&asked, answered.as_deref().unwrap_or_default(), Instant::now());
             }
         });
     }
 
     pub(super) fn erase_plan(&self, server: ServerId) -> Option<(String, [u8; 32], Vec<StreamKeys>)> {
         let root = self.client.borrow().identity_secret()?;
-        let (url, given) = self.sync.borrow().as_ref().map(|live| (live.url.clone(), live.book.given()))?;
+        let (url, given) = self.sync.borrow().as_ref().map(|live| (live.socket_of(server), live.book.given()))?;
         let streams = self.client.borrow().every_stream(server, &given);
         (!streams.is_empty()).then_some((url, root, streams))
     }
@@ -348,7 +379,8 @@ impl Session {
             }
             let streams = keys.iter().map(|k| k.id).collect();
             if !keys.is_empty() {
-                live.pool.follow_together_tail(keys.into_iter().map(|k| (k, 0)).collect(), None);
+                let url = live.socket_of(server);
+                live.pool.follow_together_tail_at(&url, keys.into_iter().map(|k| (k, 0)).collect(), None);
             }
             streams
         };
@@ -368,24 +400,73 @@ impl Session {
         }
     }
 
+    fn chosen_sockets(&self, wanted: impl Iterator<Item = ServerId>) -> HashMap<ServerId, String> {
+        let Some(home) = self.sync.borrow().as_ref().map(|live| live.url.clone()) else { return HashMap::new() };
+        let loaded = self.client.borrow().sync_hosts();
+        let invited = self.invited_hosts.borrow().clone();
+        let guard = self.sync.borrow();
+        let Some(live) = guard.as_ref() else { return HashMap::new() };
+        wanted
+            .filter_map(|server| {
+                let chosen = match loaded.get(&server) {
+                    Some(host) => host.clone(),
+                    None => invited.get(&server).cloned().or_else(|| live.book.recorded_host(server)),
+                };
+                let socket = commy_core::sync_host::chosen_socket(chosen.as_deref(), Some(&home))?;
+                (socket != home).then_some((server, socket))
+            })
+            .collect()
+    }
+
     pub(super) fn refresh_sync(&self) {
         let Some(given) = self.sync.borrow().as_ref().map(|live| live.book.given()) else { return };
         let wanted = self.client.borrow().sync_wants(&given, Utc::now().timestamp_millis());
+        let sockets = self.chosen_sockets(wanted.keys().copied());
         let mut guard = self.sync.borrow_mut();
         let Some(live) = guard.as_mut() else { return };
-        let plan = live.book.replan(wanted);
+        let plan = live.book.replan_at(wanted, &sockets);
         for stream in plan.unfollow {
             live.pool.unfollow(stream);
         }
-        let (lasting, texts): (Vec<_>, Vec<_>) = plan.follow.into_iter().partition(|(lane, _, _)| *lane == Lane::State);
-        for (part, tail) in [(lasting, streams::STATE_TAIL), (texts, streams::FRESH_TAIL)] {
-            let part: Vec<_> = part.into_iter().map(|(_, keys, after)| (keys, after)).collect();
-            if !part.is_empty() {
-                live.pool.follow_together_tail(part, Some(tail));
+        let mut hosts: HashMap<String, Vec<(Lane, StreamKeys, u64)>> = HashMap::new();
+        for (lane, keys, after, host) in plan.follow {
+            hosts.entry(host.unwrap_or_else(|| live.url.clone())).or_default().push((lane, keys, after));
+        }
+        for (url, follow) in hosts {
+            let (lasting, texts): (Vec<_>, Vec<_>) = follow.into_iter().partition(|(lane, _, _)| *lane == Lane::State);
+            for (part, tail) in [(lasting, streams::STATE_TAIL), (texts, streams::FRESH_TAIL)] {
+                let part: Vec<_> = part.into_iter().map(|(_, keys, after)| (keys, after)).collect();
+                if !part.is_empty() {
+                    live.pool.follow_together_tail_at(&url, part, Some(tail));
+                }
             }
         }
         drop(guard);
         self.refresh_dms();
+    }
+
+    fn record_hosts(&self) {
+        let loaded = self.client.borrow().sync_hosts();
+        let due: Vec<(ServerId, Option<String>)> = {
+            let mut guard = self.sync.borrow_mut();
+            let Some(live) = guard.as_mut() else { return };
+            let due: Vec<(ServerId, Option<String>)> = loaded
+                .into_iter()
+                .filter(|(server, host)| crate::sync_book::host_to_record(live.book.recorded(*server), host.as_deref(), live.written_hosts.get(server)))
+                .collect();
+            for (server, host) in &due {
+                live.written_hosts.insert(*server, host.clone());
+            }
+            due
+        };
+        let at = Utc::now().timestamp_millis();
+        for (server, host) in due {
+            let record = sync_host_record(server, host.as_deref(), at);
+            if let Some(live) = self.sync.borrow_mut().as_mut() {
+                live.book.fold(Record::parse(&record));
+            }
+            self.append_account(record);
+        }
     }
 
     fn on_sync_entry(self: &Rc<Self>, stream: StreamId, seq: u64, at: i64, plain: &[u8]) {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, SPEECH_VOICE_ORIGINS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
+import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, SPEECH_VOICE_ORIGINS, SYNC_HOST_ORIGINS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
 const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED } = require("../ui/web-commands.js");
@@ -139,15 +139,16 @@ test("replies cross into the backend as a status line and body", () => {
   assert.equal(webReplyLine(200, '{"a":1}'), '200\n{"a":1}');
 });
 
-test("the page may only talk to its own site, the relay, server file storage, GIF search and the voice downloads, and frames nothing but the YouTube player", () => {
+test("the page may only talk to its own site, the relay, server file storage, GIF search, the voice downloads and secure sync servers, and frames nothing but the YouTube player", () => {
   const csp = contentSecurityPolicy(relayOrigins("https://relay.commy.chat:8443"));
   assert.match(csp, /default-src 'self'/);
-  assert.match(csp, /connect-src 'self' blob: https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/\*\.workers\.dev https:\/\/api\.klipy\.com https:\/\/api\.giphy\.com https:\/\/cdn\.jsdelivr\.net https:\/\/huggingface\.co https:\/\/\*\.hf\.co;/);
+  assert.match(csp, /connect-src 'self' blob: https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/\*\.workers\.dev https:\/\/api\.klipy\.com https:\/\/api\.giphy\.com https:\/\/cdn\.jsdelivr\.net https:\/\/huggingface\.co https:\/\/\*\.hf\.co wss:;/);
+  assert.deepEqual(SYNC_HOST_ORIGINS, ["wss:"], "community sync servers are reached over secure websockets only");
   assert.match(csp, /frame-src https:\/\/www\.youtube-nocookie\.com;/);
   assert.deepEqual(FILE_STORAGE_ORIGINS, ["https://*.workers.dev"]);
   assert.deepEqual(GIF_SEARCH_ORIGINS, ["https://api.klipy.com", "https://api.giphy.com"]);
   assert.deepEqual(SPEECH_VOICE_ORIGINS, ["https://cdn.jsdelivr.net", "https://huggingface.co", "https://*.hf.co"]);
-  assert.doesNotMatch(csp.replace(" https://*.workers.dev ", " ").replace(" https://*.hf.co;", ";"), /\*/, "file storage on workers.dev and the voice download mirror are the only wildcards");
+  assert.doesNotMatch(csp.replace(" https://*.workers.dev ", " ").replace(" https://*.hf.co ", " "), /\*/, "file storage on workers.dev and the voice download mirror are the only wildcards");
 });
 
 test("the bridge loads before the app and the policy lands in the head", () => {
@@ -449,7 +450,7 @@ test("the browser searches direct messages and reaches channel history older tha
   assert.match(session, /self\.deepen_history\(server, Some\(channel\), FIND_OLDER_WAIT, shown\)\.await;/);
   assert.match(session, /self\.deepen_history\(server, channel, SEARCH_OLDER_WAIT, \|\| false\)\.await;/);
   const sync = read("apps", "web", "src", "session", "sync.rs");
-  assert.match(sync, /follow_together_tail\(keys\.into_iter\(\)\.map\(\|k\| \(k, 0\)\)\.collect\(\), None\)/);
+  assert.match(sync, /follow_together_tail_at\(&url, keys\.into_iter\(\)\.map\(\|k\| \(k, 0\)\)\.collect\(\), None\)/);
 });
 
 test("the browser shares its screen and camera with the voice channel like the desktop", () => {

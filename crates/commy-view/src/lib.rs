@@ -28,6 +28,7 @@ pub mod pet;
 pub mod removals;
 pub mod templates;
 pub mod file_store;
+pub mod sync_host;
 pub mod search_keys;
 pub mod tip_jar;
 pub mod voice_invite;
@@ -391,6 +392,8 @@ pub struct ServerView {
     pub can_answer_joins: bool,
     pub tip_jar: Option<String>,
     pub file_store: Option<String>,
+    pub sync_host: Option<String>,
+    pub can_set_sync_host: bool,
     pub gif_key: Option<commy_core::search_keys::GifKey>,
     pub game_db: Option<search_keys::GameDbView>,
     pub pet: Option<pet::PetView>,
@@ -777,6 +780,8 @@ impl ServerView {
             tip_jar: state.server.tip_jar.clone(),
             file_store: commy_core::file_store::can_manage_storage(perms).then(|| state.server.file_store.clone()).flatten(),
             can_manage_file_storage: is_member && commy_core::file_store::can_manage_storage(perms),
+            sync_host: sync_host::shown_host(state),
+            can_set_sync_host: viewer == Some(state.server.owner) && !state.server.group,
             gif_key: is_member.then(|| state.server.gif_key.clone()).flatten(),
             game_db: search_keys::game_db_view(state, perms),
             pet: pet::view(state, viewer),

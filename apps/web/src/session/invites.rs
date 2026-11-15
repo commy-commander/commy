@@ -89,6 +89,7 @@ impl Session {
         }
         let given = self.sync.borrow().as_ref().and_then(|live| live.book.given().remove(&server));
         let (ticket, community) = self.client.borrow().invite_ticket(server, given)?;
+        let sync_host = self.client.borrow().servers.lock().unwrap().get(&server).and_then(|state| state.server.sync_host.clone());
         let raw = self.reachable(ticket.clone()).await.encode();
         let revoke_key = invite::new_revoke_key();
         let (key, key_text) = invite::link_key(&revoke_key, name.is_some());
@@ -98,6 +99,7 @@ impl Session {
             expiry,
             custom: name.as_deref(),
             community: community.as_ref().map(|(id, secret)| (*id, secret)),
+            sync_host: sync_host.as_deref(),
             background: None,
             revoke_key: &revoke_key,
         };
@@ -144,6 +146,10 @@ impl Session {
         if let Some(key) = opened.community.clone() {
             self.invited.borrow_mut().insert(opened.ticket.server_id, key);
         }
+        match opened.sync_host.clone() {
+            Some(host) => self.invited_hosts.borrow_mut().insert(opened.ticket.server_id, host),
+            None => self.invited_hosts.borrow_mut().remove(&opened.ticket.server_id),
+        };
         let background = match (body.has_background, link.key.as_deref()) {
             (true, Some(key)) => self.invite_background(&link, key).await,
             _ => None,

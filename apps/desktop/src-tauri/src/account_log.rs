@@ -55,6 +55,11 @@ pub enum Record {
         owner: Option<(UserId, IdentityKey)>,
     },
     Relations { set: BTreeMap<UserId, RelationPiece> },
+    SyncHost {
+        server: ServerId,
+        host: Option<String>,
+        at: i64,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -89,6 +94,8 @@ pub struct SyncState {
     pub community: BTreeMap<ServerId, (SharedKey, i64)>,
     #[serde(default)]
     pub owners: BTreeMap<ServerId, (UserId, IdentityKey)>,
+    #[serde(default)]
+    pub sync_hosts: BTreeMap<ServerId, (Option<String>, i64)>,
     #[serde(default)]
     pub relations: BTreeMap<UserId, i64>,
     #[serde(default)]
@@ -126,6 +133,7 @@ impl SyncState {
             dm_cursors: kept.dm_cursors,
             community: kept.community,
             owners: kept.owners,
+            sync_hosts: kept.sync_hosts,
             outbox: kept.outbox,
             next_id: kept.next_id,
             ..Default::default()
@@ -211,6 +219,16 @@ impl SyncState {
                     self.community.insert(server, (key, at));
                 }
                 if changed { Change::CommunityKey(server) } else { Change::Nothing }
+            }
+            Record::SyncHost { server, host, at } => {
+                let host = host.filter(|h| commy_core::sync_host::is_sync_host(h));
+                let known = self.sync_hosts.get(&server);
+                if known.is_some_and(|(_, seen)| at <= *seen) {
+                    return Change::Nothing;
+                }
+                let moved = known.map_or(host.is_some(), |(held, _)| *held != host);
+                self.sync_hosts.insert(server, (host, at));
+                if moved { Change::CommunityKey(server) } else { Change::Nothing }
             }
             Record::Relations { set } => {
                 let mut taken = BTreeMap::new();
@@ -636,6 +654,10 @@ fn seed(handle: &AppHandle) {
         for record in keys {
             state.enqueue(record, None);
         }
+        let hosts: Vec<Record> = state.sync_hosts.iter().map(|(server, (host, at))| Record::SyncHost { server: *server, host: host.clone(), at: *at }).collect();
+        for record in hosts {
+            state.enqueue(record, None);
+        }
     });
     persist(&app);
     crate::dm_sync::seed(handle);
@@ -711,6 +733,36 @@ pub fn shared_community_key(app: &App, server: ServerId) -> Option<KeyId> {
 
 pub fn shared_owner(app: &App, server: ServerId) -> Option<(UserId, IdentityKey)> {
     with_state(app, |state| state.owners.get(&server).copied()).flatten()
+}
+
+pub fn community_host(app: &App, server: ServerId) -> Option<String> {
+    with_state(app, |state| state.sync_hosts.get(&server).and_then(|(host, _)| host.clone())).flatten()
+}
+
+pub fn host_to_record(recorded: Option<&(Option<String>, i64)>, mine: Option<&str>, last_written: Option<&Option<String>>) -> bool {
+    let recorded_host = recorded.and_then(|(host, _)| host.as_deref());
+    recorded_host != mine && last_written.is_none_or(|written| written.as_deref() != mine)
+}
+
+static HOSTS_WRITTEN: std::sync::Mutex<Option<BTreeMap<ServerId, Option<String>>>> = std::sync::Mutex::new(None);
+
+pub fn record_sync_hosts(app: &App, hosts: Vec<(ServerId, Option<String>)>) {
+    let due: Vec<(ServerId, Option<String>)> = {
+        let mut written = HOSTS_WRITTEN.lock().unwrap();
+        let written = written.get_or_insert_with(BTreeMap::new);
+        let Some(due) = with_state(app, |state| {
+            hosts.into_iter().filter(|(server, host)| host_to_record(state.sync_hosts.get(server), host.as_deref(), written.get(server))).collect::<Vec<_>>()
+        }) else {
+            return;
+        };
+        for (server, host) in &due {
+            written.insert(*server, host.clone());
+        }
+        due
+    };
+    for (server, host) in due {
+        queue(app, Record::SyncHost { server, host, at: now_ms() });
+    }
 }
 
 pub fn share_community_key(app: &App, server: ServerId, key: KeyId, secret: &ChannelSecret, owner: Option<(UserId, IdentityKey)>) {
@@ -1091,5 +1143,36 @@ mod tests {
             back.extend(set);
         }
         assert_eq!(back, set);
+    }
+
+    #[test]
+    fn the_newest_sync_host_record_wins_and_survives_a_restarted_log() {
+        let server = ServerId::new();
+        let mut state = SyncState::default();
+        let host = |h: Option<&str>, at| Record::SyncHost { server, host: h.map(str::to_string), at };
+        assert_eq!(state.fold(host(None, 1)), Change::Nothing, "the default is what an unrecorded server already uses");
+        assert_eq!(state.fold(host(Some("https://sync.example.org"), 5)), Change::CommunityKey(server));
+        assert_eq!(state.fold(host(None, 3)), Change::Nothing, "an older record does not move it back");
+        assert_eq!(state.sync_hosts[&server].0.as_deref(), Some("https://sync.example.org"));
+        assert_eq!(state.fold(host(Some("http://bad.example.org"), 9)), Change::CommunityKey(server), "a bad host counts as the default");
+        assert_eq!(state.sync_hosts[&server].0, None);
+        state.fold(host(Some("https://sync.example.org"), 12));
+        state.log_restarted();
+        assert_eq!(state.sync_hosts[&server], (Some("https://sync.example.org".into()), 12));
+        let json = serde_json::to_string(&host(Some("https://sync.example.org"), 4)).unwrap();
+        assert!(json.contains(r#""k":"sync_host""#));
+        assert_eq!(serde_json::from_str::<Record>(r#"{"k":"some_later_kind","x":1}"#).unwrap(), Record::Unknown);
+    }
+
+    #[test]
+    fn each_device_writes_a_host_change_once() {
+        let away = "https://sync.example.org";
+        let recorded = |h: Option<&str>| (h.map(str::to_string), 1);
+        assert!(!host_to_record(None, None, None), "nothing to say about a server that never moved");
+        assert!(host_to_record(None, Some(away), None));
+        assert!(!host_to_record(Some(&recorded(Some(away))), Some(away), None), "already recorded");
+        assert!(host_to_record(Some(&recorded(Some(away))), None, None), "moving back home is recorded too");
+        assert!(!host_to_record(Some(&recorded(Some(away))), None, Some(&None)), "this device already said so once");
+        assert!(host_to_record(Some(&recorded(None)), Some(away), Some(&None)), "a new move is said again");
     }
 }

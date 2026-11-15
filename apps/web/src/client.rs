@@ -516,6 +516,10 @@ impl Client {
         Some((state.server.name.clone(), notice))
     }
 
+    pub fn sync_hosts(&self) -> HashMap<ServerId, Option<String>> {
+        self.servers.lock().unwrap().iter().map(|(sid, state)| (*sid, state.server.sync_host.clone())).collect()
+    }
+
     pub fn owned_servers(&self) -> Vec<ServerId> {
         let Some(me) = self.me_id() else { return Vec::new() };
         self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()

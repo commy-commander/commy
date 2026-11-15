@@ -43,5 +43,5 @@ function fileStoreStatus(server) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { FILE_STORE_MAX_CHARS, FILE_STORE_GUIDE, FILE_STORE_INVALID, cleanFileStore, fileStoreLabel, fileStoreStatus };
+  module.exports = { FILE_STORE_MAX_CHARS, FILE_STORE_GUIDE, FILE_STORE_INVALID, cleanFileStore, fileStoreLabel, fileStoreStatus, storeHostOk };
 }

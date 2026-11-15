@@ -305,6 +305,8 @@ struct SealedInvite {
     permanent: bool,
     #[serde(rename = "k", default, skip_serializing_if = "Option::is_none")]
     community: Option<SharedKey>,
+    #[serde(rename = "s", default, skip_serializing_if = "Option::is_none")]
+    sync_host: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,23 +317,32 @@ pub enum SealedExpiry {
 
 #[cfg(test)]
 fn seal_ticket(key: &SealKey, raw: &str, name: &str, expiry: SealedExpiry) -> String {
-    seal_ticket_with(key, raw, name, expiry, None)
+    seal_ticket_with(key, raw, name, expiry, None, None)
 }
 
-pub fn seal_ticket_with(key: &SealKey, raw: &str, name: &str, expiry: SealedExpiry, community: Option<(KeyId, &ChannelSecret)>) -> String {
+pub fn seal_ticket_with(key: &SealKey, raw: &str, name: &str, expiry: SealedExpiry, community: Option<(KeyId, &ChannelSecret)>, sync_host: Option<&str>) -> String {
     let (expires, permanent) = match expiry {
         SealedExpiry::At(t) => (Some(t.timestamp()), false),
         SealedExpiry::Never => (None, true),
     };
     let community = community.map(|(id, secret)| SharedKey::of(id, secret));
-    let invite = SealedInvite { ticket: raw.to_string(), name: name.to_string(), expires, permanent, community };
+    let sync_host = sync_host.filter(|origin| commy_core::sync_host::is_sync_host(origin)).map(str::to_string);
+    let invite = SealedInvite { ticket: raw.to_string(), name: name.to_string(), expires, permanent, community, sync_host };
     let payload = serde_json::to_vec(&invite).expect("invite serialization cannot fail");
     key.seal(Purpose::Invite, &payload)
 }
 
-pub fn community_key_in(stored: &str, key: &str) -> Option<(KeyId, ChannelSecret)> {
+fn sealed_invite(stored: &str, key: &str) -> Option<SealedInvite> {
     let bytes = SealKey::from_text(key).ok()?.open(Purpose::Invite, stored.trim()).ok()?;
-    serde_json::from_slice::<SealedInvite>(&bytes).ok()?.community?.open()
+    serde_json::from_slice::<SealedInvite>(&bytes).ok()
+}
+
+pub fn community_key_in(stored: &str, key: &str) -> Option<(KeyId, ChannelSecret)> {
+    sealed_invite(stored, key)?.community?.open()
+}
+
+pub fn sync_host_in(stored: &str, key: &str) -> Option<String> {
+    sealed_invite(stored, key)?.sync_host.filter(|origin| commy_core::sync_host::is_sync_host(origin))
 }
 
 pub fn open_ticket(stored: &str, key: Option<&str>) -> Result<(String, Option<SealedExpiry>), String> {
@@ -412,6 +423,7 @@ pub struct CreateRequest<'a> {
     pub expiry: Expiry,
     pub custom: Option<&'a str>,
     pub community: Option<(KeyId, &'a ChannelSecret)>,
+    pub sync_host: Option<&'a str>,
     pub background: Option<&'a str>,
     pub revoke_key: &'a str,
 }
@@ -422,7 +434,7 @@ pub fn create_body(key: &SealKey, request: &CreateRequest, now: DateTime<Utc>) -
         None => SealedExpiry::Never,
     };
     let mut body = serde_json::json!({
-        "ticket": seal_ticket_with(key, request.raw_ticket, request.server_name, sealed_expiry, request.community),
+        "ticket": seal_ticket_with(key, request.raw_ticket, request.server_name, sealed_expiry, request.community, request.sync_host),
         "expiresIn": request.expiry.as_str(),
         "revokeHash": revoke_hash(request.revoke_key),
     });
@@ -474,14 +486,16 @@ pub struct Opened {
     pub ticket: crate::ServerTicket,
     pub expires_at: Option<DateTime<Utc>>,
     pub community: Option<(KeyId, ChannelSecret)>,
+    pub sync_host: Option<String>,
 }
 
 pub fn open_reply(link: &InviteLink, reply: &ResolveResponse, now: DateTime<Utc>) -> Result<Opened, String> {
     let (raw, sealed_expiry) = open_ticket(&reply.ticket, link.key.as_deref())?;
     let ticket = crate::ServerTicket::decode(&raw).map_err(|_| "The invite server sent an invalid invite".to_string())?;
     let community = link.key.as_deref().and_then(|key| community_key_in(&reply.ticket, key));
+    let sync_host = link.key.as_deref().and_then(|key| sync_host_in(&reply.ticket, key));
     let expires_at = effective_expiry(reply.expires_at.as_deref().and_then(parse_time), sealed_expiry, now)?;
-    Ok(Opened { ticket, expires_at, community })
+    Ok(Opened { ticket, expires_at, community, sync_host })
 }
 
 pub fn resolved(link: &InviteLink, opened: &Opened, account_origin: &str, background: Option<String>) -> ResolvedInvite {
@@ -567,7 +581,7 @@ mod tests {
         let (id, secret) = (KeyId::random(), ChannelSecret::random());
         let revoke_key = new_revoke_key();
         let (key, key_text) = link_key(&revoke_key, false);
-        let request = CreateRequest { raw_ticket: &raw, server_name: "Pixel Pioneers", expiry: Expiry::Day, custom: None, community: Some((id, &secret)), background: None, revoke_key: &revoke_key };
+        let request = CreateRequest { raw_ticket: &raw, server_name: "Pixel Pioneers", expiry: Expiry::Day, custom: None, community: Some((id, &secret)), sync_host: None, background: None, revoke_key: &revoke_key };
         let now = Utc::now();
         let (body, sealed_at) = create_body(&key, &request, now);
         assert_eq!(body["expiresIn"], "1d");
@@ -599,7 +613,7 @@ mod tests {
         let revoke_key = new_revoke_key();
         let (key, key_text) = link_key(&revoke_key, true);
         assert_eq!(key_text.len(), sealed::SHORT_KEY_TEXT_LEN);
-        let request = CreateRequest { raw_ticket: &raw, server_name: "Gabagool", expiry: Expiry::Week, custom: Some("partyzzz"), community: None, background: None, revoke_key: &revoke_key };
+        let request = CreateRequest { raw_ticket: &raw, server_name: "Gabagool", expiry: Expiry::Week, custom: Some("partyzzz"), community: None, sync_host: None, background: None, revoke_key: &revoke_key };
         let now = Utc::now();
         let (body, sealed_at) = create_body(&key, &request, now);
         let reply = CreateResponse { url: "https://commy.chat/i/PARTYZZZ".into(), expires_at: None };
@@ -697,13 +711,30 @@ mod tests {
         let text = test_key();
         let key = SealKey::from_text(&text).unwrap();
         let (id, secret) = (KeyId::random(), ChannelSecret::random());
-        let sealed = seal_ticket_with(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never, Some((id, &secret)));
+        let sealed = seal_ticket_with(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never, Some((id, &secret)), None);
         assert!(!sealed.contains(&data_encoding::BASE64URL_NOPAD.encode(secret.bytes())));
         assert_eq!(open_ticket(&sealed, Some(&text)).unwrap(), ("commyticket".into(), Some(SealedExpiry::Never)));
         assert_eq!(community_key_in(&sealed, &text), Some((id, secret)));
         assert_eq!(community_key_in(&sealed, &SealKey::generate().to_text()), None);
         let plain = seal_ticket(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never);
         assert_eq!(community_key_in(&plain, &text), None);
+    }
+
+    #[test]
+    fn a_sealed_invite_carries_the_communitys_sync_host() {
+        let text = test_key();
+        let key = SealKey::from_text(&text).unwrap();
+        let sealed = seal_ticket_with(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never, None, Some("https://sync.example.org"));
+        assert!(!sealed.contains("sync.example.org"), "the host is sealed like the rest of the invite");
+        assert_eq!(sync_host_in(&sealed, &text).as_deref(), Some("https://sync.example.org"));
+        assert_eq!(sync_host_in(&sealed, &SealKey::generate().to_text()), None);
+        assert_eq!(open_ticket(&sealed, Some(&text)).unwrap().0, "commyticket");
+        let unclean = seal_ticket_with(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never, None, Some("http://sync.example.org"));
+        assert_eq!(sync_host_in(&unclean, &text), None);
+        let forged = key.seal(Purpose::Invite, br#"{"t":"commyticket","n":"P","s":"https://10.0.0.1"}"#);
+        assert_eq!(sync_host_in(&forged, &text), None, "a host that is not a public address is ignored");
+        let plain = seal_ticket(&key, "commyticket", "Pixel Pioneers", SealedExpiry::Never);
+        assert_eq!(sync_host_in(&plain, &text), None, "invites without a host keep the account server's sync");
     }
 
     #[test]

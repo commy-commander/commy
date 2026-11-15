@@ -814,7 +814,7 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
-        tip_jar: s.tip_jar || null, file_store: s.file_store || null, gif_key: s.gif_key || null, game_db: s.game_db || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
+        tip_jar: s.tip_jar || null, file_store: s.file_store || null, sync_host: s.sync_host || null, can_set_sync_host: !mock.plainMember && !s.group, gif_key: s.gif_key || null, game_db: s.game_db || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_off && (!s.tts_restricted || !mock.plainMember), tts_allowed: !s.tts_off, upload_limit_mb: s.upload_limit_mb || null,
@@ -1549,6 +1549,16 @@ async function mockInvoke(cmd, args = {}) {
         pet.level += 1;
         pet.next_level_xp = 3 * pet.level * pet.level;
       }
+      return null;
+    }
+    case "test_sync_host": {
+      const host = cleanSyncHost(args.host);
+      if (!host || host.startsWith("down.")) throw "Commy could not reach a sync server there. Check the address and that the server is running an up to date Commy sync service.";
+      return host;
+    }
+    case "set_sync_host": {
+      const host = args.host ? cleanSyncHost(args.host) : null;
+      mock.servers[args.serverId].sync_host = host;
       return null;
     }
     case "test_file_store": {
@@ -14086,6 +14096,58 @@ function renderFileStoreEditor(server) {
   $("file-store-remove").classList.toggle("hidden", !editable || !server.file_store);
 }
 
+const SYNC_HOST_CONFIRM_MS = 15000;
+let syncHostPending = null;
+
+function renderSyncHostEditor(server) {
+  syncHostPending = null;
+  const host = server.sync_host || null;
+  $("sync-host-now").textContent = syncHostNow(server);
+  $("sync-host-input").value = "";
+  $("sync-host-status").textContent = "";
+  $("sync-host-save").textContent = "Check and Move";
+  $("sync-host-home").classList.toggle("hidden", !host);
+}
+
+async function moveSyncHost(home) {
+  const server = state.currentServer;
+  if (!server) return;
+  const status = $("sync-host-status");
+  const save = $("sync-host-save");
+  const target = home ? null : cleanSyncHost($("sync-host-input").value);
+  if (!home && !target) {
+    status.textContent = SYNC_HOST_INVALID;
+    return;
+  }
+  const label = target || SYNC_HOST_HOME;
+  const confirmed = syncHostPending && syncHostPending.label === label && Date.now() - syncHostPending.at < SYNC_HOST_CONFIRM_MS;
+  save.disabled = true;
+  try {
+    if (!confirmed) {
+      if (target) {
+        status.textContent = "Checking the sync server...";
+        await invoke("test_sync_host", { host: target });
+      }
+      syncHostPending = { label, at: Date.now() };
+      status.textContent = `${label} is ready. Choose ${home ? "Move back to Commy.chat" : "Move Now"} again to move this server there.`;
+      if (!home) save.textContent = "Move Now";
+      return;
+    }
+    status.textContent = "Moving...";
+    await invoke("set_sync_host", { serverId: server.id, host: target });
+    toast(`${shownServerName(server)} now syncs through ${label}`);
+    await refreshCurrentServer();
+    renderSyncHostEditor(state.currentServer);
+    $("sync-host-status").textContent = "Moved. Keep Commy open for a few minutes while this device copies the history over.";
+  } catch (err) {
+    syncHostPending = null;
+    save.textContent = "Check and Move";
+    status.textContent = String(err);
+  } finally {
+    save.disabled = false;
+  }
+}
+
 async function saveFileStore(remove) {
   const server = state.currentServer;
   if (!server) return;
@@ -14183,6 +14245,12 @@ function wireServerTagEditor() {
   $("pet-release").onclick = () => savePet(true);
   $("pet-name").addEventListener("input", () => paintPetEditor());
   $("file-store-save").onclick = () => saveFileStore(false);
+  $("sync-host-save").onclick = () => moveSyncHost(false);
+  $("sync-host-home").onclick = () => moveSyncHost(true);
+  $("sync-host-input").addEventListener("input", () => {
+    syncHostPending = null;
+    $("sync-host-save").textContent = "Check and Move";
+  });
   $("file-store-remove").onclick = () => saveFileStore(true);
   $("file-store-guide").onclick = () => openOutsideLink(FILE_STORE_GUIDE);
   for (const id of ["file-store-input", "file-store-code"]) {
@@ -25457,6 +25525,8 @@ function openServerSettings(tab) {
   renderServerTagEditor(server);
   renderTipJarEditor(server);
   $("tab-file-storage").classList.toggle("hidden", !server.can_manage_file_storage);
+  $("tab-sync-host").classList.toggle("hidden", !server.can_set_sync_host);
+  if (server.can_set_sync_host) renderSyncHostEditor(server);
   $("tab-gif-search").classList.toggle("hidden", !server.can_manage_server);
   $("tab-game-database").classList.toggle("hidden", !server.can_manage_server);
   if (server.can_manage_server) {
@@ -25484,6 +25554,7 @@ function openServerSettings(tab) {
   const allowed = {
     bots: canBots,
     "file-storage": Boolean(server.can_manage_file_storage),
+    "sync-host": Boolean(server.can_set_sync_host),
     "gif-search": Boolean(server.can_manage_server),
     "game-database": Boolean(server.can_manage_server) && !inBrowserApp(),
     invites: canInvites,

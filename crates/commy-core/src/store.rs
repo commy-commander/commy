@@ -1635,6 +1635,13 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.server.file_store, url))
             }
+            ServerEvent::SyncHostSet { server, url } => {
+                self.same_server(server)?;
+                if url.as_deref().is_some_and(|u| !crate::sync_host::is_sync_host(u)) {
+                    return Ok(false);
+                }
+                Ok(replace(&mut self.server.sync_host, url))
+            }
             ServerEvent::GifKeySet { server, gifs } => {
                 self.same_server(server)?;
                 if gifs.as_ref().is_some_and(|g| !g.is_valid()) {
@@ -4391,6 +4398,32 @@ mod tests {
         assert_eq!(back.server.file_store.as_deref(), Some("https://commy-files.rockets.workers.dev"));
         assert_eq!(state.apply(set(None)), Ok(true));
         assert_eq!(state.server.file_store, None);
+    }
+
+    #[test]
+    fn only_the_owner_moves_the_community_to_another_sync_host() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let friend = join(&mut state, "friend");
+        let manager = join(&mut state, "manager");
+        let role_id = crate::ids::RoleId::new();
+        let role = crate::server::Role { id: role_id, name: "admin".into(), permissions: crate::Permissions::all(), position: 5, ..state.server.roles[0].clone() };
+        assert_eq!(state.apply(ServerEvent::RoleCreate { server: sid, role }), Ok(true));
+        assert_eq!(state.apply(ServerEvent::RoleAssign { server: sid, user: manager, role: role_id }), Ok(true));
+        let set = |url: Option<&str>| ServerEvent::SyncHostSet { server: sid, url: url.map(str::to_string) };
+        assert_eq!(state.server.sync_host, None, "a community stays on its members' account servers until moved");
+        assert!(crate::action::authorized(&state.server, owner, &set(Some("https://sync.example.org"))));
+        assert!(!crate::action::authorized(&state.server, manager, &set(Some("https://sync.example.org"))), "admins cannot move everyone's connections");
+        assert!(!crate::action::authorized(&state.server, friend, &set(None)));
+        assert_eq!(state.apply(set(Some("https://sync.example.org"))), Ok(true));
+        assert_eq!(state.apply(set(Some("sync.example.org"))), Ok(false), "only the clean form is stored");
+        assert_eq!(state.apply(set(Some("https://10.1.2.3"))), Ok(false));
+        assert_eq!(state.server.sync_host.as_deref(), Some("https://sync.example.org"));
+        let json = serde_json::to_string(&state.snapshot()).unwrap();
+        let back = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+        assert_eq!(back.server.sync_host.as_deref(), Some("https://sync.example.org"));
+        assert_eq!(state.apply(set(None)), Ok(true));
+        assert_eq!(state.server.sync_host, None);
     }
 
     #[test]

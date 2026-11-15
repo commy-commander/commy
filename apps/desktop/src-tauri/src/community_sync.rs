@@ -53,6 +53,8 @@ pub struct Cursors {
     pub read_back: BTreeSet<String>,
     #[serde(default)]
     pub older_before: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub hosts: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -91,6 +93,26 @@ impl Cursors {
         self.announced.retain(|stream, _| streams.contains(stream));
     }
 
+    pub fn keep_hosts_of(&mut self, servers: &HashSet<ServerId>) {
+        self.hosts.retain(|server, _| server.parse::<ServerId>().is_ok_and(|sid| servers.contains(&sid)));
+    }
+
+    pub fn settle_host(&mut self, server: ServerId, url: &str, account_url: &str, streams: &[StreamId]) -> bool {
+        let previous = self.hosts.insert(server.to_string(), url.to_string());
+        let moved = previous.as_deref().unwrap_or(account_url) != url;
+        if moved {
+            for stream in streams {
+                let hex = stream.to_hex();
+                self.after.remove(&hex);
+                self.backfilled.remove(&hex);
+                self.read_back.remove(&hex);
+                self.older_before.remove(&hex);
+                self.announced.remove(&hex);
+            }
+        }
+        moved
+    }
+
     pub fn announce(&mut self, stream: StreamId, profile: &str) -> bool {
         self.announced.insert(stream.to_hex(), profile.to_string()).as_deref() != Some(profile)
     }
@@ -109,6 +131,7 @@ struct Reading {
 }
 
 struct Community {
+    url: String,
     pool: Pool,
     wants: HashMap<StreamId, Want>,
 }
@@ -167,6 +190,7 @@ impl Live {
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 static INVITED: Mutex<Vec<(ServerId, KeyId, ChannelSecret)>> = Mutex::new(Vec::new());
+static INVITED_HOSTS: Mutex<Vec<(ServerId, String)>> = Mutex::new(Vec::new());
 static SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 static REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
 static UNSENT: Mutex<Vec<Unsent>> = Mutex::new(Vec::new());
@@ -188,6 +212,20 @@ pub fn remember_invite_key(server: ServerId, key: KeyId, secret: ChannelSecret) 
     invited.push((server, key, secret));
     let excess = invited.len().saturating_sub(MAX_INVITED);
     invited.drain(..excess);
+}
+
+pub fn remember_invite_host(server: ServerId, host: Option<String>) {
+    let mut invited = INVITED_HOSTS.lock().unwrap();
+    invited.retain(|(s, _)| *s != server);
+    if let Some(host) = host.filter(|h| commy_core::sync_host::is_sync_host(h)) {
+        invited.push((server, host));
+    }
+    let excess = invited.len().saturating_sub(MAX_INVITED);
+    invited.drain(..excess);
+}
+
+pub fn invited_host(server: ServerId) -> Option<String> {
+    INVITED_HOSTS.lock().unwrap().iter().find(|(s, _)| *s == server).map(|(_, host)| host.clone())
 }
 
 fn invited_key(server: ServerId) -> Option<(KeyId, ChannelSecret)> {
@@ -365,6 +403,7 @@ async fn tend(handle: &AppHandle) {
         });
     }
     refresh(handle);
+    record_hosts(&app);
     crate::sync_eraser::tend(&app);
     crate::dm_sync::tend(handle);
     share_keys(&app);
@@ -411,7 +450,7 @@ fn read_back(handle: &AppHandle) {
                 }
             }
         }
-        pick.map(|pick| (pick, live.url.clone()))
+        pick.and_then(|pick| Some((pick.clone(), live.communities.get(&pick.1)?.url.clone())))
     };
     let Some(((stream, server, want, until), url)) = next else { return };
     let (client, events) = SyncClient::spawn(url);
@@ -582,34 +621,86 @@ fn wanted_now(app: &App, me: UserId) -> HashMap<ServerId, Vec<Want>> {
         .collect()
 }
 
+fn known_hosts(app: &App) -> Vec<(ServerId, Option<String>, bool)> {
+    let sids: Vec<ServerId> = app.servers.lock().unwrap().keys().copied().collect();
+    let awaiting: HashSet<ServerId> = sids.into_iter().filter(|sid| app.awaits_snapshot(*sid)).collect();
+    let servers = app.servers.lock().unwrap();
+    servers.iter().map(|(sid, state)| (*sid, state.server.sync_host.clone(), awaiting.contains(sid))).collect()
+}
+
+fn chosen_hosts(app: &App) -> HashMap<ServerId, Option<String>> {
+    known_hosts(app)
+        .into_iter()
+        .map(|(sid, host, awaiting)| {
+            let chosen = if awaiting { host.or_else(|| invited_host(sid)).or_else(|| crate::account_log::community_host(app, sid)) } else { host };
+            (sid, chosen)
+        })
+        .collect()
+}
+
+fn record_hosts(app: &App) {
+    let settled: Vec<(ServerId, Option<String>)> =
+        known_hosts(app).into_iter().filter(|(_, host, awaiting)| !awaiting || host.is_some()).map(|(sid, host, _)| (sid, host)).collect();
+    crate::account_log::record_sync_hosts(app, settled);
+}
+
+pub fn community_url(chosen: Option<&str>, account_url: &str) -> Option<String> {
+    commy_core::sync_host::chosen_socket(chosen, Some(account_url))
+}
+
+fn drop_community(live: &mut Live, sid: ServerId) {
+    live.opening.remove(&sid);
+    if let Some(community) = live.communities.remove(&sid) {
+        if live.reading.as_ref().is_some_and(|r| community.wants.contains_key(&r.stream)) {
+            if let Some(stale) = live.reading.take() {
+                stale.task.abort();
+            }
+        }
+        for stream in community.wants.keys() {
+            live.fresh.remove(stream);
+            live.caught_up.remove(stream);
+            live.current.remove(stream);
+            live.lost.remove(stream);
+            live.refused.remove(stream);
+            live.seen.remove(stream);
+            live.backfilling.remove(stream);
+        }
+    }
+    live.snapshots.remove(&sid);
+    live.published.remove(&sid);
+}
+
 fn refresh(handle: &AppHandle) {
     let app = handle.state::<App>();
     let Some(me) = LIVE.lock().unwrap().as_ref().map(|l| l.me) else { return };
     let mut wanted = wanted_now(&app, me);
+    let hosts = chosen_hosts(&app);
     let mut fresh_communities = Vec::new();
     let mut promoted = Vec::new();
     let mut guard = LIVE.lock().unwrap();
     let Some(live) = guard.as_mut() else { return };
     let gone: Vec<ServerId> = live.communities.keys().filter(|sid| !wanted.contains_key(sid)).copied().collect();
     for sid in gone {
-        live.opening.remove(&sid);
-        if let Some(community) = live.communities.remove(&sid) {
-            for stream in community.wants.keys() {
-                live.caught_up.remove(stream);
-                live.current.remove(stream);
-                live.lost.remove(stream);
-                live.refused.remove(stream);
-                live.seen.remove(stream);
-            }
-        }
+        drop_community(live, sid);
     }
     let everything: HashSet<String> = wanted.values().flatten().map(|w| w.keys.id.to_hex()).collect();
     live.cursors.keep_only(&everything);
+    live.cursors.keep_hosts_of(&wanted.keys().copied().collect());
     for (sid, wants) in wanted.drain() {
+        let chosen = hosts.get(&sid).cloned().flatten();
+        let Some(url) = community_url(chosen.as_deref(), &live.url) else { continue };
+        if live.communities.get(&sid).is_some_and(|community| community.url != url) {
+            tracing::info!("{sid} moved to another sync host");
+            drop_community(live, sid);
+        }
+        let streams: Vec<StreamId> = wants.iter().map(|w| w.keys.id).collect();
+        let account_url = live.url.clone();
+        if live.cursors.settle_host(sid, &url, &account_url, &streams) {
+            save_soon();
+        }
         let fresh = !live.communities.contains_key(&sid);
         let events = live.events.clone();
-        let url = live.url.clone();
-        let community = live.communities.entry(sid).or_insert_with(|| Community { pool: Pool::with_events(&url, events), wants: HashMap::new() });
+        let community = live.communities.entry(sid).or_insert_with(|| Community { pool: Pool::with_events(&url, events), url: url.clone(), wants: HashMap::new() });
         let keep: HashSet<StreamId> = wants.iter().map(|w| w.keys.id).collect();
         let dropped: Vec<StreamId> = community.wants.keys().filter(|id| !keep.contains(id)).copied().collect();
         for stream in dropped {
@@ -851,6 +942,12 @@ pub async fn publish_now(server: ServerId, payload: &WirePayload) -> Vec<(Stream
     stored
 }
 
+pub fn community_hosts() -> HashMap<ServerId, String> {
+    let guard = LIVE.lock().unwrap();
+    let Some(live) = guard.as_ref() else { return HashMap::new() };
+    live.communities.iter().map(|(sid, community)| (*sid, community.url.clone())).collect()
+}
+
 pub fn followed_streams() -> HashMap<ServerId, Vec<commy_sync::StreamKeys>> {
     let guard = LIVE.lock().unwrap();
     let Some(live) = guard.as_ref() else { return HashMap::new() };
@@ -1022,7 +1119,7 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
         return;
     }
     let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
-    let lanes_changed = streams::changes_lanes(&event);
+    let lanes_changed = streams::changes_lanes(&event) || matches!(event, ServerEvent::SyncHostSet { .. });
     match event {
         ServerEvent::MessageCreate { message } if !rings(live_now, message.created_at, Utc::now()) => {
             crate::catchup::AppStore(handle.clone()).apply(server, vec![message], Vec::new());
@@ -1351,6 +1448,54 @@ mod tests {
         let json = serde_json::to_string(&cursors).unwrap();
         assert_eq!(serde_json::from_str::<Cursors>(&json).unwrap(), cursors);
         assert_eq!(serde_json::from_str::<Cursors>("{}").unwrap(), Cursors::default());
+    }
+
+    #[test]
+    fn moving_a_community_to_another_host_starts_its_streams_over_there() {
+        let account = "wss://commy.chat/sync";
+        let away = "wss://sync.example.org/sync";
+        let (sid, other) = (ServerId::new(), ServerId::new());
+        let a = commy_sync::StreamSecret::random().keys().id;
+        let b = commy_sync::StreamSecret::random().keys().id;
+        let mut cursors = Cursors::default();
+        cursors.advance(a, 40);
+        cursors.advance(b, 9);
+        cursors.backfilled.insert(a.to_hex());
+        cursors.announced.insert(a.to_hex(), "p".into());
+        assert!(!cursors.settle_host(sid, account, account, &[a]), "a community never moved stays where it was");
+        assert_eq!(cursors.after(a), 40);
+        assert!(cursors.settle_host(sid, away, account, &[a]));
+        assert_eq!(cursors.after(a), 0, "the new host numbers its entries from the start");
+        assert!(!cursors.backfilled.contains(&a.to_hex()), "the owner copies the history over again");
+        assert!(cursors.announced.is_empty());
+        assert_eq!(cursors.after(b), 9, "other communities keep their place");
+        assert!(!cursors.settle_host(sid, away, account, &[a]));
+        assert!(!cursors.settle_host(other, away, away, &[b]), "an account on that host saw no move");
+        cursors.advance(a, 3);
+        let json = serde_json::to_string(&cursors).unwrap();
+        let mut back = serde_json::from_str::<Cursors>(&json).unwrap();
+        assert!(!back.settle_host(sid, away, account, &[a]), "the host is remembered across restarts");
+        assert!(back.settle_host(sid, account, account, &[a]), "moving back home starts over too");
+        back.keep_hosts_of(&HashSet::from([other]));
+        assert_eq!(back.hosts.keys().cloned().collect::<Vec<_>>(), vec![other.to_string()]);
+    }
+
+    #[test]
+    fn a_community_follows_its_chosen_host_or_the_account_servers() {
+        assert_eq!(community_url(None, "wss://commy.chat/sync").as_deref(), Some("wss://commy.chat/sync"));
+        assert_eq!(community_url(Some("https://sync.example.org"), "wss://commy.chat/sync").as_deref(), Some("wss://sync.example.org/sync"));
+        assert_eq!(community_url(Some("https://10.0.0.1"), "wss://commy.chat/sync"), None);
+    }
+
+    #[test]
+    fn an_invite_remembers_where_its_community_syncs() {
+        let sid = ServerId::new();
+        remember_invite_host(sid, Some("https://sync.example.org".into()));
+        assert_eq!(invited_host(sid).as_deref(), Some("https://sync.example.org"));
+        remember_invite_host(sid, Some("http://sync.example.org".into()));
+        assert_eq!(invited_host(sid), None, "a bad host is dropped, not kept from before");
+        remember_invite_host(sid, None);
+        assert_eq!(invited_host(sid), None);
     }
 
     #[test]

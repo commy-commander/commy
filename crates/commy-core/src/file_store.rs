@@ -130,7 +130,7 @@ fn private_host(host: &str) -> bool {
         || !host.contains('.')
 }
 
-fn host_ok(host: &str) -> bool {
+pub(crate) fn host_ok(host: &str) -> bool {
     !host.is_empty()
         && host.len() <= 253
         && host.split('.').all(|label| !label.is_empty() && label.len() <= 63 && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !label.starts_with('-') && !label.ends_with('-'))

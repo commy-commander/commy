@@ -37,6 +37,7 @@ const SETTINGS_PAGE_ICONS = {
     audit: "file-text",
     bots: "bot",
     "file-storage": "folder",
+    "sync-host": "refresh-cw",
     "gif-search": "gif",
     "game-database": "gamepad-2",
     "leave-server-btn": "log-out",

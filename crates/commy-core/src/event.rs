@@ -461,6 +461,10 @@ pub enum ServerEvent {
         server: ServerId,
         games: Option<crate::search_keys::GameDbKey>,
     },
+    SyncHostSet {
+        server: ServerId,
+        url: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -562,6 +566,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::FileStoreSet { server, url: None }), 103);
         assert_eq!(wire_tag(ServerEvent::GifKeySet { server, gifs: None }), 104);
         assert_eq!(wire_tag(ServerEvent::GameDbSet { server, games: None }), 105);
+        assert_eq!(wire_tag(ServerEvent::SyncHostSet { server, url: None }), 106);
     }
 
     #[test]

@@ -38,6 +38,12 @@ pub enum Record {
         accepted: bool,
     },
     Relations { set: BTreeMap<UserId, RelationPiece> },
+    SyncHost {
+        server: ServerId,
+        #[serde(default)]
+        host: Option<String>,
+        at: i64,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -79,6 +85,15 @@ pub fn community_key_record(server: ServerId, key: &SharedKey, at: i64, owner: O
         .expect("community key encode")
 }
 
+pub fn sync_host_record(server: ServerId, host: Option<&str>, at: i64) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "k": "sync_host", "server": server, "host": host, "at": at })).expect("sync host encode")
+}
+
+pub fn host_to_record(recorded: Option<&(Option<String>, i64)>, mine: Option<&str>, last_written: Option<&Option<String>>) -> bool {
+    let recorded_host = recorded.and_then(|(host, _)| host.as_deref());
+    recorded_host != mine && last_written.is_none_or(|written| written.as_deref() != mine)
+}
+
 pub fn profile_record(profile: &UserProfile, at: DateTime<Utc>) -> Vec<u8> {
     let list = EntryList { profile: Some(profile.clone()), profile_at: Some(at), ..Default::default() };
     serde_json::to_vec(&serde_json::json!({ "k": "servers", "list": list })).expect("servers encode")
@@ -102,7 +117,7 @@ pub enum Change {
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Plan {
-    pub follow: Vec<(Lane, StreamKeys, u64)>,
+    pub follow: Vec<(Lane, StreamKeys, u64, Option<String>)>,
     pub unfollow: Vec<StreamId>,
 }
 
@@ -111,6 +126,8 @@ pub struct Book {
     list: EntryList,
     keys: HashMap<ServerId, (SharedKey, i64)>,
     owners: HashMap<ServerId, (UserId, IdentityKey)>,
+    recorded_hosts: HashMap<ServerId, (Option<String>, i64)>,
+    hosts: HashMap<ServerId, Option<String>>,
     after: HashMap<StreamId, u64>,
     routes: HashMap<StreamId, (ServerId, Want)>,
     live: HashSet<StreamId>,
@@ -175,8 +192,30 @@ impl Book {
                     .collect();
                 if taken.is_empty() { Change::Nothing } else { Change::Relations(taken) }
             }
+            Record::SyncHost { server, host, at } => {
+                let host = host.filter(|h| commy_core::sync_host::is_sync_host(h));
+                let known = self.recorded_hosts.get(&server);
+                if known.is_some_and(|(_, seen)| at <= *seen) {
+                    return Change::Nothing;
+                }
+                let moved = known.map_or(host.is_some(), |(held, _)| *held != host);
+                self.recorded_hosts.insert(server, (host, at));
+                if moved { Change::Keys } else { Change::Nothing }
+            }
             Record::Unknown => Change::Nothing,
         }
+    }
+
+    pub fn recorded_host(&self, server: ServerId) -> Option<String> {
+        self.recorded_hosts.get(&server).and_then(|(host, _)| host.clone())
+    }
+
+    pub fn recorded(&self, server: ServerId) -> Option<&(Option<String>, i64)> {
+        self.recorded_hosts.get(&server)
+    }
+
+    pub fn host_of(&self, server: ServerId) -> Option<String> {
+        self.hosts.get(&server).cloned().flatten()
     }
 
     pub fn note_relation(&mut self, user: UserId, at: i64) -> bool {
@@ -319,7 +358,33 @@ impl Book {
     }
 
     pub fn replan(&mut self, wanted: HashMap<ServerId, Vec<Want>>) -> Plan {
+        self.replan_at(wanted, &HashMap::new())
+    }
+
+    fn move_server(&mut self, server: ServerId, plan: &mut Plan) {
+        let streams: Vec<StreamId> = self.routes.iter().filter(|(_, (sid, _))| *sid == server).map(|(stream, _)| *stream).collect();
+        for stream in streams {
+            self.routes.remove(&stream);
+            self.after.remove(&stream);
+            self.live.remove(&stream);
+            self.current.remove(&stream);
+            self.lost.remove(&stream);
+            self.refused.remove(&stream);
+            plan.unfollow.push(stream);
+        }
+    }
+
+    pub fn replan_at(&mut self, wanted: HashMap<ServerId, Vec<Want>>, sockets: &HashMap<ServerId, String>) -> Plan {
         let mut plan = Plan::default();
+        self.hosts.retain(|server, _| wanted.contains_key(server));
+        for server in wanted.keys() {
+            let socket = sockets.get(server).cloned();
+            match self.hosts.get(server) {
+                Some(held) if *held != socket => self.move_server(*server, &mut plan),
+                _ => {}
+            }
+            self.hosts.insert(*server, socket);
+        }
         let keep: HashSet<StreamId> = wanted.values().flatten().map(|w| w.keys.id).collect();
         let gone: Vec<StreamId> = self.routes.keys().filter(|id| !keep.contains(id)).copied().collect();
         for stream in gone {
@@ -339,7 +404,7 @@ impl Book {
                     held.writes = want.writes;
                     continue;
                 }
-                plan.follow.push((want.lane, want.keys.clone(), self.after(stream)));
+                plan.follow.push((want.lane, want.keys.clone(), self.after(stream), self.hosts.get(&server).cloned().flatten()));
                 self.routes.insert(stream, (server, want));
             }
         }
@@ -782,5 +847,42 @@ mod tests {
         }
         assert_eq!(book.take_parked(server).len(), MAX_PARKED);
         assert!(book.take_parked(server).is_empty());
+    }
+
+    #[test]
+    fn a_moved_server_is_read_again_from_its_new_host() {
+        let (server, other) = (ServerId::new(), ServerId::new());
+        let (state, theirs) = (want(server, Lane::State, true), want(other, Lane::State, true));
+        let away = "wss://sync.example.org/sync".to_string();
+        let mut book = Book::new(EntryList::default());
+        let plan = book.replan_at([(server, vec![state.clone()]), (other, vec![theirs.clone()])].into(), &HashMap::new());
+        assert!(plan.follow.iter().all(|f| f.3.is_none()), "servers start on the account server's sync");
+        book.caught_up(state.keys.id, 30);
+        book.caught_up(theirs.keys.id, 8);
+        let sockets = HashMap::from([(server, away.clone())]);
+        let plan = book.replan_at([(server, vec![state.clone()]), (other, vec![theirs.clone()])].into(), &sockets);
+        assert_eq!(plan.unfollow, vec![state.keys.id]);
+        assert_eq!(plan.follow.len(), 1);
+        assert_eq!((plan.follow[0].1.id, plan.follow[0].2, plan.follow[0].3.clone()), (state.keys.id, 0, Some(away.clone())));
+        assert!(!book.is_live(state.keys.id));
+        assert!(book.is_live(theirs.keys.id), "other servers stay where they are");
+        assert_eq!(book.host_of(server), Some(away.clone()));
+        let again = book.replan_at([(server, vec![state.clone()]), (other, vec![theirs])].into(), &sockets);
+        assert_eq!(again, Plan::default(), "nothing moves twice");
+    }
+
+    #[test]
+    fn the_newest_sync_host_record_wins() {
+        let server = ServerId::new();
+        let mut book = Book::new(EntryList::default());
+        let record = |host: Option<&str>, at| Record::parse(&sync_host_record(server, host, at));
+        assert_eq!(book.fold(record(None, 1)), Change::Nothing);
+        assert_eq!(book.fold(record(Some("https://sync.example.org"), 5)), Change::Keys);
+        assert_eq!(book.fold(record(None, 4)), Change::Nothing, "an older record does not move it back");
+        assert_eq!(book.recorded_host(server).as_deref(), Some("https://sync.example.org"));
+        assert_eq!(book.fold(record(Some("https://10.0.0.1"), 9)), Change::Keys, "a bad host counts as the default");
+        assert_eq!(book.recorded_host(server), None);
+        let desktop = format!(r#"{{"k":"sync_host","server":"{server}","host":"https://sync.example.org","at":12}}"#);
+        assert_eq!(book.fold(Record::parse(desktop.as_bytes())), Change::Keys, "the desktop app's records read the same");
     }
 }

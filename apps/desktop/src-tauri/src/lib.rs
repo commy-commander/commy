@@ -68,6 +68,7 @@ mod state;
 mod storage;
 mod stream_deck;
 mod sync_eraser;
+mod sync_host;
 mod sync_link;
 #[cfg(windows)]
 mod taskbar;
@@ -370,6 +371,38 @@ async fn test_file_store(app: tauri::State<'_, App>, url: String) -> CmdResult<s
     Ok(serde_json::json!({ "max_bytes": info.max_bytes, "paired": info.paired }))
 }
 
+#[tauri::command]
+async fn set_sync_host(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, host: Option<String>) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    if app.awaits_snapshot(sid) {
+        return Err("wait until this server has finished loading".into());
+    }
+    let event = {
+        let servers = app.servers.lock().unwrap();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        view::sync_host::set_sync_host(state, me.id, host.as_deref())?
+    };
+    let account_url = sync_link::url().ok_or("Commy is not connected to its sync service yet")?;
+    let target = sync_host::target(&event, &account_url).ok_or(view::sync_host::SYNC_HOST_INVALID)?;
+    sync_host::claim_everything(&app, sid, &target).await?;
+    let forwarding_note = app.wire_for(sid, event.clone());
+    if community_sync::publish_now(sid, &forwarding_note).await.is_empty() {
+        tracing::warn!("the old sync host of {sid} did not take the move; members who are offline follow it through the owner's copy");
+    }
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    community_sync::refresh_soon(&handle);
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn test_sync_host(host: String) -> CmdResult<String> {
+    let origin = commy_core::sync_host::clean_sync_host(&host).ok_or(view::sync_host::SYNC_HOST_INVALID)?;
+    sync_host::check(&origin).await?;
+    Ok(commy_core::sync_host::display_host(&origin).unwrap_or_default().to_string())
+}
+
 fn storage_roster(app: &App, sid: ServerId) -> Option<commy_core::file_store::Roster> {
     let servers = app.servers.lock().unwrap();
     commy_core::file_store::roster_of(servers.get(&sid)?, chrono::Utc::now().timestamp_millis())
@@ -500,6 +533,7 @@ pub(crate) async fn join_ticket(app: &App, handle: &impl catchup::AppAccess, tic
     };
 
     let (mut state, profile, signing) = own_server_state(app, ticket.server_id, &ticket.server_name, joining).await?;
+    state.server.sync_host = community_sync::invited_host(ticket.server_id);
     let _ = state.apply(ServerEvent::MemberJoin { server: ticket.server_id, profile: profile.clone() });
     let summary = ServerSummary::from_state(&state, Some(profile.id));
     app.servers.lock().unwrap().insert(ticket.server_id, state);
@@ -8635,6 +8669,8 @@ pub fn run() {
             set_tip_jar,
             set_file_store,
             test_file_store,
+            set_sync_host,
+            test_sync_host,
             set_upload_limit,
             set_tts_allowed,
             set_pet,

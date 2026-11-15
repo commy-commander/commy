@@ -29,6 +29,7 @@ pub mod store;
 pub mod pet;
 pub mod template;
 pub mod file_store;
+pub mod sync_host;
 pub mod search_keys;
 pub mod tip_jar;
 pub mod user;

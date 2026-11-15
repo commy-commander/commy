@@ -481,6 +481,21 @@ server or channel a log belongs to.
   `GET /sync/healthz`. It logs only totals (connections, live logs, opens,
   appends, stored pictures and live signals per 10 minutes, and wake-ups when
   they are on).
+- **Syncing one community:** a Commy server's owner can move that server's
+  logs to a sync service they run, in Server Settings > Sync Server. Only the
+  `sync` service is needed for this, on its own domain at `wss://<domain>/sync`
+  on port 443; accounts stay on the members' account server. Before moving,
+  the owner's app registers the server's eraser keys on the new service,
+  refusing a service too old to erase or one where someone else already holds
+  a key. It then leaves a note about the move on the old service, records the
+  new address in the owner's account log, and copies the server's setup to the
+  new service. The owner's desktop app also copies the last 1,000 messages per
+  channel. Every member's app follows the note and records the new address in
+  its own account log. Invites made after the move carry the new address
+  inside the sealed invite. The account log, direct messages, pictures and
+  phone wake-ups stay with each member's account server, so this service needs
+  no push keys and sees only that community's logs. Copies left on the old
+  service expire with its retention period.
 
 ## iroh relay
 
