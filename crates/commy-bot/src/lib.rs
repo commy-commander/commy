@@ -16,8 +16,8 @@ pub use replica::Replica;
 pub use store::{BotStore, Outgoing};
 
 use chrono::{DateTime, Utc};
-use commy_core::channel_key::{self, Keyring};
-use commy_core::{Action, BotCommand, Identity, Message, Presence, ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile};
+use commy_core::channel_key::{self, KeyScope, Keyring};
+use commy_core::{action, Action, BotCommand, SignedEvent, Identity, Message, Presence, ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile};
 use commy_net::catchup::ApplyReport;
 use commy_net::WirePayload;
 use std::collections::{BTreeMap, HashSet};
@@ -126,6 +126,7 @@ impl Bot {
         let fresh = self.replicas.get_mut(&server)?.accept_snapshot(payload, &me, now, wall.timestamp_millis())?;
         let mut out = self.announcements(server, wall.timestamp_millis());
         out.extend(self.review(server, fresh, wall));
+        out.extend(self.tend_community_key(server, wall));
         Some(out)
     }
 
@@ -138,8 +139,30 @@ impl Bot {
         wall: DateTime<Utc>,
     ) -> Vec<WirePayload> {
         let Some(replica) = self.replicas.get_mut(&server) else { return Vec::new() };
+        let banned = matches!(event, ServerEvent::MemberBan { .. });
         let fresh = replica.apply(event, action, now);
-        self.review(server, fresh, wall)
+        let mut out = self.review(server, fresh, wall);
+        if banned {
+            out.extend(self.tend_community_key(server, wall));
+        }
+        out
+    }
+
+    pub fn tend_community_key(&mut self, server: ServerId, wall: DateTime<Utc>) -> Vec<WirePayload> {
+        let me = self.profile.id;
+        let Some(state) = self.replicas.get_mut(&server).and_then(|r| r.state.as_mut()) else { return Vec::new() };
+        let mut ring = Keyring::unlock_community(state, me, &self.identity);
+        let Some(task) = channel_key::community_key_task(state, me, &ring) else { return Vec::new() };
+        let at = wall.timestamp_millis();
+        let mut out = Vec::new();
+        for event in ring.task_events(state, KeyScope::Community, task, at) {
+            let signed = SignedEvent::sign(server, me, at, event, &self.identity);
+            if !action::authorized(&state.server, me, &signed.event) || state.apply_signed(&signed).is_err() {
+                break;
+            }
+            out.push(WirePayload::Signed(signed));
+        }
+        out
     }
 
     pub fn on_caught_up(
@@ -190,8 +213,14 @@ impl Bot {
                 acts
             };
             for act in acts {
+                let bans = matches!(act, Act::Ban { .. });
                 match self.perform(server, act, wall) {
-                    Ok(payload) => out.push(payload),
+                    Ok(payload) => {
+                        out.push(payload);
+                        if bans {
+                            out.extend(self.tend_community_key(server, wall));
+                        }
+                    }
                     Err(e) => tracing::warn!("{}: {e}", self.replicas.get(&server).map_or("", |r| r.name())),
                 }
             }

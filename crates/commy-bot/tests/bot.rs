@@ -81,6 +81,64 @@ fn repeat_offenders_are_banned_when_the_bot_may_ban() {
     assert!(world.owner_state.server.banned.contains(&world.member));
 }
 
+fn community_key_id(state: &commy_core::ServerState) -> Option<commy_core::channel_key::KeyId> {
+    state.community_keys().newest().map(|k| k.id)
+}
+
+fn key_added_by(payload: &WirePayload, by: UserId) -> bool {
+    matches!(payload, WirePayload::Signed(s) if s.action.by == by && matches!(s.event, ServerEvent::CommunityKeyAdd { .. }))
+}
+
+fn start_community_key(world: &mut World) {
+    use commy_core::channel_key::{community_key_task, KeyScope, Keyring};
+    let owner = world.owner;
+    let mut ring = Keyring::unlock_community(&world.owner_state, owner, &identity_for(owner));
+    let task = community_key_task(&world.owner_state, owner, &ring).expect("the owner starts the key");
+    let at = Utc::now().timestamp_millis();
+    for event in ring.task_events(&world.owner_state, KeyScope::Community, task, at) {
+        world.by_owner(event);
+    }
+}
+
+#[test]
+fn a_moderator_bot_rotates_the_community_key_when_someone_is_banned() {
+    let mut world = World::joined(Policy::default());
+    world.promote(Permissions::BAN_MEMBERS | Permissions::KICK_MEMBERS);
+    start_community_key(&mut world);
+    let before = community_key_id(&world.owner_state);
+    assert!(before.is_some());
+    let sid = world.sid();
+    let out = world.by_owner(ServerEvent::MemberBan { server: sid, user: world.member });
+    assert!(out.iter().any(|p| key_added_by(p, world.bot_id)), "a ban by someone else still makes the bot rotate");
+    world.deliver(out);
+    assert_ne!(community_key_id(&world.owner_state), before);
+}
+
+#[test]
+fn a_bot_that_bans_rotates_the_community_key_in_the_same_breath() {
+    let mut world = World::joined(Policy { log_channel: None, ban_after: Some(1) });
+    world.block("gold");
+    world.promote(Permissions::MANAGE_MESSAGES | Permissions::BAN_MEMBERS);
+    start_community_key(&mut world);
+    let before = community_key_id(&world.owner_state);
+    let spam = post(&world.owner_state, world.channel, world.member, "gold");
+    let out = world.posted(spam);
+    assert!(out.iter().any(|p| matches!(p, WirePayload::Signed(s) if matches!(s.event, ServerEvent::MemberBan { .. }))));
+    assert!(out.iter().any(|p| key_added_by(p, world.bot_id)));
+    world.deliver(out);
+    assert_ne!(community_key_id(&world.owner_state), before);
+}
+
+#[test]
+fn a_bot_without_ban_rights_leaves_the_key_alone() {
+    let mut world = World::joined(Policy::default());
+    world.promote(Permissions::MANAGE_MESSAGES);
+    start_community_key(&mut world);
+    let sid = world.sid();
+    let out = world.by_owner(ServerEvent::MemberBan { server: sid, user: world.member });
+    assert!(!out.iter().any(|p| key_added_by(p, world.bot_id)));
+}
+
 #[test]
 fn messages_from_members_it_has_not_met_yet_are_reviewed_once_their_key_arrives() {
     let mut world = World::joined(Policy::default());
