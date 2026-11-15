@@ -9,6 +9,7 @@ export const DEFAULT_DAILY_UPLOAD_MB = 500;
 export const MAX_ROSTER_BYTES = 2 * MIB;
 export const MAX_ROSTER_KEYS = 20000;
 export const MIN_SETUP_CODE = 16;
+export const MAX_COPIES = 4;
 const REQUEST_DOMAIN = "commy-files/v2";
 const ROSTER_DOMAIN = "commy-files-roster/v2";
 const ROSTER_OBJECT = "_commy/roster.json";
@@ -41,6 +42,10 @@ function json(status, value) {
 
 export function objectName(id) {
   return `f/${id}`;
+}
+
+export function copyName(id, key) {
+  return `${objectName(id)}/${key}`;
 }
 
 export function usageName(key) {
@@ -211,13 +216,36 @@ async function countUpload(bucket, env, key, size, now) {
   return true;
 }
 
-async function check(bucket, id) {
-  const head = await bucket.head(objectName(id));
+export async function copiesOf(bucket, id) {
+  const names = [];
+  if (await bucket.head(objectName(id))) names.push(objectName(id));
+  const listed = await bucket.list({ prefix: `${objectName(id)}/`, limit: MAX_COPIES * 2 });
+  for (const object of listed?.objects ?? []) names.push(object.key);
+  return names;
+}
+
+async function check(bucket, id, key) {
+  const head = await bucket.head(copyName(id, key));
   return head ? reply(200, null, { "content-length": String(head.size), "cache-control": "no-store" }) : reply(404, null, { "cache-control": "no-store" });
 }
 
-async function fetchFile(bucket, id) {
-  const object = await bucket.get(objectName(id));
+function copyAsked(request) {
+  const asked = new URL(request.url).searchParams.get("copy");
+  if (asked === null) return 0;
+  const copy = Number(asked);
+  return /^[0-9]+$/.test(asked) && copy < MAX_COPIES * 2 ? copy : null;
+}
+
+async function fetchCopy(bucket, id, request) {
+  const copy = copyAsked(request);
+  if (copy === null) return reply(400, "not a copy number");
+  const name = (await copiesOf(bucket, id))[copy];
+  if (!name) return reply(404, "no such file", { "cache-control": "no-store" });
+  return fetchFile(bucket, name);
+}
+
+async function fetchFile(bucket, name) {
+  const object = await bucket.get(name);
   if (!object) return reply(404, "no such file", { "cache-control": "no-store" });
   return reply(200, object.body, {
     "content-type": "application/octet-stream",
@@ -229,11 +257,13 @@ async function fetchFile(bucket, id) {
 async function keepFile(bucket, env, id, request, key, now) {
   const declared = Number(request.headers.get("content-length"));
   if (!fitsSealed(declared) || !request.body) return reply(400, "not a sealed file");
-  if (await bucket.head(objectName(id))) return reply(204);
+  const mine = copyName(id, key);
+  if (await bucket.head(mine)) return reply(204);
+  if ((await copiesOf(bucket, id)).length >= MAX_COPIES) return reply(204);
   if (!(await countUpload(bucket, env, key, declared, now))) return reply(429, "daily upload limit reached");
-  const kept = await bucket.put(objectName(id), request.body, { httpMetadata: { contentType: "application/octet-stream" } });
+  const kept = await bucket.put(mine, request.body, { httpMetadata: { contentType: "application/octet-stream" } });
   if (!kept || kept.size !== declared) {
-    await bucket.delete(objectName(id));
+    await bucket.delete(mine);
     return reply(400, "not a sealed file");
   }
   return reply(204);
@@ -245,8 +275,8 @@ async function file(bucket, env, request, method, id, now) {
   const length = method === "PUT" ? Number(request.headers.get("content-length")) || 0 : 0;
   const key = await signer(request, method, id, length, now);
   if (!key || !admits(roster, key)) return reply(403);
-  if (method === "HEAD") return check(bucket, id);
-  if (method === "GET") return fetchFile(bucket, id);
+  if (method === "HEAD") return check(bucket, id, key);
+  if (method === "GET") return fetchCopy(bucket, id, request);
   return keepFile(bucket, env, id, request, key, now);
 }
 

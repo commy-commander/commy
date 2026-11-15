@@ -12,6 +12,14 @@ pub const PAIR_PATH: &str = "_commy/pair";
 pub const ROSTER_PATH: &str = "_commy/roster";
 pub const ROSTER_TARGET: &str = "roster";
 pub const MIN_SETUP_CODE: usize = 16;
+pub const MAX_FILE_COPIES: usize = 4;
+
+pub fn copy_path(id: &str, copy: usize) -> String {
+    match copy {
+        0 => id.to_string(),
+        n => format!("{id}?copy={n}"),
+    }
+}
 const REQUEST_DOMAIN: &str = "commy-files/v2";
 const ROSTER_DOMAIN: &str = "commy-files-roster/v2";
 
@@ -165,6 +173,12 @@ pub fn reaches_in_browser(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_copy_keeps_the_plain_path() {
+        assert_eq!(copy_path("ab", 0), "ab");
+        assert_eq!(copy_path("ab", 3), "ab?copy=3");
+    }
 
     #[test]
     fn an_https_address_becomes_one_form() {

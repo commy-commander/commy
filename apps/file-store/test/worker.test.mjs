@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handle, SEALED_SIZES, MAX_FILE_PLAIN, objectName, usageName, fitsSealed, requestMessage, rosterMessage, verifies, forgetRoster, dailyCap, SIGNED_FOR_MS, DEFAULT_DAILY_UPLOAD_MB } from "../worker.js";
+import { handle, SEALED_SIZES, MAX_FILE_PLAIN, MAX_COPIES, objectName, copyName, usageName, fitsSealed, requestMessage, rosterMessage, verifies, forgetRoster, dailyCap, SIGNED_FOR_MS, DEFAULT_DAILY_UPLOAD_MB } from "../worker.js";
 
 function memoryBucket() {
   const objects = new Map();
@@ -21,6 +21,10 @@ function memoryBucket() {
     },
     async delete(name) {
       objects.delete(name);
+    },
+    async list({ prefix, limit }) {
+      const keys = [...objects.keys()].filter(name => name.startsWith(prefix)).sort().slice(0, limit);
+      return { objects: keys.map(key => ({ key })), truncated: false };
     },
   };
 }
@@ -67,8 +71,8 @@ async function put(env, who, bytes, now = NOW) {
   return send(env, "PUT", `/${id}`, { body: bytes, headers: await signedHeaders(who, "PUT", id, bytes.byteLength, now), now });
 }
 
-async function get(env, who, method = "GET") {
-  return send(env, method, `/${id}`, { headers: await signedHeaders(who, method, id, 0) });
+async function get(env, who, method = "GET", query = "") {
+  return send(env, method, `/${id}${query}`, { headers: await signedHeaders(who, method, id, 0) });
 }
 
 test("the root says this is Commy file storage, how big a file may be and whether it is set up", async () => {
@@ -120,14 +124,55 @@ test("only members on the list can read, check or upload files", async () => {
   assert.equal((await put(env, member, sealed)).status, 204);
   assert.equal((await send(env, "GET", `/${id}`)).status, 403, "unsigned reads are refused");
   assert.equal((await get(env, stranger)).status, 403);
-  assert.equal((await get(env, owner, "HEAD")).status, 200);
+  assert.equal((await get(env, member, "HEAD")).status, 200, "a member sees its own copy");
+  assert.equal((await get(env, owner, "HEAD")).status, 404, "and others are asked for theirs");
   const res = await get(env, member);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("cache-control"), "private, max-age=31536000, immutable");
   assert.deepEqual(new Uint8Array(await res.arrayBuffer()), sealed);
   const other = new Uint8Array(SEALED_SIZES[0]).fill(9);
   assert.equal((await put(env, owner, other)).status, 204);
-  assert.deepEqual(env.FILES.objects.get(objectName(id)), sealed, "a kept file is never replaced");
+  assert.deepEqual(env.FILES.objects.get(copyName(id, member.key)), sealed, "a kept copy is never replaced");
+  assert.deepEqual(env.FILES.objects.get(copyName(id, owner.key)), other, "each member keeps its own copy");
+});
+
+test("a junk copy cannot hide the real one", async () => {
+  const { env, owner, member } = await setUp();
+  const junk = new Uint8Array(SEALED_SIZES[0]).fill(1);
+  const real = new Uint8Array(SEALED_SIZES[0]).fill(2);
+  const [first, second] = [owner, member].sort((a, b) => (a.key < b.key ? -1 : 1));
+  assert.equal((await put(env, first, junk)).status, 204);
+  assert.equal((await put(env, second, real)).status, 204);
+  assert.deepEqual(new Uint8Array(await (await get(env, owner)).arrayBuffer()), junk);
+  assert.deepEqual(new Uint8Array(await (await get(env, owner, "GET", "?copy=1")).arrayBuffer()), real);
+  assert.equal((await get(env, owner, "GET", "?copy=2")).status, 404);
+  assert.equal((await get(env, owner, "GET", "?copy=x")).status, 400);
+  assert.equal((await put(env, first, real)).status, 204);
+  assert.deepEqual(env.FILES.objects.get(copyName(id, first.key)), junk, "a member cannot swap its own copy either");
+});
+
+test("a file keeps a bounded number of copies, counting one from an older worker", async () => {
+  const { env, owner, manager, member, roster } = await setUp();
+  const extra = await Promise.all([person(), person()]);
+  const everyone = { ...roster, members: [...roster.members, ...extra.map(p => p.key)], at: NOW + 1 };
+  assert.equal((await send(env, "PUT", "/_commy/roster", { body: await signedRoster(owner, everyone) })).status, 204);
+  const sealed = new Uint8Array(SEALED_SIZES[0]).fill(3);
+  env.FILES.objects.set(objectName(id), sealed);
+  for (const who of [owner, manager, member, ...extra]) assert.equal((await put(env, who, sealed)).status, 204);
+  const copies = [...env.FILES.objects.keys()].filter(name => name.startsWith(objectName(id)));
+  assert.equal(copies.length, MAX_COPIES);
+  assert.deepEqual(new Uint8Array(await (await get(env, member)).arrayBuffer()), sealed, "the older copy comes first");
+});
+
+test("a short upload drops only the uploader's own copy", async () => {
+  const { env, owner, member } = await setUp();
+  const sealed = new Uint8Array(SEALED_SIZES[0]).fill(4);
+  assert.equal((await put(env, owner, sealed)).status, 204);
+  const claimed = await signedHeaders(member, "PUT", id, SEALED_SIZES[1]);
+  const short = new Uint8Array(SEALED_SIZES[0]);
+  assert.equal((await send(env, "PUT", `/${id}`, { body: short, headers: { ...claimed, "content-length": String(SEALED_SIZES[1]) } })).status, 400);
+  assert.deepEqual(env.FILES.objects.get(copyName(id, owner.key)), sealed);
+  assert.ok(!env.FILES.objects.has(copyName(id, member.key)));
 });
 
 test("a signature is good for one request, for five minutes", async () => {
@@ -192,7 +237,7 @@ test("each member uploads at most the daily limit", async () => {
   assert.equal(await upload(ids[1]), 204);
   assert.equal(await upload(ids[2]), 204);
   assert.equal(await upload(ids[3]), 429);
-  assert.ok(!env.FILES.objects.has(objectName(ids[3])));
+  assert.ok(!env.FILES.objects.has(copyName(ids[3], member.key)));
   assert.ok(env.FILES.objects.has(usageName(member.key)));
   const tomorrow = NOW + 24 * 60 * 60 * 1000;
   assert.equal(await upload(ids[4], tomorrow), 204, "the limit starts over each day");
@@ -210,7 +255,7 @@ test("only whole sealed sizes and real ids are taken", async () => {
   const sealed = new Uint8Array(SEALED_SIZES[1]);
   const claimed = await signedHeaders(member, "PUT", id, SEALED_SIZES[0]);
   assert.equal((await send(env, "PUT", `/${id}`, { body: sealed, headers: { ...claimed, "content-length": String(SEALED_SIZES[0]) } })).status, 400, "a body that is not the size it claims is dropped");
-  assert.ok(!env.FILES.objects.has(objectName(id)));
+  assert.ok(!env.FILES.objects.has(copyName(id, member.key)));
 });
 
 test("browsers may ask first, with the signature headers", async () => {

@@ -66,6 +66,9 @@ browser those files load peer to peer.
 
 ## Who can reach it
 
+- **Each file** keeps up to four copies, one per member who uploaded it, and
+  no copy is ever replaced. Apps try each copy until one opens as the file the
+  message names.
 - **Members** can read and upload files, signed with their own identity. When
   someone joins, the owner's or a manager's app adds them within a couple of
   minutes while it is open; when someone leaves or is banned, it takes them

@@ -184,11 +184,17 @@ impl Session {
         }
         let key = FileKey::for_blob(blob);
         let id = key.id_hex();
-        let answer = self.call_storage("GET", &format!("{base}/{id}"), signed_headers(&identity, "GET", &id, 0), &[], FETCH_WAIT_MS).await;
-        if !answer.ok() {
-            return None;
+        for copy in 0..store::MAX_FILE_COPIES {
+            let url = format!("{base}/{}", store::copy_path(&id, copy));
+            let answer = self.call_storage("GET", &url, signed_headers(&identity, "GET", &id, 0), &[], FETCH_WAIT_MS).await;
+            if !answer.ok() {
+                return None;
+            }
+            if let Some(plain) = answer.body.and_then(|body| opened(&key, blob, &body, max)) {
+                return Some(plain);
+            }
         }
-        opened(&key, blob, &answer.body?, max)
+        None
     }
 
     pub(super) fn offer_file(self: &Rc<Self>, server: ServerId, blob: &str, bytes: Vec<u8>) {

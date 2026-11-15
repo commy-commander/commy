@@ -95,19 +95,22 @@ pub async fn fetch(http: &reqwest::Client, base: Option<&str>, identity: Option<
     }
     let key = FileKey::for_blob(blob);
     let id = key.id_hex();
-    let fetched = async {
-        let request = signed(http.get(format!("{base}/{id}")), identity, "GET", &id, 0);
-        let response = request.timeout(FETCH_WAIT).send().await.ok()?;
-        if !response.status().is_success() {
-            return None;
+    for copy in 0..store::MAX_FILE_COPIES {
+        let Some(body) = fetch_copy(http, base, identity, &id, copy).await else { break };
+        if let Some(plain) = opened(&key, blob, &body, max) {
+            return Fetched::Found(plain);
         }
-        response.bytes().await.ok()
     }
-    .await;
-    match fetched.and_then(|body| opened(&key, blob, &body, max)) {
-        Some(plain) => Fetched::Found(plain),
-        None => Fetched::NotKept,
+    Fetched::NotKept
+}
+
+async fn fetch_copy(http: &reqwest::Client, base: &str, identity: &Identity, id: &str, copy: usize) -> Option<Vec<u8>> {
+    let request = signed(http.get(format!("{base}/{}", store::copy_path(id, copy))), identity, "GET", id, 0);
+    let response = request.timeout(FETCH_WAIT).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
     }
+    response.bytes().await.ok().map(|body| body.to_vec())
 }
 
 fn first_offer(base: &str, blob: &str) -> bool {
