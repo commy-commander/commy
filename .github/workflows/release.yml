@@ -451,7 +451,7 @@ jobs:
           fi
           version="${TAG#v}"
           sign() {
-            npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" signer sign "$1" >/dev/null
+            npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" signer sign --app-version "$version" "$1" >/dev/null
             cat "$1.sig"
             rm "$1.sig"
           }

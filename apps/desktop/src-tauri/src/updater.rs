@@ -365,6 +365,12 @@ mod tests {
     }
 
     #[test]
+    fn updates_must_carry_the_version_they_were_signed_for() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["plugins"]["updater"]["requireSignedVersion"], serde_json::Value::Bool(true));
+    }
+
+    #[test]
     fn versions_parse_with_or_without_v() {
         assert_eq!(parse_version("v0.2.0-rc.1").unwrap().to_string(), "0.2.0-rc.1");
         assert_eq!(parse_version("0.2.0").unwrap().to_string(), "0.2.0");
