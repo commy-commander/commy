@@ -19063,6 +19063,7 @@ function mountYouTube(video) {
   releaseYouTube();
   const frame = document.createElement("iframe");
   frame.title = "YouTube video player";
+  frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation");
   frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
   frame.allowFullscreen = true;
   frame.referrerPolicy = "strict-origin-when-cross-origin";
@@ -26620,6 +26621,7 @@ function showSignInCheck(url) {
   if (!url) return;
   const frame = document.createElement("iframe");
   frame.title = t("signin.check.label");
+  frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
   frame.src = url;
   box.append(frame);
 }

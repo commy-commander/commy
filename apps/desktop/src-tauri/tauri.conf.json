@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: commy-media: http://commy-media.localhost; media-src 'self' data: blob: mediastream: commy-media: http://commy-media.localhost; connect-src 'self' ipc: http://ipc.localhost data: blob: commy-media: http://commy-media.localhost; font-src 'self' data:; frame-src https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {
