@@ -5363,7 +5363,7 @@ async fn update_role(
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let form = view::roles::RoleForm { name, color, permissions, tag, self_assignable: Some(self_assignable), hoist, mentionable };
-    let event = managed(&app, sid, me.id, |state, perms| view::roles::update_role(state, perms, rid, form))?;
+    let event = managed(&app, sid, me.id, |state, perms| view::roles::update_role(state, me.id, perms, rid, form))?;
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
@@ -7098,7 +7098,7 @@ async fn create_role(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
     let form = view::roles::RoleForm { name, color, permissions: Some(permissions), tag, self_assignable, hoist, mentionable };
-    let (id, event) = managed(&app, sid, me.id, |state, perms| view::roles::create_role(state, perms, form))?;
+    let (id, event) = managed(&app, sid, me.id, |state, perms| view::roles::create_role(state, me.id, perms, form))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     Ok(id.to_string())
 }
@@ -7113,7 +7113,7 @@ async fn delete_role(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let event = managed(&app, sid, me.id, |state, perms| view::roles::delete_role(state, perms, rid))?;
+    let event = managed(&app, sid, me.id, |state, perms| view::roles::delete_role(state, me.id, perms, rid))?;
     apply_and_broadcast(&app, &handle, sid, event).await
 }
 
@@ -7130,7 +7130,7 @@ async fn set_member_role(
     let uid: UserId = user_id.parse().map_err(err_to_string)?;
     let rid: RoleId = role_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let event = managed(&app, sid, me.id, |state, perms| view::roles::member_role(state, perms, uid, rid, grant))?;
+    let event = managed(&app, sid, me.id, |state, perms| view::roles::member_role(state, me.id, perms, uid, rid, grant))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     channel_lock::tend_server(&app, &handle, sid).await;
     Ok(())

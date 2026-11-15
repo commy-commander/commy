@@ -211,7 +211,24 @@ fn actions_are_checked_against_the_bots_roles() {
     assert!(world.owner_state.message(theirs.id).unwrap().reactions.iter().any(|r| r.emoji == "🎉" && r.users.contains(&world.bot_id)));
 
     world.promote(Permissions::MANAGE_MESSAGES | Permissions::KICK_MEMBERS | Permissions::MANAGE_ROLES | Permissions::SEND_MESSAGES);
-    let role = world.owner_state.server.roles.iter().find(|r| r.name == "bots").unwrap().id;
+    let own_role = world.owner_state.server.roles.iter().find(|r| r.name == "bots").unwrap().id;
+    assert_eq!(world.bot.perform(sid, Act::AddRole { user: world.member, role: own_role }, Utc::now()), Err(ActError::Missing("Manage Roles")), "a bot can't hand out its own top role");
+    let helpers = commy_core::Role {
+        id: commy_core::RoleId::new(),
+        name: "helpers".into(),
+        color: None,
+        permissions: Permissions::SEND_MESSAGES,
+        position: 1,
+        hoist: false,
+        self_assignable: false,
+        mentionable: false,
+        tag: None,
+        banner: None,
+    };
+    let role = helpers.id;
+    let raised = commy_core::Role { position: 5, ..world.owner_state.server.roles.iter().find(|r| r.id == own_role).unwrap().clone() };
+    world.by_owner(ServerEvent::RoleUpdate { server: sid, role: raised });
+    world.by_owner(ServerEvent::RoleCreate { server: sid, role: helpers });
     let give = world.bot.perform(sid, Act::AddRole { user: world.member, role }, Utc::now()).unwrap();
     let removed = world.bot.perform(sid, Act::Remove { message: theirs.id }, Utc::now()).unwrap();
     let kick = world.bot.perform(sid, Act::Kick { user: world.member }, Utc::now()).unwrap();

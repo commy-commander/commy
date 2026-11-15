@@ -39,12 +39,33 @@ fn role_color(raw: Option<&str>) -> Option<String> {
     raw.map(|c| c.trim().trim_start_matches('#').to_lowercase()).filter(|c| !c.is_empty())
 }
 
-pub fn create_role(state: &ServerState, perms: Permissions, form: RoleForm) -> Act<(RoleId, ServerEvent)> {
+fn new_role_position(state: &ServerState, me: UserId) -> Act<u32> {
+    if me == state.server.owner {
+        return Ok(state.server.roles.iter().map(|r| r.position).max().unwrap_or(0) + 1);
+    }
+    let below_mine = state.server.top_role_position(me).saturating_sub(1);
+    if below_mine == 0 {
+        return Err("you can only make roles below your own top role".into());
+    }
+    Ok(below_mine)
+}
+
+fn within_reach(state: &ServerState, me: UserId, role: &Role) -> Act<()> {
+    if !state.server.ranks_above(me, role) {
+        return Err("you can only change roles below your own top role".into());
+    }
+    if !state.server.may_hand_out(me, role) {
+        return Err("you can only hand out permissions you have".into());
+    }
+    Ok(())
+}
+
+pub fn create_role(state: &ServerState, me: UserId, perms: Permissions, form: RoleForm) -> Act<(RoleId, ServerEvent)> {
     let name = role_name(&form.name)?;
     let color = role_color(form.color.as_deref()).filter(|c| valid_hex_color(c));
     let tag = role_tag(form.tag.as_deref())?;
     need(perms, Permissions::MANAGE_ROLES, "manage roles")?;
-    let position = state.server.roles.iter().map(|r| r.position).max().unwrap_or(0) + 1;
+    let position = new_role_position(state, me)?;
     let role = Role {
         id: RoleId::new(),
         name,
@@ -57,10 +78,11 @@ pub fn create_role(state: &ServerState, perms: Permissions, form: RoleForm) -> A
         banner: None,
         mentionable: form.mentionable.unwrap_or(false),
     };
+    within_reach(state, me, &role)?;
     Ok((role.id, ServerEvent::RoleCreate { server: state.server.id, role }))
 }
 
-pub fn update_role(state: &ServerState, perms: Permissions, role: RoleId, form: RoleForm) -> Act<ServerEvent> {
+pub fn update_role(state: &ServerState, me: UserId, perms: Permissions, role: RoleId, form: RoleForm) -> Act<ServerEvent> {
     let tag = role_tag(form.tag.as_deref())?;
     let color = role_color(form.color.as_deref());
     if color.as_deref().is_some_and(|c| !valid_hex_color(c)) {
@@ -68,6 +90,9 @@ pub fn update_role(state: &ServerState, perms: Permissions, role: RoleId, form: 
     }
     need(perms, Permissions::MANAGE_ROLES, "edit roles")?;
     let existing = state.server.roles.iter().find(|r| r.id == role).ok_or("unknown role")?;
+    if !state.server.ranks_above(me, existing) {
+        return Err("you can only change roles below your own top role".into());
+    }
     let role = Role {
         name: role_name(&form.name)?,
         color,
@@ -78,16 +103,22 @@ pub fn update_role(state: &ServerState, perms: Permissions, role: RoleId, form: 
         mentionable: form.mentionable.unwrap_or(existing.mentionable),
         ..existing.clone()
     };
+    within_reach(state, me, &role)?;
     Ok(ServerEvent::RoleUpdate { server: state.server.id, role })
 }
 
-pub fn delete_role(state: &ServerState, perms: Permissions, role: RoleId) -> Act<ServerEvent> {
+pub fn delete_role(state: &ServerState, me: UserId, perms: Permissions, role: RoleId) -> Act<ServerEvent> {
     need(perms, Permissions::MANAGE_ROLES, "manage roles")?;
+    if state.server.roles.iter().find(|r| r.id == role).is_some_and(|r| !state.server.ranks_above(me, r)) {
+        return Err("you can only remove roles below your own top role".into());
+    }
     Ok(ServerEvent::RoleDelete { server: state.server.id, role })
 }
 
-pub fn member_role(state: &ServerState, perms: Permissions, user: UserId, role: RoleId, grant: bool) -> Act<ServerEvent> {
+pub fn member_role(state: &ServerState, me: UserId, perms: Permissions, user: UserId, role: RoleId, grant: bool) -> Act<ServerEvent> {
     need(perms, Permissions::MANAGE_ROLES, "manage roles")?;
+    let target = state.server.roles.iter().find(|r| r.id == role).ok_or("unknown role")?;
+    within_reach(state, me, target)?;
     Ok(assignment(state, user, role, grant))
 }
 
@@ -256,7 +287,7 @@ mod tests {
         }
         assert!(!seen(&state).can_use_voice_filters && seen(&state).chat_restricted.voice_filters);
         assert!(state.server.permissions_for(owner).can_use_voice_filters(), "the owner is never held back");
-        let (singers, event) = create_role(&state, state.server.permissions_for(owner), RoleForm { name: "Singers".into(), ..RoleForm::default() }).unwrap();
+        let (singers, event) = create_role(&state, owner, state.server.permissions_for(owner), RoleForm { name: "Singers".into(), ..RoleForm::default() }).unwrap();
         state.apply(event).unwrap();
         state.apply(ServerEvent::RoleAssign { server: sid, user: member.id, role: singers }).unwrap();
         assert!(seen(&state).can_use_voice_filters, "a role without the restriction lets its members through");
@@ -276,40 +307,40 @@ mod tests {
     fn new_roles_sit_on_top_and_drop_bad_colors() {
         let (state, owner, member) = hangout();
         let form = || RoleForm { name: "  Mods ".into(), color: Some("#ZZZZZZ".into()), permissions: Some(vec!["kick_members".into()]), ..RoleForm::default() };
-        assert!(create_role(&state, state.server.permissions_for(member), form()).is_err());
-        let (id, event) = create_role(&state, state.server.permissions_for(owner), form()).unwrap();
+        assert!(create_role(&state, member, state.server.permissions_for(member), form()).is_err());
+        let (id, event) = create_role(&state, owner, state.server.permissions_for(owner), form()).unwrap();
         let ServerEvent::RoleCreate { role, .. } = event else { panic!() };
         assert_eq!((role.id, role.name.as_str(), role.color), (id, "Mods", None));
         assert!(role.position > state.server.roles.iter().map(|r| r.position).max().unwrap());
-        assert!(create_role(&state, state.server.permissions_for(owner), RoleForm { name: " ".into(), ..RoleForm::default() }).is_err());
+        assert!(create_role(&state, owner, state.server.permissions_for(owner), RoleForm { name: " ".into(), ..RoleForm::default() }).is_err());
     }
 
     #[test]
     fn editing_a_role_keeps_what_the_form_leaves_out() {
         let (mut state, owner, _) = hangout();
         let perms = state.server.permissions_for(owner);
-        let (id, event) = create_role(&state, perms, RoleForm { name: "Mods".into(), hoist: Some(true), permissions: Some(vec!["kick_members".into()]), ..RoleForm::default() }).unwrap();
+        let (id, event) = create_role(&state, owner, perms, RoleForm { name: "Mods".into(), hoist: Some(true), permissions: Some(vec!["kick_members".into()]), ..RoleForm::default() }).unwrap();
         state.apply(event).unwrap();
-        let ServerEvent::RoleUpdate { role, .. } = update_role(&state, perms, id, RoleForm { name: "Helpers".into(), color: Some("#FF4D4D".into()), ..RoleForm::default() }).unwrap() else { panic!() };
+        let ServerEvent::RoleUpdate { role, .. } = update_role(&state, owner, perms, id, RoleForm { name: "Helpers".into(), color: Some("#FF4D4D".into()), ..RoleForm::default() }).unwrap() else { panic!() };
         assert_eq!((role.name.as_str(), role.color.as_deref(), role.hoist), ("Helpers", Some("ff4d4d"), true));
         assert_eq!(role.permissions, Permissions::KICK_MEMBERS);
-        assert!(update_role(&state, perms, id, RoleForm { name: "x".into(), color: Some("blue".into()), ..RoleForm::default() }).is_err());
-        assert!(update_role(&state, perms, RoleId::new(), RoleForm { name: "x".into(), ..RoleForm::default() }).is_err());
+        assert!(update_role(&state, owner, perms, id, RoleForm { name: "x".into(), color: Some("blue".into()), ..RoleForm::default() }).is_err());
+        assert!(update_role(&state, owner, perms, RoleId::new(), RoleForm { name: "x".into(), ..RoleForm::default() }).is_err());
     }
 
     #[test]
     fn people_only_pick_roles_marked_self_assignable() {
         let (mut state, owner, member) = hangout();
         let perms = state.server.permissions_for(owner);
-        let (open, event) = create_role(&state, perms, RoleForm { name: "Gamers".into(), self_assignable: Some(true), ..RoleForm::default() }).unwrap();
+        let (open, event) = create_role(&state, owner, perms, RoleForm { name: "Gamers".into(), self_assignable: Some(true), ..RoleForm::default() }).unwrap();
         state.apply(event).unwrap();
-        let (closed, event) = create_role(&state, perms, RoleForm { name: "Mods".into(), ..RoleForm::default() }).unwrap();
+        let (closed, event) = create_role(&state, owner, perms, RoleForm { name: "Mods".into(), ..RoleForm::default() }).unwrap();
         state.apply(event).unwrap();
         assert!(matches!(own_role(&state, member, open, true), Ok(ServerEvent::RoleAssign { user, .. }) if user == member));
         assert!(matches!(own_role(&state, member, open, false), Ok(ServerEvent::RoleUnassign { .. })));
         assert!(own_role(&state, member, closed, true).is_err());
-        assert!(member_role(&state, state.server.permissions_for(member), member, closed, true).is_err());
-        assert!(member_role(&state, perms, member, closed, true).is_ok());
+        assert!(member_role(&state, member, state.server.permissions_for(member), member, closed, true).is_err());
+        assert!(member_role(&state, owner, perms, member, closed, true).is_ok());
     }
 
     #[test]

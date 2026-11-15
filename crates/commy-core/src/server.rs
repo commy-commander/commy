@@ -672,6 +672,30 @@ impl Server {
         perms
     }
 
+    pub fn top_role_position(&self, user: UserId) -> u32 {
+        if user == self.owner {
+            return u32::MAX;
+        }
+        let Some(member) = self.member(user) else {
+            return EVERYONE_ROLE_POSITION;
+        };
+        self.roles
+            .iter()
+            .filter(|r| member.roles.contains(&r.id))
+            .map(|r| r.position)
+            .max()
+            .unwrap_or(EVERYONE_ROLE_POSITION)
+    }
+
+    pub fn ranks_above(&self, user: UserId, role: &Role) -> bool {
+        user == self.owner || role.position < self.top_role_position(user)
+    }
+
+    pub fn may_hand_out(&self, user: UserId, role: &Role) -> bool {
+        let held = self.permissions_for(user);
+        self.ranks_above(user, role) && role.permissions & !Permissions::RESTRICTIONS & !held == Permissions::NONE
+    }
+
     pub fn can_pin(&self, user: UserId) -> bool {
         self.permissions_for(user).can_pin()
     }

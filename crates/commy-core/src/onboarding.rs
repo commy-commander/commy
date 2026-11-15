@@ -58,7 +58,11 @@ pub struct Onboarding {
 }
 
 pub fn hands_out_safely(role: &Role) -> bool {
-    !role.is_everyone() && role.permissions.0 & NEVER_HANDED_OUT.0 == 0
+    !role.is_everyone() && !is_privileged(role.permissions)
+}
+
+pub fn is_privileged(permissions: Permissions) -> bool {
+    permissions.0 & NEVER_HANDED_OUT.0 != 0
 }
 
 pub fn grantable(roles: &[Role], role: RoleId) -> bool {

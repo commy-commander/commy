@@ -388,9 +388,17 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         }
         E::JoinAsk { .. } => actor(event) == Some(by) && crate::join_request::may_ask(server, by),
         E::JoinAnswer { user, .. } => member && *user != by && allows(Permissions::KICK_MEMBERS),
-        E::RoleCreate { .. } | E::RoleDelete { .. } | E::RoleUpdate { .. } => allows(Permissions::MANAGE_ROLES),
+        E::RoleCreate { role, .. } => allows(Permissions::MANAGE_ROLES) && server.may_hand_out(by, role),
+        E::RoleUpdate { role, .. } => {
+            let current = server.roles.iter().find(|r| r.id == role.id);
+            allows(Permissions::MANAGE_ROLES) && current.is_none_or(|r| server.ranks_above(by, r)) && server.may_hand_out(by, role)
+        }
+        E::RoleDelete { role, .. } => {
+            allows(Permissions::MANAGE_ROLES) && server.roles.iter().find(|r| r.id == *role).is_none_or(|r| server.ranks_above(by, r))
+        }
         E::RoleAssign { user, role, .. } | E::RoleUnassign { user, role, .. } => {
-            allows(Permissions::MANAGE_ROLES)
+            let managed = server.roles.iter().find(|r| r.id == *role).is_some_and(|r| server.may_hand_out(by, r));
+            (allows(Permissions::MANAGE_ROLES) && managed)
                 || (*user == by && server.roles.iter().any(|r| r.id == *role && r.self_assignable))
                 || (*user == by && crate::onboarding::may_self_assign(server, by, *role))
         }
@@ -544,15 +552,18 @@ mod tests {
         let sid = state.server.id;
         let admin = join(&mut state, "admin");
         let plain = join(&mut state, "plain");
-        let admin_role = role(Permissions::ADMINISTRATOR, false);
+        let admin_role = Role { position: 2, ..role(Permissions::ADMINISTRATOR, false) };
         let rid = admin_role.id;
+        let lower = role(Permissions::SEND_MESSAGES, false);
+        let lower_id = lower.id;
         state.apply(ServerEvent::RoleCreate { server: sid, role: admin_role }).unwrap();
+        state.apply(ServerEvent::RoleCreate { server: sid, role: lower }).unwrap();
         state.apply(ServerEvent::RoleAssign { server: sid, user: admin, role: rid }).unwrap();
         let events = [
             ServerEvent::ServerRename { server: sid, name: "n".into() },
             ServerEvent::MemberBan { server: sid, user: plain },
             ServerEvent::ChannelDelete { server: sid, channel: state.server.channels[0].id },
-            ServerEvent::RoleDelete { server: sid, role: rid },
+            ServerEvent::RoleDelete { server: sid, role: lower_id },
             ServerEvent::MemberLeave { server: sid, user: admin },
             ServerEvent::VoiceModerate { server: sid, user: plain, muted: true, deafened: false },
             ServerEvent::MemberNickname { server: sid, user: admin, nickname: Some("Ad".into()) },
@@ -564,6 +575,57 @@ mod tests {
             assert!(!authorized(&state.server, plain, event), "{event:?}");
             assert!(!authorized(&state.server, UserId::new(), event), "stranger {event:?}");
         }
+    }
+
+    #[test]
+    fn role_managers_only_hand_out_what_they_hold_below_their_own_top_role() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let manager = join(&mut state, "manager");
+        let plain = join(&mut state, "plain");
+        let managers = Role { position: 3, ..role(Permissions::MANAGE_ROLES | Permissions::KICK_MEMBERS, false) };
+        let senior = Role { position: 5, ..role(Permissions::SEND_MESSAGES, false) };
+        let junior = Role { position: 1, ..role(Permissions::KICK_MEMBERS, false) };
+        let (managers_id, senior_id, junior_id) = (managers.id, senior.id, junior.id);
+        for r in [managers.clone(), senior.clone(), junior.clone()] {
+            state.apply(ServerEvent::RoleCreate { server: sid, role: r }).unwrap();
+        }
+        state.apply(ServerEvent::RoleAssign { server: sid, user: manager, role: managers_id }).unwrap();
+        let admin_below = Role { position: 2, ..role(Permissions::ADMINISTRATOR, false) };
+        let ban_below = Role { position: 2, ..role(Permissions::BAN_MEMBERS, false) };
+        let kick_below = Role { position: 2, ..role(Permissions::KICK_MEMBERS, false) };
+        let kick_above = Role { position: 4, ..role(Permissions::KICK_MEMBERS, false) };
+        let create = |role: &Role| ServerEvent::RoleCreate { server: sid, role: role.clone() };
+        assert!(!authorized(&state.server, manager, &create(&admin_below)), "administrator is not theirs to give");
+        assert!(!authorized(&state.server, manager, &create(&ban_below)), "a permission they lack");
+        assert!(!authorized(&state.server, manager, &create(&kick_above)), "above their own top role");
+        assert!(authorized(&state.server, manager, &create(&kick_below)));
+        let raise_own = ServerEvent::RoleUpdate { server: sid, role: Role { permissions: Permissions::ADMINISTRATOR, ..managers.clone() } };
+        assert!(!authorized(&state.server, manager, &raise_own), "their own top role is not below them");
+        let lift_junior = ServerEvent::RoleUpdate { server: sid, role: Role { position: 4, ..junior.clone() } };
+        assert!(!authorized(&state.server, manager, &lift_junior), "cannot move a role above themselves");
+        let rename_junior = ServerEvent::RoleUpdate { server: sid, role: Role { name: "j".into(), ..junior.clone() } };
+        assert!(authorized(&state.server, manager, &rename_junior));
+        assert!(!authorized(&state.server, manager, &ServerEvent::RoleDelete { server: sid, role: senior_id }));
+        assert!(authorized(&state.server, manager, &ServerEvent::RoleDelete { server: sid, role: junior_id }));
+        let assign = |role| ServerEvent::RoleAssign { server: sid, user: plain, role };
+        assert!(authorized(&state.server, manager, &assign(junior_id)));
+        assert!(!authorized(&state.server, manager, &assign(senior_id)));
+        assert!(!authorized(&state.server, manager, &assign(managers_id)), "their own top role is not below them");
+        assert!(authorized(&state.server, owner, &assign(senior_id)));
+        assert!(authorized(&state.server, owner, &create(&admin_below)));
+    }
+
+    #[test]
+    fn a_server_may_still_make_administrator_a_self_pick_role() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let picker = join(&mut state, "picker");
+        let open_admin = Role { position: 4, ..role(Permissions::ADMINISTRATOR, true) };
+        let rid = open_admin.id;
+        assert!(authorized(&state.server, owner, &ServerEvent::RoleCreate { server: sid, role: open_admin.clone() }));
+        state.apply(ServerEvent::RoleCreate { server: sid, role: open_admin }).unwrap();
+        assert!(authorized(&state.server, picker, &ServerEvent::RoleAssign { server: sid, user: picker, role: rid }));
     }
 
     #[test]

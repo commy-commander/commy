@@ -324,7 +324,7 @@ impl ServerTemplate {
                 color: clean_color(r.color.as_deref()),
                 permissions: r.permissions & known_permissions(),
                 hoist: r.hoist,
-                self_assignable: r.self_assignable,
+                self_assignable: r.self_assignable && !crate::onboarding::is_privileged(r.permissions),
                 tag: portable_tag(r.tag.as_deref()),
                 mentionable: r.mentionable,
             });
@@ -627,6 +627,25 @@ impl ServerTemplate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_self_pick_roles_never_carry_moderation_or_admin_powers() {
+        let pick = |permissions| TemplateRole {
+            name: "Gamers".into(),
+            color: None,
+            permissions,
+            hoist: false,
+            self_assignable: true,
+            tag: None,
+            mentionable: false,
+        };
+        let mut template = ServerTemplate::builtin(BuiltinTemplate::Fresh);
+        template.roles = vec![pick(Permissions::ADMINISTRATOR), pick(Permissions::BAN_MEMBERS), pick(Permissions::NONE)];
+        let imported = ServerTemplate::decode(&template.encode()).unwrap();
+        let picks: Vec<bool> = imported.roles.iter().map(|r| r.self_assignable).collect();
+        assert_eq!(picks, vec![false, false, true]);
+        assert!(imported.roles[0].permissions.contains(Permissions::ADMINISTRATOR), "the role itself survives for the owner to hand out");
+    }
 
     fn owner() -> UserId {
         UserId::new()

@@ -171,7 +171,7 @@ impl Session {
                 let form = role_form(&args);
                 let mut made = None;
                 let payload = client().act(server, |state, me, _, _| {
-                    let (id, event) = roles::create_role(state, me.perms, form)?;
+                    let (id, event) = roles::create_role(state, me.user, me.perms, form)?;
                     made = Some(id);
                     Ok(event)
                 })?;
@@ -180,15 +180,15 @@ impl Session {
             }
             "update_role" => {
                 let (role, form) = (role()?, role_form(&args));
-                vec![client().act(server, |state, me, _, _| roles::update_role(state, me.perms, role, form))?]
+                vec![client().act(server, |state, me, _, _| roles::update_role(state, me.user, me.perms, role, form))?]
             }
             "delete_role" => {
                 let role = role()?;
-                vec![client().act(server, |state, me, _, _| roles::delete_role(state, me.perms, role))?]
+                vec![client().act(server, |state, me, _, _| roles::delete_role(state, me.user, me.perms, role))?]
             }
             "set_member_role" => {
                 let (user, role, grant) = (user()?, role()?, args.grant.as_ref().and_then(Value::as_bool).unwrap_or(true));
-                vec![client().act(server, |state, me, _, _| roles::member_role(state, me.perms, user, role, grant))?]
+                vec![client().act(server, |state, me, _, _| roles::member_role(state, me.user, me.perms, user, role, grant))?]
             }
             "set_own_role" => {
                 let (role, held) = (role()?, args.held.unwrap_or(true));
