@@ -484,6 +484,10 @@ pub struct Server {
     pub game_db: Option<crate::search_keys::GameDbKey>,
     #[serde(default)]
     pub sync_host: Option<String>,
+    #[serde(default)]
+    pub blocked_homes: Vec<String>,
+    #[serde(default)]
+    pub require_home: bool,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -583,6 +587,8 @@ impl Server {
             sync_host: None,
             gif_key: None,
             game_db: None,
+            blocked_homes: Vec::new(),
+            require_home: false,
         }
     }
 
@@ -608,6 +614,10 @@ impl Server {
 
     pub fn is_current_member(&self, user: UserId) -> bool {
         self.is_member(user) && !self.banned.contains(&user)
+    }
+
+    pub fn blocks_home(&self, domain: &str) -> bool {
+        self.blocked_homes.iter().any(|blocked| crate::home::covers(blocked, domain))
     }
 
     pub fn is_banned(&self, user: UserId) -> bool {

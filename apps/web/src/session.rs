@@ -41,6 +41,7 @@ mod files;
 mod handoff;
 mod invites;
 mod join_waits;
+mod homes;
 mod links;
 mod pictures;
 mod profile;
@@ -121,6 +122,7 @@ pub struct Session {
     invited: RefCell<HashMap<ServerId, (KeyId, ChannelSecret)>>,
     invited_hosts: RefCell<HashMap<ServerId, String>>,
     links: RefCell<links::LinkSafety>,
+    homes: RefCell<homes::HomeWatch>,
     watching: RefCell<crate::watching::Watching>,
     mic: RefCell<crate::mic_gate::MicGate>,
     shares: RefCell<share::Shares>,
@@ -235,6 +237,8 @@ struct Args {
     seconds: Option<u32>,
     sensitive: Option<bool>,
     public: Option<bool>,
+    homes: Option<Vec<String>>,
+    require_home: Option<bool>,
     confirm_name: Option<String>,
     display_name: Option<String>,
     custom_status: Option<String>,
@@ -313,6 +317,7 @@ impl Session {
             invited: RefCell::default(),
             invited_hosts: RefCell::default(),
             links: RefCell::default(),
+            homes: RefCell::default(),
             watching: RefCell::default(),
             mic: RefCell::default(),
             shares: RefCell::default(),
@@ -323,6 +328,7 @@ impl Session {
     pub async fn invoke(self: &Rc<Self>, cmd: &str, args: &str) -> Result<Value, String> {
         let args: Args = serde_json::from_str(args).unwrap_or_default();
         self.keep_link_list_fresh();
+        self.keep_homes_fresh();
         match cmd {
             "check_link" => self.check_link(args),
             "account_status" => self.account_status().await,
@@ -577,6 +583,8 @@ impl Session {
             "set_afk_channel" => self.server_command(cmd, args).await,
             "set_server_afk_timeout" => self.server_command(cmd, args).await,
             "set_server_public" => self.server_command(cmd, args).await,
+            "set_blocked_homes" => self.server_command(cmd, args).await,
+            "home_status" => self.home_status(args).await,
             "set_channel_limit" => self.server_command(cmd, args).await,
             "set_channel_slow_mode" => self.server_command(cmd, args).await,
             "set_channel_color" => self.server_command(cmd, args).await,
@@ -1248,6 +1256,7 @@ impl Session {
 
     fn after_apply(self: &Rc<Self>, server: ServerId, applied: Applied, rings: bool, shown: bool, timeout: Option<Option<i64>>) -> Applied {
         if let Applied::Created(message) = &applied {
+            let rings = rings && !self.hides_author(server, message.author);
             if let Some(payload) = self.client.borrow().message_created_payload(server, message).filter(|_| rings) {
                 self.emit("message-created", payload);
             }

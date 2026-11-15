@@ -17,6 +17,7 @@ pub struct Config {
     pub operator: Option<String>,
     pub abuse_contact: Option<Contact>,
     pub smtp: Option<SmtpSettings>,
+    pub server_key: Option<KeySeed>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +87,24 @@ fn smtp_settings(env: &impl Fn(&str) -> Option<String>) -> Result<Option<SmtpSet
     Ok(Some(SmtpSettings::Host { host, port, user: user.clone(), password: set("SMTP_PASSWORD"), from: from()? }))
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct KeySeed(pub [u8; 32]);
+
+impl std::fmt::Debug for KeySeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("KeySeed(hidden)")
+    }
+}
+
+fn server_key_seed(env: &impl Fn(&str) -> Option<String>) -> Result<Option<KeySeed>, String> {
+    let Some(text) = env("SYNC_SERVER_KEY").map(|v| v.trim().to_ascii_lowercase()).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    let bytes = data_encoding::HEXLOWER.decode(text.as_bytes()).map_err(|_| "SYNC_SERVER_KEY must be 64 hex characters".to_string())?;
+    let seed: [u8; 32] = bytes.try_into().map_err(|_| "SYNC_SERVER_KEY must be 64 hex characters".to_string())?;
+    Ok(Some(KeySeed(seed)))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApnsSettings {
     pub key: String,
@@ -144,6 +163,7 @@ impl Config {
             operator: env("SYNC_OPERATOR_NAME").map(|v| v.trim().chars().take(100).collect::<String>()).filter(|v| !v.is_empty()),
             abuse_contact: env("SYNC_ABUSE_CONTACT").filter(|v| !v.trim().is_empty()).map(|v| Contact::parse(&v)).transpose()?,
             smtp: smtp_settings(&env)?,
+            server_key: server_key_seed(&env)?,
         })
     }
 
@@ -195,6 +215,16 @@ mod tests {
         assert_eq!(c.retention_days, 90);
         assert!(c.trust_proxy);
         assert_eq!(c.summary(), "port=3002 store=memory retention=90d trust_proxy=true wake=off reports=kept-no-contact");
+    }
+
+    #[test]
+    fn a_server_key_seed_is_hex_and_kept_out_of_logs() {
+        let seed = "ab".repeat(32);
+        let c = config(&[("SYNC_SERVER_KEY", &seed)]).unwrap();
+        assert_eq!(c.server_key, Some(KeySeed([0xab; 32])));
+        assert!(!format!("{c:?}").contains("abab"));
+        assert_eq!(config(&[]).unwrap().server_key, None);
+        assert!(config(&[("SYNC_SERVER_KEY", "abc")]).is_err());
     }
 
     #[test]

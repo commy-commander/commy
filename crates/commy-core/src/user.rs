@@ -60,6 +60,8 @@ pub struct UserProfile {
     pub card_effect: Option<String>,
     #[serde(default)]
     pub phone_until: Option<i64>,
+    #[serde(default)]
+    pub home: Option<crate::home::HomeCard>,
 }
 
 pub const PHONE_REACH_MS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -212,6 +214,7 @@ impl UserProfile {
             avatar_border: None,
             card_effect: None,
             phone_until: None,
+            home: None,
         }
     }
 
@@ -228,6 +231,7 @@ impl UserProfile {
         shared.server_tag = shared.server_tag.filter(crate::server_tag::WornTag::is_valid);
         shared.avatar_border = shared.avatar_border.filter(|b| valid_avatar_border(b));
         shared.card_effect = shared.card_effect.filter(|e| valid_card_effect(e));
+        shared.home = shared.home.filter(|card| card.holds_together(self.id, self.identity.as_ref()));
         if self.presence == Presence::Invisible {
             shared.presence = Presence::Offline;
             shared.activity = None;

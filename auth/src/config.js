@@ -2,6 +2,10 @@ import { normalizeAccessCode } from "./access.js";
 import { PRIVATE_NETWORKS, trustedProxyList } from "./client-ip.js";
 import { LINK_BLOCKLIST_PATH, linkBlocklistSources } from "./link-blocklist.js";
 import { appleAppSiteAssociation, assetLinks } from "./app-sign-in.js";
+import { HOME_CARD_PATH } from "./home-card.js";
+import { HOME_KEY_PATH } from "./home-keys.js";
+import { SERVER_BLOCKLIST_PATH } from "./server-blocklist.js";
+import { loadListKey, loadServerKey } from "./server-key.js";
 
 export const APPLE_ORIGIN = "https://appleid.apple.com";
 export const CAPTCHA_PATH = "/commy/captcha";
@@ -120,6 +124,15 @@ function trustedProxiesConfig(env, errors) {
   }
 }
 
+function serverKeys(env, secret, errors) {
+  try {
+    return { serverKey: loadServerKey({ secret }, env), listKey: loadListKey({ secret }, env) };
+  } catch (err) {
+    errors.push(`AUTH_SERVER_KEY and COMMY_LIST_KEY must be 64 hex characters when set: ${err.message}`);
+    return {};
+  }
+}
+
 export function loadConfig(env = process.env) {
   const errors = [];
 
@@ -151,6 +164,8 @@ export function loadConfig(env = process.env) {
   const apple = appleConfig(env, appleWarnings, errors);
   const trustedProxies = trustedProxiesConfig(env, errors);
 
+  const keys = serverKeys(env, secret, errors);
+
   if (errors.length > 0) {
     throw new Error(`Invalid auth server configuration:\n- ${errors.join("\n- ")}`);
   }
@@ -174,6 +189,9 @@ export function loadConfig(env = process.env) {
   return {
     port,
     secret,
+    serverKey: keys.serverKey,
+    listKey: keys.listKey,
+    serverBlocklistFile: (env.SERVER_BLOCKLIST_FILE ?? "").trim() || null,
     databaseUrl,
     baseURL,
     basePath: "/api/auth",
@@ -231,6 +249,8 @@ export function featureSummary(config) {
     `signup=${on(config.allowSignup)}`,
     `access_code=${on(config.accessCode)}`,
     `adults_only=${on(config.adultsOnly)}`,
+    `server_key=${config.serverKey.published.id}`,
+    `server_blocklist=${config.serverBlocklistFile ? "file" : "empty"}`,
     `throwaway_emails=${config.blockThrowawayEmails ? "blocked" : "allowed"}`,
     `unverified_cleanup=${on(config.smtp)}`,
   ].join(" ");
@@ -243,6 +263,8 @@ export function discoveryDocument(config) {
     version: 1,
     issuer: config.baseURL,
     api,
+    serverKey: config.serverKey.published,
+    serverBlocklist: { url: `${api}${SERVER_BLOCKLIST_PATH}`, key: config.listKey.published },
     providers: {
       google: Boolean(config.google),
       twitch: Boolean(config.twitch),
@@ -296,6 +318,8 @@ export function discoveryDocument(config) {
       doorbellRing: `${api}/commy/doorbell/ring`,
       doorbellTake: `${api}/commy/doorbell/take`,
       sync: config.syncUrl,
+      homeCard: `${api}${HOME_CARD_PATH}`,
+      homeKey: `${api}${HOME_KEY_PATH}`,
       ...(config.linkBlocklistSources.length ? { linkBlocklist: `${api}${LINK_BLOCKLIST_PATH}` } : {}),
     },
     features: {

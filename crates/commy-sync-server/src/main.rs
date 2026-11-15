@@ -1,5 +1,5 @@
 use commy_sync_server::apns::{Apns, ApnsConfig};
-use commy_sync_server::config::Config;
+use commy_sync_server::config::{Config, KeySeed};
 use commy_sync_server::fcm::Fcm;
 use commy_sync_server::store::Store;
 use commy_sync_server::wake::Pusher;
@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
-    let config = Config::from_env(|key| std::env::var(key).ok()).map_err(|e| anyhow::anyhow!("invalid sync service configuration: {e}"))?;
+    let mut config = Config::from_env(|key| std::env::var(key).ok()).map_err(|e| anyhow::anyhow!("invalid sync service configuration: {e}"))?;
     if !args.is_empty() {
         return run_operator_command(&config, &args).await;
     }
@@ -38,6 +38,9 @@ async fn main() -> anyhow::Result<()> {
         ),
         None => None,
     };
+    let server_key = commy_sync_server::server_key::load(&config, &store).await?;
+    config.server_key = Some(KeySeed(server_key.to_bytes()));
+    tracing::info!("sync server key {}", commy_sync_server::server_key::published(&server_key).id);
     let pusher = Pusher::live(fcm, apns);
     let service = Service::with_pusher(store, &config, pusher);
     learn_dropped(&service).await;

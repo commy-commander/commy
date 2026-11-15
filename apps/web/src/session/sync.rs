@@ -412,6 +412,9 @@ impl Session {
                     Some(host) => host.clone(),
                     None => invited.get(&server).cloned().or_else(|| live.book.recorded_host(server)),
                 };
+                if chosen.as_deref().is_some_and(|origin| self.blocks_sync_origin(origin)) {
+                    return None;
+                }
                 let socket = commy_core::sync_host::chosen_socket(chosen.as_deref(), Some(&home))?;
                 (socket != home).then_some((server, socket))
             })

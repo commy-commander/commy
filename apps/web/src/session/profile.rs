@@ -175,7 +175,7 @@ impl Session {
         Ok(blob)
     }
 
-    fn edit_profile(&self, shared: bool, edit: impl FnOnce(&mut UserProfile)) -> Result<UserProfile, String> {
+    pub(super) fn edit_profile(&self, shared: bool, edit: impl FnOnce(&mut UserProfile)) -> Result<UserProfile, String> {
         let shown = self.client.borrow().profile().map(|p| p.presence.as_seen_by_others());
         let edited = self.client.borrow().edit_me(edit)?;
         let details = self.dms.borrow().safety.profile_policy.shows_details_to_servers();

@@ -645,7 +645,7 @@ fn record_hosts(app: &App) {
 }
 
 pub fn community_url(chosen: Option<&str>, account_url: &str) -> Option<String> {
-    commy_core::sync_host::chosen_socket(chosen, Some(account_url))
+    commy_core::sync_host::chosen_socket(chosen, Some(account_url)).filter(|url| !crate::server_guard::blocks_origin(url))
 }
 
 fn drop_community(live: &mut Live, sid: ServerId) {
@@ -688,7 +688,10 @@ fn refresh(handle: &AppHandle) {
     live.cursors.keep_hosts_of(&wanted.keys().copied().collect());
     for (sid, wants) in wanted.drain() {
         let chosen = hosts.get(&sid).cloned().flatten();
-        let Some(url) = community_url(chosen.as_deref(), &live.url) else { continue };
+        let Some(url) = community_url(chosen.as_deref(), &live.url) else {
+            drop_community(live, sid);
+            continue;
+        };
         if live.communities.get(&sid).is_some_and(|community| community.url != url) {
             tracing::info!("{sid} moved to another sync host");
             drop_community(live, sid);

@@ -357,6 +357,10 @@ impl Session {
                 vec![client().act(server, |state, me, _, _| moderate::afk_channel(state, me.perms, afk))?]
             }
             "set_server_afk_timeout" => vec![client().act(server, |state, me, _, _| moderate::afk_timeout(state, me.perms, args.minutes))?],
+            "set_blocked_homes" => {
+                let (homes, require_home) = (args.homes.clone().unwrap_or_default(), args.require_home.unwrap_or(false));
+                vec![client().act(server, |state, me, _, _| commy_view::homes::set_blocked_homes(state, me.perms, me.user, &homes, require_home))?]
+            }
             "set_server_public" => {
                 let public = args.public.unwrap_or(false);
                 vec![client().act(server, |state, me, _, _| moderate::public(state, me.perms, public))?]
@@ -389,7 +393,7 @@ impl Session {
         }
         self.refresh_gates();
         match cmd {
-            "ban_member" | "set_member_role" | "set_join_approval" | "answer_join_request" => self.tend_keys(server, None),
+            "ban_member" | "set_member_role" | "set_join_approval" | "answer_join_request" | "set_blocked_homes" => self.tend_keys(server, None),
             "set_channel_access" => {
                 self.leave_unseen_voice(server).await;
                 self.tend_keys(server, Some(KeyScope::Channel(channel()?)));
@@ -406,7 +410,7 @@ impl Session {
         if cmd == "transfer_ownership" {
             self.follow_owner(server);
         }
-        if matches!(cmd, "rename_server" | "set_role_access" | "set_server_public" | "transfer_ownership" | "set_activities_enabled") {
+        if matches!(cmd, "rename_server" | "set_role_access" | "set_server_public" | "transfer_ownership" | "set_activities_enabled" | "set_blocked_homes") {
             self.emit("servers-changed", Value::Null);
         }
         Ok(reply)

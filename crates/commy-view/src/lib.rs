@@ -24,6 +24,7 @@ pub mod saved;
 pub mod search;
 pub mod join_requests;
 pub mod server_tags;
+pub mod homes;
 pub mod pet;
 pub mod removals;
 pub mod templates;
@@ -266,6 +267,7 @@ pub struct MemberView {
     pub card_effect: Option<String>,
     pub phone: bool,
     pub needs_key: bool,
+    pub home: Option<homes::HomeTag>,
 }
 
 #[derive(Debug, Serialize)]
@@ -394,6 +396,7 @@ pub struct ServerView {
     pub file_store: Option<String>,
     pub sync_host: Option<String>,
     pub can_set_sync_host: bool,
+    pub blocked_homes: homes::BlockedHomesView,
     pub gif_key: Option<commy_core::search_keys::GifKey>,
     pub game_db: Option<search_keys::GameDbView>,
     pub pet: Option<pet::PetView>,
@@ -595,6 +598,7 @@ impl ServerView {
                     card_effect: p.card_effect.clone().filter(|e| commy_core::user::valid_card_effect(e)),
                     phone: !p.presence.is_visible_online() && commy_core::user::phone_reachable(p.phone_until, now.timestamp_millis()),
                     needs_key: viewer == Some(state.server.owner) && !state.is_bot(p.id) && state.identity_of(p.id).is_none(),
+                    home: homes::tag_of(p, now.timestamp_millis()),
                 }
             })
             .collect();
@@ -782,6 +786,7 @@ impl ServerView {
             can_manage_file_storage: is_member && commy_core::file_store::can_manage_storage(perms),
             sync_host: sync_host::shown_host(state),
             can_set_sync_host: viewer == Some(state.server.owner) && !state.server.group,
+            blocked_homes: homes::blocked_homes_view(state, viewer),
             gif_key: is_member.then(|| state.server.gif_key.clone()).flatten(),
             game_db: search_keys::game_db_view(state, perms),
             pet: pet::view(state, viewer),

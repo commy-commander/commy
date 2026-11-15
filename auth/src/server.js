@@ -8,6 +8,7 @@ import { discoveryDocument, featureSummary, loadConfig, wellKnownFiles } from ".
 import { dropDeviceNames } from "./devices.js";
 import { createRequestHandler } from "./http.js";
 import { createLinkBlocklist } from "./link-blocklist.js";
+import { createServerBlocklist } from "./server-blocklist.js";
 import { createPages } from "./pages.js";
 import { createRelayAccess, linkedDeviceLookup, relayAccessToken } from "./relay-access.js";
 import { createWebClient } from "./web-client.js";
@@ -61,6 +62,8 @@ async function migrate(attempts = 30) {
 }
 
 const linkBlocklist = createLinkBlocklist({ sources: config.linkBlocklistSources });
+const serverBlocklist = createServerBlocklist({ listKey: config.listKey, origin: config.baseURL, serverKey: config.serverKey, file: config.serverBlocklistFile });
+await serverBlocklist.start();
 const discovery = discoveryDocument(config);
 const pages = createPages({ auth, config, discovery, trustedProxies: config.trustedProxies });
 if (pages.enabled) await pages.ready;
@@ -77,6 +80,7 @@ const server = http.createServer(
     pool,
     redis,
     linkBlocklist,
+    serverBlocklist,
     pages,
     webClient,
     relayAccess,

@@ -8,6 +8,7 @@ pub mod mail;
 pub mod operator;
 mod pictures;
 pub mod reports;
+pub mod server_key;
 mod session;
 pub mod store;
 pub mod wake;
@@ -103,6 +104,7 @@ pub struct Service {
     pub desk: Desk,
     pub trust_proxy: bool,
     pub retention_days: u32,
+    pub server_key: commy_core::Identity,
 }
 
 impl Service {
@@ -120,6 +122,7 @@ impl Service {
             desk: Desk::new(config),
             trust_proxy: config.trust_proxy,
             retention_days: config.retention_days,
+            server_key: config.server_key.as_ref().map_or_else(commy_core::Identity::generate, |seed| commy_core::Identity::from_bytes(&seed.0)),
         })
     }
 

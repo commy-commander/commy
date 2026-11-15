@@ -28,3 +28,5 @@ safety.json
 
 apps/desktop/ui/stock-assets/
 dump.rdb
+
+deploy/server-blocklist/

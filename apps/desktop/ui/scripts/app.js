@@ -814,7 +814,8 @@ async function mockInvoke(cmd, args = {}) {
         emojis: s.emojis || [], sounds: s.sounds || [], emojis_shareable: !!s.emojis_shareable, soundboard_open: !!s.soundboard_open, sounds_shareable: !!s.sounds_shareable, public: !!s.public,
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
-        tip_jar: s.tip_jar || null, file_store: s.file_store || null, sync_host: s.sync_host || null, can_set_sync_host: !mock.plainMember && !s.group, gif_key: s.gif_key || null, game_db: s.game_db || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
+        tip_jar: s.tip_jar || null, file_store: s.file_store || null, sync_host: s.sync_host || null, can_set_sync_host: !mock.plainMember && !s.group,
+        blocked_homes: { homes: s.blocked_homes || [], require_home: !!s.require_home, can_edit: !mock.plainMember }, gif_key: s.gif_key || null, game_db: s.game_db || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
         can_send_tts_messages: !s.tts_off && (!s.tts_restricted || !mock.plainMember), tts_allowed: !s.tts_off, upload_limit_mb: s.upload_limit_mb || null,
@@ -1555,6 +1556,15 @@ async function mockInvoke(cmd, args = {}) {
       const host = cleanSyncHost(args.host);
       if (!host || host.startsWith("down.")) throw "Commy could not reach a sync server there. Check the address and that the server is running an up to date Commy sync service.";
       return host;
+    }
+    case "home_status":
+      return (args.homes || []).map(home => ({ home, key: (mock.homeKeys || {})[home] || null, checked: true, blocked: (mock.blockedServers || []).some(d => home === `https://${d}` || home.endsWith(`.${d}`)) }));
+    case "set_blocked_homes": {
+      const homes = (args.homes || []).map(cleanHomeInput);
+      if (homes.some(h => !h)) throw "Use a server address like example.org (up to 200)";
+      mock.servers[args.serverId].blocked_homes = [...new Set(homes)].sort();
+      mock.servers[args.serverId].require_home = !!args.requireHome;
+      return null;
     }
     case "set_sync_host": {
       const host = args.host ? cleanSyncHost(args.host) : null;
@@ -9489,7 +9499,17 @@ function heldMark(reason) {
   return mark;
 }
 
+function blockedHomeRow(message) {
+  const row = el("div", "msg first msg-blocked-home");
+  row.dataset.id = message.id;
+  row.appendChild(el("div", "avatar spacer", ""));
+  const body = row.appendChild(el("div", "msg-body"));
+  body.appendChild(el("div", "msg-content msg-sealed", BLOCKED_HOME_HIDDEN));
+  return row;
+}
+
 function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {}) {
+  if (state.view === "server" && homeBlocked(currentServerMember(message.author_id))) return blockedHomeRow(message);
   const pending = Boolean(message.pending);
   const held = Boolean(message.held);
   if (held || message.tts) grouped = false;
@@ -10856,6 +10876,7 @@ function currentServerMember(id) {
     for (const m of server.members) if (!byId.has(m.id)) byId.set(m.id, m);
     currentMembersSource = server.members;
     currentMembersById = byId;
+    askHomeStatus(server.members);
   }
   return currentMembersById.get(id);
 }
@@ -14552,6 +14573,7 @@ function studioProfilePane(person, place, reopen) {
   const name = nameRow.appendChild(el("span", "mc-name", person.name));
   paintRole(name, person.color);
   if (person.server_tag) nameRow.appendChild(serverTagChip(person.server_tag));
+  if (person.home) nameRow.appendChild(homeChip(person));
   if (person.bot) nameRow.appendChild(botTag());
   if (person.tag) nameRow.appendChild(roleTagChip(person.tag, person.tag_color));
   if (timeoutActive(person.timeout_until)) nameRow.appendChild(timeoutBadge(person.timeout_until));
@@ -14634,7 +14656,8 @@ async function openFullProfile(member) {
   av.appendChild(el("span", "presence-dot " + presenceDot(person)));
   $("fp-name").textContent = person.name;
   paintRole($("fp-name"), person.color);
-  $("fp-name").parentElement.querySelectorAll(".role-tag, .server-tag").forEach(n => n.remove());
+  $("fp-name").parentElement.querySelectorAll(".role-tag, .server-tag, .home-tag").forEach(n => n.remove());
+  if (person.home) $("fp-name").after(homeChip(person));
   if (person.server_tag) $("fp-name").after(serverTagChip(person.server_tag));
   if (person.tag) $("fp-name").after(roleTagChip(person.tag, person.tag_color));
   $("fp-username").textContent = [person.username ? `@${person.username}` : "", person.pronouns || ""].filter(Boolean).join(" \u00b7 ");
@@ -14946,10 +14969,50 @@ function openMemberCard(member, anchor) {
   card.style.top = `${Math.max(8, Math.min(a.top, window.innerHeight - r.height - 8))}px`;
 }
 
+const homeStatuses = new Map();
+let homeAskTimer = null;
+
+function myHome() {
+  return (state.user && state.user.home && state.user.home.home) || null;
+}
+
+function askHomeStatus(members) {
+  const homes = homesToAsk(members, homeStatuses);
+  if (!homes.length || homeAskTimer) return;
+  homeAskTimer = setTimeout(async () => {
+    homeAskTimer = null;
+    try {
+      for (const status of await invoke("home_status", { homes })) homeStatuses.set(status.home, status);
+      if (state.view === "server") renderMessages(state.renderedMessages || []);
+    } catch (e) {
+      console.warn("home status", e);
+    }
+  }, 300);
+}
+
+function homeStateOf(member) {
+  return member && member.home ? homeTagState(member.home, homeStatuses.get(member.home.home)) : null;
+}
+
+function homeChip(member) {
+  const tagState = homeStateOf(member);
+  const chip = el("span", `home-tag home-${tagState}`);
+  if (homeTagWarns(tagState)) chip.appendChild(svgIcon("warning", 12));
+  chip.appendChild(document.createTextNode(member.home.shown));
+  chip.title = homeTagTitle(member.home, tagState);
+  chip.setAttribute("aria-label", chip.title);
+  return chip;
+}
+
+function homeBlocked(member) {
+  return homeStateOf(member) === "blocked";
+}
+
 function decorateAuthor(node, authorId) {
   const member = state.view === "server" && currentServerMember(authorId);
   if (!member) return;
   paintRole(node, member.color);
+  if (member.home && showsHomeInChat(member.home, myHome(), homeStateOf(member))) node.after(homeChip(member));
   if (member.server_tag) node.after(serverTagChip(member.server_tag));
   if (member.tag) node.after(roleTagChip(member.tag, member.tag_color));
   if (member.bot) node.after(botTag());
@@ -24622,6 +24685,10 @@ function wireEvents() {
       renderVoicePanel();
       if (state.currentServer && state.currentServer.id === server) await refreshCurrentServer();
     });
+    window.__TAURI__.event.listen("homes-changed", () => {
+      homeStatuses.clear();
+      if (state.currentServer) askHomeStatus(state.currentServer.members);
+    });
     window.__TAURI__.event.listen("profile-changed", event => {
       state.user = event.payload;
       renderUserPanel();
@@ -26084,8 +26151,55 @@ async function inviteBack(server, person) {
   dmSentToast(sent, person.name, `Sent ${person.name} an invite back to ${shownServerName(server)}`);
 }
 
+let blockedHomesDraft = [];
+
+async function saveBlockedHomes(server, homes, requireHome) {
+  await invoke("set_blocked_homes", { serverId: server.id, homes, requireHome });
+  await refreshCurrentServer();
+  openServerSettings("removed");
+}
+
+function renderBlockedHomes(server) {
+  const view = server.blocked_homes || { homes: [], require_home: false, can_edit: false };
+  $("blocked-homes").classList.toggle("hidden", !view.can_edit);
+  if (!view.can_edit) return;
+  blockedHomesDraft = view.homes;
+  $("blocked-homes-head").textContent = view.homes.length ? `Blocked servers - ${view.homes.length}` : "Blocked servers";
+  const list = $("blocked-homes-list");
+  list.replaceChildren();
+  for (const home of view.homes) {
+    const row = el("div", "manage-row");
+    row.append(el("span", "manage-row-label", home), el("span", "removed-actions"));
+    row.lastChild.appendChild(removedButton("Unblock", false, () => saveBlockedHomes(server, withoutBlockedHome(blockedHomesDraft, home), view.require_home)));
+    list.appendChild(row);
+  }
+  if (!view.homes.length) list.appendChild(el("div", "manage-empty", "No servers are blocked."));
+  $("blocked-home-error").textContent = "";
+  $("blocked-home-add").onclick = async () => {
+    const next = withBlockedHome(blockedHomesDraft, $("blocked-home-input").value);
+    $("blocked-home-error").textContent = next.error || "";
+    if (next.error || next.homes === blockedHomesDraft) return;
+    try {
+      await saveBlockedHomes(server, next.homes, view.require_home);
+      $("blocked-home-input").value = "";
+    } catch (e) {
+      $("blocked-home-error").textContent = String(e);
+    }
+  };
+  $("require-home-toggle").checked = view.require_home;
+  $("require-home-toggle").onchange = async e => {
+    try {
+      await saveBlockedHomes(server, blockedHomesDraft, e.target.checked);
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(String(err));
+    }
+  };
+}
+
 function renderRemovedSettings(server) {
   const now = Date.now();
+  renderBlockedHomes(server);
   const bans = server.can_ban ? server.banned || [] : [];
   const kicks = server.can_kick ? server.kicked || [] : [];
   $("tab-removed").textContent = bans.length || kicks.length ? `Bans & Kicks (${bans.length + kicks.length})` : "Bans & Kicks";

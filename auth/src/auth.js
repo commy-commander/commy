@@ -14,6 +14,8 @@ import { adultConfirmationField, commyAdultConfirmation, recordAdultConfirmation
 import { sealedAtRest } from "./at-rest.js";
 import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
+import { commyHomeCard } from "./home-card.js";
+import { commyHomeKeys, createHomeKeys } from "./home-keys.js";
 import { commyDirectory } from "./directory.js";
 import { commyDoorbell } from "./doorbell.js";
 import { commyEmailPreferences } from "./email-preferences.js";
@@ -79,7 +81,7 @@ export function postgresDatabase(pool) {
   return kyselyAdapter(new Kysely({ dialect: new PostgresDialect({ pool }) }), { type: "postgres", transaction: true });
 }
 
-export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
+export function buildAuthOptions(config, { pool, send, fetch, redis = null, homeKeys = null }) {
   const throwawayDomains = config.blockThrowawayEmails ? loadThrowawayDomains() : null;
   const plugins = [
     bearer(),
@@ -111,6 +113,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
     commyAppSignIn({ accessCode: config.accessCode, turnstileSiteKey: config.turnstile?.siteKey ?? null }),
     commyEmailPreferences({ secret: config.secret, instanceName: config.instanceName, basePath: config.basePath }),
     commyAdultConfirmation(),
+    commyHomeCard({ serverKey: config.serverKey, home: config.baseURL }),
+    commyHomeKeys({ homeKeys: homeKeys ?? createHomeKeys({ ownHome: config.baseURL, ownKey: config.serverKey.published }) }),
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
@@ -258,6 +262,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null }) {
         "/commy/account/delete/start": { window: 600, max: 5 },
         "/commy/account/delete/finish": { window: 600, max: 10 },
         "/commy/email/preferences": { window: 60, max: 20 },
+        "/commy/home-card": { window: 600, max: 10 },
+        "/commy/home-key": { window: 60, max: 30 },
         "/passkey/verify-authentication": { window: 60, max: 10 },
         "/sign-in/social": { window: 60, max: 20 },
         "/commy/access": { window: 600, max: 10 },

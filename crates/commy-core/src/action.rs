@@ -163,6 +163,7 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::GifKeySet { .. } => "gif_key".into(),
         E::GameDbSet { .. } => "game_db".into(),
         E::SyncHostSet { .. } => "sync_host".into(),
+        E::HomesBlocked { .. } => "blocked_homes".into(),
         E::PetSet { .. } => "pet".into(),
         E::PetCare { user, care, .. } => format!("pet_care:{user}:{}", crate::pet::care_name(*care)),
         E::DriveAdd { item, .. } => format!("drive:{}", item.id),
@@ -436,7 +437,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             member && (own || others)
         }
         E::VoiceMove { user, .. } => allows(Permissions::MOVE_MEMBERS) && *user != by && sees(event),
-        E::MemberBan { .. } | E::MemberUnban { .. } => allows(Permissions::BAN_MEMBERS),
+        E::MemberBan { .. } | E::MemberUnban { .. } | E::HomesBlocked { .. } => allows(Permissions::BAN_MEMBERS),
         E::MemberBanUntil { user, .. } => *user != by && allows(Permissions::BAN_MEMBERS),
         E::MemberTimeout { user, .. } => *user != by && actor(event) == Some(by) && allows(Permissions::TIME_OUT_MEMBERS),
         E::ServerDelete { .. } | E::SyncHostSet { .. } => by == server.owner,

@@ -734,13 +734,59 @@ impl ServerState {
         if ahead > MAX_ACTION_AHEAD_MS || (is_key_grant(&signed.event) && ahead > MAX_GRANT_AHEAD_MS) {
             return Err(StoreError::TooFarAhead);
         }
-        if !action::authorized(&self.server, by, &signed.event) {
+        if !action::authorized(&self.server, by, &signed.event) || self.author_home_refused(by, &signed.event) {
             return Err(StoreError::NotAllowed);
         }
         Ok(self.fresh(action::subject(&signed.event).as_deref(), signed.action.at))
     }
 
+    pub fn refuses_home(&self, profile: &UserProfile) -> bool {
+        if profile.id == self.server.owner || self.bots.contains(&profile.id) {
+            return false;
+        }
+        match crate::home::proven_home(profile) {
+            Some(card) => self.server.blocks_home(card.domain()),
+            None => self.server.require_home,
+        }
+    }
+
+    pub fn home_refused(&self, user: UserId) -> bool {
+        self.profiles.get(&user).is_some_and(|profile| self.refuses_home(profile))
+    }
+
+    fn author_home_refused(&self, by: UserId, event: &ServerEvent) -> bool {
+        match event {
+            ServerEvent::MemberLeave { .. } => false,
+            ServerEvent::MemberJoin { profile, .. } | ServerEvent::ProfileUpdate { profile } | ServerEvent::JoinAsk { profile, .. } if profile.id == by => {
+                self.refuses_home(profile)
+            }
+            _ => self.home_refused(by),
+        }
+    }
+
+    fn drop_refused_homes(&mut self) {
+        let refused: Vec<UserId> = self.server.members.iter().map(|m| m.user).filter(|user| self.home_refused(*user)).collect();
+        for user in refused {
+            self.remove_member(user);
+        }
+        let asking: Vec<UserId> = self.server.join_requests.iter().filter(|r| self.refuses_home(&r.profile)).map(|r| r.profile.id).collect();
+        self.server.join_requests.retain(|r| !asking.contains(&r.profile.id));
+    }
+
+    fn remove_member(&mut self, user: UserId) -> bool {
+        let before = self.server.members.len();
+        self.server.members.retain(|m| m.user != user);
+        self.drop_voice_presence(user);
+        self.devices.forget(user);
+        self.bots.remove(&user);
+        self.bot_commands.remove(&user);
+        self.server.members.len() != before
+    }
+
     pub fn admits_unsigned(&self, event: &ServerEvent) -> Result<(), StoreError> {
+        if unsigned_author(event).is_some_and(|author| self.author_home_refused(author, event)) {
+            return Err(StoreError::NotAllowed);
+        }
         if action::self_signed(event) {
             return Ok(());
         }
@@ -1202,6 +1248,9 @@ impl ServerState {
                 }
                 self.pin_identity(&mut profile)?;
                 profile = profile.as_seen_by_others();
+                if self.refuses_home(&profile) {
+                    return Ok(false);
+                }
                 if self.server.is_member(profile.id) {
                     self.keep_phone_mark(&mut profile);
                     let changed = self.profiles.get(&profile.id) != Some(&profile);
@@ -1225,13 +1274,7 @@ impl ServerState {
             }
             ServerEvent::MemberLeave { server, user } => {
                 self.same_server(server)?;
-                let before = self.server.members.len();
-                self.server.members.retain(|m| m.user != user);
-                self.drop_voice_presence(user);
-                self.devices.forget(user);
-                self.bots.remove(&user);
-                self.bot_commands.remove(&user);
-                Ok(self.server.members.len() != before)
+                Ok(self.remove_member(user))
             }
             ServerEvent::PresenceUpdate { user, presence } => {
                 let presence = presence.as_seen_by_others();
@@ -1635,6 +1678,17 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.server.file_store, url))
             }
+            ServerEvent::HomesBlocked { server, homes, require_home } => {
+                self.same_server(server)?;
+                let Some(homes) = crate::home::clean_blocked_homes(&homes) else { return Ok(false) };
+                if self.server.blocked_homes == homes && self.server.require_home == require_home {
+                    return Ok(false);
+                }
+                self.server.blocked_homes = homes;
+                self.server.require_home = require_home;
+                self.drop_refused_homes();
+                Ok(true)
+            }
             ServerEvent::SyncHostSet { server, url } => {
                 self.same_server(server)?;
                 if url.as_deref().is_some_and(|u| !crate::sync_host::is_sync_host(u)) {
@@ -1684,6 +1738,9 @@ impl ServerState {
                     return Err(StoreError::IdentityMismatch);
                 }
                 let profile = profile.as_seen_by_others();
+                if self.refuses_home(&profile) {
+                    return Ok(false);
+                }
                 Ok(crate::join_request::record(&mut self.server, crate::join_request::JoinRequest { profile, note, at }))
             }
             ServerEvent::JoinAnswer { server, user, admit } => {
@@ -2210,6 +2267,9 @@ impl ServerState {
                 }
                 self.pin_identity(&mut profile)?;
                 profile = profile.as_seen_by_others();
+                if self.refuses_home(&profile) {
+                    return Ok(false);
+                }
                 self.keep_phone_mark(&mut profile);
                 match self.profiles.get(&profile.id) {
                     Some(existing) if *existing == profile => Ok(false),
@@ -3154,6 +3214,14 @@ fn supersedes(stored: &Message, edited_at: Option<DateTime<Utc>>, sig: &Signatur
     match millis(edited_at).cmp(&millis(stored.edited_at)) {
         std::cmp::Ordering::Equal => stored.sig.is_none_or(|old| sig.0 < old.0),
         order => order.is_gt(),
+    }
+}
+
+
+fn unsigned_author(event: &ServerEvent) -> Option<UserId> {
+    match event {
+        ServerEvent::MessageCreate { message } => Some(message.author),
+        other => action::actor(other),
     }
 }
 

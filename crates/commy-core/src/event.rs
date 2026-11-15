@@ -465,6 +465,11 @@ pub enum ServerEvent {
         server: ServerId,
         url: Option<String>,
     },
+    HomesBlocked {
+        server: ServerId,
+        homes: Vec<String>,
+        require_home: bool,
+    },
 }
 
 #[cfg(test)]
@@ -567,6 +572,7 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::GifKeySet { server, gifs: None }), 104);
         assert_eq!(wire_tag(ServerEvent::GameDbSet { server, games: None }), 105);
         assert_eq!(wire_tag(ServerEvent::SyncHostSet { server, url: None }), 106);
+        assert_eq!(wire_tag(ServerEvent::HomesBlocked { server, homes: vec![], require_home: false }), 107);
     }
 
     #[test]

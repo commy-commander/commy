@@ -71,6 +71,8 @@ pub struct ServerFeatures {
     pub folder_lock: bool,
     #[serde(default, alias = "linkBlocklist")]
     pub link_blocklist: bool,
+    #[serde(default, alias = "adultsOnly")]
+    pub adults_only: bool,
 }
 
 impl AccountState {
@@ -144,6 +146,7 @@ impl AccountState {
                 (Some(f), "emojis") => f.emojis,
                 (Some(f), "stickers") => f.stickers,
                 (Some(f), "link_blocklist") => f.link_blocklist,
+                (Some(_), "home_card" | "home_key") => true,
                 _ => false,
             }
     }
@@ -160,6 +163,10 @@ static CHOSEN_SERVER: Mutex<Option<String>> = Mutex::new(None);
 
 static ENV_SERVER: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)));
+
+pub fn is_bench_server(server: &str) -> bool {
+    ENV_SERVER.as_deref() == Some(server)
+}
 
 fn switchable(server: &str) -> bool {
     ENV_SERVER.as_deref().is_none_or(|env| env == server)
@@ -504,6 +511,10 @@ pub(crate) async fn discover(http: &reqwest::Client, server: &str) -> Result<Dis
     let doc: Discovery = res.json().await.map_err(|_| format!("{host} sent an invalid sign-in description"))?;
     if !doc.same_origin(server) {
         return Err(format!("{host} points sign-in at a different address; refusing for safety"));
+    }
+    let adults_only = doc.features.is_some_and(|f| f.adults_only);
+    if let Some(refusal) = crate::server_guard::sign_in_refusal(server, adults_only) {
+        return Err(refusal);
     }
     Ok(doc)
 }
@@ -989,6 +1000,8 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
         store(&app, &state);
     }
     use_sync_service(handle, server, doc);
+    let renewing = handle.clone();
+    tauri::async_runtime::spawn(async move { crate::server_guard::renew_home_card(&renewing).await });
     #[cfg(target_os = "ios")]
     if next == AfterSignIn::KeepOpen {
         crate::relaunch::start_fresh_when_hidden(false);
@@ -1669,7 +1682,7 @@ mod tests {
         };
         assert!(state.server_offers("gifs") && state.server_offers("games"));
         assert!(!state.server_offers("media"));
-        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true, folder_lock: false, link_blocklist: false });
+        state.features = Some(ServerFeatures { gifs: true, games: false, emojis: true, media: true, vault: false, stickers: true, folder_lock: false, link_blocklist: false, adults_only: false });
         assert!(state.server_offers("gifs"));
         assert!(state.server_offers("stickers"));
         assert!(state.server_offers("emojis"));
@@ -1696,7 +1709,7 @@ mod tests {
         with["features"] = serde_json::json!({ "gifs": true, "games": false });
         with["endpoints"]["sync"] = serde_json::json!("wss://chat.example.org/sync");
         let new: Discovery = serde_json::from_value(with).unwrap();
-        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false, folder_lock: false, link_blocklist: false }));
+        assert_eq!(new.features, Some(ServerFeatures { gifs: true, games: false, emojis: false, media: false, vault: false, stickers: false, folder_lock: false, link_blocklist: false, adults_only: false }));
         assert_eq!(new.endpoints.sync.as_deref(), Some("wss://chat.example.org/sync"));
     }
 

@@ -3104,6 +3104,23 @@
           <div id="removed-bans" class="removed-list"></div>
           <h2 class="settings-subhead" id="removed-kicks-head">Kicked</h2>
           <div id="removed-kicks" class="removed-list"></div>
+          <div id="blocked-homes" class="hidden">
+            <h2 class="settings-subhead" id="blocked-homes-head">Blocked servers</h2>
+            <div class="setting-sub">Nobody who signs in through these servers can join or post here, and anyone already here from one of them is removed. Their subdomains are blocked too.</div>
+            <div id="blocked-homes-list" class="removed-list"></div>
+            <div class="blocked-home-add">
+              <input id="blocked-home-input" type="text" inputmode="url" maxlength="253" autocomplete="off" spellcheck="false" placeholder="spam.example.org" aria-label="Server address to block" />
+              <button class="btn-primary btn-small" id="blocked-home-add">Block</button>
+            </div>
+            <div class="setting-sub blocked-home-error" id="blocked-home-error" role="alert"></div>
+            <label class="settings-card setting-row" id="require-home-row">
+              <div>
+                <div class="setting-title">Only people with a verified home server</div>
+                <div class="setting-sub">Keeps out people whose app does not show which server they sign in through. Everyone on an up to date Commy has one.</div>
+              </div>
+              <input type="checkbox" id="require-home-toggle" class="switch" />
+            </label>
+          </div>
         </section>
 
         <section class="settings-page" data-page="reports">
@@ -3592,6 +3609,7 @@
   <script src="scripts/studio-forum.js"></script>
   <script src="scripts/studio-compact.js"></script>
   <script src="scripts/server-tags.js"></script>
+  <script src="scripts/home-tags.js"></script>
   <script src="scripts/overlay-view.js"></script>
   <script src="scripts/studio-discover.js"></script>
   <script src="scripts/studio-start.js"></script>

@@ -21,6 +21,7 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS sync_reports (id TEXT PRIMARY KEY, received BIGINT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL)",
     "CREATE INDEX IF NOT EXISTS sync_reports_state ON sync_reports (state, received)",
     "CREATE TABLE IF NOT EXISTS sync_dropped (stream BYTEA PRIMARY KEY, dropped BIGINT NOT NULL, report TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS sync_server_key (id SMALLINT PRIMARY KEY CHECK (id = 1), seed BYTEA NOT NULL)",
 ];
 
 pub const TOUCH_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -148,6 +149,13 @@ impl Store {
         match self {
             Store::Memory(m) => Ok(m.prune_wakes(today)),
             Store::Postgres(p) => p.prune_wakes(today).await,
+        }
+    }
+
+    pub async fn server_key_seed(&self, fresh: [u8; 32]) -> Result<[u8; 32], StoreError> {
+        match self {
+            Store::Memory(_) => Ok(fresh),
+            Store::Postgres(p) => p.server_key_seed(fresh).await,
         }
     }
 
@@ -463,6 +471,12 @@ impl PgStore {
             Err(e) if code_of(&e).as_deref() == Some("42P04") => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+
+    async fn server_key_seed(&self, fresh: [u8; 32]) -> Result<[u8; 32], StoreError> {
+        sqlx::query("INSERT INTO sync_server_key (id, seed) VALUES (1, $1) ON CONFLICT (id) DO NOTHING").bind(&fresh[..]).execute(&self.pool).await?;
+        let seed: Vec<u8> = sqlx::query("SELECT seed FROM sync_server_key WHERE id = 1").fetch_one(&self.pool).await?.get(0);
+        seed.try_into().map_err(|_| StoreError::Database(sqlx::Error::Decode("the stored server key is not 32 bytes".into())))
     }
 
     async fn existing(&self, stream: &StreamId, nonce: &[u8]) -> Result<Option<Appended>, StoreError> {
@@ -835,6 +849,17 @@ mod tests {
         exercise(&store).await;
         let again = Store::postgres(&url).await.expect("the schema applies twice");
         assert!(again.ping().await);
+    }
+
+    #[tokio::test]
+    async fn postgres_keeps_the_first_server_key_it_was_given() {
+        let Ok(url) = std::env::var("SYNC_POSTGRES_TEST_URL") else { return };
+        let url = format!("{}/commy_sync_key_{}", url.trim_end_matches('/'), rand::random::<u32>());
+        let store = Store::postgres(&url).await.unwrap();
+        assert_eq!(store.server_key_seed([1; 32]).await.unwrap(), [1; 32]);
+        assert_eq!(store.server_key_seed([2; 32]).await.unwrap(), [1; 32]);
+        let reopened = Store::postgres(&url).await.unwrap();
+        assert_eq!(reopened.server_key_seed([3; 32]).await.unwrap(), [1; 32]);
     }
 
     #[tokio::test]

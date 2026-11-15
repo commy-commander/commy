@@ -57,6 +57,7 @@ mod sent_files;
 mod screen_service;
 use commy_view::catalog;
 use commy_view::search;
+mod server_guard;
 mod server_wake;
 mod settle;
 mod sounds;
@@ -464,6 +465,17 @@ async fn set_upload_limit(app: tauri::State<'_, App>, handle: tauri::AppHandle, 
     let now = chrono::Utc::now();
     let event = managed(&app, sid, me.id, |state, perms| view::moderate::upload_limit(state, perms, megabytes, now))?;
     apply_and_broadcast(&app, &handle, sid, event).await
+}
+
+#[tauri::command]
+async fn set_blocked_homes(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, homes: Vec<String>, require_home: bool) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let event = managed(&app, sid, me.id, |state, perms| view::homes::set_blocked_homes(state, perms, me.id, &homes, require_home))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    channel_lock::tend_server(&app, &handle, sid).await;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -6867,6 +6879,11 @@ async fn publish_profile(app: &App, handle: &tauri::AppHandle, profile: &UserPro
     let _ = handle.emit("profile-changed", profile);
 }
 
+pub(crate) async fn set_home_card(app: &App, handle: &tauri::AppHandle, card: commy_core::home::HomeCard) {
+    let Ok(profile) = edit_profile(app, |p| p.home = Some(card)) else { return };
+    publish_profile(app, handle, &profile).await;
+}
+
 pub(crate) async fn note_phone_reachable(app: &App, handle: &tauri::AppHandle) {
     let now = chrono::Utc::now().timestamp_millis();
     let due = app.profile.lock().unwrap().as_ref().is_some_and(|p| commy_core::user::phone_mark_due(p.phone_until, now));
@@ -7903,6 +7920,9 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
         if keys.hold(state, message).is_some() {
             return;
         }
+        if state.profiles.get(&message.author).is_some_and(server_guard::blocks_profile) {
+            return;
+        }
         let Some(message) = keys.open(state, message) else { return };
         let mut names = app.profile.lock().unwrap().as_ref().map(catchup::mention_names).unwrap_or_default();
         names.extend(view::nickname_of(state, me));
@@ -8302,6 +8322,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
 
     tauri::async_runtime::spawn(doorbell::run(handle.clone()));
     tauri::async_runtime::spawn(directory::keep_listings_current(handle.clone()));
+    server_guard::keep_home_card(&handle);
     let session_check = tauri::async_runtime::spawn(account::verify_saved_session(handle.clone()));
     tauri::async_runtime::spawn(async move {
         match CommyNode::spawn_on_port(node_key, node_port).await {
@@ -8608,6 +8629,7 @@ pub fn run() {
                 let _ = app.base_dir.set(dir.clone());
                 account_folder::remove_doomed_folders(&dir);
                 link_safety::start(&handle, &dir);
+                server_guard::start(&handle, &dir);
                 invite_link::register_scheme();
                 invite_link::start(&handle, &dir, launch_link);
                 *app.account.lock().unwrap() = account::load(&dir);
@@ -8626,6 +8648,8 @@ pub fn run() {
             notify_anyway::notify_anyway,
             link_preview::prepare_link_preview,
             link_safety::check_link,
+            server_guard::home_status,
+            set_blocked_homes,
             account::account_status,
             account_log::sync_prefs_load,
             account_log::sync_prefs_set,

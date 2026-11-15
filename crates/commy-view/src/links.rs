@@ -287,6 +287,31 @@ fn imitates(host: &str, shown_label: &str) -> bool {
     })
 }
 
+const MIN_HOME_LABEL_FOR_TYPO_MATCH: usize = 5;
+
+fn imitates_one_home(host: &str, known: &str) -> bool {
+    let (site, known_site) = (site_of(host), site_of(known));
+    if site == known_site {
+        return false;
+    }
+    let (label, known_label) = (site_label(site), site_label(known_site));
+    let embedded = host.starts_with(&format!("{known}.")) || host.contains(&format!(".{known}."));
+    let same_name = label == known_label;
+    let hyphenated = label.split('-').any(|part| part == known_label);
+    let homoglyph = skeleton(&unicode_host(label)) == skeleton(known_label);
+    let typo = known_label.len() >= MIN_HOME_LABEL_FOR_TYPO_MATCH && one_edit_apart(&skeleton(label), &skeleton(known_label));
+    embedded || same_name || hyphenated || homoglyph || typo
+}
+
+pub fn imitates_home(domain: &str, known_homes: &[&str]) -> bool {
+    let host = domain.trim_end_matches('.').to_ascii_lowercase();
+    let known: Vec<String> = known_homes.iter().map(|k| k.trim_start_matches("https://").to_ascii_lowercase()).collect();
+    if known.iter().any(|k| within(&host, k)) {
+        return false;
+    }
+    host.split('.').any(|part| part.starts_with(PUNYCODE_PREFIX)) || known.iter().any(|k| imitates_one_home(&host, k))
+}
+
 fn borrows_brand_name(host: &str) -> bool {
     let label = site_label(site_of(host));
     !well_known(host)
@@ -539,4 +564,16 @@ mod tests {
         assert!(!one_edit_apart("microsoft", "microsoft"));
         assert!(!one_edit_apart("microsoft", "macrosaft"));
     }
+
+    #[test]
+    fn homes_that_pass_for_commy_chat_are_flagged() {
+        let known = ["https://commy.chat"];
+        for fake in ["cornmy.chat", "commy.net", "commy-chat.org", "commy.chat.example.org", "conmy.chat", "xn--cmmy-7ve.chat", "c0mmy.chat", "comrny.chat"] {
+            assert!(imitates_home(fake, &known), "{fake}");
+        }
+        for fine in ["commy.chat", "eu.commy.chat", "friends.example.org", "gaming.club", "chat.example.org"] {
+            assert!(!imitates_home(fine, &known), "{fine}");
+        }
+    }
+
 }

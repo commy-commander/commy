@@ -29,6 +29,7 @@ const AUDIT_GROUP_OF = {
   tip_jar: "server",
   file_store: "server",
   sync_host: "server",
+  blocked_homes: "members",
   gif_key: "server",
   game_db: "server",
   server_pet: "server",
@@ -143,6 +144,7 @@ function describeAudit(entry) {
     case "upload_limit": return detail ? ["limited files to ", auditStrong(detail)] : ["removed the file size limit"];
     case "text_to_speech": return [detail === "on" ? "turned on text-to-speech messages" : "turned off text-to-speech messages"];
     case "tip_jar": return detail ? ["set the tip jar to ", auditStrong(tipJarText(detail))] : ["removed the tip jar"];
+    case "blocked_homes": return detail ? ["blocked people from ", auditStrong(String(detail))] : ["unblocked every server"];
     case "sync_host": return detail ? ["moved syncing to ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["moved syncing back to Commy.chat"];
     case "file_store": return detail ? ["connected file storage at ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["turned off file storage"];
     case "gif_key": return detail ? ["gave GIF search a ", auditStrong(detail === "giphy" ? "GIPHY" : "KLIPY"), " key"] : ["removed the GIF search key"];

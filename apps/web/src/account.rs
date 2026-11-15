@@ -204,7 +204,7 @@ pub fn features(reply: &Reply) -> Features {
     serde_json::from_str::<Discovery>(&reply.body).map(|d| d.features).unwrap_or_default()
 }
 
-fn encode_component(text: &str) -> String {
+pub fn encode_component(text: &str) -> String {
     let mut out = String::new();
     for byte in text.bytes() {
         match byte {

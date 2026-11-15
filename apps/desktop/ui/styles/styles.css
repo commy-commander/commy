@@ -8940,3 +8940,30 @@ body.mobile-app .header-actions .icon-btn:not(.active):hover { background: none;
 .stack-panel-name { flex: 1; min-width: 0; color: var(--header-primary); font-size: 14px; }
 .stack-panel-move { width: 32px; height: 32px; }
 .stack-panel-move:disabled { opacity: .35; cursor: default; }
+
+.home-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  padding: 0 5px;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.home-tag.home-checking { opacity: .7; }
+.home-tag.home-lookalike, .home-tag.home-unverified, .home-tag.home-expired { border-color: var(--yellow); color: var(--yellow); }
+.home-tag.home-blocked { border-color: var(--red); color: var(--red); }
+.blocked-home-add { display: flex; gap: 8px; margin-top: 8px; }
+.blocked-home-add input { flex: 1; }
+.blocked-home-error { min-height: 1.2em; color: var(--red); }
+.msg-blocked-home .msg-content { font-style: italic; color: var(--text-muted); }
