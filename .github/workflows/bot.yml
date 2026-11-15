@@ -83,11 +83,19 @@ jobs:
         run: |
           mkdir -p dist
           if [ "$RUNNER_OS" = Windows ]; then
-            if command -v 7z >/dev/null; then
-              7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
-            else
-              powershell -NoProfile -Command "Compress-Archive -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
-            fi
+            zip_bot() {
+              if command -v 7z >/dev/null; then
+                7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
+              else
+                powershell -NoProfile -Command "Compress-Archive -Force -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
+              fi
+            }
+            for attempt in 1 2 3 4 5 6; do
+              zip_bot && break
+              echo "commy-bot.exe is still held open, trying again ($attempt)"
+              sleep 5
+            done
+            [ -f "dist/$ARTIFACT.zip" ]
           else
             chmod +x bin/commy-bot
             tar -czf "dist/$ARTIFACT.tar.gz" -C bin commy-bot
@@ -166,11 +174,19 @@ jobs:
         run: |
           mkdir -p dist
           if [ "$RUNNER_OS" = Windows ]; then
-            if command -v 7z >/dev/null; then
-              7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
-            else
-              powershell -NoProfile -Command "Compress-Archive -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
-            fi
+            zip_bot() {
+              if command -v 7z >/dev/null; then
+                7z a -tzip "dist/$ARTIFACT.zip" ./bin/commy-bot.exe
+              else
+                powershell -NoProfile -Command "Compress-Archive -Force -Path 'bin/commy-bot.exe' -DestinationPath 'dist/$ARTIFACT.zip'"
+              fi
+            }
+            for attempt in 1 2 3 4 5 6; do
+              zip_bot && break
+              echo "commy-bot.exe is still held open, trying again ($attempt)"
+              sleep 5
+            done
+            [ -f "dist/$ARTIFACT.zip" ]
           else
             chmod +x bin/commy-bot
             tar -czf "dist/$ARTIFACT.tar.gz" -C bin commy-bot
