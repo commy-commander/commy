@@ -262,6 +262,19 @@ jobs:
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
+      - name: Clear other containers off the runner
+        if: runner.os == 'Linux'
+        shell: sh
+        run: |
+          docker info >/dev/null 2>&1 || exit 0
+          me="$(grep -o 'containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -n 1 | cut -d/ -f2)"
+          [ -n "$me" ] || { echo "could not tell which container this job runs in"; exit 1; }
+          for id in $(docker ps -aq --no-trunc); do
+            [ "$id" = "$me" ] && continue
+            docker rm -f "$id" >/dev/null
+            echo "removed a container left on the runner: $id"
+          done
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -305,6 +318,19 @@ jobs:
       matrix:
         service: [auth]
     steps:
+      - name: Clear other containers off the runner
+        if: runner.os == 'Linux'
+        shell: sh
+        run: |
+          docker info >/dev/null 2>&1 || exit 0
+          me="$(grep -o 'containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -n 1 | cut -d/ -f2)"
+          [ -n "$me" ] || { echo "could not tell which container this job runs in"; exit 1; }
+          for id in $(docker ps -aq --no-trunc); do
+            [ "$id" = "$me" ] && continue
+            docker rm -f "$id" >/dev/null
+            echo "removed a container left on the runner: $id"
+          done
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -351,6 +377,19 @@ jobs:
       matrix:
         service: [auth, sync]
     steps:
+      - name: Clear other containers off the runner
+        if: runner.os == 'Linux'
+        shell: sh
+        run: |
+          docker info >/dev/null 2>&1 || exit 0
+          me="$(grep -o 'containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -n 1 | cut -d/ -f2)"
+          [ -n "$me" ] || { echo "could not tell which container this job runs in"; exit 1; }
+          for id in $(docker ps -aq --no-trunc); do
+            [ "$id" = "$me" ] && continue
+            docker rm -f "$id" >/dev/null
+            echo "removed a container left on the runner: $id"
+          done
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0

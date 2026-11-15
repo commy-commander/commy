@@ -40,6 +40,19 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Clear other containers off the runner
+        if: runner.os == 'Linux'
+        shell: sh
+        run: |
+          docker info >/dev/null 2>&1 || exit 0
+          me="$(grep -o 'containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -n 1 | cut -d/ -f2)"
+          [ -n "$me" ] || { echo "could not tell which container this job runs in"; exit 1; }
+          for id in $(docker ps -aq --no-trunc); do
+            [ "$id" = "$me" ] && continue
+            docker rm -f "$id" >/dev/null
+            echo "removed a container left on the runner: $id"
+          done
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Linux build dependencies
@@ -428,6 +441,19 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - name: Clear other containers off the runner
+        if: runner.os == 'Linux'
+        shell: sh
+        run: |
+          docker info >/dev/null 2>&1 || exit 0
+          me="$(grep -o 'containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -n 1 | cut -d/ -f2)"
+          [ -n "$me" ] || { echo "could not tell which container this job runs in"; exit 1; }
+          for id in $(docker ps -aq --no-trunc); do
+            [ "$id" = "$me" ] && continue
+            docker rm -f "$id" >/dev/null
+            echo "removed a container left on the runner: $id"
+          done
+
       - uses: https://data.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4
         with:
           pattern: commy-*
@@ -631,6 +657,19 @@ jobs:
     if: github.ref_type == 'tag' && github.server_url != 'https://github.com' && !cancelled() && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      - name: Clear other containers off the runner
+        if: runner.os == 'Linux'
+        shell: sh
+        run: |
+          docker info >/dev/null 2>&1 || exit 0
+          me="$(grep -o 'containers/[0-9a-f]\{64\}' /proc/self/mountinfo | head -n 1 | cut -d/ -f2)"
+          [ -n "$me" ] || { echo "could not tell which container this job runs in"; exit 1; }
+          for id in $(docker ps -aq --no-trunc); do
+            [ "$id" = "$me" ] && continue
+            docker rm -f "$id" >/dev/null
+            echo "removed a container left on the runner: $id"
+          done
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main

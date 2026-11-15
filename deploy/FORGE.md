@@ -52,6 +52,11 @@ docker compose up -d
 `commy-pc` to the `catthehacker/ubuntu:full-*` images (about 19 GB each, pulled once),
 and jobs reach the runner's own Docker daemon through `DOCKER_HOST`.
 
+Every job shares that daemon, so the runner pulls job images fresh each time
+(`force_pull`), and jobs that hold signing or publishing secrets first remove
+any container left on the daemon. Pull requests should still get their own
+runner with its own daemon once a second machine is available.
+
 ## Secrets
 
 Repository secrets (Settings > Actions > Secrets): `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
