@@ -88,3 +88,94 @@ export function requestHead(method, url, rawHeaders) {
   }
   return `${out}\r\n`;
 }
+
+export const ENDPOINT_ID = /^[0-9a-f]{64}$/;
+export const LINKED_KEEP_MS = 10 * 60 * 1000;
+export const STRANGER_KEEP_MS = 5 * 1000;
+
+export function accessMode(value) {
+  return String(value ?? "").trim().toLowerCase() === "enforce" ? "enforce" : "watch";
+}
+
+export function letIn(mode, linked) {
+  return mode === "watch" || linked !== false;
+}
+
+export class Answers {
+  constructor(max = 50_000) {
+    this.max = max;
+    this.kept = new Map();
+  }
+
+  get(endpoint, now) {
+    const kept = this.kept.get(endpoint);
+    if (!kept) return undefined;
+    if (now >= kept.until) {
+      this.kept.delete(endpoint);
+      return undefined;
+    }
+    return kept.linked;
+  }
+
+  set(endpoint, linked, now) {
+    this.kept.delete(endpoint);
+    this.kept.set(endpoint, { linked, until: now + (linked ? LINKED_KEEP_MS : STRANGER_KEEP_MS) });
+    while (this.kept.size > this.max) this.kept.delete(this.kept.keys().next().value);
+  }
+}
+
+export function dayKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+export function emptyTally(now) {
+  return { day: dayKey(now), endpoints: 0, strangers: 0, refused: 0, unchecked: 0, seen: new Set(), outsiders: new Set() };
+}
+
+export function tally(state, now, endpoint, outcome) {
+  const next = state.day === dayKey(now) ? state : emptyTally(now);
+  if (!next.seen.has(endpoint)) {
+    next.seen.add(endpoint);
+    next.endpoints = next.seen.size;
+  }
+  if (outcome.linked === false && !next.outsiders.has(endpoint)) {
+    next.outsiders.add(endpoint);
+    next.strangers = next.outsiders.size;
+  }
+  if (!outcome.allowed) next.refused += 1;
+  if (outcome.linked === undefined) next.unchecked += 1;
+  return next;
+}
+
+export function tallyReport(state, mode) {
+  const { day, endpoints, strangers, refused, unchecked } = state;
+  return { mode, day, endpoints, strangers, refused, unchecked };
+}
+
+export const DEFAULT_AUTH_URL = "http://auth:3001/internal/relay-access";
+
+export function authUrls(value) {
+  const urls = String(value ?? "")
+    .split(",")
+    .map((url) => url.trim())
+    .filter((url) => /^https?:\/\/[^\s]+$/.test(url));
+  return urls.length ? urls : [DEFAULT_AUTH_URL];
+}
+
+export function combineAnswers(answers) {
+  if (answers.includes(true)) return true;
+  if (answers.length && answers.every((answer) => answer === false)) return false;
+  return undefined;
+}
+
+export function loadAccessConfig(env) {
+  const num = (v, d) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
+  return {
+    mode: accessMode(env.RELAY_ACCESS_MODE),
+    authUrls: authUrls(env.RELAY_ACCESS_AUTH_URLS),
+    token: (env.RELAY_ACCESS_TOKEN || "").trim(),
+    port: num(env.ACCESS_PORT, 3342),
+    timeoutMs: num(env.RELAY_ACCESS_TIMEOUT_MS, 2000),
+    stateFile: env.ACCESS_STATE_FILE || "/data/access.json",
+  };
+}

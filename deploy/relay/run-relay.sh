@@ -22,9 +22,31 @@ with_reachable_binds() {
   fi
 }
 
+access_url_ok() {
+  case "$RELAY_ACCESS_URL" in
+    http://* | https://*) ;;
+    *) return 1 ;;
+  esac
+  case "$RELAY_ACCESS_URL" in
+    *[!A-Za-z0-9:/._-]*) return 1 ;;
+  esac
+}
+
+with_access_check() {
+  cat
+  [ -n "$RELAY_ACCESS_URL" ] || return 0
+  if ! access_url_ok; then
+    echo "[relay] ignoring RELAY_ACCESS_URL: not a plain http(s) address" >&2
+    return 0
+  fi
+  echo
+  echo "[access.http]"
+  echo "url = \"$RELAY_ACCESS_URL\""
+}
+
 plain_config() {
   mkdir -p "$TLS_DIR" && chmod 0755 "$TLS_DIR" || return 1
-  with_reachable_binds "$BASE_CONFIG" >"$TLS_DIR/plain.toml"
+  with_reachable_binds "$BASE_CONFIG" | with_access_check >"$TLS_DIR/plain.toml"
 }
 
 address_discovery_config() {
@@ -43,7 +65,7 @@ address_discovery_config() {
     echo "manual_key_path = \"$TLS_DIR/key.pem\""
     echo "quic_bind_addr = \"[::]:7842\""
   } >"$TLS_DIR/full.toml"
-  with_reachable_binds "$TLS_DIR/full.toml" >"$TLS_DIR/iroh-relay.toml"
+  with_reachable_binds "$TLS_DIR/full.toml" | with_access_check >"$TLS_DIR/iroh-relay.toml"
 }
 
 run_as_relay() {

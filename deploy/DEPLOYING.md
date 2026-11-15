@@ -96,6 +96,44 @@ RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.cha
   docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-proxy relay-meter
 ```
 
+#### Only commy.chat apps on our relays
+
+Each relay can ask its account servers whether a connecting app is a device
+someone signed in with, and refuse everything else (other iroh apps, other
+servers' users). Refused apps fall back to the public relays after 30 seconds,
+so nothing breaks, but our bandwidth only carries our own users. The relay asks
+`relay-access` (in `relay-tools/`), which asks auth at `/internal/relay-access`
+with a shared token. That path is not routed by Caddy. If auth does not answer,
+the app is let in, so an auth restart never cuts voice off.
+
+To turn it on, put the same `RELAY_ACCESS_TOKEN` (`openssl rand -hex 32`) in
+each `.env` (prod, staging and dev; staging and dev share one, since the test relay asks both). Auth reads it after `docker compose up -d auth`. Then
+start the relay projects with the access checker. Production asks prod auth:
+
+```bash
+cd /srv/commy-prod/deploy
+RELAY_ACCESS_URL=http://relay-access:3342/ RELAY_ACCESS_MODE=watch \
+RELAY_ACCOUNTS_NETWORK=commy-prod RELAY_ACCESS_AUTH_URLS=http://commy-prod-auth:3001/internal/relay-access \
+  docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-access
+```
+
+The test build relay asks staging and dev auth, since both use it:
+
+```bash
+cd /srv/commy-staging/deploy
+RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 \
+RELAY_ACCESS_URL=http://relay-access:3342/ RELAY_ACCESS_MODE=watch \
+RELAY_ACCOUNTS_NETWORK=commy-staging RELAY_TEST_ACCOUNTS_NETWORK=commy-dev \
+RELAY_ACCESS_AUTH_URLS=http://commy-staging-auth:3001/internal/relay-access,http://commy-dev-auth:3001/internal/relay-access \
+  docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-access
+```
+
+Start in `watch` mode: every app is still let in, and `access.json` in the
+`relay_meter_data` volume counts the day's apps, how many are not signed in,
+and how many checks could not reach auth. Switch `RELAY_ACCESS_MODE` to
+`enforce` once that count only shows strangers. Bots run by server owners are
+not signed-in devices, so they use the public relays.
+
 The relay image is tagged with the iroh-relay version it builds, so a version
 bump in `relay/Dockerfile` gets a fresh build even without `--build`. To check
 which relay is live, `https://relay.<domain>:8443/ping` answers 200 on

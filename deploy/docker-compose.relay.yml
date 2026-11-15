@@ -9,10 +9,22 @@ services:
       public:
         aliases: ["${RELAY_PROXY_ALIAS:-commy-relay-proxy}"]
 
+  relay-access:
+    networks:
+      edge:
+      accounts:
+      test-accounts:
+
 networks:
   public:
     external: true
     name: commy-relay
+  accounts:
+    external: true
+    name: ${RELAY_ACCOUNTS_NETWORK:-commy-relay}
+  test-accounts:
+    external: true
+    name: ${RELAY_TEST_ACCOUNTS_NETWORK:-commy-relay}
 
 volumes:
   edge_caddy_data:

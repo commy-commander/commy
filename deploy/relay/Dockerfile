@@ -1,5 +1,5 @@
 FROM rust:1.98-slim-trixie AS build
-ARG IROH_RELAY_VERSION=1.3.0
+ARG IROH_RELAY_VERSION=1.4.1
 RUN cargo install iroh-relay --locked --version "=${IROH_RELAY_VERSION}" --features server --bin iroh-relay --root /out
 
 FROM debian:trixie-slim

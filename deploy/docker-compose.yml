@@ -112,6 +112,7 @@ services:
       IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
       DOORBELL: ${DOORBELL:-true}
       SYNC_URL: ${SYNC_URL:-}
+      RELAY_ACCESS_TOKEN: ${RELAY_ACCESS_TOKEN:-}
       LINK_BLOCKLIST_URLS: ${LINK_BLOCKLIST_URLS:-}
       REDIS_URL: ${REDIS_URL-redis://redis:6379}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
@@ -150,17 +151,19 @@ services:
     <<: *hardened
     mem_limit: ${RELAY_MEM_LIMIT:-512m}
     build: ./relay
-    image: ${RELAY_IMAGE:-commy-relay:iroh-relay-1.3.0}
+    image: ${RELAY_IMAGE:-commy-relay:iroh-relay-1.4.1}
     restart: unless-stopped
     cap_add: [SETUID, SETGID, KILL]
     ports:
       - "${RELAY_QAD_PORT:-7842}:7842/udp"
     environment:
       RELAY_DOMAIN: ${RELAY_DOMAIN:-relay.${DOMAIN}}
+      RELAY_ACCESS_URL: ${RELAY_ACCESS_URL:-}
     volumes:
       - relay_flags:/flags:ro
       - caddy_data:/caddy-data:ro
     networks: [edge]
+    depends_on: [relay-access]
     logging: *logging
 
   relay-proxy:
@@ -173,6 +176,27 @@ services:
     volumes:
       - relay_flags:/flags:ro
     depends_on: [relay]
+    networks: [edge]
+    logging: *logging
+
+  relay-access:
+    <<: *hardened
+    mem_limit: 128m
+    build: ./relay-tools
+    image: ${RELAY_TOOLS_IMAGE:-commy-relay-tools:local}
+    restart: unless-stopped
+    command: ["node", "access.mjs"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3342/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    environment:
+      RELAY_ACCESS_MODE: ${RELAY_ACCESS_MODE:-watch}
+      RELAY_ACCESS_TOKEN: ${RELAY_ACCESS_TOKEN:-}
+      RELAY_ACCESS_AUTH_URLS: ${RELAY_ACCESS_AUTH_URLS:-}
+    volumes:
+      - relay_meter_data:/data
     networks: [edge]
     logging: *logging
 
