@@ -24630,6 +24630,7 @@ function wireEvents() {
   if (studioLook()) studioEvents();
   if (studioLook()) studioStart();
   if (studioLook()) studioPops();
+  if (studioLook()) studioLabels();
   if (studioLook()) studioCompact();
   if (studioLook()) studioMinors();
   if (studioLook()) studioStrip();

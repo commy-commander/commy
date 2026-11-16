@@ -1982,7 +1982,7 @@ function openRowSwipe(row) {
 const RAIL_UNLIT_MS = 200;
 const RAIL_FADE_MS = 140;
 const STUDIO_SHEET_NODES = "#pt-hold, #pt-pick, #pt-search, #pt-voice-sheet, #emoji-pop, .member-card, .ctx-menu, .composer-menu, .audio-pop, .soundboard-pop, #modal-accounts";
-const MESSAGE_REPLY_BUTTON = ':scope > .msg-actions button[title="Reply"]';
+const MESSAGE_REPLY_BUTTON = ':scope > .msg-actions button[title="Reply"], :scope > .msg-actions button[aria-label="Reply"]';
 
 function sheetAtTop(sheet, from) {
   for (let node = from; node && node !== sheet.parentNode; node = node.parentNode) if (node.scrollTop > 0) return false;
