@@ -3,9 +3,18 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { inAppSignIn, inAppRetry, signInStepView, readCaptchaMessage } = require("../scripts/signin-flow.js");
+const {
+  inAppSignIn,
+  signInFormParts,
+  looksLikeEmail,
+  emailNextStep,
+  passkeyFallsBackToPassword,
+  inAppRetry,
+  signInStepView,
+  readCaptchaMessage,
+} = require("../scripts/signin-flow.js");
 
-const browserOnly = { form: false, password: false, apple: false, google: false, twitch: false, passkey: false, buttons: false, captchaUrl: null };
+const browserOnly = { form: false, password: false, apple: false, google: false, twitch: false, passkey: false, buttons: false, socialIcons: false, captchaUrl: null };
 
 test("the desktop app and older servers keep the browser sign-in", () => {
   assert.deepEqual(inAppSignIn({ password: true, apple: true, google: true, passkey: true, captcha_url: "https://commy.chat/x" }, false), browserOnly);
@@ -30,6 +39,51 @@ test("Google, Twitch and passkeys show up when the server and the phone offer th
   const buttonsOnly = inAppSignIn({ password: false, twitch: true }, true);
   assert.equal(buttonsOnly.form, true, "the form shows even when only a social button is offered");
   assert.equal(buttonsOnly.password, false);
+});
+
+test("on iPhone, Apple stays a full button and Google and Twitch shrink to icons", () => {
+  assert.equal(inAppSignIn({ password: true, apple: true, google: true, twitch: true }, true).socialIcons, true);
+  assert.equal(inAppSignIn({ password: true, apple: false, google: true, twitch: true }, true).socialIcons, false);
+  assert.equal(inAppSignIn({ password: true, apple: true }, true).socialIcons, false);
+});
+
+test("the email comes first and the password only shows after it", () => {
+  const view = inAppSignIn({ password: true, passkey: true, captcha_url: "https://commy.chat/check" }, true);
+  assert.deepEqual(signInFormParts(view, "email"), { email: true, password: false, submitLabel: "signin.continue", passkeyLink: false, captchaUrl: null });
+  assert.deepEqual(signInFormParts(view, "password"), {
+    email: true,
+    password: true,
+    submitLabel: "signin.submit",
+    passkeyLink: true,
+    captchaUrl: "https://commy.chat/check",
+  });
+  const noPasskey = inAppSignIn({ password: true }, true);
+  assert.equal(signInFormParts(noPasskey, "password").passkeyLink, false);
+  const noPassword = inAppSignIn({ password: false, apple: true }, true);
+  assert.deepEqual(signInFormParts(noPassword, "password"), { email: false, password: false, submitLabel: "signin.continue", passkeyLink: false, captchaUrl: null });
+});
+
+test("after the email, a saved passkey is tried before the password", () => {
+  const withPasskey = inAppSignIn({ password: true, passkey: true }, true);
+  assert.equal(emailNextStep(withPasskey, false), "passkey");
+  assert.equal(emailNextStep(withPasskey, true), "password", "a password the phone already filled in skips the passkey");
+  assert.equal(emailNextStep(inAppSignIn({ password: true }, true), false), "password");
+});
+
+test("a missing, closed or refused passkey falls back to the password", () => {
+  assert.equal(passkeyFallsBackToPassword({ step: "canceled" }), true);
+  assert.equal(passkeyFallsBackToPassword({ step: "failed" }), true);
+  assert.equal(passkeyFallsBackToPassword({ step: "done" }), false);
+  assert.equal(passkeyFallsBackToPassword({ step: "code" }), false);
+  assert.equal(passkeyFallsBackToPassword(null), false, "a sign-in already running is left alone");
+});
+
+test("only something shaped like an email moves on", () => {
+  assert.equal(looksLikeEmail(" me@example.com "), true);
+  assert.equal(looksLikeEmail("me@example"), false);
+  assert.equal(looksLikeEmail("me example.com"), false);
+  assert.equal(looksLikeEmail(""), false);
+  assert.equal(looksLikeEmail(null), false);
 });
 
 test("confirming age or the access code retries the sign-in that asked for it", () => {

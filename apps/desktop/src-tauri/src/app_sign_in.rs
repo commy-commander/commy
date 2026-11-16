@@ -543,7 +543,8 @@ pub async fn account_sign_in_sheet(
 }
 
 #[tauri::command]
-pub async fn account_sign_in_passkey(app: tauri::State<'_, App>, handle: AppHandle) -> Result<SignInStep, String> {
+pub async fn account_sign_in_passkey(app: tauri::State<'_, App>, handle: AppHandle, quiet: Option<bool>) -> Result<SignInStep, String> {
+    let quiet = quiet.unwrap_or(false);
     let (server, doc) = current_server(&app).await?;
     let (Some(options_url), Some(verify_url)) = (doc.endpoints.passkey_options.clone(), doc.endpoints.passkey_verify.clone()) else {
         return Err("This account server needs your browser for passkeys.".into());
@@ -566,13 +567,24 @@ pub async fn account_sign_in_passkey(app: tauri::State<'_, App>, handle: AppHand
     if options.get("challenge").and_then(Value::as_str).unwrap_or_default().is_empty() {
         return Err("The account server sent broken passkey options".into());
     }
-    let request = json!({ "request": options.to_string() });
-    let Some(credential) = ask_native(&handle, "passkey", request, "The passkey").await? else {
+    let prompt = ask_native(&handle, "passkey", passkey_prompt(&options, quiet), "The passkey").await;
+    let Some(credential) = quiet_passkey_answer(prompt, quiet)? else {
         return Ok(SignInStep::Canceled);
     };
     let response = passkey_response(credential)?;
     let answer = post(&app, &server, &verify_url, json!({ "response": response }), Some(&cookies), None).await?;
     settle(&handle, &server, &doc, Pending::new(&server), answer).await
+}
+
+fn passkey_prompt(options: &Value, quiet: bool) -> Value {
+    json!({ "request": options.to_string(), "quiet": quiet })
+}
+
+fn quiet_passkey_answer(prompt: Result<Option<Value>, String>, quiet: bool) -> Result<Option<Value>, String> {
+    match prompt {
+        Err(_) if quiet => Ok(None),
+        other => other,
+    }
 }
 
 fn passkey_response(credential: Value) -> Result<Value, String> {
@@ -708,6 +720,19 @@ mod tests {
         assert_eq!(passkey_response(json!({ "id": "cred", "response": {} })).unwrap()["id"], json!("cred"));
         assert!(passkey_response(json!({ "id": "" , "response": {} })).is_err());
         assert!(passkey_response(json!({ "json": "nope" })).is_err());
+    }
+
+    #[test]
+    fn a_quiet_passkey_prompt_steps_aside_for_the_password() {
+        let options = json!({ "challenge": "abc", "rpId": "commy.chat" });
+        let prompt = passkey_prompt(&options, true);
+        assert_eq!(prompt["quiet"], json!(true));
+        assert_eq!(serde_json::from_str::<Value>(prompt["request"].as_str().unwrap()).unwrap(), options);
+        assert_eq!(passkey_prompt(&options, false)["quiet"], json!(false));
+        assert_eq!(quiet_passkey_answer(Err("No passkey for this account is saved on this phone".into()), true), Ok(None));
+        assert!(quiet_passkey_answer(Err("The passkey didn't finish".into()), false).is_err());
+        assert_eq!(quiet_passkey_answer(Ok(Some(json!({ "id": "cred" }))), true), Ok(Some(json!({ "id": "cred" }))));
+        assert_eq!(quiet_passkey_answer(Ok(None), false), Ok(None));
     }
 
     #[test]

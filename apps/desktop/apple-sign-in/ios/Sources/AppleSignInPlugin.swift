@@ -13,6 +13,7 @@ class SheetRequest: Decodable {
 
 class PasskeyRequest: Decodable {
   let request: String
+  let quiet: Bool?
 }
 
 struct AppleCredential: Encodable {
@@ -112,7 +113,7 @@ class AppleSignInPlugin: Plugin, ASAuthorizationControllerDelegate, ASAuthorizat
         .compactMap { Data(base64URL: $0.id) }
         .map { ASAuthorizationPlatformPublicKeyCredentialDescriptor(credentialID: $0) }
       request.userVerificationPreference = options.userVerification == "required" ? .required : .preferred
-      self.perform(request, invoke)
+      self.perform(request, invoke, onlySavedHere: args.quiet ?? false)
     }
   }
 
@@ -153,14 +154,18 @@ class AppleSignInPlugin: Plugin, ASAuthorizationControllerDelegate, ASAuthorizat
     }
   }
 
-  private func perform(_ request: ASAuthorizationRequest, _ invoke: Invoke) {
+  private func perform(_ request: ASAuthorizationRequest, _ invoke: Invoke, onlySavedHere: Bool = false) {
     pending?.reject("Another sign-in started")
     pending = invoke
     let controller = ASAuthorizationController(authorizationRequests: [request])
     controller.delegate = self
     controller.presentationContextProvider = self
     self.controller = controller
-    controller.performRequests()
+    if onlySavedHere, #available(iOS 16.0, *) {
+      controller.performRequests(options: .preferImmediatelyAvailableCredentials)
+    } else {
+      controller.performRequests()
+    }
   }
 
   private func keyWindow() -> ASPresentationAnchor {
@@ -219,11 +224,18 @@ class AppleSignInPlugin: Plugin, ASAuthorizationControllerDelegate, ASAuthorizat
 
   public func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
     guard let invoke = finish() else { return }
-    if let failure = error as? ASAuthorizationError, failure.code == .canceled {
+    if let failure = error as? ASAuthorizationError, failure.code == .canceled || nothingSavedHere(failure) {
       invoke.reject("canceled")
     } else {
       invoke.reject(error.localizedDescription)
     }
+  }
+
+  private func nothingSavedHere(_ failure: ASAuthorizationError) -> Bool {
+    if #available(iOS 15.0, *) {
+      return failure.code == .notInteractive
+    }
+    return false
   }
 
   private func finish() -> Invoke? {

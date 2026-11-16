@@ -114,6 +114,7 @@ const LOCALE_ES = {
   "signin.apple": "Iniciar sesión con Apple",
   "signin.or": "o",
   "signin.email": "Correo electrónico",
+  "signin.email.needed": "Escribe el correo electrónico con el que te registraste.",
   "signin.password": "Contraseña",
   "signin.submit": "Iniciar sesión",
   "signin.code.ask": "Escribe el código de tu app de autenticación o un código de respaldo",

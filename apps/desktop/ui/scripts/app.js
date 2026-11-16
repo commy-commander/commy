@@ -1819,7 +1819,7 @@ async function mockInvoke(cmd, args = {}) {
       if (!args.adultConfirmed) return { step: "confirm_adult" };
       if (!args.accessCode) return { step: "access_code" };
       return { step: "done" };
-    case "account_sign_in_passkey": return { step: "done" };
+    case "account_sign_in_passkey": return args && args.quiet ? { step: "canceled" } : { step: "done" };
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
     case "account_delete_start": return { confirm: "email", password: true, email: mock.account.user ? mock.account.user.email : null };
     case "account_delete_finish":
@@ -23094,7 +23094,7 @@ function wireEvents() {
   $("signin-form").addEventListener("submit", submitPasswordSignIn);
   $("signin-apple").onclick = () => signInWithApple(false);
   for (const provider of SHEET_PROVIDERS) $(`signin-${provider}`).onclick = () => signInWithSheet(provider);
-  $("signin-passkey").onclick = () => runInAppStep(() => invoke("account_sign_in_passkey"));
+  $("signin-passkey").onclick = () => runInAppStep(() => invoke("account_sign_in_passkey", { quiet: false }));
   $("signin-apple-create").onclick = () => retryInApp();
   $("signin-adult").addEventListener("change", syncAdultConfirmation);
   $("signin-terms").onclick = () => invoke("open_url", { url: `${account.server}/terms` }).catch(e => toast(String(e)));
@@ -27215,6 +27215,8 @@ function showSignIn() {
 }
 
 let inAppOptions = null;
+let inAppView = inAppSignIn(null, false);
+let signInStage = "email";
 let signInCheck = { url: null, token: null };
 let inAppBusy = false;
 
@@ -27233,21 +27235,47 @@ async function prepareInAppSignIn() {
 }
 
 function renderInAppSignIn(view) {
+  inAppView = view;
+  signInStage = "email";
   $("signin-form").classList.toggle("hidden", !view.form);
   $("signin-apple").classList.toggle("hidden", !view.apple);
-  for (const name of [...SHEET_PROVIDERS, "passkey"]) $(`signin-${name}`).classList.toggle("hidden", !view[name]);
-  $("signin-or").classList.toggle("hidden", !(view.buttons && view.password));
-  for (const id of ["signin-email", "signin-password", "signin-submit"]) $(id).classList.toggle("hidden", !view.password);
+  for (const name of SHEET_PROVIDERS) $(`signin-${name}`).classList.toggle("hidden", !view[name]);
+  const socials = $("signin-socials");
+  socials.classList.toggle("hidden", !SHEET_PROVIDERS.some(name => view[name]));
+  socials.classList.toggle("icons", view.socialIcons);
+  $("signin-or").classList.toggle("hidden", !((view.apple || view.google || view.twitch) && view.password));
   const browser = $("signin-go");
   browser.classList.toggle("btn-primary", !view.form);
   browser.classList.toggle("btn-secondary", view.form);
-  if (inBrowserApp()) return showSignInCheck(view.captchaUrl);
+  if (inBrowserApp()) return showSignInFormParts();
   browser.dataset.i18n = view.form ? "signin.browser" : "signin.go";
   browser.textContent = t(browser.dataset.i18n);
   const note = $("signin-note");
   note.dataset.i18n = !view.form ? "signin.note" : view.google || view.twitch || view.passkey ? "signin.browser.note.email" : "signin.browser.note";
   note.textContent = t(note.dataset.i18n);
-  showSignInCheck(view.captchaUrl);
+  showSignInFormParts();
+}
+
+function showSignInFormParts() {
+  const parts = signInFormParts(inAppView, signInStage);
+  $("signin-email").classList.toggle("hidden", !parts.email);
+  const password = $("signin-password");
+  password.classList.toggle("hidden", !parts.email);
+  password.classList.toggle("tucked", parts.email && !parts.password);
+  password.tabIndex = parts.password ? 0 : -1;
+  password.toggleAttribute("aria-hidden", !parts.password);
+  const submit = $("signin-submit");
+  submit.classList.toggle("hidden", !parts.email);
+  submit.dataset.i18n = parts.submitLabel;
+  submit.textContent = t(parts.submitLabel);
+  $("signin-passkey").classList.toggle("hidden", !parts.passkeyLink);
+  showSignInCheck(parts.captchaUrl);
+}
+
+function askForPassword() {
+  signInStage = "password";
+  showSignInFormParts();
+  setTimeout(() => $("signin-password").focus(), 0);
 }
 
 function showSignInCheck(url) {
@@ -27302,16 +27330,19 @@ function showInAppNote(message) {
 }
 
 async function runInAppStep(call, { resetCheck = false } = {}) {
-  if (inAppBusy) return;
+  if (inAppBusy) return null;
   inAppBusy = true;
   const buttons = ["signin-submit", "signin-apple", "signin-google", "signin-twitch", "signin-passkey", "signin-code-go", "signin-apple-create", "signin-access-go"];
   for (const id of buttons) $(id).disabled = true;
   $("signin-error").classList.add("hidden");
   try {
-    followInAppStep(await call());
+    const result = await call();
+    followInAppStep(result);
+    return result;
   } catch (err) {
     showInAppNote(String(err));
     if (resetCheck) reloadSignInCheck();
+    return { step: "failed" };
   } finally {
     inAppBusy = false;
     for (const id of buttons) $(id).disabled = false;
@@ -27325,6 +27356,8 @@ function followInAppStep(result) {
   if (step === "done") {
     $("signin-password").value = "";
     signInCheck.token = null;
+    signInStage = "email";
+    showSignInFormParts();
     return;
   }
   if (step === "check_email") {
@@ -27339,7 +27372,23 @@ function submitPasswordSignIn(event) {
   event.preventDefault();
   const email = $("signin-email").value.trim();
   const password = $("signin-password").value;
+  if (signInStage !== "password") return continueWithEmail(email, password);
   runInAppStep(() => invoke("account_sign_in_password", { email, password, captcha: signInCheck.token }), { resetCheck: true });
+}
+
+async function continueWithEmail(email, password) {
+  if (inAppBusy) return;
+  if (!looksLikeEmail(email)) {
+    showInAppNote(t("signin.email.needed"));
+    $("signin-email").focus();
+    return;
+  }
+  $("signin-error").classList.add("hidden");
+  if (emailNextStep(inAppView, Boolean(password)) === "passkey") {
+    const result = await runInAppStep(() => invoke("account_sign_in_passkey", { quiet: true }));
+    if (!passkeyFallsBackToPassword(result)) return;
+  }
+  askForPassword();
 }
 
 let inAppMethod = { kind: "apple" };

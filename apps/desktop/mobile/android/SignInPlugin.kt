@@ -78,12 +78,16 @@ class SignInPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun passkey(invoke: Invoke) {
     val options = invoke.getArgs().optString("request")
+    val quiet = invoke.getArgs().optBoolean("quiet", false)
     if (options.isEmpty()) {
       invoke.reject("The account server sent broken passkey options")
       return
     }
     activity.runOnUiThread {
-      val request = GetCredentialRequest(listOf(GetPublicKeyCredentialOption(options)))
+      val request = GetCredentialRequest.Builder()
+        .addCredentialOption(GetPublicKeyCredentialOption(options))
+        .setPreferImmediatelyAvailableCredentials(quiet)
+        .build()
       CredentialManager.create(activity).getCredentialAsync(
         activity,
         request,
@@ -104,7 +108,7 @@ class SignInPlugin(private val activity: Activity) : Plugin(activity) {
           override fun onError(e: GetCredentialException) {
             when (e) {
               is GetCredentialCancellationException -> invoke.reject("canceled")
-              is NoCredentialException -> invoke.reject("No passkey for this account is saved on this phone")
+              is NoCredentialException -> invoke.reject(if (quiet) "canceled" else "No passkey for this account is saved on this phone")
               else -> invoke.reject(e.message ?: "The passkey did not work")
             }
           }

@@ -19,8 +19,34 @@ function inAppSignIn(options, mobile) {
     twitch,
     passkey,
     buttons,
+    socialIcons: apple && (google || twitch),
     captchaUrl: password && options.captcha_url ? options.captcha_url : null,
   };
+}
+
+function signInFormParts(view, stage) {
+  const askPassword = Boolean(view.password && stage === "password");
+  return {
+    email: Boolean(view.password),
+    password: askPassword,
+    submitLabel: askPassword ? "signin.submit" : "signin.continue",
+    passkeyLink: askPassword && Boolean(view.passkey),
+    captchaUrl: askPassword ? view.captchaUrl : null,
+  };
+}
+
+function looksLikeEmail(text) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(text || "").trim());
+}
+
+function emailNextStep(view, filledPassword) {
+  if (filledPassword || !view.passkey) return "password";
+  return "passkey";
+}
+
+function passkeyFallsBackToPassword(result) {
+  const step = result && result.step;
+  return step === "canceled" || step === "failed";
 }
 
 function inAppRetry(method, { adultConfirmed = false, accessCode = null } = {}) {
@@ -52,5 +78,16 @@ function readCaptchaMessage(event, captchaUrl) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { SIGNIN_STEPS, SHEET_PROVIDERS, inAppSignIn, inAppRetry, signInStepView, readCaptchaMessage };
+  module.exports = {
+    SIGNIN_STEPS,
+    SHEET_PROVIDERS,
+    inAppSignIn,
+    signInFormParts,
+    looksLikeEmail,
+    emailNextStep,
+    passkeyFallsBackToPassword,
+    inAppRetry,
+    signInStepView,
+    readCaptchaMessage,
+  };
 }

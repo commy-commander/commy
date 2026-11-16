@@ -602,14 +602,16 @@
       <div class="signin-start" id="signin-start">
         <form class="signin-form hidden" id="signin-form" novalidate>
           <button type="button" class="signin-apple hidden" id="signin-apple"><span class="signin-apple-logo" aria-hidden="true"></span><span data-i18n="signin.apple">Sign in with Apple</span></button>
-          <button type="button" class="btn-secondary signin-go hidden" id="signin-google" data-i18n="signin.google">Continue with Google</button>
-          <button type="button" class="btn-secondary signin-go hidden" id="signin-twitch" data-i18n="signin.twitch">Continue with Twitch</button>
-          <button type="button" class="btn-secondary signin-go hidden" id="signin-passkey" data-i18n="signin.passkey">Sign in with a passkey</button>
+          <div class="signin-socials hidden" id="signin-socials">
+            <button type="button" class="btn-secondary signin-go signin-social hidden" id="signin-google" data-i18n-aria-label="signin.google" aria-label="Continue with Google"><span class="signin-social-logo google" aria-hidden="true"></span><span class="signin-social-label" data-i18n="signin.google">Continue with Google</span></button>
+            <button type="button" class="btn-secondary signin-go signin-social hidden" id="signin-twitch" data-i18n-aria-label="signin.twitch" aria-label="Continue with Twitch"><span class="signin-social-logo twitch" aria-hidden="true"></span><span class="signin-social-label" data-i18n="signin.twitch">Continue with Twitch</span></button>
+          </div>
           <div class="modal-divider hidden" id="signin-or" data-i18n="signin.or">or</div>
           <input class="signin-field" id="signin-email" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="254" data-i18n-placeholder="signin.email" placeholder="Email" data-i18n-aria-label="signin.email" aria-label="Email" />
           <input class="signin-field" id="signin-password" type="password" autocomplete="current-password" maxlength="128" data-i18n-placeholder="signin.password" placeholder="Password" data-i18n-aria-label="signin.password" aria-label="Password" />
           <div class="signin-check hidden" id="signin-check"></div>
-          <button type="submit" class="btn-primary signin-go" id="signin-submit" data-i18n="signin.submit">Sign in</button>
+          <button type="submit" class="btn-primary signin-go" id="signin-submit" data-i18n="signin.continue">Continue</button>
+          <button type="button" class="btn-link signin-passkey hidden" id="signin-passkey" data-i18n="signin.passkey">Sign in with a passkey</button>
         </form>
         <div class="signin-step hidden" id="signin-code-step">
           <div class="signin-label" data-i18n="signin.code.ask">Enter the code from your authenticator app, or a backup code</div>
