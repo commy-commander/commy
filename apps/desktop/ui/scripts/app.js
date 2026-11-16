@@ -23095,6 +23095,7 @@ function wireEvents() {
   $("signin-apple").onclick = () => signInWithApple(false);
   for (const provider of SHEET_PROVIDERS) $(`signin-${provider}`).onclick = () => signInWithSheet(provider);
   $("signin-passkey").onclick = () => runInAppStep(() => invoke("account_sign_in_passkey", { quiet: false }));
+  $("signin-create").onclick = beginSignIn;
   $("signin-apple-create").onclick = () => retryInApp();
   $("signin-adult").addEventListener("change", syncAdultConfirmation);
   $("signin-terms").onclick = () => invoke("open_url", { url: `${account.server}/terms` }).catch(e => toast(String(e)));
@@ -27119,7 +27120,11 @@ function syncServerNote() {
   note.dataset.i18n = key;
   note.textContent = t(key);
   note.classList.toggle("warn", key === "signin.server.warning");
+  note.classList.toggle("plain", key === "signin.server.note");
   note.classList.remove("error");
+  const official = showsOfficialBadge(editing ? "custom" : select.value, account.default_server_host);
+  $("signin-server-official").classList.toggle("hidden", !official);
+  select.parentElement.closest(".signin-server-field").classList.toggle("official", official);
   $("signin-server-input").removeAttribute("aria-invalid");
 }
 
@@ -27234,9 +27239,16 @@ async function prepareInAppSignIn() {
   renderInAppSignIn(view);
 }
 
+function showInAppLayout(inApp) {
+  $("modal-signin").classList.toggle("in-app", inApp);
+  for (const id of ["signin-go", "signin-note"]) $(id).classList.toggle("hidden", inApp);
+  $("signin-create").classList.toggle("hidden", !inApp);
+}
+
 function renderInAppSignIn(view) {
   inAppView = view;
   signInStage = "email";
+  showInAppLayout(view.form);
   $("signin-form").classList.toggle("hidden", !view.form);
   $("signin-apple").classList.toggle("hidden", !view.apple);
   for (const name of SHEET_PROVIDERS) $(`signin-${name}`).classList.toggle("hidden", !view[name]);
@@ -27313,7 +27325,8 @@ function showSignInStep(name) {
   const onForm = name === "form";
   if (!onForm) $("signin-form").classList.add("hidden");
   else if (inAppOptions) $("signin-form").classList.toggle("hidden", !inAppOptions.view.form);
-  for (const id of ["signin-go", "signin-note"]) $(id).classList.toggle("hidden", !onForm);
+  for (const id of ["signin-go", "signin-note"]) $(id).classList.toggle("hidden", !onForm || inAppView.form);
+  $("signin-create").classList.toggle("hidden", !onForm || !inAppView.form);
   $("signin-step-back").classList.toggle("hidden", onForm);
   if (name === "form") $("signin-adult").checked = false;
   syncAdultConfirmation();

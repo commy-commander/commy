@@ -35,6 +35,10 @@ function signInFormParts(view, stage) {
   };
 }
 
+function showsOfficialBadge(choice, defaultHost) {
+  return choice === "default" && (defaultHost || "commy.chat") === "commy.chat";
+}
+
 function looksLikeEmail(text) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(text || "").trim());
 }
@@ -83,6 +87,7 @@ if (typeof module !== "undefined" && module.exports) {
     SHEET_PROVIDERS,
     inAppSignIn,
     signInFormParts,
+    showsOfficialBadge,
     looksLikeEmail,
     emailNextStep,
     passkeyFallsBackToPassword,

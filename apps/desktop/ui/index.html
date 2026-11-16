@@ -601,17 +601,17 @@
       <p id="signin-intro" data-i18n="signin.intro">A free Commy account keeps servers free of spam bots. Your messages and calls still go straight between devices; the account only proves you are a real person.</p>
       <div class="signin-start" id="signin-start">
         <form class="signin-form hidden" id="signin-form" novalidate>
-          <button type="button" class="signin-apple hidden" id="signin-apple"><span class="signin-apple-logo" aria-hidden="true"></span><span data-i18n="signin.apple">Sign in with Apple</span></button>
-          <div class="signin-socials hidden" id="signin-socials">
-            <button type="button" class="btn-secondary signin-go signin-social hidden" id="signin-google" data-i18n-aria-label="signin.google" aria-label="Continue with Google"><span class="signin-social-logo google" aria-hidden="true"></span><span class="signin-social-label" data-i18n="signin.google">Continue with Google</span></button>
-            <button type="button" class="btn-secondary signin-go signin-social hidden" id="signin-twitch" data-i18n-aria-label="signin.twitch" aria-label="Continue with Twitch"><span class="signin-social-logo twitch" aria-hidden="true"></span><span class="signin-social-label" data-i18n="signin.twitch">Continue with Twitch</span></button>
-          </div>
-          <div class="modal-divider hidden" id="signin-or" data-i18n="signin.or">or</div>
           <input class="signin-field" id="signin-email" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="254" data-i18n-placeholder="signin.email" placeholder="Email" data-i18n-aria-label="signin.email" aria-label="Email" />
           <input class="signin-field" id="signin-password" type="password" autocomplete="current-password" maxlength="128" data-i18n-placeholder="signin.password" placeholder="Password" data-i18n-aria-label="signin.password" aria-label="Password" />
           <div class="signin-check hidden" id="signin-check"></div>
           <button type="submit" class="btn-primary signin-go" id="signin-submit" data-i18n="signin.continue">Continue</button>
           <button type="button" class="btn-link signin-passkey hidden" id="signin-passkey" data-i18n="signin.passkey">Sign in with a passkey</button>
+          <div class="modal-divider hidden" id="signin-or" data-i18n="signin.or">or</div>
+          <button type="button" class="signin-apple hidden" id="signin-apple"><span class="signin-apple-logo" aria-hidden="true"></span><span data-i18n="signin.apple">Sign in with Apple</span></button>
+          <div class="signin-socials hidden" id="signin-socials">
+            <button type="button" class="btn-secondary signin-go signin-social hidden" id="signin-google" data-i18n-aria-label="signin.google" aria-label="Continue with Google"><span class="signin-social-logo google" aria-hidden="true"></span><span class="signin-social-label" data-i18n="signin.google">Continue with Google</span></button>
+            <button type="button" class="btn-secondary signin-go signin-social hidden" id="signin-twitch" data-i18n-aria-label="signin.twitch" aria-label="Continue with Twitch"><span class="signin-social-logo twitch" aria-hidden="true"></span><span class="signin-social-label" data-i18n="signin.twitch">Continue with Twitch</span></button>
+          </div>
         </form>
         <div class="signin-step hidden" id="signin-code-step">
           <div class="signin-label" data-i18n="signin.code.ask">Enter the code from your authenticator app, or a backup code</div>
@@ -631,6 +631,7 @@
         </div>
         <button class="btn-primary signin-go" id="signin-go" data-i18n="signin.go">Sign in with your browser</button>
         <div class="signin-note" id="signin-note" data-i18n="signin.note">Your browser opens to sign in or create an account. Come back here once you approve.</div>
+        <button type="button" class="btn-link signin-create hidden" id="signin-create" data-i18n="signin.create">New here? Create an account</button>
         <button class="btn-link signin-back hidden" id="signin-step-back" data-i18n="signin.step.back">Back</button>
       </div>
       <div class="signin-wait hidden" id="signin-wait">
@@ -647,8 +648,9 @@
       <div class="signin-server">
         <span id="signin-server-label" data-i18n="signin.server">Account server</span>
         <div class="signin-server-field">
+          <span class="signin-server-official hidden" id="signin-server-official" aria-hidden="true"><span data-i18n="signin.server.default">Commy.chat (Official)</span><span class="signin-verified"></span></span>
           <select id="signin-server-select" class="compact-select" aria-labelledby="signin-server-label">
-            <option value="default" data-i18n="signin.server.default">Commy.chat (free Commy service)</option>
+            <option value="default" data-i18n="signin.server.default">Commy.chat (Official)</option>
             <option value="custom" data-i18n="signin.server.custom">Self-hosted server…</option>
           </select>
           <div class="signin-server-edit hidden" id="signin-server-edit">

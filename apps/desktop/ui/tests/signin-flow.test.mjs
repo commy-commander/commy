@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 const {
   inAppSignIn,
   signInFormParts,
+  showsOfficialBadge,
   looksLikeEmail,
   emailNextStep,
   passkeyFallsBackToPassword,
@@ -76,6 +77,14 @@ test("a missing, closed or refused passkey falls back to the password", () => {
   assert.equal(passkeyFallsBackToPassword({ step: "done" }), false);
   assert.equal(passkeyFallsBackToPassword({ step: "code" }), false);
   assert.equal(passkeyFallsBackToPassword(null), false, "a sign-in already running is left alone");
+});
+
+test("only the official Commy.chat server wears the verified check", () => {
+  assert.equal(showsOfficialBadge("default", "commy.chat"), true);
+  assert.equal(showsOfficialBadge("default", undefined), true);
+  assert.equal(showsOfficialBadge("default", "staging.commy.chat"), false, "test servers are not the official one");
+  assert.equal(showsOfficialBadge("https://chat.example.org", "commy.chat"), false);
+  assert.equal(showsOfficialBadge("custom", "commy.chat"), false);
 });
 
 test("only something shaped like an email moves on", () => {
