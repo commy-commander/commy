@@ -475,7 +475,10 @@ Staging promotes run on the forge as below.
 moves the tag, and the signature names the tag it was promoted to. The private key
 and its password are the forge secrets `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`;
 the public key is `deploy/agent/cosign.pub`. Only the accounts in the `PROMOTERS`
-variable (by default `commy-commander`) can run the workflow. Each agent runs
+variable (by default `commy-commander`) can run the workflow, and only from `main`.
+Forge secrets reach every workflow on every branch, so anyone who can push to
+the repository can reach the staging signing key; keep write access to the owner.
+Each agent runs
 `cosign verify` against its environment's public key on every new image before
 starting it, so an image retagged by anything else, or a staging signature moved
 onto the prod tag, is refused and logged; the running container keeps serving and the

@@ -23,7 +23,7 @@ env:
 jobs:
   promote:
     name: Promote to ${{ inputs.environment }}
-    if: inputs.environment == 'staging'
+    if: github.ref == 'refs/heads/main' && inputs.environment == 'staging'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment == 'prod' && 'production' || 'staging' }}
     concurrency: promote-${{ inputs.environment }}
@@ -44,11 +44,12 @@ jobs:
             echo "removed a container left on the runner: $id"
           done
 
-      - name: Only the owner promotes
+      - name: Only the owner promotes, from main
         env:
           ACTOR: ${{ github.actor }}
           PROMOTERS: ${{ vars.PROMOTERS || 'commy-commander' }}
         run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "Promote images runs only from main, not $GITHUB_REF"; exit 1; }
           case " $PROMOTERS " in
             *" $ACTOR "*) echo "$ACTOR may promote" ;;
             *) echo "$ACTOR is not allowed to promote images"; exit 1 ;;
