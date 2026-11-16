@@ -4,14 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "crates/**"
-      - "apps/desktop/src-tauri/**"
-      - "apps/desktop/apple-sign-in/**"
-      - "apps/desktop/mobile/**"
-      - "apps/desktop/ui/**"
-      - "Cargo.toml"
+      - "**/Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/mobile.yml"
+  schedule:
+    - cron: "47 19 * * *"
   pull_request:
     paths:
       - "crates/**"
@@ -21,6 +18,10 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/mobile.yml"
+      - "!crates/commy-sync-server/**"
+      - "!crates/commy-bot/**"
+      - "!crates/*/tests/**"
+      - "!**/*.md"
   workflow_dispatch:
     inputs:
       android:
@@ -47,8 +48,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}-{2}-{3}-{4}', github.event_name, github.ref, github.sha, inputs.android, inputs.ios) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && github.ref || format('{0}-{1}-{2}-{3}-{4}', github.event_name, github.ref, github.sha, inputs.android, inputs.ios) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 env:
   CARGO_TERM_COLOR: always

@@ -12,6 +12,7 @@ on:
       - "crates/commy-sync-server/**"
       - ".dockerignore"
       - ".github/workflows/images.yml"
+      - "!deploy/*.md"
   pull_request:
     paths: *image-paths
   workflow_dispatch:
@@ -25,8 +26,8 @@ env:
   WEB_IMAGE_REPO: git.commy.chat/commy-private/commy-web
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && github.ref || format('{0}-{1}', github.event_name, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
   auth-tests:
