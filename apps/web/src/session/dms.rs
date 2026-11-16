@@ -24,9 +24,9 @@ use crate::client::clean_message;
 use crate::dm_book::{self, DmBook, Received, Source};
 use crate::sync_book::{partner_record, relation_record};
 
-const HOLD_WAIT: Duration = Duration::from_secs(8);
+pub(super) const HOLD_WAIT: Duration = Duration::from_secs(8);
 
-fn node_of(hex: &str) -> Option<[u8; 32]> {
+pub(super) fn node_of(hex: &str) -> Option<[u8; 32]> {
     data_encoding::HEXLOWER_PERMISSIVE.decode(hex.trim().as_bytes()).ok().and_then(|node| node.try_into().ok())
 }
 
@@ -86,6 +86,9 @@ impl Session {
         if !plan.follow.is_empty() {
             live.pool.follow_together(plan.follow);
         }
+        drop(guard);
+        drop(client);
+        self.refresh_away_dms();
     }
 
     pub(super) fn adopt_partner(&self, profile: UserProfile, at: i64, accepted: bool) {
@@ -224,7 +227,7 @@ impl Session {
         }
     }
 
-    fn take_dm(self: &Rc<Self>, envelope: DmEnvelope, node: [u8; 32], live_now: bool) {
+    pub(super) fn take_dm(self: &Rc<Self>, envelope: DmEnvelope, node: [u8; 32], live_now: bool) {
         let Some((me, _)) = self.me_and_key() else { return };
         let now = Utc::now();
         let rings = dms::should_ring(live_now, envelope.message.created_at, now);
@@ -324,7 +327,7 @@ impl Session {
         let plain = sync_streams::encode_dm(envelope);
         let stored = matches!(n0_future::time::timeout(HOLD_WAIT, client.append(keys.id, plain)).await, Ok(Ok(_)));
         if stored && dms::rings(&envelope.message) {
-            self.ring_wake(vec![dm_wake_tag(&keys, partner)], dm_wake_preview(identity, &keys, &envelope.message));
+            self.ring_wake(vec![dm_wake_tag(&keys, partner)], dm_wake_preview(identity, &keys, &envelope.message), self.partner_sync(partner));
         }
         stored
     }
@@ -345,6 +348,14 @@ impl Session {
         let stream = keys.id;
         let identity = self.me_and_key().map(|(_, identity)| identity);
         let wake = dms::rings(&envelope.message).then(|| (dm_wake_tag(&keys, to), identity.and_then(|identity| dm_wake_preview(&identity, &keys, &envelope.message))));
+        let Ok(away) = self.partner_sync_now(to).await else { return false };
+        if let Some(url) = away {
+            let sent = self.append_away(&url, keys, sealed).await;
+            if let Some((tag, preview)) = wake.filter(|_| sent) {
+                self.ring_wake(vec![tag], preview, Some(url));
+            }
+            return sent;
+        }
         let (client, borrowed) = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return false };
@@ -364,7 +375,7 @@ impl Session {
             }
         }
         if let Some((tag, preview)) = wake.filter(|_| sent) {
-            self.ring_wake(vec![tag], preview);
+            self.ring_wake(vec![tag], preview, None);
         }
         sent
     }

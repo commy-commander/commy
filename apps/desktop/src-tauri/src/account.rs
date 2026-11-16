@@ -474,6 +474,14 @@ impl Endpoints {
 }
 
 impl Discovery {
+    pub(crate) fn sync_url(&self, server: &str) -> Option<String> {
+        commy_sync::endpoint::accepted_url(server, self.endpoints.sync.as_deref())
+    }
+
+    pub(crate) fn keeps_server_lists(&self) -> bool {
+        self.features.is_none_or(|f| f.vault)
+    }
+
     fn same_origin(&self, server: &str) -> bool {
         let ok = |url: &str| url == server || url.starts_with(&format!("{server}/"));
         ok(&self.issuer)
@@ -1117,6 +1125,35 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
     leave_account(&app, &handle, switched);
     let _ = handle.emit("account-changed", ());
     Ok(view(&app))
+}
+
+pub(crate) async fn sign_out_to_move(app: &App, handle: &AppHandle, to: &str) -> Result<(), String> {
+    if !switchable(to) {
+        return Err("This copy of Commy is set to one account server".into());
+    }
+    let (token, server) = {
+        let state = app.account.lock_or_recover();
+        (state.token.clone(), state.signed_in_server.clone())
+    };
+    if let (Some(token), Some(server)) = (token, server) {
+        if let Ok(doc) = discover(&app.http, &server).await {
+            let _ = app.http.post(&doc.endpoints.sign_out).bearer_auth(token).timeout(SIGN_OUT_WAIT).send().await;
+        }
+    }
+    {
+        let mut state = app.account.lock_or_recover();
+        state.clear_session();
+        state.device_linked = false;
+        state.server = (to != DEFAULT_ACCOUNT_SERVER).then(|| to.to_string());
+        store(app, &state);
+        *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
+    }
+    if let Some(dir) = app.data_dir() {
+        account_folder::forget_key(dir);
+    }
+    leave_account(app, handle, false);
+    let _ = handle.emit("account-changed", ());
+    Ok(())
 }
 
 pub async fn sign_out_everyone_here(app: &App) {

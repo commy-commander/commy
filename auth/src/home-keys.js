@@ -94,24 +94,43 @@ export function publishedKeyOf(document, home) {
   return { alg: key.alg, id: key.id, public: key.public };
 }
 
-export function createHomeKeys({ ownHome, ownKey, fetchDocument = fetchDiscovery, now = () => Date.now() } = {}) {
+export function syncUrlOf(document, home) {
+  const offered = String(document?.endpoints?.sync ?? "").trim().replace(/\/+$/, "");
+  if (document?.issuer !== home || !offered) return null;
+  let url;
+  try {
+    url = new URL(offered);
+  } catch {
+    return null;
+  }
+  const sameHost = url.hostname === new URL(home).hostname;
+  const plain = !url.username && !url.password && !url.search && !url.hash;
+  return url.protocol === "wss:" && sameHost && plain ? offered : null;
+}
+
+export function createHomeKeys({ ownHome, ownKey, ownSync = null, fetchDocument = fetchDiscovery, now = () => Date.now() } = {}) {
   const remembered = new Map();
 
-  function remember(home, key) {
+  function remember(home, found) {
     if (remembered.size >= MAX_REMEMBERED) remembered.delete(remembered.keys().next().value);
-    remembered.set(home, { key, until: now() + (key ? FOUND_FOR_MS : MISSING_FOR_MS) });
-    return key;
+    const usable = Boolean(found.key || found.sync);
+    remembered.set(home, { ...found, until: now() + (usable ? FOUND_FOR_MS : MISSING_FOR_MS) });
+    return found;
+  }
+
+  async function homeOf(home) {
+    if (home === ownHome) return { key: ownKey, sync: ownSync };
+    const known = remembered.get(home);
+    if (known && known.until > now()) return { key: known.key, sync: known.sync };
+    const document = await fetchDocument(home).catch(() => null);
+    return remember(home, { key: publishedKeyOf(document, home), sync: syncUrlOf(document, home) });
   }
 
   async function keyOf(home) {
-    if (home === ownHome) return ownKey;
-    const known = remembered.get(home);
-    if (known && known.until > now()) return known.key;
-    const document = await fetchDocument(home).catch(() => null);
-    return remember(home, publishedKeyOf(document, home));
+    return (await homeOf(home)).key;
   }
 
-  return { keyOf };
+  return { keyOf, homeOf };
 }
 
 export const commyHomeKeys = ({ homeKeys }) => ({
@@ -123,9 +142,9 @@ export const commyHomeKeys = ({ homeKeys }) => ({
       async (ctx) => {
         const home = ctx.query.home;
         if (!isHomeOrigin(home)) throw new APIError("BAD_REQUEST", { message: "home must be an https address on a public domain" });
-        const key = await homeKeys.keyOf(home);
-        if (!key) throw new APIError("NOT_FOUND", { message: "that server does not publish a server key" });
-        return ctx.json({ home, key });
+        const { key, sync } = await homeKeys.homeOf(home);
+        if (!key && !sync) throw new APIError("NOT_FOUND", { message: "that server does not publish a server key" });
+        return ctx.json({ home, key, sync });
       },
     ),
   },

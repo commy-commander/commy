@@ -326,6 +326,7 @@ pub fn keep_home_card(handle: &AppHandle) {
         tokio::time::sleep(FIRST_CARD_DELAY).await;
         loop {
             renew_home_card(&handle).await;
+            crate::account_move::check_moved(&handle).await;
             tokio::time::sleep(CARD_CHECK_EVERY).await;
         }
     });

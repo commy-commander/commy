@@ -15,6 +15,7 @@ const OWNED_ROWS = [
   { model: "twoFactor", field: "userId" },
   { model: "deviceCode", field: "userId" },
   { model: "directoryListing", field: "createdBy" },
+  { model: "commyMove", field: "userId" },
 ];
 
 const codeIdentifier = (userId) => `commy-delete-account-${userId}`;

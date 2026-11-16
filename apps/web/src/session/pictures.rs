@@ -24,7 +24,10 @@ impl Session {
         match cmd {
             "get_profile_image" => {
                 let blob = args.blob.as_deref().filter(|b| !b.is_empty()).ok_or("missing picture")?;
-                let bytes = self.picture(blob, args.provider.as_deref(), pictures::MAX_PROFILE_IMAGE_BYTES, is_profile_picture).await?;
+                let bytes = match self.picture(blob, args.provider.as_deref(), pictures::MAX_PROFILE_IMAGE_BYTES, is_profile_picture).await {
+                    Ok(bytes) => bytes,
+                    Err(problem) => self.picture_from_owners_home(blob).await.ok_or(problem)?,
+                };
                 Ok(Value::String(files::data_url(picture_mime(&bytes), &bytes)))
             }
             "fetch_server_image" => {
@@ -89,8 +92,35 @@ impl Session {
         sent.ok().and_then(|ok| ok.as_bool()).unwrap_or(false)
     }
 
+    async fn picture_from_owners_home(&self, blob: &str) -> Option<Vec<u8>> {
+        let home = {
+            let client = self.client.borrow();
+            let servers = client.servers.lock().unwrap();
+            let dms = self.dms.borrow();
+            let profiles = servers.values().flat_map(|state| state.profiles.values()).chain(dms.store.contacts.values());
+            commy_view::away::picture_home(profiles, &self.origin, blob)
+        }?;
+        if self.blocks_sync_origin(&home) {
+            return None;
+        }
+        let sync = self.home_sync_now(&home).await?;
+        let base = pictures::pictures_url(&sync)?;
+        let bytes = self.picture_at(&base, blob, pictures::MAX_PROFILE_IMAGE_BYTES).await.filter(|bytes| is_profile_picture(bytes))?;
+        self.offer_picture(blob, &bytes).await;
+        let mut kept = self.kept.borrow_mut();
+        if kept.pictures.len() >= KEPT_PICTURES {
+            kept.pictures.clear();
+        }
+        kept.pictures.insert(blob.to_string(), bytes.clone());
+        Some(bytes)
+    }
+
     async fn shared_picture(&self, blob: &str, max: usize) -> Option<Vec<u8>> {
         let base = self.sync.borrow().as_ref()?.pictures.clone()?;
+        self.picture_at(&base, blob, max).await
+    }
+
+    async fn picture_at(&self, base: &str, blob: &str, max: usize) -> Option<Vec<u8>> {
         let key = PictureKey::for_blob(blob);
         let body = self.host.fetch_bytes(&format!("{base}/{}", key.id_hex())).await.ok()?;
         if body.is_null() || body.is_undefined() {

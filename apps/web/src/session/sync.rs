@@ -23,6 +23,13 @@ use wasm_bindgen_futures::spawn_local;
 
 use super::Session;
 use crate::client::Applied;
+#[derive(Default)]
+struct Places {
+    sockets: HashMap<ServerId, String>,
+    unplaced: HashSet<ServerId>,
+    to_learn: Vec<String>,
+}
+
 use crate::sync_book::{community_key_record, joined_record, prefs_record, read_record, saved_record, sync_host_record, Book, Change, Record};
 
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
@@ -109,6 +116,7 @@ impl Session {
             deepened: HashSet::new(),
         });
         spawn_local(self.clone().run_sync(events));
+        self.start_away();
         spawn_local(self.clone().tend_sync());
         spawn_local(self.clone().tend_presence());
         spawn_local(self.clone().tend_file_storage());
@@ -118,6 +126,7 @@ impl Session {
     pub(super) fn stop_sync(&self) {
         self.sync.borrow_mut().take();
         self.dms.borrow_mut().forget_streams();
+        self.stop_away();
     }
 
     pub(super) fn nudge_sync(&self) {
@@ -173,6 +182,7 @@ impl Session {
                 return;
             }
             self.refresh_sync();
+            self.tend_away();
             self.record_hosts();
             self.tend_owned();
             self.tend_claims();
@@ -415,31 +425,60 @@ impl Session {
         }
     }
 
-    fn chosen_sockets(&self, wanted: impl Iterator<Item = ServerId>) -> HashMap<ServerId, String> {
-        let Some(home) = self.sync.borrow().as_ref().map(|live| live.url.clone()) else { return HashMap::new() };
+    fn community_places(&self, wanted: impl Iterator<Item = ServerId>) -> Places {
+        let mut places = Places::default();
+        let Some(home) = self.sync.borrow().as_ref().map(|live| live.url.clone()) else { return places };
         let loaded = self.client.borrow().sync_hosts();
+        let owners: HashMap<ServerId, String> = {
+            let client = self.client.borrow();
+            let servers = client.servers.lock().unwrap();
+            servers.iter().filter_map(|(sid, state)| Some((*sid, commy_view::away::owners_away_home(state, &self.origin)?))).collect()
+        };
         let invited = self.invited_hosts.borrow().clone();
         let guard = self.sync.borrow();
-        let Some(live) = guard.as_ref() else { return HashMap::new() };
-        wanted
-            .filter_map(|server| {
-                let chosen = match loaded.get(&server) {
-                    Some(host) => host.clone(),
-                    None => invited.get(&server).cloned().or_else(|| live.book.recorded_host(server)),
-                };
-                if chosen.as_deref().is_some_and(|origin| self.blocks_sync_origin(origin)) {
-                    return None;
+        let Some(live) = guard.as_ref() else { return places };
+        let homes = self.known_homes();
+        for server in wanted {
+            let chosen = match loaded.get(&server) {
+                Some(host) => host.clone(),
+                None => invited.get(&server).cloned().or_else(|| live.book.recorded_host(server)),
+            };
+            let owners_home = owners.get(&server).map(String::as_str);
+            match commy_view::away::community_place(chosen.as_deref(), owners_home, &home, |h| homes.url(h).map(str::to_string)) {
+                Some(commy_view::away::Place::At(socket)) if !self.blocks_sync_origin(&socket) => {
+                    if socket != home {
+                        places.sockets.insert(server, socket);
+                    }
                 }
-                let socket = commy_core::sync_host::chosen_socket(chosen.as_deref(), Some(&home))?;
-                (socket != home).then_some((server, socket))
-            })
-            .collect()
+                Some(commy_view::away::Place::Unknown(owner_home)) if !self.blocks_sync_origin(&owner_home) => {
+                    places.unplaced.insert(server);
+                    places.to_learn.push(owner_home);
+                }
+                _ => {
+                    places.unplaced.insert(server);
+                }
+            }
+        }
+        places
+    }
+
+    pub(super) fn place_of(&self, server: ServerId) -> Option<String> {
+        let places = self.community_places(std::iter::once(server));
+        if places.unplaced.contains(&server) {
+            return None;
+        }
+        places.sockets.get(&server).cloned().or_else(|| self.sync.borrow().as_ref().map(|live| live.url.clone()))
     }
 
     pub(super) fn refresh_sync(&self) {
         let Some(given) = self.sync.borrow().as_ref().map(|live| live.book.given()) else { return };
-        let wanted = self.client.borrow().sync_wants(&given, Utc::now().timestamp_millis());
-        let sockets = self.chosen_sockets(wanted.keys().copied());
+        let mut wanted = self.client.borrow().sync_wants(&given, Utc::now().timestamp_millis());
+        let places = self.community_places(wanted.keys().copied());
+        wanted.retain(|server, _| !places.unplaced.contains(server));
+        if !places.to_learn.is_empty() {
+            self.away.borrow_mut().wait_for_homes(places.to_learn);
+        }
+        let sockets = places.sockets;
         let mut guard = self.sync.borrow_mut();
         let Some(live) = guard.as_mut() else { return };
         let plan = live.book.replan_at(wanted, &sockets);
@@ -898,7 +937,7 @@ impl Session {
             }
             if stored {
                 this.settle_delivered(server, &[id]);
-                this.ring_server_wake(tags, preview);
+                this.ring_server_wake_everywhere(tags, preview);
             }
         });
     }

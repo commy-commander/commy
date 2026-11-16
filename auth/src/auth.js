@@ -16,6 +16,7 @@ import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
 import { commyHomeCard } from "./home-card.js";
 import { commyHomeKeys, createHomeKeys } from "./home-keys.js";
+import { commyMoved } from "./moved.js";
 import { commyDirectory } from "./directory.js";
 import { commyDoorbell } from "./doorbell.js";
 import { commyEmailPreferences } from "./email-preferences.js";
@@ -115,7 +116,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
     commyEmailPreferences({ secret: config.secret, instanceName: config.instanceName, basePath: config.basePath }),
     commyAdultConfirmation(),
     commyHomeCard({ serverKey: config.serverKey, home: config.baseURL }),
-    commyHomeKeys({ homeKeys: homeKeys ?? createHomeKeys({ ownHome: config.baseURL, ownKey: config.serverKey.published }) }),
+    commyHomeKeys({ homeKeys: homeKeys ?? createHomeKeys({ ownHome: config.baseURL, ownKey: config.serverKey.published, ownSync: config.syncUrl }) }),
+    commyMoved({ home: config.baseURL }),
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
@@ -266,6 +268,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
         "/commy/email/preferences": { window: 60, max: 20 },
         "/commy/home-card": { window: 600, max: 10 },
         "/commy/home-key": { window: 60, max: 30 },
+        "/commy/moved": { window: 60, max: 30 },
+        "/commy/moved/set": { window: 600, max: 10 },
         "/passkey/verify-authentication": { window: 60, max: 10 },
         "/sign-in/social": { window: 60, max: 20 },
         "/commy/access": { window: 600, max: 10 },

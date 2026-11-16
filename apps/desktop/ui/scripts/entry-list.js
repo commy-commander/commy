@@ -90,3 +90,57 @@ if (IS_TAURI) {
     if (status && status.state === "error") renderEntryStatus(await invoke("entry_list_sync").catch(() => status));
   });
 }
+
+function renderAccountMoved(view) {
+  const to = view && view.moved_to;
+  $("acct-moved-row").classList.toggle("hidden", !to);
+  $("acct-moved-title").textContent = to ? `Your account moved to ${to.replace(/^https:\/\//, "")}` : "";
+}
+
+function moveProblem(e) {
+  const message = String(e);
+  return isServerProblem(message) ? t(message) : message;
+}
+
+async function afterAccountMove() {
+  account = await invoke("account_status").catch(() => account);
+  startOverSignedOut();
+}
+
+$("acct-move-go").onclick = async () => {
+  const typed = $("acct-move-input").value.trim();
+  if (!typed) return;
+  const host = typed.replace(/^https:\/\//, "").replace(/\/+$/, "");
+  if (!(await confirm(`Move your account to ${host}? This device signs out here, then you sign in or create an account on ${host}.`))) return;
+  const button = $("acct-move-go");
+  button.disabled = true;
+  try {
+    await invoke("start_account_move", { to: typed });
+    await afterAccountMove();
+  } catch (e) {
+    toast(moveProblem(e));
+  } finally {
+    button.disabled = false;
+  }
+};
+
+$("acct-moved-follow").onclick = async () => {
+  const button = $("acct-moved-follow");
+  button.disabled = true;
+  try {
+    await invoke("follow_account_move");
+    await afterAccountMove();
+  } catch (e) {
+    toast(moveProblem(e));
+  } finally {
+    button.disabled = false;
+  }
+};
+
+if (IS_TAURI) {
+  window.__TAURI__.event.listen("account-moved", e => {
+    renderAccountMoved(e.payload);
+    if (e.payload && e.payload.moved_to) toast("Your account moved to another account server. See Settings, Commy Account.");
+  });
+  invoke("account_moved_to").then(renderAccountMoved).catch(() => {});
+}

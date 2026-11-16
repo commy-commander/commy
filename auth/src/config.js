@@ -4,6 +4,7 @@ import { LINK_BLOCKLIST_PATH, linkBlocklistSources } from "./link-blocklist.js";
 import { appleAppSiteAssociation, assetLinks } from "./app-sign-in.js";
 import { HOME_CARD_PATH } from "./home-card.js";
 import { HOME_KEY_PATH } from "./home-keys.js";
+import { MOVED_PATH, MOVED_SET_PATH } from "./moved.js";
 import { contactKind } from "./listing-checks.js";
 import { SERVER_BLOCKLIST_PATH } from "./server-blocklist.js";
 import { SERVER_LIST_PATH } from "./server-list.js";
@@ -364,6 +365,8 @@ export function discoveryDocument(config) {
       sync: config.syncUrl,
       homeCard: `${api}${HOME_CARD_PATH}`,
       homeKey: `${api}${HOME_KEY_PATH}`,
+      moved: `${api}${MOVED_PATH}`,
+      movedSet: `${api}${MOVED_SET_PATH}`,
       ...(config.linkBlocklistSources.length ? { linkBlocklist: `${api}${LINK_BLOCKLIST_PATH}` } : {}),
     },
     features: {
@@ -381,6 +384,7 @@ export function discoveryDocument(config) {
       sync: Boolean(config.syncUrl),
       linkBlocklist: config.linkBlocklistSources.length > 0,
       adultsOnly: config.adultsOnly,
+      moving: true,
     },
     invites: {
       linkPrefix: `${config.baseURL}/i/`,

@@ -23,7 +23,7 @@ use commy_view::dms::{EPOCHS, RECENT_MS};
 use crate::catchup::AppAccess;
 use crate::state::App;
 use crate::sync_link::{self, Pool};
-use crate::{account_log, outbox, push_wake};
+use crate::{account_log, away_homes, outbox, push_wake};
 
 const REFRESH_EVERY: Duration = Duration::from_secs(60 * 60);
 const HOLD_WAIT: Duration = Duration::from_secs(8);
@@ -43,6 +43,9 @@ struct Live {
     owners: HashMap<StreamId, UserId>,
     inboxes: HashMap<StreamId, (Option<ServerId>, StreamKeys)>,
     caught_up: HashSet<StreamId>,
+    away: Pool,
+    away_streams: HashMap<StreamId, (UserId, String)>,
+    away_caught_up: HashSet<StreamId>,
     task: tauri::async_runtime::JoinHandle<()>,
 }
 
@@ -114,7 +117,8 @@ fn start(handle: &AppHandle) {
                 old.task.abort();
             }
             let (pool, events) = Pool::new(&url);
-            let task = tauri::async_runtime::spawn(run(handle.clone(), events));
+            let (away, away_events) = Pool::new(&url);
+            let task = tauri::async_runtime::spawn(run(handle.clone(), events, away_events));
             *live = Some(Live {
                 url,
                 dir,
@@ -125,6 +129,9 @@ fn start(handle: &AppHandle) {
                 owners: HashMap::new(),
                 inboxes: HashMap::new(),
                 caught_up: HashSet::new(),
+                away,
+                away_streams: HashMap::new(),
+                away_caught_up: HashSet::new(),
                 task,
             });
         }
@@ -139,10 +146,11 @@ fn start(handle: &AppHandle) {
     }
 }
 
-fn refresh(handle: &AppHandle) {
+pub(crate) fn refresh(handle: &AppHandle) {
     let app = handle.state::<App>();
     let Some(identity) = app.identity() else { return };
     let wanted = wanted(&app);
+    let away = away_wanted(&app, &identity, &wanted);
     let epochs = sync_streams::recent_dm_epochs(Utc::now(), EPOCHS);
     let mut guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_mut() else { return };
@@ -189,9 +197,71 @@ fn refresh(handle: &AppHandle) {
         }
         live.pool.follow_together(group);
     }
+    follow_away(&app, live, away.streams);
     drop(guard);
+    away_homes::look_up(handle, away.unknown);
     tend_inboxes(handle);
     push_wake::register(handle);
+}
+
+#[derive(Default)]
+struct AwayWanted {
+    streams: HashMap<StreamId, (UserId, String, StreamKeys)>,
+    unknown: Vec<String>,
+}
+
+fn away_wanted(app: &App, identity: &commy_core::Identity, wanted: &[(UserId, IdentityKey)]) -> AwayWanted {
+    let epochs = sync_streams::recent_dm_epochs(Utc::now(), EPOCHS);
+    let mut away = AwayWanted::default();
+    for (user, key) in wanted {
+        let Some(home) = partner_profile(app, *user).and_then(|profile| away_homes::away_home(app, &profile)) else { continue };
+        let Some(url) = away_homes::known_sync(&home) else {
+            away.unknown.push(home);
+            continue;
+        };
+        for epoch in &epochs {
+            if let Some(keys) = sync_streams::dm_stream(identity, key, epoch) {
+                away.streams.insert(keys.id, (*user, url.clone(), keys));
+            }
+        }
+    }
+    away
+}
+
+fn follow_away(app: &App, live: &mut Live, wanted: HashMap<StreamId, (UserId, String, StreamKeys)>) {
+    let stale: Vec<StreamId> = live
+        .away_streams
+        .iter()
+        .filter(|(stream, (user, url))| wanted.get(stream).is_none_or(|(want_user, want_url, _)| want_user != user || want_url != url))
+        .map(|(stream, _)| *stream)
+        .collect();
+    for stream in stale {
+        live.away_streams.remove(&stream);
+        live.away_caught_up.remove(&stream);
+        live.away.unfollow(stream);
+    }
+    let mut by_url: BTreeMap<String, Vec<(StreamKeys, u64)>> = BTreeMap::new();
+    for (stream, (user, url, keys)) in wanted {
+        if live.away_streams.contains_key(&stream) {
+            continue;
+        }
+        let after = account_log::dm_cursor(app, &away_cursor(stream, &url));
+        live.away_streams.insert(stream, (user, url.clone()));
+        by_url.entry(url).or_default().push((keys, after));
+    }
+    for (url, group) in by_url {
+        tracing::info!("reading {} DM streams kept on another home", group.len());
+        live.away.follow_together_tail_at(&url, group, None);
+    }
+}
+
+fn away_cursor(stream: StreamId, url: &str) -> String {
+    commy_view::away::cursor_key(&stream.to_hex(), url)
+}
+
+fn partner_sync(app: &App, partner: UserId) -> Option<String> {
+    let home = partner_profile(app, partner).and_then(|profile| away_homes::away_home(app, &profile))?;
+    away_homes::known_sync(&home)
 }
 
 fn own_inboxes(app: &App, me: UserId) -> Vec<(Option<ServerId>, StreamKeys)> {
@@ -313,27 +383,44 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
     let keys = inbox_to(app, me, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
     let Some(plain) = inbox::seal(&key, envelope) else { return false };
     let stream = keys.id;
+    let away = match partner_profile(app, to).and_then(|profile| away_homes::away_home(app, &profile)) {
+        Some(home) => match away_homes::sync_now(app, &home).await {
+            Some(url) => Some(url),
+            None => {
+                tracing::info!("could not reach the home of {to} to leave a first message");
+                return false;
+            }
+        },
+        None => None,
+    };
     let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(app, &keys, &envelope.message)));
     let (client, borrowed) = {
         let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return false };
-        let borrowed = !live.pool.follows(stream);
+        let pool = if away.is_some() { &mut live.away } else { &mut live.pool };
+        let borrowed = !pool.follows(stream);
         if borrowed {
-            live.pool.follow_together_tail(vec![(keys, 0)], Some(0));
+            match &away {
+                Some(url) => pool.follow_together_tail_at(url, vec![(keys, 0)], Some(0)),
+                None => pool.follow_together_tail(vec![(keys, 0)], Some(0)),
+            }
         }
-        (live.pool.client_for(stream), borrowed)
+        (pool.client_for(stream), borrowed)
     };
     let sent = tokio::time::timeout(HOLD_WAIT, sync_link::append(client, stream, plain)).await;
     if borrowed {
         if let Some(live) = LIVE.lock_or_recover().as_mut() {
-            live.pool.unfollow(stream);
+            match away {
+                Some(_) => live.away.unfollow(stream),
+                None => live.pool.unfollow(stream),
+            }
         }
     }
     match sent {
         Ok(Ok(_)) => {
             tracing::info!("left a first message for {to} on the sync service");
             if let Some((tag, preview)) = wake {
-                ring_phones(app, &envelope.message, tag, preview);
+                ring_phones(app, &envelope.message, tag, preview, partner_sync(app, to));
             }
             true
         }
@@ -394,13 +481,9 @@ fn wakes(message: &DmMessage) -> bool {
     rings(message) || is_nudge(message)
 }
 
-fn ring_phones(app: &App, message: &DmMessage, tag: [u8; 32], preview: Option<String>) {
+fn ring_phones(app: &App, message: &DmMessage, tag: [u8; 32], preview: Option<String>, home_sync: Option<String>) {
     let http = app.http.clone();
-    if is_nudge(message) {
-        tauri::async_runtime::spawn(push_wake::ring_urgent(http, vec![tag], preview));
-    } else {
-        tauri::async_runtime::spawn(push_wake::ring(http, vec![tag], preview));
-    }
+    tauri::async_runtime::spawn(push_wake::ring_at(http, home_sync, vec![tag], preview, is_nudge(message)));
 }
 
 fn wake_preview(app: &App, keys: &StreamKeys, message: &DmMessage) -> Option<String> {
@@ -444,7 +527,9 @@ pub fn preview_keys(app: &App, days: &[i64]) -> Vec<[u8; 32]> {
 }
 
 
-async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver<SyncEvent>) {
+type Events = tokio::sync::mpsc::UnboundedReceiver<SyncEvent>;
+
+async fn run(handle: AppHandle, mut events: Events, mut away_events: Events) {
     let mut tick = tokio::time::interval(REFRESH_EVERY);
     tick.tick().await;
     loop {
@@ -453,8 +538,52 @@ async fn run(handle: AppHandle, mut events: tokio::sync::mpsc::UnboundedReceiver
                 Some(event) => on_event(&handle, event),
                 None => break,
             },
+            Some(event) = away_events.recv() => on_away_event(&handle, event),
             _ = tick.tick() => refresh(&handle),
         }
+    }
+}
+
+fn on_away_event(handle: &AppHandle, event: SyncEvent) {
+    let app = handle.state::<App>();
+    match event {
+        SyncEvent::Entry { stream, seq, at, plain } => {
+            let found = {
+                let live = LIVE.lock_or_recover();
+                live.as_ref().and_then(|l| {
+                    let (partner, url) = l.away_streams.get(&stream)?.clone();
+                    let key = partner_key(&app, partner)?;
+                    Some((l.me, l.me_key, partner, key, url, l.away_caught_up.contains(&stream)))
+                })
+            };
+            let Some((me, me_key, partner, key, url, live_now)) = found else { return };
+            let entry = sync_streams::decode_dm(&plain, me, &me_key, partner, &key);
+            match entry.as_ref().map(|entry| away_route(entry, at, now_ms())) {
+                Some(Route::Receive) => receive(handle, entry.unwrap().into_envelope(), live_now),
+                Some(Route::Ring) => ring(handle, entry.unwrap().into_envelope()),
+                _ => {}
+            }
+            account_log::set_dm_cursor(&app, away_cursor(stream, &url), seq, live_now);
+        }
+        SyncEvent::CaughtUp { stream, seq } => {
+            let url = LIVE.lock_or_recover().as_mut().and_then(|live| {
+                let url = live.away_streams.get(&stream)?.1.clone();
+                live.away_caught_up.insert(stream);
+                Some(url)
+            });
+            if let Some(url) = url {
+                account_log::set_dm_cursor(&app, away_cursor(stream, &url), seq, true);
+            }
+        }
+        SyncEvent::Refused { stream, code } => tracing::debug!("another home refused a DM stream {stream}: {code:?}"),
+        _ => {}
+    }
+}
+
+pub fn away_route(entry: &DmEntry, at: i64, now: i64) -> Route {
+    match entry {
+        DmEntry::FromPartner(_) => route(entry, None, at, now),
+        DmEntry::FromMe(_) => Route::Skip,
     }
 }
 
@@ -619,7 +748,7 @@ async fn append_pairwise(app: &App, partner: UserId, envelope: &DmEnvelope) -> b
     match tokio::time::timeout(HOLD_WAIT, sync_link::append(client, stream, plain)).await {
         Ok(Ok(_)) => {
             if let Some((tag, preview)) = wake {
-                ring_phones(app, &envelope.message, tag, preview);
+                ring_phones(app, &envelope.message, tag, preview, partner_sync(app, partner));
             }
             true
         }
@@ -744,6 +873,21 @@ mod tests {
         assert_eq!(route(&mine(accept.clone(), &other), Some(&here), now, now), Route::Settled);
         assert_eq!(route(&mine(accept.clone(), &here), Some(&here), now, now), Route::Skip, "our own answer never ends our call");
         assert_eq!(route(&mine(accept, &other), Some(&here), now - commy_view::dms::CALL_FRESH_MS - 1, now), Route::Skip);
+    }
+
+    #[test]
+    fn on_a_partners_home_only_their_own_entries_count() {
+        let (me, partner) = (UserId::new(), UserId::new());
+        let now = 1_000_000_000_000;
+        let theirs = DmEntry::FromPartner(DmEnvelope::new(DmMessage::new(partner, me, "hello from my home"), UserProfile::new("partner")));
+        assert_eq!(away_route(&theirs, now, now), Route::Receive);
+        let ours = DmEntry::FromMe(DmEnvelope::new(DmMessage::new(me, partner, "planted there"), UserProfile::new("me")));
+        assert_eq!(away_route(&ours, now, now), Route::Skip, "our side lives on our own home, never theirs");
+        let mut ring = DmMessage::acting(partner, me, DmAction::Call { call: commy_core::ChannelId::new(), signal: CallSignal::Ring }, "");
+        ring.from_node = "cc".repeat(32);
+        let ringing = DmEntry::FromPartner(DmEnvelope::new(ring, UserProfile::new("partner")));
+        assert_eq!(away_route(&ringing, now, now), Route::Ring);
+        assert_eq!(away_route(&ringing, now - commy_view::dms::CALL_FRESH_MS - 1, now), Route::Skip);
     }
 
     #[test]

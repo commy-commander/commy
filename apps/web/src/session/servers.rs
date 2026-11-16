@@ -150,6 +150,14 @@ impl Session {
         Ok(Value::Null)
     }
 
+    async fn pin_in_place(self: &Rc<Self>, server: ServerId) -> Result<(), String> {
+        if !self.read_state(server, |state, me| Ok(commy_view::away::needs_pin(state, me)))? {
+            return Ok(());
+        }
+        let here = self.sync.borrow().as_ref().and_then(|live| clean_sync_host(live.home())).ok_or("Commy is not connected to its sync service yet")?;
+        self.set_sync_host(server, Some(&here)).await.map(|_| ())
+    }
+
     async fn set_sync_host(self: &Rc<Self>, server: ServerId, host: Option<&str>) -> Result<Value, String> {
         let me = self.client.borrow().profile().ok_or("Your servers are not unlocked yet")?.id;
         let (home, ready) = {
@@ -199,6 +207,12 @@ impl Session {
         let user = || parse::<UserId>(args.user_id.as_ref(), "user");
         let role = || parse::<RoleId>(args.role_id.as_ref(), "role");
         let name = args.name.as_deref().unwrap_or("");
+        if cmd == "transfer_ownership" {
+            let confirm = args.confirm_name.as_deref().unwrap_or("");
+            let to = user()?;
+            self.read_state(server, |state, me| moderate::transfer(state, me, to, confirm).map(|_| ()))?;
+            self.pin_in_place(server).await?;
+        }
         let client = || self.client.borrow();
         let mut reply = Value::Null;
         let payloads = match cmd {

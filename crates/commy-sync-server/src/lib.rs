@@ -1,4 +1,5 @@
 pub mod admin;
+mod any_site;
 pub mod apns;
 pub mod certificate;
 pub mod check;
@@ -27,6 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::DefaultBodyLimit;
+use axum::middleware::map_response;
 use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -165,11 +167,19 @@ pub fn router(service: Arc<Service>) -> Router {
         .route("/sync/wake", get(wake::info))
         .route("/sync/wake/register", post(wake::register).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/forget", post(wake::forget).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
-        .route("/sync/wake/ring", post(wake::ring).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
+        .route(
+            "/sync/wake/ring",
+            post(wake::ring).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)).options(any_site::preflight).layer(map_response(any_site::open_to_any_site)),
+        )
         .route("/sync/wake/seat", post(wake::seat).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route("/sync/wake/quiet", post(wake::quiet).layer(DefaultBodyLimit::max(WAKE_BODY_LIMIT)))
         .route(gateway::GATEWAY_PATH, post(gateway::push).layer(DefaultBodyLimit::max(gateway::MAX_GATEWAY_BODY)))
-        .route("/sync/pictures/{id}", get(pictures::fetch).merge(put(pictures::store).layer(DefaultBodyLimit::max(MAX_PICTURE_SEALED))))
+        .route(
+            "/sync/pictures/{id}",
+            get(pictures::fetch)
+                .layer(map_response(any_site::open_to_any_site))
+                .merge(put(pictures::store).layer(DefaultBodyLimit::max(MAX_PICTURE_SEALED))),
+        )
         .route("/healthz", get(health))
         .with_state(service)
 }

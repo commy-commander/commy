@@ -205,7 +205,8 @@ pub(crate) async fn create(
     }
     let ticket = crate::owner_vouched_ticket(app, id)?;
     let origin = crate::account::effective_server();
-    let sync_host = app.servers.lock_or_recover().get(&id).and_then(|s| s.server.sync_host.clone());
+    let chosen = app.servers.lock_or_recover().get(&id).and_then(|s| s.server.sync_host.clone());
+    let sync_host = commy_view::away::invite_host(chosen.as_deref(), crate::community_sync::place_of(id).as_deref());
     let cache_key = format!("{origin} {} {} {}", expiry.as_str(), sync_host.as_deref().unwrap_or_default(), ticket.encode());
     let cached = if name.is_some() { None } else { CREATED.lock_or_recover().get(&cache_key).cloned() };
     let cached = cached.filter(|(created, _)| {

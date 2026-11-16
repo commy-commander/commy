@@ -77,12 +77,16 @@ pub fn preview(app: &App, keys: &StreamKeys, author: &str, channel: Option<Strin
     sealed_preview(keys, today(), |msg| identity.sign(msg).0, author, channel, text, call, ended)
 }
 
-pub async fn ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>) {
-    send_ring(http, tags, preview, false).await;
+pub async fn ring_tags(http: reqwest::Client, tags: RingTags, preview: Option<String>) {
+    ring_tags_at(http, None, tags, preview).await;
 }
 
-pub async fn ring_tags(http: reqwest::Client, tags: RingTags, preview: Option<String>) {
-    let Some(base) = sync_link::url().as_deref().and_then(wake_url) else { return };
+fn ring_base(home_sync: Option<String>) -> Option<String> {
+    home_sync.or_else(sync_link::url).as_deref().and_then(wake_url)
+}
+
+pub async fn ring_tags_at(http: reqwest::Client, home_sync: Option<String>, tags: RingTags, preview: Option<String>) {
+    let Some(base) = ring_base(home_sync) else { return };
     if tags.is_empty() {
         return;
     }
@@ -101,12 +105,8 @@ async fn post_ring(http: &reqwest::Client, base: &str, body: &WakeRing) {
     }
 }
 
-pub async fn ring_urgent(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>) {
-    send_ring(http, tags, preview, true).await;
-}
-
-async fn send_ring(http: reqwest::Client, tags: Vec<[u8; 32]>, preview: Option<String>, urgent: bool) {
-    let Some(base) = sync_link::url().as_deref().and_then(wake_url) else { return };
+pub async fn ring_at(http: reqwest::Client, home_sync: Option<String>, tags: Vec<[u8; 32]>, preview: Option<String>, urgent: bool) {
+    let Some(base) = ring_base(home_sync) else { return };
     if tags.is_empty() {
         return;
     }
@@ -185,6 +185,10 @@ pub fn set_token(handle: &AppHandle, push: Option<String>) {
     if changed {
         register(handle);
     }
+}
+
+pub fn handle() -> Option<AppHandle> {
+    HANDLE.get().cloned()
 }
 
 pub fn register_again() {

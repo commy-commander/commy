@@ -17,7 +17,7 @@ use crate::state::App;
 
 const KEY_FILE: &str = "entry-key.json";
 const LOCAL_FILE: &str = "entry-list.json";
-const VAULT_ITEM: &str = "servers";
+pub(crate) const VAULT_ITEM: &str = "servers";
 const NO_VAULT: &str = "Your account server cannot keep a server list yet.";
 pub(crate) const SIGNED_OUT: &str = "Your account server signed this device out.";
 
@@ -104,7 +104,7 @@ fn own_key(base: Option<&Path>, dir: &Path, s: &Session, shared: Option<&str>) -
     Some(key)
 }
 
-fn save_key(dir: &Path, server: &str, account: &str, key: &SealKey) {
+pub(crate) fn save_key(dir: &Path, server: &str, account: &str, key: &SealKey) {
     let stored = StoredKey { server: server.into(), account: account.into(), key: key.to_text() };
     if let Err(e) = crate::persist::write_secret_json(&dir.join(KEY_FILE), &stored) {
         tracing::warn!("could not save the entry key: {e}");
@@ -299,7 +299,7 @@ pub(crate) enum Fetched {
     Unsupported,
 }
 
-fn account_api(app: &App, s: &Session, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+pub(crate) fn account_api(app: &App, s: &Session, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
     app.http.request(method, format!("{}/api/auth/commy/{path}", s.server)).bearer_auth(&s.token)
 }
 
@@ -386,6 +386,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     let Some(s) = session(&app) else {
         return finish(handle, "off", "Sign in to your Commy account to sync your servers.", 0, false).await;
     };
+    crate::account_move::move_in_if_due(&app, &dir, &s).await;
     if app.account.lock_or_recover().features.is_some_and(|f| !f.vault) {
         return finish(handle, "unsupported", NO_VAULT, 0, false).await;
     }
@@ -708,6 +709,7 @@ pub async fn adopt_account_profile(handle: AppHandle) -> Result<Option<UserProfi
     let adopted = {
         let _guard = SYNC.lock().await;
         let (dir, s) = signed_in(&app)?;
+        crate::account_move::move_in_if_due(&app, &dir, &s).await;
         let Some(shared) = opened_account_list(&app, &dir, &s).await? else { return Ok(None) };
         let swap = app.signing.write().await;
         if !adopt_identity(&app, &dir, &shared) {

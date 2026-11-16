@@ -14,6 +14,7 @@ pub use commy_net::sync_streams::SharedKey;
 use commy_net::voice_gate::{link_of, StateLink};
 use commy_net::{NetEvent, WirePayload};
 use commy_sync::{AppendError, StreamId, SyncClient, SyncEvent};
+use commy_view::away::Place;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
@@ -658,6 +659,25 @@ fn record_hosts(app: &App) {
     crate::account_log::record_sync_hosts(app, settled);
 }
 
+fn owners_homes(app: &App) -> HashMap<ServerId, String> {
+    let Some(mine) = crate::away_homes::own_home(app) else { return HashMap::new() };
+    let servers = app.servers.lock_or_recover();
+    servers.iter().filter_map(|(sid, state)| Some((*sid, commy_view::away::owners_away_home(state, &mine)?))).collect()
+}
+
+fn community_place(chosen: Option<&str>, owners_home: Option<&str>, account_url: &str) -> Option<Place> {
+    let place = commy_view::away::community_place(chosen, owners_home, account_url, crate::away_homes::known_sync)?;
+    match &place {
+        Place::At(url) if crate::server_guard::blocks_origin(url) => None,
+        Place::Unknown(home) if crate::server_guard::blocks_origin(home) => None,
+        _ => Some(place),
+    }
+}
+
+pub fn place_of(server: ServerId) -> Option<String> {
+    LIVE.lock_or_recover().as_ref()?.communities.get(&server).map(|community| community.url.clone())
+}
+
 pub fn community_url(chosen: Option<&str>, account_url: &str) -> Option<String> {
     commy_core::sync_host::chosen_socket(chosen, Some(account_url)).filter(|url| !crate::server_guard::blocks_origin(url))
 }
@@ -689,6 +709,8 @@ fn refresh(handle: &AppHandle) {
     let Some(me) = LIVE.lock_or_recover().as_ref().map(|l| l.me) else { return };
     let mut wanted = wanted_now(&app, me);
     let hosts = chosen_hosts(&app);
+    let owners = owners_homes(&app);
+    let mut unknown_homes = Vec::new();
     let mut fresh_communities = Vec::new();
     let mut promoted = Vec::new();
     let mut guard = LIVE.lock_or_recover();
@@ -702,9 +724,18 @@ fn refresh(handle: &AppHandle) {
     live.cursors.keep_hosts_of(&wanted.keys().copied().collect());
     for (sid, wants) in wanted.drain() {
         let chosen = hosts.get(&sid).cloned().flatten();
-        let Some(url) = community_url(chosen.as_deref(), &live.url) else {
-            drop_community(live, sid);
-            continue;
+        let place = community_place(chosen.as_deref(), owners.get(&sid).map(String::as_str), &live.url);
+        let url = match place {
+            Some(Place::At(url)) => url,
+            Some(Place::Unknown(home)) => {
+                unknown_homes.push(home);
+                drop_community(live, sid);
+                continue;
+            }
+            None => {
+                drop_community(live, sid);
+                continue;
+            }
         };
         if live.communities.get(&sid).is_some_and(|community| community.url != url) {
             tracing::info!("{sid} moved to another sync host");
@@ -757,6 +788,9 @@ fn refresh(handle: &AppHandle) {
         }
     }
     drop(guard);
+    if !unknown_homes.is_empty() {
+        crate::away_homes::look_up(handle, unknown_homes);
+    }
     for sid in promoted {
         announce_me(handle, sid);
     }

@@ -93,7 +93,8 @@ impl Session {
         }
         let given = self.sync.borrow().as_ref().and_then(|live| live.book.given().remove(&server));
         let (ticket, community) = self.client.borrow().invite_ticket(server, given)?;
-        let sync_host = self.client.borrow().servers.lock().unwrap().get(&server).and_then(|state| state.server.sync_host.clone());
+        let chosen = self.client.borrow().servers.lock().unwrap().get(&server).and_then(|state| state.server.sync_host.clone());
+        let sync_host = commy_view::away::invite_host(chosen.as_deref(), self.place_of(server).as_deref());
         let raw = self.reachable(ticket.clone()).await.encode();
         let revoke_key = invite::new_revoke_key();
         let (key, key_text) = invite::link_key(&revoke_key, name.is_some());

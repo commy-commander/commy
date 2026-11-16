@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use commy_core::dm::DmMessage;
 use commy_sync::wire::Bytes;
 use commy_sync::StreamKeys;
 use wasm_bindgen::{JsCast, JsValue};
+use commy_view::away::tags_by_home;
 use wasm_bindgen_futures::spawn_local;
 
 use super::Session;
@@ -30,23 +32,31 @@ fn ring_delay() -> Duration {
 }
 
 impl Session {
-    pub(super) fn server_wake_tags(&self, server: ServerId, message: &Message) -> (RingTags, Option<String>) {
+    pub(super) fn server_wake_tags(&self, server: ServerId, message: &Message) -> (BTreeMap<Option<String>, RingTags>, Option<String>) {
+        let homes = self.member_homes(server);
         let mut guard = self.sync.borrow_mut();
-        let Some(live) = guard.as_mut() else { return (RingTags::default(), None) };
+        let Some(live) = guard.as_mut() else { return (BTreeMap::new(), None) };
         let now = Utc::now().timestamp_millis();
         let found = self.client.borrow().wake_whos(server, message, || live.all_rings.ring_due(server, message.channel, now));
-        let Some((private, whos, text)) = found else { return (RingTags::default(), None) };
-        let Some(keys) = live.book.wake_keys(server, private.then_some(message.channel)) else { return (RingTags::default(), None) };
+        let Some((private, whos, text)) = found else { return (BTreeMap::new(), None) };
+        let Some(keys) = live.book.wake_keys(server, private.then_some(message.channel)) else { return (BTreeMap::new(), None) };
         let today = wake_day(now);
         let preview = self.me_and_key().and_then(|(_, identity)| {
             sealed_preview(&keys, today, |msg| identity.sign(msg).0, &message.author.to_string(), Some(message.channel.to_string()), &text, false, false)
         });
-        let tagged = |whos: &[String]| -> Vec<[u8; 32]> { whos.iter().map(|who| keys.wake_tag(who, today)).collect() };
-        (RingTags { broad: tagged(&whos.broad), direct: tagged(&whos.direct), hush: tagged(&whos.hush), quiet: tagged(&whos.quiet) }, preview)
+        let split = commy_view::away::whos_by_home([&whos.broad, &whos.direct, &whos.hush, &whos.quiet], &homes);
+        (tags_by_home(split, |who| keys.wake_tag(who, today)), preview)
     }
 
-    pub(super) fn ring_server_wake(&self, tags: RingTags, preview: Option<String>) {
-        let Some(url) = self.sync.borrow().as_ref().and_then(|live| live.wake.clone()) else { return };
+    fn ring_url_for(&self, home_sync: Option<String>) -> Option<String> {
+        match home_sync {
+            Some(sync) => commy_net::server_wake::ring_url(&sync),
+            None => self.sync.borrow().as_ref().and_then(|live| live.wake.clone()),
+        }
+    }
+
+    pub(super) fn ring_server_wake(&self, tags: RingTags, preview: Option<String>, home_sync: Option<String>) {
+        let Some(url) = self.ring_url_for(home_sync) else { return };
         if tags.is_empty() {
             return;
         }
@@ -60,8 +70,8 @@ impl Session {
         });
     }
 
-    pub(super) fn ring_wake(&self, tags: Vec<[u8; 32]>, preview: Option<String>) {
-        let Some(url) = self.sync.borrow().as_ref().and_then(|live| live.wake.clone()) else { return };
+    pub(super) fn ring_wake(&self, tags: Vec<[u8; 32]>, preview: Option<String>, home_sync: Option<String>) {
+        let Some(url) = self.ring_url_for(home_sync) else { return };
         if tags.is_empty() {
             return;
         }

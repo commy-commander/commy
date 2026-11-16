@@ -7,7 +7,7 @@ import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
 import { cardPayload, checkCardRequest, issueCard, requestMessage } from "../src/home-card.js";
-import { createHomeKeys, isHomeOrigin, isPublicAddress, publishedKeyOf } from "../src/home-keys.js";
+import { createHomeKeys, isHomeOrigin, isPublicAddress, publishedKeyOf, syncUrlOf } from "../src/home-keys.js";
 import { blockedServerLine, blockedServers, createServerBlocklist, LIST_PURPOSE } from "../src/server-blocklist.js";
 import { keyFromSeed, keyId, loadListKey, loadServerKey, signedBytes } from "../src/server-key.js";
 
@@ -181,6 +181,34 @@ test("home keys are fetched only for public https homes and remembered", async (
   assert.equal(fetched, 1);
   assert.equal(await homeKeys.keyOf("https://liar.org"), null, "a document for another issuer is not believed");
   assert.equal(publishedKeyOf({ issuer: "https://x.org", serverKey: { ...published, id: "0000000000000000" } }, "https://x.org"), null);
+});
+
+test("a home's sync address is learned only from its own discovery document", async () => {
+  const home = "https://friend.org";
+  const doc = (sync, issuer = home) => ({ issuer, endpoints: { sync } });
+  assert.equal(syncUrlOf(doc("wss://friend.org/sync"), home), "wss://friend.org/sync");
+  assert.equal(syncUrlOf(doc("wss://friend.org/sync/"), home), "wss://friend.org/sync");
+  assert.equal(syncUrlOf(doc("wss://commy.chat/sync"), home), null, "a home cannot point at another site's sync");
+  assert.equal(syncUrlOf(doc("ws://friend.org/sync"), home), null);
+  assert.equal(syncUrlOf(doc("wss://user:pw@friend.org/sync"), home), null);
+  assert.equal(syncUrlOf(doc("wss://friend.org/sync", "https://elsewhere.org"), home), null);
+  assert.equal(syncUrlOf(doc(""), home), null);
+  assert.equal(syncUrlOf(null, home), null);
+  const published = keyFromSeed(Buffer.alloc(32, 4)).published;
+  let fetched = 0;
+  const homeKeys = createHomeKeys({
+    ownHome: "https://commy.chat",
+    ownKey: { id: "own" },
+    ownSync: "wss://commy.chat/sync",
+    fetchDocument: async (asked) => {
+      fetched += 1;
+      return { issuer: asked, serverKey: published, endpoints: { sync: `wss://${new URL(asked).hostname}/sync` } };
+    },
+  });
+  assert.deepEqual(await homeKeys.homeOf("https://commy.chat"), { key: { id: "own" }, sync: "wss://commy.chat/sync" });
+  assert.deepEqual(await homeKeys.homeOf(home), { key: published, sync: "wss://friend.org/sync" });
+  assert.deepEqual(await homeKeys.keyOf(home), published, "the key and the sync address share one look-up");
+  assert.equal(fetched, 1);
 });
 
 test("the list and server keys load from their own env names", () => {

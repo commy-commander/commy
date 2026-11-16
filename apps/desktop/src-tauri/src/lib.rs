@@ -1,6 +1,8 @@
 mod account;
 mod account_folder;
 mod account_log;
+mod account_move;
+mod away_homes;
 mod app_icon;
 mod app_sign_in;
 mod browser;
@@ -376,7 +378,11 @@ async fn test_file_store(app: tauri::State<'_, App>, url: String) -> CmdResult<s
 #[tauri::command]
 async fn set_sync_host(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, host: Option<String>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    let me = current_profile(&app)?;
+    choose_sync_host(&app, &handle, sid, host).await
+}
+
+pub(crate) async fn choose_sync_host(app: &App, handle: &tauri::AppHandle, sid: ServerId, host: Option<String>) -> CmdResult<()> {
+    let me = current_profile(app)?;
     if app.awaits_snapshot(sid) {
         return Err("wait until this server has finished loading".into());
     }
@@ -387,14 +393,35 @@ async fn set_sync_host(app: tauri::State<'_, App>, handle: tauri::AppHandle, ser
     };
     let account_url = sync_link::url().ok_or("Commy is not connected to its sync service yet")?;
     let target = sync_host::target(&event, &account_url).ok_or(view::sync_host::SYNC_HOST_INVALID)?;
-    sync_host::claim_everything(&app, sid, &target).await?;
+    sync_host::claim_everything(app, sid, &target).await?;
     let forwarding_note = app.wire_for(sid, event.clone());
     if community_sync::publish_now(sid, &forwarding_note).await.is_empty() {
         tracing::warn!("the old sync host of {sid} did not take the move; members who are offline follow it through the owner's copy");
     }
-    apply_and_broadcast(&app, &handle, sid, event).await?;
-    community_sync::refresh_soon(&handle);
+    apply_and_broadcast(app, handle, sid, event).await?;
+    community_sync::refresh_soon(handle);
     let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+pub(crate) async fn pin_in_place(app: &App, handle: &tauri::AppHandle, sid: ServerId) -> CmdResult<()> {
+    let me = current_profile(app)?;
+    let due = app.servers.lock_or_recover().get(&sid).is_some_and(|state| view::away::needs_pin(state, me.id)) && !app.awaits_snapshot(sid);
+    if !due {
+        return Ok(());
+    }
+    let here = sync_link::url().and_then(|url| commy_core::sync_host::clean_sync_host(&url)).ok_or("Commy is not connected to its sync service yet")?;
+    choose_sync_host(app, handle, sid, Some(here)).await
+}
+
+pub(crate) async fn pin_owned_in_place(app: &App, handle: &tauri::AppHandle) -> CmdResult<()> {
+    let sids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
+    for sid in sids {
+        if let Err(e) = pin_in_place(app, handle, sid).await {
+            let name = app.servers.lock_or_recover().get(&sid).map(|s| s.server.name.clone()).unwrap_or_default();
+            return Err(format!("Could not keep {name} where it is before the change ({e}). Try again in a moment."));
+        }
+    }
     Ok(())
 }
 
@@ -6005,6 +6032,8 @@ async fn transfer_ownership(
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let user: UserId = user_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
+    managed(&app, sid, me.id, |state, _| view::moderate::transfer(state, me.id, user, &confirm_name))?;
+    pin_in_place(&app, &handle, sid).await?;
     let event = managed(&app, sid, me.id, |state, _| view::moderate::transfer(state, me.id, user, &confirm_name))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     app.follow_owner(sid);
@@ -7384,6 +7413,23 @@ fn servers_showing_profile_image(app: &App, blob: &str) -> Vec<ServerId> {
         .collect()
 }
 
+fn owners_home_of_picture(app: &App, blob: &str) -> Option<String> {
+    let mine = away_homes::own_home(app)?;
+    let home = {
+        let servers = app.servers.lock_or_recover();
+        let dms = app.dms.lock_or_recover();
+        let profiles = servers.values().flat_map(|state| state.profiles.values()).chain(dms.contacts.values());
+        view::away::picture_home(profiles, &mine, blob)
+    }?;
+    (!server_guard::blocks_origin(&home)).then_some(home)
+}
+
+async fn picture_from_owners_home(app: &App, blob: &str, max: u64) -> Option<Vec<u8>> {
+    let home = owners_home_of_picture(app, blob)?;
+    let sync = away_homes::sync_now(app, &home).await?;
+    pictures::fetch_on(&app.http, &sync, blob, max).await.filter(|bytes| view::pictures::is_profile_picture(bytes))
+}
+
 pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<&str>) -> CmdResult<Vec<u8>> {
     if let Some(bytes) = profile_images::cached(app, blob) {
         return Ok(bytes);
@@ -7391,6 +7437,11 @@ pub(crate) async fn profile_image_bytes(app: &App, blob: &str, provider: Option<
     let max = profile_images::MAX_PROFILE_IMAGE_BYTES as u64;
     if let Some(bytes) = pictures::fetch(&app.http, blob, max).await.filter(|bytes| view::pictures::is_profile_picture(bytes)) {
         profile_images::keep_if_wanted(app, blob, &bytes);
+        return Ok(bytes);
+    }
+    if let Some(bytes) = picture_from_owners_home(app, blob, max).await {
+        profile_images::keep_if_wanted(app, blob, &bytes);
+        pictures::offer(&app.http, blob, &bytes);
         return Ok(bytes);
     }
     let (fetcher, sources) = {
@@ -8876,6 +8927,9 @@ pub fn run() {
             entry_list::entry_list_sync,
             entry_list::adopt_account_profile,
             entry_list::entry_list_recovery_code,
+            account_move::start_account_move,
+            account_move::follow_account_move,
+            account_move::account_moved_to,
             entry_list::entry_list_use_recovery_code,
             entry_list::entry_list_start_over,
             read_state::read_state_load,

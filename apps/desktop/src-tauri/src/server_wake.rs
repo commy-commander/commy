@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use commy_core::{ChannelId, Message, ServerId, ServerState, UserId};
 use commy_net::server_wake::{channel_ranks, choice, next_mute_end, point_whos, ring_plan, unwanted_whos, wake_text, AllRings, RingDue};
-use commy_sync::wake::RingTags;
 use data_encoding::BASE64;
 use tauri::AppHandle;
 
 use crate::state::App;
-use crate::{account_log, channel_lock, community_sync, push_wake};
+use crate::{account_log, away_homes, channel_lock, community_sync, push_wake};
+use tauri::Manager;
 
 static LAST_ALL: Mutex<Option<AllRings>> = Mutex::new(None);
 static MUTE_END_WATCHED: Mutex<Option<i64>> = Mutex::new(None);
@@ -50,19 +50,43 @@ pub fn ring(app: &App, server: ServerId, message: &Message) {
             let private = state.server.channel(message.channel).is_some_and(|c| c.is_private());
             let opened = channel_lock::holder_of(app).open(state, message)?;
             let text = wake_text(&opened.content, &message.attachments);
-            Some((private, ring_plan(state, me, message.channel, &opened.content, ring_due(server, message.channel)), text))
+            let whos = ring_plan(state, me, message.channel, &opened.content, ring_due(server, message.channel));
+            Some((private, whos, member_homes(app, state), text))
         })
     };
-    let Some((private, whos, text)) = found else { return };
+    let Some((private, whos, homes, text)) = found else { return };
     if whos.is_empty() {
         return;
     }
     let Some(keys) = community_sync::wake_keys(server, private.then_some(message.channel)) else { return };
     let today = push_wake::today();
-    let tagged = |whos: &[String]| -> Vec<[u8; 32]> { whos.iter().map(|who| keys.wake_tag(who, today)).collect() };
-    let tags = RingTags { broad: tagged(&whos.broad), direct: tagged(&whos.direct), hush: tagged(&whos.hush), quiet: tagged(&whos.quiet) };
     let preview = push_wake::preview(app, &keys, &me.to_string(), Some(message.channel.to_string()), &text, false, false);
-    tauri::async_runtime::spawn(push_wake::ring_tags(app.http.clone(), tags, preview));
+    let lists = [whos.broad.as_slice(), whos.direct.as_slice(), whos.hush.as_slice(), whos.quiet.as_slice()];
+    let split = commy_view::away::whos_by_home(lists, &homes);
+    for (home, tags) in commy_view::away::tags_by_home(split, |who| keys.wake_tag(who, today)) {
+        let (http, preview) = (app.http.clone(), preview.clone());
+        match home {
+            None => {
+                tauri::async_runtime::spawn(push_wake::ring_tags(http, tags, preview));
+            }
+            Some(home) => {
+                let Some(handle) = push_wake::handle() else { continue };
+                tauri::async_runtime::spawn(async move {
+                    let Some(url) = away_homes::sync_now(&handle.state::<App>(), &home).await else { return };
+                    push_wake::ring_tags_at(http, Some(url), tags, preview).await;
+                });
+            }
+        }
+    }
+}
+
+fn member_homes(app: &App, state: &ServerState) -> BTreeMap<String, String> {
+    state
+        .server
+        .members
+        .iter()
+        .filter_map(|member| Some((member.user.to_string(), away_homes::away_home(app, state.profiles.get(&member.user)?)?)))
+        .collect()
 }
 
 fn point_channels(state: &ServerState, me: UserId, point: Option<ChannelId>) -> Vec<ChannelId> {

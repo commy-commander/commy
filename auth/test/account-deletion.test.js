@@ -35,6 +35,7 @@ function start(env) {
     doorbellRing: [],
     twoFactor: [],
     passkey: [],
+    commyMove: [],
   };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
@@ -93,10 +94,11 @@ function giveThingsTo(userId, tag) {
   db.invite.push({ id: `inv-${tag}`, code: `code-${tag}`, ticket: "t", serverName: "", createdBy: userId, createdAt: now, expiresAt: later });
   db.inviteBackground.push({ id: `bg-${tag}`, code: `code-${tag}`, data: "x", expiresAt: later });
   db.directoryListing.push({ id: `dir-${tag}`, code: `code-${tag}`, key: "k", name: "n", description: "", category: "gaming", members: 10, createdBy: userId, createdAt: now, updatedAt: now });
+  db.commyMove.push({ id: `move-${tag}`, identity: `identity-${tag}`, userId, commyUser: "user", toHome: "https://friends.org", at: Date.now(), proof: "p" });
 }
 
 const owned = (userId) =>
-  ["session", "account", "linkedDevice", "vaultItem", "passkey"].flatMap((model) => db[model].filter((row) => row.userId === userId)).length +
+  ["session", "account", "linkedDevice", "vaultItem", "passkey", "commyMove"].flatMap((model) => db[model].filter((row) => row.userId === userId)).length +
   db.invite.filter((row) => row.createdBy === userId).length +
   db.directoryListing.filter((row) => row.createdBy === userId).length;
 

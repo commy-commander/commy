@@ -18,7 +18,11 @@ static OFFERED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 pub use commy_view::pictures::pictures_url;
 
 fn picture_url(key: &PictureKey) -> Option<String> {
-    let base = sync_link::url().as_deref().and_then(pictures_url)?;
+    picture_url_on(sync_link::url().as_deref()?, key)
+}
+
+fn picture_url_on(sync: &str, key: &PictureKey) -> Option<String> {
+    let base = pictures_url(sync)?;
     Some(format!("{base}/{}", key.id_hex()))
 }
 
@@ -30,6 +34,16 @@ pub fn opened(key: &PictureKey, blob: &str, body: &[u8], max: u64) -> Option<Vec
 pub async fn fetch(http: &reqwest::Client, blob: &str, max: u64) -> Option<Vec<u8>> {
     let key = PictureKey::for_blob(blob);
     let url = picture_url(&key)?;
+    fetch_from(http, &key, url, blob, max).await
+}
+
+pub async fn fetch_on(http: &reqwest::Client, sync: &str, blob: &str, max: u64) -> Option<Vec<u8>> {
+    let key = PictureKey::for_blob(blob);
+    let url = picture_url_on(sync, &key)?;
+    fetch_from(http, &key, url, blob, max).await
+}
+
+async fn fetch_from(http: &reqwest::Client, key: &PictureKey, url: String, blob: &str, max: u64) -> Option<Vec<u8>> {
     let fetched = tokio::time::timeout(FETCH_WAIT, async {
         let response = http.get(url).send().await.ok()?;
         if !response.status().is_success() {
@@ -40,7 +54,7 @@ pub async fn fetch(http: &reqwest::Client, blob: &str, max: u64) -> Option<Vec<u
     .await
     .ok()
     .flatten()?;
-    let plain = opened(&key, blob, &fetched, max);
+    let plain = opened(key, blob, &fetched, max);
     if plain.is_none() {
         tracing::debug!("the sync service's copy of a picture did not match its reference");
     }

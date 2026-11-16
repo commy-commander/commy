@@ -162,6 +162,14 @@ impl DmBook {
         plan
     }
 
+    pub fn pair_partners(&self) -> Vec<(UserId, IdentityKey)> {
+        let mut partners: Vec<(UserId, IdentityKey)> =
+            self.routes.values().filter_map(|source| if let Source::Pair(user, key) = source { Some((*user, *key)) } else { None }).collect();
+        partners.sort_by_key(|(user, _)| *user);
+        partners.dedup_by_key(|(user, _)| *user);
+        partners
+    }
+
     pub fn forget_streams(&mut self) {
         self.routes.clear();
         self.live.clear();

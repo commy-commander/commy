@@ -30,6 +30,7 @@ use crate::host::Host;
 use crate::store::WebStore;
 
 mod activities;
+mod away;
 mod calls;
 mod cloud_files;
 mod community;
@@ -123,6 +124,7 @@ pub struct Session {
     invited_hosts: RefCell<HashMap<ServerId, String>>,
     links: RefCell<links::LinkSafety>,
     homes: RefCell<homes::HomeWatch>,
+    away: RefCell<away::Away>,
     watching: RefCell<crate::watching::Watching>,
     mic: RefCell<crate::mic_gate::MicGate>,
     shares: RefCell<share::Shares>,
@@ -318,6 +320,7 @@ impl Session {
             invited_hosts: RefCell::default(),
             links: RefCell::default(),
             homes: RefCell::default(),
+            away: RefCell::default(),
             watching: RefCell::default(),
             mic: RefCell::default(),
             shares: RefCell::default(),

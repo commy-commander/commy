@@ -19,6 +19,7 @@ pub mod ids;
 pub mod link_preview;
 pub mod mention;
 pub mod message;
+pub mod moved;
 pub mod video_poster;
 pub mod onboarding;
 pub mod permissions;

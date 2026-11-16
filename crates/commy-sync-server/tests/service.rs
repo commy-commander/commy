@@ -304,6 +304,40 @@ async fn post(address: &str, path: &str, body: &serde_json::Value) -> u16 {
     reply[9..12].parse().unwrap()
 }
 
+async fn http_reply(address: &str, request: &str) -> String {
+    let mut tcp = tokio::net::TcpStream::connect(address).await.unwrap();
+    tcp.write_all(request.as_bytes()).await.unwrap();
+    let mut reply = String::new();
+    tcp.read_to_string(&mut reply).await.unwrap();
+    reply.to_ascii_lowercase()
+}
+
+#[tokio::test]
+async fn apps_on_other_homes_may_ring_and_read_pictures_from_a_browser() {
+    let (url, _) = start().await;
+    let address = url.trim_start_matches("ws://").trim_end_matches("/sync").to_string();
+    let asked = http_reply(
+        &address,
+        "OPTIONS /sync/wake/ring HTTP/1.1\r\nHost: x\r\nOrigin: https://friends.org\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(asked.starts_with("http/1.1 204"), "{asked}");
+    assert!(asked.contains("access-control-allow-origin: *"));
+    assert!(asked.contains("access-control-allow-methods: get, post"));
+    assert!(asked.contains("access-control-allow-headers: content-type"));
+    let body = serde_json::to_string(&WakeRing { tags: vec![Bytes([7u8; 32])], ..Default::default() }).unwrap();
+    let rung = http_reply(
+        &address,
+        &format!("POST /sync/wake/ring HTTP/1.1\r\nHost: x\r\nOrigin: https://friends.org\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()),
+    )
+    .await;
+    assert!(rung.contains("access-control-allow-origin: *"), "{rung}");
+    let picture = http_reply(&address, &format!("GET /sync/pictures/{} HTTP/1.1\r\nHost: x\r\nOrigin: https://friends.org\r\nConnection: close\r\n\r\n", "ab".repeat(32))).await;
+    assert!(picture.contains("access-control-allow-origin: *"), "{picture}");
+    let register = http_reply(&address, "OPTIONS /sync/wake/register HTTP/1.1\r\nHost: x\r\nOrigin: https://friends.org\r\nConnection: close\r\n\r\n").await;
+    assert!(!register.contains("access-control-allow-origin"), "only ringing and reading pictures open to other sites");
+}
+
 #[tokio::test]
 async fn a_ring_wakes_the_rung_persons_phones_once_per_gap() {
     let config = Config::from_env(|_| None).unwrap();
