@@ -22,9 +22,10 @@ pub fn set_gif_key(state: &ServerState, perms: Permissions, provider: Option<&st
     Ok(ServerEvent::GifKeySet { server: state.server.id, gifs })
 }
 
-pub fn game_db_login(state: &ServerState, client_id: Option<&str>, client_secret: Option<&str>) -> Result<Option<GameDbKey>, String> {
+pub fn game_db_login(state: &ServerState, keys: &crate::keys::KeyHolder, client_id: Option<&str>, client_secret: Option<&str>) -> Result<Option<GameDbKey>, String> {
     let Some(client_id) = client_id.map(str::trim).filter(|c| !c.is_empty()) else { return Ok(None) };
-    let kept = state.server.game_db.as_ref().map(|g| g.client_secret.as_str());
+    let opened = keys.opened_search_keys(state).1;
+    let kept = opened.as_ref().map(|g| g.client_secret.as_str());
     let secret = client_secret.map(str::trim).filter(|s| !s.is_empty()).or(kept).unwrap_or("");
     GameDbKey::new(client_id, secret).map(Some).ok_or_else(|| GAME_DB_INVALID.to_string())
 }
@@ -56,11 +57,11 @@ mod tests {
     #[test]
     fn a_saved_secret_is_kept_when_only_the_client_id_is_sent() {
         let mut state = ServerState::new(Server::new("Rockets", UserId::new()));
-        assert_eq!(game_db_login(&state, Some("id1"), None).unwrap_err(), GAME_DB_INVALID);
-        assert_eq!(game_db_login(&state, Some(" "), Some("s")), Ok(None));
+        assert_eq!(game_db_login(&state, &crate::keys::KeyHolder::new(None), Some("id1"), None).unwrap_err(), GAME_DB_INVALID);
+        assert_eq!(game_db_login(&state, &crate::keys::KeyHolder::new(None), Some(" "), Some("s")), Ok(None));
         state.server.game_db = GameDbKey::new("id1", "secret2");
-        assert_eq!(game_db_login(&state, Some("id9"), None), Ok(GameDbKey::new("id9", "secret2")));
-        assert_eq!(game_db_login(&state, Some("id9"), Some("new3")), Ok(GameDbKey::new("id9", "new3")));
+        assert_eq!(game_db_login(&state, &crate::keys::KeyHolder::new(None), Some("id9"), None), Ok(GameDbKey::new("id9", "secret2")));
+        assert_eq!(game_db_login(&state, &crate::keys::KeyHolder::new(None), Some("id9"), Some("new3")), Ok(GameDbKey::new("id9", "new3")));
         assert!(set_game_db(&state, Permissions::default_member(), None).is_err());
         assert_eq!(game_db_view(&state, Permissions::all()), Some(GameDbView { client_id: "id1".into() }));
         assert_eq!(game_db_view(&state, Permissions::default_member()), None);

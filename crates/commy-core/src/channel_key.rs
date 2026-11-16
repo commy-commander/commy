@@ -21,6 +21,8 @@ const COMMUNITY_GRANT_DOMAIN: &str = "commy-community-grant/v1";
 const COMMUNITY_LINK_DOMAIN: &str = "commy-community-link/v1";
 const BODY_DOMAIN: &str = "commy-channel-body/v1";
 const SEALED_PREFIX: &str = "commy-sealed:v1:";
+const SERVER_TEXT_DOMAIN: &str = "commy-server-text/v1";
+pub const MAX_SEALED_TEXT_BYTES: usize = 1024;
 const LABEL_DOMAIN: &str = "commy-channel-label/v1";
 const DRIVE_TEXT_DOMAIN: &str = "commy-drive-text/v1";
 pub const MAX_SEALED_LABEL_BYTES: usize = 1024;
@@ -601,6 +603,37 @@ fn read_bound(aad: &[u8], text: &str, ring: &Keyring) -> Option<String> {
     String::from_utf8(plain).ok()
 }
 
+pub fn is_sealed_text(text: &str) -> bool {
+    is_sealed(text) && text.len() <= MAX_SEALED_TEXT_BYTES
+}
+
+fn server_text_aad(server: ServerId, purpose: &str) -> Vec<u8> {
+    encode(&(SERVER_TEXT_DOMAIN, server, purpose))
+}
+
+pub fn seal_server_text(server: ServerId, purpose: &str, text: &str, key: KeyId, secret: &ChannelSecret) -> String {
+    let nonce: [u8; 12] = rand::random();
+    let mut bytes = Vec::with_capacity(28 + text.len() + TAG_BYTES);
+    bytes.extend_from_slice(&key.0);
+    bytes.extend_from_slice(&nonce);
+    bytes.extend(seal(&secret.0, nonce, &server_text_aad(server, purpose), text.as_bytes()));
+    format!("{SEALED_PREFIX}{}", BASE64URL_NOPAD.encode(&bytes))
+}
+
+pub fn read_server_text(server: ServerId, purpose: &str, text: &str, ring: &Keyring) -> Option<String> {
+    let Some(encoded) = text.strip_prefix(SEALED_PREFIX) else {
+        return Some(text.to_string());
+    };
+    let bytes = BASE64URL_NOPAD.decode(encoded.as_bytes()).ok()?;
+    if bytes.len() < 28 + TAG_BYTES {
+        return None;
+    }
+    let key = KeyId(bytes[..16].try_into().ok()?);
+    let nonce: [u8; 12] = bytes[16..28].try_into().ok()?;
+    let plain = unseal(&ring.secret(key)?.0, nonce, &server_text_aad(server, purpose), &bytes[28..])?;
+    String::from_utf8(plain).ok()
+}
+
 pub fn seal_label(server: ServerId, channel: ChannelId, root: MessageId, label: &str, key: KeyId, secret: &ChannelSecret) -> String {
     seal_bound(&label_aad(server, channel, root), label, key, secret)
 }
@@ -720,6 +753,23 @@ mod tests {
             }
         }
         panic!("key work did not settle");
+    }
+
+    #[test]
+    fn server_texts_open_for_members_holding_the_community_key() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let member = join(&mut state, "member");
+        while tend_community(&mut state, owner).is_some() {}
+        let ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        let (key, secret) = ring.newest_in(&state, KeyScope::Community).unwrap();
+        let sealed = seal_server_text(server, "gif-key", "abc-123", key, secret);
+        assert!(is_sealed_text(&sealed) && !sealed.contains("abc-123"));
+        let theirs = Keyring::unlock_community(&state, member, &identity_for(member));
+        assert_eq!(read_server_text(server, "gif-key", &sealed, &theirs).as_deref(), Some("abc-123"));
+        assert_eq!(read_server_text(server, "game-db-secret", &sealed, &theirs), None, "bound to its purpose");
+        let outsider = Keyring::unlock_community(&state, UserId::new(), &Identity::generate());
+        assert_eq!(read_server_text(server, "gif-key", &sealed, &outsider), None);
     }
 
     #[test]

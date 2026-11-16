@@ -789,7 +789,7 @@ impl ServerView {
             sync_host: sync_host::shown_host(state),
             can_set_sync_host: viewer == Some(state.server.owner) && !state.server.group,
             blocked_homes: homes::blocked_homes_view(state, viewer),
-            gif_key: is_member.then(|| state.server.gif_key.clone()).flatten(),
+            gif_key: is_member.then(|| keys.opened_search_keys(state).0).flatten(),
             game_db: search_keys::game_db_view(state, perms),
             pet: pet::view(state, viewer),
             automod: perms.allows(Permissions::MANAGE_SERVER).then(|| state.automod().clone()),

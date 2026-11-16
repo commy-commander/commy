@@ -1,5 +1,6 @@
 use commy_core::channel_key::{self, ChannelSecret, DriveField, KeyId, KeyScope, Keyring};
 use commy_core::ids::DriveId;
+use commy_core::search_keys::{GameDbKey, GifKey};
 use commy_core::{Attachment, ChannelId, Identity, Message, MessageId, Permissions, ServerEvent, ServerState, UserId};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -55,6 +56,27 @@ impl KeyHolder {
         }
     }
 
+    pub fn open_server_text(&self, state: &ServerState, purpose: &str, text: &str) -> Option<String> {
+        if !channel_key::is_sealed(text) {
+            return Some(text.to_string());
+        }
+        let (me, identity) = self.me.as_ref()?;
+        let ring = Keyring::unlock_community(state, *me, identity);
+        channel_key::read_server_text(state.server.id, purpose, text, &ring)
+    }
+
+    pub fn opened_search_keys(&self, state: &ServerState) -> (Option<GifKey>, Option<GameDbKey>) {
+        let gifs = state.server.gif_key.clone().and_then(|g| {
+            let key = self.open_server_text(state, commy_core::search_keys::GIF_KEY_PURPOSE, &g.key)?;
+            Some(GifKey { key, ..g })
+        });
+        let games = state.server.game_db.clone().and_then(|g| {
+            let client_secret = self.open_server_text(state, commy_core::search_keys::GAME_DB_SECRET_PURPOSE, &g.client_secret)?;
+            Some(GameDbKey { client_secret, ..g })
+        });
+        (gifs, games)
+    }
+
     pub fn open_label(&self, state: &ServerState, channel: ChannelId, root: MessageId, label: &str) -> Option<String> {
         if !channel_key::is_sealed(label) {
             return Some(label.to_string());
@@ -76,6 +98,25 @@ impl KeyHolder {
     fn ring(&self, state: &ServerState, channel: ChannelId) -> Result<Keyring, String> {
         let (me, identity) = self.me.as_ref().ok_or("your identity is not ready yet")?;
         Ok(Keyring::unlock(state, channel, *me, identity))
+    }
+
+    pub fn seal_search_keys(&self, state: &ServerState, event: ServerEvent) -> ServerEvent {
+        let Some((me, identity)) = self.me.as_ref() else { return event };
+        let ring = Keyring::unlock_community(state, *me, identity);
+        let Some((key, secret)) = ring.newest_in(state, KeyScope::Community) else { return event };
+        let server = state.server.id;
+        let seal = |purpose: &str, text: &str| channel_key::seal_server_text(server, purpose, text, key, secret);
+        match event {
+            ServerEvent::GifKeySet { server, gifs } => ServerEvent::GifKeySet {
+                server,
+                gifs: gifs.map(|g| GifKey { key: seal(commy_core::search_keys::GIF_KEY_PURPOSE, &g.key), ..g }),
+            },
+            ServerEvent::GameDbSet { server, games } => ServerEvent::GameDbSet {
+                server,
+                games: games.map(|g| GameDbKey { client_secret: seal(commy_core::search_keys::GAME_DB_SECRET_PURPOSE, &g.client_secret), ..g }),
+            },
+            other => other,
+        }
     }
 
     pub fn open_drive_text(&self, state: &ServerState, channel: ChannelId, item: DriveId, field: DriveField, text: &str) -> Option<String> {

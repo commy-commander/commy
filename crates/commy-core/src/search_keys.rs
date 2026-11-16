@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 pub const GIF_PROVIDERS: [&str; 2] = ["klipy", "giphy"];
+pub const GIF_KEY_PURPOSE: &str = "gif-key";
+pub const GAME_DB_SECRET_PURPOSE: &str = "game-db-secret";
+
+fn plain_or_sealed(value: &str) -> bool {
+    clean_key(value).as_deref() == Some(value) || crate::channel_key::is_sealed_text(value)
+}
 pub const MAX_KEY_CHARS: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,7 +35,7 @@ impl GifKey {
     }
 
     pub fn is_valid(&self) -> bool {
-        Self::new(&self.provider, &self.key).as_ref() == Some(self)
+        GIF_PROVIDERS.contains(&self.provider.as_str()) && plain_or_sealed(&self.key)
     }
 }
 
@@ -39,7 +45,7 @@ impl GameDbKey {
     }
 
     pub fn is_valid(&self) -> bool {
-        Self::new(&self.client_id, &self.client_secret).as_ref() == Some(self)
+        clean_key(&self.client_id).as_deref() == Some(self.client_id.as_str()) && plain_or_sealed(&self.client_secret)
     }
 }
 

@@ -7126,15 +7126,16 @@ async fn set_game_db(
 ) -> CmdResult<Vec<igdb::GameHit>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
+    let keys = channel_lock::holder_of(&app);
     let login = managed(&app, sid, me.id, |state, perms| {
         view::search_keys::set_game_db(state, perms, None)?;
-        view::search_keys::game_db_login(state, client_id.as_deref(), client_secret.as_deref())
+        view::search_keys::game_db_login(state, &keys, client_id.as_deref(), client_secret.as_deref())
     })?;
     let sample = match &login {
         Some(login) => igdb::IgdbClient::default().search(&app.http, &igdb::IgdbCredentials::of(login), "Portal 2").await?,
         None => Vec::new(),
     };
-    let event = managed(&app, sid, me.id, |state, perms| view::search_keys::set_game_db(state, perms, login))?;
+    let event = managed(&app, sid, me.id, |state, perms| Ok(keys.seal_search_keys(state, view::search_keys::set_game_db(state, perms, login)?)))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(sample)
@@ -7150,7 +7151,8 @@ async fn set_gif_key(
 ) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let event = managed(&app, sid, me.id, |state, perms| view::search_keys::set_gif_key(state, perms, provider.as_deref(), key.as_deref()))?;
+    let keys = channel_lock::holder_of(&app);
+    let event = managed(&app, sid, me.id, |state, perms| Ok(keys.seal_search_keys(state, view::search_keys::set_gif_key(state, perms, provider.as_deref(), key.as_deref())?)))?;
     apply_and_broadcast(&app, &handle, sid, event).await?;
     let _ = handle.emit("servers-changed", ());
     Ok(())
@@ -7159,7 +7161,8 @@ async fn set_gif_key(
 fn game_db_of(app: &App, server: Option<&str>) -> Option<igdb::IgdbCredentials> {
     let sid: ServerId = server?.parse().ok()?;
     let servers = app.servers.lock_or_recover();
-    servers.get(&sid)?.server.game_db.as_ref().map(igdb::IgdbCredentials::of)
+    let state = servers.get(&sid)?;
+    channel_lock::holder_of(app).opened_search_keys(state).1.as_ref().map(igdb::IgdbCredentials::of)
 }
 
 #[tauri::command]
