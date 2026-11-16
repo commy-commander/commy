@@ -18,7 +18,13 @@ runs:
       with:
         toolchain: stable
 
+    - name: Keep the Windows build folder between runs
+      if: runner.os == 'Windows' && github.server_url != 'https://github.com'
+      shell: bash
+      run: echo "CARGO_TARGET_DIR=$(cd "$GITHUB_WORKSPACE/../../.." && pwd -W)/target/rust-check" >> "$GITHUB_ENV"
+
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      if: runner.os != 'Windows' || github.server_url == 'https://github.com'
       with:
         key: ${{ runner.os }}
         save-if: ${{ github.ref == 'refs/heads/main' && (runner.os != 'macOS' || github.server_url == 'https://github.com') }}
