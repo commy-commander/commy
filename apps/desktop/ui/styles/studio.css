@@ -572,9 +572,11 @@ html[data-look="studio"]:not([data-fit="slim"]) .search-box input { font: 400 14
 html[data-look="studio"]:not([data-fit="slim"]) .search-box input::placeholder { color: var(--text-muted); }
 
 html[data-look="studio"]:not([data-fit="slim"]) .messages {
-  padding: 6px calc(22px + var(--chat-gutter)) 12px calc(28px + var(--chat-gutter));
+  padding: 6px calc(22px + var(--chat-gutter)) 28px calc(28px + var(--chat-gutter));
   scrollbar-width: thin;
   scrollbar-color: var(--bg-active) transparent;
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(180deg, #000 calc(100% - 28px), transparent);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .main.has-chat-banner > .chat-header {
   border-radius: 0 var(--radius-xl) 0 0;
@@ -1344,7 +1346,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .voice-channel:has(+ .voice-stat
 html[data-look="studio"]:not([data-fit="slim"]) .voice-status-line { height: 17px; margin: 0 0 0 37px; padding: 1px 0 0; font: 400 11.5px/11.5px var(--font); }
 html[data-look="studio"]:not([data-fit="slim"]) .voice-user,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-user:hover {
-  min-height: 24px;
+  min-height: 30px;
   gap: 7px;
   margin: 0;
   padding: 0 8px 0 33px;
@@ -2042,7 +2044,7 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .chat-header .heade
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .studio-star { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .vr-wing-x { flex: none; width: 32px; height: 32px; margin-left: auto; border-radius: 50%; color: var(--text-muted); }
 html[data-look="studio"]:not([data-fit="slim"]) .vr-wing-x svg { width: 16px !important; height: 16px !important; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .messages { padding: 8px 10px 12px 14px; scrollbar-width: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .messages { padding: 8px 10px 28px 14px; scrollbar-width: none; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .msg { gap: 10px; margin: 0 -6px; padding: 3px 6px 4px; border-radius: 14px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .msg > .avatar { width: 28px; height: 28px; font-size: 11px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .msg-author { font-size: 13.5px; }

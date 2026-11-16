@@ -700,6 +700,21 @@
       <button class="btn-secondary" id="join-server-save">Join Server</button>
     </div>
 
+    <div class="modal modal-avatar-crop hidden" id="modal-avatar-crop" role="dialog" aria-labelledby="avatar-crop-title">
+      <h2 id="avatar-crop-title">Adjust your avatar</h2>
+      <p>Drag to move it. Scroll or use the slider to zoom.</p>
+      <div class="avatar-crop-stage" id="avatar-crop-stage"><img id="avatar-crop-img" alt="" draggable="false" /></div>
+      <div class="avatar-crop-zoom">
+        <span class="avatar-crop-zoom-icon" id="avatar-crop-zoom-out"></span>
+        <input type="range" id="avatar-crop-range" min="100" max="400" value="100" aria-label="Zoom" />
+        <span class="avatar-crop-zoom-icon" id="avatar-crop-zoom-in"></span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="avatar-crop-cancel">Cancel</button>
+        <button class="btn-primary" id="avatar-crop-save">Save</button>
+      </div>
+    </div>
+
     <div class="modal modal-activities hidden" id="modal-activities" role="dialog" aria-labelledby="activities-title">
       <h2 id="activities-title">Activities</h2>
       <p>Everyone in your voice channel can take part. One activity runs at a time.</p>
@@ -3787,6 +3802,7 @@
   <script src="scripts/account-ui.js"></script>
   <script src="scripts/account-delete.js"></script>
   <script src="scripts/avatar-picture.js"></script>
+  <script src="scripts/avatar-crop.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
   <script src="scripts/entry-list.js"></script>

@@ -28,7 +28,7 @@ const IGNORED_EXES: &[&str] = &[
     "searchui.exe",
 ];
 
-const GAME_PATH_MARKERS: &[&str] = &[
+const GAME_LIBRARIES: &[&str] = &[
     "\\steamapps\\common\\",
     "\\epic games\\",
     "\\riot games\\",
@@ -38,8 +38,28 @@ const GAME_PATH_MARKERS: &[&str] = &[
     "\\ea games\\",
     "\\ubisoft game launcher\\games\\",
     "\\battle.net\\games\\",
-    "\\minecraft launcher\\",
 ];
+
+const OTHER_GAME_PATHS: &[&str] = &["\\minecraft launcher\\"];
+
+const LIBRARY_TOOL_FOLDERS: &[&str] = &[
+    "launcher",
+    "epic online services",
+    "riot client",
+    "steamworks shared",
+    "directx",
+    "directxredist",
+];
+
+const BUILD_WORDS: &[&str] = &["shipping", "win64", "win32", "wingdk", "x64", "x86", "dx11", "dx12", "d3d11", "d3d12", "vulkan"];
+
+const GAME_PART_WORDS: &[&str] = &["launcher", "client"];
+
+const GLUED_BUILD_WORDS: &[&str] = &["Shipping"];
+
+const GLUED_GAME_PART_WORDS: &[&str] = &["Launcher", "Client"];
+
+const ENGINE_DESCRIPTIONS: &[&str] = &["bootstrappackagedgame", "unrealgame", "ue4game", "ue5game", "unity", "unityplayer"];
 
 const MAX_LEN: usize = 64;
 
@@ -55,19 +75,13 @@ pub fn describe(exe_path: &str, description: Option<&str>) -> Option<String> {
     if exe.is_empty() || IGNORED_EXES.contains(&exe) || is_own_exe(exe_path) {
         return None;
     }
-    let friendly = description
-        .map(str::trim)
-        .filter(|d| !d.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| title_from_exe(exe_path));
+    let folder = library_folder(exe_path);
+    let in_game_path = folder.is_some() || OTHER_GAME_PATHS.iter().any(|m| lower.contains(m));
+    let friendly = friendly_name(description, folder.as_deref(), in_game_path, exe_path);
     if friendly.is_empty() {
         return None;
     }
-    let verb = if GAME_PATH_MARKERS.iter().any(|m| lower.contains(m)) {
-        "Playing"
-    } else {
-        "Using"
-    };
+    let verb = if in_game_path { "Playing" } else { "Using" };
     let mut text = format!("{verb} {friendly}");
     if text.len() > MAX_LEN {
         let mut cut = MAX_LEN;
@@ -77,6 +91,63 @@ pub fn describe(exe_path: &str, description: Option<&str>) -> Option<String> {
         text.truncate(cut);
     }
     Some(text)
+}
+
+fn library_folder(exe_path: &str) -> Option<String> {
+    let path = exe_path.replace('/', "\\");
+    let lower = path.to_ascii_lowercase();
+    let start = GAME_LIBRARIES.iter().find_map(|m| lower.find(m).map(|at| at + m.len()))?;
+    let folder = path[start..].split('\\').next()?.trim();
+    let is_file = folder.len() == path.len() - start;
+    if folder.is_empty() || is_file || LIBRARY_TOOL_FOLDERS.contains(&folder.to_ascii_lowercase().as_str()) {
+        return None;
+    }
+    Some(folder.to_string())
+}
+
+fn friendly_name(description: Option<&str>, folder: Option<&str>, game: bool, exe_path: &str) -> String {
+    let description = description.map(str::trim).filter(|d| !d.is_empty());
+    if let Some(text) = description.filter(|d| is_tidy(d, game)) {
+        return text.to_string();
+    }
+    if let Some(folder) = folder {
+        return folder.to_string();
+    }
+    let raw = description.map(str::to_string).unwrap_or_else(|| title_from_exe(exe_path));
+    let tidy = tidy_name(&raw, game);
+    if tidy.is_empty() { raw } else { tidy }
+}
+
+fn is_tidy(name: &str, game: bool) -> bool {
+    let squashed: String = name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    !ENGINE_DESCRIPTIONS.contains(&squashed.as_str()) && tidy_name(name, game) == name
+}
+
+fn tidy_name(name: &str, game: bool) -> String {
+    let separators = ['_', '-', ' '];
+    let trailing = |word: &str| {
+        let lower = word.to_ascii_lowercase();
+        BUILD_WORDS.contains(&lower.as_str()) || (game && GAME_PART_WORDS.contains(&lower.as_str()))
+    };
+    let mut text = name.trim_matches(separators);
+    while let Some((head, word)) = text.rsplit_once(separators) {
+        let head = head.trim_end_matches(separators);
+        if head.is_empty() || !trailing(word) {
+            break;
+        }
+        text = head;
+    }
+    let glued = GLUED_BUILD_WORDS.iter().chain(if game { GLUED_GAME_PART_WORDS } else { &[] });
+    for suffix in glued {
+        let Some(stem) = text.strip_suffix(suffix) else { continue };
+        let joined = stem.chars().last().is_some_and(|c| c.is_lowercase() || c.is_ascii_digit());
+        let word_start = stem.rfind(separators).map_or(0, |at| at + 1);
+        if joined && stem.len() - word_start > 1 {
+            text = stem;
+            break;
+        }
+    }
+    text.to_string()
 }
 
 fn title_from_exe(exe_path: &str) -> String {
@@ -275,6 +346,74 @@ mod tests {
             describe("C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe", None),
             None
         );
+    }
+
+    #[test]
+    fn engine_build_names_become_the_game_name() {
+        assert_eq!(
+            describe(
+                "D:\\SteamLibrary\\steamapps\\common\\Wardogs\\WardogsLauncher\\Binaries\\Win64\\WardogsLauncher-Win64-Shipping.exe",
+                Some("WardogsLauncher Shipping")
+            ),
+            Some("Playing Wardogs".to_string())
+        );
+        assert_eq!(
+            describe("C:\\Games\\WardogsLauncher-Win64-Shipping.exe", Some("WardogsLauncher Shipping")),
+            Some("Using WardogsLauncher".to_string())
+        );
+        assert_eq!(
+            describe(
+                "C:\\Program Files\\Epic Games\\Fortnite\\FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping.exe",
+                None
+            ),
+            Some("Playing Fortnite".to_string())
+        );
+        assert_eq!(
+            describe(
+                "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Deep Rock Galactic\\FSD\\Binaries\\Win64\\FSD-Win64-Shipping.exe",
+                Some("BootstrapPackagedGame")
+            ),
+            Some("Playing Deep Rock Galactic".to_string())
+        );
+    }
+
+    #[test]
+    fn a_tidy_description_beats_the_folder_name() {
+        assert_eq!(
+            describe(
+                "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe",
+                Some("Counter-Strike 2")
+            ),
+            Some("Playing Counter-Strike 2".to_string())
+        );
+    }
+
+    #[test]
+    fn store_launchers_are_not_games() {
+        assert_eq!(
+            describe(
+                "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe",
+                Some("Epic Games Launcher")
+            ),
+            Some("Using Epic Games Launcher".to_string())
+        );
+        assert_eq!(
+            describe("C:\\Riot Games\\Riot Client\\RiotClientServices.exe", Some("Riot Client")),
+            Some("Using Riot Client".to_string())
+        );
+    }
+
+    #[test]
+    fn tidy_names_keep_real_words() {
+        assert_eq!(tidy_name("WardogsLauncher Shipping", true), "Wardogs");
+        assert_eq!(tidy_name("WardogsLauncher Shipping", false), "WardogsLauncher");
+        assert_eq!(tidy_name("Epic Games Launcher", false), "Epic Games Launcher");
+        assert_eq!(tidy_name("Launcher", true), "Launcher");
+        assert_eq!(tidy_name("Hollow Knight", true), "Hollow Knight");
+        assert_eq!(tidy_name("RocketLeague", true), "RocketLeague");
+        assert_eq!(tidy_name("Cyberpunk2077", true), "Cyberpunk2077");
+        assert_eq!(tidy_name("League of Legends Client", true), "League of Legends");
+        assert_eq!(tidy_name("Tool-Win64-Shipping", false), "Tool");
     }
 
     #[test]

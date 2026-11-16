@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { gameFromActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt } = require("../scripts/activity.js");
+const { tidyGameName, gameFromActivity, shownActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt } = require("../scripts/activity.js");
 
 const player = (id, game, since, extra = {}) => ({ id, name: id, presence: "online", activity: `Playing ${game}`, activity_since: since, ...extra });
 
@@ -12,6 +12,20 @@ test("only a Playing activity names a game", () => {
   assert.equal(gameFromActivity("Using Visual Studio Code"), null);
   assert.equal(gameFromActivity("Playing   "), null);
   assert.equal(gameFromActivity(null), null);
+});
+
+test("engine build names are cleaned up before they are shown", () => {
+  assert.equal(gameFromActivity("Playing WardogsLauncher Shipping"), "Wardogs");
+  assert.equal(gameFromActivity("Playing FortniteClient-Win64-Shipping"), "Fortnite");
+  assert.equal(tidyGameName("League of Legends Client"), "League of Legends");
+  assert.equal(tidyGameName("Counter-Strike 2"), "Counter-Strike 2");
+  assert.equal(tidyGameName("Launcher"), "Launcher");
+  assert.equal(tidyGameName("RocketLeague"), "RocketLeague");
+  assert.equal(tidyGameName("Cyberpunk2077"), "Cyberpunk2077");
+  assert.equal(tidyGameName("Hollow Knight"), "Hollow Knight");
+  assert.equal(shownActivity("Playing WardogsLauncher Shipping"), "Playing Wardogs");
+  assert.equal(shownActivity("Using Blender"), "Using Blender");
+  assert.equal(shownActivity(null), null);
 });
 
 test("the Steam button links only to a real store page", () => {

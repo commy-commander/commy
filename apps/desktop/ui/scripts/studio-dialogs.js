@@ -22,6 +22,7 @@ const STUDIO_DIALOGS = [
   "modal-delete-channel",
   "modal-account-move",
   "modal-moved-in",
+  "modal-avatar-crop",
 ];
 
 const DIALOG_BLUE_ACTIONS = ["report-go"];

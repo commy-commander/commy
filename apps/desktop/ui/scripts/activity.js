@@ -1,11 +1,39 @@
 const PLAYING_PREFIX = "Playing ";
 const MAX_STEAM_APP_ID = 0xffffffff;
 
+const GAME_BUILD_WORDS = new Set(["shipping", "win64", "win32", "wingdk", "x64", "x86", "dx11", "dx12", "d3d11", "d3d12", "vulkan", "launcher", "client"]);
+const GLUED_GAME_BUILD_WORDS = ["Shipping", "Launcher", "Client"];
+const NAME_SEPARATORS = /[_\- ]+/;
+
+function stripGluedBuildWord(text) {
+  for (const suffix of GLUED_GAME_BUILD_WORDS) {
+    if (!text.endsWith(suffix)) continue;
+    const stem = text.slice(0, -suffix.length);
+    const lastWord = stem.split(NAME_SEPARATORS).pop();
+    if (/[a-z0-9]$/.test(stem) && lastWord.length > 1) return stem;
+  }
+  return text;
+}
+
+function tidyGameName(name) {
+  const words = String(name || "").trim().split(/([_\- ]+)/).filter(Boolean);
+  while (words.length > 2 && NAME_SEPARATORS.test(words[words.length - 2]) && GAME_BUILD_WORDS.has(words[words.length - 1].toLowerCase())) {
+    words.splice(-2, 2);
+  }
+  if (words.length && NAME_SEPARATORS.test(words[words.length - 1])) words.pop();
+  return stripGluedBuildWord(words.join(""));
+}
+
 function gameFromActivity(activity) {
   const text = typeof activity === "string" ? activity : "";
   if (!text.startsWith(PLAYING_PREFIX)) return null;
-  const name = text.slice(PLAYING_PREFIX.length).trim();
+  const name = tidyGameName(text.slice(PLAYING_PREFIX.length));
   return name || null;
+}
+
+function shownActivity(activity) {
+  const game = gameFromActivity(activity);
+  return game ? `${PLAYING_PREFIX}${game}` : activity;
 }
 
 function steamStoreUrl(appId) {
@@ -33,5 +61,5 @@ function activityArt(person, details) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { gameFromActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt };
+  module.exports = { tidyGameName, gameFromActivity, shownActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt };
 }

@@ -49,7 +49,7 @@ test("only the sheets the phone draws itself skip the dialog dress on the phone"
 });
 
 test("step one covers the plain confirms and small forms, each with its answers row", () => {
-  assert.equal(STUDIO_DIALOGS.length, 23);
+  assert.equal(STUDIO_DIALOGS.length, 24);
   for (const id of STUDIO_DIALOGS) {
     const start = html.indexOf(`id="${id}"`);
     assert.ok(start > 0, id);

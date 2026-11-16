@@ -2603,6 +2603,7 @@ function placeModalClose(modal) {
 function hideModals() {
   answerStreamDeckPairing(false);
   stopSoundPreview();
+  settleAvatarCrop(null);
   $("modal-backdrop").classList.add("hidden");
 }
 
@@ -2860,7 +2861,8 @@ setInterval(() => {
 
 function activityWithTime(person) {
   if (!person || !person.activity) return "";
-  return person.activity_since ? `${person.activity} for ${elapsedWords(person.activity_since)}` : person.activity;
+  const text = shownActivity(person.activity);
+  return person.activity_since ? `${text} for ${elapsedWords(person.activity_since)}` : text;
 }
 
 function voiceChannelOf(member, server) {
@@ -8082,6 +8084,136 @@ function imageFileToAvatar(file) {
     };
     img.src = url;
   });
+}
+
+const AVATAR_CROP_WHEEL_STEP = 0.0015;
+const AVATAR_CROP_RANGE_SCALE = 100;
+const avatarCrop = { crop: null, image: null, settle: null, pointers: new Map(), pinch: null };
+
+function loadPicture(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("That file is not an image we can read"));
+    img.src = src;
+  });
+}
+
+function paintAvatarCrop() {
+  const { crop } = avatarCrop;
+  if (!crop) return;
+  const img = $("avatar-crop-img");
+  const scale = avatarCropScale(crop);
+  img.style.width = `${crop.width * scale}px`;
+  img.style.height = `${crop.height * scale}px`;
+  img.style.transform = `translate(${crop.x}px, ${crop.y}px)`;
+  $("avatar-crop-range").value = String(Math.round(crop.zoom * AVATAR_CROP_RANGE_SCALE));
+}
+
+function setAvatarCrop(next) {
+  avatarCrop.crop = next;
+  paintAvatarCrop();
+}
+
+function avatarCropPoint(e) {
+  const box = $("avatar-crop-stage").getBoundingClientRect();
+  return { x: e.clientX - box.left, y: e.clientY - box.top };
+}
+
+function pinchSpan() {
+  const [a, b] = [...avatarCrop.pointers.values()];
+  return { gap: Math.hypot(a.x - b.x, a.y - b.y), mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+}
+
+function avatarCropPointerDown(e) {
+  if (!avatarCrop.crop) return;
+  e.preventDefault();
+  $("avatar-crop-stage").setPointerCapture(e.pointerId);
+  avatarCrop.pointers.set(e.pointerId, avatarCropPoint(e));
+  avatarCrop.pinch = avatarCrop.pointers.size === 2 ? { ...pinchSpan(), zoom: avatarCrop.crop.zoom } : null;
+}
+
+function avatarCropPointerMove(e) {
+  const last = avatarCrop.pointers.get(e.pointerId);
+  if (!last || !avatarCrop.crop) return;
+  const point = avatarCropPoint(e);
+  avatarCrop.pointers.set(e.pointerId, point);
+  if (avatarCrop.pinch && avatarCrop.pointers.size === 2) {
+    const { gap, mid } = pinchSpan();
+    setAvatarCrop(avatarCropZoom(avatarCrop.crop, avatarCrop.pinch.zoom * (gap / Math.max(1, avatarCrop.pinch.gap)), mid));
+    return;
+  }
+  setAvatarCrop(avatarCropMove(avatarCrop.crop, point.x - last.x, point.y - last.y));
+}
+
+function avatarCropPointerUp(e) {
+  avatarCrop.pointers.delete(e.pointerId);
+  avatarCrop.pinch = null;
+}
+
+function avatarCropWheel(e) {
+  if (!avatarCrop.crop) return;
+  e.preventDefault();
+  const zoom = avatarCrop.crop.zoom * Math.exp(-e.deltaY * AVATAR_CROP_WHEEL_STEP);
+  setAvatarCrop(avatarCropZoom(avatarCrop.crop, zoom, avatarCropPoint(e)));
+}
+
+function avatarCropPicture() {
+  const { sx, sy, side } = avatarCropSource(avatarCrop.crop);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = AVATAR_CROP_OUTPUT;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  ctx.fillStyle = "#313338";
+  ctx.fillRect(0, 0, AVATAR_CROP_OUTPUT, AVATAR_CROP_OUTPUT);
+  ctx.drawImage(avatarCrop.image, sx, sy, side, side, 0, 0, AVATAR_CROP_OUTPUT, AVATAR_CROP_OUTPUT);
+  return canvas.toDataURL("image/jpeg", 0.88).split(",")[1];
+}
+
+function settleAvatarCrop(data) {
+  const settle = avatarCrop.settle;
+  avatarCrop.settle = null;
+  avatarCrop.crop = null;
+  avatarCrop.image = null;
+  avatarCrop.pointers.clear();
+  avatarCrop.pinch = null;
+  if (settle) settle(data);
+}
+
+function wireAvatarCrop() {
+  const stage = $("avatar-crop-stage");
+  stage.addEventListener("pointerdown", avatarCropPointerDown);
+  stage.addEventListener("pointermove", avatarCropPointerMove);
+  stage.addEventListener("pointerup", avatarCropPointerUp);
+  stage.addEventListener("pointercancel", avatarCropPointerUp);
+  stage.addEventListener("wheel", avatarCropWheel, { passive: false });
+  $("avatar-crop-range").addEventListener("input", e => {
+    if (avatarCrop.crop) setAvatarCrop(avatarCropZoom(avatarCrop.crop, Number(e.target.value) / AVATAR_CROP_RANGE_SCALE));
+  });
+  $("avatar-crop-zoom-out").appendChild(svgIcon("photo", 14));
+  $("avatar-crop-zoom-in").appendChild(svgIcon("photo", 20));
+  $("avatar-crop-cancel").onclick = hideModals;
+  $("avatar-crop-save").onclick = () => {
+    settleAvatarCrop(avatarCrop.crop ? avatarCropPicture() : null);
+    hideModals();
+  };
+}
+
+async function cropAvatarPicture(src) {
+  const image = await loadPicture(src);
+  settleAvatarCrop(null);
+  $("avatar-crop-img").src = src;
+  showModal("modal-avatar-crop");
+  const stage = $("avatar-crop-stage").clientWidth || AVATAR_CROP_OUTPUT;
+  avatarCrop.image = image;
+  setAvatarCrop(avatarCropStart(image.naturalWidth, image.naturalHeight, stage));
+  return new Promise(resolve => { avatarCrop.settle = resolve; });
+}
+
+async function uploadedAvatar(src) {
+  const blob = await (await fetch(src)).blob();
+  const still = pictureKind(new Uint8Array(await blob.slice(0, 16).arrayBuffer())) !== "gif";
+  return still ? cropAvatarPicture(src) : pictureToAvatar(src);
 }
 
 async function pictureToAvatar(src, { keepStill = false } = {}) {
@@ -19108,9 +19240,7 @@ function renderVoicePanel() {
   renderVoiceTopic(call ? null : vs);
   $("vp-camera-split").classList.toggle("hidden", Boolean(call));
   $("vp-grid").classList.toggle("hidden", Boolean(call));
-  const playing = !state.sharing && state.user && state.user.activity && state.user.activity.startsWith("Playing ")
-    ? state.user.activity.slice(8)
-    : null;
+  const playing = !state.sharing && state.user ? gameFromActivity(state.user.activity) : null;
   const gameBtn = $("vp-game-share");
   gameBtn.classList.toggle("hidden", !playing || Boolean(call));
   if (playing) {
@@ -23835,11 +23965,13 @@ function wireEvents() {
     insertEmojiInName($("account-about"), picked);
     $("account-about").dispatchEvent(new Event("change", { bubbles: true }));
   }, { custom: true });
+  wireAvatarCrop();
   $("avatar-upload").onclick = async () => {
     $("avatar-menu").classList.add("hidden");
     try {
       const src = await chooseImage("Choose your avatar", $("avatar-file"));
-      if (src) await applyAvatar("image", await pictureToAvatar(src));
+      const data = src ? await uploadedAvatar(src) : null;
+      if (data) await applyAvatar("image", data);
     } catch (err) {
       toast(String(err.message || err));
     }
