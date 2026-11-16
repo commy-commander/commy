@@ -32,12 +32,24 @@ impl Moderator {
         &self.policy
     }
 
-    pub fn review(&mut self, state: &ServerState, me: UserId, message: &Message, now: DateTime<Utc>) -> Vec<Act> {
+    pub fn review(
+        &mut self,
+        state: &ServerState,
+        me: UserId,
+        message: &Message,
+        now: DateTime<Utc>,
+        arrived: Option<DateTime<Utc>>,
+    ) -> Vec<Act> {
         let written = written(message);
         let Some(joined) = state.server.member(me).map(|m| m.joined_at) else { return Vec::new() };
-        if message.author == me || written < joined || now - written > Duration::hours(REVIEW_FOR_HOURS) {
+        let seen_at = arrived.unwrap_or(written);
+        if message.author == me || now - seen_at > Duration::hours(REVIEW_FOR_HOURS) {
             return Vec::new();
         }
+        if arrived.is_none() && written < joined {
+            return Vec::new();
+        }
+        let counts_as_strike = written >= joined;
         let Some(hold) = state.hold(message) else { return Vec::new() };
         if !can_remove(state, me) {
             return Vec::new();
@@ -47,12 +59,12 @@ impl Moderator {
         tracing::info!("removing a message in {}: {}", state.server.name, hold.describe());
         let mut acts = vec![Act::Remove { message: message.id }];
         let mut note = format!("Removed a message from {name}: {}", hold.describe());
-        if let Some(limit) = self.policy.ban_after {
+        if let Some(limit) = self.policy.ban_after.filter(|_| counts_as_strike) {
             let key = (state.server.id, author);
             let list = self.strikes.entry(key).or_default();
             if !list.iter().any(|(_, id)| *id == message.id) {
-                let at = list.partition_point(|(t, _)| *t <= written);
-                list.insert(at, (written, message.id));
+                let at = list.partition_point(|(t, _)| *t <= seen_at);
+                list.insert(at, (seen_at, message.id));
             }
             let count = busiest_hour(list);
             if count >= limit as usize && can_ban(state, me, author) {
@@ -94,7 +106,7 @@ impl Moderator {
 impl Handler for Moderator {
     fn handle(&mut self, ctx: &Ctx, event: &BotEvent) -> Vec<Act> {
         match event.message() {
-            Some(message) => self.review(ctx.state, ctx.me, message, ctx.now),
+            Some(message) => self.review(ctx.state, ctx.me, message, ctx.now, None),
             None => Vec::new(),
         }
     }

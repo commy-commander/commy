@@ -17,13 +17,15 @@ pub use store::{BotStore, Outgoing};
 
 use chrono::{DateTime, Utc};
 use commy_core::channel_key::{self, KeyScope, Keyring};
-use commy_core::{action, Action, BotCommand, SignedEvent, Identity, Message, Presence, ServerEvent, ServerId, ServerState, TombstoneProof, UserId, UserProfile};
+use commy_core::{action, Action, BotCommand, Identity, Message, MessageId, Presence, ServerEvent, ServerId, ServerState, SignedEvent, TombstoneProof, UserId, UserProfile};
 use commy_net::catchup::ApplyReport;
 use commy_net::WirePayload;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
 pub const KEEP_HOURS: i64 = 24;
+pub const MAX_ARRIVALS: usize = 50_000;
+const RECENT_ARRIVAL_MINUTES: i64 = 60;
 
 pub struct Bot {
     identity: Identity,
@@ -32,13 +34,14 @@ pub struct Bot {
     moderator: Moderator,
     handlers: Vec<Box<dyn Handler>>,
     commands: BTreeMap<ServerId, Vec<BotCommand>>,
+    arrivals: HashMap<MessageId, DateTime<Utc>>,
 }
 
 impl Bot {
     pub fn new(identity: Identity, mut profile: UserProfile, moderator: Moderator) -> Self {
         profile.presence = Presence::Online;
         profile.identity = Some(identity.public());
-        Self { identity, profile, replicas: BTreeMap::new(), moderator, handlers: Vec::new(), commands: BTreeMap::new() }
+        Self { identity, profile, replicas: BTreeMap::new(), moderator, handlers: Vec::new(), commands: BTreeMap::new(), arrivals: HashMap::new() }
     }
 
     pub fn with(mut self, handler: impl Handler + 'static) -> Self {
@@ -140,6 +143,9 @@ impl Bot {
     ) -> Vec<WirePayload> {
         let Some(replica) = self.replicas.get_mut(&server) else { return Vec::new() };
         let banned = matches!(event, ServerEvent::MemberBan { .. });
+        if let Some(message) = arriving(&event) {
+            note_arrival(&mut self.arrivals, message, wall);
+        }
         let fresh = replica.apply(event, action, now);
         let mut out = self.review(server, fresh, wall);
         if banned {
@@ -163,6 +169,10 @@ impl Bot {
             out.push(WirePayload::Signed(signed));
         }
         out
+    }
+
+    pub fn arrived_at(&self, message: MessageId) -> Option<DateTime<Utc>> {
+        self.arrivals.get(&message).copied()
     }
 
     pub fn on_caught_up(
@@ -200,9 +210,12 @@ impl Bot {
         for event in events {
             let acts = {
                 let Some(state) = self.replicas.get(&server).and_then(|r| r.state.as_ref()) else { return out };
-                let Some(event) = current(state, me, &self.identity, event, &mut seen) else { continue };
+                let Some(event) = current(state, me, &self.identity, event, &self.arrivals, &mut seen) else { continue };
                 let ctx = Ctx { server, state, me, now: wall };
-                let mut acts = self.moderator.handle(&ctx, &event);
+                let mut acts = match event.message() {
+                    Some(message) => self.moderator.review(state, me, message, wall, self.arrivals.get(&message.id).copied()),
+                    None => Vec::new(),
+                };
                 let invoked = invocation(state, me, &event).map(BotEvent::CommandInvoked);
                 for handler in &mut self.handlers {
                     acts.extend(handler.handle(&ctx, &event));
@@ -234,6 +247,8 @@ impl Bot {
 
     pub fn tidy(&mut self, wall: DateTime<Utc>) {
         self.moderator.tidy(wall);
+        let kept_since = wall - chrono::Duration::hours(KEEP_HOURS);
+        self.arrivals.retain(|_, at| *at >= kept_since);
         for handler in &mut self.handlers {
             handler.tidy(wall);
         }
@@ -245,7 +260,33 @@ impl Bot {
     }
 }
 
-fn current(state: &ServerState, me: UserId, identity: &Identity, event: BotEvent, seen: &mut HashSet<commy_core::MessageId>) -> Option<BotEvent> {
+fn arriving(event: &ServerEvent) -> Option<MessageId> {
+    match event {
+        ServerEvent::MessageCreate { message } => Some(message.id),
+        ServerEvent::MessageEdit { message, .. } => Some(*message),
+        _ => None,
+    }
+}
+
+fn note_arrival(arrivals: &mut HashMap<MessageId, DateTime<Utc>>, message: MessageId, wall: DateTime<Utc>) {
+    if arrivals.len() >= MAX_ARRIVALS {
+        let recent = wall - chrono::Duration::minutes(RECENT_ARRIVAL_MINUTES);
+        arrivals.retain(|_, at| *at >= recent);
+    }
+    if arrivals.len() >= MAX_ARRIVALS {
+        arrivals.clear();
+    }
+    arrivals.insert(message, wall);
+}
+
+fn current(
+    state: &ServerState,
+    me: UserId,
+    identity: &Identity,
+    event: BotEvent,
+    arrivals: &HashMap<MessageId, DateTime<Utc>>,
+    seen: &mut HashSet<MessageId>,
+) -> Option<BotEvent> {
     match &event {
         BotEvent::ReactionAdd { user, .. } | BotEvent::ReactionRemove { user, .. } if *user == me => return None,
         _ => {}
@@ -256,7 +297,7 @@ fn current(state: &ServerState, me: UserId, identity: &Identity, event: BotEvent
         return None;
     }
     let message = readable(state, me, identity, state.message(message.id)?)?;
-    if handler::written(&message) < joined {
+    if !arrivals.contains_key(&message.id) && handler::written(&message) < joined {
         return None;
     }
     Some(match event {

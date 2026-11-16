@@ -57,8 +57,8 @@ fn held_messages_are_removed_only_once_the_bot_may_remove_them() {
     assert!(world.posted(fine).is_empty());
     let from_owner = post(&world.owner_state, world.channel, world.owner, "gold is exempt for the owner");
     assert!(world.posted(from_owner).is_empty());
-    let replayed = post_at(&world.owner_state, world.channel, world.member, "old gold", Utc::now() - Duration::hours(1));
-    assert!(world.posted(replayed).is_empty(), "messages from before the bot joined are left to moderators");
+    let backdated = post_at(&world.owner_state, world.channel, world.member, "old gold", Utc::now() - Duration::hours(1));
+    assert_eq!(deletes(&world.posted(backdated.clone())), vec![backdated.id], "a message that reaches the bot live is reviewed whatever time it claims");
 
     world.bot.tidy(Utc::now() + Duration::hours(commy_bot::KEEP_HOURS + 1));
     let kept = world.bot.replica(world.sid()).unwrap().state.as_ref().unwrap();
@@ -137,6 +137,38 @@ fn a_bot_without_ban_rights_leaves_the_key_alone() {
     let sid = world.sid();
     let out = world.by_owner(ServerEvent::MemberBan { server: sid, user: world.member });
     assert!(!out.iter().any(|p| key_added_by(p, world.bot_id)));
+}
+
+#[test]
+fn backdated_messages_that_arrive_live_are_removed_and_count_toward_bans() {
+    let mut world = World::new(Policy { log_channel: None, ban_after: Some(2) });
+    let sid = world.sid();
+    let hello = world.bot.announcements(sid, Utc::now().timestamp_millis());
+    world.deliver(hello);
+    let joined = Utc::now() - Duration::hours(3 * commy_bot::KEEP_HOURS);
+    let bot_id = world.bot_id;
+    world.owner_state.server.members.iter_mut().find(|m| m.user == bot_id).unwrap().joined_at = joined;
+    let snapshot = world.snapshot_from(world.owner);
+    let out = world.bot.on_snapshot(sid, snapshot, Instant::now(), Utc::now()).unwrap();
+    world.deliver(out);
+    world.block("gold");
+    world.promote(Permissions::MANAGE_MESSAGES | Permissions::BAN_MEMBERS);
+    world.bot.tidy(Utc::now());
+
+    let before_join = post_at(&world.owner_state, world.channel, world.member, "gold", joined - Duration::minutes(1));
+    let out = world.posted(before_join.clone());
+    assert_eq!(deletes(&out), vec![before_join.id], "a claim from before the bot joined does not dodge removal");
+    world.deliver(out);
+    let day_old = post_at(&world.owner_state, world.channel, world.member, "gold again", Utc::now() - Duration::hours(commy_bot::KEEP_HOURS + 1));
+    let out = world.posted(day_old.clone());
+    assert_eq!(deletes(&out), vec![day_old.id], "a day-old claim does not dodge review");
+    assert!(!out.iter().any(|p| is_ban(p, world.member)), "one strike is not yet a ban");
+    world.deliver(out);
+    let older = post_at(&world.owner_state, world.channel, world.member, "gold once more", Utc::now() - Duration::hours(commy_bot::KEEP_HOURS + 5));
+    let out = world.posted(older.clone());
+    assert_eq!(deletes(&out), vec![older.id]);
+    assert!(out.iter().any(|p| is_ban(p, world.member)), "strikes are timed by arrival, so claims hours apart still land in one hour");
+    assert!(world.bot.arrived_at(older.id).is_some());
 }
 
 #[test]

@@ -449,6 +449,13 @@ impl ServerState {
         removed
     }
 
+    pub fn without_local_floor<T>(&mut self, apply: impl FnOnce(&mut Self) -> T) -> T {
+        let floor = self.local_floor.take();
+        let result = apply(self);
+        self.local_floor = floor;
+        result
+    }
+
     fn rolled_off(&self, message: &Message) -> bool {
         self.local_floor.is_some_and(|floor| message.created_at < floor)
             && !self.server.is_pinned(message.id)

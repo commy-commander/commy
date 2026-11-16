@@ -188,10 +188,10 @@ fn apply_live(state: &mut ServerState, event: ServerEvent, action: Option<Action
         }
         _ => None,
     };
-    let applied = match action {
+    let applied = state.without_local_floor(|state| match action {
         Some(action) => state.apply_signed(&SignedEvent { action, event }),
         None => state.apply_unsigned(event),
-    };
+    });
     let pinned = keyless.is_some_and(|user| applied.is_ok() && state.identity_of(user).is_some());
     let happened = matches!(applied, Ok(true)).then(|| before.after(state)).flatten();
     (applied, happened, pinned)
