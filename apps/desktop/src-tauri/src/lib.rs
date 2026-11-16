@@ -7802,6 +7802,7 @@ async fn run_net_loop(
                             let shown = profile_changed
                                 .filter(|_| replayed)
                                 .map(|user| state.profiles.get(&user).map_or(Presence::Offline, |p| p.presence));
+                            let fresh_presence = device_presence.is_some() && state.signed_recently(&event, action.as_ref(), chrono::Utc::now().timestamp_millis());
                             let (mut applied, new_message, pinned) = catchup::apply_live(state, event, action);
                             if applied.is_ok() {
                                 liveness::heard_seat_news(&app, state, seat_news, std::time::Instant::now());
@@ -7811,7 +7812,7 @@ async fn run_net_loop(
                                     profile.presence = shown;
                                 }
                             }
-                            if let (Ok(_), Some((user, said))) = (&applied, device_presence) {
+                            if let (true, Ok(_), Some((user, said))) = (fresh_presence, &applied, device_presence) {
                                 let now = std::time::Instant::now();
                                 if liveness::settle_device_presence(&app, state, user, &sender, said, now, action.map(|a| a.at)) {
                                     applied = Ok(true);

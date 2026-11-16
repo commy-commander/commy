@@ -333,6 +333,7 @@ impl Client {
         let now = web_time::Instant::now();
         let mut servers = self.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&server) else { return false };
+        let fresh = said.is_some() && state.signed_recently(&event, action.as_ref(), Utc::now().timestamp_millis());
         let mut changed = match commy_net::catchup::apply_live(state, event, action).0 {
             Ok(changed) => changed,
             Err(_) => return false,
@@ -340,7 +341,7 @@ impl Client {
         let mut live = self.liveness.lock().unwrap();
         live.heard_seat_news(state, news, now);
         let said_at = action.map(|a| a.at);
-        if let Some((user, presence)) = said {
+        if let Some((user, presence)) = said.filter(|_| fresh) {
             changed |= live.settle_device_presence(state, user, node, presence, now, said_at);
         }
         if let Some(user) = speaker {

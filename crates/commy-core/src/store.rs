@@ -731,6 +731,12 @@ impl ServerState {
         self.action_times.get(subject).copied()
     }
 
+    pub fn signed_recently(&self, event: &ServerEvent, action: Option<&Action>, now_ms: i64) -> bool {
+        action.is_some_and(|action| {
+            (now_ms - action.at).abs() <= MAX_DEVICE_SIGNAL_AGE_MS && self.admits_signed(&SignedEvent { action: action.clone(), event: event.clone() }).is_ok()
+        })
+    }
+
     pub fn admits_signed(&self, signed: &SignedEvent) -> Result<bool, StoreError> {
         let by = signed.action.by;
         let key = self.signer_key(signed).ok_or(StoreError::UnknownAuthorKey(by))?;
@@ -3184,6 +3190,7 @@ fn carried_profile(event: &ServerEvent) -> Option<&UserProfile> {
 }
 
 pub const MAX_GRANT_AHEAD_MS: i64 = 120_000;
+pub const MAX_DEVICE_SIGNAL_AGE_MS: i64 = 5 * 60 * 1000;
 
 fn is_key_grant(event: &ServerEvent) -> bool {
     matches!(event, ServerEvent::ChannelKeyGrant { .. } | ServerEvent::CommunityKeyGrant { .. })
@@ -5565,6 +5572,20 @@ mod tests {
 
     fn by_owner(state: &ServerState, owner: UserId, at: i64, event: ServerEvent) -> SignedEvent {
         SignedEvent::sign(state.server.id, owner, at, event, &identity_for(owner))
+    }
+
+    #[test]
+    fn device_signals_count_only_when_signed_by_the_user_and_recent() {
+        let (state, _, owner) = fixture();
+        let now = Utc::now().timestamp_millis();
+        let event = ServerEvent::PresenceUpdate { user: owner, presence: crate::user::Presence::Online };
+        let at = |when: i64| SignedEvent::sign(state.server.id, owner, when, event.clone(), &identity_for(owner)).action;
+        assert!(state.signed_recently(&event, Some(&at(now)), now));
+        assert!(state.signed_recently(&event, Some(&at(now - 60_000)), now), "a slower device still counts");
+        assert!(!state.signed_recently(&event, Some(&at(now - MAX_DEVICE_SIGNAL_AGE_MS - 1)), now), "an old copy replayed later does not");
+        assert!(!state.signed_recently(&event, None, now));
+        let forged = SignedEvent::sign(state.server.id, owner, now, event.clone(), &crate::identity::Identity::generate()).action;
+        assert!(!state.signed_recently(&event, Some(&forged), now));
     }
 
     #[test]
