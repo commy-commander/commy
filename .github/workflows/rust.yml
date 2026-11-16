@@ -43,13 +43,11 @@ jobs:
       macos: ${{ steps.pick.outputs.macos }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
       - id: pick
         env:
-          EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
           PR: ${{ github.event.pull_request.number }}
           BASE: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -59,17 +57,6 @@ jobs:
             echo "macos=$2" >> "$GITHUB_OUTPUT"
             echo "Linux: $1, Windows and macOS: $2"
           }
-          if [ "$EVENT" = push ]; then
-            dependencies='(^|/)Cargo\.(toml|lock)$|^\.github/(workflows/rust\.yml|actions/rust-check/)'
-            if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-              pick true true
-            elif git diff --name-only "$BEFORE" HEAD | grep -Eq "$dependencies"; then
-              pick true true
-            else
-              pick true false
-            fi
-            exit 0
-          fi
           if [ -z "$PR" ]; then
             pick true true
             exit 0
@@ -77,12 +64,9 @@ jobs:
           files="$(git diff --name-only "origin/$BASE...HEAD")"
           not_compiled='\.md$|^crates/commy-bot/clients/'
           phone_only='^apps/desktop/src-tauri/(gen/|tauri\.(android|ios)\.conf\.json$|Info\.ios\.plist$|package(-lock)?\.json$)|/phone\.rs$'
-          no_os_code='^apps/web/|^crates/commy-(view|bot|sync-server)/'
           compiled="$(printf '%s\n' "$files" | grep -Ev "$not_compiled|$phone_only" || true)"
           if [ -z "$compiled" ]; then
             pick false false
-          elif printf '%s\n' "$compiled" | grep -Evq "$no_os_code"; then
-            pick true true
           else
             pick true false
           fi

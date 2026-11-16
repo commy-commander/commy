@@ -374,6 +374,7 @@ jobs:
 
   sync-image:
     name: sync image
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -427,6 +428,7 @@ jobs:
 
   relay-image:
     name: relay image
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -478,6 +480,7 @@ jobs:
 
   image:
     name: ${{ matrix.service }} image
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
