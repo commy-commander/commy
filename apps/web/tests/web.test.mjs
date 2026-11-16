@@ -365,7 +365,8 @@ test("closing the picker sends nothing", async () => {
   assert.equal(await picking, null);
 });
 
-test("a downloaded file is saved under its own name and leaves nothing behind on the page", () => {
+test("a downloaded file is saved under its own name and leaves nothing behind on the page", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const doc = fakeDocument();
   const revoked = [];
   const urls = { createObjectURL: () => "blob:one", revokeObjectURL: url => revoked.push(url) };
@@ -376,6 +377,9 @@ test("a downloaded file is saved under its own name and leaves nothing behind on
   assert.equal(link.clicks, 1);
   assert.deepEqual(doc.body.children, []);
   assert.equal(webSaveFile(fakeDocument(), urls, new Uint8Array([1]), ""), "file");
+  assert.deepEqual(revoked, []);
+  t.mock.timers.runAll();
+  assert.deepEqual(revoked, ["blob:one", "blob:one"]);
 });
 
 test("a saved chat image keeps the name the chat gave it", () => {
