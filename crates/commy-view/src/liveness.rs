@@ -160,8 +160,7 @@ impl Liveness {
                     continue;
                 }
                 alive.insert((*sid, user));
-                if self.goodbye_stood(state, user, now)
-                    || self.voice_device_went_quiet(state, user, now, expire, lasting) || self.seat_went_unconfirmed(state, user, now, expire, lasting) {
+                if self.goodbye_stood(state, user, now) || self.voice_device_went_quiet(state, user, now, expire) || self.seat_went_unconfirmed(state, user, now, expire) {
                     gone |= state.end_voice(user);
                 }
             }
@@ -191,22 +190,20 @@ impl Liveness {
         true
     }
 
-    fn seat_went_unconfirmed(&mut self, state: &ServerState, user: UserId, now: Instant, expire: Duration, lasting: bool) -> bool {
+    fn seat_went_unconfirmed(&mut self, state: &ServerState, user: UserId, now: Instant, expire: Duration) -> bool {
         let key = (state.server.id, user);
         if !state.voice_states.contains_key(&user) {
             self.seats_heard.remove(&key);
             return false;
         }
         let last = *self.seats_heard.entry(key).or_insert(now);
-        let window = if lasting { expire.max(SERVICE_EXPIRE) } else { expire };
-        now.duration_since(last) > window
+        now.duration_since(last) > expire
     }
 
-    fn voice_device_went_quiet(&mut self, state: &ServerState, user: UserId, now: Instant, expire: Duration, lasting: bool) -> bool {
+    fn voice_device_went_quiet(&mut self, state: &ServerState, user: UserId, now: Instant, expire: Duration) -> bool {
         let Some(node) = state.voice_device(user) else { return false };
         let last = *self.device_heard.entry((state.server.id, user, node.to_ascii_lowercase())).or_insert(now);
-        let window = if lasting { expire.max(SERVICE_EXPIRE) } else { expire };
-        now.duration_since(last) > window
+        now.duration_since(last) > expire
     }
 
     pub fn rest(&mut self) {
@@ -385,18 +382,46 @@ mod tests {
     }
 
     #[test]
-    fn a_seat_heard_only_through_the_service_lasts_its_longer_window() {
+    fn a_seat_beating_only_through_the_service_stays() {
         let mut room = room();
         let mut live = Liveness::default();
         let (sid, friend, voice) = (room.sid, room.friend, room.voice);
         let start = Instant::now();
         room.announce(DESKTOP, Some(voice), 1_000);
-        live.heard_through_service(sid, friend, start);
-        live.heard_device(sid, friend, &node_hex(&DESKTOP), start);
-        assert!(room.sweep(&mut live, start + SERVICE_BEAT, 15_000).is_empty());
+        let mut at = start;
+        for beat in 0..8 {
+            live.heard_through_service(sid, friend, at);
+            live.heard_device(sid, friend, &node_hex(&DESKTOP), at);
+            live.heard_seat_news(&room.servers[&sid], Some((friend, voice)), at);
+            assert!(room.sweep(&mut live, at, beat * 15_000).is_empty());
+            at += BEAT;
+        }
+        assert!(at > start + SERVICE_BEAT);
         assert_eq!(room.seated(), Some(voice));
-        assert_eq!(room.sweep(&mut live, start + SERVICE_EXPIRE + SWEEP_EVERY, 30_000), vec![sid]);
-        assert_eq!(room.seated(), None);
+    }
+
+    #[test]
+    fn a_missed_leave_ends_within_the_short_window_while_the_service_still_hears_them() {
+        let mut room = room();
+        let mut live = Liveness::default();
+        let (sid, friend, voice) = (room.sid, room.friend, room.voice);
+        let start = Instant::now();
+        room.announce(DESKTOP, Some(voice), 1_000);
+        live.heard_seat_news(&room.servers[&sid], Some((friend, voice)), start);
+        let mut at = start;
+        let mut beat = 0;
+        while at <= start + EXPIRE {
+            live.heard_through_service(sid, friend, at);
+            live.heard_device(sid, friend, &node_hex(&DESKTOP), at);
+            assert!(room.sweep(&mut live, at, beat * 15_000).is_empty(), "the seat is still inside its window");
+            at += SWEEP_EVERY;
+            beat += 1;
+        }
+        live.heard_through_service(sid, friend, at);
+        live.heard_device(sid, friend, &node_hex(&DESKTOP), at);
+        assert_eq!(room.sweep(&mut live, at, beat * 15_000), vec![sid]);
+        assert_eq!(room.seated(), None, "they left voice and stayed online, and we never got the leave");
+        assert_eq!(room.servers[&sid].profiles[&friend].presence, Presence::Online);
     }
 
     #[test]

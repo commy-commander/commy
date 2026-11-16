@@ -15,7 +15,13 @@ Change them only together with the tests named at the end.
    per account. A device that announces a voice room takes the seat when
    nobody holds it, when it already holds it, or when its `since` is later
    than the holder's (a tie keeps the holder). Every other device of that account is then stood up.
-   An older join heard late does not take the seat back. The devices
+   An older join heard late does not take the seat back. Neither does a
+   device's own join heard after that device left it: each device remembers
+   the join (`since`) it last left, and a `DeviceAnnounce` naming that join
+   or an earlier one is a beat sent before the leave that arrived late (a
+   slow path through a relay, or the leave going through the sync service
+   ahead of it). A seat ended by silence keeps no such mark, so the same
+   join heard again after a short drop takes the seat back. The devices
    themselves follow the same rule (`devices::takes_over`), so the device that
    loses stops its call on its own.
 4. While a voice device is known, the registry decides the room. A
@@ -88,8 +94,12 @@ a seat when any of these happens:
 - nobody has heard from the member for `EXPIRE` (2 minutes), or 11 minutes
   when they were last heard only through the sync service.
 - the member is still heard from another device, but the voice device itself
-  has been quiet for the same window.
-- nobody has re-confirmed the seat for the same window. A seat is confirmed
+  has been quiet for `EXPIRE`, also when it is heard only through the sync
+  service, because the voice device beats there too.
+- nobody has re-confirmed the seat for `EXPIRE` (2 minutes), whichever way the
+  member is heard. A leave is a live message with no replay, so an app whose
+  sync link or relay was down when it went out never gets it, and this is the
+  window that clears the seat then. A seat is confirmed
   only by news that names the room the member is in: a `VoiceState` or a
   `DeviceAnnounce` for that room, or live media from them in our own call.
   This ends seats we learned without their device (a snapshot's hearsay) and
@@ -157,14 +167,16 @@ channel however many devices they have. Dial their media through
 ## Tests that pin these rules
 
 - `commy-core` `devices`: a later join takes the seat, an older join heard
-  late does not, a tie keeps the holder, a join stamp beats the seat it takes
+  late does not, a device's own join heard after it left does not, a seat
+  ended by silence comes back, a tie keeps the holder, a join stamp beats the seat it takes
   over, standing up clears every seat.
 - `commy-core` `store`: only the device in voice can end the seat, the device
   in voice decides the room whatever its clock says, members without devices,
   ending voice, a fresh copy keeps who is in voice.
 - `commy-view` `liveness`: a quiet voice device, a seat that keeps beating,
   a seat nobody confirms, news about another room, someone appearing
-  offline, the sync service window, going offline on the voice device and a
+  offline, a seat beating only through the sync service, a missed leave while
+  the service still hears them, going offline on the voice device and a
   stale goodbye, a goodbye taken back by a reconnect, waking from sleep.
 
 The app also holds the leave sound for `LEAVE_CUE_HOLD_MS` (2.5 seconds) and

@@ -7000,6 +7000,25 @@ mod tests {
     }
 
     #[test]
+    fn a_seat_beat_delivered_after_the_leave_does_not_seat_the_member_again() {
+        let (mut state, _, _) = fixture();
+        let (general, _) = two_rooms(&mut state);
+        let member = join(&mut state, "friend");
+        let phone = "ab".repeat(32);
+        state.apply(device(&state, member, &phone, Some(general), 1_000)).unwrap();
+        state.apply(device(&state, member, &phone, None, 0)).unwrap();
+        assert_eq!(state.voice_states.get(&member), None);
+
+        state.apply(device(&state, member, &phone, Some(general), 1_000)).unwrap();
+        assert_eq!(state.voice_states.get(&member), None, "the beat was sent before the leave and arrived after it");
+
+        let again = state.voice_join_stamp(member, 900);
+        assert!(again > 1_000);
+        state.apply(device(&state, member, &phone, Some(general), again)).unwrap();
+        assert_eq!(state.voice_states.get(&member), Some(&general), "joining again seats them");
+    }
+
+    #[test]
     fn the_device_in_voice_decides_the_room_whatever_its_clock_says() {
         let (mut state, _, _) = fixture();
         let (general, lounge) = two_rooms(&mut state);

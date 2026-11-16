@@ -9,6 +9,7 @@ pub struct Device {
     pub node: String,
     pub voice: Option<ChannelId>,
     pub since: Option<i64>,
+    pub left: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -23,9 +24,12 @@ pub fn node_key(node: &str) -> Option<String> {
 
 impl Devices {
     pub fn note(&mut self, user: UserId, node: String, voice: Option<ChannelId>, since: Option<i64>) -> bool {
-        let takes_seat = voice.is_some() && self.voice_holder(user).is_none_or(|held| held.node == node || since > held.since);
+        let before_now = self.of(user).iter().find(|d| d.node == node).cloned();
+        let heard_late = before_now.as_ref().is_some_and(|d| repeats_a_join_it_left(d, since));
+        let takes_seat = voice.is_some() && !heard_late && self.voice_holder(user).is_none_or(|held| held.node == node || since > held.since);
         let voice = voice.filter(|_| takes_seat);
-        let device = Device { node, since: voice.and(since), voice };
+        let left = before_now.as_ref().and_then(|d| if voice.is_some() { d.left } else { last_join(d) });
+        let device = Device { node, since: voice.and(since), voice, left };
         let list = self.by_user.entry(user).or_default();
         let before = list.clone();
         if takes_seat {
@@ -41,8 +45,8 @@ impl Devices {
     }
 
     pub fn join_stamp(&self, user: UserId, now_ms: i64) -> i64 {
-        let held = self.voice_holder(user).and_then(|d| d.since);
-        held.map_or(now_ms, |since| now_ms.max(since.saturating_add(1)))
+        let latest = self.of(user).iter().filter_map(last_join).max();
+        latest.map_or(now_ms, |since| now_ms.max(since.saturating_add(1)))
     }
 
     pub fn voice_holder(&self, user: UserId) -> Option<&Device> {
@@ -52,7 +56,7 @@ impl Devices {
     pub fn stand_up(&mut self, user: UserId) -> bool {
         let Some(list) = self.by_user.get_mut(&user) else { return false };
         let seated = list.iter().any(|d| d.voice.is_some());
-        list.iter_mut().for_each(unseat);
+        list.iter_mut().for_each(clear_seat);
         seated
     }
 
@@ -78,8 +82,21 @@ impl Devices {
 }
 
 fn unseat(device: &mut Device) {
+    device.left = last_join(device);
+    clear_seat(device);
+}
+
+fn clear_seat(device: &mut Device) {
     device.voice = None;
     device.since = None;
+}
+
+fn last_join(device: &Device) -> Option<i64> {
+    device.since.max(device.left)
+}
+
+fn repeats_a_join_it_left(device: &Device, since: Option<i64>) -> bool {
+    device.voice.is_none() && since.zip(device.left).is_some_and(|(since, left)| since <= left)
 }
 
 fn liveliness(presence: Presence) -> u8 {
@@ -147,6 +164,36 @@ mod tests {
         assert_eq!(devices.of(user).iter().find(|d| d.node == node(1)).and_then(|d| d.voice), None);
         devices.note(user, node(2), Some(room), Some(2_000));
         assert_eq!(devices.in_voice(user, room), Some(node(2).as_str()), "the device in voice may move rooms");
+    }
+
+    #[test]
+    fn a_join_heard_after_its_device_left_does_not_seat_it_again() {
+        let (mut devices, user, room) = (Devices::default(), UserId::new(), ChannelId::new());
+        devices.note(user, node(1), Some(room), Some(1_000));
+        devices.note(user, node(1), None, None);
+        assert!(!devices.note(user, node(1), Some(room), Some(1_000)), "a beat from before the leave arrived late");
+        assert!(devices.voice_holder(user).is_none());
+        assert!(devices.note(user, node(1), Some(room), Some(devices.join_stamp(user, 500))));
+        assert_eq!(devices.in_voice(user, room), Some(node(1).as_str()), "joining again is a new join");
+    }
+
+    #[test]
+    fn a_device_stood_up_by_a_later_join_is_not_seated_again_by_its_old_join() {
+        let (mut devices, user, room) = (Devices::default(), UserId::new(), ChannelId::new());
+        devices.note(user, node(1), Some(room), Some(1_000));
+        devices.note(user, node(2), Some(room), Some(2_000));
+        devices.note(user, node(2), None, None);
+        devices.note(user, node(1), Some(room), Some(1_000));
+        assert!(devices.voice_holder(user).is_none());
+    }
+
+    #[test]
+    fn a_seat_ended_by_silence_comes_back_when_the_same_join_is_heard_again() {
+        let (mut devices, user, room) = (Devices::default(), UserId::new(), ChannelId::new());
+        devices.note(user, node(1), Some(room), Some(1_000));
+        devices.stand_up(user);
+        assert!(devices.note(user, node(1), Some(room), Some(1_000)));
+        assert_eq!(devices.in_voice(user, room), Some(node(1).as_str()));
     }
 
     #[test]
