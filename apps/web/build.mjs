@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { bundleWebPage } from "./bundle.mjs";
 import { dirname, join, relative, sep } from "node:path";
 import { injectWebShell, webRelayList } from "./shell.mjs";
 
@@ -52,5 +53,18 @@ cpSync(join(repo, "apps", "desktop", "src-tauri", "voice-pack.json"), join(dist,
 run("wasm-bindgen", ["--target", "web", "--no-typescript", "--out-dir", join(dist, "scripts", "pkg"), wasm]);
 
 const index = join(dist, "index.html");
-writeFileSync(index, injectWebShell(readFileSync(index, "utf8"), { relays, base }));
+const inDist = path => join(dist, ...path.split("/"));
+const shell = injectWebShell(readFileSync(index, "utf8"), { relays, base });
+writeFileSync(
+  index,
+  bundleWebPage(shell, {
+    read: path => readFileSync(inDist(path)),
+    write: (path, bytes) => {
+      mkdirSync(dirname(inDist(path)), { recursive: true });
+      writeFileSync(inDist(path), bytes);
+    },
+    remove: path => rmSync(inDist(path)),
+    wasmPackage: { js: "scripts/pkg/commy_web_client.js", wasm: "scripts/pkg/commy_web_client_bg.wasm" },
+  }),
+);
 console.log(`web client built into ${dist}`);

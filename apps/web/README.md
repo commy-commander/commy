@@ -80,7 +80,12 @@ cargo install wasm-bindgen-cli --locked --version "$(cargo metadata --format-ver
 node apps/web/build.mjs
 ```
 
-The bundle lands in `apps/web/dist`. Build settings:
+The bundle lands in `apps/web/dist`. The page loads its scripts, stylesheets,
+fonts and WebAssembly from `assets/`, joined into a few files named after a
+hash of their content, so a server can let browsers and caches keep everything
+under `assets/` for a year and only revalidate the page itself. Scripts are
+joined in page order, and a script that opens with `"use strict"` never shares
+a file with one that does not. Build settings:
 
 - `COMMY_WEB_RELAYS`: a comma-separated list of relays the page may use. The
   page's content security policy allows only its own site and these relays.

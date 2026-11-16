@@ -24,6 +24,8 @@ before(async () => {
   await writeFile(join(dir, "scripts", "app.js"), "console.log(1)");
   await writeFile(join(dir, "scripts", "pkg", "client_bg.wasm"), Buffer.from([0, 97, 115, 109]));
   await writeFile(join(dir, "scripts", "with space.js"), "1");
+  await mkdir(join(dir, "assets"), { recursive: true });
+  await writeFile(join(dir, "assets", "scripts-0123456789abcdef.js"), "console.log(2)");
   const web = createWebClient({ dir, env: { COMMY_RELAY_URLS: "https://relay.example.test:8443/", COMMY_DOWNLOAD_URL: "/download" } });
   assert.equal(web.enabled, true, web.reason);
   server = http.createServer((req, res) => {
@@ -85,6 +87,13 @@ test("files are served with their type and revalidate by etag", async () => {
   assert.equal((await get("/web/scripts/with%20space.js")).status, 200);
   const page = await get("/web");
   assert.equal((await get("/web", { "if-none-match": page.headers.get("etag") })).status, 304);
+});
+
+test("hashed bundle files are cached for a year and never revalidated", async () => {
+  const res = await get("/web/assets/scripts-0123456789abcdef.js");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("cache-control"), "public, max-age=31536000, immutable");
+  assert.equal((await get("/web/scripts/app.js")).headers.get("cache-control"), "public, max-age=0, must-revalidate");
 });
 
 test("head requests send no body", async () => {

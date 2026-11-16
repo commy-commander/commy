@@ -32,6 +32,12 @@ const CONTENT_TYPES = {
   "": "text/plain; charset=utf-8",
 };
 const BINARY = "application/octet-stream";
+const REVALIDATE = "public, max-age=0, must-revalidate";
+const HASHED_FOREVER = "public, max-age=31536000, immutable";
+
+export function fileCacheControl(name) {
+  return name.startsWith("assets/") ? HASHED_FOREVER : REVALIDATE;
+}
 
 export function configuredRelays(env = process.env) {
   const relays = String(env.COMMY_RELAY_URLS ?? "")
@@ -68,6 +74,7 @@ function listFiles(dir) {
         const name = relative(dir, full).split(sep).join("/");
         files.set(name, {
           full,
+          cacheControl: fileCacheControl(name),
           size: stat.size,
           type: CONTENT_TYPES[extname(name)] ?? BINARY,
           etag: `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`,
@@ -112,7 +119,7 @@ export function createWebClient({ env = process.env, dir = WEB_CLIENT_DIR } = {}
   }
 
   function serveFile(req, res, file) {
-    const headers = { ...SECURITY_HEADERS, "content-type": file.type, "cache-control": "public, max-age=0, must-revalidate", etag: file.etag };
+    const headers = { ...SECURITY_HEADERS, "content-type": file.type, "cache-control": file.cacheControl, etag: file.etag };
     if (fresh(req, file.etag)) {
       res.writeHead(304, headers);
       return res.end();
