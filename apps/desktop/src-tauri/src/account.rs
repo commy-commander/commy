@@ -344,8 +344,6 @@ fn signed_out_in_place(switched: bool, folder_open: bool, can_relaunch: bool) ->
 fn leave_account(app: &App, handle: &AppHandle, switched: bool) {
     let folder_open = app.data_dir().is_some();
     if signed_out_in_place(switched, folder_open, !cfg!(target_os = "ios")) {
-        #[cfg(target_os = "ios")]
-        crate::relaunch::start_fresh_when_hidden(true);
         return;
     }
     if switched || folder_open {
@@ -1015,10 +1013,6 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
     use_sync_service(handle, server, doc);
     let renewing = handle.clone();
     tauri::async_runtime::spawn(async move { crate::server_guard::renew_home_card(&renewing).await });
-    #[cfg(target_os = "ios")]
-    if next == AfterSignIn::KeepOpen {
-        crate::relaunch::start_fresh_when_hidden(false);
-    }
     match (&next, app.data_dir()) {
         (AfterSignIn::Restart, _) => restart_signed_in_as_someone_else(handle),
         (AfterSignIn::KeepOpen, Some(dir)) if account_folder::is_locked(dir) => {
