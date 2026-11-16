@@ -874,6 +874,11 @@ async function mockInvoke(cmd, args = {}) {
       return null;
     }
     case "account_server_info": return { origin: "https://commy.chat", host: "commy.chat", is_default: true };
+    case "account_moved_to": return { moved_to: /[?&]movedto\b/.test(location.search) ? "https://friends.example" : null };
+    case "account_move_pending": return /[?&]movepending\b/.test(location.search) ? "https://friends.example" : null;
+    case "take_account_moved_in": return /[?&]movedin\b/.test(location.search) && !mock.movedInShown && (mock.movedInShown = true) ? { from: "https://commy.chat", to: "https://friends.example" } : null;
+    case "start_account_move": return new Promise(resolve => setTimeout(resolve, 1500));
+    case "follow_account_move": return null;
     case "set_server_public": {
       const s = mock.servers[args.serverId];
       if (s) s.public = args.public;
@@ -14131,17 +14136,48 @@ let syncHostPending = null;
 function renderSyncHostEditor(server) {
   syncHostPending = null;
   const host = server.sync_host || null;
-  $("sync-host-now").textContent = syncHostNow(server);
+  const ownerHome = account && account.server_host;
+  $("sync-host-now").textContent = syncHostNow(server, null, ownerHome);
   invoke("sync_host_release", { serverId: server.id })
     .then(release => {
-      if (state.currentServer && state.currentServer.id === server.id) $("sync-host-now").textContent = syncHostNow(server, release);
+      if (state.currentServer && state.currentServer.id === server.id) $("sync-host-now").textContent = syncHostNow(server, release, ownerHome);
     })
     .catch(() => {});
   $("sync-host-input").value = "";
   $("sync-host-status").textContent = "";
   $("sync-host-save").textContent = "Check and Move";
   $("sync-host-home").classList.toggle("hidden", !host);
+  renderSyncHostGuide();
 }
+
+function renderSyncHostGuide() {
+  const done = syncHostGuideDone(localStorage);
+  $("sync-host-guide").classList.toggle("hidden", done);
+  $("sync-host-guide-again").classList.toggle("hidden", !done);
+  const list = $("sync-host-guide-steps");
+  if (list.childElementCount) return;
+  for (const step of syncHostGuideSteps()) {
+    const item = el("li");
+    item.append(el("b", null, step.title), el("span", null, step.text));
+    list.appendChild(item);
+  }
+}
+
+function setSyncHostGuideDone(done) {
+  finishSyncHostGuide(localStorage, done);
+  renderSyncHostGuide();
+}
+
+function openHelp(page) {
+  invoke("open_url", { url: helpUrl(page) }).catch(err => toast(String(err)));
+}
+
+document.addEventListener("click", e => {
+  const key = e.target.closest("[data-help]");
+  if (!key) return;
+  e.preventDefault();
+  openHelp(key.dataset.help);
+});
 
 async function moveSyncHost(home) {
   const server = state.currentServer;
@@ -14284,6 +14320,8 @@ function wireServerTagEditor() {
   $("file-store-save").onclick = () => saveFileStore(false);
   $("sync-host-save").onclick = () => moveSyncHost(false);
   $("sync-host-home").onclick = () => moveSyncHost(true);
+  $("sync-host-guide-done").onclick = () => setSyncHostGuideDone(true);
+  $("sync-host-guide-again").onclick = () => setSyncHostGuideDone(false);
   $("sync-host-input").addEventListener("input", () => {
     syncHostPending = null;
     $("sync-host-save").textContent = "Check and Move";
@@ -26852,7 +26890,7 @@ async function continueBoot() {
   if (target) await openNotificationTarget(target);
   const call = await invoke("get_dm_call").catch(() => null);
   if (call) onDmCall(call);
-  if (!(await takePendingInviteLink())) await offerTrayPrompt();
+  if (!(await takePendingInviteLink()) && !(await showMovedInIfDue())) await offerTrayPrompt();
 }
 
 const ACCOUNT_PROFILE_WAIT_MS = 15000;
@@ -26998,6 +27036,7 @@ function showSignIn() {
     $("signin-wait").classList.remove("hidden");
   }
   prepareInAppSignIn();
+  showMoveFinishNote();
   showModal("modal-signin");
 }
 

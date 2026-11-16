@@ -3061,3 +3061,5 @@ html[data-look="studio"][data-fit="slim"] .toast > .toast-avatar { flex: none; w
 html[data-look="studio"][data-fit="slim"] .toast > .toast-avatar .presence-dot { border-color: var(--bg-raised); }
 html[data-look="studio"][data-fit="slim"] body:has(> #modal-backdrop:not(.hidden)) > .toast { bottom: calc(var(--keyboard-height, 0px) + env(safe-area-inset-bottom) + 104px); }
 html[data-look="studio"][data-fit="slim"] .stage-ink-tools > .stage-btn { width: 44px; min-width: 44px; }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ilearn { margin-top: 10px; padding: 6px 4px; border: 0; background: none; color: var(--link); font: 600 14px/1.4 var(--font); }
+html[data-look="studio"][data-fit="slim"] .pt-invite .ilearn.hidden { display: none; }

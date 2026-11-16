@@ -20,8 +20,8 @@ function cleanSyncHost(input) {
   return syncHostOk(host) ? host.toLowerCase() : null;
 }
 
-function syncHostNow(server, release) {
-  const now = `This server syncs through ${(server && server.sync_host) || SYNC_HOST_HOME}.`;
+function syncHostNow(server, release, ownerHome = SYNC_HOST_HOME) {
+  const now = `This server syncs through ${(server && server.sync_host) || ownerHome || SYNC_HOST_HOME}.`;
   return release && release.text ? `${now} ${release.text}` : now;
 }
 

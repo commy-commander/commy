@@ -101,6 +101,8 @@ const LOCALE_ES = {
   "signin.server.note": "Los servidores propios funcionan por su cuenta, aunque Commy.chat esté caído. Puedes crear una cuenta allí en la página que se abre.",
   "signin.server.warning": "Este servidor no está en la lista de Commy. Añade solo un servidor que conozcas y en el que confíes. Gestiona tu inicio de sesión y ve tu correo y tu nombre visible.",
   "signin.server.listed": "Este servidor está en la lista de Commy: quien lo gestiona firmó el compromiso de Commy y pasa una revisión cada mes. Gestiona tu inicio de sesión y ve tu correo y tu nombre visible.",
+  "signin.server.help": "¿Qué es un servidor de cuentas?",
+  "signin.move.finish": "Termina la mudanza: inicia sesión o crea tu cuenta en {host}. Tus servidores vuelven en cuanto entres.",
   "signin.server.bad.https": "Usa una dirección https://. Commy solo inicia sesión con una conexión segura.",
   "signin.server.bad.login": "Quita el nombre de usuario o la contraseña y escribe solo la dirección.",
   "signin.server.bad.ip": "Usa el nombre de dominio del servidor, como chat.example.com, no una dirección IP.",

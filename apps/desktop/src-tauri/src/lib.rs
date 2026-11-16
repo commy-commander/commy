@@ -8930,6 +8930,8 @@ pub fn run() {
             account_move::start_account_move,
             account_move::follow_account_move,
             account_move::account_moved_to,
+            account_move::account_move_pending,
+            account_move::take_account_moved_in,
             entry_list::entry_list_use_recovery_code,
             entry_list::entry_list_start_over,
             read_state::read_state_load,

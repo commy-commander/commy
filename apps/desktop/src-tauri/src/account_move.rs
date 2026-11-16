@@ -17,6 +17,7 @@ use crate::entry_list::{self, Fetched, Put, Session, VAULT_ITEM};
 use crate::state::App;
 
 const TICKET_FILE: &str = "account-move.json";
+const MOVED_IN_FILE: &str = "moved-in.json";
 const TICKET_KEPT_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const LOG_WAIT: Duration = Duration::from_secs(60);
 const ASK_WAIT: Duration = Duration::from_secs(15);
@@ -80,11 +81,38 @@ fn ticket_path(app: &App) -> Option<PathBuf> {
     app.base_dir().map(|base| base.join(TICKET_FILE))
 }
 
-fn drop_ticket(path: &Path) {
+fn remove_quietly(path: &Path) {
     if let Err(e) = std::fs::remove_file(path) {
         if e.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!("could not remove the account move ticket: {e}");
+            tracing::warn!("could not remove {}: {e}", path.display());
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MovedIn {
+    from: String,
+    to: String,
+}
+
+#[tauri::command]
+pub fn account_move_pending(app: tauri::State<'_, App>) -> Option<String> {
+    let ticket = entry_list::read::<Ticket>(&ticket_path(&app)?)?;
+    (ticket_use(&ticket, &ticket.to, now_ms()) != TicketUse::Stale).then_some(ticket.to)
+}
+
+#[tauri::command]
+pub fn take_account_moved_in(app: tauri::State<'_, App>) -> Option<MovedIn> {
+    let path = app.data_dir()?.join(MOVED_IN_FILE);
+    let moved = entry_list::read::<MovedIn>(&path);
+    remove_quietly(&path);
+    moved
+}
+
+fn remember_moved_in(dir: &Path, ticket: &Ticket) {
+    let moved = MovedIn { from: ticket.from.clone(), to: ticket.to.clone() };
+    if let Err(e) = crate::persist::write_secret_json(&dir.join(MOVED_IN_FILE), &moved) {
+        tracing::warn!("could not keep the moved in notice: {e}");
     }
 }
 
@@ -201,13 +229,13 @@ pub(crate) async fn move_in_if_due(app: &App, dir: &Path, s: &Session) {
     let Some(ticket) = entry_list::read::<Ticket>(&path) else { return };
     match ticket_use(&ticket, &s.server, now_ms()) {
         TicketUse::NotHere => return,
-        TicketUse::Stale => return drop_ticket(&path),
+        TicketUse::Stale => return remove_quietly(&path),
         TicketUse::Here => {}
     }
-    let Ok(key) = SealKey::from_text(&ticket.key) else { return drop_ticket(&path) };
+    let Ok(key) = SealKey::from_text(&ticket.key) else { return remove_quietly(&path) };
     let item = match entry_list::fetch(app, s, VAULT_ITEM).await {
         Ok(Fetched::Item(item)) => item,
-        Ok(Fetched::Unsupported) => return drop_ticket(&path),
+        Ok(Fetched::Unsupported) => return remove_quietly(&path),
         Err(e) => return tracing::info!("moving in waits for the account server: {e}"),
     };
     match landing(item.data.as_deref(), |data| EntryList::open(&key, data).is_ok()) {
@@ -219,12 +247,13 @@ pub(crate) async fn move_in_if_due(app: &App, dir: &Path, s: &Session) {
         Landing::Ours => {}
         Landing::Taken => {
             tracing::warn!("this account already keeps another server list, so the moved one was not brought in");
-            return drop_ticket(&path);
+            return remove_quietly(&path);
         }
     }
     entry_list::save_key(dir, &s.server, &s.account, &key);
+    remember_moved_in(dir, &ticket);
     tracing::info!("moved in from {}", ticket.from);
-    drop_ticket(&path);
+    remove_quietly(&path);
 }
 
 #[derive(Deserialize)]

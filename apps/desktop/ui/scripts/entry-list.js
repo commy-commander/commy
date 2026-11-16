@@ -107,22 +107,73 @@ async function afterAccountMove() {
   startOverSignedOut();
 }
 
-$("acct-move-go").onclick = async () => {
+function fillList(list, items, tag = "li") {
+  list.replaceChildren(...items.map(text => el(tag, null, text)));
+}
+
+let movingTo = null;
+
+function openMovePlan(typed) {
+  const plan = movePlan(typed);
+  movingTo = typed;
+  $("account-move-title").textContent = plan.title;
+  $("account-move-comes").textContent = plan.comes;
+  fillList($("account-move-steps"), plan.steps);
+  $("account-move-others").textContent = plan.others;
+  $("account-move-note").textContent = plan.note;
+  $("account-move-status").textContent = "";
+  $("account-move-go").disabled = false;
+  showModal("modal-account-move");
+}
+
+$("acct-move-go").onclick = () => {
   const typed = $("acct-move-input").value.trim();
-  if (!typed) return;
-  const host = typed.replace(/^https:\/\//, "").replace(/\/+$/, "");
-  if (!(await confirm(`Move your account to ${host}? This device signs out here, then you sign in or create an account on ${host}.`))) return;
-  const button = $("acct-move-go");
+  if (typed) openMovePlan(typed);
+};
+
+$("account-move-cancel").onclick = hideModals;
+
+$("account-move-go").onclick = async () => {
+  if (!movingTo) return;
+  const button = $("account-move-go");
   button.disabled = true;
+  $("account-move-status").textContent = `Copying your account to ${shownHost(movingTo)}…`;
   try {
-    await invoke("start_account_move", { to: typed });
+    await invoke("start_account_move", { to: movingTo });
+    movingTo = null;
+    hideModals();
     await afterAccountMove();
   } catch (e) {
+    $("account-move-status").textContent = "";
     toast(moveProblem(e));
   } finally {
     button.disabled = false;
   }
 };
+
+function showMovedIn(moved) {
+  const welcome = movedInWelcome(moved);
+  $("moved-in-title").textContent = welcome.title;
+  $("moved-in-lead").textContent = welcome.lead;
+  fillList($("moved-in-points"), welcome.points);
+  showModal("modal-moved-in");
+}
+
+async function showMovedInIfDue() {
+  const moved = await invoke("take_account_moved_in").catch(() => null);
+  if (!moved) return false;
+  showMovedIn(moved);
+  return true;
+}
+
+$("moved-in-done").onclick = hideModals;
+
+async function showMoveFinishNote() {
+  const to = await invoke("account_move_pending").catch(() => null);
+  const note = $("signin-move-note");
+  note.classList.toggle("hidden", !to);
+  note.textContent = to ? t("signin.move.finish", { host: shownHost(to) }) : "";
+}
 
 $("acct-moved-follow").onclick = async () => {
   const button = $("acct-moved-follow");

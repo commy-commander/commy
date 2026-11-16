@@ -656,6 +656,8 @@
         </div>
       </div>
       <div class="signin-server-note" id="signin-server-note" role="status" aria-live="polite" data-i18n="signin.server.note">Self-hosted servers work on their own, even if Commy.chat is down. You can create an account there on the page that opens.</div>
+      <div class="signin-move-note hidden" id="signin-move-note" role="status"></div>
+      <button class="btn-link signin-server-help" data-help="accountServers" data-i18n="signin.server.help">What's an account server?</button>
     </div>
 
     <div class="modal modal-signin hidden" id="modal-claim">
@@ -821,6 +823,7 @@
         </div>
       </div>
       <div class="invite-link-warning hidden" id="invite-link-warning" role="alert"></div>
+      <button class="btn-link invite-link-learn hidden" id="invite-link-learn">What does this mean?</button>
       <div class="modal-actions">
         <button class="btn-secondary" id="invite-link-cancel">Cancel</button>
         <button class="btn-primary" id="invite-link-join">Join Server</button>
@@ -881,6 +884,32 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="delete-account-cancel">Cancel</button>
         <button class="btn-danger" id="delete-account-go">Send Code</button>
+      </div>
+    </div>
+
+    <div class="modal move-guide hidden" id="modal-account-move" role="dialog" aria-labelledby="account-move-title">
+      <h2 id="account-move-title"></h2>
+      <p id="account-move-comes"></p>
+      <div class="field-label">What happens</div>
+      <ol class="modal-list" id="account-move-steps"></ol>
+      <div class="field-label">What others see</div>
+      <p id="account-move-others"></p>
+      <p class="move-guide-note" id="account-move-note"></p>
+      <p class="move-guide-status" id="account-move-status" role="status"></p>
+      <button class="btn-link move-guide-learn" data-help="moving">Learn more about moving</button>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="account-move-cancel">Cancel</button>
+        <button class="btn-primary" id="account-move-go">Move Account</button>
+      </div>
+    </div>
+
+    <div class="modal move-guide hidden" id="modal-moved-in" role="dialog" aria-labelledby="moved-in-title">
+      <h2 id="moved-in-title"></h2>
+      <p id="moved-in-lead"></p>
+      <ul class="modal-list" id="moved-in-points"></ul>
+      <button class="btn-link move-guide-learn" data-help="moving">Learn more about moving</button>
+      <div class="modal-actions">
+        <button class="btn-primary" id="moved-in-done">Got It</button>
       </div>
     </div>
 
@@ -1728,10 +1757,13 @@
                 <div class="setting-title" id="acct-moved-title"></div>
                 <div class="setting-sub">Sign in there to keep your identity, profile and servers on this device.</div>
               </div>
-              <button class="btn-primary btn-small" id="acct-moved-follow">Sign In There</button>
+              <div class="account-line-keys">
+                <button class="btn-link" data-help="moving">Learn More</button>
+                <button class="btn-primary btn-small" id="acct-moved-follow">Sign In There</button>
+              </div>
             </div>
             <div class="setting-title">Move to another account server</div>
-            <div class="setting-sub">Your identity, profile, server list and settings go with you, so the people you talk to keep finding you. Your old account server points to the new one, and your other devices offer to follow.</div>
+            <div class="setting-sub">Your identity, profile, server list and settings go with you, so the people you talk to keep finding you. Your old account server points to the new one, and your other devices offer to follow. <button class="btn-link inline-help" data-help="moving">How moving works</button></div>
             <div class="entry-recovery">
               <input id="acct-move-input" type="text" autocomplete="off" spellcheck="false" placeholder="friends.example" />
               <button class="btn-secondary btn-small" id="acct-move-go">Move</button>
@@ -3287,6 +3319,14 @@
         </section>
         <section class="settings-page" data-page="sync-host">
           <h1>Sync Server</h1>
+          <div class="settings-card sync-host-guide" id="sync-host-guide" data-search="sync server move walkthrough how moving works">
+            <div class="sync-host-guide-head">
+              <div class="setting-title">How moving works</div>
+              <button class="btn-link" id="sync-host-guide-done">Got It</button>
+            </div>
+            <ol class="sync-host-guide-steps" id="sync-host-guide-steps"></ol>
+          </div>
+          <button class="btn-link sync-host-guide-again hidden" id="sync-host-guide-again">How moving works</button>
           <div class="settings-card integration-card" id="sync-host-card">
             <div class="integration-head">
               <div class="integration-logo integration-logo-deck">
@@ -3294,8 +3334,8 @@
               </div>
               <div class="integration-copy">
                 <div class="setting-title">Choose where this server's messages sync</div>
-                <div class="setting-sub">Messages and server settings travel through a sync server. They are sealed on members' devices first, so the sync server can't read them. This server uses the Commy.chat sync service unless you move it to a Commy sync server you run yourself.</div>
-                <div class="setting-sub">Moving copies the server's setup and its recent messages, up to 1,000 per channel, from this device to the new sync server. Members follow on their own the next time an up to date Commy opens. Accounts, direct messages and phone notifications stay with Commy.chat.</div>
+                <div class="setting-sub">Messages and server settings travel through a sync server. They are sealed on members' devices first, so the sync server can't read them. Until you move it, this server syncs through its owner's account server, which is Commy.chat for most servers.</div>
+                <div class="setting-sub">Moving copies the server's setup and its recent messages, up to 1,000 per channel, from this device to the new sync server. Members follow on their own the next time an up to date Commy opens. Accounts, direct messages and phone notifications stay with each member's account server. <button class="btn-link inline-help" data-help="syncServers">Learn more</button></div>
               </div>
             </div>
             <div class="setting-sub" id="sync-host-now" role="status"></div>
@@ -3628,6 +3668,7 @@
   <script src="scripts/server-tags.js"></script>
   <script src="scripts/home-tags.js"></script>
   <script src="scripts/server-listing.js"></script>
+  <script src="scripts/move-guide.js"></script>
   <script src="scripts/overlay-view.js"></script>
   <script src="scripts/studio-discover.js"></script>
   <script src="scripts/studio-start.js"></script>

@@ -26,6 +26,8 @@ test("the app and core agree on what a sync server address is", () => {
 test("the page says where the server syncs now", () => {
   assert.equal(syncHostNow({ sync_host: null }), "This server syncs through Commy.chat.");
   assert.equal(syncHostNow({ sync_host: "sync.example.org" }), "This server syncs through sync.example.org.");
+  assert.equal(syncHostNow({ sync_host: null }, null, "friends.example"), "This server syncs through friends.example.");
+  assert.equal(syncHostNow({ sync_host: "sync.example.org" }, null, "friends.example"), "This server syncs through sync.example.org.");
 });
 
 test("the sync server page loads its script and is only for the owner's app", () => {

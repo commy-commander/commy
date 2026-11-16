@@ -21,6 +21,7 @@ pub const SEALED_FILES: &[&str] = &[
     "identity.key",
     "integrations.json",
     "invites.json",
+    "moved-in.json",
     "node.key",
     "outbox.json",
     "pins.json",

@@ -20,6 +20,8 @@ const STUDIO_DIALOGS = [
   "modal-drive-item",
   "modal-report",
   "modal-delete-channel",
+  "modal-account-move",
+  "modal-moved-in",
 ];
 
 const DIALOG_BLUE_ACTIONS = ["report-go"];
