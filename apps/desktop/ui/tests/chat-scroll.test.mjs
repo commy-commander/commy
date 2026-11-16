@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { scrollDownShown, centeredScrollTop, landingScrollTop, distanceFromEnd, atListEnd, redrawnScrollTop } = require("../scripts/chat-scroll.js");
+const { scrollDownShown, centeredScrollTop, landingScrollTop, distanceFromEnd, atListEnd, redrawnScrollTop, landedMessageIds } = require("../scripts/chat-scroll.js");
 
 test("the scroll down button stays hidden near the newest messages", () => {
   assert.equal(scrollDownShown(2000, 1500, 500), false);
@@ -77,4 +77,14 @@ test("a new message leaves a reader further up the history in place", () => {
 
 test("a redraw that shortens the list stops at its end", () => {
   assert.equal(redrawnScrollTop({ scrollTop: 1460, fromEnd: 40, pinned: false, newer: false }, 1700, 500), 1200);
+});
+
+test("only messages that arrive after the newest one already shown land", () => {
+  const ids = list => list.map(id => ({ id }));
+  assert.deepEqual([...landedMessageIds(ids(["a", "b"]), ids(["a", "b", "c"]))], ["c"]);
+  assert.deepEqual([...landedMessageIds(ids(["c", "d"]), ids(["a", "b", "c", "d"]))], []);
+  assert.deepEqual([...landedMessageIds(ids(["a", "b"]), ids(["a", "b"]))], []);
+  assert.deepEqual([...landedMessageIds([], ids(["a"]))], []);
+  assert.deepEqual([...landedMessageIds(ids(["x"]), ids(["a", "b"]))], []);
+  assert.deepEqual([...landedMessageIds(ids(["a"]), ids(["a", "b", "c", "d", "e", "f", "g"]))], []);
 });

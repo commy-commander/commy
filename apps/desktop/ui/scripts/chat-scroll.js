@@ -36,6 +36,21 @@ function redrawnScrollTop({ scrollTop, fromEnd, pinned, newer }, scrollHeight, c
   return Math.min(scrollTop, end);
 }
 
+const MAX_LANDING_MESSAGES = 5;
+
+function landedMessageIds(previous, next) {
+  const seen = new Set((previous || []).map(message => message.id));
+  if (!seen.size) return new Set();
+  const list = next || [];
+  let lastSeen = -1;
+  list.forEach((message, index) => {
+    if (seen.has(message.id)) lastSeen = index;
+  });
+  if (lastSeen < 0) return new Set();
+  const fresh = list.slice(lastSeen + 1).map(message => message.id);
+  return new Set(fresh.length > MAX_LANDING_MESSAGES ? [] : fresh);
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { scrollDownShown, centeredScrollTop, landingScrollTop, distanceFromEnd, atListEnd, redrawnScrollTop };
+  module.exports = { scrollDownShown, centeredScrollTop, landingScrollTop, distanceFromEnd, atListEnd, redrawnScrollTop, landedMessageIds };
 }

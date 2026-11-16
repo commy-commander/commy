@@ -8703,6 +8703,11 @@ function renderMessages(messages) {
   else if (state.currentChannel) box.appendChild(buildChannelIntro(state.currentChannel));
   syncThreadsButton(messages);
   if (!messages.length) return;
+  const sameList = shownMessageView === viewKey;
+  const landed = sameList ? landedMessageIds(shownMessageIds, messages) : new Set();
+  shownMessageView = viewKey;
+  shownMessageIds = messages.map(message => ({ id: message.id }));
+  const landing = stillLanding(landed, sameList);
   state.renderedMessages = messages;
   const replyCounts = state.view === "dm" ? new Map() : threadReplyCounts(messages);
   let lastAuthor = null;
@@ -8738,7 +8743,8 @@ function renderMessages(messages) {
       continue;
     }
     const grouped = !message.reply_to && message.author_id === lastAuthor && time - lastTime < 5 * 60e3;
-    box.appendChild(buildMessageRow(message, grouped, { replies: replyCounts.get(message.id) || 0 }));
+    const row = box.appendChild(buildMessageRow(message, grouped, { replies: replyCounts.get(message.id) || 0 }));
+    if (landing.has(message.id)) row.classList.add("land");
     lastAuthor = message.held ? null : message.author_id;
     lastTime = time;
   }
@@ -8747,6 +8753,8 @@ function renderMessages(messages) {
   }
   if (!sameView) landMessageList(box);
   else box.scrollTop = redrawnScrollTop(before, box.scrollHeight, box.clientHeight);
+  if (landed.size && before.pinned) nudgeMessageList(box);
+  if (!sameList) fadeInMessageList(box);
   noteChatScroll();
   if (state.threadRoot) renderThread();
 }
@@ -8804,6 +8812,39 @@ function showForumView(on) {
 function paintScrollDown() {
   const box = $("messages");
   $("scroll-down").classList.toggle("hidden", !scrollDownShown(box.scrollHeight, box.scrollTop, box.clientHeight));
+}
+
+let shownMessageIds = [];
+let shownMessageView = "";
+const landingSince = new Map();
+const LAND_MS = 300;
+const NUDGE_MS = 360;
+
+function stillLanding(landed, sameList) {
+  const now = performance.now();
+  if (!sameList) landingSince.clear();
+  for (const id of landed) landingSince.set(id, now);
+  for (const [id, since] of landingSince) if (now - since > LAND_MS) landingSince.delete(id);
+  return new Set(landingSince.keys());
+}
+let nudgeTimer = 0;
+
+const SWITCH_FADE_MS = 200;
+let switchFadeTimer = 0;
+
+function fadeInMessageList(box) {
+  box.classList.add("switching");
+  clearTimeout(switchFadeTimer);
+  switchFadeTimer = setTimeout(() => box.classList.remove("switching"), SWITCH_FADE_MS);
+}
+
+function nudgeMessageList(box) {
+  const rise = [...box.querySelectorAll(":scope > .msg.land")].reduce((sum, row) => sum + row.offsetHeight, 0);
+  if (!rise) return;
+  box.style.setProperty("--nudge", `${Math.min(rise, box.clientHeight)}px`);
+  box.classList.add("nudge");
+  clearTimeout(nudgeTimer);
+  nudgeTimer = setTimeout(() => box.classList.remove("nudge"), NUDGE_MS);
 }
 
 function landMessageList(box) {
