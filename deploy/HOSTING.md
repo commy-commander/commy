@@ -771,24 +771,42 @@ server or channel a log belongs to.
 
 ## iroh relay
 
-The stack runs its own [iroh](https://iroh.computer) relay at
-`https://relay.<DOMAIN>:8443`. Apps use only this relay while it answers, which
-keeps them reachable from the web app. If it stays out of reach for 30 seconds,
-apps add n0's public relays as a fallback. Relays help peers find each other and carry traffic only when a
-direct connection is impossible, always end to end encrypted.
+The stack runs its own [iroh](https://iroh.computer) relay. It answers at
+`https://<DOMAIN>/relay` on port 443, like the [sync host](#run-a-sync-host)
+bundle, and at `https://relay.<DOMAIN>:8443`. Apps use only this relay while it
+answers, which keeps them reachable from the web app. If it stays out of reach
+for 30 seconds, apps add n0's public relays as a fallback. Relays help peers
+find each other and carry traffic only when a direct connection is impossible,
+always end to end encrypted.
 
+- **Communities on your sync service:** the sync service tells apps to use
+  this relay for voice in the communities it holds (`SYNC_RELAY_URL`,
+  `https://<DOMAIN>` by default), so members signed in to other account
+  servers use your relay there too. If it does not answer, voice in those
+  communities pauses (the app says so). With `SYNC_RELAY_FALLBACK=public`,
+  voice moves to the free public relays instead until yours answers again.
+  Commy's relay is never used for your communities. The access check below
+  refuses members whose account is on another server, so leave
+  `RELAY_ACCESS_MODE` on `watch` while you host communities for them.
 - **DNS:** an A record for `relay.<DOMAIN>`, DNS only (not proxied) in
   Cloudflare, plus an AAAA record if the server has IPv6. Open `8443/tcp`
   (relay over HTTPS, certificate via port 80) and `7842/udp` (address
-  discovery), over IPv6 too. The shared relay in `docker-compose.relay.yml`
+  discovery), over IPv6 too. `<DOMAIN>` itself also needs DNS only for address
+  discovery to work there. The shared relay in `docker-compose.relay.yml`
   runs on an IPv6 network so apps on IPv6-only networks get address discovery.
 - **Address discovery:** apps ask the relay on `7842/udp` which public address
   their packets come from, so two apps behind home routers can connect
   directly instead of through the relay. The relay reuses Caddy's certificate
   for `RELAY_DOMAIN` (read only, restarting when Caddy renews it) and runs
-  without address discovery until that certificate exists. Apps built with
-  `COMMY_RELAY_QAD_PORT` set ask another port, which test builds use for the
-  staging relay on `7843/udp`.
+  without address discovery until that certificate exists. Apps that reach it
+  at `https://<DOMAIN>/relay` only get address discovery with
+  `RELAY_DOMAIN=<DOMAIN>`; otherwise they still relay, but connect directly
+  less often. Apps built with `COMMY_RELAY_QAD_PORT` set ask another port,
+  which test builds use for the staging relay on `7843/udp`.
+- **Admin page:** with `SYNC_ADMIN_PASSWORD` set (16 characters or more), the
+  sync service's admin page listens on `127.0.0.1:8790`
+  (`SYNC_ADMIN_HOST_PORT`) and shows whether the relay answers. Open it through
+  an SSH tunnel as for the [sync host](#run-a-sync-host).
 - **Bandwidth budget:** `relay-meter` adds up relayed bytes each month (UTC).
   At `RELAY_WARN_PERCENT` of `RELAY_MONTHLY_LIMIT_GB` it posts to
   `ALERT_WEBHOOK_URL`; at `RELAY_PAUSE_PERCENT` it stops the relay until the
@@ -802,6 +820,9 @@ direct connection is impossible, always end to end encrypted.
   [DEPLOYING.md](DEPLOYING.md) has the commands.
 - **Apps:** `COMMY_RELAY_URLS=https://relay.example.org:8443` points a build at
   another relay, `none` uses only n0's.
+- **Commy servers on one VPS:** the per environment stacks announce no relay
+  and send members from other account servers to the public relays
+  ([DEPLOYING.md](DEPLOYING.md)).
 
 The relay must run the same iroh version as the app (`IROH_RELAY_VERSION` in
 `relay/Dockerfile`), so the two are upgraded together.

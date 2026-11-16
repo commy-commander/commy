@@ -31,6 +31,13 @@
 		reverse_proxy sync:3002
 	}
 
+	@relay path /relay /relay/* /ping /generate_204
+	handle @relay {
+		@upgrade_without_connection_header header Upgrade *
+		request_header @upgrade_without_connection_header Connection Upgrade
+		reverse_proxy relay-proxy:3341
+	}
+
 	handle {
 		reverse_proxy web:3000
 	}

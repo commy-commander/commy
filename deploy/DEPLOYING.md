@@ -305,6 +305,16 @@ discovery document lists `endpoints.sync`. Behind Cloudflare Access, add
 the apps cannot complete the Access login. Production stays off until its
 `.env` gets the same three lines.
 
+### Relays for hosted communities
+
+Apps signed in here use the shared relay in every community. In communities
+synced here, members whose account is on another server use the free public
+relays for voice instead, so other homes never add to the relay bill. The per
+environment stacks announce no relay (`SYNC_RELAY_URL` stays empty) and tell
+those apps to use the public relays (`SYNC_RELAY_FALLBACK=public` by default).
+`GET /sync/about` shows `"relay_fallback":"public"`. The relay access check
+can stay on `enforce`.
+
 ### The push gateway
 
 Self-hosted sync servers cannot wake phones on their own, because the app's

@@ -157,6 +157,9 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      SYNC_RELAY_URL: ${SYNC_RELAY_URL:-https://${DOMAIN}}
+      SYNC_RELAY_FALLBACK: ${SYNC_RELAY_FALLBACK:-pause}
+      SYNC_ADMIN_PASSWORD: ${SYNC_ADMIN_PASSWORD:-}
       SYNC_PUSH_GATEWAY: ${SYNC_PUSH_GATEWAY:-off}
       SYNC_PUSH_VIA: ${SYNC_PUSH_VIA:-off}
       SYNC_DOMAIN: ${DOMAIN}
@@ -165,6 +168,8 @@ services:
       SYNC_GATEWAY_BLOCKLIST: ${SYNC_GATEWAY_BLOCKLIST:-}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       RUST_LOG: ${SYNC_LOG:-info}
+    ports:
+      - "127.0.0.1:${SYNC_ADMIN_HOST_PORT:-8790}:3003"
     depends_on:
       postgres:
         condition: service_healthy
