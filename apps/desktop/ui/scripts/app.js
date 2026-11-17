@@ -3068,8 +3068,9 @@ function railServerButton(server, folderId) {
   btn.classList.toggle("muted", isServerMuted(server.id));
   const wrap = el("div", "rail-item");
   wrap.appendChild(btn);
-  if (server.host_removed) {
-    btn.title = `${shownServerName(server)}: ${HOST_REMOVED_TEXT}`;
+  const unsynced = hostTroubleText(server);
+  if (unsynced) {
+    btn.title = `${shownServerName(server)}: ${unsynced}`;
     const mark = el("span", "rail-wait-mark away");
     mark.appendChild(svgIcon("close", 11));
     wrap.appendChild(mark);
@@ -8690,6 +8691,7 @@ function renderMembers() {
   pane.innerHTML = "";
   if (!state.currentServer) return;
   rememberAvatars(state.currentServer.members);
+  askHomeStatus(state.currentServer.members);
   renderCamGrid();
 
   const sharers = new Set((state.currentServer.screen_shares || []).map(s => s.user));
@@ -8721,6 +8723,7 @@ function renderMembers() {
       if (member.server_tag) nameRow.appendChild(serverTagChip(member.server_tag));
       if (timeoutActive(member.timeout_until)) nameRow.appendChild(timeoutBadge(member.timeout_until));
       if (member.needs_key) nameRow.appendChild(needsKeyBadge());
+      if (homeBlocked(member)) nameRow.appendChild(homeChip(member));
       if (sharers.has(member.id)) {
         const live = el("span", "live-badge", "LIVE");
         live.title = "Watch screen";
@@ -13317,11 +13320,18 @@ let awaitedSeq = 0;
 
 const HOST_REMOVED_TEXT = "This server's sync server removed it, so new messages here no longer reach anyone.";
 
+function hostTroubleText(server) {
+  if (!server) return null;
+  if (server.host_removed) return HOST_REMOVED_TEXT;
+  if (server.host_blocked) return hostBlockedText(server.sync_host);
+  return null;
+}
+
 async function syncAwaitedBar() {
   const seq = ++awaitedSeq;
   const serverId = state.view === "server" && state.currentServer ? state.currentServer.id : null;
   let text = null;
-  if (serverId && state.currentServer.host_removed) text = HOST_REMOVED_TEXT;
+  if (serverId && hostTroubleText(state.currentServer)) text = hostTroubleText(state.currentServer);
   else if (serverId) {
     try {
       text = awaitedText(await invoke("get_awaited", { serverId }));
@@ -15239,7 +15249,10 @@ function askHomeStatus(members) {
     homeAskTimer = null;
     try {
       for (const status of await invoke("home_status", { homes })) homeStatuses.set(status.home, status);
-      if (state.view === "server") renderMessages(state.renderedMessages || []);
+      if (state.view === "server") {
+        renderMessages(state.renderedMessages || []);
+        renderMembers();
+      }
     } catch (e) {
       console.warn("home status", e);
     }
@@ -24990,9 +25003,14 @@ function wireEvents() {
       renderVoicePanel();
       if (state.currentServer && state.currentServer.id === server) await refreshCurrentServer();
     });
-    window.__TAURI__.event.listen("homes-changed", () => {
+    window.__TAURI__.event.listen("homes-changed", async () => {
       homeStatuses.clear();
-      if (state.currentServer) askHomeStatus(state.currentServer.members);
+      await refreshServers();
+      if (state.currentServer) {
+        await refreshCurrentServer();
+        askHomeStatus(state.currentServer.members);
+        syncAwaitedBar();
+      }
     });
     window.__TAURI__.event.listen("listed-servers-changed", async () => {
       await loadAccount();

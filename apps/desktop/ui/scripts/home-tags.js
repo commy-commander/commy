@@ -8,6 +8,11 @@ const HOME_TAG_TEXT = {
 };
 const MAX_BLOCKED_HOMES = 200;
 const BLOCKED_HOME_HIDDEN = "Hidden because this person's server is blocked by Commy";
+const HOST_BLOCKED_TEXT = "This server syncs through {host}, which is on Commy's list of blocked servers, so it no longer syncs.";
+
+function hostBlockedText(host) {
+  return HOST_BLOCKED_TEXT.replace("{host}", host || "a server");
+}
 
 function homeTagState(tag, status) {
   if (!tag) return null;
@@ -60,7 +65,7 @@ function withoutBlockedHome(homes, home) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    HOME_TAG_TEXT, MAX_BLOCKED_HOMES, BLOCKED_HOME_HIDDEN,
-    homeTagState, homeTagTitle, homeTagWarns, showsHomeInChat, homesToAsk, cleanHomeInput, withBlockedHome, withoutBlockedHome,
+    HOME_TAG_TEXT, MAX_BLOCKED_HOMES, BLOCKED_HOME_HIDDEN, HOST_BLOCKED_TEXT,
+    hostBlockedText, homeTagState, homeTagTitle, homeTagWarns, showsHomeInChat, homesToAsk, cleanHomeInput, withBlockedHome, withoutBlockedHome,
   };
 }

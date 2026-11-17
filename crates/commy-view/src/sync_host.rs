@@ -51,6 +51,16 @@ pub fn refuse_when_removed(removed: bool) -> Result<(), String> {
     if removed { Err(HOST_REMOVED.into()) } else { Ok(()) }
 }
 
+pub const HOST_BLOCKED: &str = "This server syncs through a server on Commy's list of blocked servers, so it no longer syncs.";
+
+pub fn host_blocked(state: &ServerState, blocks_origin: impl Fn(&str) -> bool) -> bool {
+    state.server.sync_host.as_deref().is_some_and(blocks_origin)
+}
+
+pub fn refuse_when_blocked(blocked: bool) -> Result<(), String> {
+    if blocked { Err(HOST_BLOCKED.into()) } else { Ok(()) }
+}
+
 pub const HOST_NEEDS_NEWER_APP: &str = "This server's sync server needs a newer Commy. Update Commy to keep chatting here.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -150,6 +160,19 @@ mod tests {
     fn posting_is_refused_in_a_removed_server() {
         assert_eq!(refuse_when_removed(false), Ok(()));
         assert_eq!(refuse_when_removed(true), Err(HOST_REMOVED.to_string()));
+        assert_eq!(refuse_when_blocked(false), Ok(()));
+        assert_eq!(refuse_when_blocked(true), Err(HOST_BLOCKED.to_string()));
+    }
+
+    #[test]
+    fn a_server_is_blocked_only_when_its_own_sync_server_is_on_the_list() {
+        let mut state = ServerState::new(commy_core::Server::new("s", UserId::new()));
+        let blocks = |origin: &str| origin == "https://dev.example.org";
+        assert!(!host_blocked(&state, blocks), "a server on the account server");
+        state.server.sync_host = Some("https://dev.example.org".into());
+        assert!(host_blocked(&state, blocks));
+        state.server.sync_host = Some("https://sync.example.org".into());
+        assert!(!host_blocked(&state, blocks));
     }
 
     #[test]

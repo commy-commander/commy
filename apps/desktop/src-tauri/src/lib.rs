@@ -627,7 +627,11 @@ fn list_servers(app: tauri::State<App>) -> Vec<ServerSummary> {
     let servers = app.servers.lock_or_recover();
     let mut list: Vec<ServerSummary> = servers
         .values()
-        .map(|s| ServerSummary { host_removed: removed.contains(&s.server.id), ..ServerSummary::from_state(s, me) })
+        .map(|s| ServerSummary {
+            host_removed: removed.contains(&s.server.id),
+            host_blocked: view::sync_host::host_blocked(s, server_guard::blocks_origin),
+            ..ServerSummary::from_state(s, me)
+        })
         .collect();
     list.sort_by(|a, b| a.name.cmp(&b.name));
     list
@@ -644,7 +648,8 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
     let servers = app.servers.lock_or_recover();
     let state = servers.get(&id).ok_or("unknown server")?;
     let view = ServerView::for_viewer(state, me, &keys).with_friend_details(&friends, &contacts);
-    Ok(ServerView { host_removed, ..view })
+    let host_blocked = view::sync_host::host_blocked(state, server_guard::blocks_origin);
+    Ok(ServerView { host_removed, host_blocked, ..view })
 }
 
 #[tauri::command]
@@ -872,6 +877,7 @@ async fn send_message(
     let content = clean_message(&content)?;
     let sid = server_id.parse().map_err(err_to_string)?;
     view::sync_host::refuse_when_removed(community_sync::host_removed(sid))?;
+    view::sync_host::refuse_when_blocked(sync_host_blocked(&app, sid))?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
     let content = expressions_for_server(&app, sid, profile.id, content).await?;
@@ -5981,6 +5987,10 @@ fn end_voice_in(app: &App, sid: ServerId) {
 }
 
 const HOME_BLOCKED: &str = "home-blocked";
+
+fn sync_host_blocked(app: &App, sid: ServerId) -> bool {
+    app.servers.lock_or_recover().get(&sid).is_some_and(|state| view::sync_host::host_blocked(state, server_guard::blocks_origin))
+}
 
 fn removal_of_me(event: &ServerEvent, action: Option<&commy_core::Action>, me: Option<UserId>) -> Option<&'static str> {
     let me = me?;

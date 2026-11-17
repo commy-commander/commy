@@ -47,3 +47,9 @@ test("blocked server addresses are cleaned, kept sorted and capped", () => {
   assert.match(withBlockedHome(full, "new.example").error, /up to/);
   assert.deepEqual(withoutBlockedHome(["a.example", "b.example"], "a.example"), ["b.example"]);
 });
+
+test("a server whose sync server Commy blocks names that sync server in its notice", () => {
+  const { hostBlockedText } = require("../scripts/home-tags.js");
+  assert.equal(hostBlockedText("dev.example.org"), "This server syncs through dev.example.org, which is on Commy's list of blocked servers, so it no longer syncs.");
+  assert.match(hostBlockedText(null), /syncs through a server, which/);
+});
