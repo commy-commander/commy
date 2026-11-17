@@ -12,6 +12,7 @@ pub const VAULT_PUT_PATH: &str = "/api/auth/commy/vault/put";
 pub const FOLDER_KEY_PATH: &str = "/api/auth/commy/folder-key";
 pub const CONFLICT: u16 = 409;
 pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
+pub const MOVED_PATH: &str = "/api/auth/commy/moved";
 pub const DELETE_START_PATH: &str = "/api/auth/commy/account/delete/start";
 pub const DELETE_FINISH_PATH: &str = "/api/auth/commy/account/delete/finish";
 
@@ -354,9 +355,68 @@ pub fn entry_status(signed_in: bool, unlocked: bool, has_key: bool, servers: usi
     serde_json::json!({ "state": state, "servers": servers, "has_key": has_key && unlocked, "detail": detail })
 }
 
+#[derive(Deserialize)]
+struct MovedReply {
+    moved: commy_core::moved::MovePointer,
+}
+
+pub fn moved_to_of(reply: &Reply, user: commy_core::UserId, identity: &commy_core::IdentityKey, from: &str) -> Option<Option<String>> {
+    match reply.status {
+        200..=299 => Some(
+            serde_json::from_str::<MovedReply>(&reply.body)
+                .ok()
+                .map(|reply| reply.moved)
+                .filter(|pointer| pointer.moves(user, identity, from))
+                .map(|pointer| pointer.to),
+        ),
+        404 => Some(None),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn moved_body(identity: &commy_core::Identity, user: commy_core::UserId, from: &str, to: &str) -> String {
+        serde_json::json!({ "moved": commy_core::moved::MovePointer::sign(identity, from, to, user, 1_700_000_000_000) }).to_string()
+    }
+
+    #[test]
+    fn a_signed_move_pointer_for_me_names_the_new_home() {
+        let identity = commy_core::Identity::generate();
+        let user = commy_core::UserId::new();
+        let body = moved_body(&identity, user, "https://staging.example.org", "https://home.example.net");
+        let reply = Reply { status: 200, body };
+        assert_eq!(moved_to_of(&reply, user, &identity.public(), "https://staging.example.org"), Some(Some("https://home.example.net".to_string())));
+    }
+
+    #[test]
+    fn a_move_pointer_for_someone_else_or_another_home_is_ignored() {
+        let identity = commy_core::Identity::generate();
+        let user = commy_core::UserId::new();
+        let from = "https://staging.example.org";
+        let to = "https://home.example.net";
+        for body in [
+            moved_body(&commy_core::Identity::generate(), user, from, to),
+            moved_body(&identity, user, "https://other.example.org", to),
+            moved_body(&identity, commy_core::UserId::new(), from, to),
+            "not json".to_string(),
+        ] {
+            assert_eq!(moved_to_of(&Reply { status: 200, body }, user, &identity.public(), from), Some(None));
+        }
+    }
+
+    #[test]
+    fn not_moved_clears_and_a_failed_check_keeps_what_we_knew() {
+        let identity = commy_core::Identity::generate().public();
+        let user = commy_core::UserId::new();
+        let from = "https://staging.example.org";
+        assert_eq!(moved_to_of(&Reply { status: 404, body: String::new() }, user, &identity, from), Some(None));
+        for status in [401, 429, 502] {
+            assert_eq!(moved_to_of(&Reply { status, body: String::new() }, user, &identity, from), None, "{status}");
+        }
+    }
 
     fn reply(status: u16, body: &str) -> Reply {
         Reply { status, body: body.into() }

@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, INVITE_READS, SPEECH_VOICE_ORIGINS, SYNC_HOST_ORIGINS, SYNC_HOST_READS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, webInviteFromHash, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, webInviteFromHash, webMovedHome, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -593,4 +593,15 @@ test("an invite handed to the web app in its address opens once it is a real inv
     assert.equal(webInviteFromHash(bad), null, bad);
   }
   assert.equal(webDefault("take_pending_invite_link").known, false, "the bridge answers it from the address, not a fixed default");
+});
+
+test("a moved account sends the browser only to the new home's own web app", () => {
+  assert.deepEqual(webMovedHome("https://dev.commy.chat"), { name: "dev.commy.chat", web: "https://dev.commy.chat/web/" });
+  for (const bad of [null, "", "dev.commy.chat", "http://dev.commy.chat", "https://dev.commy.chat:8443", "https://me@dev.commy.chat", "https://dev.commy.chat/web/", "https://dev.commy.chat/?x=1", "javascript:alert(1)"]) {
+    assert.equal(webMovedHome(bad), null, String(bad));
+  }
+  assert.ok(rustCommands.has("account_moved_to"), "the settings page can ask where the account went");
+  const bridge = read("apps", "web", "ui", "web-bridge.js");
+  assert.match(bridge, /listeners\.set\("web-account-moved"/);
+  assert.match(read("apps", "web", "src", "session", "moved.rs"), /"web-account-moved"/);
 });

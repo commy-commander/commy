@@ -52,6 +52,10 @@ impl Client {
         self.me.lock().unwrap().as_ref().map(|(profile, _)| profile.id)
     }
 
+    pub fn me_pair(&self) -> Option<(UserId, commy_core::IdentityKey)> {
+        self.me.lock().unwrap().as_ref().map(|(profile, identity)| (profile.id, identity.public()))
+    }
+
     pub fn keys(&self) -> KeyHolder {
         KeyHolder::new(self.me.lock().unwrap().as_ref().map(|(profile, identity)| (profile.id, identity.clone())))
     }

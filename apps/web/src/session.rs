@@ -44,6 +44,7 @@ mod invites;
 mod join_waits;
 mod homes;
 mod links;
+mod moved;
 mod pictures;
 mod profile;
 mod servers;
@@ -124,6 +125,7 @@ pub struct Session {
     invited_hosts: RefCell<HashMap<ServerId, String>>,
     links: RefCell<links::LinkSafety>,
     homes: RefCell<homes::HomeWatch>,
+    moved: RefCell<moved::MoveWatch>,
     away: RefCell<away::Away>,
     watching: RefCell<crate::watching::Watching>,
     mic: RefCell<crate::mic_gate::MicGate>,
@@ -320,6 +322,7 @@ impl Session {
             invited_hosts: RefCell::default(),
             links: RefCell::default(),
             homes: RefCell::default(),
+            moved: RefCell::default(),
             away: RefCell::default(),
             watching: RefCell::default(),
             mic: RefCell::default(),
@@ -332,11 +335,13 @@ impl Session {
         let args: Args = serde_json::from_str(args).unwrap_or_default();
         self.keep_link_list_fresh();
         self.keep_homes_fresh();
+        self.keep_move_checked();
         match cmd {
             "check_link" => self.check_link(args),
             "account_status" => self.account_status().await,
             "account_sign_out" => self.sign_out().await,
             "web_check_session" => self.check_session().await,
+            "account_moved_to" => Ok(self.moved_view()),
             "account_delete_start" => self.delete_account_start().await,
             "account_delete_finish" => self.delete_account_finish(args.code.as_deref(), args.password.as_deref()).await,
             "web_unlock" => self.unlock().await,

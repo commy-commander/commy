@@ -378,6 +378,55 @@
     return unlocked;
   }
 
+  let movedShownFor = null;
+
+  function movedModal() {
+    let modal = document.getElementById("modal-web-moved");
+    if (modal) return modal;
+    modal = document.createElement("div");
+    modal.className = "modal modal-signin hidden";
+    modal.id = "modal-web-moved";
+    modal.innerHTML = `
+      <img class="signin-logo" src="images/commy-star.svg" alt="" />
+      <h2>Your account moved</h2>
+      <p id="web-moved-lead"></p>
+      <div class="signin-start">
+        <button class="btn-primary signin-go" id="web-moved-go">Sign In There</button>
+      </div>
+      <div class="signin-note"><button class="btn-link" id="web-moved-later">Not now</button></div>
+      <div class="signin-error hidden" id="web-moved-error"></div>`;
+    document.getElementById("modal-signin").after(modal);
+    modal.querySelector("#web-moved-later").onclick = () => {
+      if (typeof hideModals === "function") hideModals();
+    };
+    return modal;
+  }
+
+  async function followMove(home) {
+    const error = movedModal().querySelector("#web-moved-error");
+    error.classList.add("hidden");
+    try {
+      await backend("account_sign_out");
+    } catch (e) {
+      error.textContent = String(e);
+      error.classList.remove("hidden");
+      return;
+    }
+    window.location.assign(home.web);
+  }
+
+  function tellMoved(view) {
+    const home = webMovedHome(view && view.moved_to);
+    if (!home || movedShownFor === home.web) return;
+    movedShownFor = home.web;
+    const modal = movedModal();
+    modal.querySelector("#web-moved-lead").textContent = `Your account now lives on ${home.name}. Sign in there to keep your identity, profile and servers.`;
+    modal.querySelector("#web-moved-go").onclick = () => followMove(home);
+    (unlocked || Promise.resolve()).then(() => setTimeout(() => {
+      if (typeof showModal === "function") showModal("modal-web-moved");
+    }, 0));
+  }
+
   function showNotice(args) {
     const Notice = window.Notification;
     if (!Notice || Notice.permission !== "granted") return null;
@@ -508,6 +557,7 @@
 
   listeners.set("web-unlock-changed", new Map([[0, e => (e.payload.state === "unlocked" ? settle(e.payload) : !opened && paintUnlock(e.payload))]]));
   listeners.set("web-servers-loaded", new Map([[0, () => { serversLoaded = true; }]]));
+  listeners.set("web-account-moved", new Map([[0, e => tellMoved(e.payload)]]));
 
   window.__TAURI__ = {
     core: {

@@ -177,6 +177,17 @@ function webInviteFromHash(hash) {
   return text.length <= WEB_MAX_INVITE_CHARS ? text : null;
 }
 
+function webMovedHome(to) {
+  let home;
+  try {
+    home = new URL(String(to || ""));
+  } catch {
+    return null;
+  }
+  if (home.protocol !== "https:" || home.username || home.password || home.port || home.pathname !== "/" || home.search || home.hash) return null;
+  return { name: home.hostname, web: `${home.origin}/web/` };
+}
+
 function webNotice(args) {
   const clip = (text, chars) => Array.from(String(text || "")).slice(0, chars).join("");
   const target = webNoticeTarget(args && args.target);
@@ -217,5 +228,5 @@ function webReplyLine(status, text) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget, WEB_PENDING_INVITE_KEY, webInviteFromHash };
+  module.exports = { WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget, WEB_PENDING_INVITE_KEY, webInviteFromHash, webMovedHome };
 }
