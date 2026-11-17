@@ -78,11 +78,11 @@ export default function DeviceApproval({ initialCode, userEmail }) {
             Only approve if you just clicked Sign in in the Commy app on a computer in front of you. Commy staff will
             never ask you to approve a code.
           </p>
-          <div className="hero-actions">
+          <div className="decision-actions">
             <button type="button" className="btn btn-primary" disabled={busy} onClick={() => decide(true)}>
               Approve
             </button>
-            <button type="button" className="btn" disabled={busy} onClick={() => decide(false)}>
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => decide(false)}>
               Deny
             </button>
           </div>

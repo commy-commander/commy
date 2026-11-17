@@ -1,4 +1,4 @@
-import { browserSupportsWebAuthn, startAuthentication, startRegistration } from "@simplewebauthn/browser";
+import { browserSupportsWebAuthn, browserSupportsWebAuthnAutofill, startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { authGet, authPost } from "./auth-client.js";
 
 export const passkeysWork = () => typeof window !== "undefined" && browserSupportsWebAuthn();
@@ -17,6 +17,16 @@ export async function signInWithPasskey() {
   );
   const response = await startAuthentication({ optionsJSON });
   await authPost("/passkey/verify-authentication", { response });
+}
+
+export async function signInWithPasskeyAutofill() {
+  if (!(await browserSupportsWebAuthnAutofill())) return false;
+  const optionsJSON = await authGet(
+    "/passkey/generate-authenticate-options",
+  );
+  const response = await startAuthentication({ optionsJSON, useBrowserAutofill: true });
+  await authPost("/passkey/verify-authentication", { response });
+  return true;
 }
 
 export function passkeyErrorMessage(err, fallback) {

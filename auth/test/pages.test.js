@@ -96,6 +96,9 @@ test("the sign-in page carries the server's name, legal links and a safe logo", 
   assert.match(res.headers.get("content-security-policy"), /frame-ancestors 'none'/);
   assert.match(res.body, /<title>Account - Pixel &#60;Home&#62;<\/title>/);
   assert.match(res.body, /Sign in to Pixel &lt;Home>/);
+  assert.match(res.body, /autocomplete="username webauthn"/);
+  assert.match(res.body, />Continue</);
+  assert.match(res.body, /class="tucked"/);
   assert.match(res.body, /<a href="\/terms">Terms<\/a>/);
   assert.match(res.body, /<a href="https:\/\/example.test\/privacy">Privacy<\/a>/);
   assert.doesNotMatch(res.body, /javascript:/);

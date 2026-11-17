@@ -709,39 +709,6 @@ input::placeholder {
   font-size: var(--step-small);
   text-align: center;
 }
-.social-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
-  gap: 0.6rem;
-}
-.btn-social {
-  display: grid;
-  justify-items: center;
-  align-content: center;
-  gap: 0.4rem;
-  min-height: 4.5rem;
-  padding: 0.6rem 0.5rem;
-  border: 0;
-  border-radius: 1rem;
-  background: var(--surface-2);
-  color: var(--fg);
-  font: inherit;
-  font-size: var(--step-small);
-  font-weight: 600;
-  cursor: pointer;
-}
-.btn-social svg {
-  width: 1.5rem;
-  height: 1.5rem;
-}
-.btn-social[aria-pressed="true"] {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.btn-social:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
 .form-error {
   margin-top: 1rem;
   padding: 0.75rem 1rem;
@@ -949,7 +916,7 @@ h3 {
   letter-spacing: -0.02em;
 }
 h1 {
-  letter-spacing: -0.035em;
+  letter-spacing: 0;
 }
 a {
   text-decoration-color: color-mix(in srgb, var(--link) 55%, transparent);
@@ -1298,85 +1265,6 @@ input[aria-invalid="true"]:not([type="checkbox"]) {
   height: 1px;
   background: var(--line);
 }
-.social-row {
-  display: grid;
-  grid-template-columns: repeat(var(--social-cols, 3), minmax(0, 1fr));
-  gap: 8px;
-}
-.social-row[data-count="1"] {
-  --social-cols: 1;
-}
-.social-row[data-count="2"],
-.social-row[data-count="4"] {
-  --social-cols: 2;
-}
-.btn-social {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-width: 0;
-  height: 40px;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--glass-hi), var(--glass-key);
-  box-shadow: var(--glass-rim), var(--glass-drop);
-  -webkit-backdrop-filter: var(--glass-fx);
-  backdrop-filter: var(--glass-fx);
-  font-family: var(--font);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  color: var(--header-primary);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    transform var(--t-press) var(--ease-out),
-    background-color var(--t-hover) ease;
-}
-.btn-social svg {
-  flex: none;
-  width: 18px;
-  height: 18px;
-}
-.btn-social span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.btn-social:active {
-  transform: translateY(1px) scale(0.97);
-}
-.btn-social:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.btn-social[aria-pressed="true"] {
-  outline: 2px solid var(--accent-lit);
-  outline-offset: 2px;
-}
-.btn-social:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-@media (hover: hover) and (pointer: fine) {
-  .btn-social:hover:not(:disabled) {
-    background: var(--glass-hi), var(--glass-key-hover);
-  }
-}
-@media (max-width: 480px) {
-  .social-row {
-    --social-cols: 1;
-  }
-  .social-row[data-count] {
-    --social-cols: 1;
-  }
-  .btn-social {
-    height: var(--tap-min);
-    min-height: var(--tap-min);
-  }
-}
 @media (max-width: 760px) {
   input:not([type]),
   input[type="text"],
@@ -1419,4 +1307,127 @@ input[aria-invalid="true"]:not([type="checkbox"]) {
 }
 .listing-checks .check-fail strong {
   color: var(--accent);
+}
+.signin-form .tucked {
+  position: absolute;
+  width: 1px;
+  min-width: 0;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  pointer-events: none;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  opacity: 0;
+}
+.signin-as {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--tap-min);
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-hi), var(--glass-key);
+  box-shadow: var(--glass-rim);
+  font-size: 15px;
+}
+.signin-as-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--header-primary);
+}
+.signin-as .link-button {
+  flex: none;
+  font-size: var(--step-small);
+  color: var(--fg-muted);
+}
+.other-ways {
+  display: grid;
+  gap: 12px;
+}
+.other-ways .divider {
+  margin: 1.25rem 0 0.25rem;
+}
+.btn-apple {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--tap-min);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: #fff;
+  color: #000;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", var(--font);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--t-press) var(--ease-out);
+}
+:root[data-theme="light"] .btn-apple {
+  background: #000;
+  color: #fff;
+}
+.btn-apple svg {
+  width: 17px;
+  height: 20px;
+  margin-top: -2px;
+}
+.btn-apple:active {
+  transform: translateY(1px) scale(0.98);
+}
+.btn-apple:focus-visible,
+.btn-social-icon:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.social-icons {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+.btn-social-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--glass-hi), var(--glass-key);
+  box-shadow: var(--glass-rim), var(--glass-drop);
+  -webkit-backdrop-filter: var(--glass-fx);
+  backdrop-filter: var(--glass-fx);
+  color: var(--header-primary);
+  cursor: pointer;
+  transition:
+    transform var(--t-press) var(--ease-out),
+    background-color var(--t-hover) ease;
+}
+.btn-social-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.btn-social-icon:active {
+  transform: translateY(1px) scale(0.95);
+}
+.btn-apple:disabled,
+.btn-social-icon:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn-social-icon:hover:not(:disabled) {
+    background: var(--glass-hi), var(--glass-key-hover);
+  }
+}
+.decision-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 24px;
 }

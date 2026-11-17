@@ -50,6 +50,7 @@ export function providersFrom(discovery, { adultsOnly = false } = {}) {
   const providers = discovery?.providers ?? {};
   const features = discovery?.features ?? {};
   return {
+    apple: providers.apple ?? false,
     google: providers.google ?? false,
     twitch: providers.twitch ?? false,
     magicLink: providers.magicLink ?? false,
