@@ -336,6 +336,7 @@ check "an existing host path is used as it is" "$(use_host_checkout "$FAKE/srv/c
 check "without a known host path compose stays where it was" "$(cd "$FAKE" && use_host_checkout "" && pwd)" "$FAKE"
 check "the mount path itself needs no link" "$(cd "$FAKE" && use_host_checkout "$REPO_DIR" && pwd)" "$FAKE"
 check "a relative host path is ignored" "$(cd "$FAKE" && use_host_checkout "srv/x" && pwd)" "$FAKE"
+check "the agent moves to the host path before it starts watching" "$(sed -n "/^main() {/,/^}/p" "$here/commy-agent.sh" | grep -cF 'use_host_checkout "$(checkout_on_host)"')" "1"
 
 INTERVAL=10
 check "short interval keeps jitter small" "$(jitter | awk '{ print ($1 <= 3) }')" "1"

@@ -218,6 +218,7 @@ jitter() {
 }
 
 main() {
+	use_host_checkout "$(checkout_on_host)"
 	log "watching [$SERVICES] in project ${COMPOSE_PROJECT_NAME:-commy} every ${INTERVAL}s"
 	if verify_enabled && [ -n "$COSIGN_KEY" ]; then
 		log "deploying only images signed with the key in $COSIGN_KEY"
