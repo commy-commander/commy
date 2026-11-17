@@ -97,9 +97,10 @@ impl ListedServers {
         Some(HostTrust { origin: clean, host, listed })
     }
 
-    pub fn join_host(&self, sync_host: Option<&str>, account_server: &str, trusted: &[String], now_ms: i64) -> Option<JoinHost> {
+    pub fn join_host(&self, sync_host: Option<&str>, account_server: &str, official: &str, trusted: &[String], now_ms: i64) -> Option<JoinHost> {
         let trust = self.trust_for_host(sync_host?, now_ms)?;
-        if commy_core::sync_host::clean_sync_host(account_server).as_deref() == Some(trust.origin.as_str()) {
+        let is_host = |server: &str| commy_core::sync_host::clean_sync_host(server).as_deref() == Some(trust.origin.as_str());
+        if is_host(account_server) || is_host(official) {
             return None;
         }
         let ask = trust.listed.is_none() && !trusted.iter().any(|t| t == &trust.origin);
@@ -203,11 +204,24 @@ mod tests {
         let signer = Identity::from_bytes(&[2; 32]);
         let listed = held(&signer, vec![entry("https://listed.example.org", "Listed", &["sync"])]);
         let trusted = vec!["https://rooms.example.org".to_string()];
-        let ask = |host: Option<&str>| listed.join_host(host, "https://commy.chat", &trusted, 11).map(|j| j.ask);
+        let ask = |host: Option<&str>| listed.join_host(host, "https://commy.chat", "https://commy.chat", &trusted, 11).map(|j| j.ask);
         assert_eq!(ask(None), None);
         assert_eq!(ask(Some("https://commy.chat")), None);
         assert_eq!(ask(Some("rooms.example.org")), Some(false));
         assert_eq!(ask(Some("https://listed.example.org")), Some(false));
         assert_eq!(ask(Some("https://new.example.org")), Some(true));
+    }
+
+    #[test]
+    fn joining_a_community_on_the_official_server_never_asks_from_another_home() {
+        let signer = Identity::from_bytes(&[2; 32]);
+        let listed = held(&signer, vec![entry("https://listed.example.org", "Listed", &["home", "sync"])]);
+        let ask = |host: &str, home: &str| listed.join_host(Some(host), home, "https://staging.commy.chat", &[], 11).map(|j| j.ask);
+        assert_eq!(ask("https://staging.commy.chat", "https://dev.commy.chat"), None);
+        assert_eq!(ask("staging.commy.chat", "https://listed.example.org"), None);
+        assert_eq!(ask("https://dev.commy.chat", "https://dev.commy.chat"), None);
+        assert_eq!(ask("https://dev.commy.chat", "https://staging.commy.chat"), Some(true));
+        assert_eq!(ask("https://listed.example.org", "https://dev.commy.chat"), Some(false));
+        assert_eq!(listed.join_host(Some("https://staging.commy.chat"), "https://dev.commy.chat", "https://commy.chat", &[], 11).map(|j| j.ask), Some(true));
     }
 }

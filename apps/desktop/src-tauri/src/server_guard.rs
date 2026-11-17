@@ -58,7 +58,7 @@ pub fn is_listed_home(origin: &str) -> bool {
 
 pub fn join_host(sync_host: Option<&str>, account_server: &str) -> Option<JoinHost> {
     let trusted = TRUSTED.read().unwrap().clone();
-    listed(|listed| listed.join_host(sync_host, account_server, &trusted, now_ms()))
+    listed(|listed| listed.join_host(sync_host, account_server, DEFAULT_ACCOUNT_SERVER, &trusted, now_ms()))
 }
 
 fn load_trusted(dir: &Path) {

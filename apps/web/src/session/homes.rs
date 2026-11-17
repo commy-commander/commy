@@ -142,7 +142,7 @@ impl Session {
 
     pub(super) fn join_host(&self, sync_host: Option<&str>) -> Option<JoinHost> {
         let trusted = self.trusted_hosts();
-        self.homes.borrow().listed.join_host(sync_host, &self.origin, &trusted, Utc::now().timestamp_millis())
+        self.homes.borrow().listed.join_host(sync_host, &self.origin, &self.origin, &trusted, Utc::now().timestamp_millis())
     }
 
     pub(super) fn trust_sync_host(&self, args: Args) -> Result<Value, String> {
