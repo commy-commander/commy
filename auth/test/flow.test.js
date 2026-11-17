@@ -88,13 +88,13 @@ async function desktopSignIn(cookie, { appIp = "203.0.113.5", approverIp = "203.
   return granted.json.access_token;
 }
 
-async function link(auth, key, name) {
+async function link(auth, key, name, kind) {
   const ch = await call("POST", "/commy/devices/challenge", { ...auth, body: { nodeId: key.nodeId } });
   assert.equal(ch.status, 200, JSON.stringify(ch.json));
   assert.ok(ch.json.message.startsWith("commy-device-link:v1\nhttp://localhost:3001\n"));
   return call("POST", "/commy/devices/register", {
     ...auth,
-    body: { nodeId: key.nodeId, name, challenge: ch.json.challenge, signature: key.sign(ch.json.message) },
+    body: { nodeId: key.nodeId, name, kind, challenge: ch.json.challenge, signature: key.sign(ch.json.message) },
   });
 }
 
@@ -153,16 +153,21 @@ test("desktop sign in, prove key, link, list, transfer and remove", { timeout: 3
   assert.equal(reg.status, 200, JSON.stringify(reg.json));
   assert.equal(reg.json.device.nodeId, key.nodeId);
 
-  const again = await link({ token }, key, "DESKTOP-ABC123");
+  assert.equal(reg.json.device.name, "Commy app", "an older app that sends no kind");
+
+  const odd = await link({ token }, key, "Desk PC", "toaster");
+  assert.equal(odd.status, 400, "only known kinds of app");
+
+  const again = await link({ token }, key, "DESKTOP-ABC123", "android");
   assert.equal(again.status, 200, JSON.stringify(again.json));
-  assert.equal(again.json.device.name, "Commy desktop", "the name an app sends is not kept");
+  assert.equal(again.json.device.name, "Commy on Android", "the name an app sends is not kept, only its kind");
   for (const row of db.linkedDevice) {
-    assert.deepEqual(Object.keys(row).sort(), ["createdAt", "id", "lastSeenAt", "nodeId", "sessionId", "userId"]);
+    assert.deepEqual(Object.keys(row).sort(), ["createdAt", "id", "kind", "lastSeenAt", "nodeId", "sessionId", "userId"]);
   }
 
   const list = await call("GET", "/commy/devices", { cookie });
   assert.equal(list.json.devices.length, 1);
-  assert.equal(list.json.devices[0].name, "Commy desktop");
+  assert.equal(list.json.devices[0].name, "Commy on Android");
 
   await call("POST", "/commy/devices/remove", { cookie: bob, body: { id: list.json.devices[0].id } });
   assert.equal((await call("GET", "/commy/devices", { token })).json.devices.length, 1, "bob cannot remove another user's device");

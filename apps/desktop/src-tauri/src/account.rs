@@ -1078,6 +1078,16 @@ fn after_sign_in(opening: account_folder::Opening, open: Option<&Path>) -> After
     }
 }
 
+fn device_kind() -> &'static str {
+    if cfg!(target_os = "android") {
+        "android"
+    } else if cfg!(target_os = "ios") {
+        "ios"
+    } else {
+        "desktop"
+    }
+}
+
 async fn link_device(app: &App, dir: &Path, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|_| "Could not create this account's folder".to_string())?;
     let secret = crate::persist::load_or_create_node_key(dir).ok_or("This install has no node key yet")?;
@@ -1099,7 +1109,7 @@ async fn link_device(app: &App, dir: &Path, server: &str, doc: &Discovery, token
         .http
         .post(&doc.endpoints.register_device)
         .bearer_auth(token)
-        .json(&serde_json::json!({ "nodeId": node_id, "challenge": challenge.challenge, "signature": signature }))
+        .json(&serde_json::json!({ "nodeId": node_id, "kind": device_kind(), "challenge": challenge.challenge, "signature": signature }))
         .send()
         .await
         .map_err(|_| "Could not link this device".to_string())?;

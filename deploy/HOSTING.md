@@ -466,10 +466,12 @@ phishing an approval.
 
 To link its iroh node id, the app asks `POST /api/auth/commy/devices/challenge`
 for a challenge, signs the returned `message` with its node secret key
-(ed25519), and sends `nodeId`, `challenge` and the hex `signature` to
+(ed25519), and sends `nodeId`, `challenge`, the hex `signature` and its `kind`
+(`desktop`, `android`, `ios` or `browser`) to
 `POST /api/auth/commy/devices/register`. Only the holder of a node key can link
 that node id, and the message names the server URL, so a signature for one
-server cannot be replayed on another.
+server cannot be replayed on another. The account page names each device by its
+kind only, never by the computer's or phone's own name.
 
 ## Invite links
 

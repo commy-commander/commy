@@ -1023,7 +1023,7 @@ impl Session {
         let reply = self.request("POST", account::LINK_CHALLENGE_PATH, Some(json!({ "nodeId": node_id }))).await?;
         let challenge = account::parse_challenge(&reply, &self.origin, &node_id)?;
         let signature = data_encoding::HEXLOWER.encode(&key.sign(challenge.message.as_bytes()).to_bytes());
-        let body = json!({ "nodeId": node_id, "challenge": challenge.challenge, "signature": signature });
+        let body = json!({ "nodeId": node_id, "kind": "browser", "challenge": challenge.challenge, "signature": signature });
         let reply = self.request("POST", account::LINK_REGISTER_PATH, Some(body)).await?;
         if !reply.ok() {
             return Err("Your account server could not verify this browser".into());

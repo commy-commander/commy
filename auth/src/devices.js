@@ -19,13 +19,24 @@ function requireNodeId(value) {
   return nodeId;
 }
 
-export const DEVICE_LABEL = "Commy desktop";
+export const DEVICE_KINDS = {
+  desktop: "Commy desktop",
+  android: "Commy on Android",
+  ios: "Commy on iPhone",
+  browser: "Commy in a browser",
+};
+export const UNKNOWN_DEVICE_LABEL = "Commy app";
+const deviceKind = z.enum(Object.keys(DEVICE_KINDS)).optional();
+
+export function deviceLabel(kind) {
+  return Object.hasOwn(DEVICE_KINDS, kind ?? "") ? DEVICE_KINDS[kind] : UNKNOWN_DEVICE_LABEL;
+}
 
 export function toPublicDevice(row) {
   return {
     id: row.id,
     nodeId: row.nodeId,
-    name: DEVICE_LABEL,
+    name: deviceLabel(row.kind),
     createdAt: row.createdAt,
     lastSeenAt: row.lastSeenAt,
   };
@@ -64,6 +75,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         createdAt: { type: "date", required: true },
         lastSeenAt: { type: "date", required: true },
         sessionId: { type: "string", required: false },
+        kind: { type: "string", required: false },
       },
     },
   },
@@ -103,6 +115,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         body: z.object({
           nodeId: z.string(),
           name: nameOlderAppsSendAndWeIgnore,
+          kind: deviceKind,
           challenge: z.string(),
           signature: z.string(),
         }),
@@ -111,6 +124,7 @@ export const commyDevices = ({ secret, serverUrl }) => ({
         const userId = ctx.context.session.user.id;
         const nodeId = requireNodeId(ctx.body.nodeId);
         const { challenge, signature } = ctx.body;
+        const kind = ctx.body.kind ? { kind: ctx.body.kind } : {};
         if (
           !checkChallenge(secret, userId, nodeId, challenge) ||
           !verifyNodeSignature(nodeId, linkMessage(serverUrl, nodeId, challenge), signature)
@@ -132,14 +146,14 @@ export const commyDevices = ({ secret, serverUrl }) => ({
           const updated = await adapter.update({
             model: MODEL,
             where: [{ field: "id", value: existing.id }],
-            update: { userId, lastSeenAt: now, sessionId },
+            update: { userId, lastSeenAt: now, sessionId, ...kind },
           });
-          return ctx.json({ device: toPublicDevice(updated ?? { ...existing, userId, lastSeenAt: now }) });
+          return ctx.json({ device: toPublicDevice(updated ?? { ...existing, userId, lastSeenAt: now, ...kind }) });
         }
 
         const created = await adapter.create({
           model: MODEL,
-          data: { nodeId, userId, createdAt: now, lastSeenAt: now, sessionId },
+          data: { nodeId, userId, createdAt: now, lastSeenAt: now, sessionId, ...kind },
         });
         return ctx.json({ device: toPublicDevice(created) });
       },

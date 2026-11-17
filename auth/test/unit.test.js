@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { socialProviders } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
-import { DEVICE_LABEL, dropDeviceNames, normalizeNodeId, toPublicDevice } from "../src/devices.js";
+import { DEVICE_KINDS, UNKNOWN_DEVICE_LABEL, deviceLabel, dropDeviceNames, normalizeNodeId, toPublicDevice } from "../src/devices.js";
 import { createMailer, escapeHtml, renderEmail } from "../src/mailer.js";
 
 const base = {
@@ -82,7 +82,16 @@ test("normalizeNodeId accepts only 32 byte hex keys", () => {
 test("toPublicDevice drops the owning user id and any stored name", () => {
   const out = toPublicDevice({ id: "1", nodeId: "n", name: "DESKTOP-ABC123", userId: "secret", createdAt: 1, lastSeenAt: 2 });
   assert.equal("userId" in out, false);
-  assert.equal(out.name, DEVICE_LABEL);
+  assert.equal(out.name, UNKNOWN_DEVICE_LABEL);
+});
+
+test("a device is named only by the kind of app it is", () => {
+  assert.equal(toPublicDevice({ id: "1", nodeId: "n", kind: "android", name: "Galaxy" }).name, "Commy on Android");
+  assert.equal(deviceLabel("desktop"), DEVICE_KINDS.desktop);
+  assert.equal(deviceLabel("ios"), "Commy on iPhone");
+  assert.equal(deviceLabel("browser"), "Commy in a browser");
+  assert.equal(deviceLabel(undefined), UNKNOWN_DEVICE_LABEL);
+  assert.equal(deviceLabel("toString"), UNKNOWN_DEVICE_LABEL);
 });
 
 test("dropDeviceNames removes the old name column", async () => {
