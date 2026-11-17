@@ -209,8 +209,15 @@ function cameraPipelineRunning(pipe) {
   return Boolean(pipe && pipe.timer);
 }
 
+function detachCameraFeed(video) {
+  video.pause();
+  video.srcObject = null;
+}
+
 function swapCameraSource(pipe, stream) {
-  for (const track of pipe.stream.getTracks()) track.stop();
+  const old = pipe.stream;
+  detachCameraFeed(pipe.video);
+  for (const track of old.getTracks()) track.stop();
   pipe.stream = stream;
   pipe.video.srcObject = stream;
   pipe.video.play().catch(() => {});
@@ -220,8 +227,8 @@ function stopCameraPipeline(pipe) {
   if (!pipe) return;
   clearInterval(pipe.timer);
   pipe.timer = null;
+  detachCameraFeed(pipe.video);
   for (const track of pipe.stream.getTracks()) track.stop();
-  pipe.video.srcObject = null;
   pipe.video.remove();
   pipe.canvas.remove();
 }

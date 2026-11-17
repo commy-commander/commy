@@ -15,7 +15,7 @@ fail() {
   exit 1
 }
 
-for plugin in coreelements video4linux2 pulseaudio videoconvert videoscale videorate audioconvert audioresample app playback mpg123; do
+for plugin in coreelements video4linux2 pulseaudio videoconvert videoscale videorate audioconvert audioresample app playback mpg123 videofilter deinterlace; do
   [ -f "$plugins/libgst$plugin.so" ] || fail "no GStreamer $plugin plugin, so cameras, microphones or sounds would be missing"
 done
 for unwanted in pipewire soup; do

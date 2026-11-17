@@ -74,9 +74,9 @@ jobs:
           system="/usr/lib/x86_64-linux-gnu/gstreamer-1.0"
           chosen="$RUNNER_TEMP/appimage-gstreamer-plugins"
           mkdir -p "$chosen"
-          for plugin in coreelements app audioconvert audioparsers audiomixer audiorate audioresample autodetect \
+          for plugin in coreelements app audioconvert audioparsers audiomixer audiorate audioresample autodetect deinterlace \
             id3demux interleave isomp4 jpeg matroska mpg123 ogg opengl opus pbtypes playback pulseaudio \
-            typefindfunctions video4linux2 videoconvert videorate videoscale volume vorbis vpx wavparse; do
+            typefindfunctions video4linux2 videoconvert videofilter videorate videoscale volume vorbis vpx wavparse; do
             cp "$system/libgst$plugin.so" "$chosen/"
           done
           echo "GSTREAMER_PLUGINS_DIR=$chosen" >> "$GITHUB_ENV"
