@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, signedOutInPlace, accountChangeStep, accountScreenName } = require("../scripts/account-ui.js");
+const { UI_OWNER_KEY, ACCOUNT_UI_KEYS, claimUiState, unclaimedProfileLine, accountRows, canAddAccount, accountLine, signOutPrompt, signedOutInPlace, signInChoice, accountChangeStep, accountScreenName } = require("../scripts/account-ui.js");
 const LOCALE_EN = require("../scripts/locales/en.js");
 
 function memoryStorage(entries = {}) {
@@ -97,6 +97,18 @@ test("a first sign-in opens the account, and later changes never cover it with t
   assert.equal(accountChangeStep(false, signedIn, false), "open");
   assert.equal(accountChangeStep(true, signedIn, false), null);
   assert.equal(accountChangeStep(true, signedIn, true), "accounts");
+});
+
+test("adding an account shows the server picked for it, not the open account's server", () => {
+  const open = { signed_in: true, server: "https://commy.chat", is_default_server: true, server_verified: true, listed_homes: [] };
+  const adding = { ...open, sign_in_server: { server: "https://chat.example.org", server_host: "chat.example.org", is_default_server: false, server_listed: false, server_verified: false, server_impostor: false } };
+  const choice = signInChoice(adding);
+  assert.equal(choice.server, "https://chat.example.org");
+  assert.equal(choice.is_default_server, false);
+  assert.equal(choice.server_verified, false);
+  assert.equal(choice.signed_in, true);
+  assert.equal(adding.server, "https://commy.chat");
+  assert.equal(signInChoice(open), open);
 });
 
 test("signing out or a waiting sign-in code shows the sign-in screen", () => {

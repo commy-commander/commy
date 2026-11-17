@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 
-use crate::account::{complete_sign_in, discover, effective_server, host_of, room_for_another_account, Discovery};
+use crate::account::{complete_sign_in, discover, host_of, room_for_another_account, sign_in_server, Discovery};
 use crate::state::App;
 
 const CHALLENGE_LIFETIME: Duration = Duration::from_secs(9 * 60);
@@ -220,7 +220,7 @@ async fn post(app: &App, server: &str, url: &str, body: Value, cookie: Option<&s
 
 async fn current_server(app: &App) -> Result<(String, Discovery), String> {
     room_for_another_account(app)?;
-    let server = effective_server();
+    let server = sign_in_server();
     let doc = discover(&app.http, &server).await?;
     Ok((server, doc))
 }
@@ -259,7 +259,7 @@ async fn settle(handle: &AppHandle, server: &str, doc: &Discovery, mut pending: 
 
 #[tauri::command]
 pub async fn account_in_app_options(app: tauri::State<'_, App>) -> Result<InAppOptions, String> {
-    let server = effective_server();
+    let server = sign_in_server();
     let doc = discover(&app.http, &server).await?;
     Ok(InAppOptions {
         password: offers_password(&doc),

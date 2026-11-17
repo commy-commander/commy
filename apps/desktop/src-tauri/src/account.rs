@@ -116,6 +116,17 @@ impl AccountState {
         self.others.truncate(MAX_ACCOUNTS - 1);
     }
 
+    fn open_session(&mut self, server: &str, token: &str, user: AccountUser, features: Option<ServerFeatures>) {
+        self.keep_previous(server, &user.id);
+        if !is_bench_server(server) {
+            self.server = (server != DEFAULT_ACCOUNT_SERVER).then(|| server.to_string());
+        }
+        self.signed_in_server = Some(server.to_string());
+        self.token = Some(token.to_string());
+        self.user = Some(user);
+        self.features = features;
+    }
+
     fn become_account(&mut self, saved: SavedAccount) {
         self.server = (saved.server != DEFAULT_ACCOUNT_SERVER).then(|| saved.server.clone());
         self.signed_in_server = Some(saved.server);
@@ -170,6 +181,8 @@ pub struct AccountUser {
 
 static CHOSEN_SERVER: Mutex<Option<String>> = Mutex::new(None);
 
+static NEXT_SIGN_IN_SERVER: Mutex<Option<String>> = Mutex::new(None);
+
 static ENV_SERVER: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("COMMY_AUTH_URL").ok().and_then(|s| normalize_origin(&s)));
 
@@ -188,6 +201,23 @@ pub fn effective_server() -> String {
     CHOSEN_SERVER.lock_or_recover().clone().unwrap_or_else(|| DEFAULT_ACCOUNT_SERVER.to_string())
 }
 
+pub fn sign_in_server() -> String {
+    if ENV_SERVER.is_some() {
+        return effective_server();
+    }
+    NEXT_SIGN_IN_SERVER.lock_or_recover().clone().unwrap_or_else(effective_server)
+}
+
+fn use_account_server(server: Option<String>) {
+    *CHOSEN_SERVER.lock_or_recover() = server;
+    *NEXT_SIGN_IN_SERVER.lock_or_recover() = None;
+}
+
+fn next_sign_in_server(picked: Option<String>, current: &str) -> Option<String> {
+    let picked = picked.unwrap_or_else(|| DEFAULT_ACCOUNT_SERVER.to_string());
+    (picked != current).then_some(picked)
+}
+
 fn path(dir: &Path) -> PathBuf {
     dir.join(FILE)
 }
@@ -197,7 +227,7 @@ pub fn load(dir: &Path) -> AccountState {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
+    use_account_server(state.server.clone());
     state
 }
 
@@ -689,6 +719,17 @@ pub struct AccountView {
     server_listed: bool,
     server_verified: bool,
     server_impostor: bool,
+    sign_in_server: SignInServerView,
+}
+
+#[derive(Serialize)]
+struct SignInServerView {
+    server: String,
+    server_host: String,
+    is_default_server: bool,
+    server_listed: bool,
+    server_verified: bool,
+    server_impostor: bool,
 }
 
 #[derive(Serialize)]
@@ -744,12 +785,30 @@ fn view(app: &App) -> AccountView {
         server_listed: crate::server_guard::is_listed_home(&effective_server()),
         server_verified: crate::official_check::is_verified(&effective_server()),
         server_impostor: crate::official_check::is_impostor(&effective_server()),
+        sign_in_server: sign_in_choice(),
+    }
+}
+
+fn sign_in_choice() -> SignInServerView {
+    let server = sign_in_server();
+    SignInServerView {
+        server_host: host_of(&server),
+        is_default_server: server == DEFAULT_ACCOUNT_SERVER,
+        server_listed: crate::server_guard::is_listed_home(&server),
+        server_verified: crate::official_check::is_verified(&server),
+        server_impostor: crate::official_check::is_impostor(&server),
+        server,
     }
 }
 
 #[tauri::command]
 pub async fn verify_account_server(handle: AppHandle) -> AccountView {
-    crate::official_check::check(&handle, &effective_server()).await;
+    let current = effective_server();
+    crate::official_check::check(&handle, &current).await;
+    let next = sign_in_server();
+    if next != current {
+        crate::official_check::check(&handle, &next).await;
+    }
     view(&handle.state::<App>())
 }
 
@@ -760,20 +819,21 @@ pub fn account_status(app: tauri::State<'_, App>) -> AccountView {
 
 #[tauri::command]
 pub fn set_account_server(app: tauri::State<'_, App>, server: Option<String>) -> Result<AccountView, String> {
-    if is_signed_in(&app.account.lock_or_recover()) {
-        return Err("Sign out before changing the account server".into());
-    }
     let server = match server.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
         None => None,
         Some(s) => Some(public_server_origin(&s).map_err(|e| e.message_key().to_string())?),
     }
     .filter(|s| s != DEFAULT_ACCOUNT_SERVER);
+    if is_signed_in(&app.account.lock_or_recover()) {
+        *NEXT_SIGN_IN_SERVER.lock_or_recover() = next_sign_in_server(server, &effective_server());
+        return Ok(view(&app));
+    }
     {
         let mut state = app.account.lock_or_recover();
         state.server = server.clone();
         store(&app, &state);
     }
-    *CHOSEN_SERVER.lock_or_recover() = server;
+    use_account_server(server);
     Ok(view(&app))
 }
 
@@ -875,7 +935,7 @@ fn default_interval() -> u64 {
 #[tauri::command]
 pub async fn account_begin_sign_in(app: tauri::State<'_, App>, handle: AppHandle) -> Result<SignInStart, String> {
     room_for_another_account(&app)?;
-    let server = effective_server();
+    let server = sign_in_server();
     let doc = discover(&app.http, &server).await?;
     let res = app
         .http
@@ -1055,13 +1115,10 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
     };
     {
         let mut state = app.account.lock_or_recover();
-        state.keep_previous(server, &user.id);
-        state.signed_in_server = Some(server.to_string());
-        state.token = Some(token.to_string());
-        state.user = Some(user);
+        state.open_session(server, token, user, doc.features);
         state.device_linked = device_linked.is_ok() && next == AfterSignIn::KeepOpen;
-        state.features = doc.features;
         store(&app, &state);
+        use_account_server(state.server.clone());
     }
     use_sync_service(handle, server, doc);
     let renewing = handle.clone();
@@ -1173,7 +1230,7 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
         let mut state = app.account.lock_or_recover();
         let switched = state.sign_out_current();
         store(&app, &state);
-        *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
+        use_account_server(state.server.clone());
         switched
     };
     if let Some(dir) = app.data_dir() {
@@ -1203,7 +1260,7 @@ pub(crate) async fn sign_out_to_move(app: &App, handle: &AppHandle, to: &str) ->
         state.device_linked = false;
         state.server = (to != DEFAULT_ACCOUNT_SERVER).then(|| to.to_string());
         store(app, &state);
-        *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
+        use_account_server(state.server.clone());
     }
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);
@@ -1324,7 +1381,7 @@ async fn forget_deleted_account(app: &App, handle: &AppHandle) -> Result<Account
         let mut state = app.account.lock_or_recover();
         let switched = state.sign_out_current();
         store(app, &state);
-        *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
+        use_account_server(state.server.clone());
         switched
     };
     if let Some(dir) = app.data_dir() {
@@ -1357,7 +1414,7 @@ pub async fn account_switch(app: tauri::State<'_, App>, handle: AppHandle, serve
             return Err("That account is no longer on this computer.".into());
         }
         store(&app, &state);
-        *CHOSEN_SERVER.lock_or_recover() = state.server.clone();
+        use_account_server(state.server.clone());
     }
     restart_signed_in_as_someone_else(&handle)
 }
@@ -1947,6 +2004,33 @@ mod tests {
         assert_eq!(others(&state), ["main"], "signing in again as the same account adds nothing");
         state.keep_previous(&effective_server(), "main");
         assert_eq!(others(&state), ["second"], "an account is never both open and in the list");
+    }
+
+    #[test]
+    fn adding_an_account_on_another_server_moves_to_that_server() {
+        let mut state = signed_in_as("main");
+        let other = "https://chat.example.org";
+        let user = AccountUser { id: "away".into(), name: "away".into(), email: "away@example.test".into(), created_at: None };
+        state.open_session(other, "token-away", user, None);
+        assert_eq!(state.server.as_deref(), Some(other));
+        assert_eq!(state.signed_in_server.as_deref(), Some(other));
+        assert_eq!(state.token.as_deref(), Some("token-away"));
+        assert_eq!(others(&state), ["main"]);
+        assert_eq!(state.others[0].server, effective_server());
+
+        let back = AccountUser { id: "home".into(), name: "home".into(), email: "home@example.test".into(), created_at: None };
+        state.open_session(DEFAULT_ACCOUNT_SERVER, "token-home", back, None);
+        assert_eq!(state.server, None, "the official server is the default, so nothing is pinned");
+        assert_eq!(others(&state), ["away", "main"]);
+    }
+
+    #[test]
+    fn the_server_picked_for_a_new_sign_in_is_kept_only_when_it_differs() {
+        let current = DEFAULT_ACCOUNT_SERVER;
+        assert_eq!(next_sign_in_server(None, current), None);
+        assert_eq!(next_sign_in_server(Some(current.into()), current), None);
+        assert_eq!(next_sign_in_server(Some("https://chat.example.org".into()), current).as_deref(), Some("https://chat.example.org"));
+        assert_eq!(next_sign_in_server(None, "https://chat.example.org").as_deref(), Some(DEFAULT_ACCOUNT_SERVER));
     }
 
     #[test]

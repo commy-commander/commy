@@ -1842,7 +1842,14 @@ async function mockInvoke(cmd, args = {}) {
       return mock.account;
     }
     case "account_sign_out_other": mock.account.others = mock.account.others.filter(o => o.id !== args.id); return mock.account;
-    case "set_account_server": if (args.server && !/^(https:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|chat)$/i.test(args.server)) throw "signin.server.bad.ending"; return mock.account;
+    case "set_account_server": {
+      if (args.server && !/^(https:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|org|net|chat)$/i.test(args.server)) throw "signin.server.bad.ending";
+      if (!mock.account.signed_in) return mock.account;
+      const origin = args.server ? (args.server.startsWith("https://") ? args.server : `https://${args.server}`) : "https://commy.chat";
+      const host = origin.replace("https://", "");
+      mock.account.sign_in_server = { server: origin, server_host: host, is_default_server: !args.server, server_listed: false, server_verified: !args.server, server_impostor: false };
+      return mock.account;
+    }
     case "set_user_voice": {
       mock.voice.user_volumes = mock.voice.user_volumes || {};
       mock.voice.muted_users = mock.voice.muted_users || [];
@@ -25096,7 +25103,7 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("listed-servers-changed", async () => {
       await loadAccount();
-      if (!$("modal-signin").classList.contains("hidden") && !account.signed_in) {
+      if (!$("modal-signin").classList.contains("hidden")) {
         showListedHomes($("signin-server-select"));
         syncServerNote();
       }
@@ -27280,7 +27287,8 @@ let signInUrl = null;
 function syncServerNote() {
   const select = $("signin-server-select");
   const editing = !$("signin-server-edit").classList.contains("hidden");
-  const key = signInServerNote(editing ? "custom" : select.value, account);
+  const choice = signInChoice(account);
+  const key = signInServerNote(editing ? "custom" : select.value, choice);
   const note = $("signin-server-note");
   note.dataset.i18n = key;
   note.textContent = t(key);
@@ -27288,7 +27296,7 @@ function syncServerNote() {
   note.classList.toggle("plain", key === "signin.server.note");
   note.classList.remove("error");
   showSignInHelp(key);
-  const official = showsOfficialBadge(editing ? "custom" : select.value, account);
+  const official = showsOfficialBadge(editing ? "custom" : select.value, choice);
   $("signin-server-official").classList.toggle("hidden", !official);
   select.parentElement.closest(".signin-server-field").classList.toggle("official", official);
   $("signin-server-input").removeAttribute("aria-invalid");
@@ -27330,7 +27338,8 @@ function openServerEdit() {
 
 function closeServerEdit() {
   const select = $("signin-server-select");
-  select.value = account.is_default_server ? "default" : account.server;
+  const choice = signInChoice(account);
+  select.value = choice.is_default_server ? "default" : choice.server;
   select.classList.remove("hidden");
   $("signin-server-edit").classList.add("hidden");
   syncServerNote();
@@ -27351,7 +27360,7 @@ async function useAccountServer(server) {
 function showListedHomes(select) {
   for (const old of [...select.querySelectorAll("option[data-listed]")]) old.remove();
   const custom = select.querySelector('option[value="custom"]');
-  for (const home of listedHomeOptions(account.listed_homes, account.server)) {
+  for (const home of listedHomeOptions(account.listed_homes, signInChoice(account).server)) {
     const option = new Option(home.label, home.value);
     option.dataset.listed = "1";
     select.insertBefore(option, custom);
@@ -27363,18 +27372,19 @@ function showSignIn() {
   $("signin-wait").classList.add("hidden");
   $("signin-error").classList.add("hidden");
   const select = $("signin-server-select");
-  const custom = !account.is_default_server;
+  const choice = signInChoice(account);
+  const custom = !choice.is_default_server;
   const defaultHost = account.default_server_host || "commy.chat";
   const first = select.options[0];
   if (defaultHost === "commy.chat") first.dataset.i18n = "signin.server.default";
   else delete first.dataset.i18n;
   first.text = defaultHost === "commy.chat" ? t("signin.server.default") : t("signin.server.test", { host: defaultHost });
   showListedHomes(select);
-  if (custom && ![...select.options].some(o => o.value === account.server)) {
-    select.insertBefore(new Option(account.server_host, account.server), select.options[1]);
+  if (custom && ![...select.options].some(o => o.value === choice.server)) {
+    select.insertBefore(new Option(choice.server_host, choice.server), select.options[1]);
   }
-  select.value = custom ? account.server : "default";
-  select.disabled = Boolean(account.server_from_env) || account.signed_in;
+  select.value = custom ? choice.server : "default";
+  select.disabled = Boolean(account.server_from_env);
   select.title = account.server_from_env ? "Set by COMMY_AUTH_URL" : "";
   $("signin-back").classList.toggle("hidden", !account.signed_in);
   for (const [id, key] of [["signin-title", "signin.title"], ["signin-intro", "signin.intro"]]) {
