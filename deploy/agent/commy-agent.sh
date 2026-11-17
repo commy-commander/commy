@@ -11,6 +11,7 @@ COSIGN_IDENTITY="${AGENT_COSIGN_IDENTITY:-https://github.com/commy-commander/com
 COSIGN_WEB_IDENTITY="${AGENT_COSIGN_WEB_IDENTITY:-https://github.com/commy-commander/commy-web/.github/workflows/promote.yml@refs/heads/main}"
 COSIGN_ISSUER="${AGENT_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
 COSIGN_KEY="${AGENT_COSIGN_KEY:-}"
+REPO_DIR="${AGENT_REPO_DIR:-/repo}"
 
 log() {
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
