@@ -384,10 +384,10 @@ const DM_SENDERS_REMEMBERED: usize = 4096;
 struct DmAcceptor {
     tx: mpsc::UnboundedSender<IncomingDm>,
     legacy: bool,
-    recent: Arc<std::sync::Mutex<HashMap<[u8; 32], (std::time::Instant, u32)>>>,
+    recent: Arc<std::sync::Mutex<HashMap<[u8; 32], (n0_future::time::Instant, u32)>>>,
 }
 
-fn dm_rate_allows(recent: &std::sync::Mutex<HashMap<[u8; 32], (std::time::Instant, u32)>>, node: [u8; 32], now: std::time::Instant) -> bool {
+fn dm_rate_allows(recent: &std::sync::Mutex<HashMap<[u8; 32], (n0_future::time::Instant, u32)>>, node: [u8; 32], now: n0_future::time::Instant) -> bool {
     let mut recent = recent.lock().unwrap();
     if recent.len() >= DM_SENDERS_REMEMBERED {
         recent.retain(|_, (since, _)| now.duration_since(*since) < std::time::Duration::from_secs(60));
@@ -423,7 +423,7 @@ impl DmAcceptor {
                 return Ok(());
             };
             let accepted = envelope.sent_from(&node)
-                && dm_rate_allows(&self.recent, node, std::time::Instant::now())
+                && dm_rate_allows(&self.recent, node, n0_future::time::Instant::now())
                 && self.tx.send(IncomingDm { envelope, node }).is_ok();
             write_frame(&mut send, &DmAck { accepted })
                 .await

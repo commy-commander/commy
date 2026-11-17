@@ -358,12 +358,24 @@
     });
   }
 
+  function unlockCardShown() {
+    const modal = document.getElementById("modal-web-unlock");
+    return Boolean(modal) && !modal.classList.contains("hidden");
+  }
+
+  function anotherCardShown() {
+    const backdrop = document.getElementById("modal-backdrop");
+    if (!backdrop || backdrop.classList.contains("hidden")) return false;
+    return [...document.querySelectorAll(".modal")].some(modal => modal.id !== "modal-web-unlock" && !modal.classList.contains("hidden"));
+  }
+
   function settle(view) {
     const opening = view.state === "unlocked";
     if (opened) return;
     opened = opening;
     paintUnlock(opening ? { state: "opening", detail: "" } : view);
     if (opening) whenServersLoad().then(() => resolveUnlocked && resolveUnlocked());
+    if (opening && anotherCardShown()) return;
     if (typeof showModal === "function") showModal("modal-web-unlock");
   }
 
@@ -510,7 +522,7 @@
     if (cmd === "mic_level") return voice.level();
     if (cmd === "get_user") {
       await untilUnlocked();
-      if (typeof hideModals === "function") hideModals();
+      if (unlockCardShown() && typeof hideModals === "function") hideModals();
       document.addEventListener("pointerdown", askForNotices, { once: true, capture: true });
     }
     return backend(cmd, args);

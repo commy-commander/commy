@@ -2,9 +2,10 @@ use crate::node::{accept_error, NetEvent};
 use anyhow::{Context, Result};
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
+use n0_future::time::Instant;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub const WAKE_ALPN: &[u8] = b"commy/wake/1";

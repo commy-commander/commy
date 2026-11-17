@@ -605,3 +605,23 @@ test("a moved account sends the browser only to the new home's own web app", () 
   assert.match(bridge, /listeners\.set\("web-account-moved"/);
   assert.match(read("apps", "web", "src", "session", "moved.rs"), /"web-account-moved"/);
 });
+
+test("code the browser runs never reads the clock through std::time, which panics in wasm", () => {
+  const { readdirSync, statSync } = require("node:fs");
+  const files = dir => readdirSync(dir).flatMap(name => {
+    const path = join(dir, name);
+    return statSync(path).isDirectory() ? files(path) : name.endsWith(".rs") ? [path] : [];
+  });
+  const roots = [["apps", "web", "src"], ...["commy-core", "commy-net", "commy-view", "commy-sync", "commy-audio"].map(c => ["crates", c, "src"])];
+  const stdClock = /std::time::(Instant|SystemTime)|use std::time::\{[^}]*\b(Instant|SystemTime)\b/;
+  const found = [];
+  for (const root of roots) {
+    for (const file of files(join(repo, ...root))) {
+      if (/[\\/]tests?\.rs$/.test(file)) continue;
+      const text = readFileSync(file, "utf8");
+      const shipped = text.split(/^#\[cfg\(test\)\]\s*\n\s*mod tests/m)[0];
+      shipped.split("\n").forEach((line, i) => { if (stdClock.test(line)) found.push(`${file.slice(repo.length + 1)}:${i + 1}`); });
+    }
+  }
+  assert.deepEqual(found, []);
+});
