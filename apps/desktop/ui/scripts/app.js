@@ -11518,31 +11518,43 @@ async function loadUpdateStatus() {
 }
 
 function onUpdateStatus(status) {
-  const wasReady = updateStatus && updateStatus.phase === "ready";
   updateStatus = status;
   const ready = status && status.phase === "ready";
   $("settings-btn").classList.toggle("update-ready", !!ready);
   $("settings-btn").dataset.i18nTitle = ready ? "nav.settings.updateReady" : "nav.settings";
   $("settings-btn").title = t($("settings-btn").dataset.i18nTitle);
-  if (ready && !wasReady && openSettingsLayerId() !== "user-settings") {
-    toast(`Commy ${status.version} is ready. Restart from Settings > Startup & Updates.`);
-  }
   renderUpdateStatus();
   paintUpdateChip();
 }
 
-let dismissedUpdateVersion = null;
+let dismissedUpdateNotice = null;
 
 function paintUpdateChip() {
-  const notice = outdatedNotice(updateStatus) || syncHostNotice;
+  const ready = readyNotice(updateStatus);
+  const notice = ready || outdatedNotice(updateStatus) || syncHostNotice;
   const offline = !$("offline-chip").classList.contains("hidden");
-  const dismissed = !!notice && dismissedUpdateVersion === (updateStatus && updateStatus.version);
+  const dismissed = !!notice && dismissedUpdateNotice === notice;
   $("update-chip-text").textContent = notice || "";
-  $("update-chip").classList.toggle("hidden", !notice || offline || dismissed);
+  $("update-chip-open").textContent = ready ? "Restart" : "Update";
+  $("update-chip").classList.toggle("hidden", !notice || (offline && !ready) || dismissed);
+}
+
+function runUpdateChip() {
+  if (readyNotice(updateStatus)) restartToUpdate();
+  else openUpdateSettings();
+}
+
+async function restartToUpdate() {
+  try {
+    await invoke("restart_to_update");
+  } catch (err) {
+    toast(String(err));
+    loadUpdateStatus();
+  }
 }
 
 function dismissUpdateChip() {
-  dismissedUpdateVersion = updateStatus && updateStatus.version;
+  dismissedUpdateNotice = $("update-chip-text").textContent || null;
   paintUpdateChip();
 }
 
@@ -11571,7 +11583,7 @@ async function runUpdateAction() {
   const action = $("update-action").dataset.action;
   try {
     if (action === "restart") {
-      await invoke("restart_to_update");
+      await restartToUpdate();
     } else if (action === "page") {
       if (updateStatus && updateStatus.page) await invoke("open_url", { url: updateStatus.page });
     } else {
@@ -24369,7 +24381,7 @@ function wireEvents() {
     renderUpdateStatus();
   });
   $("update-action").onclick = runUpdateAction;
-  $("update-chip-open").onclick = openUpdateSettings;
+  $("update-chip-open").onclick = runUpdateChip;
   $("update-chip-close").onclick = dismissUpdateChip;
   $("conn-test-run").onclick = runConnectionTest;
   $("verbose-log-toggle").addEventListener("change", e => setVerboseLogging(e.target.checked));

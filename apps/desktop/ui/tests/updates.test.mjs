@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-const { agoWords, updateStatusText, updateAction, outdatedNotice } = createRequire(import.meta.url)("../scripts/updates.js");
+const { agoWords, updateStatusText, updateAction, outdatedNotice, readyNotice } = createRequire(import.meta.url)("../scripts/updates.js");
 const now = 1_760_000_000_000;
 const ago = secs => now / 1000 - secs;
 
@@ -65,4 +65,11 @@ test("no outdated warning when current, busy, or on a store or development build
   assert.equal(outdatedNotice({ phase: "ready", version: "0.2.2" }), null);
   assert.equal(outdatedNotice({ phase: "available", reason: "store", version: "0.2.2" }), null);
   assert.equal(outdatedNotice({ phase: "available", reason: "dev", version: "0.2.2" }), null);
+});
+
+test("a downloaded update offers a quiet restart instead of a warning", () => {
+  assert.equal(readyNotice({ phase: "ready", version: "0.3.0" }), "Commy 0.3.0 is ready. Restart to update.");
+  assert.equal(readyNotice({ phase: "downloading", version: "0.3.0", progress: 40 }), null);
+  assert.equal(readyNotice({ phase: "available", version: "0.3.0" }), null);
+  assert.equal(readyNotice(null), null);
 });

@@ -340,7 +340,9 @@ async fn update_at_launch(handle: AppHandle) {
     publish(&handle).await;
     tokio::time::sleep(RESTART_PAUSE).await;
     tracing::info!("restarting into the update found at launch");
-    if let Err(e) = updater::restart(&handle) {
+    let restarting = handle.clone();
+    let restarted = tauri::async_runtime::spawn_blocking(move || updater::restart(&restarting)).await;
+    if let Err(e) = restarted.map_err(|e| e.to_string()).and_then(|done| done) {
         tracing::warn!("could not restart into the update: {e}");
         RESTARTING.store(false, Ordering::SeqCst);
         publish(&handle).await;

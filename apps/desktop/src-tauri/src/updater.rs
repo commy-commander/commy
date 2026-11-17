@@ -258,11 +258,13 @@ async fn install(handle: &AppHandle, manifest: &str, current: semver::Version, f
     let url = manifest.parse().map_err(|e| format!("bad manifest link: {e}"))?;
     let newer_than = current;
     let test_build = crate::instance::TEST_BUILD;
+    let leaving = handle.clone();
     let update = handle
         .updater_builder()
         .endpoints(vec![url])
         .map_err(|e| e.to_string())?
         .timeout(FETCH_TIMEOUT)
+        .on_before_exit(move || leave_for_installer(&leaving))
         .version_comparator(move |_, remote| is_offered(&remote.version, &newer_than, test_build))
         .build()
         .map_err(|e| e.to_string())?
@@ -306,6 +308,13 @@ async fn install(handle: &AppHandle, manifest: &str, current: semver::Version, f
         s.progress = None;
     });
     Ok(())
+}
+
+#[cfg(desktop)]
+fn leave_for_installer(handle: &AppHandle) {
+    crate::leave_cleanly(handle);
+    crate::invite_link::step_aside();
+    handle.cleanup_before_exit();
 }
 
 async fn fetch_manifest(url: &str) -> Result<Manifest, String> {
@@ -369,6 +378,12 @@ mod tests {
     fn updates_must_carry_the_version_they_were_signed_for() {
         let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(config["plugins"]["updater"]["requireSignedVersion"], serde_json::Value::Bool(true));
+    }
+
+    #[test]
+    fn windows_updates_install_without_showing_the_installer() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["plugins"]["updater"]["windows"]["installMode"], "quiet");
     }
 
     #[test]

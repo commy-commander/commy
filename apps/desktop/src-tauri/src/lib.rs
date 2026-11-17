@@ -8246,6 +8246,11 @@ async fn startup_continue(handle: tauri::AppHandle) -> CmdResult<startup::Startu
     Ok(startup::current(&handle).await)
 }
 
+pub(crate) fn leave_cleanly(handle: &tauri::AppHandle) {
+    liveness::say_goodbye(&handle.state::<App>());
+    catchup::save_unsaved(&handle.state::<App>());
+}
+
 #[tauri::command]
 fn get_update_status(handle: tauri::AppHandle) -> updater::UpdateStatus {
     updater::status(&handle)
@@ -9117,8 +9122,7 @@ pub fn run() {
         .expect("failed to run Commy")
         .run(|handle, event| {
             if let tauri::RunEvent::Exit = event {
-                liveness::say_goodbye(&handle.state::<App>());
-                catchup::save_unsaved(&handle.state::<App>());
+                leave_cleanly(handle);
             }
             if let tauri::RunEvent::Resumed = event {
                 on_resumed(handle);
@@ -9132,8 +9136,7 @@ pub fn run() {
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Suspended, .. } = &event {
                 note_phone_moved(handle, false);
                 if relaunch::reopen_needed() {
-                    liveness::say_goodbye(&handle.state::<App>());
-                    catchup::save_unsaved(&handle.state::<App>());
+                    leave_cleanly(handle);
                     handle.cleanup_before_exit();
                     std::process::exit(0);
                 }

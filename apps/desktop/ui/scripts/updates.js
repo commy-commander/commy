@@ -50,4 +50,10 @@ function outdatedNotice(status) {
   return `Commy ${s.version} is out. Until you update, you may not be able to connect with people on the newest version.`;
 }
 
-if (typeof module !== "undefined") module.exports = { agoWords, updateStatusText, updateAction, outdatedNotice };
+function readyNotice(status) {
+  const s = status || {};
+  if (s.phase !== "ready" || !s.version) return null;
+  return `Commy ${s.version} is ready. Restart to update.`;
+}
+
+if (typeof module !== "undefined") module.exports = { agoWords, updateStatusText, updateAction, outdatedNotice, readyNotice };
