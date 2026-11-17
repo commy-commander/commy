@@ -71,6 +71,14 @@ impl Observed {
         }
     }
 
+    pub fn with_warm_relay_rtt(self, warm: Option<Duration>) -> Self {
+        let relay_rtt = match (self.relay_rtt, warm) {
+            (Some(reported), Some(warm)) => Some(reported.min(warm)),
+            (reported, warm) => reported.or(warm),
+        };
+        Self { relay_rtt, ..self }
+    }
+
     pub fn direct(&self) -> DirectPath {
         match (self.udp, self.address_varies) {
             (true, Some(true)) => DirectPath::Limited,
@@ -134,12 +142,20 @@ pub struct ConnectionChecker {
 
 impl ConnectionChecker {
     pub async fn run(self) -> ConnectionCheck {
+        self.run_with_warm_relay_rtt(None).await
+    }
+
+    pub async fn run_with_warm_relay_rtt(self, warm: Option<Duration>) -> ConnectionCheck {
         let mut reports = self.endpoint.net_report();
         let report = match reports.get() {
             Some(report) => Some(report),
             None => n0_future::time::timeout(REPORT_WAIT, reports.initialized()).await.ok(),
         };
-        self.observe(report.as_ref()).check()
+        self.observe(report.as_ref()).with_warm_relay_rtt(warm).check()
+    }
+
+    pub fn relay_probe_url(&self) -> Option<url::Url> {
+        self.home_relay()?.join(iroh_relay::http::RELAY_PROBE_PATH).ok()
     }
 
     pub fn now(&self) -> ConnectionCheck {
@@ -151,11 +167,15 @@ impl ConnectionChecker {
         RelayLink::of(self.uses_relays, connected)
     }
 
-    fn observe(&self, report: Option<&NetReport>) -> Observed {
+    fn home_relay(&self) -> Option<RelayUrl> {
         let relays = self.endpoint.home_relay_status().get();
         let connected = relays.iter().find(|status| status.is_connected());
-        let home = connected.or(relays.first()).map(|status| status.url().clone());
-        Observed::from_report(report, home.as_ref(), connected.is_some(), self.can_discover_address)
+        connected.or(relays.first()).map(|status| status.url().clone())
+    }
+
+    fn observe(&self, report: Option<&NetReport>) -> Observed {
+        let connected = self.endpoint.home_relay_status().get().iter().any(|status| status.is_connected());
+        Observed::from_report(report, self.home_relay().as_ref(), connected, self.can_discover_address)
     }
 }
 
@@ -239,6 +259,23 @@ mod tests {
     }
 
     #[test]
+    fn a_warm_round_trip_replaces_a_slower_idle_reading() {
+        let idle = seen(true, Some(false), Some(157));
+        let warm = idle.with_warm_relay_rtt(Some(Duration::from_millis(55)));
+        assert_eq!(warm.check().relay_rtt_ms, Some(55));
+        assert_eq!(warm.quality(), Quality::Good);
+        assert_eq!(idle.with_warm_relay_rtt(None), idle);
+    }
+
+    #[test]
+    fn a_slower_warm_round_trip_keeps_the_quicker_reading() {
+        let quick = seen(true, Some(false), Some(40));
+        assert_eq!(quick.with_warm_relay_rtt(Some(Duration::from_millis(90))).relay_rtt, Some(Duration::from_millis(40)));
+        let unreported = seen(true, None, None);
+        assert_eq!(unreported.with_warm_relay_rtt(Some(Duration::from_millis(70))).relay_rtt, Some(Duration::from_millis(70)));
+    }
+
+    #[test]
     fn checks_serialize_in_plain_words() {
         let json = serde_json::to_value(seen(false, None, Some(80)).check()).unwrap();
         assert_eq!(json["quality"], "fair");
@@ -256,6 +293,7 @@ mod tests {
         assert_eq!(check.quality, Quality::Offline);
         assert!(!check.relay_reachable);
         assert_eq!(checker.relay(), RelayLink::NotUsed);
+        assert_eq!(checker.relay_probe_url(), None);
         assert_eq!(checker.now().quality, Quality::Offline);
         node.shutdown().await.ok();
     }

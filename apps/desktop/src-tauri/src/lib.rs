@@ -53,6 +53,7 @@ mod notify_anyway;
 mod push_wake;
 mod read_state;
 mod relaunch;
+mod relay_ping;
 mod safety;
 mod saved;
 mod kept_files;
@@ -8142,13 +8143,18 @@ This file stays on your device until you share it. It has no messages, keys or p
 #[tauri::command]
 async fn run_connection_check(app: tauri::State<'_, App>) -> CmdResult<commy_net::ConnectionCheck> {
     let checker = app.net.lock().await.as_ref().map(CommyNode::connection_checker).ok_or("Commy is still starting its connection")?;
-    let check = checker.run().await;
+    let warm = match checker.relay_probe_url() {
+        Some(probe) => relay_ping::warm_round_trip(probe).await,
+        None => None,
+    };
+    let check = checker.run_with_warm_relay_rtt(warm).await;
     tracing::info!(
-        "connection check: quality {:?}, direct {:?}, relay reachable {}, relay round trip {:?} ms, ipv6 {}",
+        "connection check: quality {:?}, direct {:?}, relay reachable {}, relay round trip {:?} ms (warm {:?} ms), ipv6 {}",
         check.quality,
         check.direct,
         check.relay_reachable,
         check.relay_rtt_ms,
+        warm.map(|rtt| rtt.as_millis()),
         check.ipv6
     );
     Ok(check)
