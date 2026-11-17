@@ -25,4 +25,17 @@ if GST_PLUGIN_PATH="$dir" GST_TRACERS=commycamerafix gst-launch-1.0 videotestsrc
   exit 1
 fi
 
-echo "the camera fix repairs DMA_DRM capsfilters in system memory"
+rate_check="$(dirname "$GST_REGISTRY_1_0")/rate-check"
+gcc -O2 -Wall -Wextra -Werror -Wno-unused-parameter -o "$rate_check" "$(dirname "$0")/rate-check.c" $(pkg-config --cflags --libs gstreamer-1.0)
+
+if "$rate_check" >/dev/null; then
+  echo "the camera frame rate converter does not replay old frames without the fix, so this check proves nothing"
+  exit 1
+fi
+
+if ! GST_PLUGIN_PATH="$dir" GST_TRACERS=commycamerafix "$rate_check"; then
+  echo "the camera fix did not stop the frame rate converter from replaying the first frame"
+  exit 1
+fi
+
+echo "the camera fix repairs DMA_DRM capsfilters in system memory and keeps camera frames moving"

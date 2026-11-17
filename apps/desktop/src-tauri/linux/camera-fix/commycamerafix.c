@@ -59,13 +59,23 @@ on_caps_changed (GObject * filter, GParamSpec * pspec, gpointer user_data)
   gst_caps_unref (caps);
 }
 
+static gboolean
+is_camera_rate_converter (GstElement * element, const gchar * factory_name)
+{
+  return g_strcmp0 (factory_name, "videorate") == 0
+      && g_strcmp0 (GST_OBJECT_NAME (element), "videorate") == 0;
+}
+
 static void
 on_element_new (GstTracer * tracer, GstClockTime ts, GstElement * element)
 {
   GstElementFactory *factory = gst_element_get_factory (element);
+  const gchar *factory_name = factory != NULL ? GST_OBJECT_NAME (factory) : NULL;
 
-  if (factory != NULL && g_strcmp0 (GST_OBJECT_NAME (factory), "capsfilter") == 0)
+  if (g_strcmp0 (factory_name, "capsfilter") == 0)
     g_signal_connect (element, "notify::caps", G_CALLBACK (on_caps_changed), NULL);
+  else if (is_camera_rate_converter (element, factory_name))
+    g_object_set (element, "drop-only", TRUE, "average-period", (guint64) 1, NULL);
 }
 
 static void
