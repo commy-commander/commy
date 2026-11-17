@@ -370,7 +370,10 @@ async fn settle(admin: &Admin, headers: &HeaderMap, id: String, command: fn(Stri
         return StatusCode::NOT_FOUND.into_response();
     }
     match operator::run(&admin.service.store, command(id)).await {
-        Ok(_) => Redirect::to(&format!("/?done={done}")).into_response(),
+        Ok(_) => {
+            crate::learn_dropped(&admin.service).await;
+            Redirect::to(&format!("/?done={done}")).into_response()
+        }
         Err(e) => (StatusCode::SERVICE_UNAVAILABLE, format!("The database did not answer: {e}")).into_response(),
     }
 }

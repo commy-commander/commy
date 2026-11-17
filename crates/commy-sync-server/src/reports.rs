@@ -87,9 +87,12 @@ impl Desk {
         self.dropped.read().unwrap().contains(stream)
     }
 
-    pub fn learn_dropped(&self, streams: impl IntoIterator<Item = StreamId>) {
+    pub fn learn_dropped(&self, streams: impl IntoIterator<Item = StreamId>) -> Vec<StreamId> {
         let fresh: HashSet<StreamId> = streams.into_iter().collect();
-        *self.dropped.write().unwrap() = fresh;
+        let mut held = self.dropped.write().unwrap();
+        let newly: Vec<StreamId> = fresh.difference(&held).copied().collect();
+        *held = fresh;
+        newly
     }
 
     pub fn emails_reports(&self) -> bool {

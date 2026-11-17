@@ -13,8 +13,10 @@ use commy_net::community_streams::{self as streams, rings, wake_point, Lane, Wan
 pub use commy_net::sync_streams::SharedKey;
 use commy_net::voice_gate::{link_of, StateLink};
 use commy_net::{NetEvent, WirePayload};
+use commy_sync::wire::ErrorCode;
 use commy_sync::{AppendError, StreamId, SyncClient, SyncEvent};
 use commy_view::away::Place;
+use commy_view::sync_host::HostRemovals;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
@@ -151,6 +153,7 @@ struct Live {
     current: HashSet<StreamId>,
     lost: HashSet<StreamId>,
     refused: HashSet<StreamId>,
+    removed: HostRemovals,
     seen: HashMap<StreamId, HashSet<MessageId>>,
     backfilling: HashSet<StreamId>,
     snapshots: HashMap<ServerId, WirePayload>,
@@ -191,6 +194,29 @@ impl Live {
 }
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
+
+fn newly_removed(live: &mut Live, stream: StreamId) -> Option<ServerId> {
+    let (server, _) = live.route(stream)?;
+    let url = live.communities.get(&server)?.url.clone();
+    live.removed.note(server, &url).then_some(server)
+}
+
+fn tell_host_removed(handle: &AppHandle, server: ServerId) {
+    let name = handle.state::<App>().servers.lock_or_recover().get(&server).map(|state| state.server.name.clone());
+    tracing::warn!("the sync server of {server} removed it; new messages there no longer reach anyone");
+    let _ = handle.emit("host-removed", serde_json::json!({ "server": server.to_string(), "name": name }));
+    let _ = handle.emit("servers-changed", ());
+}
+
+pub fn host_removed(sid: ServerId) -> bool {
+    LIVE.lock_or_recover().as_ref().is_some_and(|live| live.communities.get(&sid).is_some_and(|c| live.removed.holds(sid, &c.url)))
+}
+
+pub fn removed_by_host() -> HashSet<ServerId> {
+    let guard = LIVE.lock_or_recover();
+    let Some(live) = guard.as_ref() else { return HashSet::new() };
+    live.communities.iter().filter(|(sid, c)| live.removed.holds(**sid, &c.url)).map(|(sid, _)| *sid).collect()
+}
 
 pub fn greeting_of(sid: ServerId) -> Option<commy_sync::wire::Greeting> {
     LIVE.lock_or_recover().as_ref()?.communities.get(&sid)?.pool.greeting()
@@ -401,6 +427,7 @@ async fn tend(handle: &AppHandle) {
             current: HashSet::new(),
             lost: HashSet::new(),
             refused: HashSet::new(),
+            removed: HostRemovals::default(),
             seen: HashMap::new(),
             backfilling: HashSet::new(),
             snapshots: HashMap::new(),
@@ -718,6 +745,7 @@ fn refresh(handle: &AppHandle) {
     let gone: Vec<ServerId> = live.communities.keys().filter(|sid| !wanted.contains_key(sid)).copied().collect();
     for sid in gone {
         drop_community(live, sid);
+        live.removed.forget(sid);
     }
     let everything: HashSet<String> = wanted.values().flatten().map(|w| w.keys.id.to_hex()).collect();
     live.cursors.keep_only(&everything);
@@ -1114,9 +1142,13 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
         SyncEvent::Signal { stream, plain } => on_signal(handle, stream, &plain),
         SyncEvent::Refused { stream, code } => {
             tracing::debug!("the sync service refused a server stream {stream}: {code:?}");
-            if let Some(live) = LIVE.lock_or_recover().as_mut() {
+            let removed = LIVE.lock_or_recover().as_mut().and_then(|live| {
                 live.current.remove(&stream);
                 live.refused.insert(stream);
+                (code == ErrorCode::Removed).then(|| newly_removed(live, stream)).flatten()
+            });
+            if let Some(server) = removed {
+                tell_host_removed(handle, server);
             }
         }
         SyncEvent::Connected => {

@@ -3068,7 +3068,12 @@ function railServerButton(server, folderId) {
   btn.classList.toggle("muted", isServerMuted(server.id));
   const wrap = el("div", "rail-item");
   wrap.appendChild(btn);
-  if (count && !isServerMuted(server.id)) wrap.appendChild(countBadge(count));
+  if (server.host_removed) {
+    btn.title = `${shownServerName(server)}: ${HOST_REMOVED_TEXT}`;
+    const mark = el("span", "rail-wait-mark away");
+    mark.appendChild(svgIcon("close", 11));
+    wrap.appendChild(mark);
+  } else if (count && !isServerMuted(server.id)) wrap.appendChild(countBadge(count));
   btn.onclick = () => selectServer(server.id);
   btn.oncontextmenu = e => {
     e.preventDefault();
@@ -13310,11 +13315,14 @@ function awaitedText(count) {
 
 let awaitedSeq = 0;
 
+const HOST_REMOVED_TEXT = "This server's sync server removed it, so new messages here no longer reach anyone.";
+
 async function syncAwaitedBar() {
   const seq = ++awaitedSeq;
   const serverId = state.view === "server" && state.currentServer ? state.currentServer.id : null;
   let text = null;
-  if (serverId) {
+  if (serverId && state.currentServer.host_removed) text = HOST_REMOVED_TEXT;
+  else if (serverId) {
     try {
       text = awaitedText(await invoke("get_awaited", { serverId }));
     } catch {}
@@ -24836,8 +24844,8 @@ function wireEvents() {
       toast(`${event.payload.name || "A server"} was deleted by its owner`);
       await leaveServerView(event.payload.server);
     });
-    const removedFrom = (verb) => async event => {
-      toast(`You were ${verb} ${event.payload.name || "a server"}`);
+    const putOut = (say) => async event => {
+      toast(say(event.payload.name || "a server"));
       if (state.voiceServer && state.voiceServer.id === event.payload.server) {
         state.voiceChannelId = null;
         state.voiceServer = null;
@@ -24849,8 +24857,18 @@ function wireEvents() {
         await enterDmMode();
       }
     };
+    const removedFrom = (verb) => putOut(name => `You were ${verb} ${name}`);
     window.__TAURI__.event.listen("banned", removedFrom("banned from"));
     window.__TAURI__.event.listen("kicked", removedFrom("removed from"));
+    window.__TAURI__.event.listen("home-blocked", putOut(name => `You were removed from ${name} because it no longer lets in people from your home server`));
+    window.__TAURI__.event.listen("host-removed", async event => {
+      toast(`${event.payload.name || "A server"}: ${HOST_REMOVED_TEXT}`);
+      await refreshServers();
+      if (state.currentServer && state.currentServer.id === event.payload.server) {
+        await refreshCurrentServer();
+        syncAwaitedBar();
+      }
+    });
     window.__TAURI__.event.listen("join-waits-changed", refreshServers);
     window.__TAURI__.event.listen("join-request-accepted", async event => {
       const { server, name } = event.payload || {};

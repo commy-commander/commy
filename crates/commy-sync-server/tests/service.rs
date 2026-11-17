@@ -42,6 +42,15 @@ async fn next_entry(events: &mut UnboundedReceiver<SyncEvent>) -> (u64, Vec<u8>)
     }
 }
 
+async fn refusal(events: &mut UnboundedReceiver<SyncEvent>) -> (commy_sync::StreamId, ErrorCode) {
+    loop {
+        match tokio::time::timeout(WAIT, events.recv()).await.expect("a refusal in time").expect("client running") {
+            SyncEvent::Refused { stream, code } => return (stream, code),
+            _ => continue,
+        }
+    }
+}
+
 async fn caught_up(events: &mut UnboundedReceiver<SyncEvent>) -> Vec<(u64, Vec<u8>)> {
     let mut seen = Vec::new();
     loop {
@@ -801,23 +810,19 @@ async fn a_dropped_community_is_refused_and_others_carry_on() {
     writer.follow(dropped.clone(), 0);
     writer.follow(kept.clone(), 0);
     assert_eq!(writer.append(dropped.id, b"before".to_vec()).await.unwrap(), 1);
+    let (reader, mut reader_events) = SyncClient::spawn(url.clone());
+    reader.follow(dropped.clone(), 0);
+    caught_up(&mut reader_events).await;
     let receipt = commy_sync::reporting::send(&url, host_report(vec![dropped.id])).await.unwrap();
     let said = commy_sync_server::operator::run(&service.store, commy_sync_server::operator::Command::Drop(receipt.id)).await.unwrap();
     assert!(said.contains("1 streams refused"), "{said}");
     commy_sync_server::learn_dropped(&service).await;
     assert!(service.desk.is_dropped(&dropped.id));
+    assert_eq!(refusal(&mut reader_events).await, (dropped.id, ErrorCode::Removed), "an app already following is told at once");
 
     let (late, mut late_events) = SyncClient::spawn(url.clone());
     late.follow(dropped.clone(), 0);
-    loop {
-        match tokio::time::timeout(WAIT, late_events.recv()).await.expect("a refusal in time").expect("client running") {
-            SyncEvent::Refused { stream, code } => {
-                assert_eq!((stream, code), (dropped.id, ErrorCode::Removed));
-                break;
-            }
-            _ => continue,
-        }
-    }
+    assert_eq!(refusal(&mut late_events).await, (dropped.id, ErrorCode::Removed));
     assert!(writer.append(dropped.id, b"after".to_vec()).await.is_err(), "nothing new is stored for it");
     assert_eq!(service.store.head(&dropped.id).await.unwrap(), 0);
     assert_eq!(writer.append(kept.id, b"still here".to_vec()).await.unwrap(), 1);

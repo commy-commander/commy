@@ -54,3 +54,20 @@ test("confirm boxes wait for an answer, since the phone apps answer them later a
   assert.deepEqual(mobile.platforms.sort(), ["android", "iOS"]);
   assert.ok(mobile.permissions.includes("dialog:allow-message"));
 });
+
+test("the removed-by-sync-server notice reads the same as the refusal the backend sends", () => {
+  const quoted = (source, pattern) => new RegExp(pattern).exec(source)[1];
+  const ui = quoted(appSource, 'const HOST_REMOVED_TEXT = "([^"]+)";');
+  const backend = quoted(read("crates", "commy-view", "src", "sync_host.rs"), 'pub const HOST_REMOVED: &str = "([^"]+)";');
+  assert.equal(ui, backend);
+});
+
+test("the app listens for every way a server can put someone out", () => {
+  for (const notice of ["banned", "kicked", "home-blocked", "host-removed", "server-deleted"]) {
+    assert.ok(appSource.includes(`event.listen("${notice}"`), notice);
+  }
+  const desktop = read("apps", "desktop", "src-tauri", "src", "lib.rs");
+  assert.ok(desktop.includes('const HOME_BLOCKED: &str = "home-blocked";'));
+  const web = read("apps", "web", "src", "client.rs");
+  assert.ok(web.includes('"home-blocked"'));
+});

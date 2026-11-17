@@ -220,7 +220,13 @@ async fn about(State(service): State<Arc<Service>>) -> Response {
 
 pub async fn learn_dropped(service: &Service) {
     match service.store.dropped_streams().await {
-        Ok(streams) => service.desk.learn_dropped(streams),
+        Ok(streams) => {
+            let newly = service.desk.learn_dropped(streams);
+            let told: usize = newly.iter().map(|stream| service.hub.removed(stream)).sum();
+            if !newly.is_empty() {
+                tracing::info!("sync: {} streams are removed from this server now, told {told} open followers", newly.len());
+            }
+        }
         Err(e) => tracing::warn!("sync: reading removed communities failed: {e}"),
     }
 }

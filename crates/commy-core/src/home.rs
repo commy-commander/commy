@@ -243,6 +243,8 @@ mod blocking {
         assert_eq!(state.server.blocked_homes, vec!["spam.example".to_string()]);
         assert!(!state.server.is_member(spammer.id));
         assert!(state.server.is_member(friend.id));
+        assert!(state.put_out_by_home(spammer.id), "their own app can tell why they are gone");
+        assert!(!state.put_out_by_home(friend.id));
         assert_eq!(arrive(&mut state, &spammer), Err(StoreError::NotAllowed));
         assert!(!state.server.is_member(spammer.id));
         let spam = post(&state, channel, spammer.id, "buy now");

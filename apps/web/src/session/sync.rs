@@ -13,6 +13,7 @@ use commy_net::sealed::SealKey;
 use commy_net::server_wake::AllRings;
 use commy_net::{sync_streams, ServerTicket, WirePayload};
 use commy_sync::errands::{self, owner_work, ClaimBook, Errand, Instant};
+use commy_sync::wire::ErrorCode;
 use commy_sync::{Pool, StreamId, StreamKeys, SyncClient, SyncEvent};
 use commy_view::liveness::{SERVICE_BEAT, SWEEP_EVERY};
 use commy_view::reads::{PrefPiece, ReadMark, ReadView};
@@ -147,9 +148,16 @@ impl Session {
                 }
                 SyncEvent::CaughtUp { stream, seq } => self.on_sync_caught_up(stream, seq),
                 SyncEvent::Signal { stream, plain } => self.on_sync_signal(stream, &plain),
-                SyncEvent::Refused { stream, .. } => {
-                    if let Some(live) = self.sync.borrow_mut().as_mut() {
-                        live.book.note_refused(stream);
+                SyncEvent::Refused { stream, code } => {
+                    let removed = self.sync.borrow_mut().as_mut().and_then(|live| match code {
+                        ErrorCode::Removed => live.book.note_removed(stream),
+                        _ => {
+                            live.book.note_refused(stream);
+                            None
+                        }
+                    });
+                    if let Some(server) = removed {
+                        self.tell_host_removed(server);
                     }
                 }
                 SyncEvent::Disconnected { streams } => {
@@ -160,6 +168,16 @@ impl Session {
                 SyncEvent::Connected => {}
             }
         }
+    }
+
+    fn tell_host_removed(&self, server: ServerId) {
+        let name = self.client.borrow().summary(server).map(|s| s.name);
+        self.emit("host-removed", json!({ "server": server.to_string(), "name": name }));
+        self.emit("servers-changed", Value::Null);
+    }
+
+    pub(super) fn host_removed(&self, server: ServerId) -> bool {
+        self.sync.borrow().as_ref().is_some_and(|live| live.book.host_removed(server))
     }
 
     pub(super) fn room_relay_of(&self, server: ServerId) -> RoomRelay {

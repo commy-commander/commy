@@ -509,6 +509,8 @@ impl Client {
             "banned"
         } else if state.server.is_member(me) {
             return None;
+        } else if state.home_refused(me) {
+            "home-blocked"
         } else if state.signed_actions().iter().any(|s| s.action.by != me && s.event == ServerEvent::MemberLeave { server, user: me }) {
             "kicked"
         } else {
@@ -1229,6 +1231,18 @@ mod tests {
             let name = w.client.servers.lock().unwrap()[&w.server].server.name.clone();
             assert_eq!(w.client.gone(w.server), Some((name, if deleted { "server-deleted" } else { "banned" })));
         }
+    }
+
+    #[test]
+    fn a_server_that_stops_letting_in_my_home_says_so() {
+        let w = world();
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        let (owner, identity) = w.owner.clone();
+        let event = ServerEvent::HomesBlocked { server: w.server, homes: vec![], require_home: true };
+        let signed = SignedEvent::sign(w.server, owner.id, Utc::now().timestamp_millis(), event, &identity);
+        assert_eq!(w.client.apply_live(w.server, signed.event, Some(signed.action)), Applied::Changed);
+        let name = w.client.servers.lock().unwrap()[&w.server].server.name.clone();
+        assert_eq!(w.client.gone(w.server), Some((name, "home-blocked")));
     }
 
     #[test]

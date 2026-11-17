@@ -1,5 +1,6 @@
 use commy_core::sync_host::clean_sync_host;
-use commy_core::{ServerEvent, ServerState, UserId};
+use commy_core::{ServerEvent, ServerId, ServerState, UserId};
+use std::collections::HashMap;
 use commy_sync::wire::{Fit, Greeting, PROTOCOL};
 use serde::Serialize;
 
@@ -23,6 +24,31 @@ pub enum RoomRelay {
     Theirs { url: String, public_fallback: bool },
     Public,
     Unavailable(&'static str),
+}
+
+pub const HOST_REMOVED: &str = "This server's sync server removed it, so new messages here no longer reach anyone.";
+
+#[derive(Debug, Clone, Default)]
+pub struct HostRemovals {
+    held: HashMap<ServerId, String>,
+}
+
+impl HostRemovals {
+    pub fn note(&mut self, server: ServerId, socket: &str) -> bool {
+        self.held.insert(server, socket.to_string()).as_deref() != Some(socket)
+    }
+
+    pub fn holds(&self, server: ServerId, socket: &str) -> bool {
+        self.held.get(&server).is_some_and(|held| held == socket)
+    }
+
+    pub fn forget(&mut self, server: ServerId) {
+        self.held.remove(&server);
+    }
+}
+
+pub fn refuse_when_removed(removed: bool) -> Result<(), String> {
+    if removed { Err(HOST_REMOVED.into()) } else { Ok(()) }
 }
 
 pub const HOST_NEEDS_NEWER_APP: &str = "This server's sync server needs a newer Commy. Update Commy to keep chatting here.";
@@ -96,6 +122,26 @@ pub fn shown_host(state: &ServerState) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_removal_holds_only_for_the_sync_server_that_removed_it() {
+        let mut removals = HostRemovals::default();
+        let server = ServerId::new();
+        assert!(!removals.holds(server, "wss://sync.example.org/sync"));
+        assert!(removals.note(server, "wss://sync.example.org/sync"), "first word of it is news");
+        assert!(!removals.note(server, "wss://sync.example.org/sync"), "hearing it again is not");
+        assert!(removals.holds(server, "wss://sync.example.org/sync"));
+        assert!(!removals.holds(server, "wss://other.example.org/sync"), "moving elsewhere lifts it");
+        assert!(!removals.holds(ServerId::new(), "wss://sync.example.org/sync"));
+        removals.forget(server);
+        assert!(!removals.holds(server, "wss://sync.example.org/sync"));
+    }
+
+    #[test]
+    fn posting_is_refused_in_a_removed_server() {
+        assert_eq!(refuse_when_removed(false), Ok(()));
+        assert_eq!(refuse_when_removed(true), Err(HOST_REMOVED.to_string()));
+    }
+
     #[test]
     fn a_community_uses_its_own_hosts_relay_only() {
         let with = |relay: &str| Greeting { relay: Some(relay.to_string()), ..Greeting::of(PROTOCOL) };

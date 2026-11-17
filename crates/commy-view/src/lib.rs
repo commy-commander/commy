@@ -65,6 +65,7 @@ pub struct ServerSummary {
     pub can_invite: bool,
     pub group: bool,
     pub tag: Option<server_tags::ServerTagView>,
+    pub host_removed: bool,
 }
 
 pub fn server_name(state: &ServerState, viewer: Option<UserId>) -> String {
@@ -96,6 +97,7 @@ impl ServerSummary {
             can_invite: viewer.is_some_and(|me| state.server.permissions_for(me).allows(Permissions::CREATE_INVITES)),
             group: state.server.group,
             tag: state.server.tag.as_ref().map(|t| server_tags::tag_view(t, &state.server.name)),
+            host_removed: false,
         }
     }
 }
@@ -398,6 +400,7 @@ pub struct ServerView {
     pub file_store: Option<String>,
     pub sync_host: Option<String>,
     pub can_set_sync_host: bool,
+    pub host_removed: bool,
     pub blocked_homes: homes::BlockedHomesView,
     pub gif_key: Option<commy_core::search_keys::GifKey>,
     pub game_db: Option<search_keys::GameDbView>,
@@ -788,6 +791,7 @@ impl ServerView {
             can_manage_file_storage: is_member && commy_core::file_store::can_manage_storage(perms),
             sync_host: sync_host::shown_host(state),
             can_set_sync_host: viewer == Some(state.server.owner) && !state.server.group,
+            host_removed: false,
             blocked_homes: homes::blocked_homes_view(state, viewer),
             gif_key: is_member.then(|| keys.opened_search_keys(state).0).flatten(),
             game_db: search_keys::game_db_view(state, perms),

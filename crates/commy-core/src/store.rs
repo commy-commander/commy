@@ -767,6 +767,10 @@ impl ServerState {
         self.profiles.get(&user).is_some_and(|profile| self.refuses_home(profile))
     }
 
+    pub fn put_out_by_home(&self, user: UserId) -> bool {
+        !self.server.is_member(user) && self.home_refused(user)
+    }
+
     fn author_home_refused(&self, by: UserId, event: &ServerEvent) -> bool {
         match event {
             ServerEvent::MemberLeave { .. } => false,

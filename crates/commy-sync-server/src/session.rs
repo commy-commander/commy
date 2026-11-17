@@ -357,6 +357,10 @@ async fn follow(service: Arc<Service>, session: u64, stream: StreamId, after: u6
                 }
                 continue;
             }
+            Ok(Live::Removed) => {
+                let _ = out.send(ServerFrame::stream_error(ErrorCode::Removed, stream)).await;
+                return;
+            }
             Ok(Live::Entry(entry)) => Ok(entry),
             Err(e) => Err(e.clone()),
         };

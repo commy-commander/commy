@@ -13,6 +13,7 @@ use commy_sync::{StreamId, StreamKeys};
 use commy_view::reads::{PrefPiece, ReadMark, ReadState};
 use commy_view::safety::RelationPiece;
 use commy_view::saved::{SavedOp, SavedStore};
+use commy_view::sync_host::HostRemovals;
 use serde::Deserialize;
 
 pub const MAX_PARKED: usize = 2_000;
@@ -134,6 +135,7 @@ pub struct Book {
     current: HashSet<StreamId>,
     lost: HashSet<StreamId>,
     refused: HashSet<StreamId>,
+    removed: HostRemovals,
     snapshots: HashMap<ServerId, (i64, WirePayload)>,
     parked: HashMap<ServerId, VecDeque<WirePayload>>,
     reads: ReadState,
@@ -362,6 +364,7 @@ impl Book {
     }
 
     fn move_server(&mut self, server: ServerId, plan: &mut Plan) {
+        self.removed.forget(server);
         let streams: Vec<StreamId> = self.routes.iter().filter(|(_, (sid, _))| *sid == server).map(|(stream, _)| *stream).collect();
         for stream in streams {
             self.routes.remove(&stream);
@@ -452,6 +455,17 @@ impl Book {
     pub fn note_refused(&mut self, stream: StreamId) {
         self.current.remove(&stream);
         self.refused.insert(stream);
+    }
+
+    pub fn note_removed(&mut self, stream: StreamId) -> Option<ServerId> {
+        self.note_refused(stream);
+        let (server, _) = self.route(stream)?;
+        let socket = self.host_of(server).unwrap_or_default();
+        self.removed.note(server, &socket).then_some(server)
+    }
+
+    pub fn host_removed(&self, server: ServerId) -> bool {
+        self.removed.holds(server, &self.host_of(server).unwrap_or_default())
     }
 
     pub fn state_link(&self, server: ServerId) -> StateLink {
@@ -801,6 +815,22 @@ mod tests {
         let mut reader = Book::new(EntryList::default());
         reader.replan([(server, vec![want(server, Lane::State, false)])].into());
         assert!(reader.wake_keys(server, None).is_none(), "a stream we may not write to rings nobody");
+    }
+
+    #[test]
+    fn a_server_its_sync_server_removed_is_marked_until_it_moves() {
+        let server = ServerId::new();
+        let state = want(server, Lane::State, true);
+        let mut book = Book::new(EntryList::default());
+        book.replan([(server, vec![state.clone()])].into());
+        assert!(!book.host_removed(server));
+        assert_eq!(book.note_removed(state.keys.id), Some(server));
+        assert!(book.host_removed(server));
+        assert_eq!(book.note_removed(state.keys.id), None, "told once");
+        assert_eq!(book.note_removed(want(ServerId::new(), Lane::State, true).keys.id), None, "a stream of no server we follow");
+        let sockets: HashMap<ServerId, String> = [(server, "wss://sync.example.org/sync".to_string())].into();
+        book.replan_at([(server, vec![state])].into(), &sockets);
+        assert!(!book.host_removed(server), "moving to another sync server lifts it");
     }
 
     #[test]

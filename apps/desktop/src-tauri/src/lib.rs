@@ -623,8 +623,12 @@ async fn own_server_state_from<'a>(
 #[tauri::command]
 fn list_servers(app: tauri::State<App>) -> Vec<ServerSummary> {
     let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
+    let removed = community_sync::removed_by_host();
     let servers = app.servers.lock_or_recover();
-    let mut list: Vec<ServerSummary> = servers.values().map(|s| ServerSummary::from_state(s, me)).collect();
+    let mut list: Vec<ServerSummary> = servers
+        .values()
+        .map(|s| ServerSummary { host_removed: removed.contains(&s.server.id), ..ServerSummary::from_state(s, me) })
+        .collect();
     list.sort_by(|a, b| a.name.cmp(&b.name));
     list
 }
@@ -636,9 +640,11 @@ fn get_server(app: tauri::State<App>, server_id: String) -> CmdResult<ServerView
     let keys = channel_lock::holder_of(&app);
     let friends = app.safety.lock_or_recover().friends.clone();
     let contacts = app.dms.lock_or_recover().contacts.clone();
+    let host_removed = community_sync::host_removed(id);
     let servers = app.servers.lock_or_recover();
     let state = servers.get(&id).ok_or("unknown server")?;
-    Ok(ServerView::for_viewer(state, me, &keys).with_friend_details(&friends, &contacts))
+    let view = ServerView::for_viewer(state, me, &keys).with_friend_details(&friends, &contacts);
+    Ok(ServerView { host_removed, ..view })
 }
 
 #[tauri::command]
@@ -865,6 +871,7 @@ async fn send_message(
 ) -> CmdResult<MessageView> {
     let content = clean_message(&content)?;
     let sid = server_id.parse().map_err(err_to_string)?;
+    view::sync_host::refuse_when_removed(community_sync::host_removed(sid))?;
     let cid = channel_id.parse().map_err(err_to_string)?;
     let profile = current_profile(&app)?;
     let content = expressions_for_server(&app, sid, profile.id, content).await?;
@@ -5973,6 +5980,8 @@ fn end_voice_in(app: &App, sid: ServerId) {
     }
 }
 
+const HOME_BLOCKED: &str = "home-blocked";
+
 fn removal_of_me(event: &ServerEvent, action: Option<&commy_core::Action>, me: Option<UserId>) -> Option<&'static str> {
     let me = me?;
     match event {
@@ -7756,6 +7765,8 @@ async fn run_net_loop(
                 );
                 let my_id = app.profile.lock_or_recover().as_ref().map(|p| p.id);
                 let removal = removal_of_me(&event, action.as_ref(), my_id);
+                let blocks_homes = matches!(event, ServerEvent::HomesBlocked { .. });
+                let home_put_me_out: bool;
                 let new_owner = match &event {
                     ServerEvent::OwnerTransfer { user, .. } => Some(*user),
                     _ => None,
@@ -7806,7 +7817,9 @@ async fn run_net_loop(
                                 .filter(|_| replayed)
                                 .map(|user| state.profiles.get(&user).map_or(Presence::Offline, |p| p.presence));
                             let fresh_presence = device_presence.is_some() && state.signed_recently(&event, action.as_ref(), chrono::Utc::now().timestamp_millis());
+                            let was_member = my_id.is_some_and(|me| state.server.is_member(me));
                             let (mut applied, new_message, pinned) = catchup::apply_live(state, event, action);
+                            home_put_me_out = blocks_homes && was_member && my_id.is_some_and(|me| state.put_out_by_home(me));
                             if applied.is_ok() {
                                 liveness::heard_seat_news(&app, state, seat_news, std::time::Instant::now());
                             }
@@ -7846,7 +7859,7 @@ async fn run_net_loop(
                 }
                 match applied {
                     Ok(true) => {
-                        if let Some(notice) = removal {
+                        if let Some(notice) = removal.or(home_put_me_out.then_some(HOME_BLOCKED)) {
                             on_removed(&app, &handle, server, notice).await;
                             continue;
                         }

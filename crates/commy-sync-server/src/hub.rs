@@ -11,6 +11,7 @@ const LIVE_BUFFER: usize = 256;
 pub enum Live {
     Entry(WireEntry),
     Signal { from: u64, body: Blob },
+    Removed,
 }
 
 #[derive(Default)]
@@ -30,6 +31,10 @@ impl Hub {
 
     pub fn signal(&self, stream: &StreamId, from: u64, body: Blob) -> usize {
         self.send(stream, Live::Signal { from, body })
+    }
+
+    pub fn removed(&self, stream: &StreamId) -> usize {
+        self.send(stream, Live::Removed)
     }
 
     fn send(&self, stream: &StreamId, live: Live) -> usize {
@@ -72,6 +77,16 @@ mod tests {
         assert!(on_b.try_recv().is_err());
         hub.publish(&StreamSecret::random().keys().id, entry(9));
         assert!(on_b.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn followers_hear_when_their_stream_is_removed() {
+        let hub = Hub::default();
+        let a = StreamSecret::random().keys().id;
+        let mut on_a = hub.subscribe(a);
+        assert_eq!(hub.removed(&a), 1);
+        assert!(matches!(&*on_a.recv().await.unwrap(), Live::Removed));
+        assert_eq!(hub.removed(&StreamSecret::random().keys().id), 0);
     }
 
     #[tokio::test]

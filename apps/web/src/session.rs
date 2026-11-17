@@ -345,10 +345,14 @@ impl Session {
             "entry_list_status" => Ok(self.entry_status()),
             "entry_list_recovery_code" => self.status.borrow().key.as_ref().map(|key| json!(key.to_text())).ok_or_else(|| account::NO_LIST_KEY.to_string()),
             "get_user" => to_json(&self.client.borrow().profile()),
-            "list_servers" => to_json(&self.client.borrow().list_servers()),
+            "list_servers" => {
+                let list = self.client.borrow().list_servers();
+                to_json(&list.into_iter().map(|s| self.with_host_removal(s)).collect::<Vec<_>>())
+            }
             "get_server" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
-                to_json(&self.client.borrow().get_server(server)?)
+                let view = self.client.borrow().get_server(server)?;
+                to_json(&commy_view::ServerView { host_removed: self.host_removed(server), ..view })
             }
             "get_messages" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
@@ -1359,8 +1363,14 @@ impl Session {
         Ok(Value::Null)
     }
 
+    fn with_host_removal(&self, summary: commy_view::ServerSummary) -> commy_view::ServerSummary {
+        let removed = summary.id.parse().is_ok_and(|server| self.host_removed(server));
+        commy_view::ServerSummary { host_removed: removed, ..summary }
+    }
+
     async fn send_message(self: &Rc<Self>, args: Args) -> Result<Value, String> {
         let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+        commy_view::sync_host::refuse_when_removed(self.host_removed(server))?;
         let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
         let reply_to: Option<MessageId> = args.reply_to.as_ref().map(|r| parse(Some(r), "message")).transpose()?;
         let (message, view) = self.client.borrow().compose(server, channel, args.content.as_deref().unwrap_or(""), reply_to, args.tts.unwrap_or(false))?;
@@ -1369,6 +1379,7 @@ impl Session {
 
     async fn send_poll(self: &Rc<Self>, args: Args) -> Result<Value, String> {
         let server: ServerId = parse(args.server_id.as_ref(), "server")?;
+        commy_view::sync_host::refuse_when_removed(self.host_removed(server))?;
         let channel: ChannelId = parse(args.channel_id.as_ref(), "channel")?;
         let form = PollForm {
             question: args.question.unwrap_or_default(),
