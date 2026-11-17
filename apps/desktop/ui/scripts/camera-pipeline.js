@@ -166,12 +166,22 @@ function canvasWithContext() {
   return { canvas, ctx: canvas.getContext("2d") };
 }
 
-function createCameraPipeline(stream) {
+function cameraFeedVideo(stream) {
   const video = document.createElement("video");
+  video.className = "cam-feed";
   video.muted = true;
   video.playsInline = true;
+  video.setAttribute("muted", "");
+  video.setAttribute("playsinline", "");
+  video.setAttribute("aria-hidden", "true");
   video.srcObject = stream;
+  document.body.appendChild(video);
   video.play().catch(() => {});
+  return video;
+}
+
+function createCameraPipeline(stream) {
+  const video = cameraFeedVideo(stream);
   const out = canvasWithContext();
   out.canvas.className = "cam-self";
   const pipe = {
@@ -212,6 +222,7 @@ function stopCameraPipeline(pipe) {
   pipe.timer = null;
   for (const track of pipe.stream.getTracks()) track.stop();
   pipe.video.srcObject = null;
+  pipe.video.remove();
   pipe.canvas.remove();
 }
 

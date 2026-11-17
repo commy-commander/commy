@@ -5992,7 +5992,8 @@ function onDmReceived(dm) {
 
 const CAMERA_KEY = "commy.cameraDevice";
 const CAMERA_FPS = 12;
-const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null, tucked: false };
+const CAMERA_SIZE = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 } };
+const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null, tucked: false, facing: "user", canFlip: false };
 
 function savedCamera() {
   try { return readCameraChoice(localStorage.getItem(CAMERA_KEY)); } catch { return null; }
@@ -6027,19 +6028,28 @@ function rememberCameraLabel(stream) {
 
 async function openCameraStream() {
   const choice = savedCamera();
+  if (!choice && onPhoneApp()) return openCameraFacing("user", false);
   const found = findCamera(await listCameras(), choice);
   const stream = await openCameraById(found ? found.deviceId : choice ? choice.id : "");
   rememberCameraLabel(stream);
   return stream;
 }
 
+async function openCameraFacing(facing, exact) {
+  try {
+    return await navigator.mediaDevices.getUserMedia({ video: { facingMode: exact ? { exact: facing } : facing, ...CAMERA_SIZE }, audio: false });
+  } catch (e) {
+    const deviceId = cameraForFacing(await listCameras(), facing);
+    if (deviceId) return openCameraById(deviceId);
+    if (exact) throw e;
+    return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  }
+}
+
 async function openCameraById(deviceId) {
   const video = deviceId ? { deviceId: { exact: deviceId } } : {};
   try {
-    return await navigator.mediaDevices.getUserMedia({
-      video: { ...video, width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 } },
-      audio: false,
-    });
+    return await navigator.mediaDevices.getUserMedia({ video: { ...video, ...CAMERA_SIZE }, audio: false });
   } catch (e) {
     if (deviceId) return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     throw e;
@@ -6065,6 +6075,8 @@ async function startCamera() {
   const pipe = createCameraPipeline(stream);
   watchCameraTrack(pipe);
   cam.pipe = pipe;
+  cam.facing = streamFacing(stream, "user");
+  cam.canFlip = onPhoneApp() && (await listCameras()).length > 1;
   cam.timer = setInterval(async () => {
     if (cam.busy || !pipe.drawn || cam.pipe !== pipe) return;
     cam.busy = true;
@@ -6080,6 +6092,41 @@ async function startCamera() {
   state.cameraOn = true;
   renderVoicePanel();
   if (state.currentServer) await refreshCurrentServer();
+}
+
+function streamFacing(stream, fallback) {
+  const track = stream.getVideoTracks()[0];
+  return cameraFacing(track && track.getSettings(), fallback);
+}
+
+async function flipCamera() {
+  const pipe = cam.pipe;
+  if (!cameraPipelineRunning(pipe) || pipe.following) return;
+  pipe.following = true;
+  const was = cam.facing;
+  let facing = otherFacing(was);
+  for (const track of pipe.stream.getTracks()) track.stop();
+  try {
+    const stream = await openCameraFacing(facing, true).catch(() => {
+      facing = was;
+      toast("Could not switch camera");
+      return openCameraFacing(was, false);
+    });
+    if (cameraPipelineRunning(pipe)) {
+      swapCameraSource(pipe, stream);
+      watchCameraTrack(pipe);
+      cam.facing = streamFacing(stream, facing);
+    } else {
+      for (const track of stream.getTracks()) track.stop();
+    }
+  } catch (e) {
+    pipe.following = false;
+    toast(`Camera unavailable: ${e.message || e}`);
+    await stopCamera();
+    return;
+  }
+  pipe.following = false;
+  renderVoicePanel();
 }
 
 function watchCameraTrack(pipe) {

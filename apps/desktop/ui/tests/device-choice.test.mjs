@@ -10,6 +10,7 @@ const {
   NOT_CONNECTED,
   audioDeviceIdentity, sameAudioDevice, connectedAudioDevice, audioDevicePicks,
   readCameraChoice, cameraChoiceText, findCamera, cameraPicks, cameraChoiceFor, cameraMove,
+  otherFacing, cameraFacing, cameraForFacing,
 } = require("../scripts/device-choice.js");
 
 const ui = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,4 +90,24 @@ test("the device choice script loads before the app and the pickers use it", () 
   const app = readFileSync(join(ui, "scripts", "app.js"), "utf8");
   assert.ok(app.includes(`addEventListener("devicechange"`));
   assert.ok(!app.includes("names.includes(current"));
+});
+
+test("the camera switch goes between the front and back cameras", () => {
+  assert.equal(otherFacing("user"), "environment");
+  assert.equal(otherFacing("environment"), "user");
+  assert.equal(otherFacing(undefined), "environment");
+  assert.equal(cameraFacing({ facingMode: "environment" }, "user"), "environment");
+  assert.equal(cameraFacing({}, "user"), "user");
+  assert.equal(cameraFacing({ facingMode: "left" }, "environment"), "environment");
+});
+
+test("a phone camera is found by the side it faces when its name says so", () => {
+  const iphone = [{ deviceId: "f", label: "Front Camera" }, { deviceId: "b", label: "Back Camera" }];
+  const android = [{ deviceId: "0", label: "camera2 0, facing back" }, { deviceId: "1", label: "camera2 1, facing front" }];
+  assert.equal(cameraForFacing(iphone, "user"), "f");
+  assert.equal(cameraForFacing(iphone, "environment"), "b");
+  assert.equal(cameraForFacing(android, "user"), "1");
+  assert.equal(cameraForFacing(android, "environment"), "0");
+  assert.equal(cameraForFacing([webcam, laptop], "environment"), null);
+  assert.equal(cameraForFacing(iphone, "sideways"), null);
 });

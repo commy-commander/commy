@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, messageSwipePull, messageSwipeAction, edgeBackStarts,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, MIRROR_FRAME_MS, roomTileStreams, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, MIRROR_FRAME_MS, roomTileStreams, roomCameraTiles, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -906,9 +906,10 @@ test("the stream you are watching plays in its tile and carries its own stop key
   assert.match(css, rule(' \\.pt-stream\\.w \\.max', 'right: 58px;'));
   assert.ok(MIRROR_FRAME_MS >= 16 && MIRROR_FRAME_MS <= 100);
   assert.match(glue, /if \(stream\.watching\) \{\n\s+const pic = el\("canvas", "pic"\);/);
-  assert.match(glue, /const crop = frame\.classList\.contains\("blank"\) \? null : coverCrop\(frame\.width, frame\.height, box\.width, box\.height\);\n\s+if \(!crop\) return;/);
+  assert.match(glue, /if \(streamPic && !frame\.classList\.contains\("blank"\)\) mirrorInto\(streamPic, frame\);/);
+  assert.match(glue, /const crop = coverCrop\(frame\.width, frame\.height, box\.width, box\.height\);\n\s+if \(!crop\) return;/);
   assert.match(glue, /drawImage\(frame, crop\.sx, crop\.sy, crop\.sw, crop\.sh, 0, 0, width, height\);\n\s+pic\.parentNode\.classList\.toggle\("on", true\);/);
-  assert.match(glue, /if \(!pic \|\| !roomOpen\(\)\) return;\n\s+studioPhone\.mirror = requestAnimationFrame\(mirrorStream\);/);
+  assert.match(glue, /if \(\(!streamPic && !cameraPics\.length\) \|\| !roomOpen\(\)\) return;\n\s+studioPhone\.mirror = requestAnimationFrame\(mirrorStream\);/);
   assert.match(css, rule(' \\.pt-stream\\.on :is\\(\\.avatar, \\.go\\)', 'display: none;'));
   assert.match(css, rule(' \\.pt-stream \\.pic', 'position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; visibility: hidden;'));
 });
@@ -1345,4 +1346,38 @@ test("an open thread on the phone is a full screen like the chat, with its own b
   assert.match(glue, /return \{ kind: "back", node: \$\("thread-panel"\), thread: true \};/);
   assert.match(glue, /send\.onclick = \(\) => sendThreadReply\(\);/);
   assert.match(glue, /more\.classList\.toggle\("hidden", !threadMoreRows\(\)\.length\);/);
+});
+
+test("everyone with their camera on gets a video tile in the phone voice room, yours first", () => {
+  const people = [
+    { id: "ana", name: "Ana", label: "Ana", you: false },
+    { id: "me", name: "commander", label: "You", you: true },
+    { id: "bo", name: "Bo", label: "Bo", you: false },
+  ];
+  const tiles = roomCameraTiles(["bo", "ana"], people, { userId: "me", camera: true, canFlip: true });
+  assert.deepEqual(tiles.map(tile => tile.user), ["me", "ana", "bo"]);
+  assert.deepEqual(tiles[0], { user: "me", name: "commander", title: "You", own: true, camera: true, rear: false, canFlip: true });
+  assert.deepEqual(tiles[1], { user: "ana", name: "Ana", title: "Ana", own: false, camera: true, rear: false, canFlip: false });
+  assert.deepEqual(roomCameraTiles(["me"], people, { userId: "me", camera: false }), []);
+  assert.equal(roomCameraTiles([], people, { userId: "me", camera: true, facing: "environment" })[0].rear, true);
+  assert.deepEqual(roomCameraTiles(["zed"], people, { userId: "me" }), []);
+  assert.deepEqual(roomCameraTiles(null, null, {}), []);
+});
+
+test("a camera turning on or flipping repaints the phone voice room", () => {
+  const people = roomTiles({ voice_users: ["Ana"], voice_user_ids: ["ana"] }, { userId: "me" });
+  const front = roomCameraTiles([], [{ id: "me", name: "me" }], { userId: "me", camera: true, canFlip: true });
+  const back = roomCameraTiles([], [{ id: "me", name: "me" }], { userId: "me", camera: true, canFlip: true, facing: "environment" });
+  assert.notEqual(roomSignature(people, [], "x"), roomSignature(people, front, "x"));
+  assert.notEqual(roomSignature(people, front, "x"), roomSignature(people, back, "x"));
+  assert.notEqual(roomSignature(people, [{ user: "me", watching: false }], "x"), roomSignature(people, front, "x"));
+});
+
+test("a camera tile in the phone voice room plays that camera and your own carries the front and back switch", () => {
+  assert.match(glue, /<div class="pt-room-streams pt-room-cams" id="pt-room-cams"><\/div>/);
+  assert.match(glue, /\$\("pt-room-cams"\)\.replaceChildren\(\.\.\.cameras\.map\(roomCameraTile\)\);/);
+  assert.match(glue, /if \(camera\.canFlip\) \{[\s\S]*?await flipCamera\(\);/);
+  assert.match(glue, /return cam\.pipe && cam\.pipe\.drawn \? cam\.pipe\.canvas : null;/);
+  assert.match(glue, /watch\(\$\("cam-grid"\), \{ childList: true, subtree: true \}, queueRoomPaint\);/);
+  assert.match(css, /\[data-cam-mirror="on"\] \.pt-stream\.cam\.own:not\(\.rear\) \.pic \{ transform: scaleX\(-1\); \}/);
 });

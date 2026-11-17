@@ -4,7 +4,7 @@ The Studio look draws its icons from Phosphor. Each icon is kept in two weights,
 
 | File | Source | SHA-256 |
 | --- | --- | --- |
-| `icons.js` | npm `@phosphor-icons/core@2.1.1`, weights `regular` and `fill` | `a2e86833f83891d39a4cd4d7f105519b2b84384d63b57eac2c5596aa038e6706` |
+| `icons.js` | npm `@phosphor-icons/core@2.1.1`, weights `regular` and `fill` | `561e6172ba9c67a3f9e4b6ac8f2737a6bf23977b18f6771b31655c9d0777eb17` |
 
 Licensed under the MIT License (`LICENSE`).
 

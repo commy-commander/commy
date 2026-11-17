@@ -114,7 +114,7 @@ function roomMarkup() {
 <div class="t"><b><span id="pt-room-name"></span><span class="live hidden" id="pt-room-live">Live</span></b><small id="pt-room-sub"></small></div>
 <button type="button" class="sig" id="pt-room-sig" aria-haspopup="dialog" aria-expanded="false">${studioDockSignalMarkup()}<span id="pt-room-sig-word"></span></button>
 </header>
-<div class="pt-room-body"><div class="pt-room-streams" id="pt-room-streams"></div><div class="pt-room-people" id="pt-room-people"></div><div class="pt-aud hidden" id="pt-room-aud"><div class="pt-aud-label" id="pt-room-aud-label"></div><div class="pt-aud-chips" id="pt-room-aud-chips"></div></div></div>`;
+<div class="pt-room-body"><div class="pt-room-streams" id="pt-room-streams"></div><div class="pt-room-streams pt-room-cams" id="pt-room-cams"></div><div class="pt-room-people" id="pt-room-people"></div><div class="pt-aud hidden" id="pt-room-aud"><div class="pt-aud-label" id="pt-room-aud-label"></div><div class="pt-aud-chips" id="pt-room-aud-chips"></div></div></div>`;
 }
 
 function watchMarkup() {
@@ -1763,6 +1763,7 @@ function watchStudioPhone() {
     refreshLiveRooms(false);
   });
   watch($("voice-panel"), { attributes: true, attributeFilter: ["class", "data-quality"], subtree: true, childList: true }, queueRoomPaint);
+  watch($("cam-grid"), { childList: true, subtree: true }, queueRoomPaint);
   watch($("soundboard-pop"), { attributes: true, attributeFilter: ["class"] }, () => {
     syncRoomKeys();
     decorateTray();
@@ -2435,6 +2436,36 @@ function roomStreamTile(stream) {
   return tile;
 }
 
+function roomCameraTile(camera) {
+  const tile = studioNode("div", "pt-stream cam theme-dark" + (camera.own ? " own" : "") + (camera.rear ? " rear" : ""), '<span class="who"><span class="who-name"></span></span>');
+  tile.dataset.user = camera.user;
+  tile.querySelector(".who-name").textContent = camera.title;
+  tile.setAttribute("aria-label", camera.own ? "Your camera" : `${camera.name}'s camera`);
+  tile.prepend(makeAvatar(camera.user, camera.name, "avatar"));
+  const pic = el("canvas", "pic");
+  pic.setAttribute("aria-hidden", "true");
+  tile.prepend(pic);
+  if (camera.canFlip) {
+    const flip = studioNode("span", "flip", '<i data-i="camera-rotate"></i>');
+    flip.setAttribute("role", "button");
+    flip.tabIndex = 0;
+    flip.setAttribute("aria-label", camera.rear ? "Switch to front camera" : "Switch to back camera");
+    flip.onclick = async e => {
+      e.stopPropagation();
+      await flipCamera();
+      queueRoomPaint();
+    };
+    tile.appendChild(flip);
+  }
+  return tile;
+}
+
+function roomCameraSource(user) {
+  if (state.user && user === state.user.id) return cam.pipe && cam.pipe.drawn ? cam.pipe.canvas : null;
+  const frame = $("cam-grid").querySelector(`.cam-tile.camera[data-user="${CSS.escape(user)}"] .tile-frame`);
+  return frame && !frame.classList.contains("blank") ? frame : null;
+}
+
 function roomAudienceChip(person) {
   const chip = el("div", "pt-aud-chip" + (person.hand ? " hand" : ""));
   if (person.id) chip.dataset.user = person.id;
@@ -2450,15 +2481,24 @@ function roomAudienceChip(person) {
 
 function mirrorStream(now) {
   studioPhone.mirror = 0;
-  const pic = document.querySelector("#pt-room-streams .pic");
-  if (!pic || !roomOpen()) return;
+  const streamPic = document.querySelector("#pt-room-streams .pic");
+  const cameraPics = [...document.querySelectorAll("#pt-room-cams .pic")];
+  if ((!streamPic && !cameraPics.length) || !roomOpen()) return;
   studioPhone.mirror = requestAnimationFrame(mirrorStream);
   if (now - (studioPhone.mirrored || 0) < MIRROR_FRAME_MS) return;
-  const frame = $("video-frame");
-  const box = pic.parentNode.getBoundingClientRect();
-  const crop = frame.classList.contains("blank") ? null : coverCrop(frame.width, frame.height, box.width, box.height);
-  if (!crop) return;
   studioPhone.mirrored = now;
+  const frame = $("video-frame");
+  if (streamPic && !frame.classList.contains("blank")) mirrorInto(streamPic, frame);
+  for (const pic of cameraPics) {
+    const source = roomCameraSource(pic.parentNode.dataset.user);
+    if (source) mirrorInto(pic, source);
+  }
+}
+
+function mirrorInto(pic, frame) {
+  const box = pic.parentNode.getBoundingClientRect();
+  const crop = coverCrop(frame.width, frame.height, box.width, box.height);
+  if (!crop) return;
   const ratio = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.round(box.width * ratio);
   const height = Math.round(box.height * ratio);
@@ -2492,9 +2532,10 @@ function paintRoom() {
   const mine = everyone.find(tile => tile.you);
   const viewers = shareViewers($("vp-viewers").textContent, $("vp-viewers").classList.contains("hidden"));
   const streams = roomTileStreams(call ? [] : roomStreams(server, state.voiceChannelId, me), { userId: me.userId, name: mine ? mine.name : me.name, sharing: Boolean(state.sharing), viewers });
+  const cameras = call ? [] : roomCameraTiles(server && server.cameras, everyone, { ...me, facing: cam.facing, canFlip: cam.canFlip });
   const name = call ? vs.name : vs.channelName;
   const quality = $("vp-signal").dataset.quality || "";
-  const seen = roomSignature(everyone, streams, [name, vs.name, quality, viewers, audience.map(person => `${person.id}${person.hand ? "!" : ""}`).join(",")].join("/"));
+  const seen = roomSignature(everyone, [...streams, ...cameras], [name, vs.name, quality, viewers, audience.map(person => `${person.id}${person.hand ? "!" : ""}`).join(",")].join("/"));
   if (seen === studioPhone.roomSeen) return;
   studioPhone.roomSeen = seen;
   $("pt-room-name").textContent = name;
@@ -2504,6 +2545,7 @@ function paintRoom() {
   $("pt-room-sig").setAttribute("aria-label", `${studioDockQuality(quality).line}. Voice options`);
   $("pt-room-sig-word").textContent = signalWord(quality);
   $("pt-room-streams").replaceChildren(...streams.map(roomStreamTile));
+  $("pt-room-cams").replaceChildren(...cameras.map(roomCameraTile));
   $("pt-room-people").replaceChildren(...tiles.map(roomTile));
   $("pt-room-aud").classList.toggle("hidden", !audience.length);
   $("pt-room-aud-label").textContent = audienceLabel(audience.length);

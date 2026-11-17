@@ -393,6 +393,16 @@ function roomTileStreams(streams, me = {}) {
   return [{ user: me.userId, name: me.name || "", title: "Your screen", short: "You", own: true, watching: false, viewers: Math.max(0, Number(me.viewers) || 0) }, ...(streams || [])];
 }
 
+function roomCameraTiles(cameraIds, people, me = {}) {
+  const on = new Set(cameraIds || []);
+  const showing = person => person.id && (person.id === me.userId ? Boolean(me.camera) : on.has(person.id));
+  const tiles = (people || []).filter(showing).map(person => {
+    const own = person.id === me.userId;
+    return { user: person.id, name: person.name, title: own ? "You" : person.name, own, camera: true, rear: own && me.facing === "environment", canFlip: own && Boolean(me.canFlip) };
+  });
+  return [...tiles.filter(tile => tile.own), ...tiles.filter(tile => !tile.own)];
+}
+
 function shareViewers(text, hidden = false) {
   return hidden ? 0 : Math.max(0, parseInt(text, 10) || 0);
 }
@@ -436,7 +446,7 @@ function audienceLabel(count) {
 function roomSignature(tiles, streams, extra = "") {
   return [
     tiles.map(tile => `${tile.id}:${tile.name}:${tile.muted ? 1 : 0}${tile.deafened ? 1 : 0}`).join(","),
-    streams.map(stream => `${stream.user}:${stream.watching ? 1 : 0}`).join(","),
+    streams.map(stream => `${stream.camera ? "c" : "s"}${stream.user}:${stream.watching ? 1 : 0}${stream.rear ? 1 : 0}${stream.canFlip ? 1 : 0}`).join(","),
     extra,
   ].join("|");
 }
@@ -533,6 +543,7 @@ if (typeof module !== "undefined" && module.exports) {
     STREAM_TOOLS_MS,
     streamToolsStay,
     roomTileStreams,
+    roomCameraTiles,
     shareViewers,
     roomStage,
     audienceLabel,

@@ -3354,6 +3354,7 @@ body.compact .msg .avatar { width: 32px; height: 32px; font-size: 12px; }
 .cam-avatar-add { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 20px; }
 .cam-avatars img[src] + .cam-avatar-add { visibility: hidden; }
 [data-cam-mirror="on"] .cam-self { transform: scaleX(-1); }
+.cam-feed { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: .01; pointer-events: none; }
 
 .server-icon, .rail-home { position: relative; overflow: visible; }
 .server-icon.active::before {

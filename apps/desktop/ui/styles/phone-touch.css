@@ -1429,7 +1429,7 @@ html[data-look="studio"][data-fit="slim"] .pt-stream.on .pic { visibility: visib
 html[data-look="studio"][data-fit="slim"] .pt-stream.on :is(.avatar, .go) { display: none; }
 html[data-look="studio"][data-fit="slim"] .pt-stream .who-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 html[data-look="studio"][data-fit="slim"] .pt-stream .go { height: 44px; padding: 0 22px; border-radius: 999px; font: 600 14.5px/1 var(--font); }
-html[data-look="studio"][data-fit="slim"] .pt-stream :is(.max, .x, .stopk) {
+html[data-look="studio"][data-fit="slim"] .pt-stream :is(.max, .x, .stopk, .flip) {
   position: absolute;
   right: 12px;
   bottom: 12px;
@@ -1443,7 +1443,7 @@ html[data-look="studio"][data-fit="slim"] .pt-stream :is(.max, .x, .stopk) {
   backdrop-filter: blur(18px) saturate(1.3);
   box-shadow: inset 0 1px 0 rgb(var(--lamp) / .22), inset 0 0 0 1px var(--rim-soft), 0 14px 20px -8px rgb(var(--dark) / .7);
 }
-html[data-look="studio"][data-fit="slim"] .pt-stream :is(.max, .x) .i { width: 19px; height: 19px; }
+html[data-look="studio"][data-fit="slim"] .pt-stream :is(.max, .x, .flip) .i { width: 19px; height: 19px; }
 html[data-look="studio"][data-fit="slim"] .pt-stream .max .i.i-g { stroke: currentColor; stroke-width: 9; }
 html[data-look="studio"][data-fit="slim"] .pt-stream.w .max { right: 58px; }
 html[data-look="studio"][data-fit="slim"] .pt-stream .eye { display: flex; flex: none; align-items: center; gap: 5px; font: 600 13px/1 var(--font); color: var(--video-ink); }
@@ -1454,6 +1454,9 @@ html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) 
 html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) .pt-stream .eye.by:not(.hidden) { display: flex; }
 html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) .pt-stream .full { display: none; }
 html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) .pt-stream .short { display: inline; }
+html[data-look="studio"][data-fit="slim"] .pt-stream.cam { height: 300px; padding: 0; }
+html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) .pt-stream.cam { height: auto; aspect-ratio: 3 / 4; padding: 0; }
+html[data-look="studio"][data-fit="slim"] [data-cam-mirror="on"] .pt-stream.cam.own:not(.rear) .pic { transform: scaleX(-1); }
 html[data-look="studio"][data-fit="slim"] .pt-aud { margin-top: -12px; }
 html[data-look="studio"][data-fit="slim"] .pt-aud-label { display: flex; align-items: center; height: 32px; padding: 14px 4px 0; font: 600 13px/1 var(--font); color: var(--text-muted); }
 html[data-look="studio"][data-fit="slim"] .pt-aud-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
@@ -1462,7 +1465,7 @@ html[data-look="studio"][data-fit="slim"] .pt-aud-chip .avatar { flex: none; wid
 html[data-look="studio"][data-fit="slim"] .pt-aud-chip b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 html[data-look="studio"][data-fit="slim"] .pt-aud-chip .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); }
 html[data-look="studio"][data-fit="slim"] .pt-stream .stopk { display: flex; align-items: center; width: auto; padding: 0 16px; border-radius: 999px; font: 600 13.5px/1 var(--font); }
-html[data-look="studio"][data-fit="slim"] .pt-stream :is(.x, .stopk)::after { content: ""; position: absolute; inset: -3px; }
+html[data-look="studio"][data-fit="slim"] .pt-stream :is(.x, .stopk, .flip)::after { content: ""; position: absolute; inset: -3px; }
 html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) .pt-stream {
   grid-auto-flow: column;
   justify-content: start;
@@ -1475,7 +1478,7 @@ html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) 
 }
 html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) .pt-stream .avatar { width: 40px; height: 40px; font-size: 15px; }
 html[data-look="studio"][data-fit="slim"] .pt-room-streams:has(> :nth-child(2)) .pt-stream .go { height: 32px; padding: 0 14px; font-size: 13.5px; }
-html[data-look="studio"][data-fit="slim"][data-fx="lite"] .pt-stream :is(.who, .max, .x, .stopk) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look="studio"][data-fit="slim"][data-fx="lite"] .pt-stream :is(.who, .max, .x, .stopk, .flip) { -webkit-backdrop-filter: none; backdrop-filter: none; }
 html[data-look="studio"][data-fit="slim"] .pt-room-people { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 html[data-look="studio"][data-fit="slim"] .ptile {
   position: relative;

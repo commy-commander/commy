@@ -80,10 +80,32 @@ function cameraMove(cameras, choice, usingId) {
   return list.length ? { deviceId: "" } : null;
 }
 
+const CAMERA_FACING_WORDS = {
+  user: /\b(front|user|facetime|selfie)\b/i,
+  environment: /\b(back|rear|environment|world)\b/i,
+};
+
+function otherFacing(facing) {
+  return facing === "environment" ? "user" : "environment";
+}
+
+function cameraFacing(settings, fallback) {
+  const facing = settings && settings.facingMode;
+  return facing === "user" || facing === "environment" ? facing : fallback;
+}
+
+function cameraForFacing(cameras, facing) {
+  const words = CAMERA_FACING_WORDS[facing];
+  if (!words) return null;
+  const found = (cameras || []).find(c => c.deviceId && words.test(c.label || ""));
+  return found ? found.deviceId : null;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     NOT_CONNECTED,
     audioDeviceIdentity, sameAudioDevice, connectedAudioDevice, audioDevicePicks,
     readCameraChoice, cameraChoiceText, findCamera, cameraPicks, cameraChoiceFor, cameraMove,
+    otherFacing, cameraFacing, cameraForFacing,
   };
 }
