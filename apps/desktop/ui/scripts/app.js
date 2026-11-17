@@ -5991,6 +5991,7 @@ function onDmReceived(dm) {
 }
 
 const CAMERA_KEY = "commy.cameraDevice";
+const CAMERA_FACING_KEY = "commy.cameraFacing";
 const CAMERA_FPS = 12;
 const CAMERA_SIZE = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 } };
 const cam = { pipe: null, timer: null, busy: false, watching: new Set(), bigTile: null, tucked: false, facing: "user", canFlip: false };
@@ -6004,6 +6005,18 @@ function saveCamera(choice) {
     if (choice) localStorage.setItem(CAMERA_KEY, cameraChoiceText(choice));
     else localStorage.removeItem(CAMERA_KEY);
   } catch {}
+}
+
+function savedFacing() {
+  try { return readCameraFacing(localStorage.getItem(CAMERA_FACING_KEY)); } catch { return "user"; }
+}
+
+function saveFacing(facing) {
+  try { localStorage.setItem(CAMERA_FACING_KEY, readCameraFacing(facing)); } catch {}
+}
+
+async function cameraPicksHere() {
+  return onPhoneApp() ? facingPicks(savedFacing()) : cameraPicks(await listCameras(), savedCamera());
 }
 
 async function listCameras() {
@@ -6027,8 +6040,8 @@ function rememberCameraLabel(stream) {
 }
 
 async function openCameraStream() {
+  if (onPhoneApp()) return openCameraFacing(savedFacing(), false);
   const choice = savedCamera();
-  if (!choice && onPhoneApp()) return openCameraFacing("user", false);
   const found = findCamera(await listCameras(), choice);
   const stream = await openCameraById(found ? found.deviceId : choice ? choice.id : "");
   rememberCameraLabel(stream);
@@ -6075,7 +6088,7 @@ async function startCamera() {
   const pipe = createCameraPipeline(stream);
   watchCameraTrack(pipe);
   cam.pipe = pipe;
-  cam.facing = streamFacing(stream, "user");
+  cam.facing = streamFacing(stream, savedFacing());
   cam.canFlip = onPhoneApp() && (await listCameras()).length > 1;
   cam.timer = setInterval(async () => {
     if (cam.busy || !pipe.drawn || cam.pipe !== pipe) return;
@@ -6134,13 +6147,23 @@ function watchCameraTrack(pipe) {
   if (track) track.addEventListener("ended", () => followCamera(pipe));
 }
 
+async function cameraToFollow(pipe) {
+  if (!onPhoneApp()) {
+    const move = cameraMove(await listCameras(), savedCamera(), liveCameraId(pipe));
+    return move && (() => openCameraById(move.deviceId));
+  }
+  if (liveCameraId(pipe) !== null) return null;
+  const facing = pipe === cam.pipe ? cam.facing : savedFacing();
+  return () => openCameraFacing(facing, false);
+}
+
 async function followCamera(pipe) {
   if (!cameraPipelineRunning(pipe) || pipe.following) return;
   pipe.following = true;
   try {
-    const move = cameraMove(await listCameras(), savedCamera(), liveCameraId(pipe));
-    if (move) {
-      const stream = await openCameraById(move.deviceId);
+    const open = await cameraToFollow(pipe);
+    if (open) {
+      const stream = await open();
       if (cameraPipelineRunning(pipe)) {
         swapCameraSource(pipe, stream);
         watchCameraTrack(pipe);
@@ -7423,7 +7446,8 @@ function showCameraFrame(frame) {
 }
 
 async function loadCameraDevices() {
-  fillPicks($("camera-device"), cameraPicks(await listCameras(), savedCamera()));
+  fillPicks($("camera-device"), await cameraPicksHere());
+  $("cam-stage").classList.toggle("rear", onPhoneApp() && savedFacing() === "environment");
 }
 
 let previewPipe = null;
@@ -7437,7 +7461,7 @@ async function toggleCameraPreview() {
     previewPipe = createCameraPipeline(await openCameraStream());
     watchCameraTrack(previewPipe);
     $("cam-stage").appendChild(previewPipe.canvas);
-    $("cam-stage").classList.add("live");
+    $("cam-stage").classList.add("running");
     $("cam-preview-btn").textContent = "Stop Test";
     loadCameraDevices();
   } catch (e) {
@@ -7448,7 +7472,7 @@ async function toggleCameraPreview() {
 function stopCameraPreview() {
   stopCameraPipeline(previewPipe);
   previewPipe = null;
-  $("cam-stage").classList.remove("live");
+  $("cam-stage").classList.remove("running");
   $("cam-preview-btn").textContent = "Test Camera";
 }
 
@@ -12344,7 +12368,7 @@ async function fillVoicePop() {
     for (const id of ["vop-mic", "vop-speakers"]) $(id).replaceChildren(new Option("No devices found", ""));
   }
   const camera = $("vop-camera");
-  fillPicks(camera, cameraPicks(await listCameras(), savedCamera()), [new Option("Off", "off")]);
+  fillPicks(camera, await cameraPicksHere(), [new Option("Off", "off")]);
   if (!state.cameraOn) camera.value = "off";
 }
 
@@ -12404,7 +12428,8 @@ function animateToggle(button, off) {
 }
 
 async function useCameraDevice(id) {
-  saveCamera(cameraChoiceFor(await listCameras(), id, savedCamera()));
+  if (onPhoneApp()) saveFacing(id);
+  else saveCamera(cameraChoiceFor(await listCameras(), id, savedCamera()));
   await loadCameraDevices();
   if (previewPipe) {
     stopCameraPreview();
@@ -12428,7 +12453,7 @@ async function toggleVideoPop(anchor) {
   select.replaceChildren(el("option", null, "Loading cameras..."));
   pop.classList.remove("hidden");
   placePopup(pop, anchor, "above");
-  fillPicks(select, cameraPicks(await listCameras(), savedCamera()));
+  fillPicks(select, await cameraPicksHere());
 }
 
 async function toggleAudioPop(which, anchor) {

@@ -85,6 +85,19 @@ const CAMERA_FACING_WORDS = {
   environment: /\b(back|rear|environment|world)\b/i,
 };
 
+const CAMERA_FACING_PICKS = [
+  { value: "user", label: "Front camera" },
+  { value: "environment", label: "Back camera" },
+];
+
+function readCameraFacing(raw) {
+  return raw === "environment" ? "environment" : "user";
+}
+
+function facingPicks(facing) {
+  return { options: CAMERA_FACING_PICKS.map(pick => ({ ...pick })), value: readCameraFacing(facing) };
+}
+
 function otherFacing(facing) {
   return facing === "environment" ? "user" : "environment";
 }
@@ -106,6 +119,6 @@ if (typeof module !== "undefined" && module.exports) {
     NOT_CONNECTED,
     audioDeviceIdentity, sameAudioDevice, connectedAudioDevice, audioDevicePicks,
     readCameraChoice, cameraChoiceText, findCamera, cameraPicks, cameraChoiceFor, cameraMove,
-    otherFacing, cameraFacing, cameraForFacing,
+    CAMERA_FACING_PICKS, readCameraFacing, facingPicks, otherFacing, cameraFacing, cameraForFacing,
   };
 }

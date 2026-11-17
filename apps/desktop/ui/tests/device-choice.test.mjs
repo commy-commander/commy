@@ -10,7 +10,7 @@ const {
   NOT_CONNECTED,
   audioDeviceIdentity, sameAudioDevice, connectedAudioDevice, audioDevicePicks,
   readCameraChoice, cameraChoiceText, findCamera, cameraPicks, cameraChoiceFor, cameraMove,
-  otherFacing, cameraFacing, cameraForFacing,
+  CAMERA_FACING_PICKS, readCameraFacing, facingPicks, otherFacing, cameraFacing, cameraForFacing,
 } = require("../scripts/device-choice.js");
 
 const ui = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -110,4 +110,22 @@ test("a phone camera is found by the side it faces when its name says so", () =>
   assert.equal(cameraForFacing(android, "environment"), "0");
   assert.equal(cameraForFacing([webcam, laptop], "environment"), null);
   assert.equal(cameraForFacing(iphone, "sideways"), null);
+});
+
+test("the phone app offers a plain front or back camera choice, front by default", () => {
+  assert.deepEqual(CAMERA_FACING_PICKS.map(pick => pick.label), ["Front camera", "Back camera"]);
+  assert.deepEqual(facingPicks(null), { options: [{ value: "user", label: "Front camera" }, { value: "environment", label: "Back camera" }], value: "user" });
+  assert.equal(facingPicks("environment").value, "environment");
+  assert.equal(readCameraFacing("Front Ultra Wide Camera"), "user");
+  assert.equal(readCameraFacing(undefined), "user");
+});
+
+test("the camera test in settings fills its box on phones instead of shrinking to the Live badge", () => {
+  const app = readFileSync(join(ui, "scripts/app.js"), "utf8");
+  const css = readFileSync(join(ui, "styles/styles.css"), "utf8");
+  assert.match(app, /\$\("cam-stage"\)\.classList\.add\("running"\);/);
+  assert.doesNotMatch(app, /\$\("cam-stage"\)\.classList\.(add|remove|toggle)\("live"/);
+  assert.match(css, /\.cam-stage\.running \.cam-stage-idle \{ visibility: hidden; \}/);
+  assert.match(app, /if \(onPhoneApp\(\)\) return openCameraFacing\(savedFacing\(\), false\);/);
+  assert.match(app, /if \(onPhoneApp\(\)\) saveFacing\(id\);/);
 });
