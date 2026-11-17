@@ -144,7 +144,7 @@ The test build relay asks staging and dev auth, since both use it:
 cd /srv/commy-staging/deploy
 RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 \
 RELAY_IMAGE=commy-relay:staging-iroh-relay-1.4.1 RELAY_IPV6_SUBNET=fd99:6513:f442::/64 \
-RELAY_ACCESS_URL=http://relay-access:3342/ RELAY_ACCESS_MODE=watch \
+RELAY_ACCESS_URL=http://relay-access:3342/ RELAY_ACCESS_MODE=watch RELAY_ACCESS_ALIAS=commy-relay-staging-access \
 RELAY_ACCOUNTS_NETWORK=commy-staging RELAY_TEST_ACCOUNTS_NETWORK=commy-dev \
 RELAY_ACCESS_AUTH_URLS=http://commy-staging-auth:3001/internal/relay-access,http://commy-dev-auth:3001/internal/relay-access \
   docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --build relay relay-access
@@ -163,6 +163,70 @@ bump in `relay/Dockerfile` gets a fresh build even without `--build`. To check
 which relay is live, `https://relay.<domain>:8443/ping` answers 200 on
 iroh-relay 1.x, which the web app needs; an older relay answers 404 and refuses
 browsers.
+
+#### Relays on their own server
+
+A relay can move to a second server so its bandwidth never competes with the
+sites. The relay names and ports stay the same, so the apps keep working and
+only DNS changes. The access checker stays on the main server, because it
+reaches auth over the internal Docker networks. The moved relay asks it over
+HTTPS on port 8443, through the main edge, which lets only the relay server's
+addresses through. The steps below move the test build relay; the release relay
+moves the same way with its own names, ports and subnet.
+
+1. Prepare the relay server: SSH key login for a sudo user, then
+   `sudo sh deploy/host/harden-vps.sh` from a checkout in `/srv/commy` (it opens
+   80/tcp, 8443/tcp and both address discovery ports), Docker Engine with the
+   compose plugin, and a swapfile if it has little memory.
+2. On the main server, give the access checker a name the edge can reach: run
+   its command above again with `RELAY_ACCESS_ALIAS=commy-relay-staging-access`
+   (already there for the test build relay), which puts it on `commy-relay`
+   under that name. Then add an untracked `edge/sites.d/relay-access.caddy`
+   with the relay server's IPv4 and IPv6 addresses:
+
+   ```caddy
+   relay-access.commy.chat:8443 {
+   	@relay_server remote_ip <relay server IPv4> <relay server IPv6>
+   	handle @relay_server {
+   		reverse_proxy commy-relay-staging-access:3342
+   	}
+   	handle {
+   		abort
+   	}
+   }
+   ```
+
+   and reload the edge Caddy from the file on disk.
+3. On the relay server, put `ACME_EMAIL`, `RELAY_DOMAIN` and
+   `STAGING_RELAY_DOMAIN` in `deploy/relay-host/.env` and run
+   `docker compose up -d` there. This small edge creates the `commy-relay`
+   network and the `commy-edge_caddy_data` volume that
+   `docker-compose.relay.yml` expects, so the relay commands work unchanged.
+4. Give `deploy/.env` placeholder values for `DOMAIN`, `ACME_EMAIL`,
+   `POSTGRES_PASSWORD` and `BETTER_AUTH_SECRET`: compose requires them, but the
+   relay services never read them. Then start the relay without its access
+   checker, which stays on the main server:
+
+   ```bash
+   cd /srv/commy/deploy
+   RELAY_PROXY_ALIAS=commy-relay-staging-proxy RELAY_DOMAIN=relay-staging.commy.chat RELAY_QAD_PORT=7843 RELAY_MONTHLY_LIMIT_GB=500 \
+   RELAY_IMAGE=commy-relay:staging-iroh-relay-1.4.1 RELAY_IPV6_SUBNET=fd99:6513:f442::/64 \
+   RELAY_ACCESS_URL=https://relay-access.commy.chat:8443/ \
+     docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --no-deps relay relay-proxy relay-meter
+   ```
+
+   Building the relay image compiles iroh-relay, which needs more memory than a
+   small server has. Build it on the main server and copy it over with
+   `docker save` and `docker load`, together with the relay tools image.
+5. The relay starts without address discovery until its name points at the new
+   server. Point the relay name's A and AAAA records at the relay server and
+   `relay-access.commy.chat` at the main server, all DNS only. Once the edge
+   has the certificate, the relay restarts with address discovery on its own.
+   Check that `https://relay-staging.commy.chat:8443/ping` answers 200, that
+   the address discovery port answers over UDP (a provider firewall in front of
+   the server can block it), and that `docker compose logs relay-access` on the
+   main server shows the checks. Then stop `relay`, `relay-proxy` and
+   `relay-meter` of that project on the main server and keep `relay-access`.
 
 ### Dockhand
 

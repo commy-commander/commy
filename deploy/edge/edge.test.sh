@@ -117,6 +117,15 @@ printf 'local-site.example.org {\n\trespond "local"\n}\n' >"$full/sites.d/local.
 check "full edge config is valid with a local site" "$(full_caddy validate >/dev/null 2>&1 && echo valid)" valid
 check "local sites are loaded" "$(full_caddy adapt 2>/dev/null | grep -c local-site.example.org)" 1
 
+relay_host_caddy() {
+	env ACME_EMAIL=ops@example.org RELAY_DOMAIN=relay.example.org STAGING_RELAY_DOMAIN=relay-staging.example.org \
+		"$caddy" "$@" --config "$here/../relay-host/Caddyfile" --adapter caddyfile
+}
+check "relay server edge config is valid" "$(relay_host_caddy validate >/dev/null 2>&1 && echo valid)" valid
+check "relay server edge serves both relay names" \
+	"$(relay_host_caddy adapt 2>/dev/null | grep -o 'relay\(-staging\)\?\.example\.org' | sort -u | tr '\n' ' ')" \
+	"relay-staging.example.org relay.example.org "
+
 if [ "$failures" -gt 0 ]; then
 	echo "$failures check(s) failed"
 	cat "$work/caddy.out"

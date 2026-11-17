@@ -12,8 +12,10 @@ services:
   relay-access:
     networks:
       edge:
-      accounts:
-      test-accounts:
+      public: &relay_access_alias
+        aliases: ["${RELAY_ACCESS_ALIAS:-commy-relay-access}"]
+      accounts: *relay_access_alias
+      test-accounts: *relay_access_alias
 
 networks:
   edge:
