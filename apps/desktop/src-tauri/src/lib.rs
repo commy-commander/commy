@@ -8439,6 +8439,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
     tauri::async_runtime::spawn(directory::keep_listings_current(handle.clone()));
     server_guard::keep_home_card(&handle);
     let session_check = tauri::async_runtime::spawn(account::verify_saved_session(handle.clone()));
+    tauri::async_runtime::spawn(account::watch_session(handle.clone()));
     tauri::async_runtime::spawn(async move {
         match CommyNode::spawn_on_port(node_key, node_port).await {
             Ok((mut node, events, media, dms)) => {
@@ -8659,6 +8660,9 @@ pub fn run() {
         );
     builder
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Focused(true)) && window.label() == "main" {
+                account::check_session_soon();
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" {
                     return;

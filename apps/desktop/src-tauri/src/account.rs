@@ -17,6 +17,12 @@ const SESSION_RECHECK_FIRST: Duration = Duration::from_secs(5);
 const SESSION_RECHECK_MOST: Duration = Duration::from_secs(30);
 static SESSION_RECHECK: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
 static RECHECKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const SESSION_WATCH_EVERY: Duration = Duration::from_secs(45);
+const SESSION_WATCH_SOONEST: Duration = Duration::from_secs(10);
+static SESSION_WATCH: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
+static SESSION_URL: Mutex<Option<(String, String)>> = Mutex::new(None);
+const DISCOVER_TRIES: u32 = 3;
+const DISCOVER_RETRY_WAIT: Duration = Duration::from_secs(1);
 pub const FILE: &str = "account.json";
 pub const PENDING_SIGN_IN_FILE: &str = "sign-in-pending.json";
 pub const MAX_ACCOUNTS: usize = 5;
@@ -505,15 +511,47 @@ fn use_sync_service(handle: &AppHandle, server: &str, doc: &Discovery) {
     }
 }
 
+fn worth_asking_again(status: Option<reqwest::StatusCode>) -> bool {
+    match status {
+        None => true,
+        Some(status) => {
+            status.is_server_error()
+                || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || status == reqwest::StatusCode::REQUEST_TIMEOUT
+        }
+    }
+}
+
+fn discovery_refusal(host: &str, status: reqwest::StatusCode) -> String {
+    if worth_asking_again(Some(status)) {
+        format!("{host} is not answering right now. Try again in a minute.")
+    } else {
+        format!("{host} is not a Commy account server")
+    }
+}
+
+async fn fetch_discovery(http: &reqwest::Client, server: &str) -> reqwest::Result<reqwest::Response> {
+    let mut tries = 1;
+    loop {
+        let sent = http.get(format!("{server}/.well-known/commy-auth.json")).send().await;
+        let status = sent.as_ref().ok().map(|res| res.status());
+        if tries >= DISCOVER_TRIES || !worth_asking_again(status) {
+            return sent;
+        }
+        tracing::warn!("{server} did not describe its sign-in ({status:?}); asking again");
+        tokio::time::sleep(DISCOVER_RETRY_WAIT * tries).await;
+        tries += 1;
+    }
+}
+
 pub(crate) async fn discover(http: &reqwest::Client, server: &str) -> Result<Discovery, String> {
     let host = host_of(server);
-    let res = http
-        .get(format!("{server}/.well-known/commy-auth.json"))
-        .send()
+    let res = fetch_discovery(http, server)
         .await
         .map_err(|_| format!("Could not reach {host}. Check your connection or the account server in Settings."))?;
     if !res.status().is_success() {
-        return Err(format!("{host} is not a Commy account server"));
+        tracing::warn!("{server} answered {} for its sign-in description", res.status());
+        return Err(discovery_refusal(&host, res.status()));
     }
     let doc: Discovery = res.json().await.map_err(|_| format!("{host} sent an invalid sign-in description"))?;
     if !doc.same_origin(server) {
@@ -1365,14 +1403,14 @@ pub async fn account_claim_profile(app: tauri::State<'_, App>, handle: AppHandle
 }
 
 async fn sign_in_again_if_signed_out(app: &App, handle: &AppHandle, problem: String) -> Result<AccountView, String> {
-    if !matches!(check_saved_session(app).await, SessionCheck::Rejected) {
+    let SessionCheck::Rejected(token) = check_saved_session(app).await else {
         return Err(problem);
-    }
+    };
     if let Some((base, server, account)) = signed_in_folder(app) {
         account_folder::forget_key(&account_folder::folder(&base, &server, &account));
     }
     *MAY_CLAIM.lock_or_recover() = None;
-    drop_rejected_session(app, handle);
+    drop_rejected_session(app, handle, &token);
     Ok(view(app))
 }
 
@@ -1413,7 +1451,7 @@ async fn open_folder(
 
 enum SessionCheck {
     Valid(Discovery),
-    Rejected,
+    Rejected(String),
     Unknown,
 }
 
@@ -1425,34 +1463,50 @@ fn session_answer(status: reqwest::StatusCode, session: Option<SessionResponse>)
     }
 }
 
-async fn check_saved_session(app: &App) -> SessionCheck {
-    let (token, server) = {
-        let state = app.account.lock_or_recover();
-        if !is_signed_in(&state) {
-            return SessionCheck::Unknown;
-        }
-        (state.token.clone(), state.signed_in_server.clone())
-    };
-    let (Some(token), Some(server)) = (token, server) else { return SessionCheck::Unknown };
-    let Ok(doc) = discover(&app.http, &server).await else { return SessionCheck::Unknown };
-    let Ok(res) = app.http.get(&doc.endpoints.session).bearer_auth(&token).send().await else {
-        return SessionCheck::Unknown;
-    };
+fn saved_session(app: &App) -> Option<(String, String)> {
+    let state = app.account.lock_or_recover();
+    if !is_signed_in(&state) {
+        return None;
+    }
+    Some((state.signed_in_server.clone()?, state.token.clone()?))
+}
+
+async fn session_at(app: &App, url: &str, token: &str) -> Option<bool> {
+    let res = app.http.get(url).bearer_auth(token).send().await.ok()?;
     let status = res.status();
     let session = if status.is_success() { res.json::<Option<SessionResponse>>().await.ok().flatten() } else { None };
-    match session_answer(status, session) {
+    session_answer(status, session)
+}
+
+fn remember_session_url(server: &str, url: &str) {
+    *SESSION_URL.lock_or_recover() = Some((server.to_string(), url.to_string()));
+}
+
+fn known_session_url(server: &str) -> Option<String> {
+    SESSION_URL.lock_or_recover().as_ref().filter(|(known, _)| known == server).map(|(_, url)| url.clone())
+}
+
+async fn check_saved_session(app: &App) -> SessionCheck {
+    let Some((server, token)) = saved_session(app) else { return SessionCheck::Unknown };
+    let Ok(doc) = discover(&app.http, &server).await else { return SessionCheck::Unknown };
+    remember_session_url(&server, &doc.endpoints.session);
+    match session_at(app, &doc.endpoints.session, &token).await {
         Some(true) => SessionCheck::Valid(doc),
-        Some(false) => SessionCheck::Rejected,
+        Some(false) => SessionCheck::Rejected(token),
         None => SessionCheck::Unknown,
     }
 }
 
-fn drop_rejected_session(app: &App, handle: &AppHandle) {
+fn drop_rejected_session(app: &App, handle: &AppHandle, token: &str) {
     {
         let mut state = app.account.lock_or_recover();
+        if state.token.as_deref() != Some(token) {
+            return;
+        }
         state.clear_session();
         store(app, &state);
     }
+    tracing::info!("the account server signed this device out");
     crate::sync_link::clear_url();
     crate::account_log::stop();
     crate::key_handoff::stop();
@@ -1461,6 +1515,45 @@ fn drop_rejected_session(app: &App, handle: &AppHandle) {
         account_folder::forget_key(dir);
     }
     let _ = handle.emit("account-changed", ());
+}
+
+pub fn check_session_soon() {
+    SESSION_WATCH.notify_one();
+}
+
+fn early_check_allowed(since_last: Duration) -> bool {
+    since_last >= SESSION_WATCH_SOONEST
+}
+
+pub async fn watch_session(handle: AppHandle) {
+    let mut last = tokio::time::Instant::now();
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(SESSION_WATCH_EVERY) => {}
+            _ = SESSION_WATCH.notified() => {
+                if !early_check_allowed(last.elapsed()) {
+                    continue;
+                }
+            }
+        }
+        last = tokio::time::Instant::now();
+        recheck_saved_session(&handle).await;
+    }
+}
+
+async fn recheck_saved_session(handle: &AppHandle) {
+    if RECHECKING.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let app = handle.state::<App>();
+    let Some((server, token)) = saved_session(&app) else { return };
+    let Some(url) = known_session_url(&server) else {
+        verify_saved_session(handle.clone()).await;
+        return;
+    };
+    if session_at(&app, &url, &token).await == Some(false) {
+        drop_rejected_session(&app, handle, &token);
+    }
 }
 
 pub fn session_recheck_delay(tries: u32) -> Duration {
@@ -1523,7 +1616,7 @@ pub async fn verify_saved_session(handle: AppHandle) -> bool {
                 let _ = handle.emit("account-changed", ());
             }
         }
-        SessionCheck::Rejected => drop_rejected_session(&app, &handle),
+        SessionCheck::Rejected(token) => drop_rejected_session(&app, &handle, &token),
         SessionCheck::Unknown => {}
     }
     answered
@@ -1533,7 +1626,7 @@ fn startup_service(check: &SessionCheck) -> crate::startup::Service {
     use crate::startup::Service;
     match check {
         SessionCheck::Valid(_) if crate::sync_link::url().is_some() => Service::Used,
-        SessionCheck::Valid(_) | SessionCheck::Rejected => Service::NotUsed,
+        SessionCheck::Valid(_) | SessionCheck::Rejected(_) => Service::NotUsed,
         SessionCheck::Unknown => Service::Unreachable,
     }
 }
@@ -1561,6 +1654,34 @@ mod tests {
         assert_eq!(session_recheck_delay(2), Duration::from_secs(20));
         assert_eq!(session_recheck_delay(3), Duration::from_secs(30));
         assert_eq!(session_recheck_delay(400), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn a_remote_sign_out_is_noticed_within_a_minute() {
+        assert!(SESSION_WATCH_EVERY < Duration::from_secs(60));
+    }
+
+    #[test]
+    fn coming_back_to_the_window_checks_the_sign_in_at_most_every_few_seconds() {
+        assert!(!early_check_allowed(Duration::from_secs(2)));
+        assert!(early_check_allowed(SESSION_WATCH_SOONEST));
+        assert!(early_check_allowed(Duration::from_secs(40)));
+    }
+
+    #[test]
+    fn a_busy_or_unreachable_account_server_is_asked_again() {
+        assert!(worth_asking_again(None));
+        assert!(worth_asking_again(Some(reqwest::StatusCode::BAD_GATEWAY)));
+        assert!(worth_asking_again(Some(reqwest::StatusCode::SERVICE_UNAVAILABLE)));
+        assert!(worth_asking_again(Some(reqwest::StatusCode::TOO_MANY_REQUESTS)));
+        assert!(!worth_asking_again(Some(reqwest::StatusCode::NOT_FOUND)));
+        assert!(!worth_asking_again(Some(reqwest::StatusCode::OK)));
+    }
+
+    #[test]
+    fn only_a_server_with_no_sign_in_description_is_called_not_a_commy_server() {
+        assert_eq!(discovery_refusal("example.com", reqwest::StatusCode::NOT_FOUND), "example.com is not a Commy account server");
+        assert!(discovery_refusal("example.com", reqwest::StatusCode::BAD_GATEWAY).contains("not answering right now"));
     }
 
     #[test]

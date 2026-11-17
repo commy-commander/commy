@@ -50,15 +50,24 @@ impl Reply {
     }
 }
 
+#[derive(Deserialize)]
+struct SessionBody {
+    user: AccountUser,
+}
+
 pub fn parse_session(reply: &Reply) -> Option<AccountUser> {
-    #[derive(Deserialize)]
-    struct Session {
-        user: AccountUser,
-    }
     if !reply.ok() {
         return None;
     }
-    serde_json::from_str::<Option<Session>>(&reply.body).ok().flatten().map(|s| s.user)
+    serde_json::from_str::<Option<SessionBody>>(&reply.body).ok().flatten().map(|s| s.user)
+}
+
+pub fn session_ended(reply: &Reply) -> bool {
+    match reply.status {
+        401 | 403 => true,
+        200..=299 => matches!(serde_json::from_str::<Option<SessionBody>>(&reply.body), Ok(None)),
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -366,6 +375,17 @@ mod tests {
         assert_eq!(user.map(|u| u.id), Some("u1".into()));
         assert_eq!(parse_session(&reply(200, "null")), None);
         assert_eq!(parse_session(&reply(401, r#"{"user":{"id":"u1"}}"#)), None);
+    }
+
+    #[test]
+    fn only_a_clear_answer_ends_the_browser_session() {
+        assert!(session_ended(&reply(200, "null")));
+        assert!(session_ended(&reply(401, "")));
+        assert!(session_ended(&reply(403, "")));
+        assert!(!session_ended(&reply(200, r#"{"user":{"id":"u1"},"session":{}}"#)));
+        assert!(!session_ended(&reply(200, "<html>busy</html>")));
+        assert!(!session_ended(&reply(502, "")));
+        assert!(!session_ended(&reply(429, "")));
     }
 
     #[test]

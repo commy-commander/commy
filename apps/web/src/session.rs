@@ -336,6 +336,7 @@ impl Session {
             "check_link" => self.check_link(args),
             "account_status" => self.account_status().await,
             "account_sign_out" => self.sign_out().await,
+            "web_check_session" => self.check_session().await,
             "account_delete_start" => self.delete_account_start().await,
             "account_delete_finish" => self.delete_account_finish(args.code.as_deref(), args.password.as_deref()).await,
             "web_unlock" => self.unlock().await,
@@ -686,14 +687,34 @@ impl Session {
         }))
     }
 
-    async fn sign_out(&self) -> Result<Value, String> {
+    async fn leave_account(&self) {
         self.say_goodbye();
         n0_future::time::sleep(FAREWELL_LINGER).await;
         self.stop_sync();
         *self.dms.borrow_mut() = DmBook::default();
+    }
+
+    async fn sign_out(&self) -> Result<Value, String> {
+        self.leave_account().await;
         let _ = self.request("POST", account::SIGN_OUT_PATH, Some(json!({}))).await;
         self.host.remove(account::ENTRY_KEY_KEY);
         self.account_status().await
+    }
+
+    async fn check_session(&self) -> Result<Value, String> {
+        if self.status.borrow().account.is_none() {
+            return Ok(json!({ "signed_out": false }));
+        }
+        let reply = self.request("GET", account::SESSION_PATH, None).await?;
+        if !account::session_ended(&reply) {
+            return Ok(json!({ "signed_out": false }));
+        }
+        self.leave_account().await;
+        self.host.remove(account::ENTRY_KEY_KEY);
+        let mut status = self.status.borrow_mut();
+        status.account = None;
+        status.unlock = Unlock::SignedOut;
+        Ok(json!({ "signed_out": true }))
     }
 
     async fn delete_account_start(&self) -> Result<Value, String> {

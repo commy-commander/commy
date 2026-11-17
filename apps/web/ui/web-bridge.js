@@ -457,8 +457,21 @@
   window.addEventListener("keyup", () => talk(false), true);
   window.addEventListener("blur", () => talk(false));
 
-  const nudge = () => { if (unlocked) backend("web_nudge").catch(() => {}); };
+  let sessionCheckedAt = Date.now();
+  async function checkSession() {
+    sessionCheckedAt = Date.now();
+    const answer = await backend("web_check_session").catch(() => null);
+    if (answer && answer.signed_out) window.location.reload();
+  }
+  const checkSessionSoon = () => { if (webSessionCheckDue(sessionCheckedAt, Date.now())) checkSession(); };
+  setInterval(checkSession, WEB_SESSION_CHECK_MS);
+
+  const nudge = () => {
+    checkSessionSoon();
+    if (unlocked) backend("web_nudge").catch(() => {});
+  };
   window.addEventListener("online", nudge);
+  window.addEventListener("focus", checkSessionSoon);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") nudge(); });
   window.addEventListener("pagehide", () => { if (unlocked) backend("web_farewell").catch(() => {}); });
   window.addEventListener("pageshow", e => { if (e.persisted) nudge(); });

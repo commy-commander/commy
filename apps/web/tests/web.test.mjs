@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, SPEECH_VOICE_ORIGINS, SYNC_HOST_ORIGINS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -46,6 +46,18 @@ test("a notice is clipped like the desktop's and opens only a channel or DM", ()
   assert.equal(plain.title, "Commy");
   assert.equal(plain.options.tag, undefined);
   assert.equal(plain.target, null);
+});
+
+test("a sign-out from another device reaches an open tab within a minute", () => {
+  assert.ok(WEB_SESSION_CHECK_MS < 60_000);
+  assert.ok(rustCommands.has("web_check_session"));
+  assert.match(read("apps", "web", "ui", "web-bridge.js"), /setInterval\(checkSession, WEB_SESSION_CHECK_MS\)/);
+});
+
+test("coming back to the tab checks the sign-in at most every few seconds", () => {
+  assert.equal(webSessionCheckDue(0, 2_000), false);
+  assert.equal(webSessionCheckDue(0, WEB_SESSION_CHECK_SOONEST_MS), true);
+  assert.equal(webSessionCheckDue(1_000, 50_000), true);
 });
 
 test("notices go to the browser rather than being dropped", () => {
