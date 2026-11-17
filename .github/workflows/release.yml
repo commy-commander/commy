@@ -181,8 +181,10 @@ jobs:
               ;;
             Linux)
               cp "$bundle"/deb/*.deb "$out/Commy_${VERSION}_amd64.deb"
-              dpkg-deb -c "$out/Commy_${VERSION}_amd64.deb" | grep -q ' ./usr/lib/commy/gstreamer-1.0/libgstcommycamerafix.so$' \
-                || { echo "the .deb does not carry the camera fix plugin"; exit 1; }
+              deb_root="$(mktemp -d)"
+              dpkg-deb -x "$out/Commy_${VERSION}_amd64.deb" "$deb_root"
+              [ -f "$deb_root/usr/lib/commy/gstreamer-1.0/libgstcommycamerafix.so" ] \
+                || { echo "the .deb does not carry the camera fix plugin"; dpkg-deb -c "$out/Commy_${VERSION}_amd64.deb"; exit 1; }
               cp "$bundle"/appimage/*.AppImage "$out/Commy_${VERSION}_amd64.AppImage"
               bash "$GITHUB_WORKSPACE/.github/scripts/check-appimage-media.sh" "$out/Commy_${VERSION}_amd64.AppImage"
               ;;
