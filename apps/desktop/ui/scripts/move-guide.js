@@ -3,6 +3,7 @@ const HELP_PAGES = {
   accountServers: "account-servers",
   moving: "moving-your-account",
   syncServers: "sync-servers",
+  choosing: "choosing-a-server",
 };
 const SYNC_HOST_GUIDE_KEY = "commy.syncHostGuideDone";
 
@@ -44,8 +45,10 @@ function movedInWelcome(moved) {
   };
 }
 
-function inviteHelpPage(invite) {
-  return invite && invite.community_host && invite.community_host.ask ? "syncServers" : "accountServers";
+function signInHelp(noteKey) {
+  return noteKey === "signin.server.warning"
+    ? { page: "choosing", key: "signin.server.trust" }
+    : { page: "accountServers", key: "signin.server.help" };
 }
 
 function syncHostGuideSteps() {
@@ -79,7 +82,7 @@ if (typeof module !== "undefined" && module.exports) {
     shownHost,
     movePlan,
     movedInWelcome,
-    inviteHelpPage,
+    signInHelp,
     syncHostGuideSteps,
     syncHostGuideDone,
     finishSyncHostGuide,

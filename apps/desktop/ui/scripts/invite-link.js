@@ -21,7 +21,6 @@ async function openInviteLink(link) {
     if (warningText) warning.textContent = warningText;
     const learn = $("invite-link-learn");
     learn.classList.toggle("hidden", !warningText);
-    learn.dataset.help = inviteHelpPage(invite);
     $("invite-link-join").textContent = inviteAsksTrust(invite) ? TRUST_AND_JOIN : "Join Server";
     showModal("modal-invite-link");
   } catch (e) {

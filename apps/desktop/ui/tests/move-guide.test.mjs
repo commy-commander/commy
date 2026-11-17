@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { HELP_PAGES, helpUrl, shownHost, movePlan, movedInWelcome, inviteHelpPage, syncHostGuideSteps, syncHostGuideDone, finishSyncHostGuide } = require("../scripts/move-guide.js");
+const { HELP_PAGES, helpUrl, shownHost, movePlan, movedInWelcome, signInHelp, syncHostGuideSteps, syncHostGuideDone, finishSyncHostGuide } = require("../scripts/move-guide.js");
 
 const memoryStorage = () => {
   const items = new Map();
@@ -16,6 +16,7 @@ test("help links open the matching guide on the website", () => {
   assert.equal(helpUrl("moving"), "https://commy.chat/docs/moving-your-account");
   assert.equal(helpUrl("syncServers"), "https://commy.chat/docs/sync-servers");
   assert.equal(helpUrl("accountServers"), "https://commy.chat/docs/account-servers");
+  assert.equal(helpUrl("choosing"), "https://commy.chat/docs/choosing-a-server");
   assert.equal(helpUrl("nothing"), "https://commy.chat/docs");
 });
 
@@ -46,10 +47,17 @@ test("the welcome after moving names both account servers", () => {
   assert.ok(welcome.points.some(p => p.startsWith("commy.chat keeps a note")));
 });
 
-test("an invite's help explains the sync server only when it asks for trust", () => {
-  assert.equal(inviteHelpPage({ community_host: { ask: true } }), "syncServers");
-  assert.equal(inviteHelpPage({ community_host: { ask: false } }), "accountServers");
-  assert.equal(inviteHelpPage(null), "accountServers");
+test("sign in points to the trust guide only when the server is not on Commy's list", () => {
+  assert.deepEqual(signInHelp("signin.server.warning"), { page: "choosing", key: "signin.server.trust" });
+  assert.deepEqual(signInHelp("signin.server.listed"), { page: "accountServers", key: "signin.server.help" });
+  assert.deepEqual(signInHelp("signin.server.note"), { page: "accountServers", key: "signin.server.help" });
+});
+
+test("invite warnings link to the guide on choosing a server", () => {
+  const html = readFileSync(join(import.meta.dirname, "..", "index.html"), "utf8");
+  const phone = readFileSync(join(import.meta.dirname, "..", "scripts", "studio-phone.js"), "utf8");
+  assert.match(html, /id="invite-link-learn" data-help="choosing"/);
+  assert.match(phone, /id="pt-invite-learn" data-help="choosing"/);
 });
 
 test("the owner walkthrough is shown until it is dismissed, and can come back", () => {

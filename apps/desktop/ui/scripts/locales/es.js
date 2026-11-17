@@ -105,6 +105,7 @@ const LOCALE_ES = {
   "signin.server.warning": "Este servidor no está en la lista de Commy. Añade solo un servidor que conozcas y en el que confíes. Gestiona tu inicio de sesión y ve tu correo y tu nombre visible.",
   "signin.server.listed": "Este servidor está en la lista de Commy: quien lo gestiona firmó el compromiso de Commy y pasa una revisión cada mes. Gestiona tu inicio de sesión y ve tu correo y tu nombre visible.",
   "signin.server.help": "¿Qué es un servidor de cuentas?",
+  "signin.server.trust": "¿Cómo elijo un servidor de confianza?",
   "signin.move.finish": "Termina la mudanza: inicia sesión o crea tu cuenta en {host}. Tus servidores vuelven en cuanto entres.",
   "signin.server.bad.https": "Usa una dirección https://. Commy solo inicia sesión con una conexión segura.",
   "signin.server.bad.login": "Quita el nombre de usuario o la contraseña y escribe solo la dirección.",

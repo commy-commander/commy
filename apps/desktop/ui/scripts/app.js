@@ -27264,10 +27264,20 @@ function syncServerNote() {
   note.classList.toggle("warn", key === "signin.server.warning");
   note.classList.toggle("plain", key === "signin.server.note");
   note.classList.remove("error");
+  showSignInHelp(key);
   const official = showsOfficialBadge(editing ? "custom" : select.value, account.default_server_host);
   $("signin-server-official").classList.toggle("hidden", !official);
   select.parentElement.closest(".signin-server-field").classList.toggle("official", official);
   $("signin-server-input").removeAttribute("aria-invalid");
+}
+
+function showSignInHelp(noteKey) {
+  const help = signInHelp(noteKey);
+  const button = document.querySelector("#modal-signin .signin-server-help");
+  if (!button) return;
+  button.dataset.help = help.page;
+  button.dataset.i18n = help.key;
+  button.textContent = t(help.key);
 }
 
 function showServerProblem(key) {

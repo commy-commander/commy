@@ -105,6 +105,7 @@ const LOCALE_EN = {
   "signin.server.warning": "This server is not on Commy's list. Only add a server you know and trust. It handles your sign-in and sees your email and display name.",
   "signin.server.listed": "This server is on Commy's list: its operator signed Commy's pledge and it passes a check every month. It handles your sign-in and sees your email and display name.",
   "signin.server.help": "What's an account server?",
+  "signin.server.trust": "How do I choose a server I trust?",
   "signin.move.finish": "Finish moving: sign in or create your account on {host}. Your servers come back once you're in.",
   "signin.server.bad.https": "Use an https:// address. Commy signs in only over a secure connection.",
   "signin.server.bad.login": "Leave out any user name or password and enter just the address.",

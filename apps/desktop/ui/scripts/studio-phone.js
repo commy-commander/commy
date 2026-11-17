@@ -180,7 +180,7 @@ function inviteMarkup() {
 <small>You've been invited to join a server</small>
 <b id="pt-invite-name"></b>
 <span class="ifrom" id="pt-invite-from"></span>
-<div class="iwarn hidden" id="pt-invite-warn" role="alert"><span class="iw"><i data-i="triangle-alert"></i></span><p><b id="pt-invite-warn-lead"></b><span id="pt-invite-warn-rest"></span></p></div><button type="button" class="ilearn hidden" id="pt-invite-learn">What does this mean?</button>
+<div class="iwarn hidden" id="pt-invite-warn" role="alert"><span class="iw"><i data-i="triangle-alert"></i></span><p><b id="pt-invite-warn-lead"></b><span id="pt-invite-warn-rest"></span></p></div><button type="button" class="ilearn hidden" id="pt-invite-learn" data-help="choosing">What does this mean?</button>
 <p class="ierr hidden" id="pt-invite-error" role="alert"></p>
 </div>
 <div class="ikeys"><button type="button" class="key lg primary" id="pt-invite-join">Join</button><button type="button" class="key lg" id="pt-invite-later">Not now</button></div>
@@ -2831,7 +2831,6 @@ function fillInvite() {
   $("pt-invite-warn-lead").textContent = parts.lead;
   $("pt-invite-warn-rest").textContent = parts.rest;
   $("pt-invite-learn").classList.toggle("hidden", !parts.lead);
-  $("pt-invite-learn").dataset.help = inviteHelpPage(pendingInvite);
   $("pt-invite-error").classList.toggle("hidden", true);
 }
 
