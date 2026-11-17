@@ -80,6 +80,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/rust-check
 
+  camera-fix:
+    name: Linux camera fix plugin
+    needs: platforms
+    if: needs.platforms.outputs.linux == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and try the plugin
+        run: |
+          sudo apt-get update
+          sudo apt-get remove -y libunwind-14-dev
+          sudo apt-get install -y --no-install-recommends gcc pkg-config libgstreamer1.0-dev gstreamer1.0-tools gstreamer1.0-plugins-base
+          bash apps/desktop/src-tauri/linux/camera-fix/build.sh "$RUNNER_TEMP/camera-fix"
+          bash apps/desktop/src-tauri/linux/camera-fix/check.sh "$RUNNER_TEMP/camera-fix"
+
   windows:
     name: Windows check
     needs: platforms

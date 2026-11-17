@@ -11,6 +11,8 @@ mod activity;
 mod afk;
 mod call_service;
 mod calls;
+#[cfg(target_os = "linux")]
+mod camera_fix;
 mod entry_list;
 mod catchup;
 mod channel_lock;
@@ -8653,6 +8655,8 @@ pub fn run() {
     data_location::finish_scheduled_before_start();
 
     instance::apply_webview_data_dir_before_any_window();
+    #[cfg(target_os = "linux")]
+    camera_fix::apply_before_any_window();
 
     let builder = tauri::Builder::default()
         .manage(App::default())

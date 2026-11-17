@@ -59,12 +59,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          sudo apt-get remove -y libunwind-14-dev
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
             libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
             libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
             libxdo-dev libssl-dev clang cmake \
-            file gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio gstreamer1.0-gl
+            file gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio gstreamer1.0-gl \
+            libgstreamer1.0-dev gstreamer1.0-tools
 
       - name: Choose the GStreamer plugins the AppImage carries
         if: runner.os == 'Linux'
@@ -78,6 +80,12 @@ jobs:
             cp "$system/libgst$plugin.so" "$chosen/"
           done
           echo "GSTREAMER_PLUGINS_DIR=$chosen" >> "$GITHUB_ENV"
+
+      - name: Build the camera fix GStreamer plugin for the .deb
+        if: runner.os == 'Linux'
+        run: |
+          bash apps/desktop/src-tauri/linux/camera-fix/build.sh
+          bash apps/desktop/src-tauri/linux/camera-fix/check.sh apps/desktop/src-tauri/linux/camera-fix
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -173,6 +181,8 @@ jobs:
               ;;
             Linux)
               cp "$bundle"/deb/*.deb "$out/Commy_${VERSION}_amd64.deb"
+              dpkg-deb -c "$out/Commy_${VERSION}_amd64.deb" | grep -q ' ./usr/lib/commy/gstreamer-1.0/libgstcommycamerafix.so$' \
+                || { echo "the .deb does not carry the camera fix plugin"; exit 1; }
               cp "$bundle"/appimage/*.AppImage "$out/Commy_${VERSION}_amd64.AppImage"
               bash "$GITHUB_WORKSPACE/.github/scripts/check-appimage-media.sh" "$out/Commy_${VERSION}_amd64.AppImage"
               ;;
@@ -228,6 +238,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          sudo apt-get remove -y libunwind-14-dev
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
             libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
