@@ -100,7 +100,8 @@ pub(crate) async fn resolve(app: &App, link: &str) -> Result<ResolvedInvite, Str
         (true, Some(key)) => fetch_background(app, &parsed, key).await,
         _ => None,
     };
-    let resolved = commy_net::invite::resolved(&parsed, &opened, &crate::account::effective_server(), background);
+    let mut resolved = commy_net::invite::resolved(&parsed, &opened, &crate::account::effective_server(), background);
+    resolved.trusted |= from_official_server(&parsed.origin);
     hold_resolved(ResolvedLink {
         link: resolved.link.clone(),
         ticket: resolved.ticket.clone(),
@@ -127,6 +128,10 @@ struct ResolvedLink {
 }
 
 static RESOLVED: std::sync::Mutex<Vec<ResolvedLink>> = std::sync::Mutex::new(Vec::new());
+
+fn from_official_server(origin: &str) -> bool {
+    normalize_origin(origin).is_some_and(|origin| origin == DEFAULT_ACCOUNT_SERVER)
+}
 
 fn hold_resolved(entry: ResolvedLink) {
     let mut held = RESOLVED.lock_or_recover();
@@ -595,6 +600,14 @@ pub fn register_scheme() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invites_from_the_official_server_are_trusted_from_any_home() {
+        assert!(from_official_server(DEFAULT_ACCOUNT_SERVER));
+        assert!(from_official_server(&format!("{DEFAULT_ACCOUNT_SERVER}/")));
+        assert!(!from_official_server("https://chat.example.org"));
+        assert!(!from_official_server("not an origin"));
+    }
 
     #[test]
     fn a_resolved_link_counts_only_when_joined_from_that_link_and_ticket() {
