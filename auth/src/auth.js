@@ -16,6 +16,7 @@ import { commyDeviceRequests } from "./device-requests.js";
 import { commyDevices } from "./devices.js";
 import { commyHomeCard } from "./home-card.js";
 import { commyHomeKeys, createHomeKeys } from "./home-keys.js";
+import { commyServerProof } from "./server-proof.js";
 import { commyMoved } from "./moved.js";
 import { commyDirectory } from "./directory.js";
 import { commyDoorbell } from "./doorbell.js";
@@ -116,6 +117,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
     commyEmailPreferences({ secret: config.secret, instanceName: config.instanceName, basePath: config.basePath }),
     commyAdultConfirmation(),
     commyHomeCard({ serverKey: config.serverKey, home: config.baseURL }),
+    commyServerProof({ serverKey: config.serverKey, origin: config.baseURL }),
     commyHomeKeys({ homeKeys: homeKeys ?? createHomeKeys({ ownHome: config.baseURL, ownKey: config.serverKey.published, ownSync: config.syncUrl }) }),
     commyMoved({ home: config.baseURL }),
   ];

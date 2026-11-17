@@ -339,6 +339,7 @@ impl Session {
         match cmd {
             "check_link" => self.check_link(args),
             "account_status" => self.account_status().await,
+            "verify_account_server" => self.account_status().await,
             "account_sign_out" => self.sign_out().await,
             "web_check_session" => self.check_session().await,
             "account_moved_to" => Ok(self.moved_view()),
@@ -656,6 +657,10 @@ impl Session {
         raw.as_string().and_then(|raw| Reply::parse(&raw)).ok_or_else(|| "Unexpected reply from your account server".into())
     }
 
+    fn serves_official_site(&self) -> bool {
+        commy_core::official_server::is_official_origin(&self.origin)
+    }
+
     fn host_name(&self) -> String {
         self.origin.split("://").nth(1).unwrap_or(&self.origin).to_string()
     }
@@ -686,6 +691,8 @@ impl Session {
             "is_default_server": true,
             "default_server_host": self.host_name(),
             "server_from_env": true,
+            "server_verified": self.serves_official_site(),
+            "server_impostor": false,
             "device_linked": status.device_linked,
             "pending_code": null,
             "server_gifs": offers.gifs,

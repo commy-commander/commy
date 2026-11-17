@@ -8,6 +8,7 @@ import { MOVED_PATH, MOVED_SET_PATH } from "./moved.js";
 import { contactKind } from "./listing-checks.js";
 import { SERVER_BLOCKLIST_PATH } from "./server-blocklist.js";
 import { SERVER_LIST_PATH } from "./server-list.js";
+import { SERVER_PROOF_PATH } from "./server-proof.js";
 import { loadListKey, loadServerKey } from "./server-key.js";
 
 export const APPLE_ORIGIN = "https://appleid.apple.com";
@@ -365,6 +366,7 @@ export function discoveryDocument(config) {
       sync: config.syncUrl,
       homeCard: `${api}${HOME_CARD_PATH}`,
       homeKey: `${api}${HOME_KEY_PATH}`,
+      serverProof: `${api}${SERVER_PROOF_PATH}`,
       moved: `${api}${MOVED_PATH}`,
       movedSet: `${api}${MOVED_SET_PATH}`,
       ...(config.linkBlocklistSources.length ? { linkBlocklist: `${api}${LINK_BLOCKLIST_PATH}` } : {}),

@@ -873,6 +873,7 @@ async function mockInvoke(cmd, args = {}) {
       mock.invites = mock.invites.filter(i => !(i.origin === args.origin && i.code === args.code));
       return null;
     }
+    case "verify_account_server": return Object.assign(mock.account || {}, { server_verified: !/[?&]impostor\b/.test(location.search), server_impostor: /[?&]impostor\b/.test(location.search) });
     case "account_server_info": return { origin: "https://commy.chat", host: "commy.chat", is_default: true };
     case "account_moved_to": return { moved_to: /[?&]movedto\b/.test(location.search) ? "https://friends.example" : null };
     case "account_move_pending": return /[?&]movepending\b/.test(location.search) ? "https://friends.example" : null;
@@ -27274,14 +27275,23 @@ function syncServerNote() {
   const note = $("signin-server-note");
   note.dataset.i18n = key;
   note.textContent = t(key);
-  note.classList.toggle("warn", key === "signin.server.warning");
+  note.classList.toggle("warn", key === "signin.server.warning" || key === "signin.server.unverified");
   note.classList.toggle("plain", key === "signin.server.note");
   note.classList.remove("error");
   showSignInHelp(key);
-  const official = showsOfficialBadge(editing ? "custom" : select.value, account.default_server_host);
+  const official = showsOfficialBadge(editing ? "custom" : select.value, account);
   $("signin-server-official").classList.toggle("hidden", !official);
   select.parentElement.closest(".signin-server-field").classList.toggle("official", official);
   $("signin-server-input").removeAttribute("aria-invalid");
+}
+
+async function verifyAccountServer() {
+  try {
+    account = await invoke("verify_account_server");
+  } catch {
+    return;
+  }
+  syncServerNote();
 }
 
 function showSignInHelp(noteKey) {
@@ -27372,6 +27382,7 @@ function showSignIn() {
   select.classList.remove("hidden");
   $("signin-server-edit").classList.add("hidden");
   syncServerNote();
+  verifyAccountServer();
   showSignInStep("form");
   if (!account.signed_in && account.pending_code) {
     signInUrl = account.pending_url;

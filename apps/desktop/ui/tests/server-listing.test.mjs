@@ -36,6 +36,7 @@ test("listed homes show their name and address", () => {
 test("the note under the picker matches the choice", () => {
   const account = { server: "https://mine.example.org", server_listed: false, listed_homes: [{ origin: "https://a.example.org" }] };
   assert.equal(signInServerNote("default", account), "signin.server.note");
+  assert.equal(signInServerNote("default", { ...account, server_impostor: true }), "signin.server.unverified");
   assert.equal(signInServerNote("https://a.example.org", account), "signin.server.listed");
   assert.equal(signInServerNote("https://mine.example.org", account), "signin.server.warning");
   assert.equal(signInServerNote("https://mine.example.org", { ...account, server_listed: true }), "signin.server.listed");

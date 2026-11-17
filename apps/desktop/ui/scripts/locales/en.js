@@ -102,6 +102,7 @@ const LOCALE_EN = {
   "signin.server.custom": "Self-hosted server…",
   "signin.server.use": "Use",
   "signin.server.note": "Self-hosted servers work on their own, even if Commy.chat is down. You can create an account there on the page that opens.",
+  "signin.server.unverified": "Commy could not confirm this is the real Commy.chat. Something on this network may be changing your connection. Wait to sign in until you are on a network you trust.",
   "signin.server.warning": "This server is not on Commy's list. Only add a server you know and trust. It handles your sign-in and sees your email and display name.",
   "signin.server.listed": "This server is on Commy's list: its operator signed Commy's pledge and it passes a check every month. It handles your sign-in and sees your email and display name.",
   "signin.server.help": "What's an account server?",

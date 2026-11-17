@@ -76,8 +76,8 @@ function returnSignInDue({ stage, mode, triedAt = 0, now = 0, fromLink = false }
   return fromLink || now - triedAt >= RETURN_RETRY_MS;
 }
 
-function showsOfficialBadge(choice, defaultHost) {
-  return choice === "default" && (defaultHost || "commy.chat") === "commy.chat";
+function showsOfficialBadge(choice, account) {
+  return choice === "default" && (account?.default_server_host || "commy.chat") === "commy.chat" && account?.server_verified === true;
 }
 
 function looksLikeEmail(text) {

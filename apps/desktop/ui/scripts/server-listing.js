@@ -31,7 +31,7 @@ function listedHomeOptions(homes, chosen) {
 }
 
 function signInServerNote(choice, account) {
-  if (choice === "default") return "signin.server.note";
+  if (choice === "default") return account?.server_impostor ? "signin.server.unverified" : "signin.server.note";
   const homes = (account && account.listed_homes) || [];
   const listed = homes.some(home => home.origin === choice) || (choice === account?.server && account?.server_listed);
   return listed ? "signin.server.listed" : "signin.server.warning";

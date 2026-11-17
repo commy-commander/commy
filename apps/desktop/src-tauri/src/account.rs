@@ -685,6 +685,8 @@ pub struct AccountView {
     max_accounts: usize,
     listed_homes: Vec<commy_view::listed::ListedView>,
     server_listed: bool,
+    server_verified: bool,
+    server_impostor: bool,
 }
 
 #[derive(Serialize)]
@@ -738,7 +740,15 @@ fn view(app: &App) -> AccountView {
         max_accounts: MAX_ACCOUNTS,
         listed_homes: crate::server_guard::listed_homes(),
         server_listed: crate::server_guard::is_listed_home(&effective_server()),
+        server_verified: crate::official_check::is_verified(&effective_server()),
+        server_impostor: crate::official_check::is_impostor(&effective_server()),
     }
+}
+
+#[tauri::command]
+pub async fn verify_account_server(handle: AppHandle) -> AccountView {
+    crate::official_check::check(&handle, &effective_server()).await;
+    view(&handle.state::<App>())
 }
 
 #[tauri::command]

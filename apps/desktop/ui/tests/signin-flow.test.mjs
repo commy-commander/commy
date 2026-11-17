@@ -133,12 +133,16 @@ test("a missing, closed or refused passkey falls back to the password", () => {
   assert.equal(passkeyFallsBackToPassword(null), false, "a sign-in already running is left alone");
 });
 
-test("only the official Commy.chat server wears the verified check", () => {
-  assert.equal(showsOfficialBadge("default", "commy.chat"), true);
-  assert.equal(showsOfficialBadge("default", undefined), true);
-  assert.equal(showsOfficialBadge("default", "staging.commy.chat"), false, "test servers are not the official one");
-  assert.equal(showsOfficialBadge("https://chat.example.org", "commy.chat"), false);
-  assert.equal(showsOfficialBadge("custom", "commy.chat"), false);
+test("only the official Commy.chat server wears the verified check, once it proves itself", () => {
+  const proven = { default_server_host: "commy.chat", server_verified: true };
+  assert.equal(showsOfficialBadge("default", proven), true);
+  assert.equal(showsOfficialBadge("default", { server_verified: true }), true);
+  assert.equal(showsOfficialBadge("default", { ...proven, server_verified: false }), false, "the name alone is not enough");
+  assert.equal(showsOfficialBadge("default", { default_server_host: "commy.chat" }), false, "no badge before the server proves itself");
+  assert.equal(showsOfficialBadge("default", undefined), false);
+  assert.equal(showsOfficialBadge("default", { ...proven, default_server_host: "staging.commy.chat" }), false, "test servers are not the official one");
+  assert.equal(showsOfficialBadge("https://chat.example.org", proven), false);
+  assert.equal(showsOfficialBadge("custom", proven), false);
 });
 
 test("only something shaped like an email moves on", () => {

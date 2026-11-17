@@ -52,6 +52,7 @@ mod pins;
 mod drive;
 mod profile_images;
 mod notify_anyway;
+mod official_check;
 mod push_wake;
 mod read_state;
 mod relaunch;
@@ -8814,6 +8815,7 @@ pub fn run() {
             account_log::sync_prefs_load,
             account_log::sync_prefs_set,
             account::set_account_server,
+            account::verify_account_server,
             account::account_begin_sign_in,
             account::account_cancel_sign_in,
             app_sign_in::account_in_app_options,
