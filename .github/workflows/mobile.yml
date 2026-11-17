@@ -174,7 +174,7 @@ jobs:
           echo "APK:      $got"
           [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::The APK is not signed with the key from ANDROID_DEBUG_KEYSTORE"; exit 1; }
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         if: env.ANDROID_MODE == 'debug'
         with:
           name: commy-android-debug
@@ -229,7 +229,7 @@ jobs:
           echo "APK native library: $(file -b "$RUNNER_TEMP/libcommy_desktop.so" | grep -o 'not stripped\|stripped' || echo unknown), $(wc -c < "$RUNNER_TEMP/libcommy_desktop.so") bytes"
           ls -la dist
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         if: env.ANDROID_MODE == 'play'
         with:
           name: commy-android-play
@@ -402,7 +402,7 @@ jobs:
           fi
           ls -la dist
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         with:
           name: commy-ios-${{ env.IOS_MODE }}
           path: dist/*

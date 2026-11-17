@@ -191,7 +191,7 @@ jobs:
           esac
           ls -la "$out"
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         if: matrix.bundles
         with:
           name: commy-${{ matrix.target }}
@@ -199,7 +199,7 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         if: runner.os == 'macOS'
         with:
           name: macos-bin-${{ matrix.target }}
@@ -323,7 +323,7 @@ jobs:
           esac
           ls -la "$out"
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         if: matrix.bundles
         with:
           name: commy-${{ matrix.target }}
@@ -331,7 +331,7 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ github.ref_type == 'tag' && 90 || 7 }}
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         if: runner.os == 'macOS'
         with:
           name: macos-bin-${{ matrix.target }}
@@ -444,7 +444,7 @@ jobs:
           COPYFILE_DISABLE=1 tar -czf "$out/Commy_${VERSION}_universal.app.tar.gz" -C "$bundle/macos" Commy.app
           ls -la "$out"
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         with:
           name: commy-universal-apple-darwin
           path: dist/*

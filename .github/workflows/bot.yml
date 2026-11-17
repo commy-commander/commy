@@ -105,7 +105,7 @@ jobs:
           fi
           ls -la dist
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         with:
           name: ${{ matrix.artifact }}
           path: dist/*
@@ -199,7 +199,7 @@ jobs:
           fi
           ls -la dist
 
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         with:
           name: ${{ matrix.artifact }}
           path: dist/*
