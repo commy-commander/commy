@@ -68,7 +68,7 @@ jobs:
   android:
     name: Android ${{ inputs.android == 'play' && 'Play bundle' || 'debug APK' }}
     if: inputs.android != 'none'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.android == 'play' && 'commy-pc' || 'ubuntu-latest' }}
     defaults:
       run:
         shell: bash
