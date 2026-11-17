@@ -521,7 +521,14 @@ impl Session {
     }
 
     fn record_hosts(&self) {
-        let loaded = self.client.borrow().sync_hosts();
+        let Some(home) = self.sync.borrow().as_ref().map(|live| live.url.clone()) else { return };
+        let loaded: Vec<(ServerId, Option<String>)> = self
+            .client
+            .borrow()
+            .sync_hosts()
+            .into_iter()
+            .filter_map(|(server, chosen)| Some((server, commy_view::away::remembered_host(chosen.as_deref(), self.place_of(server).as_deref(), &home)?)))
+            .collect();
         let due: Vec<(ServerId, Option<String>)> = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };

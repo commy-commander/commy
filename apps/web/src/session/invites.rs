@@ -19,6 +19,7 @@ const JOIN_POLL: Duration = Duration::from_millis(250);
 const DEFAULT_ACCOUNT_SERVER: &str = "https://commy.chat";
 const OPEN_A_LINK: &str = "Open an invite link to join a server from the browser";
 const TURNED_AWAY: &str = "This server did not let you in";
+const ELSEWHERE_WAIT_MS: u32 = 15_000;
 
 #[derive(Deserialize)]
 struct ErrorReply {
@@ -31,6 +32,20 @@ pub(super) fn invite_reply<T: DeserializeOwned>(reply: Reply) -> Result<T, Strin
         return Err(message.map_or_else(|| format!("the invite server answered {}", reply.status), |m| invite::clip(&m, 200)));
     }
     serde_json::from_str(&reply.body).map_err(|_| "The invite server sent an invalid reply".to_string())
+}
+
+fn unreachable_host(link: &InviteLink) -> String {
+    format!("Could not reach {} to open this invite", link.host())
+}
+
+fn reply_of(answer: &wasm_bindgen::JsValue) -> Option<Reply> {
+    let field = |name: &str| js_sys::Reflect::get(answer, &wasm_bindgen::JsValue::from_str(name)).ok().filter(|v| !v.is_null() && !v.is_undefined());
+    let status = field("status")?.as_f64()? as u16;
+    if status == 0 {
+        return None;
+    }
+    let body = field("body").map(|bytes| js_sys::Uint8Array::new(&bytes).to_vec()).unwrap_or_default();
+    Some(Reply { status, body: String::from_utf8_lossy(&body).into_owned() })
 }
 
 impl Session {
@@ -120,12 +135,13 @@ impl Session {
         Ok(made.invite)
     }
 
-    fn same_site(&self, link: &InviteLink) -> Result<(), String> {
+    async fn invite_read(&self, link: &InviteLink, path: &str) -> Result<Reply, String> {
+        let url = link.endpoint(path);
         if link.origin == self.origin {
-            Ok(())
-        } else {
-            Err(format!("This invite comes from {}. Open it in the desktop app to join from another account server.", link.host()))
+            return self.request("GET", &url, None).await;
         }
+        let answer = self.host.storage_request("GET", &url, "{}", &[], ELSEWHERE_WAIT_MS).await.map_err(|_| unreachable_host(link))?;
+        reply_of(&answer).ok_or_else(|| unreachable_host(link))
     }
 
     async fn full_link(&self, server: ServerId, origin: &str, code: &str) -> Result<String, String> {
@@ -137,16 +153,14 @@ impl Session {
             invite::revocable(state, me, origin, code)?
         };
         let link = invite::tracked_link(&tracked);
-        self.same_site(&link)?;
-        let body: ResolveResponse = invite_reply(self.request("GET", &link.endpoint(invite::RESOLVE_PATH), None).await?)?;
+        let body: ResolveResponse = invite_reply(self.invite_read(&link, invite::RESOLVE_PATH).await?)?;
         invite::open_reply(&link, &body, Utc::now()).map_err(|_| invite::OLD_LINK.to_string())?;
         Ok(link.url())
     }
 
     async fn resolve_invite(&self, raw: &str) -> Result<invite::ResolvedInvite, String> {
         let link = invite::parse(raw).ok_or("That is not a Commy invite link")?;
-        self.same_site(&link)?;
-        let body: ResolveResponse = invite_reply(self.request("GET", &link.endpoint(invite::RESOLVE_PATH), None).await?)?;
+        let body: ResolveResponse = invite_reply(self.invite_read(&link, invite::RESOLVE_PATH).await?)?;
         let opened = invite::open_reply(&link, &body, Utc::now())?;
         if let Some(key) = opened.community.clone() {
             self.invited.borrow_mut().insert(opened.ticket.server_id, key);
@@ -163,7 +177,7 @@ impl Session {
     }
 
     async fn invite_background(&self, link: &InviteLink, key: &str) -> Option<String> {
-        let reply = self.request("GET", &link.endpoint(invite::BACKGROUND_PATH), None).await.ok()?;
+        let reply = self.invite_read(link, invite::BACKGROUND_PATH).await.ok()?;
         let body: BackgroundResponse = invite_reply(reply).ok()?;
         let bytes = invite::open_background(&body.background, key).filter(|b| commy_view::pictures::is_jpeg_or_png(b))?;
         Some(files::data_url(commy_view::pictures::picture_mime(&bytes), &bytes))
@@ -194,8 +208,11 @@ impl Session {
         if ticket.owner.is_none() {
             return Err("That invite is damaged".into());
         }
-        self.join_group(raw.trim(), Some(key), true);
         let deadline = web_time::Instant::now() + JOIN_WAIT;
+        while self.sync.borrow().is_none() && web_time::Instant::now() < deadline {
+            n0_future::time::sleep(JOIN_POLL).await;
+        }
+        self.join_group(raw.trim(), Some(key), true);
         while web_time::Instant::now() < deadline {
             if let Some(summary) = self.client.borrow().summary(server) {
                 return to_json(&summary);

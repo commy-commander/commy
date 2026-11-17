@@ -681,8 +681,12 @@ fn chosen_hosts(app: &App) -> HashMap<ServerId, Option<String>> {
 }
 
 fn record_hosts(app: &App) {
-    let settled: Vec<(ServerId, Option<String>)> =
-        known_hosts(app).into_iter().filter(|(_, host, awaiting)| !awaiting || host.is_some()).map(|(sid, host, _)| (sid, host)).collect();
+    let Some(account_url) = LIVE.lock_or_recover().as_ref().map(|live| live.url.clone()) else { return };
+    let settled: Vec<(ServerId, Option<String>)> = known_hosts(app)
+        .into_iter()
+        .filter(|(_, host, awaiting)| !awaiting || host.is_some())
+        .filter_map(|(sid, host, _)| Some((sid, commy_view::away::remembered_host(host.as_deref(), place_of(sid).as_deref(), &account_url)?)))
+        .collect();
     crate::account_log::record_sync_hosts(app, settled);
 }
 

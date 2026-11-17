@@ -16,7 +16,7 @@ import { createServerBlocklist } from "./server-blocklist.js";
 import { createServerList } from "./server-list.js";
 import { createPages } from "./pages.js";
 import { createRelayAccess, linkedDeviceLookup, relayAccessToken } from "./relay-access.js";
-import { createWebClient } from "./web-client.js";
+import { createWebClient, WEB_PATH } from "./web-client.js";
 import { connectRedis } from "./redis.js";
 import { startUnverifiedSweeps } from "./unverified-cleanup.js";
 
@@ -86,10 +86,10 @@ async function migrate(attempts = 30) {
 const linkBlocklist = createLinkBlocklist({ sources: config.linkBlocklistSources });
 await serverBlocklist.start();
 const discovery = discoveryDocument(config);
-const pages = createPages({ auth, config, discovery, trustedProxies: config.trustedProxies });
+const webClient = createWebClient();
+const pages = createPages({ auth, config, discovery, trustedProxies: config.trustedProxies, webApp: webClient.enabled ? `${WEB_PATH}/` : null });
 if (pages.enabled) await pages.ready;
 else config.warnings.push(pages.reason);
-const webClient = createWebClient();
 const relayAccess = createRelayAccess({ token: relayAccessToken(process.env), isLinked: linkedDeviceLookup(auth.$context) });
 if (!webClient.enabled) config.warnings.push(webClient.reason);
 

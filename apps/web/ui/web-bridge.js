@@ -23,6 +23,35 @@
     }
   }
 
+  function tabStorage() {
+    try {
+      return window.sessionStorage;
+    } catch {
+      return null;
+    }
+  }
+
+  let pendingInvite = null;
+  function holdInviteFromAddress() {
+    const link = webInviteFromHash(window.location.hash);
+    if (!link) return false;
+    pendingInvite = link;
+    tabStorage()?.setItem(WEB_PENDING_INVITE_KEY, link);
+    window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    return true;
+  }
+  holdInviteFromAddress();
+  window.addEventListener("hashchange", () => {
+    if (holdInviteFromAddress()) emit("invite-link", "");
+  });
+
+  function takePendingInvite() {
+    const link = pendingInvite || tabStorage()?.getItem(WEB_PENDING_INVITE_KEY) || null;
+    pendingInvite = null;
+    tabStorage()?.removeItem(WEB_PENDING_INVITE_KEY);
+    return link;
+  }
+
   const host = {
     async request(method, path, body) {
       const init = { method, credentials: "same-origin", headers: {} };
@@ -404,6 +433,7 @@
   async function invoke(cmd, args, options) {
     const fallback = webDefault(cmd);
     if (fallback.known) return fallback.value;
+    if (cmd === "take_pending_invite_link") return takePendingInvite();
     if (cmd === "open_url") return openLinkInNewTab(window, args && args.url);
     if (cmd === "account_begin_sign_in") {
       window.location.assign(webSignInUrl(window.location.origin, window.location.pathname));

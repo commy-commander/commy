@@ -12,6 +12,12 @@ function sendJson(res, status, body) {
   res.end(body);
 }
 
+export const ANY_SITE_READS = ["/commy/invites/resolve", "/commy/invites/background"];
+
+export function readableFromAnySite(req, basePath, path) {
+  return (req.method === "GET" || req.method === "HEAD") && ANY_SITE_READS.some((read) => path === `${basePath}${read}`);
+}
+
 function endOnlyThisRequest(req, res, err) {
   if (!req.destroyed) console.warn(`[auth] ${req.method} ${req.url?.split("?")[0]} failed: ${err?.code ?? err?.message ?? err}`);
   if (res.headersSent || res.destroyed) res.destroy();
@@ -57,6 +63,7 @@ export function createRequestHandler({ authHandler, basePath, discovery, pool, r
     }
     if (path.startsWith(basePath)) {
       nameTheClient(req, trustedProxies);
+      if (readableFromAnySite(req, basePath, path)) res.setHeader("access-control-allow-origin", "*");
       return authHandler(req, res);
     }
     sendJson(res, 404, '{"error":"not_found"}');

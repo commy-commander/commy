@@ -109,3 +109,26 @@ test("a handler that throws gets a 500 and the server keeps serving", async () =
     failing.close();
   }
 });
+
+async function readFrom(path, site) {
+  return fetch(`http://127.0.0.1:${port}${path}`, { headers: { origin: site } });
+}
+
+test("invite reads answer any site so a web app on another account server can open the link", async () => {
+  for (const path of ["/api/auth/commy/invites/resolve?code=ZZZZZZZZ", "/api/auth/commy/invites/background?code=ZZZZZZZZ"]) {
+    const res = await readFrom(path, "https://elsewhere.example");
+    assert.equal(res.status, 404, path);
+    assert.equal(res.headers.get("access-control-allow-origin"), "*", path);
+    assert.equal(res.headers.get("access-control-allow-credentials"), null, path);
+  }
+});
+
+test("only invite reads answer other sites", async () => {
+  assert.equal((await readFrom("/api/auth/get-session", "https://elsewhere.example")).headers.get("access-control-allow-origin"), null);
+  const create = await fetch(`http://127.0.0.1:${port}/api/auth/commy/invites/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "http://localhost:3001" },
+    body: JSON.stringify({ ticket: "nope" }),
+  });
+  assert.equal(create.headers.get("access-control-allow-origin"), null);
+});

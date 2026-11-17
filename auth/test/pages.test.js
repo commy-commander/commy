@@ -43,10 +43,10 @@ function buildAuth(config) {
   return betterAuth(options);
 }
 
-async function startServer(env, pageEnv) {
+async function startServer(env, pageEnv, webApp = null) {
   const config = loadConfig(env);
   const auth = buildAuth(config);
-  const pages = createPages({ auth, config, discovery: discoveryDocument(config), env: pageEnv });
+  const pages = createPages({ auth, config, discovery: discoveryDocument(config), env: pageEnv, webApp });
   assert.equal(pages.enabled, true, pages.reason);
   await pages.ready;
   const s = await listen(
@@ -157,6 +157,29 @@ test("forms stay shut until the page script takes over", async () => {
     assert.match(fieldset, /\sdisabled[\s>]/, path);
     assert.match(fieldset, /display:\s*contents/, path);
   }
+});
+
+async function inviteOn(at) {
+  const created = await fetch(`${at}/api/auth/commy/invites/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: ORIGIN },
+    body: JSON.stringify({ ticket: "sealed1." + "AbCd-_0123456789".repeat(5) }),
+  });
+  assert.equal(created.status, 200);
+  const { code } = await created.json();
+  return (await fetch(`${at}/i/${code}`)).text();
+}
+
+test("an invite page offers the browser app only where this site serves it", async () => {
+  const withWeb = await startServer(ENV, PAGE_ENV, "/web/");
+  try {
+    const html = await inviteOn(withWeb.base);
+    assert.match(html, /<a href="\/web\/#join=[^"]*%2Fi%2F[A-Z0-9]{8}" class="btn">Join in the browser<\/a>/);
+    assert.match(html, /Signed in on another Commy server\?/);
+  } finally {
+    withWeb.server.close();
+  }
+  assert.doesNotMatch(await inviteOn(base), /Join in the browser/);
 });
 
 test("an unknown invite is a not found page", async () => {

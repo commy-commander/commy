@@ -136,7 +136,7 @@ function noStore(extra = {}) {
   return { "cache-control": "no-store, no-transform", "x-content-type-options": "nosniff", ...extra };
 }
 
-export function createPages({ auth, config, discovery, env = process.env, dist = PAGES_DIST, trustedProxies = trustedProxyList(PRIVATE_NETWORKS) }) {
+export function createPages({ auth, config, discovery, env = process.env, dist = PAGES_DIST, trustedProxies = trustedProxyList(PRIVATE_NETWORKS), webApp = null }) {
   let built;
   try {
     built = { ...loadDist(dist), server: null };
@@ -179,7 +179,7 @@ export function createPages({ auth, config, discovery, env = process.env, dist =
     const loaded = await load(pathname, query, req.headers.cookie ?? "");
     if (!loaded) return null;
     if (loaded.redirect) return { loaded, cookies };
-    const site = { name: config.instanceName, host, logo, links: siteLinksFor };
+    const site = { name: config.instanceName, host, logo, links: siteLinksFor, webApp };
     const data = { page: loaded.page, props: loaded.props, site, turnstile: Boolean(providers.turnstileSiteKey) };
     return { loaded, data, site, html: server.renderPage(data), cookies };
   }

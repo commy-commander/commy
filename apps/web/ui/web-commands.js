@@ -23,7 +23,6 @@ const WEB_DEFAULTS = {
   set_window_title: null,
   set_unread: null,
   get_custom_icon: null,
-  take_pending_invite_link: null,
   take_notification_target: null,
   share_audio_supported: false,
   list_share_sources: [],
@@ -159,6 +158,25 @@ function webNoticeTarget(target) {
   return null;
 }
 
+const WEB_JOIN_HASH = "#join=";
+const WEB_PENDING_INVITE_KEY = "commy.web.pending-invite";
+const WEB_MAX_INVITE_CHARS = 2048;
+
+function webInviteFromHash(hash) {
+  if (typeof hash !== "string" || !hash.startsWith(WEB_JOIN_HASH) || hash.length > WEB_JOIN_HASH.length + WEB_MAX_INVITE_CHARS * 3) return null;
+  let link;
+  try {
+    link = new URL(decodeURIComponent(hash.slice(WEB_JOIN_HASH.length)));
+  } catch {
+    return null;
+  }
+  const loopback = link.hostname === "localhost" || link.hostname === "127.0.0.1";
+  const secure = link.protocol === "https:" || (link.protocol === "http:" && loopback);
+  if (!secure || link.username || link.password || !/^\/i\/[A-Za-z0-9-]{3,32}$/.test(link.pathname) || link.search) return null;
+  const text = link.href;
+  return text.length <= WEB_MAX_INVITE_CHARS ? text : null;
+}
+
 function webNotice(args) {
   const clip = (text, chars) => Array.from(String(text || "")).slice(0, chars).join("");
   const target = webNoticeTarget(args && args.target);
@@ -199,5 +217,5 @@ function webReplyLine(status, text) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget };
+  module.exports = { WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget, WEB_PENDING_INVITE_KEY, webInviteFromHash };
 }

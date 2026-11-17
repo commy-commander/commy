@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, SPEECH_VOICE_ORIGINS, SYNC_HOST_ORIGINS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
+import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, INVITE_READS, SPEECH_VOICE_ORIGINS, SYNC_HOST_ORIGINS, SYNC_HOST_READS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
-const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue } = require("../ui/web-commands.js");
+const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, webInviteFromHash, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue } = require("../ui/web-commands.js");
 const webVoiceScripts = require("../ui/web-voice.js");
 const worklet = require("../ui/web-voice-worklet.js");
 
@@ -154,13 +154,16 @@ test("replies cross into the backend as a status line and body", () => {
 test("the page may only talk to its own site, the relay, server file storage, GIF search, the voice downloads and secure sync servers, and frames nothing but the YouTube player", () => {
   const csp = contentSecurityPolicy(relayOrigins("https://relay.commy.chat:8443"));
   assert.match(csp, /default-src 'self'/);
-  assert.match(csp, /connect-src 'self' blob: https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/\*\.workers\.dev https:\/\/api\.klipy\.com https:\/\/api\.giphy\.com https:\/\/cdn\.jsdelivr\.net https:\/\/huggingface\.co https:\/\/\*\.hf\.co wss:;/);
+  assert.match(csp, /connect-src 'self' blob: https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/\*\.workers\.dev https:\/\/api\.klipy\.com https:\/\/api\.giphy\.com https:\/\/cdn\.jsdelivr\.net https:\/\/huggingface\.co https:\/\/\*\.hf\.co wss: https:\/\/\*\/sync\/ https:\/\/\*\/api\/auth\/commy\/invites\/;/);
   assert.deepEqual(SYNC_HOST_ORIGINS, ["wss:"], "community sync servers are reached over secure websockets only");
+  assert.deepEqual(SYNC_HOST_READS, ["https://*/sync/"], "other sync servers are read over https only under their /sync/ path");
+  assert.deepEqual(INVITE_READS, ["https://*/api/auth/commy/invites/"], "other account servers are read only for invites");
   assert.match(csp, /frame-src https:\/\/www\.youtube-nocookie\.com;/);
   assert.deepEqual(FILE_STORAGE_ORIGINS, ["https://*.workers.dev"]);
   assert.deepEqual(GIF_SEARCH_ORIGINS, ["https://api.klipy.com", "https://api.giphy.com"]);
   assert.deepEqual(SPEECH_VOICE_ORIGINS, ["https://cdn.jsdelivr.net", "https://huggingface.co", "https://*.hf.co"]);
-  assert.doesNotMatch(csp.replace(" https://*.workers.dev ", " ").replace(" https://*.hf.co ", " "), /\*/, "file storage on workers.dev and the voice download mirror are the only wildcards");
+  const pathBound = [...SYNC_HOST_READS, ...INVITE_READS].reduce((rest, read) => rest.replace(` ${read}`, ""), csp);
+  assert.doesNotMatch(pathBound.replace(" https://*.workers.dev ", " ").replace(" https://*.hf.co ", " "), /\*/, "file storage on workers.dev, the voice download mirror and the path-bound sync and invite reads are the only wildcards");
 });
 
 test("the bridge loads before the app and the policy lands in the head", () => {
@@ -579,4 +582,15 @@ test("Switch while sharing is hidden in the browser, like the room's Switch", ()
   const index = read("apps", "desktop", "ui", "index.html");
   assert.match(/<button [^>]*id="vp-change-source"[^>]*>/.exec(index)[0], /\bnative-only\b/);
   assert.ok(read("apps", "desktop", "ui", "scripts", "app.js").includes('tile.querySelector(".vr-switch").classList.toggle("hidden", inBrowserApp());'));
+});
+
+test("an invite handed to the web app in its address opens once it is a real invite link", () => {
+  const link = "https://dev.commy.chat/i/ABCD2345#k3y-part";
+  assert.equal(webInviteFromHash(`#join=${encodeURIComponent(link)}`), link);
+  assert.equal(webInviteFromHash(`#join=${encodeURIComponent("https://commy.chat/i/bench-outside")}`), "https://commy.chat/i/bench-outside");
+  assert.equal(webInviteFromHash(`#join=${encodeURIComponent("http://localhost:3100/i/ABCD2345")}`), "http://localhost:3100/i/ABCD2345");
+  for (const bad of ["", "#k3y", "#join=", "#join=%E0%A4%A", `#join=${encodeURIComponent("javascript:alert(1)")}`, `#join=${encodeURIComponent("http://dev.commy.chat/i/ABCD2345")}`, `#join=${encodeURIComponent("https://dev.commy.chat/account")}`, `#join=${encodeURIComponent("https://me:pw@dev.commy.chat/i/ABCD2345")}`, `#join=${encodeURIComponent("https://dev.commy.chat/i/ABCD2345?next=x")}`, `#join=${encodeURIComponent(`https://dev.commy.chat/i/ABCD2345#${"k".repeat(3000)}`)}`]) {
+    assert.equal(webInviteFromHash(bad), null, bad);
+  }
+  assert.equal(webDefault("take_pending_invite_link").known, false, "the bridge answers it from the address, not a fixed default");
 });

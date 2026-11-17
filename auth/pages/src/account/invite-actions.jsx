@@ -7,6 +7,10 @@ function deepLink(host, code, key) {
   return key ? `${link}#${key}` : link;
 }
 
+export function webAppLink(webApp, fullUrl) {
+  return webApp ? `${webApp}#join=${encodeURIComponent(fullUrl)}` : null;
+}
+
 function formatExpiry(at) {
   const soon = at.getTime() - Date.now() < 36 * 3600 * 1000;
   return soon
@@ -24,7 +28,7 @@ async function loadBackground(code, key) {
 }
 
 export default function InviteActions({ host, code, url, sealed, plainName, expiresAt, hasBackground }) {
-  const { links } = useSite();
+  const { links, webApp } = useSite();
   const [opened, setOpened] = useState(false);
   const [copied, setCopied] = useState(false);
   const [key, setKey] = useState(null);
@@ -111,6 +115,11 @@ export default function InviteActions({ host, code, url, sealed, plainName, expi
         <a href={deepLink(host, code, key)} className="btn btn-primary" onClick={() => setOpened(true)}>
           Open in Commy
         </a>
+        {webApp && (
+          <a href={webAppLink(webApp, fullUrl)} className="btn">
+            Join in the browser
+          </a>
+        )}
         <button
           type="button"
           className="btn"
@@ -122,6 +131,10 @@ export default function InviteActions({ host, code, url, sealed, plainName, expi
           {copied ? "Copied" : "Copy invite link"}
         </button>
       </div>
+      <p className="muted small invite-hint">
+        Signed in on another Commy server? Copy the link and paste it into Join Server in the app or web app you use
+        there.
+      </p>
       {opened && (
         <p className="muted small invite-hint">
           Nothing happened? <a href={links.download}>Download Commy</a>, then paste this link into Add a Server, Join

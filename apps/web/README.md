@@ -18,9 +18,10 @@ questions, AutoMod and the Activities switch, run activities in a voice
 channel (Watch together with YouTube links or attached videos, and
 Tic-tac-toe), export a server as a template,
 report members to the server owner, set message reminders, and browse or list
-servers in Discover. Links from another
-account server, video and screen sharing, and direct video links in Watch
-together still need the desktop app.
+servers in Discover. Invite links from another account server open in the
+browser too: the page reads only that server's invite answers, which any site
+may read. Video and screen sharing and direct video links in Watch together
+still need the desktop app.
 
 Pictures (avatars, server icons and banners, custom emoji) come from the sync
 service's encrypted picture copies when it has them, and otherwise straight
