@@ -328,6 +328,15 @@ check "tag of a tagged image" "$(tag_of localhost:5000/commy-web:dev)" "dev"
 check "tag of an untagged image" "$(tag_of localhost:5000/commy-web)" "latest"
 check "tag of a digest reference" "$(tag_of ghcr.io/commy/commy-web@sha256:abc)" ""
 
+REPO_DIR="$FAKE/repo"
+mkdir -p "$REPO_DIR/deploy"
+check "compose runs from the host path of the checkout, so relative mounts point at the real folders" "$(use_host_checkout "$FAKE/srv/commy-staging" && pwd)" "$FAKE/srv/commy-staging/deploy"
+check "the host path leads to the mounted checkout" "$(readlink "$FAKE/srv/commy-staging")" "$REPO_DIR"
+check "an existing host path is used as it is" "$(use_host_checkout "$FAKE/srv/commy-staging" && pwd)" "$FAKE/srv/commy-staging/deploy"
+check "without a known host path compose stays where it was" "$(cd "$FAKE" && use_host_checkout "" && pwd)" "$FAKE"
+check "the mount path itself needs no link" "$(cd "$FAKE" && use_host_checkout "$REPO_DIR" && pwd)" "$FAKE"
+check "a relative host path is ignored" "$(cd "$FAKE" && use_host_checkout "srv/x" && pwd)" "$FAKE"
+
 INTERVAL=10
 check "short interval keeps jitter small" "$(jitter | awk '{ print ($1 <= 3) }')" "1"
 INTERVAL=600

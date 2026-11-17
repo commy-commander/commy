@@ -195,6 +195,22 @@ run_once() {
 	return $status
 }
 
+checkout_on_host() {
+	docker inspect -f "{{range .Mounts}}{{if eq .Destination \"$REPO_DIR\"}}{{.Source}}{{end}}{{end}}" "$(hostname)" 2>/dev/null
+}
+
+use_host_checkout() {
+	case "$1" in
+	"" | "$REPO_DIR") return 0 ;;
+	/*) ;;
+	*) return 0 ;;
+	esac
+	if [ ! -e "$1" ]; then
+		mkdir -p "$(dirname "$1")" && ln -s "$REPO_DIR" "$1" || return 0
+	fi
+	cd "$1/deploy" && log "running compose from $1/deploy, where the host keeps this checkout"
+}
+
 jitter() {
 	max=$((INTERVAL / 3))
 	[ "$max" -gt 20 ] && max=20
