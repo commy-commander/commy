@@ -69,7 +69,7 @@ fn partner_key(app: &App, user: UserId) -> Option<IdentityKey> {
 
 pub(crate) fn partner_profile(app: &App, user: UserId) -> Option<UserProfile> {
     let known = app.dms.lock_or_recover().contacts.get(&user).cloned();
-    known.or_else(|| outbox::member_profile(&app.servers.lock_or_recover(), user)).filter(|p| p.identity.is_some())
+    commy_view::dms::partner_profile(known.as_ref(), &app.servers.lock_or_recover(), user).filter(|p| p.identity.is_some())
 }
 
 fn last_message_ms(app: &App, user: UserId) -> Option<i64> {

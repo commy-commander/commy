@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use commy_core::home::proven_home;
+use commy_core::home::{proven_home, HomeCard};
 use commy_core::sync_host::{clean_sync_host, socket_url};
 use commy_core::{Avatar, ServerState, UserProfile};
 use commy_sync::endpoint::accepted_url;
@@ -22,6 +22,15 @@ fn origin_form(origin: &str) -> String {
 
 pub fn same_home(a: &str, b: &str) -> bool {
     origin_form(a) == origin_form(b)
+}
+
+pub fn newest_home<'a>(profile: &'a UserProfile, copies: impl IntoIterator<Item = &'a UserProfile>) -> Option<HomeCard> {
+    std::iter::once(profile)
+        .chain(copies)
+        .filter_map(|copy| copy.home.as_ref())
+        .filter(|card| card.holds_together(profile.id, profile.identity.as_ref()))
+        .max_by_key(|card| card.issued)
+        .cloned()
 }
 
 pub fn away_home(mine: &str, profile: &UserProfile) -> Option<String> {
@@ -226,6 +235,29 @@ mod tests {
         assert_eq!(remembered_host(Some("https://sync.example.org"), Some("wss://other.example.org/sync"), home), Some(Some("https://sync.example.org".into())), "a chosen host is kept as chosen");
         assert_eq!(remembered_host(None, None, home), None, "an unplaced community keeps whatever was remembered");
         assert_eq!(remembered_host(None, Some("wss://10.0.0.5/sync"), home), None);
+    }
+
+    fn card(profile: &UserProfile, person: &Identity, home: &str, issued: i64) -> HomeCard {
+        let server = Identity::generate();
+        let expires = issued + CARD_DAYS * DAY_MS;
+        let payload = card_payload(profile.id, &person.public(), issued, expires);
+        let sig = commy_core::server_key::sign(&server, CARD_PURPOSE, home, payload.as_bytes());
+        HomeCard { home: home.into(), user: profile.id, identity: person.public(), key: server.public(), issued, expires, sig }
+    }
+
+    #[test]
+    fn the_latest_home_card_tells_where_someone_lives_now() {
+        let person = Identity::generate();
+        let mut old = UserProfile::new("ben");
+        old.identity = Some(person.public());
+        old.home = Some(card(&old, &person, "https://staging.commy.chat", NOW - DAY_MS));
+        let moved = UserProfile { home: Some(card(&old, &person, "https://dev.commy.chat", NOW)), ..old.clone() };
+        assert_eq!(newest_home(&old, [&moved]).map(|c| c.home).as_deref(), Some("https://dev.commy.chat"));
+        assert_eq!(newest_home(&moved, [&old]).map(|c| c.home).as_deref(), Some("https://dev.commy.chat"), "an older copy never undoes a move");
+        let stranger = Identity::generate();
+        let forged = UserProfile { home: Some(card(&old, &stranger, "https://evil.example", NOW + DAY_MS)), ..old.clone() };
+        assert_eq!(newest_home(&old, [&forged]).map(|c| c.home).as_deref(), Some("https://staging.commy.chat"), "a card for another identity is ignored");
+        assert_eq!(newest_home(&UserProfile::new("unhoused"), []), None);
     }
 
     #[test]

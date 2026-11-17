@@ -41,6 +41,10 @@ async function findMove(adapter, identity) {
   return adapter.findOne({ model: MODEL, where: [{ field: "identity", value: identity }] });
 }
 
+export async function movedAway(adapter, home, identity, now = Date.now()) {
+  return pointerOf(home, await findMove(adapter, identity), now);
+}
+
 export const commyMoved = ({ home, now = () => Date.now() }) => ({
   id: "commy-moved",
   schema: {

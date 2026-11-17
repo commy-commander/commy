@@ -6,6 +6,7 @@ import { memoryAdapter } from "better-auth/adapters/memory";
 import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
+import { requestMessage } from "../src/home-card.js";
 import { checkMoveRequest, commyMoved, KEPT_FOR_MS, moveMessage, pointerOf, widenMoveTimes } from "../src/moved.js";
 
 const ORIGIN = "http://localhost:3001";
@@ -82,7 +83,7 @@ test("discovery tells apps where moves are recorded", () => {
   assert.equal(doc.features.moving, true);
 });
 
-test("a signed-in person records a move, anyone can read it, and moving back removes it", async () => {
+test("a signed-in person records a move, anyone can read it, the old home stops vouching for them, and moving back undoes it", async () => {
   const config = loadConfig(ENV);
   const options = buildAuthOptions(config, { pool: null, send: async () => {}, fetch });
   const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], commyMove: [] };
@@ -109,9 +110,17 @@ test("a signed-in person records a move, anyone can read it, and moving back rem
   assert.equal(seen.status, 200);
   assert.deepEqual(seen.json.moved, { from: ORIGIN, to: NEW_HOME, user: USER, identity: person.hex, at, proof: moveBody(person, NEW_HOME, at).proof });
   assert.equal(db.commyMove[0].userId, JSON.parse(JSON.stringify(signUp.json)).user.id, "the note belongs to the account that wrote it, so deleting the account removes it");
+  const cardRequest = () => {
+    const now = Date.now();
+    return { user: USER, identity: person.hex, at: now, proof: person.sign(requestMessage(ORIGIN, USER, person.hex, now)) };
+  };
+  const refused = await call("/commy/home-card", { body: cardRequest(), cookie });
+  assert.equal(refused.status, 409, "a home that saw them leave issues no new home card, so an old session cannot pull them back");
+  assert.match(refused.json.message, /moved to https:\/\/friends\.org/);
   const stale = await call("/commy/moved/set", { body: moveBody(person, "https://other.org", at - 1000), cookie });
   assert.equal(stale.status, 409, "an older move cannot replace a newer one");
   const back = await call("/commy/moved/set", { body: moveBody(person, ORIGIN, at + 1000), cookie });
   assert.equal(back.status, 200);
   assert.equal((await read()).status, 404);
+  assert.equal((await call("/commy/home-card", { body: cardRequest(), cookie })).status, 200, "back home, the card is issued again");
 });

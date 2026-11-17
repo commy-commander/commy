@@ -100,6 +100,14 @@ pub fn member_profile(servers: &HashMap<ServerId, ServerState>, user: UserId) ->
     Some(UserProfile { identity, ..profile })
 }
 
+pub fn partner_profile(known: Option<&UserProfile>, servers: &HashMap<ServerId, ServerState>, user: UserId) -> Option<UserProfile> {
+    let mut profile = known.cloned().or_else(|| member_profile(servers, user))?;
+    if let Some(card) = crate::away::newest_home(&profile, member_entries(servers, user)) {
+        profile.home = Some(card);
+    }
+    Some(profile)
+}
+
 pub fn kicked_profile(servers: &HashMap<ServerId, ServerState>, me: UserId, user: UserId) -> Option<UserProfile> {
     servers
         .values()
@@ -208,6 +216,35 @@ mod tests {
         servers.get_mut(&sid).unwrap().server.kicked = vec![commy_core::removals::Kick { user: friend.id, by: me, at: 1 }];
         assert_eq!(reachable_profile(&servers, me, friend.id).map(|p| p.id), Some(friend.id));
         assert_eq!(reachable_profile(&servers, other, friend.id), None, "only people who can kick reach them");
+    }
+
+    #[test]
+    fn a_contact_who_moved_home_is_reached_at_the_new_home() {
+        use commy_core::home::{card_payload, HomeCard, CARD_DAYS, CARD_PURPOSE};
+        use commy_core::Identity;
+        const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+        let person = Identity::generate();
+        let mut ben = UserProfile::new("ben");
+        ben.identity = Some(person.public());
+        let card = |home: &str, issued: i64| {
+            let server = Identity::generate();
+            let expires = issued + CARD_DAYS * DAY_MS;
+            let payload = card_payload(ben.id, &person.public(), issued, expires);
+            let sig = commy_core::server_key::sign(&server, CARD_PURPOSE, home, payload.as_bytes());
+            HomeCard { home: home.into(), user: ben.id, identity: person.public(), key: server.public(), issued, expires, sig }
+        };
+        let contact = UserProfile { home: Some(card("https://staging.commy.chat", 1_000)), ..ben.clone() };
+        let moved = UserProfile { home: Some(card("https://dev.commy.chat", 2_000)), ..ben.clone() };
+        let owner = UserProfile::new("ana");
+        let mut state = ServerState::new(commy_core::Server::new("Hangout", owner.id));
+        let sid = state.server.id;
+        state.apply(commy_core::ServerEvent::MemberJoin { server: sid, profile: moved }).unwrap();
+        let servers = HashMap::from([(sid, state)]);
+        let reached = partner_profile(Some(&contact), &servers, ben.id).unwrap();
+        assert_eq!(reached.home.map(|c| c.home).as_deref(), Some("https://dev.commy.chat"));
+        assert_eq!(partner_profile(Some(&contact), &HashMap::new(), ben.id).unwrap().home.map(|c| c.home).as_deref(), Some("https://staging.commy.chat"));
+        assert_eq!(partner_profile(None, &servers, ben.id).map(|p| p.id), Some(ben.id));
+        assert_eq!(partner_profile(None, &HashMap::new(), ben.id), None);
     }
 
     #[test]

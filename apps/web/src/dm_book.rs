@@ -116,7 +116,7 @@ impl DmBook {
 
     pub fn partner_profile(&self, servers: &Servers, user: UserId) -> Option<UserProfile> {
         let known = self.store.contacts.get(&user).cloned();
-        known.or_else(|| dms::member_profile(servers, user)).filter(|p| p.identity.is_some())
+        dms::partner_profile(known.as_ref(), servers, user).filter(|p| p.identity.is_some())
     }
 
     pub fn known_user(&self, servers: &Servers, user: UserId) -> bool {
