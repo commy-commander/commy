@@ -339,6 +339,11 @@ impl Session {
                     Some(channel) => {
                         let joining_this_server = self.voice.borrow().link.as_ref().and_then(|link| link.server) != Some(server);
                         if joining_this_server {
+                            let switch = self.node.lock().await.as_ref().map(commy_net::CommyNode::relay_switch);
+                            let wanted = self.room_relay_of(server);
+                            if let Some(text) = wanted.refusal_before_joining(|url| switch.as_ref().is_some_and(|s| s.failed_recently(url))) {
+                                return Err(text.to_string());
+                            }
                             if let Some(wait) = self.voice_wait(server).await {
                                 return Err(wait.refusal());
                             }

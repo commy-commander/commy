@@ -31,8 +31,9 @@ so nothing is built on your server.
 
 While someone is in a voice channel of a community on your server, their app
 uses your relay instead of Commy's, so that community's calls and streams
-never pass through Commy. If your relay does not answer, voice in your communities
-pauses (the app says so) instead of moving to Commy's relay, so keep it running.
+never pass through Commy. If your relay does not answer, or stops answering during a
+call, voice in your communities pauses within about 15 seconds (the app says
+why) instead of moving to Commy's relay, so keep it running.
 With `SYNC_RELAY_FALLBACK=public`, voice moves to the free public relays instead
 until yours answers again. Commy's relay is never used for your communities.
 

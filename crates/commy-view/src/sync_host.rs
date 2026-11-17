@@ -26,6 +26,16 @@ pub enum RoomRelay {
     Unavailable(&'static str),
 }
 
+impl RoomRelay {
+    pub fn refusal_before_joining(&self, failed_recently: impl Fn(&str) -> bool) -> Option<&'static str> {
+        match self {
+            RoomRelay::Unavailable(text) => Some(text),
+            RoomRelay::Theirs { url, public_fallback: false } if failed_recently(url) => Some(ROOM_RELAY_DOWN),
+            _ => None,
+        }
+    }
+}
+
 pub const HOST_REMOVED: &str = "This server's sync server removed it, so new messages here no longer reach anyone.";
 
 #[derive(Debug, Clone, Default)]
@@ -103,14 +113,15 @@ fn host_release_for(greeting: &Greeting, app_protocol: u32) -> HostRelease {
 
 pub fn room_relay(community_socket: &str, default_socket: &str, greeting: Option<&Greeting>) -> RoomRelay {
     let Some(host) = socket_host(community_socket) else { return RoomRelay::Ours };
-    if socket_host(default_socket).as_deref() == Some(host.as_str()) {
-        return RoomRelay::Ours;
-    }
-    let Some(greeting) = greeting else { return RoomRelay::Unavailable(ROOM_RELAY_DOWN) };
+    let at_home = socket_host(default_socket).as_deref() == Some(host.as_str());
+    let Some(greeting) = greeting else {
+        return if at_home { RoomRelay::Ours } else { RoomRelay::Unavailable(ROOM_RELAY_DOWN) };
+    };
     let relay = greeting.relay.as_deref().map(|r| r.trim().trim_end_matches('/'));
     let relay_host = relay.and_then(|r| r.strip_prefix("https://")).filter(|rest| !rest.contains(['/', '?', '#', '@']));
     match relay_host {
         Some(relay_host) if relay_host.to_ascii_lowercase() == host => RoomRelay::Theirs { url: format!("https://{relay_host}"), public_fallback: greeting.public_fallback },
+        _ if at_home => RoomRelay::Ours,
         _ if greeting.public_fallback => RoomRelay::Public,
         _ => RoomRelay::Unavailable(ROOM_RELAY_MISSING),
     }
@@ -142,6 +153,17 @@ pub fn shown_host(state: &ServerState) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_relay_that_just_went_down_refuses_voice_with_its_reason() {
+        let theirs = RoomRelay::Theirs { url: "https://sync.example.org".into(), public_fallback: false };
+        assert_eq!(theirs.refusal_before_joining(|_| true), Some(ROOM_RELAY_DOWN));
+        assert_eq!(theirs.refusal_before_joining(|_| false), None);
+        let falls_back = RoomRelay::Theirs { url: "https://sync.example.org".into(), public_fallback: true };
+        assert_eq!(falls_back.refusal_before_joining(|_| true), None, "the public relays stand in");
+        assert_eq!(RoomRelay::Unavailable(ROOM_RELAY_MISSING).refusal_before_joining(|_| false), Some(ROOM_RELAY_MISSING));
+        assert_eq!(RoomRelay::Ours.refusal_before_joining(|_| true), None);
+    }
+
     #[test]
     fn a_removal_holds_only_for_the_sync_server_that_removed_it() {
         let mut removals = HostRemovals::default();
@@ -183,8 +205,11 @@ mod tests {
         let own = |url: &str| RoomRelay::Theirs { url: url.to_string(), public_fallback: false };
         assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org"))), own("https://sync.example.org"));
         assert_eq!(room_relay(theirs, ours, Some(&with("https://sync.example.org/"))), own("https://sync.example.org"));
-        assert_eq!(room_relay(ours, ours, Some(&with("https://commy.chat"))), RoomRelay::Ours, "communities on our host keep our relay");
+        assert_eq!(room_relay(ours, ours, Some(&Greeting::of(PROTOCOL))), RoomRelay::Ours, "a home that announces no relay keeps the app's relay");
+        assert_eq!(room_relay(ours, ours, Some(&with("https://tracker.example.net"))), RoomRelay::Ours);
         assert_eq!(room_relay(ours, ours, None), RoomRelay::Ours);
+        let home = "wss://dev.example.org/sync";
+        assert_eq!(room_relay(home, home, Some(&with("https://dev.example.org"))), own("https://dev.example.org"), "a home's own communities use the relay it runs");
     }
 
     #[test]

@@ -755,6 +755,10 @@ impl RelaySwitch {
     pub async fn use_public(&self) -> Result<bool> {
         self.relays.use_rooms(&self.endpoint, crate::relays::public_relays()).await
     }
+
+    pub fn failed_recently(&self, room: &str) -> bool {
+        crate::relays::room_relay_url(room).is_ok_and(|url| self.relays.failed_recently(&url))
+    }
 }
 
 pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);

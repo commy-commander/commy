@@ -151,11 +151,12 @@ pub struct Relays {
     rooms: Arc<std::sync::RwLock<Vec<RelayUrl>>>,
     set_aside: Arc<tokio::sync::Mutex<Vec<Arc<RelayConfig>>>>,
     failed: Arc<std::sync::Mutex<Option<(RelayUrl, n0_future::time::Instant)>>>,
+    quiet_since: Arc<std::sync::Mutex<Option<n0_future::time::Instant>>>,
 }
 
 impl Relays {
     pub fn new(own: Vec<RelayUrl>) -> Self {
-        Self { own: Arc::new(own), rooms: Arc::default(), set_aside: Arc::default(), failed: Arc::default() }
+        Self { own: Arc::new(own), rooms: Arc::default(), set_aside: Arc::default(), failed: Arc::default(), quiet_since: Arc::default() }
     }
 
     pub fn room(&self) -> Option<RelayUrl> {
@@ -168,6 +169,26 @@ impl Relays {
 
     fn set_rooms(&self, rooms: Vec<RelayUrl>) {
         *self.rooms.write().unwrap_or_else(|e| e.into_inner()) = rooms;
+        *self.quiet_since.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    pub fn failed_recently(&self, room: &RelayUrl) -> bool {
+        self.failed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|(failed, at)| failed == room && at.elapsed() < ROOM_RELAY_RETRY)
+    }
+
+    fn quiet_for(&self, endpoint: &iroh::Endpoint) -> std::time::Duration {
+        use iroh::Watcher;
+        let connected = endpoint.home_relay_status().get().iter().any(|status| status.is_connected());
+        let mut since = self.quiet_since.lock().unwrap_or_else(|e| e.into_inner());
+        if connected {
+            *since = None;
+            return std::time::Duration::ZERO;
+        }
+        since.get_or_insert_with(n0_future::time::Instant::now).elapsed()
     }
 
     pub fn hints(&self) -> Vec<RelayUrl> {
@@ -195,7 +216,14 @@ impl Relays {
         let current = self.rooms();
         let wanted: Vec<RelayUrl> = rooms.iter().map(|config| config.url.clone()).collect();
         if current == wanted {
-            return Ok(false);
+            let Some(first) = current.first().cloned() else { return Ok(false) };
+            if self.quiet_for(endpoint) < ROOM_RELAY_WAIT {
+                return Ok(false);
+            }
+            *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = Some((first.clone(), n0_future::time::Instant::now()));
+            put_back(endpoint, &mut set_aside, &current).await;
+            self.set_rooms(Vec::new());
+            anyhow::bail!("the community's relay at {first} stopped answering");
         }
         let Some(first) = wanted.first().cloned() else {
             put_back(endpoint, &mut set_aside, &current).await;
@@ -415,6 +443,35 @@ mod tests {
         assert!(relays.use_room(&endpoint, None).await.unwrap());
         assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await);
         assert_eq!(relays.hints(), vec![ours]);
+        endpoint.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_room_relay_that_stops_answering_gives_our_relay_back() {
+        let (ours_map, ours, _ours) = iroh::test_utils::run_relay_server().await.unwrap();
+        let (room_map, room, room_server) = iroh::test_utils::run_relay_server().await.unwrap();
+        let endpoint = endpoint_on(&only(&ours_map, &ours)).await;
+        assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await);
+        let relays = Relays::new(vec![ours.clone()]);
+        assert!(relays.use_room(&endpoint, Some(only(&room_map, &room))).await.unwrap());
+        assert!(!relays.failed_recently(&room));
+        drop(room_server);
+
+        let started = std::time::Instant::now();
+        let stopped = loop {
+            match relays.use_room(&endpoint, Some(only(&room_map, &room))).await {
+                Ok(false) => {}
+                Ok(true) => panic!("the room was already in use"),
+                Err(e) => break e,
+            }
+            assert!(started.elapsed() < std::time::Duration::from_secs(60), "a dead room relay is noticed");
+            n0_future::time::sleep(std::time::Duration::from_secs(1)).await;
+        };
+        assert!(stopped.to_string().contains("stopped answering"));
+        assert_eq!(relays.room(), None);
+        assert!(relays.failed_recently(&room));
+        assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await, "our relay comes back");
+        assert!(relays.use_room(&endpoint, Some(only(&room_map, &room))).await.unwrap_err().to_string().contains("a moment ago"));
         endpoint.close().await;
     }
 
