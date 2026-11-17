@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, NOTIFICATION_SOUNDS, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, EMAIL_CONFIRMED, MAX_SDK } from "./android-project.mjs";
+import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, NOTIFICATION_SOUNDS, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, pushSetup, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, EMAIL_CONFIRMED, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -132,6 +132,16 @@ test("GOOGLE_SERVICES_JSON may be the file itself, its base64 or a path", () => 
 test("the Android packages in the Firebase file can be listed to explain a mismatch", () => {
   assert.deepEqual(firebasePackages(JSON.stringify(googleServices)), ["other.app", "chat.commy.mobile"]);
   assert.deepEqual(firebasePackages({}), []);
+});
+
+test("push setup says why wake-ups are off for a missing file or another package", () => {
+  assert.match(pushSetup(null, "chat.commy.mobile").note, /GOOGLE_SERVICES_JSON is not set/);
+  const elsewhere = pushSetup(JSON.stringify(googleServices), "chat.commy.elsewhere");
+  assert.equal(elsewhere.xml, null);
+  assert.match(elsewhere.note, /other\.app, chat\.commy\.mobile, but this build is chat\.commy\.elsewhere/);
+  const on = pushSetup(JSON.stringify(googleServices), "chat.commy.mobile");
+  assert.match(on.xml, /google_app_id/);
+  assert.match(on.note, /Push wake-ups are on/);
 });
 
 test("invite links open the main screen, once, through the commy scheme", () => {

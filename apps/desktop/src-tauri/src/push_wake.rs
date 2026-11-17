@@ -174,15 +174,16 @@ pub async fn run_quiet_hours(handle: AppHandle) {
 }
 
 #[cfg(mobile)]
-pub fn set_token(handle: &AppHandle, push: Option<String>) {
+pub fn set_token(handle: &AppHandle, push: Option<String>, allowed: bool) {
     let token = push.filter(|push| commy_sync::wake::push_target(push).is_some());
+    let newly_allowed = allowed && !MAY_NOTIFY.swap(allowed, Ordering::SeqCst);
     let changed = {
         let mut held = TOKEN.lock_or_recover();
         let changed = *held != token;
         *held = token;
         changed
     };
-    if changed {
+    if changed || newly_allowed {
         register(handle);
     }
 }
@@ -527,6 +528,8 @@ mod phone_push {
         service: String,
         #[serde(default)]
         allowed: bool,
+        #[serde(default)]
+        problem: Option<String>,
     }
 
     fn firebase() -> String {
@@ -536,6 +539,27 @@ mod phone_push {
     impl TokenAnswer {
         fn push(&self) -> Option<String> {
             self.token.as_ref().map(|token| format!("{}:{token}", self.service))
+        }
+
+        fn summary(&self) -> String {
+            let token = match (&self.token, &self.problem) {
+                (Some(_), _) => format!("a {} push token", self.service),
+                (None, Some(problem)) => format!("no push token ({problem})"),
+                (None, None) => "no push token".to_string(),
+            };
+            let notify = if self.allowed { "allowed" } else { "not allowed" };
+            format!("{token}, notifications {notify}")
+        }
+    }
+
+    static LAST_SUMMARY: Mutex<Option<String>> = Mutex::new(None);
+
+    fn note_answer(answer: &TokenAnswer) {
+        let summary = answer.summary();
+        let mut last = LAST_SUMMARY.lock_or_recover();
+        if last.as_deref() != Some(summary.as_str()) {
+            tracing::info!("the phone gave {summary}");
+            *last = Some(summary);
         }
     }
 
@@ -607,8 +631,8 @@ mod phone_push {
             ASKING.store(false, Ordering::SeqCst);
             match answer {
                 Ok(answer) => {
-                    super::MAY_NOTIFY.store(answer.allowed, Ordering::SeqCst);
-                    super::set_token(&handle, answer.push())
+                    note_answer(&answer);
+                    super::set_token(&handle, answer.push(), answer.allowed)
                 }
                 Err(e) => tracing::info!("no push token: {e}"),
             }

@@ -299,8 +299,9 @@ the `.p8` contents in `APPLE_API_KEY`) or a distribution certificate and profile
 `~/.appstoreconnect/private_keys` on the Mac. To let the sync service wake the Android app with an empty push, set
 `GOOGLE_SERVICES_JSON` to your Firebase project's `google-services.json` (its
 contents, its base64 or a path) before running `android-project.mjs`; the workflow reads it
-from the secret of the same name. Without it the app builds without push
-wake-ups. CI signs each debug APK with a fresh key, so installing a newer one
+from the secret of the same name. Without it debug APKs build without push
+wake-ups (with a warning), and Play bundles stop, because a release app must
+wake phones (`COMMY_PUSH_REQUIRED=1`). CI signs each debug APK with a fresh key, so installing a newer one
 means uninstalling the old one first; to keep one key, store a debug keystore
 (password and key password `android`, alias `androiddebugkey`) as base64 in the
 `ANDROID_DEBUG_KEYSTORE` secret. Running the workflow with `android: play` and a

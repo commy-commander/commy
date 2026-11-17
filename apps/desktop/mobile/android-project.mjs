@@ -179,6 +179,14 @@ export function firebaseValues(googleServices, packageName) {
   return `<?xml version="1.0" encoding="utf-8"?>\n<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="${keep}">\n${strings}</resources>\n`;
 }
 
+export function pushSetup(googleServices, packageName) {
+  if (!googleServices) return { xml: null, note: "GOOGLE_SERVICES_JSON is not set, so push wake-ups are off" };
+  const xml = firebaseValues(googleServices, packageName);
+  if (xml) return { xml, note: `Push wake-ups are on: wrote the Firebase settings for ${packageName}` };
+  const found = firebasePackages(googleServices);
+  return { xml: null, note: `GOOGLE_SERVICES_JSON has Android apps for ${found.join(", ") || "no package"}, but this build is ${packageName ?? "an unknown package"}, so push wake-ups are off` };
+}
+
 export function readGoogleServices(value, readFile = path => readFileSync(path, "utf8")) {
   const text = value?.trim();
   if (!text) return null;
@@ -239,18 +247,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(`Copied ${sources.join(", ")} into the Android project`);
   console.log("The launcher icon is the star on night blue, with a one-colour layer for themed icons, and notifications show the white star");
   console.log(`Notifications play Commy's own sounds: ${NOTIFICATION_SOUNDS.join(", ")}`);
-  const googleServices = readGoogleServices(process.env.GOOGLE_SERVICES_JSON);
-  const packageName = applicationId(gradle);
-  const firebase = googleServices && firebaseValues(googleServices, packageName);
-  if (firebase) {
-    writeFileSync(firebasePath, firebase);
-    console.log(`Push wake-ups are on: wrote the Firebase settings for ${packageName}`);
-  } else {
-    rmSync(firebasePath, { force: true });
-    if (!googleServices) console.log("GOOGLE_SERVICES_JSON is not set, so push wake-ups are off");
-    else {
-      const found = firebasePackages(googleServices);
-      console.log(`GOOGLE_SERVICES_JSON has Android apps for ${found.join(", ") || "no package"}, but this build is ${packageName ?? "an unknown package"}, so push wake-ups are off`);
-    }
-  }
+  const push = pushSetup(readGoogleServices(process.env.GOOGLE_SERVICES_JSON), applicationId(gradle));
+  if (push.xml) writeFileSync(firebasePath, push.xml);
+  else rmSync(firebasePath, { force: true });
+  if (push.xml) console.log(push.note);
+  else if (process.env.COMMY_PUSH_REQUIRED === "1") {
+    console.error(`::error::${push.note}. This build must wake phones, so it stops here; set the GOOGLE_SERVICES_JSON secret to the Firebase google-services.json`);
+    process.exit(1);
+  } else console.log(`${process.env.CI ? "::warning::" : ""}${push.note}`);
 }

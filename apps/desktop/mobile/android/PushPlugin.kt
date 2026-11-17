@@ -18,6 +18,8 @@ import com.google.firebase.messaging.FirebaseMessaging
 
 @TauriPlugin
 class PushPlugin(private val activity: Activity) : Plugin(activity) {
+  private var askedToNotify = false
+
   init {
     NotificationManagerCompat.from(activity).cancelAll()
     WakePreviews.opened()
@@ -64,20 +66,29 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun token(invoke: Invoke) {
     NotificationManagerCompat.from(activity).cancel(WakeService.NOTIFICATION_ID)
+    askToNotifyOnce()
     if (FirebaseApp.getApps(activity).isEmpty()) {
-      invoke.resolve(JSObject())
+      invoke.resolve(tokenAnswer(null, "this build has no Firebase settings"))
       return
     }
-    askToNotify()
     FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-      val answer = JSObject()
-      if (task.isSuccessful && !task.result.isNullOrEmpty()) answer.put("token", task.result)
-      answer.put("allowed", NotificationManagerCompat.from(activity).areNotificationsEnabled())
-      invoke.resolve(answer)
+      val token = if (task.isSuccessful) task.result?.takeIf { it.isNotEmpty() } else null
+      val problem = if (token == null) task.exception?.message ?: "Firebase gave no token" else null
+      invoke.resolve(tokenAnswer(token, problem))
     }
   }
 
-  private fun askToNotify() {
+  private fun tokenAnswer(token: String?, problem: String?): JSObject {
+    val answer = JSObject()
+    token?.let { answer.put("token", it) }
+    problem?.let { answer.put("problem", it) }
+    answer.put("allowed", NotificationManagerCompat.from(activity).areNotificationsEnabled())
+    return answer
+  }
+
+  private fun askToNotifyOnce() {
+    if (askedToNotify) return
+    askedToNotify = true
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
     if (ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
     activity.runOnUiThread {
