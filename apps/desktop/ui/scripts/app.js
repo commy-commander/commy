@@ -27221,7 +27221,7 @@ async function continueBoot() {
 }
 
 function showPrivacyNoticeIfDue() {
-  if (!privacyNoticeDue(localStorage)) return false;
+  if (!privacyNoticeDue(localStorage, account.user)) return false;
   $("privacy-notice-title").textContent = privacyNoticeTitle(PRIVACY_NOTICE.updatedOn);
   finishPrivacyNotice(localStorage);
   showModal("modal-privacy-notice");

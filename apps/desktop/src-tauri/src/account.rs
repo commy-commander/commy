@@ -164,6 +164,8 @@ pub struct AccountUser {
     pub id: String,
     pub name: String,
     pub email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 static CHOSEN_SERVER: Mutex<Option<String>> = Mutex::new(None);
@@ -1015,6 +1017,8 @@ struct SessionUser {
     name: String,
     #[serde(default)]
     email: String,
+    #[serde(default, rename = "createdAt")]
+    created_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1037,6 +1041,7 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
         id: session.user.id,
         name: crate::safety::truncate(&session.user.name, 64),
         email: crate::safety::truncate(&session.user.email, 120),
+        created_at: session.user.created_at.map(|at| crate::safety::truncate(&at, 40)),
     };
     let base = app.base_dir().cloned().ok_or("This install has no data folder")?;
     let next = after_sign_in(account_folder::choose(&base, server, &user.id), app.data_dir().map(|d| d.as_path()));
@@ -1706,7 +1711,7 @@ mod tests {
 
     #[test]
     fn only_a_clear_answer_from_the_account_server_signs_this_device_out() {
-        let user = || Some(SessionResponse { user: SessionUser { id: "u".into(), name: String::new(), email: String::new() } });
+        let user = || Some(SessionResponse { user: SessionUser { id: "u".into(), name: String::new(), email: String::new(), created_at: None } });
         assert_eq!(session_answer(reqwest::StatusCode::OK, user()), Some(true));
         assert_eq!(session_answer(reqwest::StatusCode::OK, None), Some(false));
         assert_eq!(session_answer(reqwest::StatusCode::UNAUTHORIZED, None), Some(false));
@@ -1837,7 +1842,7 @@ mod tests {
     fn a_token_for_another_server_does_not_count() {
         let mut state = AccountState {
             token: Some("t".into()),
-            user: Some(AccountUser { id: "u".into(), name: "n".into(), email: "e".into() }),
+            user: Some(AccountUser { id: "u".into(), name: "n".into(), email: "e".into(), created_at: None }),
             signed_in_server: Some(effective_server()),
             ..Default::default()
         };
@@ -1853,7 +1858,7 @@ mod tests {
     fn searches_follow_the_server_feature_list() {
         let mut state = AccountState {
             token: Some("t".into()),
-            user: Some(AccountUser { id: "u".into(), name: "n".into(), email: "e".into() }),
+            user: Some(AccountUser { id: "u".into(), name: "n".into(), email: "e".into(), created_at: None }),
             signed_in_server: Some(effective_server()),
             ..Default::default()
         };
@@ -1920,7 +1925,7 @@ mod tests {
         SavedAccount {
             server: effective_server(),
             token: format!("token-{id}"),
-            user: AccountUser { id: id.into(), name: id.into(), email: format!("{id}@example.test") },
+            user: AccountUser { id: id.into(), name: id.into(), email: format!("{id}@example.test"), created_at: None },
             features: None,
         }
     }

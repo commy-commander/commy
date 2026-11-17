@@ -32,6 +32,8 @@ pub struct AccountUser {
     pub name: String,
     #[serde(default)]
     pub email: String,
+    #[serde(default, alias = "createdAt", skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -433,6 +435,9 @@ mod tests {
     fn reads_a_signed_in_session_or_none() {
         let user = parse_session(&reply(200, r#"{"user":{"id":"u1","name":"Ann","email":"a@example.com"},"session":{}}"#));
         assert_eq!(user.map(|u| u.id), Some("u1".into()));
+        let made = parse_session(&reply(200, r#"{"user":{"id":"u1","createdAt":"2026-11-17T10:00:00.000Z"},"session":{}}"#)).unwrap();
+        assert_eq!(made.created_at.as_deref(), Some("2026-11-17T10:00:00.000Z"));
+        assert_eq!(serde_json::to_value(&made).unwrap()["created_at"], "2026-11-17T10:00:00.000Z");
         assert_eq!(parse_session(&reply(200, "null")), None);
         assert_eq!(parse_session(&reply(401, r#"{"user":{"id":"u1"}}"#)), None);
     }
@@ -473,7 +478,7 @@ mod tests {
 
     #[test]
     fn names_a_new_list_after_the_account() {
-        let account = |name: &str, email: &str| AccountUser { id: "u1".into(), name: name.into(), email: email.into() };
+        let account = |name: &str, email: &str| AccountUser { id: "u1".into(), name: name.into(), email: email.into(), created_at: None };
         assert_eq!(username_for(&account("  Ada Lovelace ", "ada@example.test")), "Ada Lovelace");
         assert_eq!(username_for(&account("", "grace@example.test")), "grace");
         assert_eq!(username_for(&account(" ", "")), "Commy user");

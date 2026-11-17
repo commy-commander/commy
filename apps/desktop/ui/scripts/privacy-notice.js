@@ -4,6 +4,7 @@ const PRIVACY_NOTICE = {
   url: "https://commy.chat/privacy",
 };
 const PRIVACY_NOTICE_KEY = "commy.privacyNoticeSeen";
+const NEW_ACCOUNT_MS = 24 * 60 * 60 * 1000;
 
 function privacyNoticeTitle(updatedOn, locale) {
   const date = updatedOn ? new Date(`${updatedOn}T12:00:00Z`) : null;
@@ -12,12 +13,22 @@ function privacyNoticeTitle(updatedOn, locale) {
   return `We updated our Privacy Policy on ${shown}.`;
 }
 
-function privacyNoticeDue(storage, id = PRIVACY_NOTICE.id) {
+function agreedToCurrentPolicy(user, now, updatedOn = PRIVACY_NOTICE.updatedOn) {
+  const created = Date.parse((user && user.created_at) || "");
+  if (isNaN(created)) return false;
+  const updated = Date.parse(updatedOn ? `${updatedOn}T00:00:00Z` : "");
+  return now - created < NEW_ACCOUNT_MS || (!isNaN(updated) && created >= updated);
+}
+
+function privacyNoticeDue(storage, user, now = Date.now(), id = PRIVACY_NOTICE.id) {
   try {
-    return storage.getItem(PRIVACY_NOTICE_KEY) !== id;
+    if (storage.getItem(PRIVACY_NOTICE_KEY) === id) return false;
   } catch {
     return false;
   }
+  if (!agreedToCurrentPolicy(user, now)) return true;
+  finishPrivacyNotice(storage, id);
+  return false;
 }
 
 function finishPrivacyNotice(storage, id = PRIVACY_NOTICE.id) {
@@ -27,5 +38,5 @@ function finishPrivacyNotice(storage, id = PRIVACY_NOTICE.id) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PRIVACY_NOTICE, PRIVACY_NOTICE_KEY, privacyNoticeTitle, privacyNoticeDue, finishPrivacyNotice };
+  module.exports = { PRIVACY_NOTICE, PRIVACY_NOTICE_KEY, privacyNoticeTitle, agreedToCurrentPolicy, privacyNoticeDue, finishPrivacyNotice };
 }
