@@ -200,10 +200,13 @@ class ScreenShareService : Service() {
   }
 
   private fun capture(source: ImageReader) {
-    try {
-      source.acquireLatestImage()?.use { encode(it) }
-    } catch (e: IllegalStateException) {
-      return
+    synchronized(lock) {
+      if (reader !== source) return
+      try {
+        source.acquireLatestImage()?.use { encode(it) }
+      } catch (e: IllegalStateException) {
+        return
+      }
     }
   }
 
