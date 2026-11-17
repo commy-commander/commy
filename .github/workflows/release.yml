@@ -63,7 +63,21 @@ jobs:
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
             libasound2-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxrandr-dev \
             libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
-            libxdo-dev libssl-dev clang cmake
+            libxdo-dev libssl-dev clang cmake \
+            file gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio gstreamer1.0-gl
+
+      - name: Choose the GStreamer plugins the AppImage carries
+        if: runner.os == 'Linux'
+        run: |
+          system="/usr/lib/x86_64-linux-gnu/gstreamer-1.0"
+          chosen="$RUNNER_TEMP/appimage-gstreamer-plugins"
+          mkdir -p "$chosen"
+          for plugin in coreelements app audioconvert audioparsers audiomixer audiorate audioresample autodetect \
+            id3demux interleave isomp4 jpeg matroska mpg123 ogg opengl opus pbtypes playback pulseaudio \
+            typefindfunctions video4linux2 videoconvert videorate videoscale volume vorbis vpx wavparse; do
+            cp "$system/libgst$plugin.so" "$chosen/"
+          done
+          echo "GSTREAMER_PLUGINS_DIR=$chosen" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -160,6 +174,7 @@ jobs:
             Linux)
               cp "$bundle"/deb/*.deb "$out/Commy_${VERSION}_amd64.deb"
               cp "$bundle"/appimage/*.AppImage "$out/Commy_${VERSION}_amd64.AppImage"
+              bash "$GITHUB_WORKSPACE/.github/scripts/check-appimage-media.sh" "$out/Commy_${VERSION}_amd64.AppImage"
               ;;
           esac
           ls -la "$out"
