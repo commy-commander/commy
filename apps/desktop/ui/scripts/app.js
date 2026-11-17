@@ -27207,8 +27207,21 @@ async function continueBoot() {
   if (target) await openNotificationTarget(target);
   const call = await invoke("get_dm_call").catch(() => null);
   if (call) onDmCall(call);
-  if (!(await takePendingInviteLink()) && !(await showMovedInIfDue())) await offerTrayPrompt();
+  if (!(await takePendingInviteLink()) && !(await showMovedInIfDue()) && !showPrivacyNoticeIfDue()) await offerTrayPrompt();
 }
+
+function showPrivacyNoticeIfDue() {
+  if (!privacyNoticeDue(localStorage)) return false;
+  $("privacy-notice-title").textContent = privacyNoticeTitle(PRIVACY_NOTICE.updatedOn);
+  finishPrivacyNotice(localStorage);
+  showModal("modal-privacy-notice");
+  return true;
+}
+
+$("privacy-notice-done").onclick = hideModals;
+$("privacy-notice-read").onclick = () => {
+  invoke("open_url", { url: PRIVACY_NOTICE.url }).catch(err => toast(String(err)));
+};
 
 const ACCOUNT_PROFILE_WAIT_MS = 15000;
 

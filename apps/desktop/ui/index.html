@@ -949,6 +949,24 @@
       </div>
     </div>
 
+    <div class="modal move-guide hidden" id="modal-privacy-notice" role="dialog" aria-labelledby="privacy-notice-title">
+      <h2 id="privacy-notice-title">We updated our Privacy Policy.</h2>
+      <p>Communities can now choose to keep their messages on a sync server someone else runs, and people can keep their account on another account server. We added sections that explain:</p>
+      <ul class="modal-list">
+        <li>what happens when a community uses someone else's sync server, and the relays its calls use</li>
+        <li>where reports go and how long we keep them</li>
+        <li>how phone wake-ups work on iPhone, and for people on other account servers</li>
+        <li>what we keep when you apply to list a server</li>
+        <li>talking with people on other account servers</li>
+        <li>moving your account to another account server</li>
+      </ul>
+      <p>Nothing we already told you has changed, and your messages are still sealed on your devices before they reach any server.</p>
+      <button class="btn-link move-guide-learn" id="privacy-notice-read">Read the Privacy Policy</button>
+      <div class="modal-actions">
+        <button class="btn-primary" id="privacy-notice-done">Got It</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-stream-deck">
       <h2>Allow Stream Deck?</h2>
       <p id="stream-deck-pair-body"></p>
@@ -3705,6 +3723,7 @@
   <script src="scripts/home-tags.js"></script>
   <script src="scripts/server-listing.js"></script>
   <script src="scripts/move-guide.js"></script>
+  <script src="scripts/privacy-notice.js"></script>
   <script src="scripts/overlay-view.js"></script>
   <script src="scripts/studio-discover.js"></script>
   <script src="scripts/studio-start.js"></script>
