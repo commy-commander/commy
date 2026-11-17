@@ -121,8 +121,8 @@ network, then running its command above again.
 
 Each relay can ask its account servers whether a connecting app is a device
 someone signed in with, and refuse everything else (other iroh apps, other
-servers' users). Refused apps fall back to the public relays after 30 seconds,
-so nothing breaks, but our bandwidth only carries our own users. The relay asks
+servers' users). Refused apps move to the public relays at once, so nothing
+breaks, but our bandwidth only carries our own users. The relay asks
 `relay-access` (in `relay-tools/`), which asks auth at `/internal/relay-access`
 with a shared token. That path is not routed by Caddy. If auth does not answer,
 the app is let in, so an auth restart never cuts voice off.
@@ -152,7 +152,9 @@ RELAY_ACCESS_AUTH_URLS=http://commy-staging-auth:3001/internal/relay-access,http
 
 Start in `watch` mode: every app is still let in, and `access.json` in the
 `relay_meter_data` volume counts the day's apps, how many are not signed in,
-and how many checks could not reach auth. Switch `RELAY_ACCESS_MODE` to
+and how many checks could not reach auth. `docker compose logs relay-access`
+shows each app it refuses (or would refuse) by a short id, at most once per 10
+minutes per app. Switch `RELAY_ACCESS_MODE` to
 `enforce` once that count only shows strangers. Bots run by server owners are
 not signed-in devices, so they use the public relays.
 

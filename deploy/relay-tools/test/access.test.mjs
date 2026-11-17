@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { accessMode, Answers, authUrls, combineAnswers, DEFAULT_AUTH_URL, emptyTally, letIn, LINKED_KEEP_MS, loadAccessConfig, STRANGER_KEEP_MS, tally, tallyReport } from "../lib.mjs";
+import { accessMode, Answers, authUrls, combineAnswers, DEFAULT_AUTH_URL, emptyTally, letIn, LINKED_KEEP_MS, loadAccessConfig, NOTE_EVERY_MS, Notes, refusalNote, STRANGER_KEEP_MS, tally, tallyReport } from "../lib.mjs";
 
 const A = "aa".repeat(32);
 const B = "bb".repeat(32);
@@ -70,4 +70,18 @@ test("one account server knowing the device is enough, and a silent one never re
   assert.equal(combineAnswers([false, false]), false);
   assert.equal(combineAnswers([false, undefined]), undefined);
   assert.equal(combineAnswers([]), undefined);
+});
+
+test("a refused endpoint is logged once per ten minutes, by a short id", () => {
+  const notes = new Notes(2);
+  assert.equal(notes.due(A, 0), true);
+  assert.equal(notes.due(A, NOTE_EVERY_MS - 1), false);
+  assert.equal(notes.due(B, 1), true);
+  assert.equal(notes.due(A, NOTE_EVERY_MS), true);
+  notes.due("cc".repeat(32), 2);
+  assert.equal(notes.last.size, 2, "the log memory stays bounded");
+  const line = refusalNote("enforce", A, ["commy-staging-auth:3001"]);
+  assert.match(line, /refused aaaaaaaaaa: not signed in on commy-staging-auth:3001/);
+  assert.ok(!line.includes(A), "the full endpoint id stays out of the log");
+  assert.match(refusalNote("watch", A, ["auth:3001"]), /would refuse/);
 });

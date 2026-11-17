@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
-import { Answers, combineAnswers, emptyTally, ENDPOINT_ID, letIn, loadAccessConfig, tally, tallyReport } from "./lib.mjs";
+import { Answers, combineAnswers, emptyTally, ENDPOINT_ID, letIn, loadAccessConfig, Notes, refusalNote, tally, tallyReport } from "./lib.mjs";
 
 const cfg = loadAccessConfig(process.env);
 const answers = new Answers();
+const notes = new Notes();
+const authHosts = cfg.authUrls.map((url) => new URL(url).host);
 const WRITE_EVERY_MS = 60 * 1000;
 let today = emptyTally(new Date());
 
@@ -40,7 +42,9 @@ async function linkedState(endpoint) {
 async function decide(endpoint) {
   const linked = await linkedState(endpoint);
   const allowed = letIn(cfg.mode, linked);
-  today = tally(today, new Date(), endpoint, { linked, allowed });
+  const now = new Date();
+  today = tally(today, now, endpoint, { linked, allowed });
+  if (linked === false && notes.due(endpoint, now.getTime())) console.log(refusalNote(cfg.mode, endpoint, authHosts));
   return allowed;
 }
 
@@ -69,4 +73,4 @@ const server = http.createServer((req, res) => {
 
 if (!cfg.token) console.warn("[relay-access] RELAY_ACCESS_TOKEN is not set, so every check fails and lets the endpoint in");
 setInterval(() => writeReport().catch((err) => console.warn(`[relay-access] ${err.message}`)), WRITE_EVERY_MS).unref();
-server.listen(cfg.port, () => console.log(`[relay-access] :${cfg.port} ${cfg.mode} mode, asking ${cfg.authUrls.map((url) => new URL(url).host).join(", ")}`));
+server.listen(cfg.port, () => console.log(`[relay-access] :${cfg.port} ${cfg.mode} mode, asking ${authHosts.join(", ")}`));

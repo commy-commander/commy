@@ -124,6 +124,29 @@ export class Answers {
   }
 }
 
+export const NOTE_EVERY_MS = 10 * 60 * 1000;
+
+export class Notes {
+  constructor(max = 10_000) {
+    this.max = max;
+    this.last = new Map();
+  }
+
+  due(endpoint, now) {
+    const last = this.last.get(endpoint);
+    if (last !== undefined && now - last < NOTE_EVERY_MS) return false;
+    this.last.delete(endpoint);
+    this.last.set(endpoint, now);
+    while (this.last.size > this.max) this.last.delete(this.last.keys().next().value);
+    return true;
+  }
+}
+
+export function refusalNote(mode, endpoint, hosts) {
+  const verb = mode === "enforce" ? "refused" : "would refuse";
+  return `[relay-access] ${verb} ${endpoint.slice(0, 10)}: not signed in on ${hosts.join(", ")}; it uses the public relays instead`;
+}
+
 export function dayKey(date) {
   return date.toISOString().slice(0, 10);
 }

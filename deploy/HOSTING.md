@@ -775,7 +775,8 @@ The stack runs its own [iroh](https://iroh.computer) relay. It answers at
 `https://<DOMAIN>/relay` on port 443, like the [sync host](#run-a-sync-host)
 bundle, and at `https://relay.<DOMAIN>:8443`. Apps use only this relay while it
 answers, which keeps them reachable from the web app. If it stays out of reach
-for 30 seconds, apps add n0's public relays as a fallback. Relays help peers
+for 30 seconds, or turns the app away, apps add n0's public relays as a
+fallback. Relays help peers
 find each other and carry traffic only when a direct connection is impossible,
 always end to end encrypted.
 

@@ -66,20 +66,58 @@ pub fn fallback_relays(own: &RelayMap) -> Vec<Arc<RelayConfig>> {
         .collect()
 }
 
+pub const FALLBACK_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayStanding {
+    Connected,
+    Denied(Vec<(RelayUrl, String)>),
+    Waiting,
+}
+
+pub fn standing_of(statuses: &[iroh::endpoint::RelayStatus]) -> RelayStanding {
+    if statuses.iter().any(|status| status.is_connected()) {
+        return RelayStanding::Connected;
+    }
+    let denied: Vec<(RelayUrl, String)> = statuses
+        .iter()
+        .filter_map(|status| status.auth_denied_reason().map(|reason| (status.url().clone(), reason.to_string())))
+        .collect();
+    if denied.is_empty() { RelayStanding::Waiting } else { RelayStanding::Denied(denied) }
+}
+
 pub async fn fall_back_when_unreachable(endpoint: iroh::Endpoint, fallback: Vec<Arc<RelayConfig>>) {
+    fall_back_after(endpoint, fallback, FALLBACK_AFTER).await
+}
+
+async fn fall_back_after(endpoint: iroh::Endpoint, fallback: Vec<Arc<RelayConfig>>, after: std::time::Duration) {
+    use iroh::Watcher;
+    let mut cut_off_since: Option<n0_future::time::Instant> = None;
     loop {
-        n0_future::time::sleep(FALLBACK_AFTER).await;
+        n0_future::time::sleep(FALLBACK_CHECK_EVERY).await;
         if endpoint.is_closed() {
             return;
         }
-        if endpoint.addr().relay_urls().next().is_some() {
-            continue;
+        match standing_of(&endpoint.home_relay_status().get()) {
+            RelayStanding::Connected => cut_off_since = None,
+            RelayStanding::Denied(denied) => {
+                for (url, reason) in &denied {
+                    tracing::warn!("Commy's relay at {url} turned this app away ({reason}), using the public fallback relays");
+                    endpoint.remove_relay(url).await;
+                }
+                break;
+            }
+            RelayStanding::Waiting => {
+                let since = *cut_off_since.get_or_insert_with(n0_future::time::Instant::now);
+                if since.elapsed() >= after {
+                    tracing::warn!("Commy's relay is out of reach, adding the public fallback relays");
+                    break;
+                }
+            }
         }
-        tracing::warn!("Commy's relay is out of reach, adding the public fallback relays");
-        for node in fallback {
-            endpoint.insert_relay(node.url.clone(), node).await;
-        }
-        return;
+    }
+    for node in fallback {
+        endpoint.insert_relay(node.url.clone(), node).await;
     }
 }
 
@@ -378,6 +416,52 @@ mod tests {
         assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await);
         assert_eq!(relays.hints(), vec![ours]);
         endpoint.close().await;
+    }
+
+    #[derive(Debug)]
+    struct TurnAway;
+
+    impl iroh_relay::server::AccessControl for TurnAway {
+        async fn on_connect(&self, _request: &iroh_relay::server::ClientRequest) -> iroh_relay::server::Access {
+            iroh_relay::server::Access::Deny { reason: Some("not signed in here".into()) }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_turns_us_away_gives_way_to_the_public_ones_at_once() {
+        let (ours_map, ours, _ours) = iroh::test_utils::run_relay_server_with_access(true, Arc::new(TurnAway)).await.unwrap();
+        let (public_map, public, _public) = iroh::test_utils::run_relay_server().await.unwrap();
+        let endpoint = endpoint_on(&only(&ours_map, &ours)).await;
+        let started = std::time::Instant::now();
+        let falling_back = tokio::spawn(fall_back_after(endpoint.clone(), vec![only(&public_map, &public)], std::time::Duration::from_secs(600)));
+        assert!(home_becomes(&endpoint, std::slice::from_ref(&public), std::time::Duration::from_secs(30)).await);
+        assert!(started.elapsed() < std::time::Duration::from_secs(30), "a refusal does not wait out the fallback delay");
+        falling_back.await.unwrap();
+        let mut status = endpoint.home_relay_status();
+        let connected = n0_future::time::timeout(std::time::Duration::from_secs(10), async {
+            while standing_of(&iroh::Watcher::get(&mut status)) != RelayStanding::Connected {
+                n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        });
+        assert!(connected.await.is_ok(), "the public relay connects");
+        endpoint.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_never_connects_gives_way_after_the_delay() {
+        let (public_map, public, _public) = iroh::test_utils::run_relay_server().await.unwrap();
+        let unreachable = room_relay_config(room_relay_url("https://127.0.0.1:9").unwrap());
+        let endpoint = endpoint_on(&unreachable).await;
+        let started = std::time::Instant::now();
+        fall_back_after(endpoint.clone(), vec![only(&public_map, &public)], std::time::Duration::from_secs(3)).await;
+        assert!(started.elapsed() >= std::time::Duration::from_secs(3));
+        assert!(home_becomes(&endpoint, &[public], std::time::Duration::from_secs(30)).await);
+        endpoint.close().await;
+    }
+
+    #[test]
+    fn no_relay_status_yet_is_waiting() {
+        assert_eq!(standing_of(&[]), RelayStanding::Waiting);
     }
 
     #[test]
