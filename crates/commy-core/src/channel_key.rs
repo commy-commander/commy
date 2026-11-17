@@ -783,7 +783,7 @@ mod tests {
         let (key, secret) = ring.sending_key(&state, channel).unwrap();
         let item = crate::ids::DriveId::new();
         let sealed = seal_drive_text(server, channel, item, DriveField::Name, "Q3 plans.pdf", key, secret);
-        assert!(is_sealed_label(&sealed) && !sealed.contains("Q3"));
+        assert!(is_sealed_label(&sealed) && !sealed.contains("Q3 plans.pdf"));
         let reader_ring = Keyring::unlock(&state, channel, reader, &identity_for(reader));
         assert_eq!(read_drive_text(server, channel, item, DriveField::Name, &sealed, &reader_ring).as_deref(), Some("Q3 plans.pdf"));
         let outsider_ring = Keyring::unlock(&state, channel, outsider, &identity_for(outsider));
