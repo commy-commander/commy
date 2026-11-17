@@ -410,12 +410,22 @@ fn deliver(handle: &AppHandle, link: String) {
     let _ = handle.emit("invite-link", link);
 }
 
+pub const EMAIL_CONFIRMED_LINK: &str = "commy://email-confirmed";
+
+fn is_email_confirmed(link: &str) -> bool {
+    let rest = link.strip_prefix(EMAIL_CONFIRMED_LINK);
+    rest.is_some_and(|rest| rest.is_empty() || rest == "/" || rest.starts_with('?') || rest.starts_with("/?"))
+}
+
 pub fn on_run_event(handle: &AppHandle, event: &tauri::RunEvent) {
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
     if let tauri::RunEvent::Opened { urls } = event {
         for url in urls {
             let link = url.to_string();
-            if looks_like_link(&link) {
+            if is_email_confirmed(&link) {
+                crate::tray::show_main_window(handle);
+                let _ = handle.emit("email-confirmed", ());
+            } else if looks_like_link(&link) {
                 deliver(handle, link);
             }
         }
@@ -521,6 +531,11 @@ mod tests {
             sync_host: None,
             at: Instant::now(),
         };
+        assert!(is_email_confirmed("commy://email-confirmed"));
+        assert!(is_email_confirmed("commy://email-confirmed/"));
+        assert!(is_email_confirmed("commy://email-confirmed?from=page"));
+        assert!(!is_email_confirmed("commy://email-confirmed-elsewhere"));
+        assert!(!is_email_confirmed("commy://i/commy.chat/AB23CD45"));
         hold_resolved(held("commy://i/one"));
         assert!(take_resolved("commy://i/one", "ticket-b").is_none(), "another ticket");
         assert!(take_resolved("commy://i/two", "ticket-a").is_none(), "another link");

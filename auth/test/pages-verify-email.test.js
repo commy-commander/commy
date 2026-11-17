@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { verifyEmailOutcome } from "../pages/src/lib/verify-email.js";
+import { APP_RETURN_LINK, APP_SIGN_UP_NEXT, verifyEmailOutcome } from "../pages/src/lib/verify-email.js";
 
 test("a confirmed email continues where the sign-up started", () => {
   const outcome = verifyEmailOutcome("confirmed", "/web/");
@@ -30,4 +30,17 @@ test("anything else reads as a link that did not work", () => {
 
 test("a confirmed email names the server the account lives on", () => {
   assert.match(verifyEmailOutcome("confirmed", "/account", "Pixel Home").body, /your Pixel Home account is ready/);
+});
+
+test("an account made in the phone app sends people straight back to the app", () => {
+  const confirmed = verifyEmailOutcome("confirmed", APP_SIGN_UP_NEXT);
+  assert.equal(confirmed.title, "Email confirmed");
+  assert.match(confirmed.body, /Open Commy to finish signing in/);
+  assert.deepEqual(confirmed.action, { label: "Open Commy", href: "commy://email-confirmed" });
+  for (const result of ["expired", "invalid"]) {
+    const outcome = verifyEmailOutcome(result, APP_SIGN_UP_NEXT);
+    assert.equal(outcome.action.href, APP_RETURN_LINK);
+    assert.match(outcome.body, /Send the email again/);
+  }
+  assert.equal(verifyEmailOutcome("confirmed", "/account?app=2").action.label, "Continue");
 });

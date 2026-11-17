@@ -1802,7 +1802,7 @@ async function mockInvoke(cmd, args = {}) {
     case "account_claim_profile": mock.account.unclaimed_profile = null; mock.account.needs_account_folder = false; return mock.account;
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
-    case "account_in_app_options": return { password: true, apple: new URLSearchParams(location.search).has("ios"), google: true, twitch: true, passkey: true, captcha_url: null };
+    case "account_in_app_options": return { password: true, apple: new URLSearchParams(location.search).has("ios"), google: true, twitch: true, passkey: true, sign_up: true, captcha_url: null };
     case "account_sign_in_password":
       if (args.password !== "correct horse") throw "That email and password don't match.";
       return { step: /two-step/.test(args.email) ? "code" : "done" };
@@ -1820,6 +1820,9 @@ async function mockInvoke(cmd, args = {}) {
       if (!args.accessCode) return { step: "access_code" };
       return { step: "done" };
     case "account_sign_in_passkey": return args && args.quiet ? { step: "canceled" } : { step: "done" };
+    case "account_sign_up_email":
+      if (args.password.length < 8) throw "Use a password with at least 8 characters.";
+      return { step: "check_email" };
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
     case "account_delete_start": return { confirm: "email", password: true, email: mock.account.user ? mock.account.user.email : null };
     case "account_delete_finish":
@@ -23095,7 +23098,14 @@ function wireEvents() {
   $("signin-apple").onclick = () => signInWithApple(false);
   for (const provider of SHEET_PROVIDERS) $(`signin-${provider}`).onclick = () => signInWithSheet(provider);
   $("signin-passkey").onclick = () => runInAppStep(() => invoke("account_sign_in_passkey", { quiet: false }));
-  $("signin-create").onclick = beginSignIn;
+  $("signin-create").onclick = switchSignInMode;
+  $("signin-signup-terms").onclick = () => invoke("open_url", { url: `${account.server}/terms` }).catch(e => toast(String(e)));
+  $("signin-inbox-go").onclick = () => signInAfterConfirming("signup.inbox.not.yet");
+  $("signin-inbox-again").onclick = () => signInAfterConfirming("signup.inbox.sent");
+  $("signin-inbox-back").onclick = () => showSignUpStage("email");
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") signInOnReturn(false);
+  });
   $("signin-apple-create").onclick = () => retryInApp();
   $("signin-adult").addEventListener("change", syncAdultConfirmation);
   $("signin-terms").onclick = () => invoke("open_url", { url: `${account.server}/terms` }).catch(e => toast(String(e)));
@@ -24743,6 +24753,7 @@ function wireEvents() {
   if (IS_TAURI) {
     window.__TAURI__.event.listen("server-event", event => onServerEvent(event.payload));
     window.__TAURI__.event.listen("servers-changed", refreshServers);
+    window.__TAURI__.event.listen("email-confirmed", () => signInOnReturn(true));
     window.__TAURI__.event.listen("screen-share-ended", () => {
       if (state.sharing && state.voiceServer) stopSharing();
     });
@@ -27222,6 +27233,7 @@ function showSignIn() {
 let inAppOptions = null;
 let inAppView = inAppSignIn(null, false);
 let signInStage = "email";
+let signInMode = "signin";
 let signInCheck = { url: null, token: null };
 let inAppBusy = false;
 
@@ -27248,6 +27260,8 @@ function showInAppLayout(inApp) {
 function renderInAppSignIn(view) {
   inAppView = view;
   signInStage = "email";
+  signInMode = "signin";
+  showSignInModeText();
   showInAppLayout(view.form);
   $("signin-form").classList.toggle("hidden", !view.form);
   $("signin-apple").classList.toggle("hidden", !view.apple);
@@ -27269,19 +27283,97 @@ function renderInAppSignIn(view) {
 }
 
 function showSignInFormParts() {
-  const parts = signInFormParts(inAppView, signInStage);
+  const parts = signInFormParts(inAppView, signInStage, signInMode);
+  const signingUp = signInMode === "signup";
   $("signin-email").classList.toggle("hidden", !parts.email);
+  $("signin-name").classList.toggle("hidden", !parts.name);
+  $("signin-signup-adult-row").classList.toggle("hidden", !parts.adult);
   const password = $("signin-password");
   password.classList.toggle("hidden", !parts.email);
   password.classList.toggle("tucked", parts.email && !parts.password);
   password.tabIndex = parts.password ? 0 : -1;
   password.toggleAttribute("aria-hidden", !parts.password);
+  password.autocomplete = signingUp ? "new-password" : "current-password";
+  setI18nText(password, signingUp ? "signup.password" : "signin.password", "placeholder");
   const submit = $("signin-submit");
   submit.classList.toggle("hidden", !parts.email);
-  submit.dataset.i18n = parts.submitLabel;
-  submit.textContent = t(parts.submitLabel);
+  setI18nText(submit, parts.submitLabel);
   $("signin-passkey").classList.toggle("hidden", !parts.passkeyLink);
+  $("signin-inbox").classList.toggle("hidden", !parts.inbox);
+  for (const id of ["signin-or", "signin-apple", "signin-socials"]) $(id).classList.toggle("signup-away", !parts.socials);
+  $("modal-signin").classList.toggle("signin-inbox-open", parts.inbox);
   showSignInCheck(parts.captchaUrl);
+}
+
+function setI18nText(node, key, attribute = null) {
+  if (attribute) {
+    node.dataset.i18nPlaceholder = key;
+    node.setAttribute(attribute, t(key));
+    return;
+  }
+  node.dataset.i18n = key;
+  node.textContent = t(key);
+}
+
+function showSignInModeText() {
+  const text = signInModeText(signInMode);
+  setI18nText($("signin-title"), signInStage === "inbox" ? "signup.inbox.title" : text.title);
+  setI18nText($("signin-intro"), text.intro);
+  setI18nText($("signin-apple-label"), text.apple);
+  setI18nText($("signin-create"), text.switchLink);
+}
+
+function switchSignInMode() {
+  if (!inAppView.signUp) return beginSignIn();
+  signInMode = signInMode === "signup" ? "signin" : "signup";
+  signInStage = "email";
+  $("signin-error").classList.add("hidden");
+  showSignInModeText();
+  showSignInFormParts();
+}
+
+function showSignUpStage(stage) {
+  signInStage = stage;
+  $("signin-error").classList.add("hidden");
+  showSignInModeText();
+  showSignInFormParts();
+  if (stage === "inbox") {
+    inboxTriedAt = Date.now();
+    $("signin-inbox-text").textContent = t("signup.inbox.text", { email: $("signin-email").value.trim() });
+  }
+  const focus = { email: "signin-email", details: "signin-name" }[stage];
+  if (focus) setTimeout(() => $(focus).focus(), 0);
+}
+
+function submitSignUp() {
+  const email = $("signin-email").value.trim();
+  if (signInStage !== "details") {
+    if (!looksLikeEmail(email)) {
+      showInAppNote(t("signin.email.needed"));
+      $("signin-email").focus();
+      return;
+    }
+    return showSignUpStage("details");
+  }
+  inAppMethod = { kind: "email", email, password: $("signin-password").value, name: $("signin-name").value };
+  const adultConfirmed = $("signin-signup-adult").checked;
+  runInAppStep(() => invoke("account_sign_up_email", { ...inAppMethod, adultConfirmed, captcha: signInCheck.token, accessCode: null }), { resetCheck: true });
+}
+
+let inboxTriedAt = 0;
+
+function signInOnReturn(fromLink) {
+  const now = Date.now();
+  if (inAppBusy || !returnSignInDue({ stage: signInStage, mode: signInMode, triedAt: inboxTriedAt, now, fromLink })) return;
+  inboxTriedAt = now;
+  signInAfterConfirming("signup.inbox.not.yet");
+}
+
+async function signInAfterConfirming(noteKey) {
+  const email = $("signin-email").value.trim();
+  const password = $("signin-password").value;
+  const result = await runInAppStep(() => invoke("account_sign_in_password", { email, password, captcha: signInCheck.token }), { resetCheck: true });
+  if (result && result.step === "check_email") showInAppNote(t(noteKey));
 }
 
 function askForPassword() {
@@ -27345,7 +27437,7 @@ function showInAppNote(message) {
 async function runInAppStep(call, { resetCheck = false } = {}) {
   if (inAppBusy) return null;
   inAppBusy = true;
-  const buttons = ["signin-submit", "signin-apple", "signin-google", "signin-twitch", "signin-passkey", "signin-code-go", "signin-apple-create", "signin-access-go"];
+  const buttons = ["signin-submit", "signin-apple", "signin-google", "signin-twitch", "signin-passkey", "signin-code-go", "signin-apple-create", "signin-access-go", "signin-inbox-go", "signin-inbox-again"];
   for (const id of buttons) $(id).disabled = true;
   $("signin-error").classList.add("hidden");
   try {
@@ -27368,9 +27460,17 @@ function followInAppStep(result) {
   if (step === "canceled") return;
   if (step === "done") {
     $("signin-password").value = "";
+    $("signin-name").value = "";
     signInCheck.token = null;
     signInStage = "email";
+    signInMode = "signin";
+    showSignInModeText();
     showSignInFormParts();
+    return;
+  }
+  if (step === "check_email" && signInMode === "signup") {
+    if (signInStage !== "inbox") showSignUpStage("inbox");
+    else reloadSignInCheck();
     return;
   }
   if (step === "check_email") {
@@ -27385,6 +27485,7 @@ function submitPasswordSignIn(event) {
   event.preventDefault();
   const email = $("signin-email").value.trim();
   const password = $("signin-password").value;
+  if (signInMode === "signup") return submitSignUp();
   if (signInStage !== "password") return continueWithEmail(email, password);
   runInAppStep(() => invoke("account_sign_in_password", { email, password, captcha: signInCheck.token }), { resetCheck: true });
 }
@@ -27425,7 +27526,7 @@ function signInWithSheet(provider) {
 }
 
 function retryInApp(accessCode = null) {
-  const { command, args } = inAppRetry(inAppMethod, { adultConfirmed: $("signin-adult").checked, accessCode });
+  const { command, args } = inAppRetry(inAppMethod, { adultConfirmed: $("signin-adult").checked, accessCode, captcha: signInCheck.token });
   runInAppStep(() => invoke(command, args));
 }
 

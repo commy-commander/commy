@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, NOTIFICATION_SOUNDS, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, MAX_SDK } from "./android-project.mjs";
+import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, NOTIFICATION_SOUNDS, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, EMAIL_CONFIRMED, MAX_SDK } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -154,6 +154,15 @@ test("the sign-in page hands back to the main screen through its own link, once"
   const older = withCommyNeeds(generated).replace(SIGN_IN_RETURN, "");
   assert.equal(withCommyNeeds(older).split(SIGN_IN_RETURN).length - 1, 1, "an app made before the sign-in link gets it added");
   assert.equal(withCommyNeeds(older).split(INVITE_LINKS).length - 1, 1);
+});
+
+test("the email confirmed page opens the app through its own link, once", () => {
+  const out = withCommyNeeds(withCommyNeeds(generated));
+  assert.equal(out.split(EMAIL_CONFIRMED).length - 1, 1);
+  const main = out.indexOf('".MainActivity"');
+  const filter = out.indexOf(EMAIL_CONFIRMED);
+  assert.ok(filter > main && filter < out.indexOf("</activity>", main));
+  assert.match(EMAIL_CONFIRMED, /android:scheme="commy" android:host="email-confirmed"/);
 });
 
 test("the sign-in page and passkeys have their Android libraries", () => {

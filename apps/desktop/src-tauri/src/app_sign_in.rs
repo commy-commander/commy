@@ -13,6 +13,9 @@ use crate::state::App;
 const CHALLENGE_LIFETIME: Duration = Duration::from_secs(9 * 60);
 const MAX_EMAIL: usize = 254;
 const MAX_PASSWORD: usize = 128;
+const MIN_NEW_PASSWORD: usize = 8;
+const MAX_NAME: usize = 64;
+const SIGN_UP_RETURN: &str = "/account?app=1";
 const MAX_CODE: usize = 40;
 const TOTP_DIGITS: usize = 6;
 const ACCESS_COOKIE: &str = "commy_access";
@@ -70,6 +73,7 @@ pub struct InAppOptions {
     google: bool,
     twitch: bool,
     passkey: bool,
+    sign_up: bool,
     captcha_url: Option<String>,
 }
 
@@ -157,7 +161,11 @@ fn read_reply(answer: &Answer) -> Result<Reply, String> {
         "OAUTH_LINK_ERROR" if message == "account not linked" => {
             return Err("An account already uses this email. Sign in with your email and password, then confirm your email if asked.".into())
         }
-        "SIGNUP_DISABLED" => return Err("This account server isn't taking new accounts right now.".into()),
+        "SIGNUP_DISABLED" | "EMAIL_PASSWORD_SIGN_UP_DISABLED" => return Err("This account server isn't taking new accounts right now.".into()),
+        "USER_ALREADY_EXISTS" | "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" => return Err("An account already uses this email. Sign in instead.".into()),
+        "PASSWORD_TOO_SHORT" => return Err("Use a password with at least 8 characters.".into()),
+        "PASSWORD_TOO_LONG" => return Err("Use a password with 128 characters or fewer.".into()),
+        "THROWAWAY_EMAIL" => return Err("Use an email address you keep. Throwaway inboxes can't make accounts.".into()),
         "ACCOUNT_NOT_LINKED" => {
             return Err("An account already uses this email. Sign in with your email and password, then confirm your email if asked.".into())
         }
@@ -254,6 +262,7 @@ pub async fn account_in_app_options(app: tauri::State<'_, App>) -> Result<InAppO
         google: offers_sheet(&doc, "google"),
         twitch: offers_sheet(&doc, "twitch"),
         passkey: offers_passkey(&doc, &server),
+        sign_up: sign_up_url(&doc).is_some(),
         captcha_url: captcha_url(&doc),
     })
 }
@@ -280,6 +289,87 @@ pub async fn account_sign_in_password(
     }
     let answer = post(&app, &server, &url, json!({ "email": email, "password": password }), None, captcha.as_deref()).await?;
     settle(&handle, &server, &doc, Pending::new(&server), answer).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn account_sign_up_email(
+    app: tauri::State<'_, App>,
+    handle: AppHandle,
+    email: String,
+    password: String,
+    name: String,
+    adult_confirmed: bool,
+    captcha: Option<String>,
+    access_code: Option<String>,
+) -> Result<SignInStep, String> {
+    let fields = SignUpFields::checked(&email, &password, &name, adult_confirmed)?;
+    let (server, doc) = current_server(&app).await?;
+    let url = sign_up_url(&doc).ok_or("This account server needs your browser to create an account.")?;
+    if captcha_url(&doc).is_some() && captcha.as_deref().unwrap_or_default().is_empty() {
+        return Err("Finish the quick safety check first.".into());
+    }
+    let mut pending = pending_for(&server);
+    if let Some(code) = access_code {
+        pending.access = Some(check_access_code(&app, &server, &doc, &code).await?);
+    }
+    let cookie = pending.access.as_ref().map(|t| format!("{ACCESS_COOKIE}={t}"));
+    let answer = post(&app, &server, &url, fields.body(), cookie.as_deref(), captcha.as_deref()).await?;
+    if waits_for_email(&answer) {
+        forget();
+        return Ok(SignInStep::CheckEmail);
+    }
+    settle(&handle, &server, &doc, pending, answer).await
+}
+
+#[derive(Debug, PartialEq)]
+struct SignUpFields {
+    email: String,
+    password: String,
+    name: String,
+}
+
+impl SignUpFields {
+    fn checked(email: &str, password: &str, name: &str, adult_confirmed: bool) -> Result<Self, String> {
+        let email = email.trim();
+        if email.is_empty() || email.len() > MAX_EMAIL || !email.contains('@') {
+            return Err("Enter the email you want to use.".into());
+        }
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Enter a display name.".into());
+        }
+        if name.chars().count() > MAX_NAME {
+            return Err("Use a display name with 64 characters or fewer.".into());
+        }
+        let length = password.chars().count();
+        if length < MIN_NEW_PASSWORD {
+            return Err("Use a password with at least 8 characters.".into());
+        }
+        if password.len() > MAX_PASSWORD {
+            return Err("Use a password with 128 characters or fewer.".into());
+        }
+        if !adult_confirmed {
+            return Err("Confirm you are 18 or older and agree to the Terms.".into());
+        }
+        Ok(SignUpFields { email: email.to_string(), password: password.to_string(), name: name.to_string() })
+    }
+
+    fn body(&self) -> Value {
+        json!({ "email": self.email, "password": self.password, "name": self.name, "adultConfirmed": true, "callbackURL": SIGN_UP_RETURN })
+    }
+}
+
+fn sign_up_url(doc: &Discovery) -> Option<String> {
+    if !offers_password(doc) {
+        return None;
+    }
+    let api = doc.endpoints.sign_in_email.as_deref()?.strip_suffix("/sign-in/email")?;
+    Some(format!("{api}/sign-up/email"))
+}
+
+fn waits_for_email(answer: &Answer) -> bool {
+    (200..300).contains(&answer.status) && answer.token.is_none() && answer.body.get("twoFactorRedirect").is_none()
 }
 
 fn code_route(doc: &Discovery, code: &str) -> Option<String> {
@@ -720,6 +810,33 @@ mod tests {
         assert_eq!(passkey_response(json!({ "id": "cred", "response": {} })).unwrap()["id"], json!("cred"));
         assert!(passkey_response(json!({ "id": "" , "response": {} })).is_err());
         assert!(passkey_response(json!({ "json": "nope" })).is_err());
+    }
+
+    #[test]
+    fn sign_up_checks_each_field_before_asking_the_server() {
+        let good = SignUpFields::checked(" me@example.com ", "long enough", " Nova ", true).unwrap();
+        assert_eq!(good, SignUpFields { email: "me@example.com".into(), password: "long enough".into(), name: "Nova".into() });
+        let body = good.body();
+        assert_eq!(body["adultConfirmed"], json!(true));
+        assert_eq!(body["callbackURL"], json!(SIGN_UP_RETURN));
+        assert_eq!(body["name"], json!("Nova"));
+        assert!(SignUpFields::checked("nope", "long enough", "Nova", true).unwrap_err().contains("email"));
+        assert!(SignUpFields::checked("me@example.com", "short", "Nova", true).unwrap_err().contains("8"));
+        assert!(SignUpFields::checked("me@example.com", &"x".repeat(129), "Nova", true).unwrap_err().contains("128"));
+        assert!(SignUpFields::checked("me@example.com", "long enough", "  ", true).unwrap_err().contains("display name"));
+        assert!(SignUpFields::checked("me@example.com", "long enough", &"n".repeat(65), true).unwrap_err().contains("64"));
+        assert!(SignUpFields::checked("me@example.com", "long enough", "Nova", false).unwrap_err().contains("18"));
+    }
+
+    #[test]
+    fn sign_up_waits_for_the_email_only_when_no_session_came_back() {
+        assert!(waits_for_email(&answer(200, json!({ "token": null, "user": {} }))));
+        let mut signed_in = answer(200, json!({}));
+        signed_in.token = Some("t".into());
+        assert!(!waits_for_email(&signed_in));
+        assert!(!waits_for_email(&answer(422, json!({ "code": "USER_ALREADY_EXISTS" }))));
+        assert!(read_reply(&answer(422, json!({ "code": "USER_ALREADY_EXISTS" }))).unwrap_err().contains("Sign in instead"));
+        assert!(read_reply(&answer(400, json!({ "code": "THROWAWAY_EMAIL" }))).unwrap_err().contains("Throwaway"));
     }
 
     #[test]

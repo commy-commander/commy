@@ -602,12 +602,20 @@
       <div class="signin-start" id="signin-start">
         <form class="signin-form hidden" id="signin-form" novalidate>
           <input class="signin-field" id="signin-email" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="254" data-i18n-placeholder="signin.email" placeholder="Email" data-i18n-aria-label="signin.email" aria-label="Email" />
+          <input class="signin-field hidden" id="signin-name" type="text" autocomplete="nickname" maxlength="64" data-i18n-placeholder="signup.name" placeholder="Display name" data-i18n-aria-label="signup.name" aria-label="Display name" />
           <input class="signin-field" id="signin-password" type="password" autocomplete="current-password" maxlength="128" data-i18n-placeholder="signin.password" placeholder="Password" data-i18n-aria-label="signin.password" aria-label="Password" />
+          <label class="signin-adult hidden" id="signin-signup-adult-row"><input type="checkbox" id="signin-signup-adult" /><span><span data-i18n="signin.adult">I am 18 or older and agree to the</span> <button type="button" class="btn-link signin-terms" id="signin-signup-terms" data-i18n="signin.terms">Terms</button></span></label>
+          <div class="signin-inbox hidden" id="signin-inbox">
+            <p class="signin-inbox-text" id="signin-inbox-text"></p>
+            <button type="button" class="btn-primary signin-go" id="signin-inbox-go" data-i18n="signup.inbox.go">I confirmed it, sign me in</button>
+            <button type="button" class="btn-link signin-inbox-link" id="signin-inbox-again" data-i18n="signup.inbox.again">Send the email again</button>
+            <button type="button" class="btn-link signin-inbox-link" id="signin-inbox-back" data-i18n="signup.inbox.back">Use a different email</button>
+          </div>
           <div class="signin-check hidden" id="signin-check"></div>
           <button type="submit" class="btn-primary signin-go" id="signin-submit" data-i18n="signin.continue">Continue</button>
           <button type="button" class="btn-link signin-passkey hidden" id="signin-passkey" data-i18n="signin.passkey">Sign in with a passkey</button>
           <div class="modal-divider hidden" id="signin-or" data-i18n="signin.or">or</div>
-          <button type="button" class="signin-apple hidden" id="signin-apple"><span class="signin-apple-logo" aria-hidden="true"></span><span data-i18n="signin.apple">Sign in with Apple</span></button>
+          <button type="button" class="signin-apple hidden" id="signin-apple"><span class="signin-apple-logo" aria-hidden="true"></span><span id="signin-apple-label" data-i18n="signin.apple">Sign in with Apple</span></button>
           <div class="signin-socials hidden" id="signin-socials">
             <button type="button" class="btn-secondary signin-go signin-social hidden" id="signin-google" data-i18n-aria-label="signin.google" aria-label="Continue with Google"><span class="signin-social-logo google" aria-hidden="true"></span><span class="signin-social-label" data-i18n="signin.google">Continue with Google</span></button>
             <button type="button" class="btn-secondary signin-go signin-social hidden" id="signin-twitch" data-i18n-aria-label="signin.twitch" aria-label="Continue with Twitch"><span class="signin-social-logo twitch" aria-hidden="true"></span><span class="signin-social-label" data-i18n="signin.twitch">Continue with Twitch</span></button>

@@ -47,9 +47,11 @@ const usesFeature = name => `<uses-feature android:name="${name}" android:requir
 
 export const INVITE_LINKS = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="i" /></intent-filter>`;
 export const SIGN_IN_RETURN = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="signed-in" /></intent-filter>`;
+export const EMAIL_CONFIRMED = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="email-confirmed" /></intent-filter>`;
 const LINK_FILTERS = [
   { marker: 'android:host="i"', xml: INVITE_LINKS },
   { marker: 'android:host="signed-in"', xml: SIGN_IN_RETURN },
+  { marker: 'android:host="email-confirmed"', xml: EMAIL_CONFIRMED },
 ];
 
 function insertBefore(xml, marker, lines, indent, from = 0) {

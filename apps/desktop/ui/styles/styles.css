@@ -5590,6 +5590,13 @@ html[data-reduced-motion] .server-tag.st-fx-shine::after { display: none; }
 .signin-social-logo.google { -webkit-mask-image: var(--google-logo); mask-image: var(--google-logo); }
 .signin-social-logo.twitch { -webkit-mask-image: var(--twitch-logo); mask-image: var(--twitch-logo); }
 .signin-create { display: block; margin: 14px auto 0; font-size: 14px; }
+#modal-signin .signin-form > .signup-away { display: none; }
+#modal-signin.signin-inbox-open > :is(#signin-intro, .signin-server, .signin-server-note, .signin-move-note) { display: none; }
+#modal-signin.signin-inbox-open #signin-create { display: none; }
+.signin-inbox { display: flex; flex-direction: column; gap: 10px; }
+.signin-inbox.hidden { display: none; }
+.signin-inbox-text { margin: 0 0 6px; color: var(--text-normal); font-size: 14.5px; line-height: 1.45; text-align: center; overflow-wrap: anywhere; }
+.signin-inbox-link { display: block; margin: 0 auto; font-size: 14px; }
 .signin-create.hidden { display: none; }
 #modal-signin.in-app > * { order: 2; }
 #modal-signin.in-app > :is(.dstar, .signin-logo, h2, p) { order: 0; }

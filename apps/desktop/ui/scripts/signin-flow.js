@@ -20,19 +20,58 @@ function inAppSignIn(options, mobile) {
     passkey,
     buttons,
     socialIcons: apple && (google || twitch),
+    signUp: password && offered("sign_up"),
     captchaUrl: password && options.captcha_url ? options.captcha_url : null,
   };
 }
 
-function signInFormParts(view, stage) {
+const MODE_TEXT = {
+  signin: { title: "signin.title", intro: "signin.intro", apple: "signin.apple", switchLink: "signin.create" },
+  signup: { title: "signup.title", intro: "signup.intro", apple: "signup.apple", switchLink: "signup.have.account" },
+};
+
+function signInModeText(mode) {
+  return MODE_TEXT[mode] || MODE_TEXT.signin;
+}
+
+function signInFormParts(view, stage, mode = "signin") {
+  if (mode === "signup") return signUpFormParts(view, stage);
   const askPassword = Boolean(view.password && stage === "password");
   return {
     email: Boolean(view.password),
     password: askPassword,
+    name: false,
+    adult: false,
+    inbox: false,
+    socials: true,
     submitLabel: askPassword ? "signin.submit" : "signin.continue",
     passkeyLink: askPassword && Boolean(view.passkey),
     captchaUrl: askPassword ? view.captchaUrl : null,
   };
+}
+
+function signUpFormParts(view, stage) {
+  const offered = Boolean(view.signUp);
+  const details = offered && stage === "details";
+  const inbox = offered && stage === "inbox";
+  return {
+    email: offered && !inbox,
+    password: details,
+    name: details,
+    adult: details,
+    inbox,
+    socials: !details && !inbox,
+    submitLabel: details ? "signup.submit" : "signin.continue",
+    passkeyLink: false,
+    captchaUrl: details || inbox ? view.captchaUrl : null,
+  };
+}
+
+const RETURN_RETRY_MS = 15000;
+
+function returnSignInDue({ stage, mode, triedAt = 0, now = 0, fromLink = false }) {
+  if (mode !== "signup" || stage !== "inbox") return false;
+  return fromLink || now - triedAt >= RETURN_RETRY_MS;
 }
 
 function showsOfficialBadge(choice, defaultHost) {
@@ -53,7 +92,11 @@ function passkeyFallsBackToPassword(result) {
   return step === "canceled" || step === "failed";
 }
 
-function inAppRetry(method, { adultConfirmed = false, accessCode = null } = {}) {
+function inAppRetry(method, { adultConfirmed = false, accessCode = null, captcha = null } = {}) {
+  if (method && method.kind === "email") {
+    const { email, password, name } = method;
+    return { command: "account_sign_up_email", args: { email, password, name, adultConfirmed: true, captcha, accessCode } };
+  }
   if (method && method.kind === "sheet" && SHEET_PROVIDERS.includes(method.provider)) {
     return { command: "account_sign_in_sheet", args: { provider: method.provider, adultConfirmed, accessCode } };
   }
@@ -86,6 +129,8 @@ if (typeof module !== "undefined" && module.exports) {
     SIGNIN_STEPS,
     SHEET_PROVIDERS,
     inAppSignIn,
+    signInModeText,
+    returnSignInDue,
     signInFormParts,
     showsOfficialBadge,
     looksLikeEmail,

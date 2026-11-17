@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   inAppSignIn,
+  signInModeText,
+  returnSignInDue,
   signInFormParts,
   showsOfficialBadge,
   looksLikeEmail,
@@ -15,7 +17,7 @@ const {
   readCaptchaMessage,
 } = require("../scripts/signin-flow.js");
 
-const browserOnly = { form: false, password: false, apple: false, google: false, twitch: false, passkey: false, buttons: false, socialIcons: false, captchaUrl: null };
+const browserOnly = { form: false, password: false, apple: false, google: false, twitch: false, passkey: false, buttons: false, socialIcons: false, signUp: false, captchaUrl: null };
 
 test("the desktop app and older servers keep the browser sign-in", () => {
   assert.deepEqual(inAppSignIn({ password: true, apple: true, google: true, passkey: true, captcha_url: "https://commy.chat/x" }, false), browserOnly);
@@ -50,10 +52,12 @@ test("on iPhone, Apple stays a full button and Google and Twitch shrink to icons
 
 test("the email comes first and the password only shows after it", () => {
   const view = inAppSignIn({ password: true, passkey: true, captcha_url: "https://commy.chat/check" }, true);
-  assert.deepEqual(signInFormParts(view, "email"), { email: true, password: false, submitLabel: "signin.continue", passkeyLink: false, captchaUrl: null });
+  const signInOnly = { name: false, adult: false, inbox: false, socials: true };
+  assert.deepEqual(signInFormParts(view, "email"), { email: true, password: false, ...signInOnly, submitLabel: "signin.continue", passkeyLink: false, captchaUrl: null });
   assert.deepEqual(signInFormParts(view, "password"), {
     email: true,
     password: true,
+    ...signInOnly,
     submitLabel: "signin.submit",
     passkeyLink: true,
     captchaUrl: "https://commy.chat/check",
@@ -61,7 +65,44 @@ test("the email comes first and the password only shows after it", () => {
   const noPasskey = inAppSignIn({ password: true }, true);
   assert.equal(signInFormParts(noPasskey, "password").passkeyLink, false);
   const noPassword = inAppSignIn({ password: false, apple: true }, true);
-  assert.deepEqual(signInFormParts(noPassword, "password"), { email: false, password: false, submitLabel: "signin.continue", passkeyLink: false, captchaUrl: null });
+  assert.deepEqual(signInFormParts(noPassword, "password"), { email: false, password: false, ...signInOnly, submitLabel: "signin.continue", passkeyLink: false, captchaUrl: null });
+});
+
+test("email sign-up asks for the email, then the details, then waits for the inbox", () => {
+  const view = inAppSignIn({ password: true, sign_up: true, captcha_url: "https://commy.chat/check" }, true);
+  assert.equal(view.signUp, true);
+  const start = signInFormParts(view, "email", "signup");
+  assert.deepEqual([start.email, start.password, start.name, start.adult, start.socials, start.captchaUrl], [true, false, false, false, true, null]);
+  assert.equal(start.submitLabel, "signin.continue");
+  const details = signInFormParts(view, "details", "signup");
+  assert.deepEqual([details.email, details.password, details.name, details.adult, details.socials], [true, true, true, true, false]);
+  assert.equal(details.submitLabel, "signup.submit");
+  assert.equal(details.captchaUrl, "https://commy.chat/check");
+  assert.equal(details.passkeyLink, false);
+  const inbox = signInFormParts(view, "inbox", "signup");
+  assert.deepEqual([inbox.email, inbox.password, inbox.inbox, inbox.socials], [false, false, true, false]);
+  assert.equal(inbox.captchaUrl, "https://commy.chat/check", "signing in after confirming needs a fresh safety check");
+});
+
+test("servers without email sign-up keep sending new people to the browser", () => {
+  assert.equal(inAppSignIn({ password: true, sign_up: false }, true).signUp, false);
+  assert.equal(inAppSignIn({ password: false, sign_up: true }, true).signUp, false);
+  assert.equal(signInFormParts(inAppSignIn({ password: true }, true), "details", "signup").name, false);
+});
+
+test("coming back to the app after the email link signs in, but not over and over", () => {
+  const waiting = { stage: "inbox", mode: "signup", triedAt: 100000 };
+  assert.equal(returnSignInDue({ ...waiting, now: 100000 + 15000 }), true);
+  assert.equal(returnSignInDue({ ...waiting, now: 100000 + 3000 }), false, "a quick app switch does not resend the email");
+  assert.equal(returnSignInDue({ ...waiting, now: 100000 + 3000, fromLink: true }), true, "the Open Commy link always signs in");
+  assert.equal(returnSignInDue({ stage: "details", mode: "signup", now: 999999, fromLink: true }), false);
+  assert.equal(returnSignInDue({ stage: "inbox", mode: "signin", now: 999999, fromLink: true }), false);
+});
+
+test("each mode names itself and points at the other", () => {
+  assert.deepEqual(signInModeText("signup"), { title: "signup.title", intro: "signup.intro", apple: "signup.apple", switchLink: "signup.have.account" });
+  assert.equal(signInModeText("signin").switchLink, "signin.create");
+  assert.equal(signInModeText("anything").title, "signin.title");
 });
 
 test("after the email, a saved passkey is tried before the password", () => {
@@ -105,6 +146,10 @@ test("confirming age or the access code retries the sign-in that asked for it", 
     args: { create: true, adultConfirmed: true, accessCode: "abc" },
   });
   assert.equal(inAppRetry({ kind: "sheet", provider: "github" }).command, "account_sign_in_apple");
+  assert.deepEqual(inAppRetry({ kind: "email", email: "me@example.com", password: "long enough", name: "Nova" }, { accessCode: "abc", captcha: "tok" }), {
+    command: "account_sign_up_email",
+    args: { email: "me@example.com", password: "long enough", name: "Nova", adultConfirmed: true, captcha: "tok", accessCode: "abc" },
+  });
 });
 
 test("each server answer opens its step", () => {
