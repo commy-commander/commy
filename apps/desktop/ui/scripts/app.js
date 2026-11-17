@@ -1802,7 +1802,11 @@ async function mockInvoke(cmd, args = {}) {
     case "account_claim_profile": mock.account.unclaimed_profile = null; mock.account.needs_account_folder = false; return mock.account;
     case "account_begin_sign_in": return { user_code: "WDJB-MJHT", verification_url: "https://commy.chat/device?user_code=WDJBMJHT", expires_in: 600 };
     case "account_cancel_sign_in": return null;
-    case "account_in_app_options": return { password: true, apple: new URLSearchParams(location.search).has("ios"), google: true, twitch: true, passkey: true, sign_up: true, captcha_url: null };
+    case "account_in_app_options": {
+      const phone = new URLSearchParams(location.search).has("mobile");
+      return { password: true, apple: new URLSearchParams(location.search).has("ios"), google: true, twitch: true, passkey: phone, passkey_in_browser: !phone, browser_sheet: !phone, sign_up: true, captcha_url: null };
+    }
+    case "account_cancel_browser_sign_in": mock.browserSignIn?.(); return null;
     case "account_sign_in_password":
       if (args.password !== "correct horse") throw "That email and password don't match.";
       return { step: /two-step/.test(args.email) ? "code" : "done" };
@@ -1815,6 +1819,7 @@ async function mockInvoke(cmd, args = {}) {
       if (!args.accessCode) return { step: "access_code" };
       return { step: "done" };
     case "account_sign_in_sheet":
+      if (!new URLSearchParams(location.search).has("mobile") && await new Promise(done => { mock.browserSignIn = () => done(true); setTimeout(() => done(false), 3000); })) return { step: "canceled" };
       if (args.provider === "twitch") return { step: "canceled" };
       if (!args.adultConfirmed) return { step: "confirm_adult" };
       if (!args.accessCode) return { step: "access_code" };
@@ -23097,7 +23102,12 @@ function wireEvents() {
   $("signin-form").addEventListener("submit", submitPasswordSignIn);
   $("signin-apple").onclick = () => signInWithApple(false);
   for (const provider of SHEET_PROVIDERS) $(`signin-${provider}`).onclick = () => signInWithSheet(provider);
-  $("signin-passkey").onclick = () => runInAppStep(() => invoke("account_sign_in_passkey", { quiet: false }));
+  $("signin-passkey").onclick = () => (inAppView.passkey ? runInAppStep(() => invoke("account_sign_in_passkey", { quiet: false })) : beginSignIn());
+  $("signin-browser-cancel").onclick = () => invoke("account_cancel_browser_sign_in").catch(() => {});
+  $("signin-browser-instead").onclick = async () => {
+    await invoke("account_cancel_browser_sign_in").catch(() => {});
+    beginSignIn();
+  };
   $("signin-create").onclick = switchSignInMode;
   $("signin-signup-terms").onclick = () => invoke("open_url", { url: `${account.server}/terms` }).catch(e => toast(String(e)));
   $("signin-inbox-go").onclick = () => signInAfterConfirming("signup.inbox.not.yet");
@@ -27241,8 +27251,7 @@ async function prepareInAppSignIn() {
   const start = $("signin-start");
   const server = account && account.server;
   if (inAppOptions && inAppOptions.server === server) return renderInAppSignIn(inAppOptions.view);
-  const mobile = await invoke("is_mobile_app").catch(() => false);
-  if (!mobile) return renderInAppSignIn(inAppSignIn(null, false));
+  if (inBrowserApp()) return renderInAppSignIn(inAppSignIn(null, false));
   start.classList.add("signin-loading");
   const options = await invoke("account_in_app_options").catch(() => null);
   const view = inAppSignIn(options, true);
@@ -27522,12 +27531,31 @@ function signInWithApple(create, accessCode = null) {
 
 function signInWithSheet(provider) {
   useInAppMethod({ kind: "sheet", provider });
-  runInAppStep(() => invoke("account_sign_in_sheet", { provider, adultConfirmed: false, accessCode: null }));
+  runSheetStep(provider, () => invoke("account_sign_in_sheet", { provider, adultConfirmed: false, accessCode: null }));
 }
 
 function retryInApp(accessCode = null) {
   const { command, args } = inAppRetry(inAppMethod, { adultConfirmed: $("signin-adult").checked, accessCode, captcha: signInCheck.token });
+  if (command === "account_sign_in_sheet") return runSheetStep(args.provider, () => invoke(command, args));
   runInAppStep(() => invoke(command, args));
+}
+
+async function runSheetStep(provider, call) {
+  if (!inAppView.browserSheet) return runInAppStep(call);
+  if (inAppBusy) return;
+  showBrowserWait(provider);
+  try {
+    await runInAppStep(call);
+  } finally {
+    showBrowserWait(null);
+  }
+}
+
+function showBrowserWait(provider) {
+  const waiting = Boolean(provider);
+  if (waiting) setI18nText($("signin-browser-label"), `signin.browser.wait.${provider}`);
+  $("signin-browser-wait").classList.toggle("hidden", !waiting);
+  $("signin-start").classList.toggle("hidden", waiting);
 }
 
 function syncAdultConfirmation() {

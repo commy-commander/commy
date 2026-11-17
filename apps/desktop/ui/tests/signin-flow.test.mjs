@@ -17,9 +17,9 @@ const {
   readCaptchaMessage,
 } = require("../scripts/signin-flow.js");
 
-const browserOnly = { form: false, password: false, apple: false, google: false, twitch: false, passkey: false, buttons: false, socialIcons: false, signUp: false, captchaUrl: null };
+const browserOnly = { form: false, password: false, apple: false, google: false, twitch: false, passkey: false, passkeyInBrowser: false, browserSheet: false, buttons: false, socialIcons: false, signUp: false, captchaUrl: null };
 
-test("the desktop app and older servers keep the browser sign-in", () => {
+test("the web app and older servers keep the browser sign-in", () => {
   assert.deepEqual(inAppSignIn({ password: true, apple: true, google: true, passkey: true, captcha_url: "https://commy.chat/x" }, false), browserOnly);
   assert.deepEqual(inAppSignIn(null, true), browserOnly);
   assert.equal(inAppSignIn({ password: false, apple: false }, true).form, false);
@@ -42,6 +42,19 @@ test("Google, Twitch and passkeys show up when the server and the phone offer th
   const buttonsOnly = inAppSignIn({ password: false, twitch: true }, true);
   assert.equal(buttonsOnly.form, true, "the form shows even when only a social button is offered");
   assert.equal(buttonsOnly.password, false);
+});
+
+test("on a computer, Google and Twitch finish in the browser and a passkey opens the browser sign-in", () => {
+  const desktop = inAppSignIn({ password: true, google: true, twitch: true, passkey: false, passkey_in_browser: true, browser_sheet: true, sign_up: true }, true);
+  assert.equal(desktop.form, true);
+  assert.equal(desktop.browserSheet, true);
+  assert.equal(desktop.passkeyInBrowser, true);
+  assert.equal(desktop.socialIcons, false);
+  assert.equal(emailNextStep(desktop, false), "password", "no quiet passkey try on a computer");
+  assert.equal(signInFormParts(desktop, "password").passkeyLink, true);
+  assert.equal(inAppSignIn({ password: true, browser_sheet: true }, true).browserSheet, false, "no browser wait without a social button");
+  assert.equal(inAppSignIn({ password: false, google: true, passkey_in_browser: true }, true).passkeyInBrowser, false, "the passkey link sits under the password");
+  assert.equal(inAppSignIn({ password: true, passkey: true, passkey_in_browser: true }, true).passkeyInBrowser, false, "an in-app passkey wins");
 });
 
 test("on iPhone, Apple stays a full button and Google and Twitch shrink to icons", () => {

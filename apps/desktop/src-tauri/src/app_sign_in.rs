@@ -24,8 +24,11 @@ const SHEET_RETURN_SCHEME: &str = "commy";
 const SHEET_RETURN_HOST: &str = "signed-in";
 const MAX_HANDOFF: usize = 64;
 const IOS_PASSKEY_SITES: [&str; 1] = ["commy.chat"];
+#[cfg(desktop)]
+const BROWSER_WAIT: Duration = Duration::from_secs(10 * 60);
 
 static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
+static BROWSER_RETURN: Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>> = Mutex::new(None);
 
 #[derive(Clone)]
 struct Pending {
@@ -73,6 +76,8 @@ pub struct InAppOptions {
     google: bool,
     twitch: bool,
     passkey: bool,
+    passkey_in_browser: bool,
+    browser_sheet: bool,
     sign_up: bool,
     captcha_url: Option<String>,
 }
@@ -120,7 +125,7 @@ fn offers_sheet(doc: &Discovery, provider: &str) -> bool {
         "twitch" => doc.providers.twitch,
         _ => false,
     };
-    cfg!(mobile) && offered && doc.endpoints.app_sign_in_start.is_some() && doc.endpoints.app_sign_in_finish.is_some()
+    offered && doc.endpoints.app_sign_in_start.is_some() && doc.endpoints.app_sign_in_finish.is_some()
 }
 
 fn offers_passkey(doc: &Discovery, server: &str) -> bool {
@@ -262,6 +267,8 @@ pub async fn account_in_app_options(app: tauri::State<'_, App>) -> Result<InAppO
         google: offers_sheet(&doc, "google"),
         twitch: offers_sheet(&doc, "twitch"),
         passkey: offers_passkey(&doc, &server),
+        passkey_in_browser: cfg!(desktop) && doc.providers.passkey,
+        browser_sheet: cfg!(desktop),
         sign_up: sign_up_url(&doc).is_some(),
         captcha_url: captcha_url(&doc),
     })
@@ -618,11 +625,10 @@ pub async fn account_sign_in_sheet(
         return Err(read_reply(&started).err().unwrap_or_else(|| "The account server did not start the sign-in".into()));
     }
     let (page, handoff) = sheet_page(&server, &started)?;
-    let Some(back) = ask_native(&handle, "openSheet", json!({ "url": page }), "The sign-in page").await? else {
+    let Some(back) = open_sheet(&handle, page).await? else {
         keep(pending);
         return Ok(SignInStep::Canceled);
     };
-    let back = back.get("url").and_then(Value::as_str).unwrap_or_default().to_string();
     let code = sheet_code(&back, &handoff)?;
     let answer = post(&app, &server, &finish, json!({ "handoff": handoff, "verifier": verifier, "code": code }), None, None).await?;
     if answer.body.get("code").and_then(Value::as_str) == Some("ACCESS_DENIED") {
@@ -630,6 +636,54 @@ pub async fn account_sign_in_sheet(
         return Ok(SignInStep::Canceled);
     }
     settle(&handle, &server, &doc, pending, answer).await
+}
+
+#[cfg(mobile)]
+async fn open_sheet(handle: &AppHandle, page: String) -> Result<Option<String>, String> {
+    let back = ask_native(handle, "openSheet", json!({ "url": page }), "The sign-in page").await?;
+    Ok(back.map(|back| back.get("url").and_then(Value::as_str).unwrap_or_default().to_string()))
+}
+
+#[cfg(desktop)]
+async fn open_sheet(handle: &AppHandle, page: String) -> Result<Option<String>, String> {
+    let back = wait_for_browser();
+    if let Err(e) = crate::browser::open(handle, &page) {
+        account_cancel_browser_sign_in();
+        return Err(format!("Could not open your browser: {e}"));
+    }
+    match tokio::time::timeout(BROWSER_WAIT, back).await {
+        Ok(link) => Ok(link.ok().flatten()),
+        Err(_) => {
+            account_cancel_browser_sign_in();
+            Err("The sign-in took too long. Try again.".into())
+        }
+    }
+}
+
+#[cfg(desktop)]
+fn wait_for_browser() -> tokio::sync::oneshot::Receiver<Option<String>> {
+    let (waiter, back) = tokio::sync::oneshot::channel();
+    if let Some(earlier) = BROWSER_RETURN.lock_or_recover().replace(waiter) {
+        let _ = earlier.send(None);
+    }
+    back
+}
+
+pub fn is_browser_return(link: &str) -> bool {
+    url::Url::parse(link).is_ok_and(|url| url.scheme() == SHEET_RETURN_SCHEME && url.host_str() == Some(SHEET_RETURN_HOST))
+}
+
+pub fn browser_came_back(link: &str) {
+    if let Some(waiter) = BROWSER_RETURN.lock_or_recover().take() {
+        let _ = waiter.send(Some(link.to_string()));
+    }
+}
+
+#[tauri::command]
+pub fn account_cancel_browser_sign_in() {
+    if let Some(waiter) = BROWSER_RETURN.lock_or_recover().take() {
+        let _ = waiter.send(None);
+    }
 }
 
 #[tauri::command]
@@ -837,6 +891,28 @@ mod tests {
         assert!(!waits_for_email(&answer(422, json!({ "code": "USER_ALREADY_EXISTS" }))));
         assert!(read_reply(&answer(422, json!({ "code": "USER_ALREADY_EXISTS" }))).unwrap_err().contains("Sign in instead"));
         assert!(read_reply(&answer(400, json!({ "code": "THROWAWAY_EMAIL" }))).unwrap_err().contains("Throwaway"));
+    }
+
+    #[test]
+    fn only_the_sign_in_return_link_counts_as_the_browser_coming_back() {
+        assert!(is_browser_return("commy://signed-in?handoff=h1&code=c1"));
+        assert!(!is_browser_return("commy://email-confirmed"));
+        assert!(!is_browser_return("commy://i/commy.chat/AB23CD45"));
+        assert!(!is_browser_return("https://signed-in/?handoff=h1"));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn the_browser_return_reaches_only_the_newest_waiting_sign_in() {
+        let mut earlier = wait_for_browser();
+        let mut newest = wait_for_browser();
+        assert_eq!(earlier.try_recv().unwrap(), None, "a second sign-in sets the first aside");
+        browser_came_back("commy://signed-in?handoff=h2&code=c2");
+        assert_eq!(newest.try_recv().unwrap().as_deref(), Some("commy://signed-in?handoff=h2&code=c2"));
+        let mut canceled = wait_for_browser();
+        account_cancel_browser_sign_in();
+        assert_eq!(canceled.try_recv().unwrap(), None);
+        browser_came_back("commy://signed-in?handoff=late&code=late");
     }
 
     #[test]

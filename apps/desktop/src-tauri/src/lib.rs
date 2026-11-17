@@ -8775,6 +8775,7 @@ pub fn run() {
             app_sign_in::account_sign_in_code,
             app_sign_in::account_sign_in_apple,
             app_sign_in::account_sign_in_sheet,
+            app_sign_in::account_cancel_browser_sign_in,
             app_sign_in::account_sign_in_passkey,
             account::account_sign_out,
             account::account_delete_start,

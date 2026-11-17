@@ -43,7 +43,7 @@ fn handoff(line: &str) -> Option<Handoff> {
     match line.trim() {
         SHOW_REQUEST => Some(Handoff::Show),
         HERE_REQUEST => Some(Handoff::Here),
-        other => other.strip_prefix(HANDOFF_PREFIX).filter(|link| looks_like_link(link)).map(|link| Handoff::Link(link.to_string())),
+        other => other.strip_prefix(HANDOFF_PREFIX).filter(|link| app_link(link).is_some()).map(|link| Handoff::Link(link.to_string())),
     }
 }
 
@@ -354,7 +354,7 @@ pub fn take_pending_invite_link() -> Option<String> {
 }
 
 pub fn link_from_args() -> Option<String> {
-    std::env::args().skip(1).find(|a| a.starts_with("commy://") && looks_like_link(a))
+    std::env::args().skip(1).find(|a| a.starts_with("commy://") && app_link(a).is_some())
 }
 
 pub fn default_data_dir() -> Option<PathBuf> {
@@ -404,10 +404,40 @@ fn answer(line: &str) -> Option<Handoff> {
     handoff(line).filter(|_| !STEPPING_ASIDE.load(Ordering::SeqCst))
 }
 
+#[derive(Debug, PartialEq)]
+enum AppLink {
+    Invite,
+    EmailConfirmed,
+    SignedIn,
+}
+
+fn app_link(link: &str) -> Option<AppLink> {
+    if is_email_confirmed(link) {
+        Some(AppLink::EmailConfirmed)
+    } else if crate::app_sign_in::is_browser_return(link) {
+        Some(AppLink::SignedIn)
+    } else {
+        looks_like_link(link).then_some(AppLink::Invite)
+    }
+}
+
 fn deliver(handle: &AppHandle, link: String) {
-    *PENDING.lock_or_recover() = Some(link.clone());
-    crate::tray::show_main_window(handle);
-    let _ = handle.emit("invite-link", link);
+    match app_link(&link) {
+        Some(AppLink::Invite) => {
+            *PENDING.lock_or_recover() = Some(link.clone());
+            crate::tray::show_main_window(handle);
+            let _ = handle.emit("invite-link", link);
+        }
+        Some(AppLink::EmailConfirmed) => {
+            crate::tray::show_main_window(handle);
+            let _ = handle.emit("email-confirmed", ());
+        }
+        Some(AppLink::SignedIn) => {
+            crate::tray::show_main_window(handle);
+            crate::app_sign_in::browser_came_back(&link);
+        }
+        None => {}
+    }
 }
 
 pub const EMAIL_CONFIRMED_LINK: &str = "commy://email-confirmed";
@@ -421,13 +451,7 @@ pub fn on_run_event(handle: &AppHandle, event: &tauri::RunEvent) {
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
     if let tauri::RunEvent::Opened { urls } = event {
         for url in urls {
-            let link = url.to_string();
-            if is_email_confirmed(&link) {
-                crate::tray::show_main_window(handle);
-                let _ = handle.emit("email-confirmed", ());
-            } else if looks_like_link(&link) {
-                deliver(handle, link);
-            }
+            deliver(handle, url.to_string());
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
@@ -435,7 +459,7 @@ pub fn on_run_event(handle: &AppHandle, event: &tauri::RunEvent) {
 }
 
 pub fn start(handle: &AppHandle, data_dir: &Path, launch_link: Option<String>) {
-    if let Some(link) = launch_link {
+    if let Some(link) = launch_link.filter(|link| app_link(link) == Some(AppLink::Invite)) {
         *PENDING.lock_or_recover() = Some(link);
     }
     let listener = match TcpListener::bind(("127.0.0.1", 0)) {
@@ -512,7 +536,60 @@ pub fn register_scheme() {
     );
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+const LINUX_LINK_ENTRY: &str = "chat.commy.desktop-links.desktop";
+
+#[cfg(target_os = "linux")]
+pub fn register_scheme() {
+    let exe = std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok());
+    let (Some(exe), Some(dir)) = (exe, linux_applications_dir()) else { return };
+    let entry = linux_link_entry(&exe.to_string_lossy());
+    let path = dir.join(LINUX_LINK_ENTRY);
+    if std::fs::read_to_string(&path).is_ok_and(|current| current == entry) {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, entry)) {
+        tracing::warn!("could not register the commy:// link handler: {e}");
+        return;
+    }
+    let _ = std::process::Command::new("xdg-mime").args(["default", LINUX_LINK_ENTRY, "x-scheme-handler/commy"]).status();
+    let _ = std::process::Command::new("update-desktop-database").arg(&dir).status();
+}
+
+#[cfg(target_os = "linux")]
+fn linux_applications_dir() -> Option<PathBuf> {
+    let data = std::env::var_os("XDG_DATA_HOME").filter(|dir| !dir.is_empty()).map(PathBuf::from);
+    let data = data.or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))?;
+    Some(data.join("applications"))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_link_entry(exe: &str) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Commy\nExec={} %u\nNoDisplay=true\nTerminal=false\nMimeType=x-scheme-handler/commy;\n",
+        desktop_exec_path(exe)
+    )
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn desktop_exec_path(exe: &str) -> String {
+    let mut quoted = String::from("\"");
+    for c in exe.chars() {
+        match c {
+            '"' | '`' | '$' => {
+                quoted.push_str("\\\\");
+                quoted.push(c);
+            }
+            '\\' => quoted.push_str("\\\\\\\\"),
+            '%' => quoted.push_str("%%"),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn register_scheme() {}
 
 #[cfg(test)]
@@ -536,11 +613,24 @@ mod tests {
         assert!(is_email_confirmed("commy://email-confirmed?from=page"));
         assert!(!is_email_confirmed("commy://email-confirmed-elsewhere"));
         assert!(!is_email_confirmed("commy://i/commy.chat/AB23CD45"));
+        assert_eq!(app_link("commy://email-confirmed"), Some(AppLink::EmailConfirmed));
+        assert_eq!(app_link("commy://signed-in?handoff=h&code=c"), Some(AppLink::SignedIn));
+        assert_eq!(app_link("commy://i/commy.chat/AB23CD45"), Some(AppLink::Invite));
+        assert_eq!(app_link("commy://elsewhere"), None);
+        assert!(matches!(handoff(&launch_request(Some("commy://signed-in?handoff=h&code=c"), false)), Some(Handoff::Link(_))));
         hold_resolved(held("commy://i/one"));
         assert!(take_resolved("commy://i/one", "ticket-b").is_none(), "another ticket");
         assert!(take_resolved("commy://i/two", "ticket-a").is_none(), "another link");
         assert!(take_resolved("commy://i/one", "ticket-a").is_some());
         assert!(take_resolved("commy://i/one", "ticket-a").is_none(), "taken once");
+    }
+
+    #[test]
+    fn the_linux_link_entry_runs_this_app_for_commy_links() {
+        let entry = linux_link_entry("/home/me/Apps/Commy.AppImage");
+        assert!(entry.contains("Exec=\"/home/me/Apps/Commy.AppImage\" %u\n"));
+        assert!(entry.contains("MimeType=x-scheme-handler/commy;\n"));
+        assert_eq!(desktop_exec_path("/opt/100% $odd"), "\"/opt/100%% \\\\$odd\"");
     }
 
     #[test]

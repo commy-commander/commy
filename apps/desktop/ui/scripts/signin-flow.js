@@ -3,8 +3,8 @@ const CAPTCHA_MESSAGE = "commy-captcha";
 
 const SHEET_PROVIDERS = ["google", "twitch"];
 
-function inAppSignIn(options, mobile) {
-  const offered = name => Boolean(mobile && options && options[name]);
+function inAppSignIn(options, nativeApp) {
+  const offered = name => Boolean(nativeApp && options && options[name]);
   const password = offered("password");
   const apple = offered("apple");
   const google = offered("google");
@@ -18,6 +18,8 @@ function inAppSignIn(options, mobile) {
     google,
     twitch,
     passkey,
+    passkeyInBrowser: password && !passkey && offered("passkey_in_browser"),
+    browserSheet: (google || twitch) && offered("browser_sheet"),
     buttons,
     socialIcons: apple && (google || twitch),
     signUp: password && offered("sign_up"),
@@ -45,7 +47,7 @@ function signInFormParts(view, stage, mode = "signin") {
     inbox: false,
     socials: true,
     submitLabel: askPassword ? "signin.submit" : "signin.continue",
-    passkeyLink: askPassword && Boolean(view.passkey),
+    passkeyLink: askPassword && Boolean(view.passkey || view.passkeyInBrowser),
     captchaUrl: askPassword ? view.captchaUrl : null,
   };
 }
