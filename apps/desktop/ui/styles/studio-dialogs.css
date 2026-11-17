@@ -2247,6 +2247,7 @@ html[data-look="studio"] .modal.dialog.move-guide > .field-label { margin: 2px 0
 html[data-look="studio"] .modal.dialog.move-guide > .modal-list { padding-left: 22px; }
 html[data-look="studio"] .modal.dialog.move-guide > p.move-guide-note { color: var(--text-muted); font-size: 13px; }
 html[data-look="studio"] .modal.dialog.move-guide > p.move-guide-status:empty { display: none; }
+html[data-look="studio"] .modal.dialog.move-guide > p.move-guide-status.error { color: var(--danger-text); }
 html[data-look="studio"] .modal.dialog.dc > .signin-server-help,
 html[data-look="studio"] .modal.dialog.dc > .signin-move-note { width: 100%; }
 html[data-look="studio"] .modal.dialog.dc > .signin-server-help { width: auto; align-self: center; }

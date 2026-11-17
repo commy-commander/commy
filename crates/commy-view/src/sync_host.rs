@@ -58,6 +58,16 @@ pub struct HostRelease {
     pub version: Option<String>,
     pub fit: &'static str,
     pub text: String,
+    pub operator: Option<String>,
+}
+
+const OPERATOR_SHOWN_CHARS: usize = 60;
+const UNNAMED_OPERATOR: &str = "this sync server";
+
+fn shown_operator(name: Option<&str>) -> Option<String> {
+    let name: String = name?.chars().filter(|c| !c.is_control()).take(OPERATOR_SHOWN_CHARS).collect();
+    let name = name.trim();
+    (!name.is_empty() && !name.eq_ignore_ascii_case(UNNAMED_OPERATOR)).then(|| name.to_string())
 }
 
 pub fn host_release(greeting: &Greeting) -> HostRelease {
@@ -78,7 +88,7 @@ fn host_release_for(greeting: &Greeting, app_protocol: u32) -> HostRelease {
         }
         Fit::AppBehind => ("app_behind", HOST_NEEDS_NEWER_APP.to_string()),
     };
-    HostRelease { version, fit, text }
+    HostRelease { version, fit, text, operator: shown_operator(greeting.operator.as_deref()) }
 }
 
 pub fn room_relay(community_socket: &str, default_socket: &str, greeting: Option<&Greeting>) -> RoomRelay {
@@ -206,7 +216,10 @@ mod tests {
     #[test]
     fn the_hosts_release_reads_as_plain_words() {
         let current = Greeting { version: Some("0.2.5".into()), ..Greeting::of(5) };
-        assert_eq!(host_release_for(&current, 5), HostRelease { version: Some("0.2.5".into()), fit: "current", text: "It runs Commy 0.2.5.".into() });
+        assert_eq!(
+            host_release_for(&current, 5),
+            HostRelease { version: Some("0.2.5".into()), fit: "current", text: "It runs Commy 0.2.5.".into(), operator: None }
+        );
         let behind = host_release_for(&Greeting::of(4), 5);
         assert_eq!(behind.fit, "host_behind");
         assert!(behind.text.starts_with("It runs an earlier Commy, which is older than this app."));
@@ -216,5 +229,16 @@ mod tests {
         assert_eq!(host_release_for(&odd, 5).version, None, "a version with markup is not shown");
         let dev = Greeting { version: Some("main".into()), ..Greeting::of(5) };
         assert_eq!(host_release_for(&dev, 5).text, "It runs a development build of Commy.");
+    }
+
+    #[test]
+    fn the_hosts_operator_name_is_shown_when_it_has_one() {
+        let named = |name: &str| host_release_for(&Greeting { operator: Some(name.into()), ..Greeting::of(5) }, 5).operator;
+        assert_eq!(named(" Dev test host ").as_deref(), Some("Dev test host"));
+        assert_eq!(named("this sync server"), None, "the unnamed default is not a name");
+        assert_eq!(named("  "), None);
+        assert_eq!(named("Line\nbreak").as_deref(), Some("Linebreak"));
+        assert_eq!(named(&"x".repeat(100)).map(|n| n.len()), Some(OPERATOR_SHOWN_CHARS));
+        assert_eq!(host_release_for(&Greeting::of(5), 5).operator, None);
     }
 }

@@ -10,6 +10,7 @@ import { createRequestHandler } from "./http.js";
 import { createLinkBlocklist } from "./link-blocklist.js";
 import { createChecker, oldestFor } from "./listing-checks.js";
 import { createListingStore } from "./listing.js";
+import { widenMoveTimes } from "./moved.js";
 import { startListingRechecks } from "./listing-rechecks.js";
 import { createServerBlocklist } from "./server-blocklist.js";
 import { createServerList } from "./server-list.js";
@@ -35,16 +36,21 @@ async function retryUntilDatabaseReady(work, attempts) {
   }
 }
 
-async function dropRetiredColumnsBeforeBetterAuthStarts(attempts = 30) {
+async function fixOldColumns(old) {
+  await dropDeviceNames(old);
+  if (await widenMoveTimes(old)) console.log("[auth] move times now hold millisecond timestamps");
+}
+
+async function fixOldColumnsBeforeBetterAuthStarts(attempts = 30) {
   const old = new pg.Pool({ connectionString: config.databaseUrl, max: 1 });
   try {
-    await retryUntilDatabaseReady(() => dropDeviceNames(old), attempts);
+    await retryUntilDatabaseReady(() => fixOldColumns(old), attempts);
   } finally {
     await old.end();
   }
 }
 
-await dropRetiredColumnsBeforeBetterAuthStarts();
+await fixOldColumnsBeforeBetterAuthStarts();
 const redis = config.redisUrl ? connectRedis(config.redisUrl) : null;
 redis?.ready.then(() => console.log("[auth] redis connected"));
 const serverBlocklist = createServerBlocklist({ listKey: config.listKey, origin: config.baseURL, serverKey: config.serverKey, file: config.serverBlocklistFile });

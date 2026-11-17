@@ -113,6 +113,12 @@ function fillList(list, items, tag = "li") {
 
 let movingTo = null;
 
+function showMoveStatus(text, failed = false) {
+  const status = $("account-move-status");
+  status.textContent = text;
+  status.classList.toggle("error", failed);
+}
+
 function openMovePlan(typed) {
   const plan = movePlan(typed);
   movingTo = typed;
@@ -121,7 +127,8 @@ function openMovePlan(typed) {
   fillList($("account-move-steps"), plan.steps);
   $("account-move-others").textContent = plan.others;
   $("account-move-note").textContent = plan.note;
-  $("account-move-status").textContent = "";
+  showMoveStatus("");
+  $("account-move-go").textContent = "Move Account";
   $("account-move-go").disabled = false;
   showModal("modal-account-move");
 }
@@ -137,15 +144,15 @@ $("account-move-go").onclick = async () => {
   if (!movingTo) return;
   const button = $("account-move-go");
   button.disabled = true;
-  $("account-move-status").textContent = `Copying your account to ${shownHost(movingTo)}…`;
+  showMoveStatus(`Copying your account to ${shownHost(movingTo)}…`);
   try {
     await invoke("start_account_move", { to: movingTo });
     movingTo = null;
     hideModals();
     await afterAccountMove();
   } catch (e) {
-    $("account-move-status").textContent = "";
-    toast(moveProblem(e));
+    showMoveStatus(moveProblem(e), true);
+    button.textContent = "Try Again";
   } finally {
     button.disabled = false;
   }

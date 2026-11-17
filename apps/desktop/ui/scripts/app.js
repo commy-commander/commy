@@ -877,7 +877,7 @@ async function mockInvoke(cmd, args = {}) {
     case "account_moved_to": return { moved_to: /[?&]movedto\b/.test(location.search) ? "https://friends.example" : null };
     case "account_move_pending": return /[?&]movepending\b/.test(location.search) ? "https://friends.example" : null;
     case "take_account_moved_in": return /[?&]movedin\b/.test(location.search) && !mock.movedInShown && (mock.movedInShown = true) ? { from: "https://commy.chat", to: "https://friends.example" } : null;
-    case "start_account_move": return new Promise(resolve => setTimeout(resolve, 1500));
+    case "start_account_move": return new Promise((resolve, reject) => setTimeout(() => (String(args.to).includes("down.") ? reject("Your account server could not record the move (500 Internal Server Error). Nothing was lost, and moving again picks up where this left off.") : resolve()), 1500));
     case "follow_account_move": return null;
     case "set_server_public": {
       const s = mock.servers[args.serverId];
@@ -14347,6 +14347,7 @@ function renderSyncHostEditor(server) {
   $("sync-host-input").value = "";
   $("sync-host-status").textContent = "";
   $("sync-host-save").textContent = "Check and Move";
+  $("sync-host-home").textContent = syncHostHomeButton(ownerHome);
   $("sync-host-home").classList.toggle("hidden", !host);
   renderSyncHostGuide();
 }
@@ -14390,7 +14391,7 @@ async function moveSyncHost(home) {
     status.textContent = SYNC_HOST_INVALID;
     return;
   }
-  const label = target || SYNC_HOST_HOME;
+  const label = target || syncHostHomeLabel(account && account.server_host);
   const confirmed = syncHostPending && syncHostPending.label === label && Date.now() - syncHostPending.at < SYNC_HOST_CONFIRM_MS;
   let release = null;
   save.disabled = true;

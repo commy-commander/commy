@@ -139,7 +139,13 @@ impl Service {
             gateway: gateway::Gateway::new(config, keys),
             trust_proxy: config.trust_proxy,
             retention_days: config.retention_days,
-            greeting: Greeting { version: config.version.clone(), relay: config.relay.clone(), public_fallback: config.public_relay_fallback, ..Greeting::of(PROTOCOL) },
+            greeting: Greeting {
+                version: config.version.clone(),
+                relay: config.relay.clone(),
+                public_fallback: config.public_relay_fallback,
+                operator: config.operator.clone(),
+                ..Greeting::of(PROTOCOL)
+            },
             server_key: config.server_key.as_ref().map_or_else(commy_core::Identity::generate, |seed| commy_core::Identity::from_bytes(&seed.0)),
         })
     }

@@ -28,6 +28,15 @@ export function pointerOf(home, row, now = Date.now()) {
   return { from: home, to: row.toHome, user: row.commyUser, identity: row.identity, at: Number(row.at), proof: row.proof };
 }
 
+export async function widenMoveTimes(pool) {
+  const { rows } = await pool.query(
+    "SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'commyMove' AND column_name = 'at'",
+  );
+  if (rows[0]?.data_type !== "integer") return false;
+  await pool.query('ALTER TABLE "commyMove" ALTER COLUMN "at" TYPE bigint');
+  return true;
+}
+
 async function findMove(adapter, identity) {
   return adapter.findOne({ model: MODEL, where: [{ field: "identity", value: identity }] });
 }
@@ -41,7 +50,7 @@ export const commyMoved = ({ home, now = () => Date.now() }) => ({
         userId: { type: "string", required: true, references: { model: "user", field: "id", onDelete: "cascade" }, index: true },
         commyUser: { type: "string", required: true },
         toHome: { type: "string", required: true },
-        at: { type: "number", required: true },
+        at: { type: "number", bigint: true, required: true },
         proof: { type: "string", required: true },
       },
     },

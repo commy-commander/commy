@@ -65,10 +65,11 @@ fn landing(vault: Option<&str>, opens: impl Fn(&str) -> bool) -> Landing {
     }
 }
 
-fn to_copy(target_seq: u64, entries: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
-    if target_seq == 0 {
-        entries
+fn to_copy(already: &[Vec<u8>], mut entries: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    if entries.starts_with(already) {
+        entries.split_off(already.len())
     } else {
+        tracing::warn!("the new home already keeps a different account log, so this one was not copied");
         Vec::new()
     }
 }
@@ -187,20 +188,20 @@ async fn announce_move(app: &App, s: &Session, identity: &commy_core::Identity, 
             tracing::info!("the old home cannot point to the new one");
             Ok(())
         }
-        status => Err(format!("Your account server answered {status}")),
+        status => Err(format!("Your account server could not record the move ({status}). Nothing was lost, and moving again picks up where this left off.")),
     }
 }
 
-async fn read_log(url: &str, keys: &StreamKeys) -> Result<(SyncClient, u64, Vec<Vec<u8>>), String> {
+async fn read_log(url: &str, keys: &StreamKeys) -> Result<(SyncClient, Vec<Vec<u8>>), String> {
     let (client, mut events) = SyncClient::spawn(url.to_string());
     client.follow(keys.clone(), 0);
     let stream = keys.id;
     let mut entries = Vec::new();
-    let read = tokio::time::timeout(LOG_WAIT, async {
+    tokio::time::timeout(LOG_WAIT, async {
         while let Some(event) = events.recv().await {
             match event {
                 SyncEvent::Entry { stream: from, plain, .. } if from == stream => entries.push(plain),
-                SyncEvent::CaughtUp { stream: from, seq } if from == stream => return Ok(seq),
+                SyncEvent::CaughtUp { stream: from, .. } if from == stream => return Ok(()),
                 SyncEvent::Refused { stream: from, code } if from == stream => return Err(format!("the sync service refused: {code:?}")),
                 _ => {}
             }
@@ -209,14 +210,14 @@ async fn read_log(url: &str, keys: &StreamKeys) -> Result<(SyncClient, u64, Vec<
     })
     .await
     .map_err(|_| "the sync service took too long".to_string())??;
-    Ok((client, read, entries))
+    Ok((client, entries))
 }
 
 async fn copy_log(from: &str, to: &str, keys: StreamKeys) -> Result<usize, String> {
-    let (old, _, entries) = read_log(from, &keys).await?;
+    let (old, entries) = read_log(from, &keys).await?;
     old.unfollow(keys.id);
-    let (new, seq, _) = read_log(to, &keys).await?;
-    let entries = to_copy(seq, entries);
+    let (new, already) = read_log(to, &keys).await?;
+    let entries = to_copy(&already, entries);
     for plain in &entries {
         new.append(keys.id, plain.clone()).await.map_err(|e| format!("could not copy your account log: {e}"))?;
     }
@@ -318,10 +319,18 @@ mod tests {
     }
 
     #[test]
-    fn the_account_log_is_copied_only_onto_an_empty_stream() {
+    fn copying_the_account_log_again_adds_only_what_is_missing() {
+        let entries = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
+        assert_eq!(to_copy(&[], entries.clone()), entries);
+        assert_eq!(to_copy(&entries[..1], entries.clone()), entries[1..].to_vec(), "a move that stopped part way finishes the copy");
+        assert!(to_copy(&entries, entries.clone()).is_empty(), "a retry after a full copy writes nothing twice");
+    }
+
+    #[test]
+    fn a_different_log_at_the_new_home_is_never_mixed_with_this_one() {
         let entries = vec![b"a".to_vec(), b"b".to_vec()];
-        assert_eq!(to_copy(0, entries.clone()), entries);
-        assert!(to_copy(3, entries).is_empty());
+        assert!(to_copy(&[b"x".to_vec()], entries.clone()).is_empty());
+        assert!(to_copy(&[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()], entries).is_empty());
     }
 
     #[test]

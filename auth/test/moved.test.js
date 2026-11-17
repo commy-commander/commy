@@ -6,7 +6,7 @@ import { memoryAdapter } from "better-auth/adapters/memory";
 import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
-import { checkMoveRequest, KEPT_FOR_MS, moveMessage, pointerOf } from "../src/moved.js";
+import { checkMoveRequest, commyMoved, KEPT_FOR_MS, moveMessage, pointerOf, widenMoveTimes } from "../src/moved.js";
 
 const ORIGIN = "http://localhost:3001";
 const SECRET = "test-secret-".repeat(4);
@@ -44,6 +44,35 @@ test("an old pointer is no longer served", () => {
   assert.deepEqual(pointerOf(ORIGIN, row, 6), { from: ORIGIN, to: NEW_HOME, user: USER, identity: "ab", at: 5, proof: "p" });
   assert.equal(pointerOf(ORIGIN, row, 6 + KEPT_FOR_MS), null);
   assert.equal(pointerOf(ORIGIN, null, 6), null);
+});
+
+test("a move time is kept in milliseconds, which needs a bigint column", () => {
+  const at = commyMoved({ home: ORIGIN }).schema.commyMove.fields.at;
+  assert.equal(at.type, "number");
+  assert.equal(at.bigint, true);
+  assert.ok(Date.now() > 2 ** 31, "today's millisecond time does not fit a Postgres integer");
+});
+
+function columnPool(dataType) {
+  const sent = [];
+  return {
+    sent,
+    query: async (text) => {
+      sent.push(text);
+      return { rows: text.startsWith("SELECT") && dataType ? [{ data_type: dataType }] : [] };
+    },
+  };
+}
+
+test("an older integer move time column is widened once, keeping its rows", async () => {
+  const old = columnPool("integer");
+  assert.equal(await widenMoveTimes(old), true);
+  assert.equal(old.sent.length, 2);
+  assert.match(old.sent[1], /^ALTER TABLE "commyMove" ALTER COLUMN "at" TYPE bigint$/);
+  for (const ready of [columnPool("bigint"), columnPool(null)]) {
+    assert.equal(await widenMoveTimes(ready), false);
+    assert.equal(ready.sent.length, 1, "a bigint column or a fresh database is left alone");
+  }
 });
 
 test("discovery tells apps where moves are recorded", () => {

@@ -20,14 +20,29 @@ function cleanSyncHost(input) {
   return syncHostOk(host) ? host.toLowerCase() : null;
 }
 
-function syncHostNow(server, release, ownerHome = SYNC_HOST_HOME) {
-  const now = `This server syncs through ${(server && server.sync_host) || ownerHome || SYNC_HOST_HOME}.`;
+function syncHostHomeLabel(ownerHome) {
+  const host = String(ownerHome || "").trim().toLowerCase();
+  return !host || host === "commy.chat" ? SYNC_HOST_HOME : host;
+}
+
+function syncHostHomeButton(ownerHome) {
+  return `Move back to ${syncHostHomeLabel(ownerHome)}`;
+}
+
+function syncHostPlace(host, release) {
+  const operator = release && release.operator;
+  return operator && operator.toLowerCase() !== host.toLowerCase() ? `${operator} at ${host}` : host;
+}
+
+function syncHostNow(server, release, ownerHome) {
+  const host = (server && server.sync_host) || syncHostHomeLabel(ownerHome);
+  const now = `This server syncs through ${syncHostPlace(host, release)}.`;
   return release && release.text ? `${now} ${release.text}` : now;
 }
 
 function syncHostReady(label, release, home) {
   const runs = release && release.text ? ` ${release.text}` : "";
-  return `${label} is ready.${runs} Choose ${home ? "Move back to Commy.chat" : "Move Now"} again to move this server there.`;
+  return `${label} is ready.${runs} Choose ${home ? syncHostHomeButton(label) : "Move Now"} again to move this server there.`;
 }
 
 function syncHostAppNotice(release) {
@@ -35,5 +50,5 @@ function syncHostAppNotice(release) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { SYNC_HOST_MAX_CHARS, SYNC_HOST_HOME, SYNC_HOST_INVALID, cleanSyncHost, syncHostNow, syncHostReady, syncHostAppNotice };
+  module.exports = { SYNC_HOST_MAX_CHARS, SYNC_HOST_HOME, SYNC_HOST_INVALID, cleanSyncHost, syncHostHomeLabel, syncHostHomeButton, syncHostNow, syncHostReady, syncHostAppNotice };
 }

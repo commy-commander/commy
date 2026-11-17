@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { SYNC_HOST_MAX_CHARS, SYNC_HOST_INVALID, cleanSyncHost, syncHostNow, syncHostReady, syncHostAppNotice } = require("../scripts/sync-host.js");
+const { SYNC_HOST_MAX_CHARS, SYNC_HOST_INVALID, cleanSyncHost, syncHostHomeButton, syncHostNow, syncHostReady, syncHostAppNotice } = require("../scripts/sync-host.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const core = readFileSync(join(repo, "crates", "commy-core", "src", "sync_host.rs"), "utf8");
@@ -42,6 +42,22 @@ test("the page says which Commy the sync server runs", () => {
   assert.equal(syncHostNow({ sync_host: null }, null), "This server syncs through Commy.chat.");
   assert.equal(syncHostReady("sync.example.org", release, false), "sync.example.org is ready. It runs Commy 0.2.5. Choose Move Now again to move this server there.");
   assert.equal(syncHostReady("Commy.chat", null, true), "Commy.chat is ready. Choose Move back to Commy.chat again to move this server there.");
+});
+
+test("the page names who runs the sync server when it has a name", () => {
+  const dev = { version: "main", fit: "current", text: "It runs a development build of Commy.", operator: "Dev test host" };
+  assert.equal(syncHostNow({ sync_host: null }, dev, "dev.commy.chat"), "This server syncs through Dev test host at dev.commy.chat. It runs a development build of Commy.");
+  assert.equal(syncHostNow({ sync_host: "sync.example.org" }, { ...dev, operator: "Sync.Example.org" }), "This server syncs through sync.example.org. It runs a development build of Commy.");
+  assert.equal(syncHostNow({ sync_host: "sync.example.org" }, { ...dev, operator: null }), "This server syncs through sync.example.org. It runs a development build of Commy.");
+  assert.ok(view.includes("pub operator: Option<String>"), "the app reads the name the sync server sends");
+});
+
+test("moving back names the owner's own account server", () => {
+  assert.equal(syncHostHomeButton("commy.chat"), "Move back to Commy.chat");
+  assert.equal(syncHostHomeButton("staging.commy.chat"), "Move back to staging.commy.chat");
+  assert.equal(syncHostHomeButton(null), "Move back to Commy.chat");
+  assert.equal(syncHostReady("staging.commy.chat", null, true), "staging.commy.chat is ready. Choose Move back to staging.commy.chat again to move this server there.");
+  assert.doesNotMatch(html, /Move back to Commy\.chat/, "the button is named from the owner's account server, not fixed text");
 });
 
 test("members are told to update only when the sync server needs a newer app", () => {

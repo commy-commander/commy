@@ -9010,6 +9010,7 @@ body.mobile-app .header-actions .icon-btn:not(.active):hover { background: none;
 .move-guide > .field-label { margin-top: 4px; }
 .modal p.move-guide-note { font-size: 13px; color: var(--text-faint); }
 .modal p.move-guide-status { min-height: 20px; font-size: 13px; color: var(--text-normal); }
+.modal p.move-guide-status.error { color: var(--red); }
 .move-guide > .move-guide-learn, .invite-link-learn, .signin-server-help { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--link); font-size: 13px; font-weight: 600; cursor: pointer; }
 .move-guide > .move-guide-learn:hover, .invite-link-learn:hover, .signin-server-help:hover { text-decoration: underline; }
 .invite-link-learn { margin: -4px 0 12px; }

@@ -181,6 +181,8 @@ pub enum ServerFrame {
         relay: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         public_fallback: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operator: Option<String>,
     },
     Opened { stream: StreamId, head: u64 },
     Entries { stream: StreamId, entries: Vec<WireEntry>, caught_up: bool },
@@ -209,6 +211,7 @@ pub struct Greeting {
     pub oldest_protocol: u32,
     pub relay: Option<String>,
     pub public_fallback: bool,
+    pub operator: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,7 +223,7 @@ pub enum Fit {
 
 impl Greeting {
     pub fn of(protocol: u32) -> Self {
-        Greeting { protocol, version: None, oldest_protocol: OLDEST_CLIENT_PROTOCOL, relay: None, public_fallback: false }
+        Greeting { protocol, version: None, oldest_protocol: OLDEST_CLIENT_PROTOCOL, relay: None, public_fallback: false, operator: None }
     }
 
     pub fn frame(&self) -> ServerFrame {
@@ -230,6 +233,7 @@ impl Greeting {
             oldest: Some(self.oldest_protocol),
             relay: self.relay.clone(),
             public_fallback: self.public_fallback,
+            operator: self.operator.clone(),
         }
     }
 
@@ -246,17 +250,18 @@ impl Greeting {
 
 impl ServerFrame {
     pub fn hello(protocol: u32) -> Self {
-        ServerFrame::Hello { protocol, version: None, oldest: None, relay: None, public_fallback: false }
+        ServerFrame::Hello { protocol, version: None, oldest: None, relay: None, public_fallback: false, operator: None }
     }
 
     pub fn greeting(&self) -> Option<Greeting> {
         match self {
-            ServerFrame::Hello { protocol, version, oldest, relay, public_fallback } => Some(Greeting {
+            ServerFrame::Hello { protocol, version, oldest, relay, public_fallback, operator } => Some(Greeting {
                 protocol: *protocol,
                 version: version.clone(),
                 oldest_protocol: oldest.unwrap_or(OLDEST_CLIENT_PROTOCOL),
                 relay: relay.clone(),
                 public_fallback: *public_fallback,
+                operator: operator.clone(),
             }),
             _ => None,
         }
@@ -328,7 +333,8 @@ mod tests {
         let id = StreamSecret::random().keys().id;
         let frames = [
             ServerFrame::hello(PROTOCOL),
-            Greeting { protocol: PROTOCOL, version: Some("0.2.5".into()), oldest_protocol: 2, relay: Some("https://sync.example.org".into()), public_fallback: false }.frame(),
+            Greeting { protocol: PROTOCOL, version: Some("0.2.5".into()), oldest_protocol: 2, relay: Some("https://sync.example.org".into()), public_fallback: false, operator: None }.frame(),
+            Greeting { operator: Some("Example Chat".into()), ..Greeting::of(PROTOCOL) }.frame(),
             ServerFrame::Opened { stream: id, head: 7 },
             ServerFrame::Entries { stream: id, entries: vec![WireEntry { seq: 1, at: 1_760_000_000_000, body: Blob(vec![4; 40]) }], caught_up: true },
             ServerFrame::Appended { stream: id, nonce: Bytes([1; APPEND_NONCE_BYTES]), seq: 8, at: 5 },
@@ -397,12 +403,20 @@ mod tests {
     fn an_older_hello_still_reads_as_a_greeting() {
         let old: ServerFrame = serde_json::from_str(r#"{"t":"hello","protocol":3}"#).unwrap();
         assert_eq!(old.greeting(), Some(Greeting::of(3)));
-        let new = Greeting { protocol: 5, version: Some("0.2.5".into()), oldest_protocol: 4, relay: Some("https://sync.example.org".into()), public_fallback: true };
+        let new = Greeting {
+            protocol: 5,
+            version: Some("0.2.5".into()),
+            oldest_protocol: 4,
+            relay: Some("https://sync.example.org".into()),
+            public_fallback: true,
+            operator: Some("Example Chat".into()),
+        };
         let text = serde_json::to_string(&new.frame()).unwrap();
         assert!(text.contains(r#""public_fallback":true"#));
         assert_eq!(serde_json::from_str::<ServerFrame>(&text).unwrap().greeting(), Some(new));
         let paused = serde_json::to_string(&Greeting { relay: Some("https://sync.example.org".into()), ..Greeting::of(5) }.frame()).unwrap();
         assert!(!paused.contains("public_fallback"), "older apps see the same hello as before");
+        assert!(!paused.contains("operator"), "a host with no operator name sends none");
         assert_eq!(serde_json::to_string(&ServerFrame::hello(4)).unwrap(), r#"{"t":"hello","protocol":4}"#);
     }
 
