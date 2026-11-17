@@ -16,6 +16,7 @@ pub struct HomeTag {
     pub key: String,
     pub lookalike: bool,
     pub current: bool,
+    pub official: bool,
 }
 
 pub fn tag_of(profile: &UserProfile, now_ms: i64) -> Option<HomeTag> {
@@ -27,6 +28,7 @@ pub fn tag_of(profile: &UserProfile, now_ms: i64) -> Option<HomeTag> {
         key: commy_core::server_key::key_id(&card.key),
         lookalike: crate::links::imitates_home(domain, OFFICIAL_HOMES),
         current: card.current_at(now_ms),
+        official: commy_core::official_server::holds_official_key(&card.home, &card.key),
     })
 }
 
@@ -177,6 +179,7 @@ mod tests {
         assert_eq!(tag.home, "https://commy.chat");
         assert_eq!(tag.shown, "commy.chat");
         assert!(!tag.lookalike && tag.current);
+        assert!(!tag.official, "a card signed by any key other than the pinned one is not official");
         assert_eq!(tag.key.len(), 16);
         assert!(!tag_of(&profile, 1_000 + 31 * DAY_MS).unwrap().current);
     }

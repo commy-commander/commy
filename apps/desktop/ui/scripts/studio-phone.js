@@ -148,7 +148,7 @@ function youMarkup() {
 <div class="picks" role="radiogroup" aria-labelledby="pt-notify-lbl">${NOTIFY_PICKS.map(pick => `<button type="button" class="srow pick" role="radio" aria-checked="false" data-notify="${pick.level}"><i data-i="${pick.icon}"></i><span class="l">${pick.label}</span><i data-i="check" class="tick"></i></button>`).join("")}</div>
 <button type="button" class="srow go" id="pt-settings"><i data-i="settings"></i><span class="l">All settings</span><i data-i="chevron-right" class="chev"></i></button>
 <button type="button" class="srow go hidden" id="pt-switch-account"><i data-i="users"></i><span class="l">Switch Account</span><i data-i="chevron-right" class="chev"></i></button>
-<div class="about"><span class="star" id="pt-about-star" data-state="quiet" data-follow="off" role="img" aria-label="Commy"></span><span class="l" id="pt-about-words">Early build<small>Some of this will move.</small></span><button type="button" class="out" id="pt-sign-out">Sign out</button></div>
+<button type="button" class="srow go out" id="pt-sign-out"><i data-i="log-out"></i><span class="l">Sign out</span></button>
 </div>`;
 }
 
@@ -1121,7 +1121,6 @@ function paintYouPage() {
   $("pt-glass").setAttribute("aria-checked", String(document.documentElement.dataset.fx !== "lite"));
   const level = notifyPrefs().level;
   for (const row of document.querySelectorAll("#pt-you [data-notify]")) row.setAttribute("aria-checked", String(row.dataset.notify === level));
-  $("pt-about-words").classList.toggle("hidden", !earlyBuild(updateStatus && updateStatus.current));
   $("pt-switch-account").classList.toggle("hidden", !accountRows(account).length);
 }
 
@@ -1638,7 +1637,6 @@ function wireYouPage() {
   $("pt-presence").onclick = openPresenceSheet;
   $("pt-switch-account").onclick = () => openAccounts();
   $("pt-sign-out").onclick = () => signOutOfCurrent();
-  if (typeof Star !== "undefined") Star.mount($("pt-about-star"));
   for (const row of document.querySelectorAll("#pt-you [data-notify]")) {
     row.onclick = () => {
       const select = $("notify-level");

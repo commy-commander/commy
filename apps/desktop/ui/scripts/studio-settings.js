@@ -5,6 +5,7 @@ const SETTINGS_PAGE_ICONS = {
     privacy: "shield",
     voice: "mic",
     camera: "video",
+    streaming: "monitor-up",
     overlay: "gamepad-2",
     notifications: "bell",
     sounds: "volume-2",

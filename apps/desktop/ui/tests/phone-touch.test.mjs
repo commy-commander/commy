@@ -10,7 +10,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, messageSwipePull, messageSwipeAction, edgeBackStarts,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, MIRROR_FRAME_MS, roomTileStreams, roomCameraTiles, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, earlyBuild, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, MIRROR_FRAME_MS, roomTileStreams, roomCameraTiles, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-touch.css");
@@ -1083,25 +1083,18 @@ test("the You page asks one question about notifications, with the app's own thr
   assert.doesNotMatch(css, new RegExp(`${slim} \\.srow\\.pick \\{[^}]*font-size`));
 });
 
-test("the early build line shows only while the version is below one, and never when the version is unknown", () => {
-  assert.equal(earlyBuild("0.1.19"), true);
-  assert.equal(earlyBuild("v0.9.0-rc.2"), true);
-  assert.equal(earlyBuild("1.0.0"), false);
-  assert.equal(earlyBuild("12.4.1"), false);
-  assert.equal(earlyBuild(""), false);
-  assert.equal(earlyBuild(null), false);
-  assert.equal(earlyBuild("Commy"), false);
-  assert.match(glue, /<span class="l" id="pt-about-words">Early build<small>Some of this will move\.<\/small><\/span>/);
-  assert.match(glue, /\$\("pt-about-words"\)\.classList\.toggle\("hidden", !earlyBuild\(updateStatus && updateStatus\.current\)\);/);
+test("the You page carries no early build note", () => {
+  assert.doesNotMatch(glue, /Early build|Some of this will move|pt-about/);
+  assert.doesNotMatch(css, / \.pt-you \.about/);
 });
 
-test("the You page ends with All settings under a hairline, the star, and Sign out as red words that still ask first", () => {
+test("the You page ends with All settings under a hairline and a red Sign out row that still asks first", () => {
   assert.match(glue, /<button type="button" class="srow go" id="pt-settings"><i data-i="settings"><\/i><span class="l">All settings<\/span><i data-i="chevron-right" class="chev"><\/i><\/button>/);
-  assert.match(glue, /<button type="button" class="out" id="pt-sign-out">Sign out<\/button>/);
+  assert.match(glue, /<button type="button" class="srow go out" id="pt-sign-out"><i data-i="log-out"><\/i><span class="l">Sign out<\/span><\/button>/);
   assert.match(glue, /\$\("pt-sign-out"\)\.onclick = \(\) => signOutOfCurrent\(\);/);
   assert.match(read("scripts", "app.js"), /async function signOutOfCurrent\(\) \{[^}]*confirm\(/);
   assert.match(css, rule(" \\.pt-you \\.set \\.srow\\.go", "box-shadow: inset 0 1px 0 var\\(--line\\);"));
-  assert.match(css, rule(" \\.pt-you \\.about \\.out", "background: none;[^}]*color: var\\(--danger-text\\);"));
+  assert.match(css, rule(" \\.pt-you \\.set \\.srow\\.out", "color: var\\(--danger-text\\);"));
   assert.doesNotMatch(css, new RegExp(`${slim} \\.out \\{`));
   assert.doesNotMatch(glue, /<div class="sec lbl">More<\/div>/);
 });

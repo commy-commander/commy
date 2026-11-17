@@ -2298,6 +2298,7 @@ function selectSettingsTab(id, tab) {
   layer.dataset.tab = tab;
   settingsPhoneView(layer, "page");
   if (tab === "camera") prepareAvatarStage();
+  if (id === "user-settings" && tab === "commy-account") refreshAccountServerMark();
   if (id === "user-settings" && tab === "storage") loadDataFolder();
 }
 
@@ -15336,12 +15337,20 @@ function homeStateOf(member) {
   return member && member.home ? homeTagState(member.home, homeStatuses.get(member.home.home)) : null;
 }
 
+function verifiedSeal(extra) {
+  const seal = el("span", `signin-verified ${extra}`);
+  seal.setAttribute("aria-hidden", "true");
+  return seal;
+}
+
 function homeChip(member) {
   const tagState = homeStateOf(member);
-  const chip = el("span", `home-tag home-${tagState}`);
+  const official = homeTagOfficial(member.home, tagState);
+  const chip = el("span", `home-tag home-${tagState}${official ? " home-official" : ""}`);
   if (homeTagWarns(tagState)) chip.appendChild(svgIcon("warning", 12));
+  if (official) chip.appendChild(verifiedSeal("home-seal"));
   chip.appendChild(document.createTextNode(member.home.shown));
-  chip.title = homeTagTitle(member.home, tagState);
+  chip.title = homeTagTitle(member.home, official ? "official" : tagState);
   chip.setAttribute("aria-label", chip.title);
   return chip;
 }
@@ -27286,12 +27295,7 @@ function syncServerNote() {
 }
 
 async function verifyAccountServer() {
-  try {
-    account = await invoke("verify_account_server");
-  } catch {
-    return;
-  }
-  syncServerNote();
+  if (await checkAccountServer()) syncServerNote();
 }
 
 function showSignInHelp(noteKey) {
@@ -27978,11 +27982,46 @@ async function signOutOfOther(row) {
   }
 }
 
+function officialServerMark() {
+  const mark = el("span", "acct-official");
+  mark.append(verifiedSeal("acct-seal"), document.createTextNode("Official"));
+  mark.title = "Commy checked this is the real Commy.chat";
+  return mark;
+}
+
+function paintAccountServerLine() {
+  const { host, official } = accountServerParts(account);
+  const line = $("acct-server-line");
+  line.replaceChildren(document.createTextNode(`Account server: ${host}${account.server_from_env && !inBrowserApp() ? " (set by COMMY_AUTH_URL)" : ""}`));
+  if (official) line.append(" ", officialServerMark());
+}
+
+function paintAccountMoveNow() {
+  const { host, official } = accountServerParts(account);
+  const line = $("acct-move-now");
+  line.replaceChildren(document.createTextNode(`You are on ${host}`));
+  if (official) line.append(" ", officialServerMark());
+}
+
+async function checkAccountServer() {
+  try {
+    account = await invoke("verify_account_server");
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+async function refreshAccountServerMark() {
+  if (await checkAccountServer()) renderAccountSettings();
+}
+
 function renderAccountSettings() {
   const u = account.user || {};
   $("acct-name").textContent = u.name || "Signed out";
   $("acct-email").textContent = u.email || "";
-  $("acct-server-line").textContent = `Account server: ${account.server_host}${account.server_from_env && !inBrowserApp() ? " (set by COMMY_AUTH_URL)" : ""}`;
+  paintAccountServerLine();
+  paintAccountMoveNow();
   $("acct-device-line").textContent = account.device_linked
     ? "This device is linked to your account."
     : "This device is not linked yet; it links automatically on sign-in.";

@@ -842,12 +842,8 @@ html[data-look="studio"][data-fit="slim"] .srow.pick[aria-checked="true"] > .i:f
 html[data-look="studio"][data-fit="slim"] .srow.pick[aria-checked="true"] .tick { opacity: 1; scale: 1; }
 html[data-look="studio"][data-fit="slim"] .pt-you .set .srow.go { margin-top: 4px; border-radius: 0; box-shadow: inset 0 1px 0 var(--line); }
 html[data-look="studio"][data-fit="slim"] .srow.go .chev { flex: none; width: 18px; height: 18px; margin-right: 16px; color: var(--text-faint); }
-html[data-look="studio"][data-fit="slim"] .pt-you .about { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 0 0 10px; box-shadow: inset 0 1px 0 var(--line); font: 500 15px/1 var(--font); color: var(--header-primary); }
-html[data-look="studio"][data-fit="slim"] .pt-you .about .star { --star-size: 36px; }
-html[data-look="studio"][data-fit="slim"] .pt-you .about .l { flex: 1; min-width: 0; }
-html[data-look="studio"][data-fit="slim"] .pt-you .about small { display: block; margin-top: 6px; font: 400 13px/1 var(--font); color: var(--text-muted); white-space: nowrap; }
-html[data-look="studio"][data-fit="slim"] .pt-you .about .out { height: 44px; margin-left: auto; padding: 0 16px; border: 0; border-radius: 999px; background: none; font: 600 14.5px/1 var(--font); letter-spacing: normal; color: var(--danger-text); white-space: nowrap; }
-html[data-look="studio"][data-fit="slim"] .pt-you .about .out:active { background: var(--bg-active); }
+html[data-look="studio"][data-fit="slim"] .pt-you .set .srow.out { color: var(--danger-text); }
+html[data-look="studio"][data-fit="slim"] .pt-you .set .srow.out > .i { color: var(--danger-text); }
 html[data-look="studio"][data-fit="slim"] .srow {
   display: flex;
   align-items: center;

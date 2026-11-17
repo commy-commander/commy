@@ -9001,6 +9001,11 @@ body.mobile-app .header-actions .icon-btn:not(.active):hover { background: none;
   vertical-align: middle;
 }
 .home-tag.home-checking { opacity: .7; }
+.home-tag.home-official { opacity: 1; }
+.home-tag .home-seal { width: 11px; height: 11px; }
+.acct-official { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; color: var(--header-primary, var(--text-normal)); font-weight: 600; white-space: nowrap; }
+.acct-official .acct-seal { width: 15px; height: 15px; }
+.acct-move-now { margin-bottom: 10px; }
 .home-tag.home-lookalike, .home-tag.home-unverified, .home-tag.home-expired { border-color: var(--yellow); color: var(--yellow); }
 .home-tag.home-blocked { border-color: var(--red); color: var(--red); }
 .blocked-home-add { display: flex; gap: 8px; margin-top: 8px; }

@@ -1,4 +1,5 @@
 const HOME_TAG_TEXT = {
+  official: "Signed in through {home}, the official Commy server",
   verified: "Signed in through {home}",
   checking: "Signed in through {home} (checking)",
   unverified: "Says it signs in through {home}, but that server does not vouch for this person",
@@ -25,6 +26,16 @@ function homeTagState(tag, status) {
 
 function homeTagTitle(tag, state) {
   return (HOME_TAG_TEXT[state] || HOME_TAG_TEXT.checking).replace("{home}", tag.shown);
+}
+
+function homeTagOfficial(tag, state) {
+  return Boolean(tag && tag.official === true) && (state === "verified" || state === "checking");
+}
+
+function accountServerParts(view) {
+  const host = (view && view.server_host) || "";
+  const official = Boolean(view && view.server_verified === true);
+  return { host, official };
 }
 
 function homeTagWarns(state) {
@@ -66,6 +77,6 @@ function withoutBlockedHome(homes, home) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     HOME_TAG_TEXT, MAX_BLOCKED_HOMES, BLOCKED_HOME_HIDDEN, HOST_BLOCKED_TEXT,
-    hostBlockedText, homeTagState, homeTagTitle, homeTagWarns, showsHomeInChat, homesToAsk, cleanHomeInput, withBlockedHome, withoutBlockedHome,
+    hostBlockedText, homeTagState, homeTagTitle, homeTagOfficial, accountServerParts, homeTagWarns, showsHomeInChat, homesToAsk, cleanHomeInput, withBlockedHome, withoutBlockedHome,
   };
 }

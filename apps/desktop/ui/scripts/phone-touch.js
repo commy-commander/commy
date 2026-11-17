@@ -277,11 +277,6 @@ const NOTIFY_PICKS = [
   { level: "none", label: "Nothing", icon: "bell-off" },
 ];
 
-function earlyBuild(version) {
-  const major = /^\s*v?(\d+)\./.exec(String(version || ""));
-  return Boolean(major) && Number(major[1]) === 0;
-}
-
 function chatBanner({ view, channel }) {
   return view === "server" && channel && channel.banner ? String(channel.banner) : "";
 }
@@ -529,7 +524,6 @@ if (typeof module !== "undefined" && module.exports) {
     layerStep,
     faceTapAuthor,
     inviteWarningParts,
-    earlyBuild,
     trayNeedsStep,
     roomTiles,
     duoTiles,

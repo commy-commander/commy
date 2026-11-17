@@ -135,3 +135,17 @@ test("the stage, share picker, voice panel and settings carry the drawing contro
   const page = read("ui/ink.html");
   assert.ok(page.indexOf("scripts/ink-view.js") < page.indexOf("scripts/ink.js"));
 });
+
+test("drawing on streams lives on its own Screen Share settings page, not under Camera", () => {
+  const html = read("ui/index.html");
+  const page = name => {
+    const start = html.indexOf(`<section class="settings-page" data-page="${name}"`);
+    return html.slice(start, html.indexOf("</section>", start));
+  };
+  assert.ok(html.includes('<button class="settings-tab" data-tab="streaming" data-i18n="settings.tab.streaming">Screen Share</button>'));
+  assert.ok(html.indexOf('data-tab="camera"') < html.indexOf('data-tab="streaming"'));
+  for (const id of ["stream-ink-toggle", "stream-ink-screen-toggle"]) {
+    assert.ok(page("streaming").includes(`id="${id}"`), `Screen Share lacks #${id}`);
+    assert.ok(!page("camera").includes(`id="${id}"`), `Camera still holds #${id}`);
+  }
+});

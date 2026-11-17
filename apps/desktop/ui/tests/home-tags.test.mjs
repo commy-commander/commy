@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { homeTagState, homeTagTitle, showsHomeInChat, homesToAsk, cleanHomeInput, withBlockedHome, withoutBlockedHome, MAX_BLOCKED_HOMES } = require("../scripts/home-tags.js");
+const { homeTagState, homeTagTitle, homeTagOfficial, accountServerParts, showsHomeInChat, homesToAsk, cleanHomeInput, withBlockedHome, withoutBlockedHome, MAX_BLOCKED_HOMES } = require("../scripts/home-tags.js");
 
 const tag = over => ({ home: "https://commy.chat", shown: "commy.chat", key: "b62e867fa2f33afe", lookalike: false, current: true, ...over });
 const status = over => ({ home: "https://commy.chat", key: "b62e867fa2f33afe", checked: true, blocked: false, ...over });
@@ -52,4 +52,21 @@ test("a server whose sync server Commy blocks names that sync server in its noti
   const { hostBlockedText } = require("../scripts/home-tags.js");
   assert.equal(hostBlockedText("dev.example.org"), "This server syncs through dev.example.org, which is on Commy's list of blocked servers, so it no longer syncs.");
   assert.match(hostBlockedText(null), /syncs through a server, which/);
+});
+
+test("only a card signed with the pinned Commy.chat key wears the official seal, and never on a warning", () => {
+  assert.equal(homeTagOfficial(tag({ official: true }), "verified"), true);
+  assert.equal(homeTagOfficial(tag({ official: true }), "checking"), true);
+  assert.equal(homeTagOfficial(tag(), "verified"), false, "the name commy.chat alone is not enough");
+  assert.equal(homeTagOfficial(tag({ official: "yes" }), "verified"), false);
+  for (const warning of ["unverified", "lookalike", "blocked", "expired"]) assert.equal(homeTagOfficial(tag({ official: true }), warning), false, warning);
+  assert.equal(homeTagOfficial(null, "verified"), false);
+  assert.match(homeTagTitle(tag(), "official"), /commy\.chat, the official Commy server/);
+});
+
+test("the account pages call a server official only once it has proven itself", () => {
+  assert.deepEqual(accountServerParts({ server_host: "commy.chat", server_verified: true }), { host: "commy.chat", official: true });
+  assert.deepEqual(accountServerParts({ server_host: "commy.chat" }), { host: "commy.chat", official: false });
+  assert.deepEqual(accountServerParts({ server_host: "commy.chat", server_verified: "true" }), { host: "commy.chat", official: false });
+  assert.deepEqual(accountServerParts(null), { host: "", official: false });
 });

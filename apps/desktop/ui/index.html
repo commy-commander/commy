@@ -1684,6 +1684,7 @@
         <div class="settings-nav-group" data-i18n="settings.group.voice">Voice &amp; Video</div>
         <button class="settings-tab" data-tab="voice" data-i18n="settings.tab.voice">Voice</button>
         <button class="settings-tab" data-tab="camera" data-i18n="settings.tab.camera">Camera</button>
+        <button class="settings-tab" data-tab="streaming" data-i18n="settings.tab.streaming">Screen Share</button>
         <button class="settings-tab desktop-only native-only" data-tab="overlay" data-i18n="settings.tab.overlay">Game Overlay</button>
         <div class="settings-nav-group" data-i18n="settings.group.alerts">Alerts &amp; Sounds</div>
         <button class="settings-tab" data-tab="notifications" data-i18n="settings.tab.notifications">Notifications</button>
@@ -1816,6 +1817,7 @@
                 <button class="btn-primary btn-small" id="acct-moved-follow">Sign In There</button>
               </div>
             </div>
+            <div class="setting-sub acct-move-now" id="acct-move-now"></div>
             <div class="setting-title">Move to another account server</div>
             <div class="setting-sub">Your identity, profile, server list and settings go with you, so the people you talk to keep finding you. Your old account server points to the new one, and your other devices offer to follow. <button class="btn-link inline-help" data-help="moving">How moving works</button></div>
             <div class="entry-recovery">
@@ -2079,7 +2081,12 @@
               </div>
             </div>
           </div>
-          <h2 class="settings-subhead">Streaming</h2>
+        </section>
+
+        <section class="settings-page" data-page="streaming" data-search="stream streaming screen share go live">
+          <h1 data-i18n="settings.tab.streaming">Screen Share</h1>
+          <p class="settings-intro" data-i18n="settings.intro.streaming">What viewers can do while you share your screen.</p>
+          <h2 class="settings-subhead">Drawing</h2>
           <label class="settings-card setting-row" data-search="stream draw point pen">
             <div>
               <div class="setting-title">Let viewers draw on my streams</div>

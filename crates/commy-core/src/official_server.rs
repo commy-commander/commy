@@ -29,6 +29,14 @@ pub fn is_official_origin(origin: &str) -> bool {
     OFFICIAL_SERVER_KEYS.iter().any(|(pinned, _)| *pinned == origin)
 }
 
+pub fn holds_official_key(origin: &str, key: &IdentityKey) -> bool {
+    holds_pinned_key(OFFICIAL_SERVER_KEYS, origin, key)
+}
+
+pub fn holds_pinned_key(pinned: &[(&str, &str)], origin: &str, key: &IdentityKey) -> bool {
+    pinned.iter().any(|(o, hex)| *o == origin && IdentityKey::from_hex(hex).as_ref() == Some(key))
+}
+
 pub fn judge(origin: &str, nonce: &str, proof: Option<&ServerProof>) -> Verdict {
     judge_against(OFFICIAL_SERVER_KEYS, origin, nonce, proof)
 }
@@ -103,6 +111,17 @@ mod tests {
         assert_eq!(judge_against(&pinned, ORIGIN, &nonce, Some(&other_origin)), Verdict::Impostor);
         let relabelled = ServerProof { origin: ORIGIN.into(), ..other_origin };
         assert_eq!(judge_against(&pinned, ORIGIN, &nonce, Some(&relabelled)), Verdict::Impostor);
+    }
+
+    #[test]
+    fn only_the_pinned_key_for_that_origin_is_official() {
+        let official = Identity::from_bytes(&[15; 32]);
+        let hex = pinned_hex(&official);
+        let pinned = [(ORIGIN, hex.as_str())];
+        assert!(holds_pinned_key(&pinned, ORIGIN, &official.public()));
+        assert!(!holds_pinned_key(&pinned, "https://cornmy.chat", &official.public()));
+        assert!(!holds_pinned_key(&pinned, ORIGIN, &Identity::from_bytes(&[16; 32]).public()));
+        assert!(!holds_official_key(ORIGIN, &official.public()));
     }
 
     #[test]
