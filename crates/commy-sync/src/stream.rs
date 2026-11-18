@@ -143,6 +143,10 @@ impl StreamKeys {
         self.read
     }
 
+    pub fn sibling(&self, label: &str) -> StreamKeys {
+        StreamSecret::derive(&self.seal, label, &self.id.0).keys()
+    }
+
     pub fn sign_append(&self, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8]) -> [u8; 64] {
         self.write.sign(&append_message(&self.id, nonce, body)).to_bytes()
     }
@@ -435,5 +439,18 @@ mod tests {
         assert_eq!(StreamId::from_hex("abcd"), None);
         assert_eq!(StreamId::from_hex(&"zz".repeat(32)), None);
         assert!(!format!("{:?}", StreamSecret::random()).contains(|c: char| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn a_sibling_stream_is_fixed_by_its_parent_and_label_and_readable_only_with_its_own_keys() {
+        let parent = StreamSecret::from_bytes([3; 32]).keys();
+        let sibling = parent.sibling("checkpoint");
+        assert_eq!(sibling.id, StreamSecret::from_bytes([3; 32]).keys().sibling("checkpoint").id);
+        assert_ne!(sibling.id, parent.id);
+        assert_ne!(sibling.id, parent.sibling("other").id);
+        assert_ne!(sibling.id, StreamSecret::from_bytes([4; 32]).keys().sibling("checkpoint").id);
+        let sealed = sibling.seal(b"hello").unwrap();
+        assert_eq!(sibling.open(&sealed).unwrap(), b"hello");
+        assert!(parent.open(&sealed).is_err());
     }
 }

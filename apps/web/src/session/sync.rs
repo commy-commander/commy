@@ -24,6 +24,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
+use super::checkpoints::{self, Checkpoints};
 use super::Session;
 use crate::client::Applied;
 #[derive(Default)]
@@ -73,6 +74,7 @@ pub(super) struct Live {
     pub(super) wake: Option<String>,
     pub(super) all_rings: AllRings,
     deepened: HashSet<(ServerId, Option<ChannelId>)>,
+    pub(super) checkpoints: Checkpoints,
 }
 
 impl Live {
@@ -117,6 +119,7 @@ impl Session {
             wake,
             all_rings: AllRings::default(),
             deepened: HashSet::new(),
+            checkpoints: Checkpoints::default(),
         });
         spawn_local(self.clone().run_sync(events));
         self.start_away();
@@ -141,6 +144,9 @@ impl Session {
     async fn run_sync(self: Rc<Self>, mut events: mpsc::UnboundedReceiver<SyncEvent>) {
         while let Some(event) = events.recv().await {
             match event {
+                SyncEvent::Entry { stream, seq, plain, .. } if self.on_checkpoint_entry(stream, seq, &plain) => {}
+                SyncEvent::CaughtUp { stream, .. } if self.on_checkpoint_caught_up(stream) => {}
+                SyncEvent::Refused { stream, .. } if self.on_checkpoint_refused(stream) => {}
                 SyncEvent::Entry { stream, seq, at, plain } => self.on_sync_entry(stream, seq, at, &plain),
                 SyncEvent::Unreadable { stream, seq } => {
                     self.dms.borrow_mut().advance(stream, seq);
@@ -207,6 +213,7 @@ impl Session {
                 return;
             }
             self.refresh_sync();
+            self.end_slow_checkpoint_reads();
             self.tend_away();
             self.record_hosts();
             self.tend_owned();
@@ -224,7 +231,12 @@ impl Session {
             let mut grouped: HashMap<String, (HashSet<ServerId>, HashMap<ServerId, Vec<StreamKeys>>)> = HashMap::new();
             grouped.entry(live.url.clone()).or_default();
             for (server, keys) in live.book.streams_by_server() {
-                grouped.entry(live.socket_of(server)).or_default().1.insert(server, keys);
+                let checkpoints: Vec<StreamKeys> = keys
+                    .iter()
+                    .filter(|keys| live.book.route(keys.id).is_some_and(|(_, want)| want.lane == Lane::State))
+                    .map(commy_net::checkpoint::keys_for)
+                    .collect();
+                grouped.entry(live.socket_of(server)).or_default().1.insert(server, keys.into_iter().chain(checkpoints).collect());
             }
             for server in &owned {
                 grouped.entry(live.socket_of(*server)).or_default().0.insert(*server);
@@ -285,7 +297,7 @@ impl Session {
         });
     }
 
-    fn tend_owned(&self) {
+    fn tend_owned(self: &Rc<Self>) {
         let now = Utc::now().timestamp_millis();
         for server in self.client.borrow().owned_servers() {
             let (due, copy) = {
@@ -313,6 +325,7 @@ impl Session {
                 for payload in self.client.borrow().owner_copy(server) {
                     self.publish(server, &payload);
                 }
+                self.write_checkpoints(server);
             }
         }
     }
@@ -526,7 +539,12 @@ impl Session {
         }
         let mut hosts: HashMap<String, Vec<(Lane, StreamKeys, u64)>> = HashMap::new();
         for (lane, keys, after, host) in plan.follow {
-            hosts.entry(host.unwrap_or_else(|| live.url.clone())).or_default().push((lane, keys, after));
+            let url = host.unwrap_or_else(|| live.url.clone());
+            let server = live.book.route(keys.id).map(|(server, _)| server);
+            match server.filter(|server| live.checkpoints.reads_first(lane, keys.id, !self.client.borrow().has(*server))) {
+                Some(server) => checkpoints::start_reading(live, server, keys, &url),
+                None => hosts.entry(url).or_default().push((lane, keys, after)),
+            }
         }
         for (url, follow) in hosts {
             let (lasting, texts): (Vec<_>, Vec<_>) = follow.into_iter().partition(|(lane, _, _)| *lane == Lane::State);
@@ -893,6 +911,10 @@ impl Session {
         if self.client.borrow().install_service_snapshot(server, snapshot, joined) != Ok(true) {
             return;
         }
+        self.adopted(server);
+    }
+
+    pub(super) fn adopted(self: &Rc<Self>, server: ServerId) {
         self.release_parked(server);
         self.emit("servers-changed", Value::Null);
         self.emit("server-event", json!(server.to_string()));

@@ -32,6 +32,7 @@ use crate::store::WebStore;
 mod activities;
 mod away;
 mod calls;
+mod checkpoints;
 mod cloud_files;
 mod community;
 mod directory;

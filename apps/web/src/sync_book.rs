@@ -430,6 +430,11 @@ impl Book {
         self.after.get(&stream).copied().unwrap_or(0)
     }
 
+    pub fn start_at(&mut self, stream: StreamId, seq: u64) {
+        let start = self.after.get(&stream).map_or(seq, |held| (*held).min(seq));
+        self.after.insert(stream, start);
+    }
+
     pub fn advance(&mut self, stream: StreamId, seq: u64) {
         let slot = self.after.entry(stream).or_default();
         *slot = (*slot).max(seq);
@@ -555,6 +560,19 @@ mod tests {
         want.lane = lane;
         want.writes = writes;
         want
+    }
+
+    #[test]
+    fn a_checkpoint_moves_a_state_cursor_back_but_never_forward() {
+        let mut book = Book::new(EntryList::default());
+        let stream = commy_sync::StreamSecret::random().keys().id;
+        book.start_at(stream, 40);
+        assert_eq!(book.after(stream), 40);
+        book.advance(stream, 90);
+        book.start_at(stream, 60);
+        assert_eq!(book.after(stream), 60);
+        book.start_at(stream, 75);
+        assert_eq!(book.after(stream), 60);
     }
 
     #[test]

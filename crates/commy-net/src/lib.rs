@@ -1,4 +1,5 @@
 pub mod catchup;
+pub mod checkpoint;
 pub mod community_streams;
 pub mod connection_check;
 pub mod directory;

@@ -9,6 +9,7 @@ use chrono::Utc;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
 use commy_core::{MessageId, Presence, ServerEvent, ServerId, SignedEvent, UserId, UserProfile};
 use commy_net::catchup::CatchupStore;
+use commy_net::checkpoint::{self, Assembler};
 use commy_net::community_streams::{self as streams, rings, wake_point, Lane, Want};
 pub use commy_net::sync_streams::SharedKey;
 use commy_net::voice_gate::{link_of, StateLink};
@@ -42,6 +43,7 @@ const UNSENT_FOR_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const READ_BACK: u64 = 2_000;
 const GREET_GAP: Duration = Duration::from_secs(120);
 const GREET_SPREAD_MS: u64 = 3_000;
+const CHECKPOINT_PATIENCE: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cursors {
@@ -89,6 +91,12 @@ impl Cursors {
         moved
     }
 
+    pub fn start_at(&mut self, stream: StreamId, seq: u64) {
+        let hex = stream.to_hex();
+        let start = self.after.get(&hex).map_or(seq, |held| (*held).min(seq));
+        self.after.insert(hex, start);
+    }
+
     pub fn keep_only(&mut self, streams: &HashSet<String>) {
         self.after.retain(|stream, _| streams.contains(stream));
         self.backfilled.retain(|stream| streams.contains(stream));
@@ -134,6 +142,13 @@ struct Reading {
     task: tauri::async_runtime::JoinHandle<()>,
 }
 
+struct CheckpointRead {
+    server: ServerId,
+    state: commy_sync::StreamKeys,
+    assembler: Assembler,
+    looked_back: bool,
+}
+
 struct Community {
     url: String,
     pool: Pool,
@@ -164,6 +179,8 @@ struct Live {
     fresh: HashSet<StreamId>,
     reading: Option<Reading>,
     opening: HashMap<ServerId, OpenGroup>,
+    checkpoints: HashMap<StreamId, CheckpointRead>,
+    checkpoint_tried: HashSet<StreamId>,
     greeted: HashMap<ServerId, Instant>,
     say_again: HashSet<ServerId>,
     cursors: Cursors,
@@ -438,6 +455,8 @@ async fn tend(handle: &AppHandle) {
             fresh: HashSet::new(),
             reading: None,
             opening: HashMap::new(),
+            checkpoints: HashMap::new(),
+            checkpoint_tried: HashSet::new(),
             greeted: HashMap::new(),
             say_again: HashSet::new(),
             cursors,
@@ -715,6 +734,7 @@ pub fn community_url(chosen: Option<&str>, account_url: &str) -> Option<String> 
 
 fn drop_community(live: &mut Live, sid: ServerId) {
     live.opening.remove(&sid);
+    live.checkpoints.retain(|_, read| read.server != sid);
     if let Some(community) = live.communities.remove(&sid) {
         if live.reading.as_ref().is_some_and(|r| community.wants.contains_key(&r.stream)) {
             if let Some(stale) = live.reading.take() {
@@ -856,9 +876,99 @@ fn open_waiting(server: ServerId) {
     let mut guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_mut() else { return };
     let Some(group) = live.opening.remove(&server) else { return };
+    let awaiting = live.handle.state::<App>().awaits_snapshot(server);
     let Some(community) = live.communities.get_mut(&server) else { return };
     let still: OpenGroup = group.into_iter().filter(|(_, keys, _)| community.wants.contains_key(&keys.id)).collect();
-    follow_group(&mut community.pool, still);
+    let (first_checkpoint, rest): (OpenGroup, OpenGroup) = still
+        .into_iter()
+        .partition(|(lane, keys, _)| awaiting && *lane == Lane::State && !live.checkpoint_tried.contains(&keys.id));
+    follow_group(&mut community.pool, rest);
+    for (_, state, _) in first_checkpoint {
+        let keys = checkpoint::keys_for(&state);
+        community.pool.follow_together_tail(vec![(keys.clone(), 0)], Some(checkpoint::FIRST_LOOK));
+        live.checkpoints.insert(keys.id, CheckpointRead { server, state, assembler: Assembler::default(), looked_back: false });
+        let handle = live.handle.clone();
+        crate::account_session::spawn(async move {
+            tokio::time::sleep(CHECKPOINT_PATIENCE).await;
+            end_checkpoint_read(&handle, keys.id);
+        });
+    }
+}
+
+fn on_checkpoint_event(handle: &AppHandle, event: &SyncEvent) -> bool {
+    let stream = match event {
+        SyncEvent::Entry { stream, .. } | SyncEvent::Unreadable { stream, .. } | SyncEvent::CaughtUp { stream, .. } | SyncEvent::Refused { stream, .. } => *stream,
+        _ => return false,
+    };
+    let caught_up = {
+        let mut guard = LIVE.lock_or_recover();
+        let Some(live) = guard.as_mut() else { return false };
+        let Some(read) = live.checkpoints.get_mut(&stream) else { return false };
+        match event {
+            SyncEvent::Entry { seq, plain, .. } => {
+                read.assembler.take(*seq, plain);
+                return true;
+            }
+            SyncEvent::CaughtUp { .. } => match (read.looked_back, read.assembler.read_again_from()) {
+                (false, Some(from)) => {
+                    read.looked_back = true;
+                    if let Some(community) = live.communities.get_mut(&read.server) {
+                        community.pool.unfollow(stream);
+                        community.pool.follow_together_tail(vec![(checkpoint::keys_for(&read.state), from)], None);
+                    }
+                    false
+                }
+                _ => true,
+            },
+            SyncEvent::Refused { .. } => true,
+            _ => false,
+        }
+    };
+    if caught_up {
+        end_checkpoint_read(handle, stream);
+    }
+    true
+}
+
+fn end_checkpoint_read(handle: &AppHandle, stream: StreamId) {
+    let Some(read) = LIVE.lock_or_recover().as_mut().and_then(|live| live.checkpoints.remove(&stream)) else { return };
+    let server = read.server;
+    let start = adopt_checkpoint(handle, &read);
+    {
+        let mut guard = LIVE.lock_or_recover();
+        let Some(live) = guard.as_mut() else { return };
+        live.checkpoint_tried.insert(read.state.id);
+        let Some(community) = live.communities.get_mut(&server) else { return };
+        community.pool.unfollow(stream);
+        if !community.wants.contains_key(&read.state.id) {
+            return;
+        }
+        match start {
+            Some(after) => {
+                live.cursors.start_at(read.state.id, after);
+                community.pool.follow_together_tail(vec![(read.state, after)], None);
+            }
+            None => {
+                let after = live.cursors.after(read.state.id);
+                community.pool.follow_together_tail(vec![(read.state, after)], Some(streams::STATE_TAIL));
+            }
+        }
+    }
+    save_soon();
+    release_parked(handle);
+    refresh_soon(handle);
+}
+
+fn adopt_checkpoint(handle: &AppHandle, read: &CheckpointRead) -> Option<u64> {
+    let app = handle.state::<App>();
+    let (_, owner) = app.ticket_owner(read.server)?;
+    let found = read.assembler.newest(read.server, &owner)?;
+    let after = found.state_after();
+    if !crate::catchup::apply_service_snapshot(handle, read.server, found.snapshot) {
+        return None;
+    }
+    tracing::info!("took the owner's full copy of {} from its checkpoint on the sync service", read.server);
+    Some(after)
 }
 
 pub fn focus(server: ServerId) {
@@ -1034,7 +1144,13 @@ pub fn community_hosts() -> HashMap<ServerId, String> {
 pub fn followed_streams() -> HashMap<ServerId, Vec<commy_sync::StreamKeys>> {
     let guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_ref() else { return HashMap::new() };
-    live.communities.iter().map(|(sid, community)| (*sid, community.wants.values().map(|want| want.keys.clone()).collect())).collect()
+    live.communities
+        .iter()
+        .map(|(sid, community)| {
+            let checkpoints = community.wants.values().filter(|want| want.lane == Lane::State).map(|want| checkpoint::keys_for(&want.keys));
+            (*sid, community.wants.values().map(|want| want.keys.clone()).chain(checkpoints).collect())
+        })
+        .collect()
 }
 
 pub fn wake_keys(server: ServerId, private: Option<commy_core::ChannelId>) -> Option<commy_sync::StreamKeys> {
@@ -1134,6 +1250,9 @@ async fn listen(handle: AppHandle, mut events: mpsc::UnboundedReceiver<SyncEvent
 }
 
 fn on_event(handle: &AppHandle, event: SyncEvent) {
+    if on_checkpoint_event(handle, &event) {
+        return;
+    }
     match event {
         SyncEvent::Entry { stream, seq, plain, .. } => on_entry(handle, stream, seq, &plain),
         SyncEvent::Unreadable { stream, seq } => {
@@ -1344,6 +1463,78 @@ fn publish_snapshots(handle: &AppHandle) {
         for payload in snapshot.into_iter().chain(keys.unwrap_or_default()) {
             publish(server, &payload);
         }
+        if app.servers.lock_or_recover().get(&server).is_some_and(|state| state.server.owner == me) {
+            publish_checkpoints(handle, server);
+        }
+    }
+}
+
+fn publish_checkpoints(handle: &AppHandle, server: ServerId) {
+    let app = handle.state::<App>();
+    let (Some(identity), Some(snapshot)) = (app.identity(), crate::catchup::checkpoint_snapshot_for(&app, server)) else { return };
+    let writes: Vec<(commy_sync::StreamKeys, u64, SyncClient, String)> = {
+        let mut guard = LIVE.lock_or_recover();
+        let Some(live) = guard.as_mut() else { return };
+        let Some(community) = live.communities.get_mut(&server) else { return };
+        let states: Vec<(commy_sync::StreamKeys, u64)> = community
+            .wants
+            .iter()
+            .filter(|(stream, want)| want.lane == Lane::State && live.caught_up.contains(*stream))
+            .map(|(stream, want)| (checkpoint::keys_for(&want.keys), live.cursors.after(*stream)))
+            .collect();
+        states
+            .into_iter()
+            .filter_map(|(keys, covers)| {
+                community.pool.follow_together_tail(vec![(keys.clone(), 0)], Some(0));
+                let client = community.pool.client_for(keys.id)?;
+                Some((keys, covers, client, community.url.clone()))
+            })
+            .collect()
+    };
+    for (keys, covers, client, url) in writes {
+        let Some(records) = checkpoint::records(&snapshot, covers, &identity) else {
+            stop_writing_checkpoint(server, keys.id);
+            continue;
+        };
+        let root = identity.to_bytes();
+        crate::account_session::spawn(async move {
+            let written = write_checkpoint(&client, keys.id, records).await;
+            stop_writing_checkpoint(server, keys.id);
+            let Some(first) = written else { return };
+            tracing::info!("wrote the checkpoint copy of {server} to the sync service");
+            if first > 1 {
+                let work = commy_sync::errands::owner_work(&root, &[keys], |_| commy_sync::errands::Errand::Erase { through: first - 1 });
+                if let Err(e) = commy_sync::errands::run(&url, work).await {
+                    tracing::debug!("older checkpoint copies stay until they expire: {e}");
+                }
+            }
+        });
+    }
+}
+
+async fn write_checkpoint(client: &SyncClient, stream: StreamId, records: Vec<Vec<u8>>) -> Option<u64> {
+    let mut first = None;
+    for plain in records {
+        match tokio::time::timeout(PUBLISH_WAIT, client.append(stream, plain)).await {
+            Ok(Ok(seq)) => {
+                first.get_or_insert(seq);
+            }
+            Ok(Err(e)) => {
+                tracing::debug!("could not write a checkpoint copy: {e}");
+                return None;
+            }
+            Err(_) => {
+                tracing::debug!("the sync service took too long to store a checkpoint copy");
+                return None;
+            }
+        }
+    }
+    first
+}
+
+fn stop_writing_checkpoint(server: ServerId, stream: StreamId) {
+    if let Some(community) = LIVE.lock_or_recover().as_mut().and_then(|live| live.communities.get_mut(&server)) {
+        community.pool.unfollow(stream);
     }
 }
 
@@ -1549,6 +1740,19 @@ mod tests {
         assert_eq!(serde_json::from_str::<Cursors>(&json).unwrap().unsent, unsent);
         cursors.unsent.clear();
         assert_eq!(serde_json::from_str::<Cursors>(r#"{"after":{}}"#).unwrap(), cursors);
+    }
+
+    #[test]
+    fn a_checkpoint_moves_a_state_cursor_back_but_never_forward() {
+        let stream = commy_sync::StreamSecret::random().keys().id;
+        let mut cursors = Cursors::default();
+        cursors.start_at(stream, 40);
+        assert_eq!(cursors.after(stream), 40, "a new device starts where the checkpoint says");
+        cursors.advance(stream, 90);
+        cursors.start_at(stream, 60);
+        assert_eq!(cursors.after(stream), 60, "entries parked before a restart are read again");
+        cursors.start_at(stream, 75);
+        assert_eq!(cursors.after(stream), 60);
     }
 
     #[test]

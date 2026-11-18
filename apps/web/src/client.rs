@@ -496,6 +496,18 @@ impl Client {
         std::iter::once(snapshot).chain(keys).collect()
     }
 
+    pub fn owner_checkpoints(&self, server: ServerId, covers: &[u64]) -> Vec<Vec<Vec<u8>>> {
+        let Some((profile, identity)) = self.me.lock().unwrap().clone() else { return Vec::new() };
+        let servers = self.servers.lock().unwrap();
+        let Some(state) = servers.get(&server).filter(|s| s.server.owner == profile.id && !s.is_deleted()) else { return Vec::new() };
+        let snapshot = commy_net::checkpoint::snapshot_of(state, profile.id, Utc::now().timestamp_millis(), &identity);
+        covers.iter().map(|covers| commy_net::checkpoint::records(&snapshot, *covers, &identity).unwrap_or_default()).collect()
+    }
+
+    pub fn ticket_owner_key(&self, server: ServerId) -> Option<IdentityKey> {
+        self.tickets.get(&server)?.owner.map(|(_, key)| key)
+    }
+
     pub fn newest_community_key(&self, server: ServerId) -> Option<(KeyId, ChannelSecret)> {
         let servers = self.servers.lock().unwrap();
         let state = servers.get(&server)?;

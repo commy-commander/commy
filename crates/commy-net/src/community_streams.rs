@@ -105,7 +105,12 @@ pub fn every_stream(state: &ServerState, community: &Keyring, locked: impl Fn(Ch
     };
     for (_, secret) in community.held_records(state, KeyScope::Community) {
         for lane in &lanes {
-            add(*lane, stream_for(secret, server, KeyScope::Community, *lane));
+            let keys = stream_for(secret, server, KeyScope::Community, *lane);
+            let checkpoint = (*lane == Lane::State).then(|| crate::checkpoint::keys_for(&keys));
+            add(*lane, keys);
+            if let Some(checkpoint) = checkpoint {
+                add(Lane::State, checkpoint);
+            }
         }
     }
     for channel in texts.iter().filter(|c| c.is_private()) {
@@ -459,6 +464,9 @@ mod tests {
             assert!(ids.contains(&want.keys.id), "{:?} of every key ever used is covered", want.lane);
         }
         assert!(every.iter().any(|(lane, _)| *lane == Lane::Channel(channel)));
+        for want in current.iter().filter(|w| w.lane == Lane::State) {
+            assert!(ids.contains(&crate::checkpoint::keys_for(&want.keys).id), "the checkpoint copy is erased with the server too");
+        }
         let voice = state.server.channels[1].id;
         assert!(!every.iter().any(|(lane, _)| *lane == Lane::Channel(voice)));
         let mut unique = ids.clone();

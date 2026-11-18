@@ -963,6 +963,16 @@ pub fn service_snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> 
     Some(payload)
 }
 
+pub fn checkpoint_snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
+    if app.awaits_snapshot(server) || !app.key_settled() {
+        return None;
+    }
+    let me = app.profile.lock_or_recover().as_ref().map(|p| p.id)?;
+    let identity = app.identity()?;
+    let servers = app.servers.lock_or_recover();
+    Some(commy_net::checkpoint::snapshot_of(servers.get(&server)?, me, Utc::now().timestamp_millis(), &identity))
+}
+
 pub fn learn_service_profiles(handle: &tauri::AppHandle, server: ServerId, payload: &WirePayload) {
     if !snapshot_vouched(handle.app(), server, payload, commy_net::community_streams::RETENTION_MS) {
         return;
@@ -2320,6 +2330,25 @@ mod tests {
         invited_by(&app, sid, owner);
         assert!(apply_service_snapshot(&TestHandle::new(app.clone()), sid, copy));
         app
+    }
+
+    #[test]
+    fn a_new_device_gets_every_member_of_a_big_server_from_its_checkpoint() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        for i in 0..3_000 {
+            join(&mut real, &Member::new(&format!("member-{i}")));
+        }
+        let sid = real.server.id;
+        let at = Utc::now().timestamp_millis();
+        let mut small = commy_net::protocol::build_sync_response_within(&real, 0, owner.id(), commy_net::community_streams::SNAPSHOT_BYTES);
+        commy_net::protocol::sign_sync_response(&mut small, at, &owner.identity);
+        let full = commy_net::checkpoint::snapshot_of(&real, owner.id(), at, &owner.identity);
+        let members = |app: &App| app.servers.lock().unwrap()[&sid].server.members.len();
+        assert!(members(&rejoined_from(&owner, &me, sid, small)) < real.server.members.len(), "the old copy has to drop members");
+        assert_eq!(members(&rejoined_from(&owner, &me, sid, full)), real.server.members.len());
     }
 
     fn replay(app: &App, sid: ServerId, signed: &SignedEvent) {

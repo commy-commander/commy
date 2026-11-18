@@ -133,6 +133,29 @@ async fn streams_do_not_leak_into_each_other() {
 }
 
 #[tokio::test]
+async fn a_writer_appends_right_after_opening_at_the_head_and_a_reader_can_look_further_back() {
+    let (url, _) = start().await;
+    let keys = StreamSecret::random().keys();
+    let (filler, _filler_events) = SyncClient::spawn(url.clone());
+    filler.follow(keys.clone(), 0);
+    for i in 0..20u32 {
+        filler.append(keys.id, i.to_le_bytes().to_vec()).await.unwrap();
+    }
+    let (owner, mut owner_events) = SyncClient::spawn(url.clone());
+    owner.follow_tail(keys.clone(), 0, Some(0));
+    assert_eq!(owner.append(keys.id, b"newest".to_vec()).await.unwrap(), 21, "no wait between opening and writing");
+    assert_eq!(next_entry(&mut owner_events).await.0, 21, "opening at the head reads no history");
+
+    let (reader, mut events) = SyncClient::spawn(url.clone());
+    reader.follow_tail(keys.clone(), 0, Some(8));
+    let seqs = |seen: Vec<(u64, Vec<u8>)>| seen.into_iter().map(|(seq, _)| seq).collect::<Vec<_>>();
+    assert_eq!(seqs(caught_up(&mut events).await), (14..=21).collect::<Vec<_>>());
+    reader.unfollow(keys.id);
+    reader.follow_tail(keys.clone(), 3, None);
+    assert_eq!(seqs(caught_up(&mut events).await), (4..=21).collect::<Vec<_>>());
+}
+
+#[tokio::test]
 async fn appending_to_an_unfollowed_stream_fails_locally() {
     let (url, _) = start().await;
     let (client, _events) = SyncClient::spawn(url);
