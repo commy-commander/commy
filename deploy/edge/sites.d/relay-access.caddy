@@ -1,0 +1,14 @@
+relay-access.{$PROD_DOMAIN}:8443 {
+	@relay_host remote_ip {$RELAY_HOST_IPS:127.0.0.1/32}
+	handle @relay_host {
+		handle /prod/* {
+			reverse_proxy commy-relay-access:3342
+		}
+		handle {
+			reverse_proxy commy-relay-staging-access:3342
+		}
+	}
+	handle {
+		abort
+	}
+}

@@ -74,6 +74,28 @@ test("the test build access checker never takes the release relay's name", () =>
   }
 });
 
+test("a moved release relay asks the release access checker", () => {
+  const moved = read("DEPLOYING.md")
+    .replace(/\\\n\s*/g, " ")
+    .split("\n")
+    .filter((line) => line.includes("-p commy-relay ") && line.includes("--no-deps"));
+  assert.equal(moved.length, 1);
+  assert.match(moved[0], /RELAY_ACCESS_URL=https:\/\/\S+:8443\/prod\//);
+  assert.match(moved[0], /RELAY_QAD_PORT=7842/);
+  assert.match(moved[0], /RELAY_IPV6_SUBNET=fd99:6513:f442:1::\/64/);
+});
+
+test("the edge routes release relay checks apart from test build ones", () => {
+  const site = read("edge/sites.d/relay-access.caddy");
+  assert.match(site, /^relay-access\.\{\$PROD_DOMAIN\}:8443 \{$/m);
+  assert.match(site, /remote_ip \{\$RELAY_HOST_IPS:127\.0\.0\.1\/32\}/);
+  assert.match(site, /handle \/prod\/\* \{\n\t\t\treverse_proxy commy-relay-access:3342/);
+  assert.match(site, /reverse_proxy commy-relay-staging-access:3342/);
+  assert.doesNotMatch(site, /\d+\.\d+\.\d+\.\d+(?!\/32\})/);
+  assert.match(read("edge/docker-compose.yml"), /RELAY_HOST_IPS: \$\{RELAY_HOST_IPS:-127\.0\.0\.1\/32\}/);
+  assert.match(read("edge/.gitignore"), /^!sites\.d\/relay-access\.caddy$/m);
+});
+
 test("a moved relay asks the access checker over HTTPS without starting one", () => {
   const moved = read("DEPLOYING.md")
     .replace(/\\\n\s*/g, " ")

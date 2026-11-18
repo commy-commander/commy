@@ -1,3 +1,4 @@
 certs/
-sites.d/
+sites.d/*
+!sites.d/relay-access.caddy
 docker-compose.override.yml

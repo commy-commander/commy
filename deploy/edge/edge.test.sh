@@ -117,6 +117,25 @@ printf 'local-site.example.org {\n\trespond "local"\n}\n' >"$full/sites.d/local.
 check "full edge config is valid with a local site" "$(full_caddy validate >/dev/null 2>&1 && echo valid)" valid
 check "local sites are loaded" "$(full_caddy adapt 2>/dev/null | grep -c local-site.example.org)" 1
 
+cp "$here/sites.d/relay-access.caddy" "$full/sites.d/"
+access_route() {
+	full_caddy adapt 2>/dev/null | node -e '
+let s = "";
+process.stdin.on("data", (d) => (s += d)).on("end", () => {
+  const servers = Object.values(JSON.parse(s).apps.http.servers);
+  const route = servers.flatMap((v) => v.routes).find((r) => JSON.stringify(r.match ?? []).includes("relay-access.example.org"));
+  const text = JSON.stringify(route);
+  const pick = (re) => [...text.matchAll(re)].map((m) => m[1]).join(" ");
+  console.log(process.argv[1] === "ranges" ? pick(/"ranges":\["([^\]]*)"\]/g).replace(/","/g, " ") : pick(/"dial":"([^"]+)"/g));
+});' "$1"
+}
+check "tracked relay access site is valid" "$(full_caddy validate >/dev/null 2>&1 && echo valid)" valid
+check "relay access lets nobody in until the relay server is named" "$(access_route ranges)" "127.0.0.1/32"
+check "relay access sends prod checks to the prod checker and the rest to staging" \
+	"$(access_route dials)" "commy-relay-access:3342 commy-relay-staging-access:3342"
+check "relay access lets in every named relay server address" \
+	"$(RELAY_HOST_IPS="192.0.2.10 2001:db8::10" access_route ranges)" "192.0.2.10 2001:db8::10"
+
 relay_host_caddy() {
 	env ACME_EMAIL=ops@example.org RELAY_DOMAIN=relay.example.org STAGING_RELAY_DOMAIN=relay-staging.example.org \
 		"$caddy" "$@" --config "$here/../relay-host/Caddyfile" --adapter caddyfile

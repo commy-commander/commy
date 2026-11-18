@@ -178,25 +178,23 @@ moves the same way with its own names, ports and subnet.
    `sudo sh deploy/host/harden-vps.sh` from a checkout in `/srv/commy` (it opens
    80/tcp, 8443/tcp and both address discovery ports), Docker Engine with the
    compose plugin, and a swapfile if it has little memory.
-2. On the main server, give the access checker a name the edge can reach: run
-   its command above again with `RELAY_ACCESS_ALIAS=commy-relay-staging-access`
-   (already there for the test build relay), which puts it on `commy-relay`
-   under that name. Then add an untracked `edge/sites.d/relay-access.caddy`
-   with the relay server's IPv4 and IPv6 addresses:
+2. On the main server, give each access checker a name the edge can reach.
+   `docker-compose.relay.yml` puts it on `commy-relay` as
+   `RELAY_ACCESS_ALIAS`: `commy-relay-access` for the release relay (the
+   default) and `commy-relay-staging-access` for the test build relay, so run
+   their commands above again if they predate that. The tracked
+   `edge/sites.d/relay-access.caddy` serves `relay-access.<domain>:8443`,
+   sends `/prod/` checks to the release checker and every other path to the
+   test build one, and lets in only the addresses in `RELAY_HOST_IPS`. Until
+   that is set it lets in nobody but the main server itself. Put the relay
+   server's addresses in `edge/.env`:
 
-   ```caddy
-   relay-access.commy.chat:8443 {
-   	@relay_server remote_ip <relay server IPv4> <relay server IPv6>
-   	handle @relay_server {
-   		reverse_proxy commy-relay-staging-access:3342
-   	}
-   	handle {
-   		abort
-   	}
-   }
+   ```bash
+   RELAY_HOST_IPS="<relay server IPv4> <relay server IPv6>"
    ```
 
-   and reload the edge Caddy from the file on disk.
+   and recreate the edge with `docker compose up -d caddy` in `edge/`, since
+   Caddy reads environment values only when it starts.
 3. On the relay server, put `ACME_EMAIL`, `RELAY_DOMAIN` and
    `STAGING_RELAY_DOMAIN` in `deploy/relay-host/.env` and run
    `docker compose up -d` there. This small edge creates the `commy-relay`
@@ -215,6 +213,21 @@ moves the same way with its own names, ports and subnet.
      docker compose -p commy-relay-staging -f docker-compose.yml -f docker-compose.relay.yml up -d --no-deps relay relay-proxy relay-meter
    ```
 
+   The release relay runs next to it in the `commy-relay` project and asks the
+   release checker under `/prod/`:
+
+   ```bash
+   cd /srv/commy/deploy
+   RELAY_DOMAIN=relay.commy.chat RELAY_QAD_PORT=7842 RELAY_MONTHLY_LIMIT_GB=6000 \
+   RELAY_IMAGE=commy-relay:iroh-relay-1.4.1 RELAY_IPV6_SUBNET=fd99:6513:f442:1::/64 \
+   RELAY_ACCESS_URL=https://relay-access.commy.chat:8443/prod/ \
+     docker compose -p commy-relay -f docker-compose.yml -f docker-compose.relay.yml up -d --no-deps relay relay-proxy relay-meter
+   ```
+
+   Keep each project's own values in its own env file (`--env-file .env
+   --env-file relay-prod.env`) rather than in `deploy/.env`, so one relay's
+   settings never reach the other.
+
    Building the relay image compiles iroh-relay, which needs more memory than a
    small server has. Build it on the main server and copy it over with
    `docker save` and `docker load`, together with the relay tools image.
@@ -227,6 +240,12 @@ moves the same way with its own names, ports and subnet.
    the server can block it), and that `docker compose logs relay-access` on the
    main server shows the checks. Then stop `relay`, `relay-proxy` and
    `relay-meter` of that project on the main server and keep `relay-access`.
+
+   To move a relay that is already live without a certificate gap, copy its
+   certificate folder (`caddy/certificates/<issuer>/<relay name>/` in the
+   `commy-edge_caddy_data` volume) from the main server to the same path on
+   the relay server and restart the relay server's Caddy before DNS changes.
+   It serves that certificate at once and renews it itself later.
 
 ### Dockhand
 
