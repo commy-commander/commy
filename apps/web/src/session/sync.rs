@@ -174,7 +174,7 @@ impl Session {
                         live.book.note_lost(&streams);
                     }
                 }
-                SyncEvent::Connected => {}
+                SyncEvent::Connected | SyncEvent::Head { .. } | SyncEvent::CannotWatch { .. } => {}
             }
         }
     }

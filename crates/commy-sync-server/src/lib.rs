@@ -22,6 +22,7 @@ pub mod server_proof;
 mod session;
 pub mod store;
 pub mod wake;
+mod watch;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

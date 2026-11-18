@@ -4,18 +4,20 @@ use tokio::sync::mpsc;
 
 use crate::client::{AppendError, SyncClient, SyncEvent};
 use crate::stream::{StreamId, StreamKeys};
-use crate::wire::{Greeting, MAX_STREAMS_PER_CONNECTION};
+use crate::wire::{Greeting, MAX_STREAMS_PER_CONNECTION, MAX_WATCHED_PER_CONNECTION};
 
 struct Slot {
     url: String,
     client: SyncClient,
     streams: usize,
+    watched: usize,
 }
 
 pub struct Pool {
     url: String,
     slots: Vec<Slot>,
     home: HashMap<StreamId, usize>,
+    watching: HashMap<StreamId, usize>,
     events: mpsc::UnboundedSender<SyncEvent>,
 }
 
@@ -26,17 +28,32 @@ impl Pool {
     }
 
     pub fn with_events(url: &str, events: mpsc::UnboundedSender<SyncEvent>) -> Pool {
-        Pool { url: url.to_string(), slots: Vec::new(), home: HashMap::new(), events }
+        Pool { url: url.to_string(), slots: Vec::new(), home: HashMap::new(), watching: HashMap::new(), events }
     }
 
     pub fn follows(&self, stream: StreamId) -> bool {
         self.home.contains_key(&stream)
     }
 
+    pub fn watches(&self, stream: StreamId) -> bool {
+        self.watching.contains_key(&stream)
+    }
+
     fn slot_with_room(&mut self, url: &str, needed: usize) -> usize {
         if let Some(at) = room_at(self.slots.iter().map(|s| (s.url.as_str(), s.streams)), url, needed) {
             return at;
         }
+        self.new_slot(url)
+    }
+
+    fn slot_with_watch_room(&mut self, url: &str) -> usize {
+        match self.slots.iter().position(|slot| slot.url == url && slot.watched < MAX_WATCHED_PER_CONNECTION) {
+            Some(at) => at,
+            None => self.new_slot(url),
+        }
+    }
+
+    fn new_slot(&mut self, url: &str) -> usize {
         let (client, mut received) = SyncClient::spawn(url.to_string());
         let events = self.events.clone();
         n0_future::task::spawn(async move {
@@ -46,7 +63,7 @@ impl Pool {
                 }
             }
         });
-        self.slots.push(Slot { url: url.to_string(), client, streams: 0 });
+        self.slots.push(Slot { url: url.to_string(), client, streams: 0, watched: 0 });
         self.slots.len() - 1
     }
 
@@ -63,6 +80,9 @@ impl Pool {
         let fresh: Vec<(StreamKeys, u64)> = group.into_iter().filter(|(keys, _)| !self.home.contains_key(&keys.id)).collect();
         if fresh.is_empty() {
             return;
+        }
+        for (keys, _) in &fresh {
+            self.unwatch(keys.id);
         }
         let at = self.slot_with_room(url, fresh.len().min(MAX_STREAMS_PER_CONNECTION));
         for (keys, after) in fresh {
@@ -81,6 +101,38 @@ impl Pool {
         if let Some(at) = self.home.remove(&stream) {
             self.slots[at].streams -= 1;
             self.slots[at].client.unfollow(stream);
+        }
+    }
+
+    pub fn watch_at(&mut self, url: &str, group: Vec<StreamKeys>) {
+        let mut by_slot: Vec<(usize, Vec<StreamKeys>)> = Vec::new();
+        for keys in group {
+            if self.home.contains_key(&keys.id) || self.watching.contains_key(&keys.id) {
+                continue;
+            }
+            let at = self.slot_with_watch_room(url);
+            self.watching.insert(keys.id, at);
+            self.slots[at].watched += 1;
+            match by_slot.iter_mut().find(|(slot, _)| *slot == at) {
+                Some((_, keys_here)) => keys_here.push(keys),
+                None => by_slot.push((at, vec![keys])),
+            }
+        }
+        for (at, keys) in by_slot {
+            self.slots[at].client.watch(keys);
+        }
+    }
+
+    pub fn unwatch(&mut self, stream: StreamId) {
+        if let Some(at) = self.watching.remove(&stream) {
+            self.slots[at].watched -= 1;
+            self.slots[at].client.unwatch(stream);
+        }
+    }
+
+    pub fn forget_watch(&mut self, stream: StreamId) {
+        if let Some(at) = self.watching.remove(&stream) {
+            self.slots[at].watched -= 1;
         }
     }
 

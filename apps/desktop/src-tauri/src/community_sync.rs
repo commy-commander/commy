@@ -14,7 +14,7 @@ use commy_net::community_streams::{self as streams, rings, wake_point, Lane, Wan
 pub use commy_net::sync_streams::SharedKey;
 use commy_net::voice_gate::{link_of, StateLink};
 use commy_net::{NetEvent, WirePayload};
-use commy_sync::wire::ErrorCode;
+use commy_sync::wire::{ErrorCode, WATCH_SINCE};
 use commy_sync::{AppendError, StreamId, SyncClient, SyncEvent};
 use commy_view::away::Place;
 use commy_view::sync_host::HostRemovals;
@@ -44,6 +44,7 @@ const READ_BACK: u64 = 2_000;
 const GREET_GAP: Duration = Duration::from_secs(120);
 const GREET_SPREAD_MS: u64 = 3_000;
 const CHECKPOINT_PATIENCE: Duration = Duration::from_secs(20);
+const DOZE_AFTER: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cursors {
@@ -153,6 +154,91 @@ struct Community {
     url: String,
     pool: Pool,
     wants: HashMap<StreamId, Want>,
+    dormant: HashSet<StreamId>,
+    baseline: HashMap<StreamId, u64>,
+    heard: HashMap<StreamId, Instant>,
+    watchless: bool,
+    owned: bool,
+}
+
+impl Community {
+    fn new(url: &str, events: mpsc::UnboundedSender<SyncEvent>, owned: bool) -> Self {
+        Community {
+            pool: Pool::with_events(url, events),
+            url: url.to_string(),
+            wants: HashMap::new(),
+            dormant: HashSet::new(),
+            baseline: HashMap::new(),
+            heard: HashMap::new(),
+            watchless: false,
+            owned,
+        }
+    }
+
+    fn lazy(&self, server: ServerId) -> bool {
+        !self.owned && !self.watchless && *FOCUS.lock_or_recover() != Some(server)
+    }
+
+    fn place(&mut self, server: ServerId, group: OpenGroup) {
+        let lazy = self.lazy(server);
+        let (quiet, open): (OpenGroup, OpenGroup) = group.into_iter().partition(|(lane, _, _)| lazy && matches!(lane, Lane::Channel(_)));
+        let now = Instant::now();
+        for (lane, keys, _) in &open {
+            if matches!(lane, Lane::Channel(_)) {
+                self.heard.insert(keys.id, now);
+            }
+        }
+        follow_group(&mut self.pool, open);
+        let quiet: Vec<commy_sync::StreamKeys> = quiet.into_iter().map(|(_, keys, _)| keys).collect();
+        self.dormant.extend(quiet.iter().map(|keys| keys.id));
+        if !quiet.is_empty() {
+            self.pool.watch_at(&self.url, quiet);
+        }
+    }
+
+    fn wake(&mut self, stream: StreamId, cursors: &Cursors) -> bool {
+        if !self.dormant.remove(&stream) {
+            return false;
+        }
+        self.baseline.remove(&stream);
+        let Some(want) = self.wants.get(&stream) else { return false };
+        self.heard.insert(stream, Instant::now());
+        follow_group(&mut self.pool, vec![(want.lane, want.keys.clone(), cursors.after(stream))]);
+        true
+    }
+
+    fn doze(&mut self, streams: &[StreamId]) {
+        let keys: Vec<commy_sync::StreamKeys> = streams.iter().filter_map(|stream| Some(self.wants.get(stream)?.keys.clone())).collect();
+        for keys in &keys {
+            self.pool.unfollow(keys.id);
+            self.heard.remove(&keys.id);
+            self.dormant.insert(keys.id);
+        }
+        if !keys.is_empty() {
+            self.pool.watch_at(&self.url, keys);
+        }
+    }
+
+    fn forget(&mut self, stream: StreamId) {
+        self.pool.unfollow(stream);
+        self.pool.unwatch(stream);
+        self.dormant.remove(&stream);
+        self.baseline.remove(&stream);
+        self.heard.remove(&stream);
+    }
+}
+
+fn changed(after: u64, baseline: &mut Option<u64>, head: u64) -> bool {
+    if after > 0 {
+        return head != after;
+    }
+    match *baseline {
+        Some(first) => head != first,
+        None => {
+            *baseline = Some(head);
+            false
+        }
+    }
 }
 
 struct Live {
@@ -178,6 +264,7 @@ struct Live {
     echoes: VecDeque<[u8; 32]>,
     fresh: HashSet<StreamId>,
     reading: Option<Reading>,
+    woken: HashSet<StreamId>,
     opening: HashMap<ServerId, OpenGroup>,
     checkpoints: HashMap<StreamId, CheckpointRead>,
     checkpoint_tried: HashSet<StreamId>,
@@ -454,6 +541,7 @@ async fn tend(handle: &AppHandle) {
             echoes: VecDeque::new(),
             fresh: HashSet::new(),
             reading: None,
+            woken: HashSet::new(),
             opening: HashMap::new(),
             checkpoints: HashMap::new(),
             checkpoint_tried: HashSet::new(),
@@ -473,6 +561,9 @@ async fn tend(handle: &AppHandle) {
     store_pending(handle);
     send_unsent();
     read_back(handle);
+    if let Some(live) = LIVE.lock_or_recover().as_mut() {
+        doze_quiet_channels(live);
+    }
 }
 
 fn read_back(handle: &AppHandle) {
@@ -742,6 +833,7 @@ fn drop_community(live: &mut Live, sid: ServerId) {
             }
         }
         for stream in community.wants.keys() {
+            live.woken.remove(stream);
             live.fresh.remove(stream);
             live.caught_up.remove(stream);
             live.current.remove(stream);
@@ -761,6 +853,7 @@ fn refresh(handle: &AppHandle) {
     let mut wanted = wanted_now(&app, me);
     let hosts = chosen_hosts(&app);
     let owners = owners_homes(&app);
+    let owned: HashSet<ServerId> = app.servers.lock_or_recover().iter().filter(|(_, state)| state.server.owner == me).map(|(sid, _)| *sid).collect();
     let mut unknown_homes = Vec::new();
     let mut fresh_communities = Vec::new();
     let mut promoted = Vec::new();
@@ -800,12 +893,14 @@ fn refresh(handle: &AppHandle) {
         }
         let fresh = !live.communities.contains_key(&sid);
         let events = live.events.clone();
-        let community = live.communities.entry(sid).or_insert_with(|| Community { pool: Pool::with_events(&url, events), url: url.clone(), wants: HashMap::new() });
+        let community = live.communities.entry(sid).or_insert_with(|| Community::new(&url, events, owned.contains(&sid)));
+        community.owned = owned.contains(&sid);
         let keep: HashSet<StreamId> = wants.iter().map(|w| w.keys.id).collect();
         let dropped: Vec<StreamId> = community.wants.keys().filter(|id| !keep.contains(id)).copied().collect();
         for stream in dropped {
             community.wants.remove(&stream);
-            community.pool.unfollow(stream);
+            community.forget(stream);
+            live.woken.remove(&stream);
             live.caught_up.remove(&stream);
             live.current.remove(&stream);
             live.lost.remove(&stream);
@@ -836,7 +931,7 @@ fn refresh(handle: &AppHandle) {
             tracing::info!("following {} sync streams for {sid}", group.len());
             fresh_communities.push((sid, group));
         } else {
-            follow_group(&mut community.pool, group);
+            community.place(sid, group);
         }
     }
     drop(guard);
@@ -882,7 +977,7 @@ fn open_waiting(server: ServerId) {
     let (first_checkpoint, rest): (OpenGroup, OpenGroup) = still
         .into_iter()
         .partition(|(lane, keys, _)| awaiting && *lane == Lane::State && !live.checkpoint_tried.contains(&keys.id));
-    follow_group(&mut community.pool, rest);
+    community.place(server, rest);
     for (_, state, _) in first_checkpoint {
         let keys = checkpoint::keys_for(&state);
         community.pool.follow_together_tail(vec![(keys.clone(), 0)], Some(checkpoint::FIRST_LOOK));
@@ -973,7 +1068,86 @@ fn adopt_checkpoint(handle: &AppHandle, read: &CheckpointRead) -> Option<u64> {
 
 pub fn focus(server: ServerId) {
     *FOCUS.lock_or_recover() = Some(server);
-    crate::account_session::spawn(async move { open_waiting(server) });
+    crate::account_session::spawn(async move {
+        open_waiting(server);
+        wake_all(server);
+    });
+}
+
+fn wake_all(server: ServerId) {
+    let mut guard = LIVE.lock_or_recover();
+    let Some(live) = guard.as_mut() else { return };
+    let Some(community) = live.communities.get_mut(&server) else { return };
+    let dormant: Vec<StreamId> = community.dormant.iter().copied().collect();
+    for stream in dormant {
+        community.wake(stream, &live.cursors);
+    }
+}
+
+fn wake_lane(live: &mut Live, server: ServerId, lane: Lane) {
+    let Some(community) = live.communities.get_mut(&server) else { return };
+    let dormant: Vec<StreamId> = community.dormant.iter().filter(|stream| community.wants.get(stream).is_some_and(|want| want.lane == lane)).copied().collect();
+    for stream in dormant {
+        community.wake(stream, &live.cursors);
+    }
+}
+
+fn on_head(stream: StreamId, head: u64) {
+    let mut guard = LIVE.lock_or_recover();
+    let Some(live) = guard.as_mut() else { return };
+    let Some(community) = live.communities.values_mut().find(|community| community.dormant.contains(&stream)) else { return };
+    let mut baseline = community.baseline.get(&stream).copied();
+    let wake = changed(live.cursors.after(stream), &mut baseline, head);
+    if let Some(first) = baseline {
+        community.baseline.insert(stream, first);
+    }
+    if wake && community.wake(stream, &live.cursors) {
+        live.woken.insert(stream);
+    }
+}
+
+fn on_cannot_watch(streams: Vec<StreamId>) {
+    let mut guard = LIVE.lock_or_recover();
+    let Some(live) = guard.as_mut() else { return };
+    for stream in streams {
+        if let Some(community) = live.communities.values_mut().find(|community| community.dormant.contains(&stream)) {
+            community.watchless = true;
+            community.wake(stream, &live.cursors);
+        }
+    }
+}
+
+fn doze_quiet_channels(live: &mut Live) {
+    let focus = *FOCUS.lock_or_recover();
+    let reading = live.reading.as_ref().map(|reading| reading.stream);
+    for (server, community) in live.communities.iter_mut() {
+        if community.owned || community.watchless || focus == Some(*server) {
+            continue;
+        }
+        if !community.pool.greeting_at(&community.url).is_some_and(|greeting| greeting.protocol >= WATCH_SINCE) {
+            continue;
+        }
+        let now = Instant::now();
+        let quiet: Vec<StreamId> = community
+            .wants
+            .iter()
+            .filter(|(stream, want)| {
+                matches!(want.lane, Lane::Channel(_))
+                    && !community.dormant.contains(*stream)
+                    && live.caught_up.contains(*stream)
+                    && !live.backfilling.contains(*stream)
+                    && reading != Some(**stream)
+            })
+            .map(|(stream, _)| *stream)
+            .filter(|stream| now.duration_since(*community.heard.entry(*stream).or_insert(now)) >= DOZE_AFTER)
+            .collect();
+        community.doze(&quiet);
+        for stream in quiet {
+            live.caught_up.remove(&stream);
+            live.current.remove(&stream);
+            live.lost.remove(&stream);
+        }
+    }
 }
 
 fn follow_group(pool: &mut Pool, group: OpenGroup) {
@@ -1025,6 +1199,8 @@ fn publish_held(held: Unsent) {
             let sends = targets(live, server, lane, key_event);
             if !sends.is_empty() {
                 live.note_echo(digest(&plain));
+            } else if matches!(lane, Lane::Channel(_)) {
+                wake_lane(live, server, lane);
             }
             (sends, live.handle.clone())
         })
@@ -1263,9 +1439,18 @@ fn on_event(handle: &AppHandle, event: SyncEvent) {
         }
         SyncEvent::CaughtUp { stream, seq } => on_caught_up(handle, stream, seq),
         SyncEvent::Signal { stream, plain } => on_signal(handle, stream, &plain),
+        SyncEvent::Head { stream, head } => on_head(stream, head),
+        SyncEvent::CannotWatch { streams } => on_cannot_watch(streams),
         SyncEvent::Refused { stream, code } => {
             tracing::debug!("the sync service refused a server stream {stream}: {code:?}");
             let removed = LIVE.lock_or_recover().as_mut().and_then(|live| {
+                if let Some(community) = live.communities.values_mut().find(|community| community.dormant.contains(&stream)) {
+                    community.pool.forget_watch(stream);
+                    if code != ErrorCode::Removed {
+                        community.watchless = true;
+                        community.wake(stream, &live.cursors);
+                    }
+                }
                 live.current.remove(&stream);
                 live.refused.insert(stream);
                 (code == ErrorCode::Removed).then(|| newly_removed(live, stream)).flatten()
@@ -1302,7 +1487,12 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
             live.cursors.older_before.entry(stream.to_hex()).or_insert(seq);
         }
         let echo = live.take_echo(&digest(plain));
-        let live_now = live.caught_up.contains(&stream);
+        let live_now = live.caught_up.contains(&stream) || live.woken.contains(&stream);
+        if matches!(want.lane, Lane::Channel(_)) {
+            if let Some(community) = live.communities.get_mut(&server) {
+                community.heard.insert(stream, Instant::now());
+            }
+        }
         let decoded = (!echo).then(|| streams::decode_entry(plain, want.lane)).flatten();
         if let Some((ServerEvent::MessageCreate { message }, _)) = decoded.as_ref().and_then(streams::event_of) {
             if !live_now {
@@ -1544,6 +1734,7 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         let Some(live) = guard.as_mut() else { return };
         let Some((server, want)) = live.route(stream) else { return };
         live.cursors.advance(stream, seq);
+        live.woken.remove(&stream);
         let first = live.caught_up.insert(stream);
         live.current.insert(stream);
         live.lost.remove(&stream);
@@ -1740,6 +1931,40 @@ mod tests {
         assert_eq!(serde_json::from_str::<Cursors>(&json).unwrap().unsent, unsent);
         cursors.unsent.clear();
         assert_eq!(serde_json::from_str::<Cursors>(r#"{"after":{}}"#).unwrap(), cursors);
+    }
+
+    #[test]
+    fn a_quiet_channel_wakes_only_when_it_changes() {
+        let mut baseline = None;
+        assert!(!changed(12, &mut baseline, 12), "nothing new since this device last read it");
+        assert!(changed(12, &mut baseline, 15), "new messages wake it");
+        assert!(changed(12, &mut baseline, 3), "a stream that started over wakes it");
+        assert_eq!(baseline, None);
+        assert!(!changed(0, &mut baseline, 40), "a channel this device never read stays asleep at first");
+        assert_eq!(baseline, Some(40));
+        assert!(!changed(0, &mut baseline, 40));
+        assert!(changed(0, &mut baseline, 41), "and wakes on its first new message");
+    }
+
+    #[test]
+    fn channels_of_servers_off_screen_wait_for_changes_while_the_rest_open() {
+        let (events, _received) = mpsc::unbounded_channel();
+        let state = commy_sync::StreamSecret::random().keys();
+        let channel = commy_sync::StreamSecret::random().keys();
+        let (state_id, channel_id) = (state.id, channel.id);
+        let group: OpenGroup = vec![(Lane::State, state, 0), (Lane::Channel(commy_core::ChannelId::new()), channel, 7)];
+        let (lazy, eager) = tauri::async_runtime::block_on(crate::account_session::spawn(async move {
+            let server = ServerId::new();
+            let mut lazy = Community::new(UNREACHABLE_SYNC_URL, events.clone(), false);
+            lazy.place(server, group.clone());
+            let mut owned = Community::new(UNREACHABLE_SYNC_URL, events, true);
+            owned.place(server, group);
+            let seen = |c: &Community| (c.pool.follows(state_id), c.pool.follows(channel_id), c.pool.watches(channel_id), c.dormant.contains(&channel_id));
+            (seen(&lazy), seen(&owned))
+        }))
+        .unwrap();
+        assert_eq!(lazy, (true, false, true, true), "a quiet channel is only watched");
+        assert_eq!(eager, (true, true, false, false), "an owner keeps every channel open");
     }
 
     #[test]

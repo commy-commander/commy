@@ -4,7 +4,10 @@ use n0_future::time::{self, Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::stream::{SealError, StreamId, StreamKeys, APPEND_NONCE_BYTES};
-use crate::wire::{ClientFrame, ErrorCode, Greeting, OpenRequest, ServerFrame, KEEPALIVE_SECS, MAX_STREAMS_PER_CONNECTION, OPEN_MANY_SINCE, SIGNALS_SINCE, WILLS_SINCE};
+use crate::wire::{
+    ClientFrame, ErrorCode, Greeting, OpenRequest, ServerFrame, WatchRequest, KEEPALIVE_SECS, MAX_STREAMS_PER_CONNECTION, MAX_WATCHES_PER_FRAME, OPEN_MANY_SINCE, SIGNALS_SINCE,
+    WATCH_SINCE, WILLS_SINCE,
+};
 
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 #[path = "client/native.rs"]
@@ -30,6 +33,8 @@ pub enum SyncEvent {
     CaughtUp { stream: StreamId, seq: u64 },
     Refused { stream: StreamId, code: ErrorCode },
     Signal { stream: StreamId, plain: Vec<u8> },
+    Head { stream: StreamId, head: u64 },
+    CannotWatch { streams: Vec<StreamId> },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -49,6 +54,8 @@ type Reply = oneshot::Sender<Result<u64, AppendError>>;
 enum Command {
     Follow { keys: Box<StreamKeys>, after: u64, tail: Option<u32> },
     Unfollow { stream: StreamId },
+    Watch { keys: Vec<StreamKeys> },
+    Unwatch { stream: StreamId },
     Append { stream: StreamId, plain: Vec<u8>, reply: Reply },
     Signal { stream: StreamId, plain: Vec<u8> },
     Will { stream: StreamId, plain: Vec<u8> },
@@ -86,6 +93,14 @@ impl SyncClient {
 
     pub fn unfollow(&self, stream: StreamId) {
         let _ = self.commands.send(Command::Unfollow { stream });
+    }
+
+    pub fn watch(&self, keys: Vec<StreamKeys>) {
+        let _ = self.commands.send(Command::Watch { keys });
+    }
+
+    pub fn unwatch(&self, stream: StreamId) {
+        let _ = self.commands.send(Command::Unwatch { stream });
     }
 
     pub async fn append(&self, stream: StreamId, plain: Vec<u8>) -> Result<u64, AppendError> {
@@ -143,6 +158,7 @@ struct Link {
     url: String,
     events: mpsc::UnboundedSender<SyncEvent>,
     streams: HashMap<StreamId, Followed>,
+    watched: HashMap<StreamId, StreamKeys>,
     pending: HashMap<[u8; APPEND_NONCE_BYTES], Pending>,
     reopen: HashMap<StreamId, Instant>,
     protocol: u32,
@@ -157,13 +173,13 @@ enum Ended {
 
 impl Link {
     fn new(url: String, events: mpsc::UnboundedSender<SyncEvent>, heard: Heard) -> Self {
-        Self { url, events, streams: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0, wills_due: false, heard }
+        Self { url, events, streams: HashMap::new(), watched: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0, wills_due: false, heard }
     }
 
     async fn run(mut self, mut inbox: mpsc::UnboundedReceiver<Command>) {
         let mut failures = 0usize;
         loop {
-            if self.streams.is_empty() && self.pending.is_empty() {
+            if self.streams.is_empty() && self.watched.is_empty() && self.pending.is_empty() {
                 match inbox.recv().await {
                     Some(command) => self.take(command, None).await,
                     None => return,
@@ -215,6 +231,10 @@ impl Link {
         let every: Vec<StreamId> = self.streams.keys().copied().collect();
         self.reopen.clear();
         if self.send_opens(&mut socket, &every).await.is_err() || self.flush_pending(&mut socket).await.is_err() {
+            return Ended::Lost;
+        }
+        let watched: Vec<StreamId> = self.watched.keys().copied().collect();
+        if self.send_watches(&mut socket, &watched).await.is_err() {
             return Ended::Lost;
         }
         if self.wills_due && self.send_wills(&mut socket).await.is_err() {
@@ -279,8 +299,13 @@ impl Link {
                 let will = known.and_then(|f| f.will.clone());
                 let followed = Followed { keys: *keys, after, tail, will };
                 let open = followed.open();
-                self.streams.insert(followed.keys.id, followed);
+                let stream = followed.keys.id;
+                self.streams.insert(stream, followed);
+                let unwatch = self.watched.remove(&stream).is_some() && self.protocol >= WATCH_SINCE;
                 if let Some(socket) = socket {
+                    if unwatch {
+                        let _ = send(socket, &ClientFrame::Unwatch { streams: vec![stream] }).await;
+                    }
                     let _ = send(socket, &open).await;
                 }
             }
@@ -288,6 +313,25 @@ impl Link {
                 if self.streams.remove(&stream).is_some() {
                     if let Some(socket) = socket {
                         let _ = send(socket, &ClientFrame::Close { stream }).await;
+                    }
+                }
+            }
+            Command::Watch { keys } => {
+                let mut added = Vec::new();
+                for keys in keys {
+                    if !self.streams.contains_key(&keys.id) && !self.watched.contains_key(&keys.id) {
+                        added.push(keys.id);
+                        self.watched.insert(keys.id, keys);
+                    }
+                }
+                if let (Some(socket), false) = (socket, added.is_empty()) {
+                    let _ = self.send_watches(socket, &added).await;
+                }
+            }
+            Command::Unwatch { stream } => {
+                if self.watched.remove(&stream).is_some() && self.protocol >= WATCH_SINCE {
+                    if let Some(socket) = socket {
+                        let _ = send(socket, &ClientFrame::Unwatch { streams: vec![stream] }).await;
                     }
                 }
             }
@@ -353,6 +397,24 @@ impl Link {
         Ok(())
     }
 
+    async fn send_watches(&mut self, socket: &mut Socket, streams: &[StreamId]) -> Result<(), ()> {
+        let asked: Vec<StreamId> = streams.iter().filter(|stream| self.watched.contains_key(stream)).copied().collect();
+        if asked.is_empty() {
+            return Ok(());
+        }
+        if self.protocol < WATCH_SINCE {
+            for stream in &asked {
+                self.watched.remove(stream);
+            }
+            let _ = self.events.send(SyncEvent::CannotWatch { streams: asked });
+            return Ok(());
+        }
+        for frame in watch_frames(asked.iter().filter_map(|stream| self.watched.get(stream))) {
+            send(socket, &frame).await?;
+        }
+        Ok(())
+    }
+
     async fn send_wills(&mut self, socket: &mut Socket) -> Result<(), ()> {
         self.wills_due = false;
         for frame in self.streams.values().filter_map(Followed::last_word) {
@@ -376,6 +438,7 @@ impl Link {
             self.reopen.remove(stream);
         }
         self.send_opens(socket, &due).await?;
+        self.send_watches(socket, &due).await?;
         for pending in self.pending.values_mut().filter(|p| p.not_before <= now) {
             send(socket, &pending.frame).await?;
             pending.not_before = now + Duration::from_secs(30);
@@ -417,6 +480,11 @@ impl Link {
                     let _ = self.events.send(SyncEvent::CaughtUp { stream, seq: followed.after });
                 }
             }
+            ServerFrame::Heads { heads } => {
+                for head in heads.into_iter().filter(|head| self.watched.contains_key(&head.stream)) {
+                    let _ = self.events.send(SyncEvent::Head { stream: head.stream, head: head.head });
+                }
+            }
             ServerFrame::Signal { stream, body } => {
                 let Some(followed) = self.streams.get(&stream) else { return };
                 if let Ok(plain) = followed.keys.open(&body.0) {
@@ -443,6 +511,8 @@ impl Link {
                     if code.is_retryable() {
                         let wait = Duration::from_millis(retry_after_ms.unwrap_or(RETRY_AFTER_DEFAULT_MS));
                         self.reopen.insert(stream, Instant::now() + wait);
+                    } else if self.watched.remove(&stream).is_some() {
+                        let _ = self.events.send(SyncEvent::Refused { stream, code });
                     } else if self.streams.remove(&stream).is_some() {
                         let stranded: Vec<_> = self
                             .pending
@@ -469,6 +539,11 @@ fn open_frames<'a>(protocol: u32, followed: impl Iterator<Item = &'a Followed>) 
         return followed.iter().map(|f| f.open()).collect();
     }
     followed.chunks(MAX_STREAMS_PER_CONNECTION).map(|chunk| ClientFrame::open_many(chunk.iter().map(|f| f.open_request()).collect())).collect()
+}
+
+fn watch_frames<'a>(watched: impl Iterator<Item = &'a StreamKeys>) -> Vec<ClientFrame> {
+    let requests: Vec<WatchRequest> = watched.map(WatchRequest::of).collect();
+    requests.chunks(MAX_WATCHES_PER_FRAME).map(|chunk| ClientFrame::Watch { streams: chunk.to_vec() }).collect()
 }
 
 fn gone_quiet(silent: Duration) -> bool {
@@ -504,6 +579,21 @@ mod tests {
         assert_eq!(opens[0], streams[0].open_request());
         let ClientFrame::OpenMany { opens } = &frames[1] else { panic!("a batch") };
         assert_eq!(opens.len(), 3);
+    }
+
+    #[test]
+    fn watched_streams_go_out_in_bounded_frames() {
+        let keys: Vec<StreamKeys> = (0..MAX_WATCHES_PER_FRAME + 3).map(|_| crate::stream::StreamSecret::random().keys()).collect();
+        let frames = watch_frames(keys.iter());
+        let sizes: Vec<usize> = frames
+            .iter()
+            .map(|frame| match frame {
+                ClientFrame::Watch { streams } => streams.len(),
+                _ => panic!("only watch frames"),
+            })
+            .collect();
+        assert_eq!(sizes, vec![MAX_WATCHES_PER_FRAME, 3]);
+        assert!(watch_frames(std::iter::empty()).is_empty());
     }
 
     #[test]

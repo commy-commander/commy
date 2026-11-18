@@ -959,3 +959,115 @@ async fn a_dropped_community_is_refused_and_others_carry_on() {
     assert_eq!(writer.append(kept.id, b"still here".to_vec()).await.unwrap(), 1);
     drop(events.try_recv());
 }
+
+fn heads_in(frames: &[ServerFrame]) -> Vec<commy_sync::wire::Head> {
+    frames
+        .iter()
+        .filter_map(|f| match f {
+            ServerFrame::Heads { heads } => Some(heads.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+#[tokio::test]
+async fn a_watch_names_where_streams_stand_and_sends_no_entries() {
+    use commy_sync::wire::{Head, WatchRequest};
+    let (url, service) = start().await;
+    let busy = StreamSecret::random().keys();
+    let quiet = StreamSecret::random().keys();
+    for n in 1..=3u8 {
+        service.store.append(&busy.id, &[n; APPEND_NONCE_BYTES], &busy.seal(&[n]).unwrap(), 1).await.unwrap();
+    }
+    let mut forged = WatchRequest::of(&StreamSecret::random().keys());
+    forged.stream = StreamSecret::random().keys().id;
+    let mut socket = raw(&url).await;
+    send(&mut socket, &ClientFrame::Watch { streams: vec![WatchRequest::of(&busy), WatchRequest::of(&quiet), forged.clone(), WatchRequest::of(&busy)] }).await;
+    let frames = frames_until_quiet(&mut socket).await;
+    assert!(frames.contains(&ServerFrame::stream_error(ErrorCode::BadStream, forged.stream)));
+    assert_eq!(heads_in(&frames), vec![Head { stream: busy.id, head: 3 }, Head { stream: quiet.id, head: 0 }], "a stream named twice is watched once");
+    assert!(!frames.iter().any(|f| matches!(f, ServerFrame::Entries { .. } | ServerFrame::Opened { .. })));
+    assert_eq!(service.hub.live_streams(), 2);
+
+    {
+        let (writer, _writer_events) = SyncClient::spawn(url.clone());
+        writer.follow_tail(busy.clone(), 0, Some(0));
+        writer.append(busy.id, b"four".to_vec()).await.unwrap();
+        writer.append(busy.id, b"five".to_vec()).await.unwrap();
+        let mut heard = Vec::new();
+        while !heard.contains(&Head { stream: busy.id, head: 5 }) {
+            let frame = receive(&mut socket).await;
+            assert!(!matches!(frame, ServerFrame::Entries { .. }), "a watcher gets positions, never bodies");
+            heard.extend(heads_in(&[frame]));
+        }
+        assert!(heard.len() <= 2, "quick appends share a heads frame: {heard:?}");
+    }
+
+    send(&mut socket, &ClientFrame::Unwatch { streams: vec![busy.id, quiet.id] }).await;
+    let (writer, _writer_events) = SyncClient::spawn(url.clone());
+    writer.follow_tail(busy.clone(), 0, Some(0));
+    writer.append(busy.id, b"six".to_vec()).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(heads_in(&frames_until_quiet(&mut socket).await).is_empty(), "an unwatched stream stays silent");
+    drop(writer);
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while service.hub.live_streams() > 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(service.hub.live_streams(), 0, "unwatching releases the streams");
+}
+
+#[tokio::test]
+async fn one_connection_watches_a_bounded_number_of_streams() {
+    use commy_sync::wire::{WatchRequest, MAX_WATCHED_PER_CONNECTION, MAX_WATCHES_PER_FRAME};
+    let mut config = Config::from_env(|_| None).unwrap();
+    config.limits.opens = Rate { burst: 1_000.0, per_second: 1_000.0 };
+    let (url, service) = start_with(config).await;
+    let mut socket = raw(&url).await;
+    let too_many: Vec<WatchRequest> = (0..MAX_WATCHES_PER_FRAME + 1).map(|_| WatchRequest::of(&StreamSecret::random().keys())).collect();
+    send(&mut socket, &ClientFrame::Watch { streams: too_many }).await;
+    assert_eq!(heads_in(&frames_until_quiet(&mut socket).await).len(), MAX_WATCHES_PER_FRAME, "one frame watches a bounded number");
+    while service.hub.live_streams() < MAX_WATCHED_PER_CONNECTION {
+        let left = MAX_WATCHED_PER_CONNECTION - service.hub.live_streams();
+        let batch: Vec<WatchRequest> = (0..left.min(MAX_WATCHES_PER_FRAME)).map(|_| WatchRequest::of(&StreamSecret::random().keys())).collect();
+        send(&mut socket, &ClientFrame::Watch { streams: batch }).await;
+        frames_until_quiet(&mut socket).await;
+    }
+    let one_more = StreamSecret::random().keys();
+    send(&mut socket, &ClientFrame::Watch { streams: vec![WatchRequest::of(&one_more)] }).await;
+    assert_eq!(receive(&mut socket).await, ServerFrame::stream_error(ErrorCode::TooManyStreams, one_more.id));
+    open_raw(&mut socket, &StreamSecret::random().keys()).await;
+    socket.close(None).await.unwrap();
+    drop(socket);
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while service.hub.live_streams() > 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(service.hub.live_streams(), 0, "a closed connection releases what it watched");
+}
+
+async fn head(events: &mut UnboundedReceiver<SyncEvent>) -> (commy_sync::StreamId, u64) {
+    loop {
+        match tokio::time::timeout(WAIT, events.recv()).await.expect("a head in time").expect("client running") {
+            SyncEvent::Head { stream, head } => return (stream, head),
+            SyncEvent::Entry { .. } => panic!("a watched stream sends no entries"),
+            _ => continue,
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_client_hears_heads_of_watched_streams_and_reads_them_once_followed() {
+    let (url, _) = start().await;
+    let keys = StreamSecret::random().keys();
+    let (watcher, mut events) = SyncClient::spawn(url.clone());
+    watcher.watch(vec![keys.clone()]);
+    assert_eq!(head(&mut events).await, (keys.id, 0));
+    let (writer, _writer_events) = SyncClient::spawn(url.clone());
+    writer.follow_tail(keys.clone(), 0, Some(0));
+    writer.append(keys.id, b"hello".to_vec()).await.unwrap();
+    assert_eq!(head(&mut events).await, (keys.id, 1));
+    watcher.follow(keys.clone(), 0);
+    assert_eq!(caught_up(&mut events).await, vec![(1, b"hello".to_vec())]);
+}

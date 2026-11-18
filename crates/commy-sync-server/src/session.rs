@@ -50,6 +50,7 @@ pub(crate) async fn run(service: Arc<Service>, caller: Caller, socket: WebSocket
     let (mut sink, mut source) = socket.split();
     let (out, mut outgoing) = mpsc::channel::<ServerFrame>(OUTGOING_BUFFER);
     let mut open: HashMap<StreamId, OpenStream> = HashMap::new();
+    let mut watching = crate::watch::Watching::default();
     let session: u64 = rand::random();
     let _ = out.send(service.greeting.frame()).await;
     let mut deadline = Instant::now() + IDLE_LIMIT;
@@ -67,7 +68,7 @@ pub(crate) async fn run(service: Arc<Service>, caller: Caller, socket: WebSocket
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 };
                 match serde_json::from_str::<ClientFrame>(&text) {
-                    Ok(frame) => handle(&service, caller, session, frame, &mut open, &out).await,
+                    Ok(frame) => handle(&service, caller, session, frame, &mut open, &mut watching, &out).await,
                     Err(_) => {
                         let _ = out.send(ServerFrame::error(ErrorCode::BadFrame)).await;
                     }
@@ -94,6 +95,7 @@ pub(crate) async fn run(service: Arc<Service>, caller: Caller, socket: WebSocket
         let _ = opened.follower.await;
         service.hub.release(&stream);
     }
+    watching.stop(&service).await;
     service.limiter.disconnect(caller);
     service.stats.disconnected();
 }
@@ -104,6 +106,7 @@ async fn handle(
     session: u64,
     frame: ClientFrame,
     open: &mut HashMap<StreamId, OpenStream>,
+    watching: &mut crate::watch::Watching,
     out: &mpsc::Sender<ServerFrame>,
 ) {
     if let Some(stream) = stream_of(&frame).filter(|stream| service.desk.is_dropped(stream)) {
@@ -122,6 +125,12 @@ async fn handle(
         }
         ClientFrame::OpenMany { opens } => {
             open_streams(service, caller, session, opens, open, out).await;
+        }
+        ClientFrame::Watch { streams } => {
+            watching.watch(service, caller, streams, out).await;
+        }
+        ClientFrame::Unwatch { streams } => {
+            watching.unwatch(service, &streams).await;
         }
         ClientFrame::Claim { stream, write, read, eraser, sig } => {
             let _ = out.send(claim(service, caller, stream, &write.0, &read.0, &eraser.0, &sig.0).await).await;
@@ -207,7 +216,7 @@ async fn handle(
     }
 }
 
-fn rate_limited(stream: StreamId, refusal: Refusal) -> ServerFrame {
+pub(crate) fn rate_limited(stream: StreamId, refusal: Refusal) -> ServerFrame {
     let retry_after_ms = match refusal {
         Refusal::Wait(wait) => Some(wait.as_millis().max(100) as u64),
         Refusal::Full => None,
@@ -309,6 +318,8 @@ fn stream_of(frame: &ClientFrame) -> Option<StreamId> {
         | ClientFrame::Will { stream, .. }
         | ClientFrame::Claim { stream, .. } => Some(*stream),
         ClientFrame::OpenMany { .. }
+        | ClientFrame::Watch { .. }
+        | ClientFrame::Unwatch { .. }
         | ClientFrame::Close { .. } | ClientFrame::Erase { .. } | ClientFrame::Release { .. } | ClientFrame::Report { .. } | ClientFrame::Ping => None,
     }
 }
