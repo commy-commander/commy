@@ -13,6 +13,7 @@ pub mod hub;
 pub mod limits;
 pub mod mail;
 pub mod operator;
+pub mod passes;
 pub mod push_via;
 pub mod ramp;
 mod pictures;
@@ -122,6 +123,7 @@ pub struct Service {
     pub retention_days: u32,
     pub greeting: Greeting,
     pub server_key: commy_core::Identity,
+    pub passes: passes::Passes,
 }
 
 impl Service {
@@ -149,9 +151,11 @@ impl Service {
                 relay: config.relay.clone(),
                 public_fallback: config.public_relay_fallback,
                 operator: config.operator.clone(),
+                passes: config.passes.as_ref().map(|p| p.issuer.clone()),
                 ..Greeting::of(PROTOCOL)
             },
             server_key: config.server_key.as_ref().map_or_else(commy_core::Identity::generate, |seed| commy_core::Identity::from_bytes(&seed.0)),
+            passes: passes::Passes::new(config.passes.clone()),
         })
     }
 

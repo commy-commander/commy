@@ -18,6 +18,7 @@ export const SEALED_FIELDS = {
   deviceCode: { deviceCode: LOOKUP },
   linkedDevice: { nodeId: LOOKUP },
   listedServer: { operatorEmail: PRIVATE, emergencyEmail: PRIVATE },
+  commyPassKey: { privateKey: PRIVATE },
 };
 
 function deriveKey(secret, purpose) {

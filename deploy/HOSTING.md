@@ -659,6 +659,18 @@ server or channel a log belongs to.
   come, first kept), and the service erases entries, or lets the key go when the
   server passes to a new owner, only for a request signed with that key in the
   last 10 minutes.
+- **New server passes:** creating a server, channel or conversation starts new
+  logs, and the service cannot tell whose they are. So each account can hold a
+  small number of passes for new logs, handed out by the auth server: 30 at
+  once, then 1 every 2 minutes, and none to a suspended account. The app blinds
+  each pass before asking for it (RSA blind signatures, RFC 9474), so the auth
+  server signs without seeing it and cannot match a pass the sync service later
+  takes to the account it was given to. A pass counts for its week and the next
+  one, once. Apps keep a few in hand, so getting one does not line up in time
+  with spending it. The bundled stack turns this on: `SYNC_PASS_ISSUER` names
+  the auth server whose passes the sync service takes, and its keys are read
+  from `SYNC_PASS_KEYS_URL` every hour. `SYNC_PASSES_REQUIRED=true` refuses new
+  logs without a pass; leave it off while older apps are in use.
 - **What it never sees:** what an entry says, who wrote it, which account or
   Commy server a log belongs to, or which logs one person follows. It stores no
   IP address. Addresses are used in memory for rate limits only, under a keyed
@@ -924,7 +936,9 @@ way: it is published in your discovery document.
   entries a day (`SYNC_CONNECTIONS_PER_ADDRESS`,
   `SYNC_DAILY_BYTES_PER_ADDRESS`); per connection, 3 new entries a second
   (bursts of 60); per log, 10 entries a second; 16 logs per connection; 12,000
-  connections in all (`SYNC_MAX_CONNECTIONS`). Entries must be padded and at most 64 KB. Wake registrations
+  connections in all (`SYNC_MAX_CONNECTIONS`). A new log that comes with a
+  new server pass counts against a looser 300 per IP (then 1 every 2 seconds)
+  instead (see "New server passes"). Entries must be padded and at most 64 KB. Wake registrations
   and rings share 1 a second per IP (bursts of 120), 16 phones per tag and 8
   tags per ring.
 - Optional Turnstile bot check and `ALLOW_SIGNUP=false` (see above).

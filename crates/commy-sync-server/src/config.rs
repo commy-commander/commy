@@ -26,6 +26,38 @@ pub struct Config {
     pub server_key: Option<KeySeed>,
     pub gateway: Option<GatewaySettings>,
     pub push_via: Option<PushVia>,
+    pub passes: Option<PassSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassSettings {
+    pub issuer: String,
+    pub keys_url: String,
+    pub required: bool,
+}
+
+fn pass_settings(env: &impl Fn(&str) -> Option<String>) -> Result<Option<PassSettings>, String> {
+    let set = |name: &str| env(name).map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty());
+    let required = match set("SYNC_PASSES_REQUIRED").map(|v| v.to_ascii_lowercase()).as_deref() {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err("SYNC_PASSES_REQUIRED must be true or false".into()),
+    };
+    let Some(issuer) = set("SYNC_PASS_ISSUER").filter(|v| !v.eq_ignore_ascii_case("none")) else {
+        return if required { Err("SYNC_PASSES_REQUIRED needs SYNC_PASS_ISSUER".into()) } else { Ok(None) };
+    };
+    let host = issuer
+        .strip_prefix("https://")
+        .or_else(|| issuer.strip_prefix("http://"))
+        .ok_or("SYNC_PASS_ISSUER must be the https:// address of the account server")?;
+    if host.is_empty() || host.contains(['/', '?', '#', '@', ' ']) {
+        return Err("SYNC_PASS_ISSUER must be https:// followed by a domain, like https://accounts.example.org".into());
+    }
+    let keys_url = set("SYNC_PASS_KEYS_URL").unwrap_or_else(|| format!("{issuer}{}", commy_sync::pass::PASS_KEYS_PATH));
+    if !keys_url.starts_with("https://") && !keys_url.starts_with("http://") {
+        return Err("SYNC_PASS_KEYS_URL must be an http:// or https:// address".into());
+    }
+    Ok(Some(PassSettings { issuer, keys_url, required }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,6 +345,7 @@ impl Config {
             server_key: server_key_seed(&env)?,
             gateway: gateway_settings(&env)?,
             push_via: push_via(&env)?,
+            passes: pass_settings(&env)?,
         })
     }
 
@@ -355,6 +388,28 @@ mod tests {
     fn config(pairs: &[(&str, &str)]) -> Result<Config, String> {
         let map: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         Config::from_env(|key| map.get(key).cloned())
+    }
+
+    #[test]
+    fn new_stream_passes_come_from_one_named_account_server() {
+        assert_eq!(config(&[]).unwrap().passes, None);
+        let on = config(&[("SYNC_PASS_ISSUER", "https://accounts.example.org/")]).unwrap().passes.unwrap();
+        assert_eq!(on.issuer, "https://accounts.example.org");
+        assert_eq!(on.keys_url, "https://accounts.example.org/api/auth/commy/passes/keys");
+        assert!(!on.required);
+        let inside = config(&[("SYNC_PASS_ISSUER", "https://accounts.example.org"), ("SYNC_PASS_KEYS_URL", "http://auth:3001/api/auth/commy/passes/keys"), ("SYNC_PASSES_REQUIRED", "true")])
+            .unwrap()
+            .passes
+            .unwrap();
+        assert_eq!(inside.keys_url, "http://auth:3001/api/auth/commy/passes/keys");
+        assert!(inside.required);
+        assert!(config(&[("SYNC_PASSES_REQUIRED", "true")]).is_err(), "requiring passes needs somewhere to get them");
+        assert_eq!(config(&[("SYNC_PASS_ISSUER", "none")]).unwrap().passes, None);
+        assert_eq!(config(&[("SYNC_PASS_ISSUER", "http://localhost:3001")]).unwrap().passes.unwrap().issuer, "http://localhost:3001");
+        assert!(config(&[("SYNC_PASS_ISSUER", "accounts.example.org")]).is_err());
+        assert!(config(&[("SYNC_PASS_ISSUER", "https://accounts.example.org/path")]).is_err());
+        assert!(config(&[("SYNC_PASS_ISSUER", "https://accounts.example.org"), ("SYNC_PASS_KEYS_URL", "ftp://x")]).is_err());
+        assert!(config(&[("SYNC_PASS_ISSUER", "https://accounts.example.org"), ("SYNC_PASSES_REQUIRED", "maybe")]).is_err());
     }
 
     #[test]

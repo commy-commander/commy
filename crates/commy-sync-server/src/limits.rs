@@ -26,6 +26,7 @@ pub struct Limits {
     pub pictures: Rate,
     pub stream_appends: Rate,
     pub new_streams: Rate,
+    pub passed_new_streams: Rate,
     pub wakes: Rate,
     pub signals: Rate,
     pub address_signals: Rate,
@@ -47,6 +48,7 @@ impl Default for Limits {
             pictures: Rate { burst: 200.0, per_second: 20.0 },
             stream_appends: Rate { burst: 100.0, per_second: 10.0 },
             new_streams: Rate { burst: 30.0, per_second: 1.0 / 120.0 },
+            passed_new_streams: Rate { burst: 300.0, per_second: 0.5 },
             wakes: Rate { burst: 120.0, per_second: 1.0 },
             signals: Rate { burst: 60.0, per_second: 2.0 },
             address_signals: Rate { burst: 1200.0, per_second: 40.0 },
@@ -101,6 +103,7 @@ struct Address {
     opens: Bucket,
     pictures: Bucket,
     new_streams: Bucket,
+    passed_new_streams: Bucket,
     wakes: Bucket,
     signals: Bucket,
     reports: Bucket,
@@ -174,6 +177,7 @@ impl Limiter {
             opens: Bucket::full(limits.address_opens, now),
             pictures: Bucket::full(limits.pictures, now),
             new_streams: Bucket::full(limits.new_streams, now),
+            passed_new_streams: Bucket::full(limits.passed_new_streams, now),
             wakes: Bucket::full(limits.wakes, now),
             signals: Bucket::full(limits.address_signals, now),
             reports: Bucket::full(limits.reports, now),
@@ -252,6 +256,16 @@ impl Limiter {
         let mut books = self.books.lock().unwrap();
         let rate = self.limits.new_streams;
         self.address(&mut books, key, now).new_streams.take(rate, now).map_err(Refusal::Wait)
+    }
+
+    pub fn passed_new_stream(&self, key: AddressKey) -> Result<(), Refusal> {
+        self.passed_new_stream_at(key, Instant::now())
+    }
+
+    fn passed_new_stream_at(&self, key: AddressKey, now: Instant) -> Result<(), Refusal> {
+        let mut books = self.books.lock().unwrap();
+        let rate = self.limits.passed_new_streams;
+        self.address(&mut books, key, now).passed_new_streams.take(rate, now).map_err(Refusal::Wait)
     }
 
     pub fn wake(&self, key: AddressKey) -> Result<(), Refusal> {
@@ -377,6 +391,7 @@ mod tests {
             pictures: Rate { burst: 2.0, per_second: 1.0 },
             stream_appends: Rate { burst: 100.0, per_second: 100.0 },
             new_streams: Rate { burst: 2.0, per_second: 1.0 },
+            passed_new_streams: Rate { burst: 3.0, per_second: 1.0 },
             wakes: Rate { burst: 2.0, per_second: 1.0 },
             signals: Rate { burst: 2.0, per_second: 1.0 },
             address_signals: Rate { burst: 3.0, per_second: 1.0 },
@@ -576,6 +591,10 @@ mod tests {
         assert!(limiter.append_at(key, &[9; 32], 10, now).is_ok(), "writing to streams that exist is not affected");
         assert!(limiter.new_stream_at(key, now + Duration::from_secs(1)).is_ok());
         assert!(limiter.new_stream_at(limiter.key("203.0.113.7".parse().unwrap()), now).is_ok());
+        for _ in 0..3 {
+            assert!(limiter.passed_new_stream_at(key, now).is_ok(), "passes from many accounts behind one address go further");
+        }
+        assert!(matches!(limiter.passed_new_stream_at(key, now), Err(Refusal::Wait(_))));
     }
 
     #[test]

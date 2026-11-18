@@ -40,5 +40,6 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "s
 rlimit = "0.11"
 
 [dev-dependencies]
+rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 commy-sync = { workspace = true, features = ["client"] }

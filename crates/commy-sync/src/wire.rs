@@ -1,6 +1,7 @@
 use data_encoding::BASE64URL_NOPAD;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::pass::Pass;
 use crate::report::{HostReport, Receipt};
 use crate::stream::{Eraser, StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
 
@@ -127,7 +128,14 @@ pub enum ClientFrame {
     OpenMany { opens: Vec<OpenRequest> },
     Watch { streams: Vec<WatchRequest> },
     Unwatch { streams: Vec<StreamId> },
-    Append { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
+    Append {
+        stream: StreamId,
+        nonce: AppendNonce,
+        body: Blob,
+        sig: Bytes<64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pass: Option<Box<Pass>>,
+    },
     Signal { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Will { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Close { stream: StreamId },
@@ -154,7 +162,14 @@ impl ClientFrame {
 
     pub fn append(keys: &StreamKeys, nonce: [u8; APPEND_NONCE_BYTES], body: Vec<u8>) -> Self {
         let sig = keys.sign_append(&nonce, &body);
-        ClientFrame::Append { stream: keys.id, nonce: Bytes(nonce), body: Blob(body), sig: Bytes(sig) }
+        ClientFrame::Append { stream: keys.id, nonce: Bytes(nonce), body: Blob(body), sig: Bytes(sig), pass: None }
+    }
+
+    pub fn with_pass(self, given: Pass) -> Self {
+        match self {
+            ClientFrame::Append { stream, nonce, body, sig, .. } => ClientFrame::Append { stream, nonce, body, sig, pass: Some(Box::new(given)) },
+            other => other,
+        }
     }
 
     pub fn signal(keys: &StreamKeys, nonce: [u8; APPEND_NONCE_BYTES], body: Vec<u8>) -> Self {
@@ -207,6 +222,7 @@ pub enum ErrorCode {
     NotYours,
     Expired,
     Removed,
+    PassNeeded,
 }
 
 impl ErrorCode {
@@ -230,6 +246,8 @@ pub enum ServerFrame {
         public_fallback: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         operator: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        passes: Option<String>,
     },
     Opened { stream: StreamId, head: u64 },
     Entries { stream: StreamId, entries: Vec<WireEntry>, caught_up: bool },
@@ -260,6 +278,7 @@ pub struct Greeting {
     pub relay: Option<String>,
     pub public_fallback: bool,
     pub operator: Option<String>,
+    pub passes: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,7 +290,7 @@ pub enum Fit {
 
 impl Greeting {
     pub fn of(protocol: u32) -> Self {
-        Greeting { protocol, version: None, oldest_protocol: OLDEST_CLIENT_PROTOCOL, relay: None, public_fallback: false, operator: None }
+        Greeting { protocol, version: None, oldest_protocol: OLDEST_CLIENT_PROTOCOL, relay: None, public_fallback: false, operator: None, passes: None }
     }
 
     pub fn frame(&self) -> ServerFrame {
@@ -282,6 +301,7 @@ impl Greeting {
             relay: self.relay.clone(),
             public_fallback: self.public_fallback,
             operator: self.operator.clone(),
+            passes: self.passes.clone(),
         }
     }
 
@@ -298,18 +318,19 @@ impl Greeting {
 
 impl ServerFrame {
     pub fn hello(protocol: u32) -> Self {
-        ServerFrame::Hello { protocol, version: None, oldest: None, relay: None, public_fallback: false, operator: None }
+        ServerFrame::Hello { protocol, version: None, oldest: None, relay: None, public_fallback: false, operator: None, passes: None }
     }
 
     pub fn greeting(&self) -> Option<Greeting> {
         match self {
-            ServerFrame::Hello { protocol, version, oldest, relay, public_fallback, operator } => Some(Greeting {
+            ServerFrame::Hello { protocol, version, oldest, relay, public_fallback, operator, passes } => Some(Greeting {
                 protocol: *protocol,
                 version: version.clone(),
                 oldest_protocol: oldest.unwrap_or(OLDEST_CLIENT_PROTOCOL),
                 relay: relay.clone(),
                 public_fallback: *public_fallback,
                 operator: operator.clone(),
+                passes: passes.clone(),
             }),
             _ => None,
         }
@@ -362,6 +383,25 @@ mod tests {
     }
 
     #[test]
+    fn a_pass_rides_on_an_append_only_when_given() {
+        let keys = StreamSecret::random().keys();
+        let plain = ClientFrame::append(&keys, rand::random(), vec![1]);
+        assert!(serde_json::to_value(&plain).unwrap().get("pass").is_none(), "older services see the frame they know");
+        let pass = Pass { epoch: 9, token: Bytes([4; 32]), randomizer: Bytes([5; 32]), sig: Blob(vec![6; 256]) };
+        let passed = plain.clone().with_pass(pass.clone());
+        let json = serde_json::to_string(&passed).unwrap();
+        let ClientFrame::Append { pass: Some(back), .. } = serde_json::from_str::<ClientFrame>(&json).unwrap() else { panic!("an append") };
+        assert_eq!(*back, pass);
+        assert_eq!(ClientFrame::Ping.with_pass(pass), ClientFrame::Ping);
+        let greeting = Greeting { passes: Some("https://commy.chat".into()), ..Greeting::of(PROTOCOL) };
+        let hello = serde_json::to_string(&greeting.frame()).unwrap();
+        assert_eq!(serde_json::from_str::<ServerFrame>(&hello).unwrap().greeting().unwrap().passes.as_deref(), Some("https://commy.chat"));
+        assert!(serde_json::to_value(Greeting::of(PROTOCOL).frame()).unwrap().get("passes").is_none());
+        assert_eq!(serde_json::to_string(&ErrorCode::PassNeeded).unwrap(), r#""pass_needed""#);
+        assert!(!ErrorCode::PassNeeded.is_retryable());
+    }
+
+    #[test]
     fn an_open_many_frame_carries_each_open_as_a_single_open_would() {
         let keys = StreamSecret::random().keys();
         let ClientFrame::Open { stream, write, read, after, tail } = ClientFrame::open_tail(&keys, 0, Some(200)) else { unreachable!() };
@@ -391,7 +431,7 @@ mod tests {
     #[test]
     fn an_append_frame_carries_a_signature_the_service_can_check() {
         let keys = StreamSecret::random().keys();
-        let ClientFrame::Append { stream, nonce, body, sig } = ClientFrame::append(&keys, rand::random(), b"x".to_vec()) else {
+        let ClientFrame::Append { stream, nonce, body, sig, .. } = ClientFrame::append(&keys, rand::random(), b"x".to_vec()) else {
             unreachable!()
         };
         assert!(verify_append(&keys.write_public(), &stream, &nonce.0, &body.0, &sig.0));
@@ -411,7 +451,7 @@ mod tests {
         let id = StreamSecret::random().keys().id;
         let frames = [
             ServerFrame::hello(PROTOCOL),
-            Greeting { protocol: PROTOCOL, version: Some("0.2.5".into()), oldest_protocol: 2, relay: Some("https://sync.example.org".into()), public_fallback: false, operator: None }.frame(),
+            Greeting { protocol: PROTOCOL, version: Some("0.2.5".into()), oldest_protocol: 2, relay: Some("https://sync.example.org".into()), public_fallback: false, operator: None, passes: None }.frame(),
             Greeting { operator: Some("Example Chat".into()), ..Greeting::of(PROTOCOL) }.frame(),
             ServerFrame::Opened { stream: id, head: 7 },
             ServerFrame::Entries { stream: id, entries: vec![WireEntry { seq: 1, at: 1_760_000_000_000, body: Blob(vec![4; 40]) }], caught_up: true },
@@ -489,6 +529,7 @@ mod tests {
             relay: Some("https://sync.example.org".into()),
             public_fallback: true,
             operator: Some("Example Chat".into()),
+            passes: Some("https://example.org".into()),
         };
         let text = serde_json::to_string(&new.frame()).unwrap();
         assert!(text.contains(r#""public_fallback":true"#));

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use n0_future::time::{self, Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::pass::Pass;
 use crate::stream::{SealError, StreamId, StreamKeys, APPEND_NONCE_BYTES};
 use crate::wire::{
     ClientFrame, ErrorCode, Greeting, OpenRequest, ServerFrame, WatchRequest, KEEPALIVE_SECS, MAX_STREAMS_PER_CONNECTION, MAX_WATCHES_PER_FRAME, OPEN_MANY_SINCE, SIGNALS_SINCE,
@@ -60,9 +61,12 @@ enum Command {
     Signal { stream: StreamId, plain: Vec<u8> },
     Will { stream: StreamId, plain: Vec<u8> },
     Nudge,
+    Carry(Purse),
 }
 
 type Heard = std::sync::Arc<std::sync::Mutex<Option<Greeting>>>;
+
+pub type Purse = std::sync::Arc<dyn Fn(&str) -> Option<Pass> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct SyncClient {
@@ -121,6 +125,10 @@ impl SyncClient {
         let _ = self.commands.send(Command::Nudge);
     }
 
+    pub fn carry(&self, purse: Purse) {
+        let _ = self.commands.send(Command::Carry(purse));
+    }
+
     pub fn is_running(&self) -> bool {
         !self.commands.is_closed()
     }
@@ -131,9 +139,15 @@ struct Followed {
     after: u64,
     tail: Option<u32>,
     will: Option<Vec<u8>>,
+    written: bool,
+    pass: Option<Pass>,
 }
 
 impl Followed {
+    fn wants_pass(&self) -> bool {
+        !self.written && self.after == 0
+    }
+
     fn open(&self) -> ClientFrame {
         ClientFrame::open_tail(&self.keys, self.after, self.tail)
     }
@@ -164,6 +178,8 @@ struct Link {
     protocol: u32,
     wills_due: bool,
     heard: Heard,
+    purse: Option<Purse>,
+    passes_from: Option<String>,
 }
 
 enum Ended {
@@ -173,7 +189,7 @@ enum Ended {
 
 impl Link {
     fn new(url: String, events: mpsc::UnboundedSender<SyncEvent>, heard: Heard) -> Self {
-        Self { url, events, streams: HashMap::new(), watched: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0, wills_due: false, heard }
+        Self { url, events, streams: HashMap::new(), watched: HashMap::new(), pending: HashMap::new(), reopen: HashMap::new(), protocol: 0, wills_due: false, heard, purse: None, passes_from: None }
     }
 
     async fn run(mut self, mut inbox: mpsc::UnboundedReceiver<Command>) {
@@ -293,11 +309,14 @@ impl Link {
     async fn take(&mut self, command: Command, socket: Option<&mut Socket>) {
         match command {
             Command::Nudge => {}
+            Command::Carry(purse) => self.purse = Some(purse),
             Command::Follow { keys, after, tail } => {
                 let known = self.streams.get(&keys.id);
                 let after = known.map_or(after, |f| f.after.max(after));
                 let will = known.and_then(|f| f.will.clone());
-                let followed = Followed { keys: *keys, after, tail, will };
+                let written = known.is_some_and(|f| f.written);
+                let pass = known.and_then(|f| f.pass.clone());
+                let followed = Followed { keys: *keys, after, tail, will, written, pass };
                 let open = followed.open();
                 let stream = followed.keys.id;
                 self.streams.insert(stream, followed);
@@ -364,7 +383,10 @@ impl Link {
                     }
                 };
                 let nonce: [u8; APPEND_NONCE_BYTES] = rand::random();
-                let frame = ClientFrame::append(&followed.keys, nonce, body);
+                let mut frame = ClientFrame::append(&followed.keys, nonce, body);
+                if let Some(pass) = self.pass_for(&stream) {
+                    frame = frame.with_pass(pass);
+                }
                 if let Some(socket) = socket {
                     let _ = send(socket, &frame).await;
                 }
@@ -415,6 +437,35 @@ impl Link {
         Ok(())
     }
 
+    fn pass_for(&mut self, stream: &StreamId) -> Option<Pass> {
+        let followed = self.streams.get_mut(stream)?;
+        if !followed.wants_pass() {
+            return None;
+        }
+        if followed.pass.is_none() {
+            let issuer = self.passes_from.as_deref()?;
+            followed.pass = (self.purse.as_ref()?)(issuer);
+        }
+        followed.pass.clone()
+    }
+
+    fn pass_pending(&mut self) {
+        let unpassed: Vec<([u8; APPEND_NONCE_BYTES], StreamId)> = self
+            .pending
+            .iter()
+            .filter_map(|(nonce, p)| match &p.frame {
+                ClientFrame::Append { stream, pass: None, .. } => Some((*nonce, *stream)),
+                _ => None,
+            })
+            .collect();
+        for (nonce, stream) in unpassed {
+            let Some(pass) = self.pass_for(&stream) else { continue };
+            if let Some(pending) = self.pending.get_mut(&nonce) {
+                pending.frame = pending.frame.clone().with_pass(pass);
+            }
+        }
+    }
+
     async fn send_wills(&mut self, socket: &mut Socket) -> Result<(), ()> {
         self.wills_due = false;
         for frame in self.streams.values().filter_map(Followed::last_word) {
@@ -451,9 +502,11 @@ impl Link {
             *self.heard.lock().unwrap() = Some(greeting);
         }
         match frame {
-            ServerFrame::Hello { protocol, .. } => {
+            ServerFrame::Hello { protocol, passes, .. } => {
                 self.protocol = protocol;
                 self.wills_due = protocol >= WILLS_SINCE;
+                self.passes_from = passes;
+                self.pass_pending();
             }
             ServerFrame::Pong | ServerFrame::Claimed { .. } | ServerFrame::Erased { .. } | ServerFrame::Released { .. } | ServerFrame::Reported { .. } => {}
             ServerFrame::Opened { stream, head } => {
@@ -461,10 +514,12 @@ impl Link {
                     if head < followed.after {
                         followed.after = 0;
                     }
+                    followed.written |= head > 0;
                 }
             }
             ServerFrame::Entries { stream, entries, caught_up } => {
                 let Some(followed) = self.streams.get_mut(&stream) else { return };
+                followed.written |= !entries.is_empty();
                 for entry in entries {
                     if entry.seq <= followed.after {
                         continue;
@@ -491,7 +546,11 @@ impl Link {
                     let _ = self.events.send(SyncEvent::Signal { stream, plain });
                 }
             }
-            ServerFrame::Appended { nonce, seq, .. } => {
+            ServerFrame::Appended { stream, nonce, seq, .. } => {
+                if let Some(followed) = self.streams.get_mut(&stream) {
+                    followed.written = true;
+                    followed.pass = None;
+                }
                 if let Some(pending) = self.pending.remove(&nonce.0) {
                     let _ = pending.reply.send(Ok(seq));
                 }
@@ -566,7 +625,7 @@ mod tests {
     use super::*;
 
     fn followed(count: usize) -> Vec<Followed> {
-        (0..count).map(|n| Followed { keys: crate::StreamSecret::random().keys(), after: n as u64, tail: None, will: None }).collect()
+        (0..count).map(|n| Followed { keys: crate::StreamSecret::random().keys(), after: n as u64, tail: None, will: None, written: false, pass: None }).collect()
     }
 
     #[test]
@@ -603,6 +662,73 @@ mod tests {
         assert_eq!(frames, streams.iter().map(Followed::open).collect::<Vec<_>>());
         assert_eq!(open_frames(OPEN_MANY_SINCE, streams[..1].iter()), vec![streams[0].open()]);
         assert!(open_frames(OPEN_MANY_SINCE, std::iter::empty()).is_empty());
+    }
+
+    fn sample_pass(epoch: u32) -> Pass {
+        use crate::wire::{Blob, Bytes};
+        Pass { epoch, token: Bytes(rand::random()), randomizer: Bytes([2; 32]), sig: Blob(vec![3; 256]) }
+    }
+
+    fn purse_counting(taken: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Purse {
+        std::sync::Arc::new(move |issuer: &str| {
+            assert_eq!(issuer, "https://commy.example");
+            Some(sample_pass(taken.fetch_add(1, std::sync::atomic::Ordering::SeqCst) as u32))
+        })
+    }
+
+    #[test]
+    fn a_new_stream_spends_one_pass_however_many_appends_wait() {
+        let (events, _heard) = mpsc::unbounded_channel();
+        let mut link = Link::new("wss://sync.example/sync".into(), events, Heard::default());
+        let taken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        link.purse = Some(purse_counting(taken.clone()));
+        let mut fresh = followed(1).pop().unwrap();
+        fresh.after = 0;
+        let keys = fresh.keys.clone();
+        link.streams.insert(keys.id, fresh);
+        let mut waiting = Vec::new();
+        for _ in 0..3 {
+            let (reply, answer) = oneshot::channel();
+            waiting.push(answer);
+            let nonce: [u8; APPEND_NONCE_BYTES] = rand::random();
+            let frame = ClientFrame::append(&keys, nonce, keys.seal(b"hi").unwrap());
+            link.pending.insert(nonce, Pending { frame, reply, not_before: Instant::now() });
+        }
+        assert_eq!(link.pass_for(&keys.id), None, "no pass before the service says whose passes it takes");
+        link.handle(ServerFrame::Hello { protocol: crate::wire::PROTOCOL, version: None, oldest: None, relay: None, public_fallback: false, operator: None, passes: Some("https://commy.example".into()) });
+        let passes: Vec<Pass> = link.pending.values().filter_map(|p| match &p.frame {
+            ClientFrame::Append { pass, .. } => pass.as_deref().cloned(),
+            _ => None,
+        }).collect();
+        assert_eq!(passes.len(), 3);
+        assert!(passes.iter().all(|p| *p == passes[0]), "the waiting appends share one pass, and the service spends it once");
+        assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let nonce = *link.pending.keys().next().unwrap();
+        link.handle(ServerFrame::Appended { stream: keys.id, nonce: crate::wire::Bytes(nonce), seq: 1, at: 1 });
+        assert_eq!(link.pass_for(&keys.id), None, "a written stream needs no pass");
+        assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn streams_with_history_never_spend_a_pass() {
+        let (events, _heard) = mpsc::unbounded_channel();
+        let mut link = Link::new("wss://sync.example/sync".into(), events, Heard::default());
+        let taken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        link.purse = Some(purse_counting(taken.clone()));
+        link.passes_from = Some("https://commy.example".into());
+        let streams = followed(3);
+        let ids: Vec<StreamId> = streams.iter().map(|f| f.keys.id).collect();
+        for f in streams {
+            link.streams.insert(f.keys.id, f);
+        }
+        assert_eq!(link.pass_for(&ids[1]), None, "a cursor means the stream has entries");
+        link.streams.get_mut(&ids[0]).unwrap().after = 0;
+        link.handle(ServerFrame::Opened { stream: ids[0], head: 4 });
+        assert_eq!(link.pass_for(&ids[0]), None, "the service said it has entries");
+        assert_eq!(taken.load(std::sync::atomic::Ordering::SeqCst), 0);
+        link.passes_from = None;
+        link.streams.get_mut(&ids[2]).unwrap().after = 0;
+        assert_eq!(link.pass_for(&ids[2]), None, "a service that takes no passes gets none");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 pub mod endpoint;
 pub mod file;
+pub mod pass;
 pub mod picture;
 pub mod report;
 pub mod stream;
@@ -16,11 +17,12 @@ pub mod pool;
 pub mod reporting;
 
 pub use file::FileKey;
+pub use pass::{Pass, PassKey};
 pub use picture::PictureKey;
 pub use stream::{Eraser, SealError, StreamId, StreamKeys, StreamSecret};
 pub use wire::{ClientFrame, ErrorCode, ServerFrame, WireEntry};
 
 #[cfg(feature = "client")]
-pub use client::{AppendError, SyncClient, SyncEvent};
+pub use client::{AppendError, Purse, SyncClient, SyncEvent};
 #[cfg(feature = "client")]
 pub use pool::Pool;

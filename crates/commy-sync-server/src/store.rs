@@ -304,6 +304,7 @@ pub struct MemoryStore {
     quiet: Mutex<HashMap<String, i64>>,
     pub(crate) reports: Mutex<crate::reports::MemoryReports>,
     pub(crate) gateway: Mutex<crate::gateway_store::MemoryGateway>,
+    pub(crate) spent_passes: Mutex<HashMap<[u8; commy_sync::pass::PASS_TOKEN_BYTES], u32>>,
 }
 
 impl MemoryStore {
@@ -499,7 +500,7 @@ impl PgStore {
             }
             Err(e) => return Err(e.into()),
         };
-        for statement in SCHEMA.iter().chain(crate::gateway_store::GATEWAY_SCHEMA) {
+        for statement in SCHEMA.iter().chain(crate::gateway_store::GATEWAY_SCHEMA).chain(crate::passes::PASS_SCHEMA) {
             sqlx::query(statement).execute(&pool).await?;
         }
         let writers = Writers::spawn(pool.clone());

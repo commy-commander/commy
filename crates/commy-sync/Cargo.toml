@@ -18,6 +18,9 @@ ed25519-dalek = "3"
 sha2 = "0.11"
 hmac = "0.13"
 rand = "0.8"
+rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit"] }
+num-bigint-dig = { version = "0.8", default-features = false }
+sha2_10 = { package = "sha2", version = "0.10", default-features = false }
 tokio = { version = "1", features = ["sync", "macros"], optional = true }
 n0-future = { version = "0.3", optional = true }
 tracing = { workspace = true, optional = true }

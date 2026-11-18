@@ -7,6 +7,7 @@ use commy_sync::stream::{
     verify_append, verify_claim, verify_erase, verify_release, verify_signal, StreamId, MAX_SEALED, MAX_SIGNAL_SEALED, NONCE_BYTES, SIZE_BUCKETS,
     TAG_BYTES,
 };
+use commy_sync::pass::Pass;
 use commy_sync::wire::{
     AppendNonce, Blob, ClientFrame, ErrorCode, OpenRequest, ServerFrame, WireEntry, ERASE_WINDOW_MS, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE,
 };
@@ -17,6 +18,7 @@ use tokio::time::Instant;
 
 use crate::hub::Live;
 use crate::limits::{Caller, Refusal};
+use crate::passes::Spent;
 use crate::Service;
 
 const IDLE_LIMIT: Duration = Duration::from_secs(180);
@@ -175,7 +177,7 @@ async fn handle(
             }
             opened.will = Some(body);
         }
-        ClientFrame::Append { stream, nonce, body, sig } => {
+        ClientFrame::Append { stream, nonce, body, sig, pass } => {
             let Some(opened) = open.get_mut(&stream) else {
                 let _ = out.send(refused(ErrorCode::NotOpen, stream, nonce, None)).await;
                 return;
@@ -189,8 +191,8 @@ async fn handle(
                 return;
             }
             if opened.unwritten {
-                if let Err(refusal) = service.limiter.new_stream(caller.address) {
-                    let _ = out.send(refused(ErrorCode::RateLimited, stream, nonce, Some(refusal))).await;
+                if let Err((code, refusal)) = new_stream_allowed(service, caller, pass.as_deref()).await {
+                    let _ = out.send(refused(code, stream, nonce, refusal)).await;
                     return;
                 }
                 opened.unwritten = false;
@@ -308,6 +310,24 @@ async fn open_streams(
         let will = wills.remove(&request.stream).flatten();
         open.insert(request.stream, OpenStream { write: request.write.0, follower, will, unwritten: head == 0 });
     }
+}
+
+async fn new_stream_allowed(service: &Service, caller: Caller, pass: Option<&Pass>) -> Result<(), (ErrorCode, Option<Refusal>)> {
+    if let Some(pass) = pass.filter(|pass| service.passes.holds(pass, now_ms())) {
+        service.limiter.passed_new_stream(caller.address).map_err(|refusal| (ErrorCode::RateLimited, Some(refusal)))?;
+        match service.passes.spend(&service.store, pass).await {
+            Ok(Spent::Now) => return Ok(()),
+            Ok(Spent::Unusable) => {}
+            Err(e) => {
+                tracing::warn!("sync store could not spend a pass: {e}");
+                return Err((ErrorCode::Unavailable, Some(Refusal::Wait(Duration::from_secs(2)))));
+            }
+        }
+    }
+    if service.passes.required() {
+        return Err((ErrorCode::PassNeeded, None));
+    }
+    service.limiter.new_stream(caller.address).map_err(|refusal| (ErrorCode::RateLimited, Some(refusal)))
 }
 
 fn stream_of(frame: &ClientFrame) -> Option<StreamId> {

@@ -52,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
     let service = Service::with_pusher(store, &config, pusher);
     learn_dropped(&service).await;
     spawn_housekeeping(service.clone());
+    commy_sync_server::passes::spawn_refresh(service.clone());
     if let Some(settings) = config.admin.clone() {
         let admin = tokio::net::TcpListener::bind(settings.listen).await?;
         tracing::info!("admin page listening on port {}", settings.listen.port());

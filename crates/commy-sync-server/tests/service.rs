@@ -208,7 +208,7 @@ async fn the_service_refuses_what_it_cannot_check() {
     send(&mut socket, &ClientFrame::append(&other, nonce, keys.seal(b"x").unwrap())).await;
     let refused = receive(&mut socket).await;
     assert!(matches!(refused, ServerFrame::Error { code: ErrorCode::NotOpen, .. }), "{refused:?}");
-    let forged = ClientFrame::Append { stream: keys.id, nonce: Bytes(nonce), body: Blob(keys.seal(b"x").unwrap()), sig: Bytes([7; 64]) };
+    let forged = ClientFrame::Append { stream: keys.id, nonce: Bytes(nonce), body: Blob(keys.seal(b"x").unwrap()), sig: Bytes([7; 64]), pass: None };
     send(&mut socket, &forged).await;
     assert!(matches!(receive(&mut socket).await, ServerFrame::Error { code: ErrorCode::BadSignature, .. }));
     send(&mut socket, &ClientFrame::append(&keys, nonce, vec![0; 700])).await;
@@ -1070,4 +1070,130 @@ async fn a_client_hears_heads_of_watched_streams_and_reads_them_once_followed() 
     assert_eq!(head(&mut events).await, (keys.id, 1));
     watcher.follow(keys.clone(), 0);
     assert_eq!(caught_up(&mut events).await, vec![(1, b"hello".to_vec())]);
+}
+
+mod passes {
+    use super::*;
+    use commy_sync::pass::{epoch_of, Pass, PassKey, PASS_KEY_BITS};
+    use commy_sync_server::config::PassSettings;
+    use rsa::pkcs8::EncodePublicKey;
+    use rsa::traits::{PrivateKeyParts, PublicKeyParts};
+    use rsa::{BigUint, RsaPrivateKey};
+    use std::sync::{Mutex, OnceLock};
+
+    const ISSUER: &str = "https://accounts.example.org";
+
+    fn issuer() -> &'static RsaPrivateKey {
+        static KEY: OnceLock<RsaPrivateKey> = OnceLock::new();
+        KEY.get_or_init(|| RsaPrivateKey::new(&mut rand::thread_rng(), PASS_KEY_BITS).unwrap())
+    }
+
+    fn now_ms() -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+    }
+
+    fn der() -> Vec<u8> {
+        issuer().to_public_key().to_public_key_der().unwrap().as_bytes().to_vec()
+    }
+
+    fn pass() -> Pass {
+        let key = PassKey::from_der(epoch_of(now_ms()), &der()).unwrap();
+        let (blinded, pending) = key.blind(&mut rand::thread_rng()).unwrap();
+        let private = issuer();
+        let signed = BigUint::from_bytes_be(&blinded).modpow(private.d(), private.n()).to_bytes_be();
+        let mut blind_sig = vec![0u8; private.size() - signed.len()];
+        blind_sig.extend_from_slice(&signed);
+        key.finish(pending, &blind_sig).unwrap()
+    }
+
+    async fn start_taking_passes(required: bool) -> (String, Arc<Service>) {
+        let mut config = Config::from_env(|_| None).unwrap();
+        config.limits.new_streams = Rate { burst: 1.0, per_second: 0.0001 };
+        config.passes = Some(PassSettings { issuer: ISSUER.into(), keys_url: "http://127.0.0.1:9/keys".into(), required });
+        let (url, service) = start_with(config).await;
+        let key = data_encoding::BASE64URL_NOPAD.encode(&der());
+        let published = serde_json::json!({ "keys": [{ "epoch": epoch_of(now_ms()), "der": key }] }).to_string();
+        assert_eq!(service.passes.learn(&published), Ok(1));
+        (url, service)
+    }
+
+    async fn greeted(url: &str) -> Raw {
+        let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        let greeting = receive(&mut socket).await.greeting().unwrap();
+        assert_eq!(greeting.passes.as_deref(), Some(ISSUER));
+        socket
+    }
+
+    async fn answer(socket: &mut Raw) -> Result<u64, ErrorCode> {
+        loop {
+            match receive(socket).await {
+                ServerFrame::Appended { seq, .. } => return Ok(seq),
+                ServerFrame::Error { code, .. } => return Err(code),
+                _ => continue,
+            }
+        }
+    }
+
+    fn append(keys: &commy_sync::StreamKeys) -> ClientFrame {
+        ClientFrame::append(keys, rand::random(), keys.seal(b"hi").unwrap())
+    }
+
+    #[tokio::test]
+    async fn an_app_carrying_passes_starts_more_new_streams_than_its_address_could() {
+        let (url, _) = start_taking_passes(false).await;
+        let purse_holds = Arc::new(Mutex::new(vec![pass(), pass(), pass()]));
+        let held = purse_holds.clone();
+        let (client, mut events) = SyncClient::spawn(url);
+        client.carry(Arc::new(move |issuer: &str| if issuer == ISSUER { held.lock().unwrap().pop() } else { None }));
+        let streams: Vec<_> = (0..4).map(|_| StreamSecret::random().keys()).collect();
+        for keys in &streams {
+            client.follow(keys.clone(), 0);
+        }
+        for _ in &streams {
+            caught_up(&mut events).await;
+        }
+        for keys in &streams {
+            let seq = tokio::time::timeout(WAIT, client.append(keys.id, b"first".to_vec())).await.expect("in time").unwrap();
+            assert_eq!(seq, 1);
+        }
+        assert!(purse_holds.lock().unwrap().is_empty(), "three streams took a pass each, the fourth used the address allowance");
+        assert_eq!(tokio::time::timeout(WAIT, client.append(streams[0].id, b"second".to_vec())).await.expect("in time").unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_pass_counts_once_and_a_forged_one_not_at_all() {
+        let (url, _) = start_taking_passes(false).await;
+        let mut socket = greeted(&url).await;
+        let streams: Vec<_> = (0..4).map(|_| StreamSecret::random().keys()).collect();
+        for keys in &streams {
+            open_raw(&mut socket, keys).await;
+        }
+        let once = pass();
+        send(&mut socket, &append(&streams[0]).with_pass(once.clone())).await;
+        assert_eq!(answer(&mut socket).await, Ok(1));
+        send(&mut socket, &append(&streams[1]).with_pass(once.clone())).await;
+        assert_eq!(answer(&mut socket).await, Ok(1), "a spent pass falls back to the address allowance");
+        send(&mut socket, &append(&streams[2]).with_pass(once)).await;
+        assert_eq!(answer(&mut socket).await, Err(ErrorCode::RateLimited), "and that allowance is used up");
+        let mut forged = pass();
+        forged.token.0[0] ^= 1;
+        send(&mut socket, &append(&streams[3]).with_pass(forged)).await;
+        assert_eq!(answer(&mut socket).await, Err(ErrorCode::RateLimited));
+        send(&mut socket, &append(&streams[3]).with_pass(pass())).await;
+        assert_eq!(answer(&mut socket).await, Ok(1));
+    }
+
+    #[tokio::test]
+    async fn a_service_that_requires_passes_refuses_new_streams_without_one() {
+        let (url, _) = start_taking_passes(true).await;
+        let mut socket = greeted(&url).await;
+        let fresh = StreamSecret::random().keys();
+        open_raw(&mut socket, &fresh).await;
+        send(&mut socket, &append(&fresh)).await;
+        assert_eq!(answer(&mut socket).await, Err(ErrorCode::PassNeeded));
+        send(&mut socket, &append(&fresh).with_pass(pass())).await;
+        assert_eq!(answer(&mut socket).await, Ok(1));
+        send(&mut socket, &append(&fresh)).await;
+        assert_eq!(answer(&mut socket).await, Ok(2), "only a stream's first entry needs a pass");
+    }
 }

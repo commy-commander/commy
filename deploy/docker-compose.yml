@@ -145,6 +145,9 @@ services:
       DATABASE_URL: postgres://commy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/commy_sync
       SYNC_RETENTION_DAYS: ${SYNC_RETENTION_DAYS:-90}
       SYNC_DB_POOL: ${SYNC_DB_POOL:-}
+      SYNC_PASS_ISSUER: ${SYNC_PASS_ISSUER:-${PUBLIC_URL:-https://${DOMAIN}}}
+      SYNC_PASS_KEYS_URL: ${SYNC_PASS_KEYS_URL:-http://auth:3001/api/auth/commy/passes/keys}
+      SYNC_PASSES_REQUIRED: ${SYNC_PASSES_REQUIRED:-false}
       FCM_SERVICE_ACCOUNT: ${FCM_SERVICE_ACCOUNT:-}
       APNS_KEY: ${APNS_KEY:-}
       APNS_KEY_ID: ${APNS_KEY_ID:-}
