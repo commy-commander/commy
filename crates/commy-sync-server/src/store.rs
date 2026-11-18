@@ -6,6 +6,8 @@ use commy_sync::wire::{Blob, WireEntry};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use sqlx::{ConnectOptions, Row};
 
+use crate::batch_writes::{NewEntry, Writers};
+
 const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS sync_streams (id BYTEA PRIMARY KEY, head BIGINT NOT NULL, last_at BIGINT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS sync_entries (stream BYTEA NOT NULL, seq BIGINT NOT NULL, nonce BYTEA NOT NULL, at BIGINT NOT NULL, body BYTEA NOT NULL, PRIMARY KEY (stream, seq))",
@@ -57,7 +59,7 @@ pub fn seat_for(others: &[(String, i64, i64)], holder: i64) -> Seat {
 
 pub const MAX_PUSHES_PER_TAG: usize = 16;
 
-const UNIQUE_VIOLATION: &str = "23505";
+pub(crate) const UNIQUE_VIOLATION: &str = "23505";
 const INVALID_CATALOG_NAME: &str = "3D000";
 
 #[derive(Debug, thiserror::Error)]
@@ -461,9 +463,10 @@ impl MemoryStore {
 
 pub struct PgStore {
     pub(crate) pool: PgPool,
+    writers: Writers,
 }
 
-fn code_of(e: &sqlx::Error) -> Option<String> {
+pub(crate) fn code_of(e: &sqlx::Error) -> Option<String> {
     match e {
         sqlx::Error::Database(db) => db.code().map(|c| c.into_owned()),
         _ => None,
@@ -487,7 +490,8 @@ impl PgStore {
         for statement in SCHEMA.iter().chain(crate::gateway_store::GATEWAY_SCHEMA) {
             sqlx::query(statement).execute(&pool).await?;
         }
-        Ok(Self { pool })
+        let writers = Writers::spawn(pool.clone());
+        Ok(Self { pool, writers })
     }
 
     async fn create_database(options: &PgConnectOptions) -> Result<(), StoreError> {
@@ -521,48 +525,8 @@ impl PgStore {
         seed.try_into().map_err(|_| StoreError::Database(sqlx::Error::Decode("the stored server key is not 32 bytes".into())))
     }
 
-    async fn existing(&self, stream: &StreamId, nonce: &[u8]) -> Result<Option<Appended>, StoreError> {
-        let row = sqlx::query("SELECT seq, at FROM sync_entries WHERE stream = $1 AND nonce = $2")
-            .bind(&stream.0[..])
-            .bind(nonce)
-            .fetch_optional(&self.pool)
-            .await?;
-        Ok(row.map(|row| Appended { seq: row.get::<i64, _>(0) as u64, at: row.get(1), fresh: false }))
-    }
-
     async fn append(&self, stream: &StreamId, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8], at: i64) -> Result<Appended, StoreError> {
-        if let Some(done) = self.existing(stream, nonce).await? {
-            return Ok(done);
-        }
-        let mut tx = self.pool.begin().await?;
-        let head: i64 = sqlx::query(
-            "INSERT INTO sync_streams (id, head, last_at) VALUES ($1, 1, $2) \
-             ON CONFLICT (id) DO UPDATE SET head = sync_streams.head + 1, last_at = $2 RETURNING head",
-        )
-        .bind(&stream.0[..])
-        .bind(at)
-        .fetch_one(&mut *tx)
-        .await?
-        .get(0);
-        let inserted = sqlx::query("INSERT INTO sync_entries (stream, seq, nonce, at, body) VALUES ($1, $2, $3, $4, $5)")
-            .bind(&stream.0[..])
-            .bind(head)
-            .bind(&nonce[..])
-            .bind(at)
-            .bind(body)
-            .execute(&mut *tx)
-            .await;
-        match inserted {
-            Ok(_) => {
-                tx.commit().await?;
-                Ok(Appended { seq: head as u64, at, fresh: true })
-            }
-            Err(e) if code_of(&e).as_deref() == Some(UNIQUE_VIOLATION) => {
-                drop(tx);
-                Ok(self.existing(stream, nonce).await?.ok_or(e)?)
-            }
-            Err(e) => Err(e.into()),
-        }
+        self.writers.append(NewEntry { stream: *stream, nonce: *nonce, body: body.to_vec(), at }).await
     }
 
     async fn page(&self, stream: &StreamId, after: u64, limit: usize) -> Result<Vec<WireEntry>, StoreError> {
@@ -905,6 +869,33 @@ mod tests {
         assert_eq!(store.server_key_seed([2; 32]).await.unwrap(), [1; 32]);
         let reopened = Store::postgres(&url).await.unwrap();
         assert_eq!(reopened.server_key_seed([3; 32]).await.unwrap(), [1; 32]);
+    }
+
+    #[tokio::test]
+    async fn postgres_batches_many_streams_at_once_without_gaps_or_doubles() {
+        let Ok(url) = std::env::var("SYNC_POSTGRES_TEST_URL") else { return };
+        let url = format!("{}/commy_sync_batch_{}", url.trim_end_matches('/'), rand::random::<u32>());
+        let store = std::sync::Arc::new(Store::postgres(&url).await.unwrap());
+        let streams: Vec<StreamId> = (0..6).map(|_| StreamSecret::random().keys().id).collect();
+        let mut tasks = Vec::new();
+        for i in 0..600u16 {
+            let store = store.clone();
+            let stream = streams[usize::from(i) % streams.len()];
+            let nonce = [(i % 250) as u8; 16];
+            tasks.push(tokio::spawn(async move { (stream, nonce, store.append(&stream, &nonce, &i.to_le_bytes(), i64::from(i)).await.unwrap()) }));
+        }
+        let mut by_key: HashMap<(StreamId, [u8; 16]), u64> = HashMap::new();
+        for task in tasks {
+            let (stream, nonce, done) = task.await.unwrap();
+            let seq = *by_key.entry((stream, nonce)).or_insert(done.seq);
+            assert_eq!(seq, done.seq, "every copy of one nonce gets the same number");
+        }
+        for stream in &streams {
+            let count = by_key.keys().filter(|(s, _)| s == stream).count() as u64;
+            let seqs: Vec<u64> = store.page(stream, 0, 1_000).await.unwrap().iter().map(|e| e.seq).collect();
+            assert_eq!(seqs, (1..=count).collect::<Vec<_>>());
+            assert_eq!(store.head(stream).await.unwrap(), count);
+        }
     }
 
     #[tokio::test]

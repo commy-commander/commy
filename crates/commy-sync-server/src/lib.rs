@@ -1,6 +1,7 @@
 pub mod admin;
 mod any_site;
 pub mod apns;
+mod batch_writes;
 pub mod certificate;
 pub mod check;
 pub mod config;
