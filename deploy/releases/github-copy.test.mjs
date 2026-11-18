@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import {
   COPIED_FILES,
   compareTags,
+  copiedReleases,
   copyPlan,
   copyReleases,
   gitPushCommand,
+  isReleaseCandidateTag,
   isStableTag,
+  movesMain,
   removeRepeatedHeadings,
   stableReleases,
   tagsToPush,
@@ -184,4 +187,59 @@ test("a dry run reports the plan and changes nothing", async () => {
 test("a failed GitHub call stops the copy with its status", async () => {
   const fetch = async (url) => (url.includes("git.commy.chat") ? new Response(JSON.stringify([release("v0.2.4")])) : new Response("boom", { status: 500 }));
   await assert.rejects(copyReleases({ env: { MIRROR_GITHUB_TOKEN: "t" }, fetch, git: () => {}, log: () => {} }), /reading GitHub release v0.2.4 failed: 500 boom/);
+});
+
+test("release candidates are copied, test builds and drafts are not", () => {
+  assert.equal(isReleaseCandidateTag("v1.0.0-rc.2"), true);
+  assert.equal(isReleaseCandidateTag("v1.0.0"), false);
+  assert.equal(isReleaseCandidateTag("v1.0.0-test.1"), false);
+  const kept = copiedReleases([
+    release("v0.2.4"),
+    release("v1.0.0-rc.1", { prerelease: true }),
+    release("v1.0.0-rc.2", { prerelease: true, draft: true }),
+    release("v1.0.0-test.3", { prerelease: true }),
+    release("v0.2.5", { prerelease: true }),
+    release("tts-pack-1"),
+  ]);
+  assert.deepEqual(kept.map((r) => r.tag_name), ["v0.2.4", "v1.0.0-rc.1"]);
+});
+
+test("release candidates sort before their final release", () => {
+  const tags = ["v1.0.0", "v1.0.0-rc.10", "v1.0.0-rc.2", "v0.2.4", "v1.0.0-rc.1"];
+  assert.deepEqual([...tags].sort(compareTags), ["v0.2.4", "v1.0.0-rc.1", "v1.0.0-rc.2", "v1.0.0-rc.10", "v1.0.0"]);
+});
+
+test("release candidates are created as pre-releases and never marked latest", () => {
+  const steps = copyPlan({
+    forge: [release("v1.0.0-rc.2", { prerelease: true }), release("v0.2.4"), release("v1.0.0-rc.1", { prerelease: true })],
+    github: new Map(),
+  });
+  assert.deepEqual(steps.map((s) => [s.tag, s.prerelease, s.latest]), [
+    ["v0.2.4", false, true],
+    ["v1.0.0-rc.1", true, false],
+    ["v1.0.0-rc.2", true, false],
+  ]);
+  assert.equal(movesMain(steps), true);
+  assert.equal(movesMain(steps.slice(1)), false);
+});
+
+test("a new release candidate pushes only its tag and is created as a pre-release", async () => {
+  const server = fakeServer({
+    forge: [release("v1.0.0-rc.2", { prerelease: true }), release("v0.2.4")],
+    github: { "v0.2.4": { id: 24, body: "notes v0.2.4", assets: COPIED_FILES.map((name) => ({ name })) } },
+    hosted: { "v1.0.0-rc.2/latest.json": "{}" },
+  });
+  const pushes = [];
+  await copyReleases({ env: { MIRROR_GITHUB_TOKEN: "t" }, fetch: server.fetch, git: (args) => pushes.push(args), log: () => {} });
+  assert.deepEqual(pushes.map((args) => args.slice(2)), [["refs/tags/v1.0.0-rc.2"]]);
+  const created = server.calls.find((c) => c.method === "POST" && c.url.endsWith("/releases"));
+  const sent = JSON.parse(created.body);
+  assert.equal(sent.tag_name, "v1.0.0-rc.2");
+  assert.equal(sent.prerelease, true);
+  assert.equal(sent.make_latest, "false");
+});
+
+test("the push leaves main alone when asked", () => {
+  const push = gitPushCommand({ repo: "owner/app", token: "t", tags: ["v1.0.0-rc.2"], pushMain: false });
+  assert.deepEqual(push.args, ["push", "https://github.com/owner/app.git", "refs/tags/v1.0.0-rc.2"]);
 });

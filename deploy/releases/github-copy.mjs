@@ -15,15 +15,35 @@ export function isStableTag(tag) {
   }
 }
 
+export function isReleaseCandidateTag(tag) {
+  try {
+    return parseTag(tag).channel === "rc";
+  } catch {
+    return false;
+  }
+}
+
 export function stableReleases(forgeReleases) {
   return forgeReleases.filter((release) => !release.draft && !release.prerelease && isStableTag(release.tag_name));
 }
 
+export function copiedReleases(forgeReleases) {
+  return forgeReleases.filter(
+    (release) => !release.draft && (isStableTag(release.tag_name) ? !release.prerelease : isReleaseCandidateTag(release.tag_name)),
+  );
+}
+
+function tagOrder(tag) {
+  const [core, pre = ""] = parseTag(tag).version.split("-");
+  const numbers = core.split(".").map(Number);
+  const candidate = pre ? Number(pre.split(".").pop()) || 0 : Infinity;
+  return [...numbers, candidate];
+}
+
 export function compareTags(a, b) {
-  const parts = (tag) => parseTag(tag).version.split(".").map(Number);
-  const [left, right] = [parts(a), parts(b)];
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index] !== right[index]) return left[index] - right[index];
+  const [left, right] = [tagOrder(a), tagOrder(b)];
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
   }
   return 0;
 }
@@ -51,16 +71,18 @@ export function removeRepeatedHeadings(body) {
 }
 
 export function copyPlan({ forge, github }) {
-  const releases = stableReleases(forge).sort((a, b) => compareTags(a.tag_name, b.tag_name));
+  const releases = copiedReleases(forge).sort((a, b) => compareTags(a.tag_name, b.tag_name));
   if (releases.length === 0) return [];
-  const newest = releases[releases.length - 1].tag_name;
+  const finals = releases.filter((release) => isStableTag(release.tag_name));
+  const newest = finals.length ? finals[finals.length - 1].tag_name : null;
   const steps = [];
   for (const release of releases) {
     const tag = release.tag_name;
     const body = removeRepeatedHeadings(release.body);
     const copy = github.get(tag);
     if (!copy) {
-      steps.push({ tag, action: "create", name: release.name || `Commy ${tag}`, body, latest: tag === newest, files: COPIED_FILES });
+      const prerelease = isReleaseCandidateTag(tag);
+      steps.push({ tag, action: "create", name: release.name || `Commy ${tag}`, body, prerelease, latest: tag === newest, files: COPIED_FILES });
       continue;
     }
     if (copy.body !== body) steps.push({ tag, action: "update", id: copy.id, body });
@@ -74,10 +96,15 @@ export function tagsToPush(steps) {
   return steps.filter((step) => step.action === "create").map((step) => step.tag);
 }
 
-export function gitPushCommand({ repo, token, tags }) {
+export function movesMain(steps) {
+  return steps.some((step) => step.action === "create" && !step.prerelease);
+}
+
+export function gitPushCommand({ repo, token, tags, pushMain = true }) {
   const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+  const main = pushMain ? ["HEAD:refs/heads/main"] : [];
   return {
-    args: ["push", `https://github.com/${repo}.git`, "HEAD:refs/heads/main", ...tags.map((tag) => `refs/tags/${tag}`)],
+    args: ["push", `https://github.com/${repo}.git`, ...main, ...tags.map((tag) => `refs/tags/${tag}`)],
     env: {
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
@@ -148,8 +175,8 @@ async function applyStep(step, { repo, token, fetch, log }) {
         name: step.name,
         body: step.body,
         draft: false,
-        prerelease: false,
-        make_latest: String(step.latest),
+        prerelease: Boolean(step.prerelease),
+        make_latest: String(Boolean(step.latest)),
       }),
     });
     const release = await (await expectOk(response, `creating GitHub release ${step.tag}`)).json();
@@ -187,7 +214,7 @@ export async function copyReleases({
     forgeToken: env.FORGE_TOKEN,
     fetch,
   });
-  const tags = stableReleases(forge).map((release) => release.tag_name);
+  const tags = copiedReleases(forge).map((release) => release.tag_name);
   const github = await readGithubCopies({ tags, repo, token, fetch });
   const steps = copyPlan({ forge, github });
   if (steps.length === 0) {
@@ -198,7 +225,7 @@ export async function copyReleases({
   if (dryRun) return steps;
   const newTags = tagsToPush(steps);
   if (newTags.length) {
-    const push = gitPushCommand({ repo, token, tags: newTags });
+    const push = gitPushCommand({ repo, token, tags: newTags, pushMain: movesMain(steps) });
     git(push.args, push.env);
   }
   for (const step of steps) await applyStep(step, { repo, token, fetch, log });
