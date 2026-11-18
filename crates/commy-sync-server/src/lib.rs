@@ -50,6 +50,9 @@ const REPORT_EVERY: Duration = Duration::from_secs(10 * 60);
 const FORGET_EVERY: Duration = Duration::from_secs(60);
 const SETTLED_REPORTS_KEPT_DAYS: i64 = 180;
 const WAKE_BODY_LIMIT: usize = 8 * 1024;
+const SOCKET_READ_BUFFER: usize = 8 * 1024;
+const SOCKET_WRITE_BUFFER: usize = 8 * 1024;
+const SOCKET_MAX_WRITE_BUFFER: usize = 4 * commy_sync::wire::MAX_FRAME_BYTES;
 
 #[derive(Default)]
 pub struct Stats {
@@ -197,13 +200,17 @@ async fn upgrade(
     ws: WebSocketUpgrade,
 ) -> Response {
     let key = service.limiter.key(service.address(peer, &headers));
-    if service.limiter.connect(key).is_err() {
+    let Ok(caller) = service.limiter.connect(key) else {
         return (StatusCode::TOO_MANY_REQUESTS, "too many connections").into_response();
-    }
+    };
+    let releasing = service.clone();
     ws.max_message_size(MAX_CLIENT_FRAME_BYTES)
         .max_frame_size(MAX_CLIENT_FRAME_BYTES)
-        .on_failed_upgrade(move |_| {})
-        .on_upgrade(move |socket| session::run(service, key, socket))
+        .read_buffer_size(SOCKET_READ_BUFFER)
+        .write_buffer_size(SOCKET_WRITE_BUFFER)
+        .max_write_buffer_size(SOCKET_MAX_WRITE_BUFFER)
+        .on_failed_upgrade(move |_| releasing.limiter.disconnect(caller))
+        .on_upgrade(move |socket| session::run(service, caller, socket))
 }
 
 async fn health(State(service): State<Arc<Service>>) -> Response {

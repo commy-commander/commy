@@ -24,6 +24,10 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS sync_server_key (id SMALLINT PRIMARY KEY CHECK (id = 1), seed BYTEA NOT NULL)",
 ];
 
+pub const DEFAULT_POOL_SIZE: u32 = 24;
+pub const MAX_POOL_SIZE: u32 = 200;
+const POOL_KEPT_WARM: u32 = 2;
+
 pub const TOUCH_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
 pub const MAX_PUSHES_PER_HOLDER: usize = 2;
 
@@ -87,7 +91,11 @@ impl Store {
     }
 
     pub async fn postgres(url: &str) -> Result<Self, StoreError> {
-        Ok(Store::Postgres(PgStore::connect(url).await?))
+        Self::postgres_pooled(url, DEFAULT_POOL_SIZE).await
+    }
+
+    pub async fn postgres_pooled(url: &str, pool_size: u32) -> Result<Self, StoreError> {
+        Ok(Store::Postgres(PgStore::connect(url, pool_size).await?))
     }
 
     pub async fn append(&self, stream: &StreamId, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8], at: i64) -> Result<Appended, StoreError> {
@@ -463,14 +471,16 @@ fn code_of(e: &sqlx::Error) -> Option<String> {
 }
 
 impl PgStore {
-    pub async fn connect(url: &str) -> Result<Self, StoreError> {
+    pub async fn connect(url: &str, pool_size: u32) -> Result<Self, StoreError> {
         let options: PgConnectOptions = url.parse()?;
         let options = options.disable_statement_logging();
-        let pool = match PgPoolOptions::new().max_connections(8).connect_with(options.clone()).await {
+        let pool_size = pool_size.clamp(1, MAX_POOL_SIZE);
+        let sized = || PgPoolOptions::new().max_connections(pool_size).min_connections(POOL_KEPT_WARM.min(pool_size));
+        let pool = match sized().connect_with(options.clone()).await {
             Ok(pool) => pool,
             Err(e) if code_of(&e).as_deref() == Some(INVALID_CATALOG_NAME) => {
                 Self::create_database(&options).await?;
-                PgPoolOptions::new().max_connections(8).connect_with(options).await?
+                sized().connect_with(options).await?
             }
             Err(e) => return Err(e.into()),
         };

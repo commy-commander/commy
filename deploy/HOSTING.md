@@ -902,10 +902,12 @@ way: it is published in your discovery document.
   device code lookups 30 per 10 minutes, doorbell rings 300 and takes 600 per
   minute. Counted in Redis when the
   stack has one, so they hold across restarts and auth instances.
-- Sync service, per IP: 256 open connections, 5 new entries a second (bursts
-  of 60) and 64 MB of entries a day (`SYNC_CONNECTIONS_PER_ADDRESS`,
-  `SYNC_DAILY_BYTES_PER_ADDRESS`); per log, 20 entries a second; 16 logs per
-  connection. Entries must be padded and at most 64 KB. Wake registrations
+- Sync service, per IP: 1,024 open connections, 20 new entries a second
+  (bursts of 300), 30 new logs (bursts, then 1 every 2 minutes) and 64 MB of
+  entries a day (`SYNC_CONNECTIONS_PER_ADDRESS`,
+  `SYNC_DAILY_BYTES_PER_ADDRESS`); per connection, 3 new entries a second
+  (bursts of 60); per log, 10 entries a second; 16 logs per connection; 12,000
+  connections in all (`SYNC_MAX_CONNECTIONS`). Entries must be padded and at most 64 KB. Wake registrations
   and rings share 1 a second per IP (bursts of 120), 16 phones per tag and 8
   tags per ring.
 - Optional Turnstile bot check and `ALLOW_SIGNUP=false` (see above).

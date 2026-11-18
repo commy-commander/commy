@@ -16,7 +16,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::hub::Live;
-use crate::limits::{AddressKey, Refusal};
+use crate::limits::{Caller, Refusal};
 use crate::Service;
 
 const IDLE_LIMIT: Duration = Duration::from_secs(180);
@@ -26,6 +26,7 @@ struct OpenStream {
     write: [u8; 32],
     follower: JoinHandle<()>,
     will: Option<Blob>,
+    unwritten: bool,
 }
 
 pub(crate) fn is_padded_size(len: usize) -> bool {
@@ -44,7 +45,7 @@ fn refused(code: ErrorCode, stream: StreamId, nonce: AppendNonce, refusal: Optio
     ServerFrame::Error { code, stream: Some(stream), nonce: Some(nonce), retry_after_ms }
 }
 
-pub(crate) async fn run(service: Arc<Service>, key: AddressKey, socket: WebSocket) {
+pub(crate) async fn run(service: Arc<Service>, caller: Caller, socket: WebSocket) {
     service.stats.connected();
     let (mut sink, mut source) = socket.split();
     let (out, mut outgoing) = mpsc::channel::<ServerFrame>(OUTGOING_BUFFER);
@@ -66,7 +67,7 @@ pub(crate) async fn run(service: Arc<Service>, key: AddressKey, socket: WebSocke
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 };
                 match serde_json::from_str::<ClientFrame>(&text) {
-                    Ok(frame) => handle(&service, key, session, frame, &mut open, &out).await,
+                    Ok(frame) => handle(&service, caller, session, frame, &mut open, &out).await,
                     Err(_) => {
                         let _ = out.send(ServerFrame::error(ErrorCode::BadFrame)).await;
                     }
@@ -93,13 +94,13 @@ pub(crate) async fn run(service: Arc<Service>, key: AddressKey, socket: WebSocke
         let _ = opened.follower.await;
         service.hub.release(&stream);
     }
-    service.limiter.disconnect(key);
+    service.limiter.disconnect(caller);
     service.stats.disconnected();
 }
 
 async fn handle(
     service: &Arc<Service>,
-    key: AddressKey,
+    caller: Caller,
     session: u64,
     frame: ClientFrame,
     open: &mut HashMap<StreamId, OpenStream>,
@@ -114,7 +115,7 @@ async fn handle(
             let _ = out.send(ServerFrame::Pong).await;
         }
         ClientFrame::Report { report } => {
-            let _ = out.send(crate::reports::take(service, key, *report).await).await;
+            let _ = out.send(crate::reports::take(service, caller.address, *report).await).await;
         }
         ClientFrame::Open { stream, write, read, after, tail } => {
             if StreamId::of(&write.0, &read.0) != stream {
@@ -130,7 +131,7 @@ async fn handle(
                 let _ = out.send(ServerFrame::stream_error(ErrorCode::TooManyStreams, stream)).await;
                 return;
             }
-            if let Err(refusal) = service.limiter.open(key) {
+            if let Err(refusal) = service.limiter.open(caller) {
                 let retry_after_ms = match refusal {
                     Refusal::Wait(wait) => Some(wait.as_millis().max(100) as u64),
                     Refusal::Full => None,
@@ -139,17 +140,28 @@ async fn handle(
                 return;
             }
             service.stats.opened();
-            let follower = tokio::spawn(follow(service.clone(), session, stream, after, tail, out.clone()));
-            open.insert(stream, OpenStream { write: write.0, follower, will });
+            let live = service.hub.subscribe(stream);
+            let head = match service.store.head(&stream).await {
+                Ok(head) => head,
+                Err(e) => {
+                    tracing::warn!("sync store head failed: {e}");
+                    let _ = out.send(ServerFrame::stream_error(ErrorCode::Unavailable, stream)).await;
+                    drop(live);
+                    service.hub.release(&stream);
+                    return;
+                }
+            };
+            let follower = tokio::spawn(follow(service.clone(), session, stream, live, head, start_after(after, tail, head), out.clone()));
+            open.insert(stream, OpenStream { write: write.0, follower, will, unwritten: head == 0 });
         }
         ClientFrame::Claim { stream, write, read, eraser, sig } => {
-            let _ = out.send(claim(service, key, stream, &write.0, &read.0, &eraser.0, &sig.0).await).await;
+            let _ = out.send(claim(service, caller, stream, &write.0, &read.0, &eraser.0, &sig.0).await).await;
         }
         ClientFrame::Erase { stream, through, at, sig } => {
-            let _ = out.send(erase(service, key, stream, through, at, &sig.0).await).await;
+            let _ = out.send(erase(service, caller, stream, through, at, &sig.0).await).await;
         }
         ClientFrame::Release { stream, at, sig } => {
-            let _ = out.send(release(service, key, stream, at, &sig.0).await).await;
+            let _ = out.send(release(service, caller, stream, at, &sig.0).await).await;
         }
         ClientFrame::Close { stream } => {
             if let Some(opened) = open.remove(&stream) {
@@ -163,7 +175,7 @@ async fn handle(
                 let _ = out.send(refused(ErrorCode::NotOpen, stream, nonce, None)).await;
                 return;
             };
-            if let Err(code) = check_signal(service, key, &opened.write, stream, &nonce, &body, &sig) {
+            if let Err(code) = check_signal(service, caller, &opened.write, stream, &nonce, &body, &sig) {
                 if let Some(code) = code {
                     let _ = out.send(refused(code, stream, nonce, None)).await;
                 }
@@ -177,7 +189,7 @@ async fn handle(
                 let _ = out.send(refused(ErrorCode::NotOpen, stream, nonce, None)).await;
                 return;
             };
-            if let Err(code) = check_signal(service, key, &opened.write, stream, &nonce, &body, &sig) {
+            if let Err(code) = check_will(service, caller, &opened.write, stream, &nonce, &body, &sig) {
                 if let Some(code) = code {
                     let _ = out.send(refused(code, stream, nonce, None)).await;
                 }
@@ -186,7 +198,7 @@ async fn handle(
             opened.will = Some(body);
         }
         ClientFrame::Append { stream, nonce, body, sig } => {
-            let Some(opened) = open.get(&stream) else {
+            let Some(opened) = open.get_mut(&stream) else {
                 let _ = out.send(refused(ErrorCode::NotOpen, stream, nonce, None)).await;
                 return;
             };
@@ -198,7 +210,14 @@ async fn handle(
                 let _ = out.send(refused(ErrorCode::BadSignature, stream, nonce, None)).await;
                 return;
             }
-            if let Err(refusal) = service.limiter.append(key, &stream.0, body.0.len()) {
+            if opened.unwritten {
+                if let Err(refusal) = service.limiter.new_stream(caller.address) {
+                    let _ = out.send(refused(ErrorCode::RateLimited, stream, nonce, Some(refusal))).await;
+                    return;
+                }
+                opened.unwritten = false;
+            }
+            if let Err(refusal) = service.limiter.append_from(caller, &stream.0, body.0.len()) {
                 let _ = out.send(refused(ErrorCode::RateLimited, stream, nonce, Some(refusal))).await;
                 return;
             }
@@ -230,8 +249,8 @@ fn stream_of(frame: &ClientFrame) -> Option<StreamId> {
     }
 }
 
-fn owner_limited(service: &Service, key: AddressKey, stream: StreamId) -> Result<(), ServerFrame> {
-    service.limiter.open(key).map_err(|refusal| {
+fn owner_limited(service: &Service, caller: Caller, stream: StreamId) -> Result<(), ServerFrame> {
+    service.limiter.open(caller).map_err(|refusal| {
         let retry_after_ms = match refusal {
             Refusal::Wait(wait) => Some(wait.as_millis().max(100) as u64),
             Refusal::Full => None,
@@ -249,14 +268,14 @@ pub(crate) fn is_fresh(at: i64, now: i64) -> bool {
     at.abs_diff(now) <= ERASE_WINDOW_MS as u64
 }
 
-async fn claim(service: &Service, key: AddressKey, stream: StreamId, write: &[u8; 32], read: &[u8; 32], eraser: &[u8; 32], sig: &[u8; 64]) -> ServerFrame {
+async fn claim(service: &Service, caller: Caller, stream: StreamId, write: &[u8; 32], read: &[u8; 32], eraser: &[u8; 32], sig: &[u8; 64]) -> ServerFrame {
     if StreamId::of(write, read) != stream {
         return ServerFrame::stream_error(ErrorCode::BadStream, stream);
     }
     if !verify_claim(eraser, &stream, sig) {
         return ServerFrame::stream_error(ErrorCode::BadSignature, stream);
     }
-    if let Err(refused) = owner_limited(service, key, stream) {
+    if let Err(refused) = owner_limited(service, caller, stream) {
         return refused;
     }
     match service.store.claim(&stream, eraser, now_ms()).await {
@@ -272,8 +291,8 @@ async fn holder(service: &Service, stream: StreamId, at: i64) -> Result<Option<[
     service.store.eraser(&stream).await.map_err(|e| unavailable(stream, e))
 }
 
-async fn erase(service: &Service, key: AddressKey, stream: StreamId, through: u64, at: i64, sig: &[u8; 64]) -> ServerFrame {
-    if let Err(refused) = owner_limited(service, key, stream) {
+async fn erase(service: &Service, caller: Caller, stream: StreamId, through: u64, at: i64, sig: &[u8; 64]) -> ServerFrame {
+    if let Err(refused) = owner_limited(service, caller, stream) {
         return refused;
     }
     match holder(service, stream, at).await {
@@ -290,8 +309,8 @@ async fn erase(service: &Service, key: AddressKey, stream: StreamId, through: u6
     }
 }
 
-async fn release(service: &Service, key: AddressKey, stream: StreamId, at: i64, sig: &[u8; 64]) -> ServerFrame {
-    if let Err(refused) = owner_limited(service, key, stream) {
+async fn release(service: &Service, caller: Caller, stream: StreamId, at: i64, sig: &[u8; 64]) -> ServerFrame {
+    if let Err(refused) = owner_limited(service, caller, stream) {
         return refused;
     }
     let eraser = match holder(service, stream, at).await {
@@ -306,22 +325,40 @@ async fn release(service: &Service, key: AddressKey, stream: StreamId, at: i64, 
     }
 }
 
+fn verify_signed_word(write: &[u8; 32], stream: StreamId, nonce: &AppendNonce, body: &Blob, sig: &commy_sync::wire::Bytes<64>) -> Result<(), ErrorCode> {
+    if !is_padded_size(body.0.len()) || body.0.len() > MAX_SIGNAL_SEALED {
+        return Err(ErrorCode::TooLarge);
+    }
+    if !verify_signal(write, &stream, &nonce.0, &body.0, &sig.0) {
+        return Err(ErrorCode::BadSignature);
+    }
+    Ok(())
+}
+
 fn check_signal(
     service: &Service,
-    key: AddressKey,
+    caller: Caller,
     write: &[u8; 32],
     stream: StreamId,
     nonce: &AppendNonce,
     body: &Blob,
     sig: &commy_sync::wire::Bytes<64>,
 ) -> Result<(), Option<ErrorCode>> {
-    if !is_padded_size(body.0.len()) || body.0.len() > MAX_SIGNAL_SEALED {
-        return Err(Some(ErrorCode::TooLarge));
-    }
-    if !verify_signal(write, &stream, &nonce.0, &body.0, &sig.0) {
-        return Err(Some(ErrorCode::BadSignature));
-    }
-    service.limiter.signal(key, body.0.len()).map_err(|_| None)
+    verify_signed_word(write, stream, nonce, body, sig).map_err(Some)?;
+    service.limiter.signal(caller, body.0.len()).map_err(|_| None)
+}
+
+fn check_will(
+    service: &Service,
+    caller: Caller,
+    write: &[u8; 32],
+    stream: StreamId,
+    nonce: &AppendNonce,
+    body: &Blob,
+    sig: &commy_sync::wire::Bytes<64>,
+) -> Result<(), Option<ErrorCode>> {
+    verify_signed_word(write, stream, nonce, body, sig).map_err(Some)?;
+    service.limiter.will(caller).map_err(|_| None)
 }
 
 pub(crate) fn start_after(after: u64, tail: Option<u32>, head: u64) -> u64 {
@@ -332,17 +369,15 @@ pub(crate) fn start_after(after: u64, tail: Option<u32>, head: u64) -> u64 {
     }
 }
 
-async fn follow(service: Arc<Service>, session: u64, stream: StreamId, after: u64, tail: Option<u32>, out: mpsc::Sender<ServerFrame>) {
-    let mut live = service.hub.subscribe(stream);
-    let head = match service.store.head(&stream).await {
-        Ok(head) => head,
-        Err(e) => {
-            tracing::warn!("sync store head failed: {e}");
-            let _ = out.send(ServerFrame::stream_error(ErrorCode::Unavailable, stream)).await;
-            return;
-        }
-    };
-    let mut sent = start_after(after, tail, head);
+async fn follow(
+    service: Arc<Service>,
+    session: u64,
+    stream: StreamId,
+    mut live: broadcast::Receiver<Arc<Live>>,
+    head: u64,
+    mut sent: u64,
+    out: mpsc::Sender<ServerFrame>,
+) {
     if out.send(ServerFrame::Opened { stream, head }).await.is_err() {
         return;
     }

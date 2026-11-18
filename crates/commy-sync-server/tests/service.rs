@@ -22,6 +22,7 @@ async fn start() -> (String, Arc<Service>) {
     let mut config = Config::from_env(|_| None).unwrap();
     config.limits.appends = Rate { burst: 1_000.0, per_second: 1_000.0 };
     config.limits.stream_appends = config.limits.appends;
+    config.limits.connection_appends = config.limits.appends;
     start_with(config).await
 }
 
@@ -277,6 +278,39 @@ async fn a_rate_limited_append_is_retried_until_it_lands() {
     }
     assert_eq!(seqs, vec![1, 2, 3, 4, 5]);
     assert!(started.elapsed() >= Duration::from_millis(500), "the limit held the later appends back");
+}
+
+#[tokio::test]
+async fn new_streams_from_one_address_are_limited_but_existing_ones_keep_working() {
+    let mut config = Config::from_env(|_| None).unwrap();
+    config.limits.new_streams = Rate { burst: 1.0, per_second: 0.0001 };
+    let (url, _) = start_with(config).await;
+    let mut socket = raw(&url).await;
+    let first = StreamSecret::random().keys();
+    let second = StreamSecret::random().keys();
+    open_raw(&mut socket, &first).await;
+    open_raw(&mut socket, &second).await;
+    let append = |keys: &commy_sync::StreamKeys| ClientFrame::append(keys, rand::random(), keys.seal(b"hi").unwrap());
+    send(&mut socket, &append(&first)).await;
+    assert!(matches!(receive(&mut socket).await, ServerFrame::Entries { .. } | ServerFrame::Appended { .. }));
+    send(&mut socket, &append(&second)).await;
+    let refused = loop {
+        match receive(&mut socket).await {
+            ServerFrame::Error { code, stream, .. } => break (code, stream),
+            _ => continue,
+        }
+    };
+    assert_eq!(refused, (ErrorCode::RateLimited, Some(second.id)), "a second new stream waits for the bucket");
+    send(&mut socket, &append(&first)).await;
+    let landed = loop {
+        match receive(&mut socket).await {
+            ServerFrame::Appended { stream, seq, .. } => break (stream, seq),
+            ServerFrame::Error { code, .. } => panic!("refused {code:?}"),
+            _ => continue,
+        }
+    };
+    assert_eq!(landed.0, first.id);
+    assert!(landed.1 >= 1, "a stream that already has entries is not new");
 }
 
 #[tokio::test]

@@ -10,6 +10,7 @@ pub const DEFAULT_RETENTION_DAYS: u32 = 90;
 pub struct Config {
     pub listen: SocketAddr,
     pub database_url: Option<String>,
+    pub db_pool: u32,
     pub retention_days: u32,
     pub trust_proxy: bool,
     pub limits: Limits,
@@ -281,9 +282,22 @@ impl Config {
             limits.connections_per_address =
                 text.trim().parse().map_err(|_| "SYNC_CONNECTIONS_PER_ADDRESS must be a whole number".to_string())?;
         }
+        if let Some(text) = env("SYNC_MAX_CONNECTIONS") {
+            limits.connections_total = text.trim().parse().map_err(|_| "SYNC_MAX_CONNECTIONS must be a whole number".to_string())?;
+        }
+        let db_pool = match env("SYNC_DB_POOL").filter(|v| !v.trim().is_empty()) {
+            Some(text) => text
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|size| (1..=crate::store::MAX_POOL_SIZE).contains(size))
+                .ok_or(format!("SYNC_DB_POOL must be a number of database connections from 1 to {}", crate::store::MAX_POOL_SIZE))?,
+            None => crate::store::DEFAULT_POOL_SIZE,
+        };
         Ok(Config {
             listen: SocketAddr::from(([0, 0, 0, 0], port)),
             database_url,
+            db_pool,
             retention_days,
             trust_proxy: env("SYNC_TRUST_PROXY").is_none_or(|v| v.trim() != "false"),
             limits,
@@ -341,6 +355,23 @@ mod tests {
     fn config(pairs: &[(&str, &str)]) -> Result<Config, String> {
         let map: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         Config::from_env(|key| map.get(key).cloned())
+    }
+
+    #[test]
+    fn the_database_pool_size_is_set_within_bounds() {
+        assert_eq!(config(&[]).unwrap().db_pool, crate::store::DEFAULT_POOL_SIZE);
+        assert_eq!(config(&[("SYNC_DB_POOL", "")]).unwrap().db_pool, crate::store::DEFAULT_POOL_SIZE);
+        assert_eq!(config(&[("SYNC_DB_POOL", " 40 ")]).unwrap().db_pool, 40);
+        assert!(config(&[("SYNC_DB_POOL", "0")]).is_err());
+        assert!(config(&[("SYNC_DB_POOL", "201")]).is_err());
+        assert!(config(&[("SYNC_DB_POOL", "lots")]).is_err());
+    }
+
+    #[test]
+    fn the_connection_ceilings_can_be_set() {
+        let set = config(&[("SYNC_CONNECTIONS_PER_ADDRESS", "50"), ("SYNC_MAX_CONNECTIONS", "500")]).unwrap();
+        assert_eq!((set.limits.connections_per_address, set.limits.connections_total), (50, 500));
+        assert!(config(&[("SYNC_MAX_CONNECTIONS", "many")]).is_err());
     }
 
     #[test]

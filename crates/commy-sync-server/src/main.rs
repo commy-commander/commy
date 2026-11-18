@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     }
     raise_open_file_limit();
     let store = match &config.database_url {
-        Some(url) => Store::postgres(url).await?,
+        Some(url) => Store::postgres_pooled(url, config.db_pool).await?,
         None => {
             tracing::warn!("DATABASE_URL is not set, so entries live in memory and are lost on restart");
             Store::memory()

@@ -18,11 +18,18 @@ pub struct Rate {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Limits {
     pub connections_per_address: usize,
+    pub connections_total: usize,
     pub appends: Rate,
+    pub connection_appends: Rate,
     pub opens: Rate,
+    pub address_opens: Rate,
+    pub pictures: Rate,
     pub stream_appends: Rate,
+    pub new_streams: Rate,
     pub wakes: Rate,
     pub signals: Rate,
+    pub address_signals: Rate,
+    pub wills: Rate,
     pub reports: Rate,
     pub daily_bytes_per_address: u64,
     pub daily_bytes_total: u64,
@@ -31,12 +38,19 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            connections_per_address: 256,
-            appends: Rate { burst: 60.0, per_second: 5.0 },
-            opens: Rate { burst: 200.0, per_second: 20.0 },
-            stream_appends: Rate { burst: 100.0, per_second: 20.0 },
+            connections_per_address: 1024,
+            connections_total: 12_000,
+            appends: Rate { burst: 300.0, per_second: 20.0 },
+            connection_appends: Rate { burst: 60.0, per_second: 3.0 },
+            opens: Rate { burst: 40.0, per_second: 4.0 },
+            address_opens: Rate { burst: 600.0, per_second: 60.0 },
+            pictures: Rate { burst: 200.0, per_second: 20.0 },
+            stream_appends: Rate { burst: 100.0, per_second: 10.0 },
+            new_streams: Rate { burst: 30.0, per_second: 1.0 / 120.0 },
             wakes: Rate { burst: 120.0, per_second: 1.0 },
             signals: Rate { burst: 60.0, per_second: 2.0 },
+            address_signals: Rate { burst: 1200.0, per_second: 40.0 },
+            wills: Rate { burst: 32.0, per_second: 0.5 },
             reports: Rate { burst: 5.0, per_second: 1.0 / 600.0 },
             daily_bytes_per_address: 64 * 1024 * 1024,
             daily_bytes_total: 16 * 1024 * 1024 * 1024,
@@ -46,6 +60,15 @@ impl Default for Limits {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AddressKey(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConnectionKey(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Caller {
+    pub address: AddressKey,
+    pub connection: ConnectionKey,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Bucket {
@@ -76,6 +99,8 @@ struct Address {
     connections: usize,
     appends: Bucket,
     opens: Bucket,
+    pictures: Bucket,
+    new_streams: Bucket,
     wakes: Bucket,
     signals: Bucket,
     reports: Bucket,
@@ -84,9 +109,18 @@ struct Address {
     seen: Instant,
 }
 
+#[derive(Debug)]
+struct Connection {
+    appends: Bucket,
+    opens: Bucket,
+    signals: Bucket,
+    wills: Bucket,
+}
+
 #[derive(Debug, Default)]
 struct Books {
     addresses: HashMap<AddressKey, Address>,
+    connections: HashMap<ConnectionKey, Connection>,
     streams: HashMap<[u8; 32], (Bucket, Instant)>,
     total: Option<(Instant, u64)>,
 }
@@ -137,9 +171,11 @@ impl Limiter {
         let entry = books.addresses.entry(key).or_insert_with(|| Address {
             connections: 0,
             appends: Bucket::full(limits.appends, now),
-            opens: Bucket::full(limits.opens, now),
+            opens: Bucket::full(limits.address_opens, now),
+            pictures: Bucket::full(limits.pictures, now),
+            new_streams: Bucket::full(limits.new_streams, now),
             wakes: Bucket::full(limits.wakes, now),
-            signals: Bucket::full(limits.signals, now),
+            signals: Bucket::full(limits.address_signals, now),
             reports: Bucket::full(limits.reports, now),
             day_started: now,
             day_bytes: 0,
@@ -149,30 +185,73 @@ impl Limiter {
         entry
     }
 
-    pub fn connect(&self, key: AddressKey) -> Result<(), Refusal> {
+    pub fn connect(&self, key: AddressKey) -> Result<Caller, Refusal> {
         let now = Instant::now();
         let mut books = self.books.lock().unwrap();
+        if books.connections.len() >= self.limits.connections_total {
+            return Err(Refusal::Full);
+        }
         let address = self.address(&mut books, key, now);
         if address.connections >= self.limits.connections_per_address {
             return Err(Refusal::Full);
         }
         address.connections += 1;
-        Ok(())
+        let connection = self.fresh_connection(&mut books, now);
+        Ok(Caller { address: key, connection })
     }
 
-    pub fn disconnect(&self, key: AddressKey) {
+    fn fresh_connection(&self, books: &mut Books, now: Instant) -> ConnectionKey {
+        let limits = &self.limits;
+        loop {
+            let key = ConnectionKey(rand::random());
+            if let std::collections::hash_map::Entry::Vacant(slot) = books.connections.entry(key) {
+                slot.insert(Connection {
+                    appends: Bucket::full(limits.connection_appends, now),
+                    opens: Bucket::full(limits.opens, now),
+                    signals: Bucket::full(limits.signals, now),
+                    wills: Bucket::full(limits.wills, now),
+                });
+                return key;
+            }
+        }
+    }
+
+    pub fn disconnect(&self, caller: Caller) {
         let mut books = self.books.lock().unwrap();
-        if let Some(address) = books.addresses.get_mut(&key) {
+        books.connections.remove(&caller.connection);
+        if let Some(address) = books.addresses.get_mut(&caller.address) {
             address.connections = address.connections.saturating_sub(1);
             address.seen = Instant::now();
         }
     }
 
-    pub fn open(&self, key: AddressKey) -> Result<(), Refusal> {
+    pub fn open(&self, caller: Caller) -> Result<(), Refusal> {
+        self.open_at(caller, Instant::now())
+    }
+
+    fn open_at(&self, caller: Caller, now: Instant) -> Result<(), Refusal> {
+        let mut books = self.books.lock().unwrap();
+        let limits = self.limits.clone();
+        let connection = books.connections.get_mut(&caller.connection).ok_or(Refusal::Full)?;
+        connection.opens.take(limits.opens, now).map_err(Refusal::Wait)?;
+        self.address(&mut books, caller.address, now).opens.take(limits.address_opens, now).map_err(Refusal::Wait)
+    }
+
+    pub fn picture(&self, key: AddressKey) -> Result<(), Refusal> {
         let now = Instant::now();
         let mut books = self.books.lock().unwrap();
-        let rate = self.limits.opens;
-        self.address(&mut books, key, now).opens.take(rate, now).map_err(Refusal::Wait)
+        let rate = self.limits.pictures;
+        self.address(&mut books, key, now).pictures.take(rate, now).map_err(Refusal::Wait)
+    }
+
+    pub fn new_stream(&self, key: AddressKey) -> Result<(), Refusal> {
+        self.new_stream_at(key, Instant::now())
+    }
+
+    fn new_stream_at(&self, key: AddressKey, now: Instant) -> Result<(), Refusal> {
+        let mut books = self.books.lock().unwrap();
+        let rate = self.limits.new_streams;
+        self.address(&mut books, key, now).new_streams.take(rate, now).map_err(Refusal::Wait)
     }
 
     pub fn wake(&self, key: AddressKey) -> Result<(), Refusal> {
@@ -187,6 +266,20 @@ impl Limiter {
         let mut books = self.books.lock().unwrap();
         let rate = self.limits.reports;
         self.address(&mut books, key, now).reports.take(rate, now).map_err(Refusal::Wait)
+    }
+
+    pub fn append_from(&self, caller: Caller, stream: &[u8; 32], bytes: usize) -> Result<(), Refusal> {
+        self.append_from_at(caller, stream, bytes, Instant::now())
+    }
+
+    fn append_from_at(&self, caller: Caller, stream: &[u8; 32], bytes: usize, now: Instant) -> Result<(), Refusal> {
+        {
+            let mut books = self.books.lock().unwrap();
+            let rate = self.limits.connection_appends;
+            let connection = books.connections.get_mut(&caller.connection).ok_or(Refusal::Full)?;
+            connection.appends.take(rate, now).map_err(Refusal::Wait)?;
+        }
+        self.append_at(caller.address, stream, bytes, now)
     }
 
     pub fn append(&self, key: AddressKey, stream: &[u8; 32], bytes: usize) -> Result<(), Refusal> {
@@ -220,11 +313,16 @@ impl Limiter {
         bucket.take(limits.stream_appends, now).map_err(Refusal::Wait)
     }
 
-    pub fn signal(&self, key: AddressKey, bytes: usize) -> Result<(), Refusal> {
-        let now = Instant::now();
+    pub fn signal(&self, caller: Caller, bytes: usize) -> Result<(), Refusal> {
+        self.signal_at(caller, bytes, Instant::now())
+    }
+
+    fn signal_at(&self, caller: Caller, bytes: usize, now: Instant) -> Result<(), Refusal> {
         let mut books = self.books.lock().unwrap();
         let limits = self.limits.clone();
-        let address = self.address(&mut books, key, now);
+        let connection = books.connections.get_mut(&caller.connection).ok_or(Refusal::Full)?;
+        connection.signals.take(limits.signals, now).map_err(Refusal::Wait)?;
+        let address = self.address(&mut books, caller.address, now);
         if now.saturating_duration_since(address.day_started) >= DAY {
             address.day_started = now;
             address.day_bytes = 0;
@@ -232,9 +330,20 @@ impl Limiter {
         if address.day_bytes + bytes as u64 > limits.daily_bytes_per_address {
             return Err(Refusal::Wait(DAY.saturating_sub(now.saturating_duration_since(address.day_started))));
         }
-        address.signals.take(limits.signals, now).map_err(Refusal::Wait)?;
+        address.signals.take(limits.address_signals, now).map_err(Refusal::Wait)?;
         address.day_bytes += bytes as u64;
         Ok(())
+    }
+
+    pub fn will(&self, caller: Caller) -> Result<(), Refusal> {
+        self.will_at(caller, Instant::now())
+    }
+
+    fn will_at(&self, caller: Caller, now: Instant) -> Result<(), Refusal> {
+        let mut books = self.books.lock().unwrap();
+        let rate = self.limits.wills;
+        let connection = books.connections.get_mut(&caller.connection).ok_or(Refusal::Full)?;
+        connection.wills.take(rate, now).map_err(Refusal::Wait)
     }
 
     pub fn forget_idle(&self) -> usize {
@@ -260,11 +369,18 @@ mod tests {
     fn tight() -> Limits {
         Limits {
             connections_per_address: 2,
+            connections_total: 100,
             appends: Rate { burst: 3.0, per_second: 1.0 },
+            connection_appends: Rate { burst: 2.0, per_second: 1.0 },
             opens: Rate { burst: 2.0, per_second: 1.0 },
+            address_opens: Rate { burst: 3.0, per_second: 1.0 },
+            pictures: Rate { burst: 2.0, per_second: 1.0 },
             stream_appends: Rate { burst: 100.0, per_second: 100.0 },
+            new_streams: Rate { burst: 2.0, per_second: 1.0 },
             wakes: Rate { burst: 2.0, per_second: 1.0 },
             signals: Rate { burst: 2.0, per_second: 1.0 },
+            address_signals: Rate { burst: 3.0, per_second: 1.0 },
+            wills: Rate { burst: 2.0, per_second: 1.0 },
             reports: Rate { burst: 2.0, per_second: 0.001 },
             daily_bytes_per_address: 10_000,
             daily_bytes_total: 25_000,
@@ -287,12 +403,52 @@ mod tests {
     fn live_signals_have_their_own_allowance_and_count_toward_the_day() {
         let limiter = Limiter::new(tight());
         let key = limiter.key("192.0.2.9".parse().unwrap());
-        assert!(limiter.signal(key, 100).is_ok());
-        assert!(limiter.signal(key, 100).is_ok());
-        assert!(matches!(limiter.signal(key, 100), Err(Refusal::Wait(_))));
+        let caller = limiter.connect(key).unwrap();
+        assert!(limiter.signal(caller, 100).is_ok());
+        assert!(limiter.signal(caller, 100).is_ok());
+        assert!(matches!(limiter.signal(caller, 100), Err(Refusal::Wait(_))));
         assert!(limiter.append(key, &[1; 32], 100).is_ok(), "signals do not use up appends");
-        let other = limiter.key("192.0.2.10".parse().unwrap());
+        let other = limiter.connect(limiter.key("192.0.2.10".parse().unwrap())).unwrap();
         assert!(matches!(limiter.signal(other, 20_000), Err(Refusal::Wait(_))));
+    }
+
+    #[test]
+    fn each_connection_has_its_own_signal_allowance_under_the_address_ceiling() {
+        let limiter = Limiter::new(Limits { connections_per_address: 10, ..tight() });
+        let key = limiter.key("192.0.2.20".parse().unwrap());
+        let now = Instant::now();
+        let first = limiter.connect(key).unwrap();
+        let second = limiter.connect(key).unwrap();
+        assert!(limiter.signal_at(first, 10, now).is_ok());
+        assert!(limiter.signal_at(first, 10, now).is_ok());
+        assert!(limiter.signal_at(first, 10, now).is_err(), "one connection used its own allowance");
+        assert!(limiter.signal_at(second, 10, now).is_ok(), "another connection from the same address still signals");
+        assert!(limiter.signal_at(second, 10, now).is_err(), "the address ceiling still holds");
+        assert!(limiter.signal_at(second, 10, now + Duration::from_secs(2)).is_ok());
+    }
+
+    #[test]
+    fn last_words_are_limited_per_connection_and_spend_no_signals_or_bytes() {
+        let limiter = Limiter::new(Limits { daily_bytes_per_address: 50, ..tight() });
+        let key = limiter.key("192.0.2.30".parse().unwrap());
+        let caller = limiter.connect(key).unwrap();
+        let now = Instant::now();
+        assert!(limiter.will_at(caller, now).is_ok());
+        assert!(limiter.will_at(caller, now).is_ok());
+        assert!(limiter.will_at(caller, now).is_err());
+        assert!(limiter.will_at(caller, now + Duration::from_secs(1)).is_ok());
+        assert!(limiter.signal_at(caller, 40, now).is_ok(), "wills did not touch the signal allowance or the day's bytes");
+    }
+
+    #[test]
+    fn a_closed_connection_takes_its_allowance_with_it() {
+        let limiter = Limiter::new(tight());
+        let key = limiter.key("192.0.2.40".parse().unwrap());
+        let caller = limiter.connect(key).unwrap();
+        limiter.disconnect(caller);
+        assert_eq!(limiter.open(caller), Err(Refusal::Full));
+        assert_eq!(limiter.signal(caller, 1), Err(Refusal::Full));
+        assert_eq!(limiter.will(caller), Err(Refusal::Full));
     }
 
     #[test]
@@ -318,13 +474,23 @@ mod tests {
     fn connections_are_capped_per_address() {
         let limiter = Limiter::new(tight());
         let key = limiter.key("203.0.113.1".parse().unwrap());
-        assert!(limiter.connect(key).is_ok());
+        let first = limiter.connect(key).unwrap();
         assert!(limiter.connect(key).is_ok());
         assert_eq!(limiter.connect(key), Err(Refusal::Full));
-        limiter.disconnect(key);
+        limiter.disconnect(first);
         assert!(limiter.connect(key).is_ok());
         let other = limiter.key("203.0.113.2".parse().unwrap());
         assert!(limiter.connect(other).is_ok());
+    }
+
+    #[test]
+    fn the_whole_service_has_a_connection_ceiling() {
+        let limiter = Limiter::new(Limits { connections_total: 3, ..tight() });
+        let callers: Vec<Caller> = (1..=3u8).map(|n| limiter.connect(limiter.key(IpAddr::from([10, 1, 0, n]))).unwrap()).collect();
+        let late = limiter.key("10.1.0.9".parse().unwrap());
+        assert_eq!(limiter.connect(late), Err(Refusal::Full));
+        limiter.disconnect(callers[0]);
+        assert!(limiter.connect(late).is_ok());
     }
 
     #[test]
@@ -368,12 +534,59 @@ mod tests {
     }
 
     #[test]
-    fn opens_are_rate_limited() {
-        let limiter = Limiter::new(tight());
+    fn opens_are_rate_limited_per_connection_and_per_address() {
+        let limiter = Limiter::new(Limits { connections_per_address: 10, ..tight() });
         let key = limiter.key("203.0.113.1".parse().unwrap());
-        assert!(limiter.open(key).is_ok());
-        assert!(limiter.open(key).is_ok());
-        assert!(matches!(limiter.open(key), Err(Refusal::Wait(_))));
+        let now = Instant::now();
+        let first = limiter.connect(key).unwrap();
+        assert!(limiter.open_at(first, now).is_ok());
+        assert!(limiter.open_at(first, now).is_ok());
+        assert!(matches!(limiter.open_at(first, now), Err(Refusal::Wait(_))));
+        let second = limiter.connect(key).unwrap();
+        assert!(limiter.open_at(second, now).is_ok());
+        assert!(matches!(limiter.open_at(second, now), Err(Refusal::Wait(_))), "the address ceiling");
+        let elsewhere = limiter.connect(limiter.key("203.0.113.2".parse().unwrap())).unwrap();
+        assert!(limiter.open_at(elsewhere, now).is_ok());
+    }
+
+    #[test]
+    fn each_connection_has_its_own_message_allowance_under_the_address_ceiling() {
+        let limiter = Limiter::new(Limits { connections_per_address: 10, ..tight() });
+        let key = limiter.key("203.0.113.8".parse().unwrap());
+        let now = Instant::now();
+        let first = limiter.connect(key).unwrap();
+        let second = limiter.connect(key).unwrap();
+        assert!(limiter.append_from_at(first, &[1; 32], 10, now).is_ok());
+        assert!(limiter.append_from_at(first, &[1; 32], 10, now).is_ok());
+        assert!(limiter.append_from_at(first, &[1; 32], 10, now).is_err(), "one connection used its own allowance");
+        assert!(limiter.append_from_at(second, &[2; 32], 10, now).is_ok());
+        assert!(limiter.append_from_at(second, &[2; 32], 10, now).is_err(), "the address ceiling still holds");
+        limiter.disconnect(first);
+        assert_eq!(limiter.append_from_at(first, &[1; 32], 10, now), Err(Refusal::Full));
+    }
+
+    #[test]
+    fn new_streams_are_limited_per_address() {
+        let limiter = Limiter::new(tight());
+        let key = limiter.key("203.0.113.6".parse().unwrap());
+        let now = Instant::now();
+        assert!(limiter.new_stream_at(key, now).is_ok());
+        assert!(limiter.new_stream_at(key, now).is_ok());
+        assert!(matches!(limiter.new_stream_at(key, now), Err(Refusal::Wait(_))));
+        assert!(limiter.append_at(key, &[9; 32], 10, now).is_ok(), "writing to streams that exist is not affected");
+        assert!(limiter.new_stream_at(key, now + Duration::from_secs(1)).is_ok());
+        assert!(limiter.new_stream_at(limiter.key("203.0.113.7".parse().unwrap()), now).is_ok());
+    }
+
+    #[test]
+    fn pictures_have_their_own_allowance() {
+        let limiter = Limiter::new(tight());
+        let key = limiter.key("203.0.113.5".parse().unwrap());
+        let caller = limiter.connect(key).unwrap();
+        assert!(limiter.picture(key).is_ok());
+        assert!(limiter.picture(key).is_ok());
+        assert!(limiter.picture(key).is_err());
+        assert!(limiter.open(caller).is_ok(), "pictures do not use up opens");
     }
 
     #[test]

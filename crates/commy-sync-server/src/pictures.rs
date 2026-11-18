@@ -19,7 +19,7 @@ pub async fn fetch(
         return (StatusCode::BAD_REQUEST, "not a picture id").into_response();
     };
     let key = service.limiter.key(service.address(peer, &headers));
-    if service.limiter.open(key).is_err() {
+    if service.limiter.picture(key).is_err() {
         return (StatusCode::TOO_MANY_REQUESTS, "slow down").into_response();
     }
     match service.store.get_picture(&id, crate::now_ms()).await {
