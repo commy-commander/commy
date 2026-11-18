@@ -223,6 +223,80 @@ async fn a_retried_append_is_stored_once() {
     assert_eq!(entries.len(), 1, "the retry is not broadcast again");
 }
 
+async fn frames_until_quiet(socket: &mut Raw) -> Vec<ServerFrame> {
+    let mut frames = Vec::new();
+    while let Ok(Some(Ok(message))) = tokio::time::timeout(Duration::from_millis(300), socket.next()).await {
+        if let Message::Text(text) = message {
+            frames.push(serde_json::from_str(&text).unwrap());
+        }
+    }
+    frames
+}
+
+#[tokio::test]
+async fn one_frame_opens_many_streams_and_refuses_only_the_bad_ones() {
+    let (url, service) = start().await;
+    let busy = StreamSecret::random().keys();
+    let quiet = StreamSecret::random().keys();
+    for n in 1..=3u8 {
+        service.store.append(&busy.id, &[n; APPEND_NONCE_BYTES], &busy.seal(&[n]).unwrap(), 1).await.unwrap();
+    }
+    let mut forged = commy_sync::wire::OpenRequest::of(&StreamSecret::random().keys(), 0, None);
+    forged.stream = StreamSecret::random().keys().id;
+    let opens = vec![
+        commy_sync::wire::OpenRequest::of(&busy, 1, None),
+        commy_sync::wire::OpenRequest::of(&quiet, 0, None),
+        forged.clone(),
+        commy_sync::wire::OpenRequest::of(&busy, 1, None),
+    ];
+    let mut socket = raw(&url).await;
+    send(&mut socket, &ClientFrame::open_many(opens)).await;
+    let frames = frames_until_quiet(&mut socket).await;
+    assert!(frames.contains(&ServerFrame::stream_error(ErrorCode::BadStream, forged.stream)));
+    assert!(frames.contains(&ServerFrame::Opened { stream: busy.id, head: 3 }));
+    assert!(frames.contains(&ServerFrame::Opened { stream: quiet.id, head: 0 }));
+    assert_eq!(frames.iter().filter(|f| matches!(f, ServerFrame::Opened { .. })).count(), 2, "a stream named twice opens once");
+    let busy_seqs: Vec<u64> = frames
+        .iter()
+        .filter_map(|f| match f {
+            ServerFrame::Entries { stream, entries, .. } if *stream == busy.id => Some(entries.iter().map(|e| e.seq).collect::<Vec<_>>()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(busy_seqs, vec![2, 3], "each stream starts from its own cursor");
+    assert!(frames.contains(&ServerFrame::Entries { stream: quiet.id, entries: vec![], caught_up: true }));
+
+    let more: Vec<_> = (0..MAX_STREAMS_PER_CONNECTION).map(|_| commy_sync::wire::OpenRequest::of(&StreamSecret::random().keys(), 0, None)).collect();
+    send(&mut socket, &ClientFrame::open_many(more.clone())).await;
+    let frames = frames_until_quiet(&mut socket).await;
+    let refused = frames.iter().filter(|f| matches!(f, ServerFrame::Error { code: ErrorCode::TooManyStreams, .. })).count();
+    assert_eq!(refused, 2, "only the streams past the connection's room are refused");
+    assert!(frames.contains(&ServerFrame::stream_error(ErrorCode::TooManyStreams, more[MAX_STREAMS_PER_CONNECTION - 1].stream)));
+}
+
+#[tokio::test]
+async fn the_client_opens_all_its_streams_with_one_open_allowance() {
+    let mut config = Config::from_env(|_| None).unwrap();
+    config.limits.opens = Rate { burst: 1.0, per_second: 0.0001 };
+    let (url, _) = start_with(config).await;
+    let keys: Vec<_> = (0..5).map(|_| StreamSecret::random().keys()).collect();
+    let (client, mut events) = SyncClient::spawn(url);
+    for k in &keys {
+        client.follow(k.clone(), 0);
+    }
+    let mut current = std::collections::HashSet::new();
+    while current.len() < keys.len() {
+        match tokio::time::timeout(WAIT, events.recv()).await.expect("every stream current in time").expect("client running") {
+            SyncEvent::CaughtUp { stream, .. } => {
+                current.insert(stream);
+            }
+            SyncEvent::Refused { code, .. } => panic!("refused {code:?}"),
+            _ => {}
+        }
+    }
+}
+
 #[tokio::test]
 async fn one_connection_follows_a_bounded_number_of_streams() {
     let (url, _) = start().await;

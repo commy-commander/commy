@@ -4,12 +4,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::report::{HostReport, Receipt};
 use crate::stream::{Eraser, StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
 
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 pub const OLDEST_CLIENT_PROTOCOL: u32 = 1;
 pub const SIGNALS_SINCE: u32 = 2;
 pub const WILLS_SINCE: u32 = 3;
 pub const ERASE_SINCE: u32 = 4;
 pub const REPORTS_SINCE: u32 = 5;
+pub const OPEN_MANY_SINCE: u32 = 6;
 pub const ERASE_WINDOW_MS: i64 = 10 * 60 * 1000;
 pub const ERASE_EVERYTHING: u64 = i64::MAX as u64;
 pub const PAGE_SIZE: usize = 200;
@@ -74,6 +75,23 @@ impl<'de> Deserialize<'de> for StreamId {
 pub type AppendNonce = Bytes<APPEND_NONCE_BYTES>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenRequest {
+    pub stream: StreamId,
+    pub write: Bytes<32>,
+    pub read: Bytes<32>,
+    pub after: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail: Option<u32>,
+}
+
+impl OpenRequest {
+    pub fn of(keys: &StreamKeys, after: u64, tail: Option<u32>) -> Self {
+        let tail = tail.filter(|_| after == 0);
+        OpenRequest { stream: keys.id, write: Bytes(keys.write_public()), read: Bytes(keys.read_token()), after, tail }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ClientFrame {
     Open {
@@ -84,6 +102,7 @@ pub enum ClientFrame {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tail: Option<u32>,
     },
+    OpenMany { opens: Vec<OpenRequest> },
     Append { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Signal { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
     Will { stream: StreamId, nonce: AppendNonce, body: Blob, sig: Bytes<64> },
@@ -101,8 +120,12 @@ impl ClientFrame {
     }
 
     pub fn open_tail(keys: &StreamKeys, after: u64, tail: Option<u32>) -> Self {
-        let tail = tail.filter(|_| after == 0);
-        ClientFrame::Open { stream: keys.id, write: Bytes(keys.write_public()), read: Bytes(keys.read_token()), after, tail }
+        let OpenRequest { stream, write, read, after, tail } = OpenRequest::of(keys, after, tail);
+        ClientFrame::Open { stream, write, read, after, tail }
+    }
+
+    pub fn open_many(opens: Vec<OpenRequest>) -> Self {
+        ClientFrame::OpenMany { opens }
     }
 
     pub fn append(keys: &StreamKeys, nonce: [u8; APPEND_NONCE_BYTES], body: Vec<u8>) -> Self {
@@ -287,6 +310,7 @@ mod tests {
         let frames = [
             ClientFrame::open(&keys, 41),
             ClientFrame::open_tail(&keys, 0, Some(50)),
+            ClientFrame::open_many(vec![OpenRequest::of(&keys, 3, None), OpenRequest::of(&StreamSecret::random().keys(), 0, Some(200))]),
             ClientFrame::append(&keys, rand::random(), vec![1, 2, 3]),
             ClientFrame::signal(&keys, rand::random(), vec![4, 5]),
             ClientFrame::will(&keys, rand::random(), vec![6]),
@@ -308,6 +332,19 @@ mod tests {
         assert!(json.get("tail").is_none(), "older services see the frame they know");
         assert_eq!(serde_json::to_value(ClientFrame::open_tail(&keys, 0, Some(200))).unwrap()["tail"], 200);
         assert!(serde_json::to_value(ClientFrame::open_tail(&keys, 9, Some(200))).unwrap().get("tail").is_none(), "a cursor wins over a tail");
+    }
+
+    #[test]
+    fn an_open_many_frame_carries_each_open_as_a_single_open_would() {
+        let keys = StreamSecret::random().keys();
+        let ClientFrame::Open { stream, write, read, after, tail } = ClientFrame::open_tail(&keys, 0, Some(200)) else { unreachable!() };
+        assert_eq!(OpenRequest::of(&keys, 0, Some(200)), OpenRequest { stream, write, read, after, tail });
+        assert_eq!(OpenRequest::of(&keys, 7, Some(200)).tail, None, "a cursor wins over a tail");
+        let json = serde_json::to_value(ClientFrame::open_many(vec![OpenRequest::of(&keys, 7, None)])).unwrap();
+        assert_eq!(json["t"], "open_many");
+        assert_eq!(json["opens"][0]["stream"], keys.id.to_hex());
+        assert!(json["opens"][0].get("tail").is_none());
+        assert!(OPEN_MANY_SINCE <= PROTOCOL);
     }
 
     #[test]

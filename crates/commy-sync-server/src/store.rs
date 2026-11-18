@@ -121,6 +121,13 @@ impl Store {
         }
     }
 
+    pub async fn heads(&self, streams: &[StreamId]) -> Result<HashMap<StreamId, u64>, StoreError> {
+        match self {
+            Store::Memory(m) => Ok(m.heads(streams)),
+            Store::Postgres(p) => p.heads(streams).await,
+        }
+    }
+
     pub async fn prune(&self, before: i64) -> Result<u64, StoreError> {
         match self {
             Store::Memory(m) => Ok(m.prune(before)),
@@ -443,6 +450,11 @@ impl MemoryStore {
             .collect()
     }
 
+    fn heads(&self, streams: &[StreamId]) -> HashMap<StreamId, u64> {
+        let held = self.streams.lock().unwrap();
+        streams.iter().filter_map(|stream| held.get(stream).map(|s| (*stream, s.head))).collect()
+    }
+
     fn head(&self, stream: &StreamId) -> u64 {
         self.streams.lock().unwrap().get(stream).map_or(0, |s| s.head)
     }
@@ -539,6 +551,18 @@ impl PgStore {
         Ok(rows
             .into_iter()
             .map(|row| WireEntry { seq: row.get::<i64, _>(0) as u64, at: row.get(1), body: Blob(row.get(2)) })
+            .collect())
+    }
+
+    async fn heads(&self, streams: &[StreamId]) -> Result<HashMap<StreamId, u64>, StoreError> {
+        let ids: Vec<Vec<u8>> = streams.iter().map(|s| s.0.to_vec()).collect();
+        let rows = sqlx::query("SELECT id, head FROM sync_streams WHERE id = ANY($1)").bind(&ids).fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let id: [u8; 32] = row.get::<Vec<u8>, _>(0).try_into().ok()?;
+                Some((StreamId(id), row.get::<i64, _>(1) as u64))
+            })
             .collect())
     }
 
@@ -730,6 +754,10 @@ mod tests {
         assert_eq!(store.append(&b, &[1; 16], b"other", 2_500).await.unwrap().seq, 1, "each stream counts on its own");
         assert_eq!(store.append(&a, &[3; 16], b"three", 3_000).await.unwrap().seq, 3);
         assert_eq!(store.head(&a).await.unwrap(), 3);
+        let unknown = StreamSecret::random().keys().id;
+        let heads = store.heads(&[a, b, unknown]).await.unwrap();
+        assert_eq!(heads, HashMap::from([(a, 3), (b, 1)]), "streams with nothing stored are left out");
+        assert!(store.heads(&[]).await.unwrap().is_empty());
         let totals = store.totals().await.unwrap();
         assert_eq!((totals.streams, totals.entries), (2, 4));
         assert!(totals.bytes >= 16, "the size counts what is stored");

@@ -4,7 +4,7 @@ use n0_future::time::{self, Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::stream::{SealError, StreamId, StreamKeys, APPEND_NONCE_BYTES};
-use crate::wire::{ClientFrame, ErrorCode, Greeting, ServerFrame, KEEPALIVE_SECS, SIGNALS_SINCE, WILLS_SINCE};
+use crate::wire::{ClientFrame, ErrorCode, Greeting, OpenRequest, ServerFrame, KEEPALIVE_SECS, MAX_STREAMS_PER_CONNECTION, OPEN_MANY_SINCE, SIGNALS_SINCE, WILLS_SINCE};
 
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 #[path = "client/native.rs"]
@@ -19,6 +19,7 @@ const RECONNECT_STEPS_MS: [u64; 6] = [500, 2_000, 5_000, 10_000, 30_000, 60_000]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const SILENCE_LIMIT: Duration = Duration::from_secs(KEEPALIVE_SECS * 2 + 10);
 const RETRY_AFTER_DEFAULT_MS: u64 = 2_000;
+const HELLO_WAIT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncEvent {
@@ -122,6 +123,10 @@ impl Followed {
         ClientFrame::open_tail(&self.keys, self.after, self.tail)
     }
 
+    fn open_request(&self) -> OpenRequest {
+        OpenRequest::of(&self.keys, self.after, self.tail)
+    }
+
     fn last_word(&self) -> Option<ClientFrame> {
         let body = self.keys.seal(self.will.as_ref()?).ok()?;
         Some(ClientFrame::will(&self.keys, rand::random(), body))
@@ -163,6 +168,9 @@ impl Link {
                     Some(command) => self.take(command, None).await,
                     None => return,
                 }
+                while let Ok(command) = inbox.try_recv() {
+                    self.take(command, None).await;
+                }
                 continue;
             }
             match Socket::connect(&self.url).await {
@@ -199,15 +207,17 @@ impl Link {
     }
 
     async fn serve(&mut self, mut socket: Socket, inbox: &mut mpsc::UnboundedReceiver<Command>) -> Ended {
-        for followed in self.streams.values() {
-            if send(&mut socket, &followed.open()).await.is_err() {
-                return Ended::Lost;
-            }
-        }
-        self.reopen.clear();
         self.protocol = 0;
         self.wills_due = false;
-        if self.flush_pending(&mut socket).await.is_err() {
+        if !self.await_hello(&mut socket).await {
+            return Ended::Lost;
+        }
+        let every: Vec<StreamId> = self.streams.keys().copied().collect();
+        self.reopen.clear();
+        if self.send_opens(&mut socket, &every).await.is_err() || self.flush_pending(&mut socket).await.is_err() {
+            return Ended::Lost;
+        }
+        if self.wills_due && self.send_wills(&mut socket).await.is_err() {
             return Ended::Lost;
         }
         let mut keepalive = time::interval(Duration::from_secs(KEEPALIVE_SECS));
@@ -319,6 +329,30 @@ impl Link {
         }
     }
 
+    async fn await_hello(&mut self, socket: &mut Socket) -> bool {
+        let deadline = Instant::now() + HELLO_WAIT;
+        while self.protocol == 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match time::timeout(left, socket.next()).await {
+                Err(_) => return true,
+                Ok(Incoming::Text(text)) => match serde_json::from_str::<ServerFrame>(&text) {
+                    Ok(frame) => self.handle(frame),
+                    Err(e) => tracing::debug!("sync service sent an unknown frame: {e}"),
+                },
+                Ok(Incoming::Other) => {}
+                Ok(Incoming::Closed) => return false,
+            }
+        }
+        true
+    }
+
+    async fn send_opens(&self, socket: &mut Socket, streams: &[StreamId]) -> Result<(), ()> {
+        for frame in open_frames(self.protocol, streams.iter().filter_map(|stream| self.streams.get(stream))) {
+            send(socket, &frame).await?;
+        }
+        Ok(())
+    }
+
     async fn send_wills(&mut self, socket: &mut Socket) -> Result<(), ()> {
         self.wills_due = false;
         for frame in self.streams.values().filter_map(Followed::last_word) {
@@ -338,12 +372,10 @@ impl Link {
     async fn flush_due(&mut self, socket: &mut Socket) -> Result<(), ()> {
         let now = Instant::now();
         let due: Vec<StreamId> = self.reopen.iter().filter(|(_, at)| **at <= now).map(|(id, _)| *id).collect();
-        for stream in due {
-            self.reopen.remove(&stream);
-            if let Some(followed) = self.streams.get(&stream) {
-                send(socket, &followed.open()).await?;
-            }
+        for stream in &due {
+            self.reopen.remove(stream);
         }
+        self.send_opens(socket, &due).await?;
         for pending in self.pending.values_mut().filter(|p| p.not_before <= now) {
             send(socket, &pending.frame).await?;
             pending.not_before = now + Duration::from_secs(30);
@@ -431,6 +463,14 @@ impl Link {
     }
 }
 
+fn open_frames<'a>(protocol: u32, followed: impl Iterator<Item = &'a Followed>) -> Vec<ClientFrame> {
+    let followed: Vec<&Followed> = followed.collect();
+    if protocol < OPEN_MANY_SINCE || followed.len() < 2 {
+        return followed.iter().map(|f| f.open()).collect();
+    }
+    followed.chunks(MAX_STREAMS_PER_CONNECTION).map(|chunk| ClientFrame::open_many(chunk.iter().map(|f| f.open_request()).collect())).collect()
+}
+
 fn gone_quiet(silent: Duration) -> bool {
     silent > Duration::from_secs(KEEPALIVE_SECS)
 }
@@ -449,6 +489,31 @@ async fn send(socket: &mut Socket, frame: &ClientFrame) -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn followed(count: usize) -> Vec<Followed> {
+        (0..count).map(|n| Followed { keys: crate::StreamSecret::random().keys(), after: n as u64, tail: None, will: None }).collect()
+    }
+
+    #[test]
+    fn services_that_know_open_many_get_streams_in_batches() {
+        let streams = followed(MAX_STREAMS_PER_CONNECTION + 3);
+        let frames = open_frames(OPEN_MANY_SINCE, streams.iter());
+        assert_eq!(frames.len(), 2);
+        let ClientFrame::OpenMany { opens } = &frames[0] else { panic!("a batch") };
+        assert_eq!(opens.len(), MAX_STREAMS_PER_CONNECTION);
+        assert_eq!(opens[0], streams[0].open_request());
+        let ClientFrame::OpenMany { opens } = &frames[1] else { panic!("a batch") };
+        assert_eq!(opens.len(), 3);
+    }
+
+    #[test]
+    fn older_services_and_single_streams_get_plain_opens() {
+        let streams = followed(4);
+        let frames = open_frames(OPEN_MANY_SINCE - 1, streams.iter());
+        assert_eq!(frames, streams.iter().map(Followed::open).collect::<Vec<_>>());
+        assert_eq!(open_frames(OPEN_MANY_SINCE, streams[..1].iter()), vec![streams[0].open()]);
+        assert!(open_frames(OPEN_MANY_SINCE, std::iter::empty()).is_empty());
+    }
 
     #[test]
     fn reconnects_back_off_and_spread_out() {

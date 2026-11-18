@@ -8,7 +8,7 @@ use commy_sync::stream::{
     TAG_BYTES,
 };
 use commy_sync::wire::{
-    AppendNonce, Blob, ClientFrame, ErrorCode, ServerFrame, WireEntry, ERASE_WINDOW_MS, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE,
+    AppendNonce, Blob, ClientFrame, ErrorCode, OpenRequest, ServerFrame, WireEntry, ERASE_WINDOW_MS, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
@@ -118,41 +118,10 @@ async fn handle(
             let _ = out.send(crate::reports::take(service, caller.address, *report).await).await;
         }
         ClientFrame::Open { stream, write, read, after, tail } => {
-            if StreamId::of(&write.0, &read.0) != stream {
-                let _ = out.send(ServerFrame::stream_error(ErrorCode::BadStream, stream)).await;
-                return;
-            }
-            let mut will = None;
-            if let Some(previous) = open.remove(&stream) {
-                previous.follower.abort();
-                let _ = previous.follower.await;
-                will = previous.will.filter(|_| previous.write == write.0);
-            } else if open.len() >= MAX_STREAMS_PER_CONNECTION {
-                let _ = out.send(ServerFrame::stream_error(ErrorCode::TooManyStreams, stream)).await;
-                return;
-            }
-            if let Err(refusal) = service.limiter.open(caller) {
-                let retry_after_ms = match refusal {
-                    Refusal::Wait(wait) => Some(wait.as_millis().max(100) as u64),
-                    Refusal::Full => None,
-                };
-                let _ = out.send(ServerFrame::Error { code: ErrorCode::RateLimited, stream: Some(stream), nonce: None, retry_after_ms }).await;
-                return;
-            }
-            service.stats.opened();
-            let live = service.hub.subscribe(stream);
-            let head = match service.store.head(&stream).await {
-                Ok(head) => head,
-                Err(e) => {
-                    tracing::warn!("sync store head failed: {e}");
-                    let _ = out.send(ServerFrame::stream_error(ErrorCode::Unavailable, stream)).await;
-                    drop(live);
-                    service.hub.release(&stream);
-                    return;
-                }
-            };
-            let follower = tokio::spawn(follow(service.clone(), session, stream, live, head, start_after(after, tail, head), out.clone()));
-            open.insert(stream, OpenStream { write: write.0, follower, will, unwritten: head == 0 });
+            open_streams(service, caller, session, vec![OpenRequest { stream, write, read, after, tail }], open, out).await;
+        }
+        ClientFrame::OpenMany { opens } => {
+            open_streams(service, caller, session, opens, open, out).await;
         }
         ClientFrame::Claim { stream, write, read, eraser, sig } => {
             let _ = out.send(claim(service, caller, stream, &write.0, &read.0, &eraser.0, &sig.0).await).await;
@@ -238,6 +207,100 @@ async fn handle(
     }
 }
 
+fn rate_limited(stream: StreamId, refusal: Refusal) -> ServerFrame {
+    let retry_after_ms = match refusal {
+        Refusal::Wait(wait) => Some(wait.as_millis().max(100) as u64),
+        Refusal::Full => None,
+    };
+    ServerFrame::Error { code: ErrorCode::RateLimited, stream: Some(stream), nonce: None, retry_after_ms }
+}
+
+fn checked_opens(service: &Service, requests: Vec<OpenRequest>) -> (Vec<OpenRequest>, Vec<ServerFrame>) {
+    let mut taking: Vec<OpenRequest> = Vec::new();
+    let mut refusals = Vec::new();
+    for request in requests {
+        if service.desk.is_dropped(&request.stream) {
+            refusals.push(ServerFrame::stream_error(ErrorCode::Removed, request.stream));
+        } else if StreamId::of(&request.write.0, &request.read.0) != request.stream {
+            refusals.push(ServerFrame::stream_error(ErrorCode::BadStream, request.stream));
+        } else if !taking.iter().any(|taken| taken.stream == request.stream) {
+            taking.push(request);
+        }
+    }
+    (taking, refusals)
+}
+
+fn fit_to_room(taking: &mut Vec<OpenRequest>, open: &HashMap<StreamId, OpenStream>) -> Vec<ServerFrame> {
+    let mut room = MAX_STREAMS_PER_CONNECTION.saturating_sub(open.len());
+    let mut refusals = Vec::new();
+    taking.retain(|request| {
+        if open.contains_key(&request.stream) {
+            return true;
+        }
+        if room == 0 {
+            refusals.push(ServerFrame::stream_error(ErrorCode::TooManyStreams, request.stream));
+            return false;
+        }
+        room -= 1;
+        true
+    });
+    refusals
+}
+
+async fn open_streams(
+    service: &Arc<Service>,
+    caller: Caller,
+    session: u64,
+    requests: Vec<OpenRequest>,
+    open: &mut HashMap<StreamId, OpenStream>,
+    out: &mpsc::Sender<ServerFrame>,
+) {
+    let (mut taking, mut refusals) = checked_opens(service, requests);
+    refusals.extend(fit_to_room(&mut taking, open));
+    for refusal in refusals {
+        let _ = out.send(refusal).await;
+    }
+    if taking.is_empty() {
+        return;
+    }
+    if let Err(refusal) = service.limiter.open(caller) {
+        for request in &taking {
+            let _ = out.send(rate_limited(request.stream, refusal)).await;
+        }
+        return;
+    }
+    let mut wills = HashMap::new();
+    for request in &taking {
+        if let Some(previous) = open.remove(&request.stream) {
+            previous.follower.abort();
+            let _ = previous.follower.await;
+            wills.insert(request.stream, previous.will.filter(|_| previous.write == request.write.0));
+        }
+    }
+    let lives: Vec<_> = taking.iter().map(|request| service.hub.subscribe(request.stream)).collect();
+    let streams: Vec<StreamId> = taking.iter().map(|request| request.stream).collect();
+    let heads = match service.store.heads(&streams).await {
+        Ok(heads) => heads,
+        Err(e) => {
+            tracing::warn!("sync store heads failed: {e}");
+            drop(lives);
+            for stream in streams {
+                service.hub.release(&stream);
+                let _ = out.send(ServerFrame::stream_error(ErrorCode::Unavailable, stream)).await;
+            }
+            return;
+        }
+    };
+    for (request, live) in taking.into_iter().zip(lives) {
+        service.stats.opened();
+        let head = heads.get(&request.stream).copied().unwrap_or(0);
+        let start = start_after(request.after, request.tail, head);
+        let follower = tokio::spawn(follow(service.clone(), session, request.stream, live, head, start, out.clone()));
+        let will = wills.remove(&request.stream).flatten();
+        open.insert(request.stream, OpenStream { write: request.write.0, follower, will, unwritten: head == 0 });
+    }
+}
+
 fn stream_of(frame: &ClientFrame) -> Option<StreamId> {
     match frame {
         ClientFrame::Open { stream, .. }
@@ -245,18 +308,13 @@ fn stream_of(frame: &ClientFrame) -> Option<StreamId> {
         | ClientFrame::Signal { stream, .. }
         | ClientFrame::Will { stream, .. }
         | ClientFrame::Claim { stream, .. } => Some(*stream),
-        ClientFrame::Close { .. } | ClientFrame::Erase { .. } | ClientFrame::Release { .. } | ClientFrame::Report { .. } | ClientFrame::Ping => None,
+        ClientFrame::OpenMany { .. }
+        | ClientFrame::Close { .. } | ClientFrame::Erase { .. } | ClientFrame::Release { .. } | ClientFrame::Report { .. } | ClientFrame::Ping => None,
     }
 }
 
 fn owner_limited(service: &Service, caller: Caller, stream: StreamId) -> Result<(), ServerFrame> {
-    service.limiter.open(caller).map_err(|refusal| {
-        let retry_after_ms = match refusal {
-            Refusal::Wait(wait) => Some(wait.as_millis().max(100) as u64),
-            Refusal::Full => None,
-        };
-        ServerFrame::Error { code: ErrorCode::RateLimited, stream: Some(stream), nonce: None, retry_after_ms }
-    })
+    service.limiter.open(caller).map_err(|refusal| rate_limited(stream, refusal))
 }
 
 fn unavailable(stream: StreamId, e: crate::store::StoreError) -> ServerFrame {
