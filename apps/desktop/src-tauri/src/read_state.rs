@@ -141,7 +141,7 @@ static PUSH_PENDING: AtomicBool = AtomicBool::new(false);
 
 pub fn schedule(handle: &AppHandle) {
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         if let Err(e) = sync(&handle).await {
             tracing::debug!("read state sync: {e}");
         }
@@ -153,7 +153,7 @@ fn schedule_push(handle: &AppHandle) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(PUSH_DELAY).await;
         PUSH_PENDING.store(false, Ordering::SeqCst);
         schedule(&handle);
@@ -207,6 +207,10 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         }
     }
     Err("Your devices kept changing the read positions at the same time; they will sync again soon".into())
+}
+
+pub fn forget() {
+    PUSH_PENDING.store(false, Ordering::SeqCst);
 }
 
 #[cfg(test)]

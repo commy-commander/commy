@@ -43,7 +43,7 @@ pub fn ensure(handle: &AppHandle) {
     if let Some(old) = live.take() {
         old.task.abort();
     }
-    let task = tauri::async_runtime::spawn(watch(handle.clone(), url.clone(), s.account.clone(), me.public()));
+    let task = crate::account_session::spawn(watch(handle.clone(), url.clone(), s.account.clone(), me.public()));
     *live = Some(Live { url, account: s.account, task });
 }
 

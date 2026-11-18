@@ -31,7 +31,7 @@ pub fn wake_when_mutes_end(app: &App, handle: &AppHandle) {
         *watched = Some(end);
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let wait = (end - now + MUTE_END_SLACK_SECS).max(0) as u64;
         tokio::time::sleep(Duration::from_secs(wait)).await;
         *MUTE_END_WATCHED.lock_or_recover() = None;
@@ -67,11 +67,11 @@ pub fn ring(app: &App, server: ServerId, message: &Message) {
         let (http, preview) = (app.http.clone(), preview.clone());
         match home {
             None => {
-                tauri::async_runtime::spawn(push_wake::ring_tags(http, tags, preview));
+                crate::account_session::spawn(push_wake::ring_tags(http, tags, preview));
             }
             Some(home) => {
                 let Some(handle) = push_wake::handle() else { continue };
-                tauri::async_runtime::spawn(async move {
+                crate::account_session::spawn(async move {
                     let Some(url) = away_homes::sync_now(&handle.state::<App>(), &home).await else { return };
                     push_wake::ring_tags_at(http, Some(url), tags, preview).await;
                 });
@@ -182,6 +182,11 @@ pub fn label(state: &ServerState, me: UserId) -> Option<Label> {
 pub fn labels(app: &App) -> BTreeMap<String, Label> {
     let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return BTreeMap::new() };
     app.servers.lock_or_recover().iter().filter_map(|(id, state)| label(state, me).map(|l| (id.to_string(), l))).collect()
+}
+
+pub fn forget() {
+    *LAST_ALL.lock_or_recover() = None;
+    *MUTE_END_WATCHED.lock_or_recover() = None;
 }
 
 #[cfg(test)]

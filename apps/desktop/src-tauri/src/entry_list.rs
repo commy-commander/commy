@@ -366,7 +366,7 @@ pub(crate) async fn account_devices(app: &App, s: &Session) -> Result<Vec<String
 
 pub fn schedule(handle: &AppHandle) {
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         if let Err(e) = sync(&handle).await {
             tracing::warn!("server list sync: {e}");
         }
@@ -593,7 +593,7 @@ fn retry_after_failure(handle: &AppHandle) {
     }
     let delay = failure_retry_delay(FAILED_TRIES.fetch_add(1, Ordering::SeqCst));
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(delay).await;
         FAILURE_RETRY_PENDING.store(false, Ordering::SeqCst);
         schedule(&handle);
@@ -616,7 +616,7 @@ static KEY_WAIT: KeyWait = KeyWait(std::sync::atomic::AtomicBool::new(false));
 
 fn schedule_later(handle: &AppHandle, delay: std::time::Duration) {
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(delay).await;
         KEY_WAIT.done();
         schedule(&handle);
@@ -814,7 +814,7 @@ fn ask_other_devices(handle: &AppHandle) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let result = ask(&handle).await;
         ASKING.store(false, Ordering::SeqCst);
         let detail = match result {
@@ -835,7 +835,7 @@ fn rebuild_unless_a_device_answers(handle: &AppHandle) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let answered = tokio::time::timeout(REBUILD_AFTER, ask(&handle)).await;
         ASKING.store(false, Ordering::SeqCst);
         if matches!(answered, Ok(Ok(Asked::Got))) {
@@ -875,7 +875,7 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(others.len() + 1);
     if let Some(url) = url {
         let (tx, account, name) = (tx.clone(), s.account.clone(), device_name());
-        tauri::async_runtime::spawn(async move {
+        crate::account_session::spawn(async move {
             let got = crate::key_handoff::ask(&url, &account, &node, &name).await;
             let _ = tx.send(Ok(got.map_or(EntryKeyReply::Denied, |key| EntryKeyReply::Key(key.to_text())))).await;
         });
@@ -884,7 +884,7 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
         let request = EntryKeyRequest { server: s.server.clone(), account: s.account.clone(), device_name: device_name() };
         for other in others {
             let (endpoint, request, tx) = (endpoint.clone(), request.clone(), tx.clone());
-            tauri::async_runtime::spawn(async move {
+            crate::account_session::spawn(async move {
                 let reply = commy_net::entry_key::request(endpoint, &other, &request).await;
                 let _ = tx.send(reply).await;
             });
@@ -916,7 +916,7 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
 pub async fn run_entry_key_requests(handle: AppHandle, mut asks: tokio::sync::mpsc::UnboundedReceiver<EntryKeyAsk>) {
     while let Some(ask) = asks.recv().await {
         let handle = handle.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::account_session::spawn(async move {
             let _ = ask.reply.send(answer(&handle, ask.peer, &ask.request).await);
         });
     }
@@ -987,6 +987,14 @@ async fn start_new_list(handle: &AppHandle) -> Result<(), String> {
         }
     }
     sync(handle).await
+}
+
+pub fn forget() {
+    *STATUS.lock_or_recover() = None;
+    ASKING.store(false, Ordering::SeqCst);
+    FAILED_TRIES.store(0, Ordering::SeqCst);
+    FAILURE_RETRY_PENDING.store(false, Ordering::SeqCst);
+    KEY_WAIT.done();
 }
 
 #[cfg(test)]

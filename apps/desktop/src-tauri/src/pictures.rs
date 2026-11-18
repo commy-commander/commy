@@ -87,7 +87,7 @@ pub fn offer(http: &reqwest::Client, blob: &str, bytes: &[u8]) {
     }
     let Ok(sealed) = key.seal(bytes) else { return };
     let (http, blob) = (http.clone(), blob.to_string());
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let sent = tokio::time::timeout(STORE_WAIT, http.put(url).body(sealed).send()).await;
         match sent {
             Ok(Ok(response)) if response.status().is_success() => {}
@@ -101,6 +101,10 @@ pub fn offer(http: &reqwest::Client, blob: &str, bytes: &[u8]) {
             }
         }
     });
+}
+
+pub fn forget() {
+    *OFFERED.lock_or_recover() = None;
 }
 
 #[cfg(test)]

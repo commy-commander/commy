@@ -541,7 +541,7 @@ where
             runtime.spawn(future);
         }
         Err(_) => {
-            tauri::async_runtime::spawn(future);
+            crate::account_session::spawn(future);
         }
     }
 }

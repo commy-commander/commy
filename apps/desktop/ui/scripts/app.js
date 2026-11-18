@@ -24909,6 +24909,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("account-changed", onAccountChanged);
     window.__TAURI__.event.listen("sign-in-failed", event => showSignInError(String(event.payload)));
     window.__TAURI__.event.listen("reopen-needed", () => $("reopen").classList.remove("hidden"));
+    window.__TAURI__.event.listen("account-closed", () => location.reload());
     window.__TAURI__.event.listen("friends-changed", async event => {
       await loadFriends();
       const p = event.payload || {};

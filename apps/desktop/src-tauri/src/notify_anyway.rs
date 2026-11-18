@@ -88,3 +88,8 @@ pub fn heard(app: &App, handle: &AppHandle, heard: Heard, name: String) {
         }),
     );
 }
+
+pub fn forget() {
+    *SENT.lock_or_recover() = NudgeLog::new();
+    *HEARD.lock_or_recover() = NudgeLog::new();
+}

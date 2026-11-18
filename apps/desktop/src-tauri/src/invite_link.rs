@@ -597,6 +597,11 @@ fn desktop_exec_path(exe: &str) -> String {
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn register_scheme() {}
 
+pub fn forget_created() {
+    CREATED.lock_or_recover().clear();
+    RESOLVED.lock_or_recover().clear();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

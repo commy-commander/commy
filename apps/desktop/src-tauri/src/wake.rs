@@ -87,7 +87,7 @@ pub(crate) async fn wake_members(app: &App, server: ServerId) -> Vec<(String, bo
 
 pub fn after_send(handle: &tauri::AppHandle, server: ServerId, message: commy_core::MessageId) {
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let missed: Vec<String> = {
             let app = handle.app();
             wake_members(app, server).await.into_iter().filter(|(_, ok)| !ok).map(|(n, _)| n).collect()
@@ -197,7 +197,7 @@ pub fn handle_wake(handle: &tauri::AppHandle, from: [u8; 32]) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         if unrest(handle.app()).await > 0 {
             show_resting(&handle, false);
         }

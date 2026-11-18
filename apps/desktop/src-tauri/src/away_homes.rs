@@ -71,7 +71,7 @@ pub fn look_up(handle: &AppHandle, homes: Vec<String>) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let http = handle.state::<App>().http.clone();
         let mut changed = false;
         for home in due {
@@ -82,4 +82,8 @@ pub fn look_up(handle: &AppHandle, homes: Vec<String>) {
             crate::community_sync::refresh_soon(&handle);
         }
     });
+}
+
+pub fn forget() {
+    *BOOK.lock_or_recover() = None;
 }

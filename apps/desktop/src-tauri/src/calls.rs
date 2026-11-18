@@ -133,7 +133,7 @@ async fn connect(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, call: D
 }
 
 fn ring_timeout(handle: tauri::AppHandle, channel: ChannelId) {
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(RING_FOR).await;
         let app = handle.state::<App>();
         let stale = app.dm_call.lock_or_recover().clone().filter(|c| c.channel == channel && !c.active);
@@ -195,7 +195,7 @@ fn answer_if_tapped(handle: &tauri::AppHandle) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         if let Err(e) = answer_dm_call(handle.state::<App>(), handle.clone(), true).await {
             tracing::info!("could not answer the call from the notification: {e}");
         }
@@ -237,7 +237,7 @@ pub async fn start_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle,
     let ringing = announce(&app, &handle, &call, "ringing", None);
     let sender = handle.clone();
     let sending = RING_SENDING.clone().lock_owned().await;
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let app = sender.state::<App>();
         let rung = send_signal_then(&app, partner, channel, CallSignal::Ring, move || drop(sending)).await;
         if let Err(e) = rung {
@@ -281,6 +281,10 @@ pub async fn end_dm_call(app: tauri::State<'_, App>, handle: tauri::AppHandle) -
 #[tauri::command]
 pub fn get_dm_call(app: tauri::State<App>) -> Option<DmCallView> {
     current(&app)
+}
+
+pub fn forget() {
+    *ANSWER_TAPPED.lock_or_recover() = None;
 }
 
 #[cfg(test)]

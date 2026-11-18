@@ -375,17 +375,25 @@ fn restart_signed_in_as_someone_else(handle: &AppHandle) -> ! {
     crate::relaunch::restart(handle)
 }
 
+async fn open_someone_else(handle: &AppHandle) {
+    if crate::account_session::switches_in_place() {
+        crate::account_session::close(handle).await;
+    } else {
+        restart_signed_in_as_someone_else(handle)
+    }
+}
+
 fn signed_out_in_place(switched: bool, folder_open: bool, can_relaunch: bool) -> bool {
     folder_open && !switched && !can_relaunch
 }
 
-fn leave_account(app: &App, handle: &AppHandle, switched: bool) {
+async fn leave_account(app: &App, handle: &AppHandle, switched: bool) {
     let folder_open = app.data_dir().is_some();
-    if signed_out_in_place(switched, folder_open, !cfg!(target_os = "ios")) {
+    if signed_out_in_place(switched, folder_open, !crate::account_session::switches_in_place()) {
         return;
     }
     if switched || folder_open {
-        restart_signed_in_as_someone_else(handle);
+        open_someone_else(handle).await;
     }
 }
 
@@ -894,6 +902,7 @@ pub async fn resume_sign_in(handle: AppHandle) {
     let Ok(doc) = discover(&app.http, &saved.server).await else { return };
     let cancel = watch_sign_in(&app, &saved.user_code, &saved.verification_url);
     let _ = handle.emit("account-changed", ());
+    crate::account_session::reload_if_closed(&handle);
     let code = DeviceCodeResponse {
         device_code: saved.device_code,
         user_code: saved.user_code,
@@ -1053,6 +1062,7 @@ async fn poll_for_token(
 pub(crate) async fn complete_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token: &str) -> Result<(), String> {
     finish_sign_in(handle, server, doc, token).await?;
     let _ = handle.emit("account-changed", ());
+    crate::account_session::reload_if_closed(&handle);
     crate::entry_list::schedule(handle);
     Ok(())
 }
@@ -1105,6 +1115,12 @@ async fn finish_sign_in(handle: &AppHandle, server: &str, doc: &Discovery, token
     };
     let base = app.base_dir().cloned().ok_or("This install has no data folder")?;
     let next = after_sign_in(account_folder::choose(&base, server, &user.id), app.data_dir().map(|d| d.as_path()));
+    let next = if next == AfterSignIn::Restart && crate::account_session::switches_in_place() {
+        crate::account_session::close(handle).await;
+        AfterSignIn::OpenFolder
+    } else {
+        next
+    };
     app.igdb.lock().await.resolved.clear();
     let device_linked = match (&next, app.data_dir()) {
         (AfterSignIn::KeepOpen, Some(dir)) => link_device(&app, dir, server, doc, token).await.map_err(|e| {
@@ -1236,8 +1252,9 @@ pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> 
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);
     }
-    leave_account(&app, &handle, switched);
+    leave_account(&app, &handle, switched).await;
     let _ = handle.emit("account-changed", ());
+    crate::account_session::reload_if_closed(&handle);
     Ok(view(&app))
 }
 
@@ -1265,8 +1282,9 @@ pub(crate) async fn sign_out_to_move(app: &App, handle: &AppHandle, to: &str) ->
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);
     }
-    leave_account(app, handle, false);
+    leave_account(app, handle, false).await;
     let _ = handle.emit("account-changed", ());
+    crate::account_session::reload_if_closed(&handle);
     Ok(())
 }
 
@@ -1387,8 +1405,9 @@ async fn forget_deleted_account(app: &App, handle: &AppHandle) -> Result<Account
     if let Some(dir) = app.data_dir() {
         account_folder::forget_key(dir);
     }
-    leave_account(app, handle, switched);
+    leave_account(app, handle, switched).await;
     let _ = handle.emit("account-changed", ());
+    crate::account_session::reload_if_closed(&handle);
     Ok(view(app))
 }
 
@@ -1416,7 +1435,10 @@ pub async fn account_switch(app: tauri::State<'_, App>, handle: AppHandle, serve
         store(&app, &state);
         use_account_server(state.server.clone());
     }
-    restart_signed_in_as_someone_else(&handle)
+    open_someone_else(&handle).await;
+    let _ = handle.emit("account-changed", ());
+    crate::account_session::reload_if_closed(&handle);
+    Ok(view(&app))
 }
 
 #[tauri::command]
@@ -1528,6 +1550,7 @@ async fn open_folder(
     }
     crate::open_account(handle, dir);
     let _ = handle.emit("account-changed", ());
+    crate::account_session::reload_if_closed(&handle);
     Ok(view(app))
 }
 
@@ -1597,6 +1620,7 @@ fn drop_rejected_session(app: &App, handle: &AppHandle, token: &str) {
         account_folder::forget_key(dir);
     }
     let _ = handle.emit("account-changed", ());
+    crate::account_session::reload_if_closed(&handle);
 }
 
 pub fn check_session_soon() {
@@ -1696,6 +1720,7 @@ pub async fn verify_saved_session(handle: AppHandle) -> bool {
             };
             if changed {
                 let _ = handle.emit("account-changed", ());
+                crate::account_session::reload_if_closed(&handle);
             }
         }
         SessionCheck::Rejected(token) => drop_rejected_session(&app, &handle, &token),

@@ -174,7 +174,7 @@ fn tend_host(app: &App, url: String, root: [u8; 32], owned: HashSet<ServerId>, f
             return;
         }
     }
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let asked: Vec<(StreamId, Errand)> = work.iter().map(|w| (w.keys.id, w.errand)).collect();
         let answered = errands::run(&url, work).await;
         if let Err(e) = &answered {
@@ -192,7 +192,7 @@ pub fn erase_deleted(plan: Plan, sid: ServerId, notices: Vec<(StreamId, u64)>) {
     let Some(account_url) = crate::sync_link::url() else { return };
     let Some(url) = crate::community_sync::community_url(plan.chosen_host.as_deref(), &account_url) else { return };
     let work = owner_work(&plan.root, &plan.streams, |stream| Errand::Erase { through: streams::erase_through(stream, &notices) });
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let finished = errands::keep_at(&url, work, &errands::ERASE_WAITS).await;
         match finished {
             Finished { too_old: true, .. } => tracing::warn!("the sync service cannot erase yet; the copies of {sid} expire on their own"),

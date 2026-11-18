@@ -88,7 +88,7 @@ fn wanted(app: &App) -> Vec<(UserId, IdentityKey)> {
 
 pub fn ensure(handle: &AppHandle) {
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move { start(&handle) });
+    crate::account_session::spawn(async move { start(&handle) });
 }
 
 pub fn stop() {
@@ -118,7 +118,7 @@ fn start(handle: &AppHandle) {
             }
             let (pool, events) = Pool::new(&url);
             let (away, away_events) = Pool::new(&url);
-            let task = tauri::async_runtime::spawn(run(handle.clone(), events, away_events));
+            let task = crate::account_session::spawn(run(handle.clone(), events, away_events));
             *live = Some(Live {
                 url,
                 dir,
@@ -468,7 +468,7 @@ fn on_inbox(handle: &AppHandle, server: Option<ServerId>, plain: &[u8], at: i64,
     };
     let ring = should_ring(live_now, envelope.message.created_at, Utc::now());
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         crate::take_dm(&handle, IncomingDm { envelope, node }, ring).await;
     });
 }
@@ -483,7 +483,7 @@ fn wakes(message: &DmMessage) -> bool {
 
 fn ring_phones(app: &App, message: &DmMessage, tag: [u8; 32], preview: Option<String>, home_sync: Option<String>) {
     let http = app.http.clone();
-    tauri::async_runtime::spawn(push_wake::ring_at(http, home_sync, vec![tag], preview, is_nudge(message)));
+    crate::account_session::spawn(push_wake::ring_at(http, home_sync, vec![tag], preview, is_nudge(message)));
 }
 
 fn wake_preview(app: &App, keys: &StreamKeys, message: &DmMessage) -> Option<String> {
@@ -683,7 +683,7 @@ fn ring(handle: &AppHandle, envelope: DmEnvelope) {
     let Ok(node) = data_encoding::HEXLOWER_PERMISSIVE.decode(envelope.message.from_node.trim().as_bytes()) else { return };
     let Ok(node) = <[u8; 32]>::try_from(node) else { return };
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         crate::take_dm(&handle, IncomingDm { envelope, node }, true).await;
     });
 }

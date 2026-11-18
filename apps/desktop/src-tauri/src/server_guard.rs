@@ -322,7 +322,7 @@ pub async fn renew_home_card(handle: &AppHandle) {
 
 pub fn keep_home_card(handle: &AppHandle) {
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(FIRST_CARD_DELAY).await;
         loop {
             renew_home_card(&handle).await;

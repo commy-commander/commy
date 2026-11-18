@@ -120,7 +120,7 @@ fn start(handle: &AppHandle) {
         deck.status = Status::Starting;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let bound = server::bind(port()).await;
         let app = handle.state::<App>();
         {
@@ -133,7 +133,7 @@ fn start(handle: &AppHandle) {
                 _ if deck.listener.is_some() => deck.status = Status::Listening,
                 Ok(listener) => {
                     let backend = Arc::new(AppBackend { handle: handle.clone() });
-                    deck.listener = Some(tauri::async_runtime::spawn(server::listen(listener, backend)));
+                    deck.listener = Some(crate::account_session::spawn(server::listen(listener, backend)));
                     deck.status = Status::Listening;
                 }
                 Err(e) => {

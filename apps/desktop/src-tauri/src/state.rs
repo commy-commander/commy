@@ -200,7 +200,7 @@ pub struct App {
     pub net: tokio::sync::Mutex<Option<CommyNode>>,
     pub node_hex: Mutex<Option<String>>,
     pub base_dir: OnceLock<PathBuf>,
-    pub data_dir: OnceLock<PathBuf>,
+    pub data_dir: DataDir,
     pub voice_session: Mutex<Option<VoiceSession>>,
     pub dm_call: Mutex<Option<crate::calls::DmCall>>,
     pub screen_share: Mutex<Option<ScreenShareSession>>,
@@ -252,6 +252,28 @@ pub struct App {
     pub signing: tokio::sync::RwLock<()>,
 }
 
+#[derive(Default)]
+pub struct DataDir(std::sync::RwLock<Option<&'static PathBuf>>);
+
+impl DataDir {
+    pub fn get(&self) -> Option<&'static PathBuf> {
+        *self.0.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn set(&self, dir: PathBuf) -> Result<(), PathBuf> {
+        let mut slot = self.0.write().unwrap_or_else(|e| e.into_inner());
+        if slot.is_some() {
+            return Err(dir);
+        }
+        *slot = Some(Box::leak(Box::new(dir)));
+        Ok(())
+    }
+
+    pub fn clear(&self) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 impl Default for App {
     fn default() -> Self {
         Self {
@@ -264,7 +286,7 @@ impl Default for App {
             net: tokio::sync::Mutex::new(None),
             node_hex: Mutex::new(None),
             base_dir: OnceLock::new(),
-            data_dir: OnceLock::new(),
+            data_dir: DataDir::default(),
             voice_session: Mutex::new(None),
             dm_call: Mutex::new(None),
             screen_share: Mutex::new(None),
@@ -328,6 +350,53 @@ impl Default for App {
 impl App {
     pub fn data_dir(&self) -> Option<&PathBuf> {
         self.data_dir.get()
+    }
+
+    pub fn forget_account(&self) {
+        use std::sync::atomic::Ordering;
+        *self.profile.lock_or_recover() = None;
+        self.servers.lock_or_recover().clear();
+        self.invites.lock_or_recover().clear();
+        self.listings.lock_or_recover().clear();
+        *self.voice.lock_or_recover() = VoiceSettings::default();
+        *self.processor.lock_or_recover() = VoiceProcessor::new();
+        *self.node_hex.lock_or_recover() = None;
+        *self.voice_session.lock_or_recover() = None;
+        *self.dm_call.lock_or_recover() = None;
+        *self.screen_share.lock_or_recover() = None;
+        *self.own_preview.lock_or_recover() = None;
+        *self.share_source.lock_or_recover() = None;
+        self.watches.lock_or_recover().clear();
+        *self.camera.lock_or_recover() = None;
+        self.camera_watches.lock_or_recover().clear();
+        *self.dms.lock_or_recover() = DmStore::new();
+        *self.safety.lock_or_recover() = crate::safety::SafetySettings::default();
+        *self.storage.lock_or_recover() = crate::storage::StorageSettings::default();
+        *self.dm_filter.lock_or_recover() = crate::safety::DmFilter::default();
+        *self.mic_test.lock_or_recover() = None;
+        *self.voice_recorder.lock_or_recover() = None;
+        *self.picked_upload.lock_or_recover() = None;
+        self.auto_idle.store(false, Ordering::SeqCst);
+        self.forced_mute.store(false, Ordering::SeqCst);
+        self.forced_deaf.store(false, Ordering::SeqCst);
+        self.audience.store(false, Ordering::SeqCst);
+        self.voice_filter_held_back.store(false, Ordering::SeqCst);
+        self.share_seen.lock_or_recover().clear();
+        *self.last_game.lock_or_recover() = None;
+        *self.stream_deck.lock_or_recover() = crate::stream_deck::StreamDeck::default();
+        *self.identity.lock_or_recover() = None;
+        *self.outbox.lock_or_recover() = crate::outbox::Outbox::default();
+        self.channel_opens.lock_or_recover().clear();
+        *self.dm_backoff.lock_or_recover() = crate::outbox::DmBackoff::default();
+        *self.catchup.lock_or_recover() = crate::catchup::Catchup::default();
+        *self.doorbell.lock_or_recover() = crate::doorbell::Doorbell::default();
+        *self.knocks.lock_or_recover() = crate::knock::Knocks::default();
+        *self.rest.lock_or_recover() = crate::wake::Rest::default();
+        *self.liveness.lock_or_recover() = crate::liveness::Liveness::default();
+        self.awaiting_snapshot.lock_or_recover().clear();
+        *self.deleted.lock_or_recover() = crate::deleted::DeletedServers::default();
+        *self.key_hold.lock_or_recover() = None;
+        self.data_dir.clear();
     }
 
     pub fn base_dir(&self) -> Option<&PathBuf> {

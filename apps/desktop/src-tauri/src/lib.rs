@@ -2,6 +2,7 @@ mod account;
 mod account_folder;
 mod account_log;
 mod account_move;
+mod account_session;
 mod away_homes;
 mod app_icon;
 mod app_sign_in;
@@ -1741,6 +1742,36 @@ async fn leave_voice(
     devices::announce(app, sid).await;
 }
 
+pub(crate) async fn leave_calls_for_account_close(app: &App, handle: &tauri::AppHandle) {
+    if app.dm_call.lock_or_recover().is_some() {
+        calls::end(app, handle, true, "hung_up").await;
+    }
+    let sid = app.voice_session.lock_or_recover().as_ref().map(|s| s.server);
+    if let (Some(sid), Ok(profile)) = (sid, current_profile(app)) {
+        let voice = app.voice.lock_or_recover().clone();
+        leave_voice(app, handle, sid, &profile, &voice).await;
+    }
+    app.watches.lock_or_recover().clear();
+    ink_window::hide(handle);
+    overlay::refresh(handle);
+}
+
+pub(crate) fn forget_account_statics() {
+    *SENT_ROSTERS.lock_or_recover() = None;
+    away_homes::forget();
+    calls::forget();
+    cloud_files::forget();
+    pictures::forget();
+    invite_link::forget_created();
+    notify_anyway::forget();
+    official_check::forget();
+    server_wake::forget();
+    entry_list::forget();
+    read_state::forget();
+    account_log::forget();
+    community_sync::forget();
+}
+
 async fn stop_voice_here(app: &App, sid: ServerId, profile: &UserProfile) {
     let testing = pause_mic_test(app);
     *app.voice_session.lock_or_recover() = None;
@@ -2031,7 +2062,7 @@ const VOICE_REDIAL_EVERY: std::time::Duration = std::time::Duration::from_secs(5
 
 fn follow_room_relay(handle: &tauri::AppHandle) {
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    account_session::spawn(async move {
         let app = handle.state::<App>();
         let switch = match app.net.lock().await.as_ref() {
             Some(net) => net.relay_switch(),
@@ -2110,7 +2141,7 @@ fn dial_voice_peer(
     our_user: UserId,
 ) {
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    account_session::spawn(async move {
         let app = handle.state::<App>();
         let hello = MediaHello::Voice {
             user: our_user,
@@ -2338,9 +2369,9 @@ async fn open_shelf(app: &App, node: &commy_net::CommyNode) {
     let Some(dir) = app.data_dir().map(|d| d.join(SHARED_FILES_DIR)) else { return };
     match commy_net::shelf::Shelf::open(&dir).await {
         Ok(shelf) => {
-            tauri::async_runtime::spawn(sent_files::sweep(shelf.clone()));
+            account_session::spawn(sent_files::sweep(shelf.clone()));
             if kept_files::ROLLING {
-                tauri::async_runtime::spawn(kept_files::roll(shelf.clone()));
+                account_session::spawn(kept_files::roll(shelf.clone()));
             }
             node.set_shelf(shelf);
         }
@@ -4937,7 +4968,7 @@ fn on_hotkey(handle: &tauri::AppHandle, id: u32, pressed: bool) {
     } else if !pressed {
     } else if keys.mute.as_deref().and_then(hotkey_id) == Some(id) {
         let handle = handle.clone();
-        tauri::async_runtime::spawn(async move {
+        account_session::spawn(async move {
             let app = handle.state::<App>();
             let muted = !app.voice.lock_or_recover().muted;
             match set_muted(app, handle.clone(), muted).await {
@@ -4947,7 +4978,7 @@ fn on_hotkey(handle: &tauri::AppHandle, id: u32, pressed: bool) {
         });
     } else if keys.deafen.as_deref().and_then(hotkey_id) == Some(id) {
         let handle = handle.clone();
-        tauri::async_runtime::spawn(async move {
+        account_session::spawn(async move {
             let app = handle.state::<App>();
             let deafened = !app.voice.lock_or_recover().deafened;
             match set_deafened(app, handle.clone(), deafened).await {
@@ -4974,7 +5005,7 @@ fn set_talk_key(handle: &tauri::AppHandle, pressed: bool, release_ms: u32) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    account_session::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(release_ms as u64)).await;
         let app = handle.state::<App>();
         if app.talk_press.load(std::sync::atomic::Ordering::SeqCst) != press {
@@ -5124,7 +5155,7 @@ fn preview_overlay(app: tauri::State<'_, App>, handle: tauri::AppHandle) {
     }
     app.overlay_preview.store(true, Relaxed);
     overlay::refresh(&handle);
-    tauri::async_runtime::spawn(async move {
+    account_session::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(8)).await;
         handle.state::<App>().overlay_preview.store(false, Relaxed);
         overlay::refresh(&handle);
@@ -6032,7 +6063,7 @@ fn retire_deleted_server(app: &App, handle: &tauri::AppHandle, sid: ServerId, no
     }
     end_voice_in(app, sid);
     let later = handle.clone();
-    tauri::async_runtime::spawn(async move { refresh_worn_tag(&later.state::<App>(), &later).await });
+    account_session::spawn(async move { refresh_worn_tag(&later.state::<App>(), &later).await });
     let kept = deleted::DeletedServer { name: name.clone(), notice, ticket };
     app.deleted.lock_or_recover().insert(sid, kept);
     app.persist_deleted();
@@ -6101,7 +6132,7 @@ async fn delete_server(
         sync_eraser::erase_deleted(plan, sid, notices);
     }
     let later = handle.clone();
-    tauri::async_runtime::spawn(async move { invite_link::revoke_all(&later.state::<App>(), invites).await });
+    account_session::spawn(async move { invite_link::revoke_all(&later.state::<App>(), invites).await });
     Ok(())
 }
 
@@ -8262,7 +8293,7 @@ fn start_with_computer_by_default(handle: &tauri::AppHandle) {
 #[tauri::command]
 fn set_auto_update(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) -> VoiceSettings {
     let settings = app.update_voice(|voice| voice.auto_update = enabled);
-    tauri::async_runtime::spawn(async move {
+    account_session::spawn(async move {
         if enabled {
             updater::check(&handle).await;
         } else {
@@ -8443,7 +8474,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
     *app.knocks.lock_or_recover() = knock::Knocks::load(&dir);
     {
         let handle = handle.clone();
-        tauri::async_runtime::spawn(async move {
+        account_session::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             let voice = handle.state::<App>().voice.lock_or_recover().clone();
             register_hotkeys(&handle, &voice);
@@ -8461,7 +8492,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
     }
     if app.hold_unsettled_key(signed_in, KEY_SETTLE_MAX) {
         let handle = handle.clone();
-        tauri::async_runtime::spawn(async move {
+        account_session::spawn(async move {
             tokio::time::sleep(KEY_SETTLE_MAX).await;
             settle::settle_key(&handle).await;
         });
@@ -8472,12 +8503,12 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
         .and_then(|dir| persist::load_or_create_node_key(dir));
     let node_port = app.data_dir().and_then(|dir| persist::load_node_port(dir));
 
-    tauri::async_runtime::spawn(doorbell::run(handle.clone()));
-    tauri::async_runtime::spawn(directory::keep_listings_current(handle.clone()));
+    account_session::spawn(doorbell::run(handle.clone()));
+    account_session::spawn(directory::keep_listings_current(handle.clone()));
     server_guard::keep_home_card(&handle);
-    let session_check = tauri::async_runtime::spawn(account::verify_saved_session(handle.clone()));
-    tauri::async_runtime::spawn(account::watch_session(handle.clone()));
-    tauri::async_runtime::spawn(async move {
+    let session_check = account_session::spawn(account::verify_saved_session(handle.clone()));
+    account_session::spawn(account::watch_session(handle.clone()));
+    account_session::spawn(async move {
         match CommyNode::spawn_on_port(node_key, node_port).await {
             Ok((mut node, events, media, dms)) => {
                 let app = handle.state::<App>();
@@ -8486,15 +8517,15 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 }
                 let hex = node.node_id_hex();
                 if let Some(asks) = node.take_entry_key_requests() {
-                    tauri::async_runtime::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
+                    account_session::spawn(entry_list::run_entry_key_requests(handle.clone(), asks));
                 }
                 if let Some(asks) = node.take_mirror_requests() {
-                    tauri::async_runtime::spawn(mirror::run_mirror_requests(handle.clone(), asks));
+                    account_session::spawn(mirror::run_mirror_requests(handle.clone(), asks));
                 }
                 if let Some(asks) = node.take_knock_requests() {
-                    tauri::async_runtime::spawn(knock::run_requests(handle.clone(), asks));
+                    account_session::spawn(knock::run_requests(handle.clone(), asks));
                 }
-                tauri::async_runtime::spawn(knock::run(handle.clone()));
+                account_session::spawn(knock::run(handle.clone()));
 
                 let me = app.profile.lock_or_recover().as_ref().map(|p| p.id);
                 let stored_invites = app
@@ -8575,19 +8606,19 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 host_unhosted(&app).await;
                 tracing::info!("iroh node online");
 
-                tauri::async_runtime::spawn(run_media_loop(handle.clone(), media));
-                tauri::async_runtime::spawn(run_dm_loop(handle.clone(), dms));
-                tauri::async_runtime::spawn(run_afk_watchdog(handle.clone()));
+                account_session::spawn(run_media_loop(handle.clone(), media));
+                account_session::spawn(run_dm_loop(handle.clone(), dms));
+                account_session::spawn(run_afk_watchdog(handle.clone()));
                 if cfg!(desktop) {
-                    tauri::async_runtime::spawn(run_seat_beats(handle.clone()));
+                    account_session::spawn(run_seat_beats(handle.clone()));
                 }
-                tauri::async_runtime::spawn(run_voice_redialer(handle.clone()));
-                tauri::async_runtime::spawn(run_status_expiry(handle.clone()));
-                tauri::async_runtime::spawn(push_wake::run_quiet_hours(handle.clone()));
-                tauri::async_runtime::spawn(run_event_reminders(handle.clone()));
+                account_session::spawn(run_voice_redialer(handle.clone()));
+                account_session::spawn(run_status_expiry(handle.clone()));
+                account_session::spawn(push_wake::run_quiet_hours(handle.clone()));
+                account_session::spawn(run_event_reminders(handle.clone()));
                 {
                     let handle = handle.clone();
-                    tauri::async_runtime::spawn(async move {
+                    account_session::spawn(async move {
                         let answered = session_check.await.unwrap_or(false);
                         entry_list::schedule(&handle);
                         if !answered {
@@ -8595,20 +8626,20 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                         }
                     });
                 }
-                tauri::async_runtime::spawn(read_state::run(handle.clone()));
-                tauri::async_runtime::spawn(run_share_heartbeat(handle.clone()));
-                tauri::async_runtime::spawn(liveness::run(handle.clone()));
-                tauri::async_runtime::spawn(run_activity_watcher(handle.clone()));
-                tauri::async_runtime::spawn(run_retention_pruner(handle.clone()));
-                tauri::async_runtime::spawn(run_mesh_healer(handle.clone()));
-                tauri::async_runtime::spawn(run_storage_roster(handle.clone()));
-                tauri::async_runtime::spawn(channel_lock::run(handle.clone()));
-                tauri::async_runtime::spawn(community_sync::run(handle.clone()));
-                tauri::async_runtime::spawn(voice_gate::run(handle.clone()));
-                tauri::async_runtime::spawn(wake::run_watchdog(handle.clone()));
-                tauri::async_runtime::spawn(run_blob_restore(handle.clone()));
-                tauri::async_runtime::spawn(catchup::run_periodic(handle.clone()));
-                tauri::async_runtime::spawn(outbox::run_dm_outbox(handle.clone()));
+                account_session::spawn(read_state::run(handle.clone()));
+                account_session::spawn(run_share_heartbeat(handle.clone()));
+                account_session::spawn(liveness::run(handle.clone()));
+                account_session::spawn(run_activity_watcher(handle.clone()));
+                account_session::spawn(run_retention_pruner(handle.clone()));
+                account_session::spawn(run_mesh_healer(handle.clone()));
+                account_session::spawn(run_storage_roster(handle.clone()));
+                account_session::spawn(channel_lock::run(handle.clone()));
+                account_session::spawn(community_sync::run(handle.clone()));
+                account_session::spawn(voice_gate::run(handle.clone()));
+                account_session::spawn(wake::run_watchdog(handle.clone()));
+                account_session::spawn(run_blob_restore(handle.clone()));
+                account_session::spawn(catchup::run_periodic(handle.clone()));
+                account_session::spawn(outbox::run_dm_outbox(handle.clone()));
                 run_net_loop(handle.clone(), events).await;
             }
             Err(e) => tracing::error!("P2P stack failed to start: {e}"),

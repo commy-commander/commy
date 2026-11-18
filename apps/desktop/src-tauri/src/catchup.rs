@@ -596,7 +596,7 @@ impl AppAccess for tauri::AppHandle {
 
     fn save_later(&self) {
         let handle = self.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::account_session::spawn(async move {
             tokio::time::sleep(SAVE_DELAY).await;
             save_unsaved(handle.app());
         });
@@ -785,7 +785,7 @@ pub fn on_neighbor_up(handle: &tauri::AppHandle, server: ServerId, peer: [u8; 32
 }
 
 pub fn spawn_session(handle: tauri::AppHandle, server: ServerId, peer: [u8; 32], delay: Option<Duration>, retry: bool) {
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         if let Some(delay) = delay {
             tokio::time::sleep(delay).await;
             let recent = handle.state::<App>().catchup.lock_or_recover().completed_recently((server, peer), Instant::now());

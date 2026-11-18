@@ -66,3 +66,7 @@ pub async fn check(handle: &AppHandle, server: &str) -> Verdict {
     }
     verdict
 }
+
+pub fn forget() {
+    *LAST.lock_or_recover() = None;
+}

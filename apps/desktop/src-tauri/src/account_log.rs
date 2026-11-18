@@ -32,6 +32,14 @@ const SERVERS_DELAY: Duration = Duration::from_secs(1);
 pub use commy_view::reads::PrefPiece;
 
 pub use commy_view::saved::SavedOp;
+pub fn forget() {
+    *STATE.lock_or_recover() = None;
+    *IN_FLIGHT.lock_or_recover() = None;
+    *HOSTS_WRITTEN.lock_or_recover() = None;
+    FLUSH_PENDING.store(false, Ordering::SeqCst);
+    SERVERS_PENDING.store(false, Ordering::SeqCst);
+}
+
 #[cfg(test)]
 use commy_view::saved::SavedMessage;
 
@@ -397,7 +405,7 @@ fn now_ms() -> i64 {
 pub fn ensure(handle: &AppHandle) {
     let _ = HANDLE.set(handle.clone());
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move { start(&handle) });
+    crate::account_session::spawn(async move { start(&handle) });
 }
 
 pub fn stop() {
@@ -439,7 +447,7 @@ fn start(handle: &AppHandle) {
     persist(&app);
     let (mut pool, events) = Pool::new(&url);
     pool.follow(keys, after);
-    let task = tauri::async_runtime::spawn(run(handle.clone(), events, stream));
+    let task = crate::account_session::spawn(run(handle.clone(), events, stream));
     *live = Some(Live { url, dir, stream, pool, caught_up: false, task });
     drop(live);
     crate::dm_sync::ensure(handle);
@@ -796,7 +804,7 @@ fn schedule_servers(handle: &AppHandle) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(SERVERS_DELAY).await;
         SERVERS_PENDING.store(false, Ordering::SeqCst);
         entry_list::schedule(&handle);
@@ -808,7 +816,7 @@ fn flush_soon() {
     if FLUSH_PENDING.swap(true, Ordering::SeqCst) {
         return;
     }
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(FLUSH_DELAY).await;
         FLUSH_PENDING.store(false, Ordering::SeqCst);
         flush(&handle).await;

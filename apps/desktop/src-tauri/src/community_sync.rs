@@ -296,7 +296,7 @@ fn save_soon() {
     if SAVE_PENDING.swap(true, Ordering::SeqCst) {
         return;
     }
-    tauri::async_runtime::spawn(async {
+    crate::account_session::spawn(async {
         tokio::time::sleep(SAVE_DELAY).await;
         SAVE_PENDING.store(false, Ordering::SeqCst);
         save();
@@ -382,7 +382,7 @@ pub fn refresh_soon(handle: &AppHandle) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(REFRESH_SOON).await;
         REFRESH_PENDING.store(false, Ordering::SeqCst);
         tend(&handle).await;
@@ -405,7 +405,7 @@ async fn tend(handle: &AppHandle) {
         let Some((net, node)) = app.net.lock().await.as_ref().map(|node| (node.local_events(), node.node_id_bytes())) else { return };
         stop();
         let (events, received) = mpsc::unbounded_channel();
-        let task = tauri::async_runtime::spawn(listen(handle.clone(), received));
+        let task = crate::account_session::spawn(listen(handle.clone(), received));
         let mut cursors = load(&dir);
         {
             let mut unsent = UNSENT.lock_or_recover();
@@ -497,7 +497,7 @@ fn read_back(handle: &AppHandle) {
     let Some(((stream, server, want, until), url)) = next else { return };
     let (client, events) = SyncClient::spawn(url);
     client.follow(want.keys.clone(), until.saturating_sub(READ_BACK + 1));
-    let task = tauri::async_runtime::spawn(read_until(handle.clone(), server, stream, want.lane, until, events));
+    let task = crate::account_session::spawn(read_until(handle.clone(), server, stream, want.lane, until, events));
     if let Some(live) = LIVE.lock_or_recover().as_mut() {
         live.reading = Some(Reading { stream, _client: client, task });
     }
@@ -837,7 +837,7 @@ fn refresh(handle: &AppHandle) {
             open_waiting(sid);
             continue;
         }
-        tauri::async_runtime::spawn(async move {
+        crate::account_session::spawn(async move {
             tokio::time::sleep(spread).await;
             open_waiting(sid);
         });
@@ -863,7 +863,7 @@ fn open_waiting(server: ServerId) {
 
 pub fn focus(server: ServerId) {
     *FOCUS.lock_or_recover() = Some(server);
-    tauri::async_runtime::spawn(async move { open_waiting(server) });
+    crate::account_session::spawn(async move { open_waiting(server) });
 }
 
 fn follow_group(pool: &mut Pool, group: OpenGroup) {
@@ -923,7 +923,7 @@ fn publish_held(held: Unsent) {
         hold(held);
         return;
     };
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let mut retry = false;
         for (stream, client) in sends {
             match sync_link::append(client, stream, plain.clone()).await {
@@ -997,7 +997,7 @@ fn greet(handle: &AppHandle, server: ServerId) {
         live.greeted.insert(server, now);
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % GREET_SPREAD_MS)).await;
         say_here(&handle, server);
     });
@@ -1088,7 +1088,7 @@ fn announce(server: ServerId, profile: &UserProfile, payload: &WirePayload) -> V
         .into_iter()
         .map(|(stream, client)| {
             let (plain, profile) = (plain.clone(), profile.clone());
-            tauri::async_runtime::spawn(async move {
+            crate::account_session::spawn(async move {
                 let Err(e) = sync_link::append(client, stream, plain).await else { return true };
                 tracing::debug!("could not tell the sync service where this device is: {e}");
                 if let Some(live) = LIVE.lock_or_recover().as_mut() {
@@ -1116,7 +1116,7 @@ fn announce_me(handle: &AppHandle, server: ServerId) {
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let mut stored = false;
         for send in sends {
             stored |= send.await.unwrap_or(false);
@@ -1399,7 +1399,7 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
     if !LIVE.lock_or_recover().as_mut().is_some_and(|live| live.backfilling.insert(stream)) {
         return;
     }
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let done = fill(stream, payloads).await;
         if let Some(live) = LIVE.lock_or_recover().as_mut() {
             live.backfilling.remove(&stream);
@@ -1466,6 +1466,15 @@ async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
     true
 }
 
+pub fn forget() {
+    INVITED.lock_or_recover().clear();
+    INVITED_HOSTS.lock_or_recover().clear();
+    UNSENT.lock_or_recover().clear();
+    *FOCUS.lock_or_recover() = None;
+    SAVE_PENDING.store(false, Ordering::SeqCst);
+    REFRESH_PENDING.store(false, Ordering::SeqCst);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1491,7 +1500,7 @@ mod tests {
     fn a_fresh_pool_opens_its_first_link_on_the_async_runtime() {
         let (events, _received) = mpsc::unbounded_channel();
         let (stream, group) = one_state_stream();
-        let followed = tauri::async_runtime::block_on(tauri::async_runtime::spawn(async move {
+        let followed = tauri::async_runtime::block_on(crate::account_session::spawn(async move {
             let mut pool = Pool::with_events(UNREACHABLE_SYNC_URL, events);
             follow_group(&mut pool, group);
             pool.follows(stream)

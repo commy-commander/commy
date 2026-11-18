@@ -139,7 +139,7 @@ pub fn offer(http: &reqwest::Client, base: Option<String>, identity: Option<Iden
         return;
     }
     let (http, blob) = (http.clone(), blob.to_string());
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         if !hand_over(&http, &base, &identity, &blob, bytes).await {
             withdraw_offer(&base, &blob);
         }
@@ -220,6 +220,11 @@ pub async fn send_roster(http: &reqwest::Client, base: &str, identity: &Identity
     } else {
         Err(format!("{SETUP_FAILED}: {}", response.status()))
     }
+}
+
+pub fn forget() {
+    *ANSWERS.lock_or_recover() = None;
+    *OFFERED.lock_or_recover() = None;
 }
 
 #[cfg(test)]

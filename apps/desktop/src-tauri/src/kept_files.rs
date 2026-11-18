@@ -77,7 +77,7 @@ pub(crate) fn store_new(handle: &tauri::AppHandle, server: ServerId, message: &M
     };
     for file in files {
         let handle = handle.clone();
-        tauri::async_runtime::spawn(async move { store(&handle, server, file, up_to).await });
+        crate::account_session::spawn(async move { store(&handle, server, file, up_to).await });
     }
 }
 
@@ -119,7 +119,7 @@ async fn store(handle: &tauri::AppHandle, server: ServerId, file: Wanted, up_to:
 pub(crate) fn keep_opened(shelf: Option<commy_net::shelf::Shelf>, blob: &str, bytes: &[u8]) {
     let Some(shelf) = shelf else { return };
     let (blob, bytes) = (blob.to_string(), bytes.to_vec());
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         if shelf.shared(&blob).await.is_some() {
             return;
         }
@@ -149,7 +149,7 @@ pub(crate) fn drop_files_of_deleted(handle: &tauri::AppHandle, blobs: Vec<String
         return;
     }
     let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::account_session::spawn(async move {
         let app = handle.state::<App>();
         let Some(shelf) = app.net.lock().await.as_ref().and_then(|node| node.shelf()) else { return };
         for blob in blobs {
