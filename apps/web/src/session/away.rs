@@ -23,6 +23,7 @@ const HOME_KEY_PATH: &str = "/api/auth/commy/home-key";
 pub(super) struct Away {
     pool: Option<Pool>,
     book: AwayBook,
+    ask: Option<mpsc::UnboundedSender<()>>,
 }
 
 #[derive(Deserialize)]
@@ -36,7 +37,13 @@ fn now_ms() -> i64 {
 
 impl Away {
     pub(super) fn wait_for_homes(&mut self, homes: Vec<String>) {
+        if homes.is_empty() {
+            return;
+        }
         self.book.wait_for(homes);
+        if let Some(ask) = &self.ask {
+            let _ = ask.send(());
+        }
     }
 }
 
@@ -90,14 +97,28 @@ impl Session {
             return;
         }
         let (pool, events) = Pool::new(&self.origin);
-        self.away.borrow_mut().pool = Some(pool);
+        let (ask, asked) = mpsc::unbounded_channel();
+        {
+            let mut away = self.away.borrow_mut();
+            away.pool = Some(pool);
+            away.ask = Some(ask);
+        }
         spawn_local(self.clone().run_away(events));
+        spawn_local(self.clone().learn_homes_when_asked(asked));
     }
 
     pub(super) fn stop_away(&self) {
         let mut away = self.away.borrow_mut();
         away.pool = None;
+        away.ask = None;
         away.book.forget_streams();
+    }
+
+    async fn learn_homes_when_asked(self: Rc<Self>, mut asked: mpsc::UnboundedReceiver<()>) {
+        while asked.recv().await.is_some() {
+            while asked.try_recv().is_ok() {}
+            self.tend_away();
+        }
     }
 
     pub(super) fn tend_away(self: &Rc<Self>) {
@@ -138,7 +159,7 @@ impl Session {
             }
         }
         self.follow_away(wanted);
-        self.away.borrow_mut().book.wait_for(unknown);
+        self.away.borrow_mut().wait_for_homes(unknown);
     }
 
     fn follow_away(&self, wanted: Wanted) {

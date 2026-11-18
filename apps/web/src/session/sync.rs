@@ -503,7 +503,15 @@ impl Session {
                     }
                 }
                 Some(commy_view::away::Place::Unknown(owner_home)) if !self.blocks_sync_origin(&owner_home) => {
-                    places.unplaced.insert(server);
+                    match live.book.placed(server) {
+                        Some(Some(socket)) if !self.blocks_sync_origin(&socket) => {
+                            places.sockets.insert(server, socket);
+                        }
+                        Some(None) => {}
+                        _ => {
+                            places.unplaced.insert(server);
+                        }
+                    }
                     places.to_learn.push(owner_home);
                 }
                 _ => {

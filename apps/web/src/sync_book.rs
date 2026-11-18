@@ -220,6 +220,10 @@ impl Book {
         self.hosts.get(&server).cloned().flatten()
     }
 
+    pub fn placed(&self, server: ServerId) -> Option<Option<String>> {
+        self.hosts.get(&server).cloned()
+    }
+
     pub fn note_relation(&mut self, user: UserId, at: i64) -> bool {
         if self.relations.get(&user).is_some_and(|seen| at <= *seen) {
             return false;
@@ -935,6 +939,21 @@ mod tests {
         assert_eq!(book.host_of(server), Some(away.clone()));
         let again = book.replan_at([(server, vec![state.clone()]), (other, vec![theirs])].into(), &sockets);
         assert_eq!(again, Plan::default(), "nothing moves twice");
+    }
+
+    #[test]
+    fn a_followed_server_keeps_its_place_until_it_is_moved() {
+        let (server, homed, unseen) = (ServerId::new(), ServerId::new(), ServerId::new());
+        let away = "wss://friends.org/sync".to_string();
+        let (state, homed_state) = (want(server, Lane::State, false), want(homed, Lane::State, false));
+        let mut book = Book::new(EntryList::default());
+        assert_eq!(book.placed(server), None);
+        book.replan_at([(server, vec![state.clone()]), (homed, vec![homed_state.clone()])].into(), &HashMap::from([(server, away.clone())]));
+        assert_eq!(book.placed(server), Some(Some(away.clone())));
+        assert_eq!(book.placed(homed), Some(None), "a server on the account's own sync is placed too");
+        assert_eq!(book.placed(unseen), None);
+        let again = book.replan_at([(server, vec![state]), (homed, vec![homed_state])].into(), &HashMap::from([(server, away.clone())]));
+        assert_eq!(again, Plan::default(), "a server held where it was is not reopened");
     }
 
     #[test]
