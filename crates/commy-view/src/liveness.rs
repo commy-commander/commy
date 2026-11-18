@@ -12,6 +12,38 @@ pub const SERVICE_BEAT: Duration = Duration::from_secs(5 * 60);
 
 pub const SERVICE_EXPIRE: Duration = Duration::from_secs(11 * 60);
 
+pub const SERVICE_TURNS: u32 = 6;
+
+#[derive(Debug, Clone)]
+pub struct ServiceRota {
+    salt: u64,
+    turn: u32,
+}
+
+impl ServiceRota {
+    pub fn new(salt: u64) -> Self {
+        Self { salt, turn: 0 }
+    }
+
+    pub fn fresh() -> Self {
+        Self::new(ServerId::new().0.as_u128() as u64)
+    }
+
+    pub fn turn_of(&self, server: ServerId) -> u32 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.salt.hash(&mut hasher);
+        server.hash(&mut hasher);
+        (hasher.finish() % u64::from(SERVICE_TURNS)) as u32
+    }
+
+    pub fn next_due(&mut self, servers: impl IntoIterator<Item = ServerId>) -> HashSet<ServerId> {
+        let turn = self.turn;
+        self.turn = (self.turn + 1) % SERVICE_TURNS;
+        servers.into_iter().filter(|server| self.turn_of(*server) == turn).collect()
+    }
+}
+
 pub const SWEEP_EVERY: Duration = Duration::from_secs(15);
 
 pub const GOODBYE_GRACE: Duration = Duration::from_secs(10);
@@ -219,6 +251,40 @@ impl Liveness {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_service_rota_reaches_every_server_once_per_round_and_spreads_them() {
+        let servers: Vec<ServerId> = (0..600).map(|_| ServerId::new()).collect();
+        let mut rota = ServiceRota::new(7);
+        let mut seen: HashMap<ServerId, u32> = HashMap::new();
+        let mut biggest = 0;
+        for _ in 0..SERVICE_TURNS {
+            let due = rota.next_due(servers.iter().copied());
+            biggest = biggest.max(due.len());
+            for server in due {
+                *seen.entry(server).or_default() += 1;
+            }
+        }
+        assert_eq!(seen.len(), servers.len());
+        assert!(seen.values().all(|times| *times == 1), "each server hears the service beat once a round");
+        assert!(biggest < servers.len() / 3, "no turn carries most of the servers");
+        let again = rota.next_due(servers.iter().copied());
+        assert!(again.iter().all(|server| rota.turn_of(*server) == 0), "the next round starts over in the same order");
+    }
+
+    #[test]
+    fn each_launch_orders_the_servers_its_own_way() {
+        let servers: Vec<ServerId> = (0..64).map(|_| ServerId::new()).collect();
+        let turns = |rota: &ServiceRota| servers.iter().map(|s| rota.turn_of(*s)).collect::<Vec<_>>();
+        assert_eq!(turns(&ServiceRota::new(1)), turns(&ServiceRota::new(1)));
+        assert_ne!(turns(&ServiceRota::fresh()), turns(&ServiceRota::fresh()));
+    }
+
+    #[test]
+    fn a_round_of_turns_fits_inside_the_service_beat() {
+        assert!(BEAT * SERVICE_TURNS <= SERVICE_BEAT);
+        assert!(SERVICE_BEAT + BEAT < SERVICE_EXPIRE);
+    }
     use commy_core::{ChannelId, Server, UserProfile};
 
     fn server_with(members: &[&UserProfile]) -> HashMap<ServerId, ServerState> {

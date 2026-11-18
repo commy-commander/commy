@@ -15,7 +15,9 @@ use commy_net::{sync_streams, ServerTicket, WirePayload};
 use commy_sync::errands::{self, owner_work, ClaimBook, Errand, Instant};
 use commy_sync::wire::ErrorCode;
 use commy_sync::{Pool, StreamId, StreamKeys, SyncClient, SyncEvent};
-use commy_view::liveness::{SERVICE_BEAT, SWEEP_EVERY};
+use commy_view::liveness::{ServiceRota, SERVICE_BEAT, SERVICE_TURNS, SWEEP_EVERY};
+
+const SERVICE_TURN: std::time::Duration = std::time::Duration::from_secs(SERVICE_BEAT.as_secs() / SERVICE_TURNS as u64);
 use commy_view::reads::{PrefPiece, ReadMark, ReadView};
 use commy_view::saved::{Entry, SavedOp, SavedStore};
 use serde_json::{json, Value};
@@ -353,15 +355,16 @@ impl Session {
     }
 
     async fn tend_presence(self: Rc<Self>) {
-        let mut beat_due = web_time::Instant::now() + SERVICE_BEAT;
+        let mut beat_due = web_time::Instant::now() + SERVICE_TURN;
+        let mut rota = ServiceRota::fresh();
         loop {
             n0_future::time::sleep(SWEEP_EVERY).await;
             if self.sync.borrow().is_none() {
                 return;
             }
             if web_time::Instant::now() >= beat_due {
-                beat_due = web_time::Instant::now() + SERVICE_BEAT;
-                self.say_here_everywhere();
+                beat_due = web_time::Instant::now() + SERVICE_TURN;
+                self.say_here_in_turn(&mut rota);
             }
             self.expire_status();
             for server in self.client.borrow().sweep_presence(Utc::now().timestamp_millis()) {
@@ -384,6 +387,19 @@ impl Session {
         let Some(plain) = streams::encode_signal(*node, &will) else { return };
         for (stream, client) in self.writers(server, Lane::State) {
             client.will(stream, plain.clone());
+        }
+    }
+
+    fn say_here_in_turn(&self, rota: &mut ServiceRota) {
+        let greeted: Vec<ServerId> = match self.sync.borrow_mut().as_mut() {
+            Some(live) => {
+                live.gone = false;
+                live.greeted.iter().copied().collect()
+            }
+            None => return,
+        };
+        for server in rota.next_due(greeted) {
+            self.say_here(server);
         }
     }
 

@@ -4,9 +4,10 @@ use crate::state::App;
 use commy_core::ids::CALL_SERVER;
 use commy_core::{ChannelId, Presence, ServerEvent, ServerId, ServerState, UserId};
 use commy_net::WirePayload;
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-pub use commy_view::liveness::{seat_news, speaker, Liveness, BEAT, EXPIRE, SERVICE_BEAT, SWEEP_EVERY};
+pub use commy_view::liveness::{seat_news, speaker, Liveness, ServiceRota, BEAT, EXPIRE, SERVICE_BEAT, SWEEP_EVERY};
 #[cfg(test)]
 use commy_view::liveness::SERVICE_EXPIRE;
 
@@ -122,18 +123,15 @@ async fn leave_seat(app: &App) {
     }
 }
 
-async fn send_all(app: &App, user: UserId, presence: Presence, through_service: bool) {
+async fn send_all(app: &App, user: UserId, presence: Presence, through_service: impl Fn(ServerId) -> bool) {
     let payloads: Vec<(ServerId, WirePayload)> = server_ids(app)
         .into_iter()
         .map(|sid| (sid, app.wire_for(sid, ServerEvent::PresenceUpdate { user, presence })))
         .collect();
-    if through_service {
-        for (sid, payload) in &payloads {
+    for (sid, payload) in &payloads {
+        if through_service(*sid) {
             crate::community_sync::signal(*sid, payload);
-        }
-    }
-    if !through_service && presence.is_visible_online() {
-        for (sid, _) in &payloads {
+        } else if presence.is_visible_online() {
             crate::community_sync::leave_word(app, *sid);
         }
     }
@@ -149,9 +147,9 @@ async fn send_all(app: &App, user: UserId, presence: Presence, through_service: 
     }
 }
 
-pub async fn beat(app: &App, through_service: bool) {
+pub async fn beat(app: &App, service_due: &HashSet<ServerId>) {
     if let Some((me, presence)) = own_beat(app) {
-        send_all(app, me, presence, through_service).await;
+        send_all(app, me, presence, |sid| service_due.contains(&sid)).await;
     }
     keep_seat(app).await;
 }
@@ -159,7 +157,7 @@ pub async fn beat(app: &App, through_service: bool) {
 pub async fn farewell(app: &App) {
     leave_seat(app).await;
     if let Some((me, _)) = own_beat(app) {
-        send_all(app, me, Presence::Offline, true).await;
+        send_all(app, me, Presence::Offline, |_| true).await;
     }
     tokio::time::sleep(FAREWELL_LINGER).await;
 }
@@ -172,7 +170,7 @@ pub fn say_goodbye(app: &App) {
 
 pub async fn run(access: impl AppAccess) {
     let mut beat_due = Instant::now() + BEAT;
-    let mut service_due = Instant::now() + SERVICE_BEAT;
+    let mut rota = ServiceRota::fresh();
     loop {
         tokio::time::sleep(SWEEP_EVERY).await;
         let app = access.app();
@@ -182,11 +180,8 @@ pub async fn run(access: impl AppAccess) {
         }
         if Instant::now() >= beat_due {
             beat_due = Instant::now() + BEAT;
-            let through_service = Instant::now() >= service_due;
-            if through_service {
-                service_due = Instant::now() + SERVICE_BEAT;
-            }
-            beat(app, through_service).await;
+            let service_due = rota.next_due(server_ids(app));
+            beat(app, &service_due).await;
         }
         let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { continue };
         hear_voice_peers(app, Instant::now());
