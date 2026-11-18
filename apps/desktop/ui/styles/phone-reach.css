@@ -65,6 +65,7 @@ html[data-look="studio"][data-fit="slim"] :is(.thread-link, .eb-tone, .eb-rail-b
 
 html[data-look="studio"][data-fit="slim"][data-corner="right"] .app[data-pane="list"] .sidebar-header { padding-right: calc(46px + var(--corner-room)); }
 html[data-look="studio"][data-fit="slim"][data-corner="right"] .app.pt-switch[data-pane="list"] .sidebar-header { padding-right: calc(66px + var(--corner-room)); }
+html[data-look="studio"][data-fit="slim"][data-corner="right"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) > .sidebar > .sidebar-header { padding-right: var(--corner-room); }
 html[data-look="studio"][data-fit="slim"][data-corner="right"] .app[data-pane="list"] > .sidebar > :is(.pt-find, .pt-compose) { translate: calc(-1 * var(--corner-room)) 0; }
 html[data-look="studio"][data-fit="slim"][data-corner="right"] .app[data-pane="list"][data-tab="messages"] .dm-search { margin-right: var(--corner-room); }
 html[data-look="studio"][data-fit="slim"][data-corner="right"] .acct { padding-right: calc(18px + var(--corner-room)); }

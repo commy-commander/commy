@@ -28,6 +28,20 @@ const servers = [
 const counts = { pp: 6, no: 3, kc: 0, bn: 1, sl: 120 };
 const unread = id => counts[id] || 0;
 
+test("the server name sits above the card like the other tabs' titles, with search on the card's corner", () => {
+  const home = ':not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode)';
+  const at = selector => {
+    const start = css.indexOf(`${SLIM}${selector} {`);
+    assert.notEqual(start, -1, selector);
+    return css.slice(start, css.indexOf("}", start));
+  };
+  assert.match(at(`${home} > .sidebar`), /margin-top: 76px;/);
+  assert.match(at(`${home} > .sidebar > .sidebar-header,\n${SLIM}${home} > .sidebar > .sidebar-header.has-banner:not(.plain)`), /position: absolute;\s+inset: -76px 0 auto;\s+height: 62px;/);
+  assert.match(at(`${home} .sidebar-header > #server-name`), /font: 700 34px\/1\.2 var\(--font-display\);\s+letter-spacing: -\.035em;/);
+  assert.match(at(`${home} .sidebar-header.has-banner:not(.plain) > .sidebar-banner`), /inset: 76px 0 auto;/);
+  assert.match(at(`${home} > .sidebar > .pt-find`), /top: -16px; right: -4px;/);
+});
+
 test("every switcher rule is for the phone app in the new look, with tokens and no comments", () => {
   const flat = css.replace(/@media \([a-z-]+: [a-z]+\) \{/g, "");
   const selectors = flat.split("}").map(block => block.split("{")[0]).flatMap(head => head.split(/,(?![^(]*\))/)).map(s => s.trim()).filter(Boolean);

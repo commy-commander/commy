@@ -177,9 +177,10 @@ test("the covered corner becomes a size the phone sheets can use, scaled to the 
   const corner = '[data-corner="right"]';
   assert.match(rule(`${corner} .app[data-pane="list"] > .sidebar > :is(.pt-find, .pt-compose)`), /translate: calc\(-1 \* var\(--corner-room\)\) 0;/);
   assert.match(rule(`${corner} .app.pt-switch[data-pane="list"] .sidebar-header`), /padding-right: calc\(66px \+ var\(--corner-room\)\);/);
+  assert.match(rule(`${corner}:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) > .sidebar > .sidebar-header`), /padding-right: var\(--corner-room\);/);
   assert.match(rule(`${corner} .acct .edit`), /translate: calc\(-1 \* var\(--corner-room\)\) 0;/);
   assert.match(rule(`${corner} .pt-profile .phd .save`), /margin-right: calc\(2px \+ var\(--corner-room\)\);/);
-  assert.equal(css.split("\n").filter(line => line.includes("--corner-room")).every(line => line.startsWith(`${SLIM}${corner} `)), true);
+  assert.equal(css.split("\n").filter(line => line.includes("--corner-room")).every(line => /^ |^:not\(\[data-stack="on"\]\) /.test(line.slice(`${SLIM}${corner}`.length)) && line.startsWith(`${SLIM}${corner}`)), true);
 });
 
 test("the iPhone app tells the page which parts of the screen are covered", () => {

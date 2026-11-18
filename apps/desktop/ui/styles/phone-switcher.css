@@ -2,6 +2,24 @@ html[data-look="studio"][data-fit="slim"] .app.pt-switch[data-pane="list"] > .ra
 html[data-look="studio"][data-fit="slim"] .app.pt-switch[data-pane="list"] .sidebar-header { padding-right: 66px; }
 html[data-look="studio"][data-fit="slim"] .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) .sidebar-header > .pt-home-chev { margin: 3px 8px 0 7px; }
 html[data-look="studio"][data-fit="slim"] .app.pt-switch[data-pane="list"] > .sidebar > .pt-find { top: 15px; right: 12px; }
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) > .sidebar { margin-top: 76px; }
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) > .sidebar > .sidebar-header,
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) > .sidebar > .sidebar-header.has-banner:not(.plain) {
+  position: absolute;
+  inset: -76px 0 auto;
+  height: 62px;
+  padding: 11px 0 11px 12px;
+}
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) .sidebar-header > #server-name {
+  font: 700 34px/1.2 var(--font-display);
+  letter-spacing: -.035em;
+}
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) .sidebar-header > .pt-home-chev { margin: 4px 8px 0; }
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) .sidebar-header > .pt-home-chev .i { width: 22px; height: 22px; }
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) .sidebar-header.has-banner:not(.plain) > .sidebar-banner { inset: 76px 0 auto; }
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) > .sidebar > .channel-scroll { padding-top: 18px; }
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) > .sidebar > .sidebar-header.has-banner:not(.plain) ~ .channel-scroll { padding-top: 84px; }
+html[data-look="studio"][data-fit="slim"]:not([data-stack="on"]) .app.pt-switch[data-pane="list"][data-tab="home"]:not(.dm-mode) > .sidebar > .pt-find { top: -16px; right: -4px; }
 
 html[data-look="studio"][data-fit="slim"] .sidebar-header > .pt-news:not([hidden]) {
   flex: none;
