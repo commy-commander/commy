@@ -21554,7 +21554,7 @@ async function selectChannel(channel) {
   if (switched) hideAnywayBar();
   if (state.currentChannel && (!channel || channel.id !== state.currentChannel.id)) state.previousChannel = state.currentChannel;
   state.currentChannel = channel;
-  if (switched && state.currentServer) await invoke("open_channel", { serverId: state.currentServer.id, channelId: channel.id }).catch(() => {});
+  if (switched && state.currentServer) invoke("open_channel", { serverId: state.currentServer.id, channelId: channel.id }).catch(() => {});
   if (channel && state.currentServer && !state.currentServer.group) rememberSwitcherRecent(`channel:${channel.id}`);
   if (channel) openChannelWithLine(channel);
   renderDmRequestBar(null);
@@ -21571,9 +21571,36 @@ async function selectChannel(channel) {
   renderTypingStrip();
   if (isDriveChannel(channel)) return openDrive(channel, switched);
   if (!channel || ageGated(channel)) return renderMessages([]);
-  const messages = await fetchChannelMessages(channel);
+  const messages = await fetchChannelMessagesWhenReady(channel);
+  if (!messages || !stillShowingChannel(channel)) return;
   renderChannelLog(messages);
   if (state.currentChannel === channel && !state.historyAnchor) advanceRead(channel.id, messages);
+}
+
+const CHANNEL_OPEN_RETRY_MS = 1000;
+const CHANNEL_OPEN_PATIENCE_MS = 120000;
+
+function stillShowingChannel(channel) {
+  return state.view === "server" && Boolean(state.currentChannel) && state.currentChannel.id === channel.id;
+}
+
+async function fetchChannelMessagesWhenReady(channel) {
+  const started = Date.now();
+  let waitingShown = false;
+  for (;;) {
+    try {
+      return await fetchChannelMessages(channel);
+    } catch (e) {
+      if (!stillShowingChannel(channel)) return null;
+      if (Date.now() - started >= CHANNEL_OPEN_PATIENCE_MS) throw e;
+      if (!waitingShown) {
+        renderMessages([]);
+        waitingShown = true;
+      }
+      await new Promise(resolve => setTimeout(resolve, CHANNEL_OPEN_RETRY_MS));
+      if (!stillShowingChannel(channel) || !state.currentServer) return null;
+    }
+  }
 }
 
 async function sendMessage() {

@@ -88,7 +88,7 @@ test("an account on another server names it", () => {
 });
 
 test("signing out says where Commy goes next", () => {
-  assert.match(signOutPrompt(signedIn([other("b")]), t), /restarts into b,/);
+  assert.match(signOutPrompt(signedIn([other("b")]), t), /switches to b,/);
   assert.match(signOutPrompt(signedIn([]), t), /sign-in screen/);
 });
 

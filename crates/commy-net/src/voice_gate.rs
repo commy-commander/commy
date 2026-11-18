@@ -43,7 +43,7 @@ impl Wait {
         match self {
             Wait::Starting => "Commy is still starting its connection",
             Wait::NoRelay => "Commy can't reach its relay yet",
-            Wait::Loading => "This server is still loading",
+            Wait::Loading => "Syncing server",
             Wait::SyncLost => "Reconnecting to the server",
             Wait::CatchingUp => "Getting the latest from the server",
             Wait::NoPeers => "Waiting for other members to answer",
