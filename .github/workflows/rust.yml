@@ -34,7 +34,7 @@ env:
 jobs:
   platforms:
     name: Pick platforms
-    runs-on: ubuntu-latest
+    runs-on: commy-any
     permissions:
       contents: read
     outputs:
