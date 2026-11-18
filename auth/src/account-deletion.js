@@ -16,6 +16,7 @@ const OWNED_ROWS = [
   { model: "deviceCode", field: "userId" },
   { model: "directoryListing", field: "createdBy" },
   { model: "commyMove", field: "userId" },
+  { model: "commyIdentity", field: "userId" },
 ];
 
 const codeIdentifier = (userId) => `commy-delete-account-${userId}`;

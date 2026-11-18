@@ -95,10 +95,11 @@ function giveThingsTo(userId, tag) {
   db.inviteBackground.push({ id: `bg-${tag}`, code: `code-${tag}`, data: "x", expiresAt: later });
   db.directoryListing.push({ id: `dir-${tag}`, code: `code-${tag}`, key: "k", name: "n", description: "", category: "gaming", members: 10, createdBy: userId, createdAt: now, updatedAt: now });
   db.commyMove.push({ id: `move-${tag}`, identity: `identity-${tag}`, userId, commyUser: "user", toHome: "https://friends.org", at: Date.now(), proof: "p" });
+  db.commyIdentity.push({ id: `commy-${tag}`, commyUser: "6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4e", userId, seenAt: now });
 }
 
 const owned = (userId) =>
-  ["session", "account", "linkedDevice", "vaultItem", "passkey", "commyMove"].flatMap((model) => db[model].filter((row) => row.userId === userId)).length +
+  ["session", "account", "linkedDevice", "vaultItem", "passkey", "commyMove", "commyIdentity"].flatMap((model) => db[model].filter((row) => row.userId === userId)).length +
   db.invite.filter((row) => row.createdBy === userId).length +
   db.directoryListing.filter((row) => row.createdBy === userId).length;
 
