@@ -31,6 +31,14 @@
     }
   }
 
+  const browserCopy = webBrowserCopy((() => {
+    try {
+      return window.indexedDB || null;
+    } catch {
+      return null;
+    }
+  })());
+
   let pendingInvite = null;
   function holdInviteFromAddress() {
     const link = webInviteFromHash(window.location.hash);
@@ -113,6 +121,9 @@
       const store = storage();
       if (store) store.removeItem(key);
     },
+    copyLoad: () => browserCopy.load(),
+    copyWrite: changes => browserCopy.write(changes),
+    copyClear: () => browserCopy.clear(),
     emit,
   };
 
@@ -563,7 +574,10 @@
   };
   window.addEventListener("online", nudge);
   window.addEventListener("focus", checkSessionSoon);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") nudge(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") nudge();
+    else if (unlocked) backend("web_keep_copy").catch(() => {});
+  });
   window.addEventListener("pagehide", () => { if (unlocked) backend("web_farewell").catch(() => {}); });
   window.addEventListener("pageshow", e => { if (e.persisted) nudge(); });
 

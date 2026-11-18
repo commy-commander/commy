@@ -686,6 +686,11 @@ impl Client {
         if snapshot.server.id != server {
             return Err("That server copy is for another server".into());
         }
+        self.install_copy(snapshot)
+    }
+
+    pub fn install_copy(&self, snapshot: Snapshot) -> Result<bool, String> {
+        let server = snapshot.server.id;
         let me = self.me_id().ok_or("Your servers are not unlocked yet")?;
         if !snapshot.server.is_member(me) {
             return Err("You are not a member of that server".into());
@@ -1097,6 +1102,34 @@ mod tests {
         let messages = w.client.get_messages(w.server, w.channel, None).unwrap();
         assert_eq!(messages.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["hello"]);
         assert!(!w.client.install_mirror(w.server, &mirror(&w)).unwrap(), "only the first copy is taken");
+    }
+
+    #[test]
+    fn a_copy_this_browser_kept_opens_with_its_history_and_shows_nobody_online() {
+        let mut w = world();
+        let me = w.client.profile().unwrap().id;
+        w.state.profiles.get_mut(&me).unwrap().presence = Presence::Online;
+        let key = commy_net::sealed::SealKey::generate();
+        let account = commy_sync::StreamId([5; 32]);
+        let copy = crate::browser_copy::ServerCopy { server: w.server, socket: "s".into(), cursors: Default::default(), snapshot: w.state.snapshot() };
+        let sealed = crate::browser_copy::seal_server(&key, account, &copy).unwrap();
+        let back = crate::browser_copy::restore(&key, account, &[(crate::browser_copy::server_name(w.server), sealed)].into());
+        let kept = back.servers.into_iter().next().unwrap();
+        assert!(w.client.install_copy(kept.snapshot.clone()).unwrap());
+        let messages = w.client.get_messages(w.server, w.channel, None).unwrap();
+        assert_eq!(messages.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["hello"]);
+        assert!(!w.client.is_shown_online(w.server, me), "presence comes fresh from the sync service");
+        assert!(!w.client.install_copy(kept.snapshot).unwrap(), "a server already open is left alone");
+    }
+
+    #[test]
+    fn a_kept_copy_of_a_server_we_left_is_not_opened() {
+        let w = world();
+        let mut snapshot = w.state.snapshot();
+        let me = w.client.profile().unwrap().id;
+        snapshot.server.members.retain(|member| member.user != me);
+        assert!(w.client.install_copy(snapshot).is_err());
+        assert!(!w.client.has(w.server));
     }
 
     fn voice_channel(w: &World) -> ChannelId {

@@ -19,6 +19,7 @@ pub enum Purpose {
     ReadState,
     KeyHandoff,
     EntryKeyEscrow,
+    BrowserCopy,
 }
 
 impl Purpose {
@@ -30,6 +31,7 @@ impl Purpose {
             Purpose::ReadState => b"commy-read-state-v1",
             Purpose::KeyHandoff => b"commy-key-handoff-v1",
             Purpose::EntryKeyEscrow => b"commy-entry-key-escrow-v1",
+            Purpose::BrowserCopy => b"commy-browser-copy-v1",
         }
     }
 }

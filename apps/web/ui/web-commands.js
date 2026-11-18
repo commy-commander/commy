@@ -227,6 +227,118 @@ function webReplyLine(status, text) {
   return `${status}\n${text}`;
 }
 
+const WEB_COPY_DB = "commy-web-copy";
+const WEB_COPY_STORE = "copies";
+
+function webBrowserCopy(idb) {
+  let opening = null;
+
+  function open() {
+    if (!idb) return Promise.resolve(null);
+    if (!opening) {
+      opening = new Promise(resolve => {
+        let request;
+        try {
+          request = idb.open(WEB_COPY_DB, 1);
+        } catch {
+          resolve(null);
+          return;
+        }
+        request.onupgradeneeded = () => request.result.createObjectStore(WEB_COPY_STORE);
+        request.onsuccess = () => {
+          const db = request.result;
+          db.onversionchange = () => {
+            db.close();
+            opening = null;
+          };
+          resolve(db);
+        };
+        request.onerror = () => resolve(null);
+        request.onblocked = () => resolve(null);
+      }).then(db => {
+        if (!db) opening = null;
+        return db;
+      });
+    }
+    return opening;
+  }
+
+  function run(mode, work, answer, failed) {
+    return open().then(db => {
+      if (!db) return failed;
+      return new Promise(resolve => {
+        try {
+          const tx = db.transaction(WEB_COPY_STORE, mode);
+          const read = work(tx.objectStore(WEB_COPY_STORE));
+          tx.oncomplete = () => resolve(answer(read));
+          tx.onerror = () => resolve(failed);
+          tx.onabort = () => resolve(failed);
+        } catch {
+          resolve(failed);
+        }
+      });
+    });
+  }
+
+  function load() {
+    return run(
+      "readonly",
+      store => ({ names: store.getAllKeys(), values: store.getAll() }),
+      ({ names, values }) => {
+        const out = {};
+        names.result.forEach((name, i) => {
+          if (typeof name === "string" && typeof values.result[i] === "string") out[name] = values.result[i];
+        });
+        return JSON.stringify(out);
+      },
+      "{}",
+    );
+  }
+
+  function write(changesJson) {
+    let changes;
+    try {
+      changes = JSON.parse(changesJson);
+    } catch {
+      return Promise.resolve(false);
+    }
+    return run(
+      "readwrite",
+      store => {
+        for (const [name, value] of Object.entries(changes)) {
+          if (value === null) store.delete(name);
+          else store.put(value, name);
+        }
+      },
+      () => true,
+      false,
+    );
+  }
+
+  function clear() {
+    if (!idb) return Promise.resolve(false);
+    const held = opening;
+    opening = null;
+    const closed = held ? held.then(db => db && db.close()) : Promise.resolve();
+    return closed.then(
+      () =>
+        new Promise(resolve => {
+          let request;
+          try {
+            request = idb.deleteDatabase(WEB_COPY_DB);
+          } catch {
+            resolve(false);
+            return;
+          }
+          request.onsuccess = () => resolve(true);
+          request.onerror = () => resolve(false);
+        }),
+    );
+  }
+
+  return { load, write, clear };
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget, WEB_PENDING_INVITE_KEY, webInviteFromHash, webMovedHome };
+  module.exports = { WEB_COPY_DB, WEB_COPY_STORE, webBrowserCopy, WEB_SHARE_QUALITY, WEB_SHARE_REFUSED, WEB_SHARE_UNSUPPORTED, webShareQuality, webFrameSize, webShareError, WEB_SOUND_ACCEPT, WEB_MAX_PICKED_SOUND_BYTES, WEB_SOUND_TOO_LARGE, webSoundName, webCatalogPath, webCatalogRefusal, WEB_IMAGE_ACCEPT, WEB_MAX_PICKED_IMAGE_BYTES, WEB_IMAGE_TOO_LARGE, webReadDataUrl, WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_PICTURE_WAIT_MS, WEB_PICTURE_STORE_MS, WEB_MAX_SEND_BYTES, WEB_SEND_TOO_LARGE, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, WEB_SERVER_WAIT_MS, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue, WEB_UNLOCK_TEXT, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, WEB_NOTICE_ASKED_KEY, webNotice, webNoticeTarget, WEB_PENDING_INVITE_KEY, webInviteFromHash, webMovedHome };
 }

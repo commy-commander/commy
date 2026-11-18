@@ -72,6 +72,13 @@ only while the tab is in the background. Clicking one opens that channel or DM.
   devices online, and messages you send are also added to the channel's
   stream. The stream keys come from your server list key and the community
   keys; the page's session is never sent to the sync service.
+- Between visits the browser keeps a copy in IndexedDB (`commy-web-copy`):
+  each server as it last saw it, how far it read each stream, and your account
+  log. Every record is sealed with your server list key, so the copy opens only
+  for your account. On the next visit your servers open from the copy and each
+  stream picks up where it stopped, so only what changed is downloaded. A
+  stream read on a different sync service starts over. Signing out, deleting
+  the account, or opening the page signed out deletes the copy.
 
 ## Build
 

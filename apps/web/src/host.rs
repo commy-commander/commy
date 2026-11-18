@@ -34,6 +34,15 @@ extern "C" {
     #[wasm_bindgen(method)]
     pub fn emit(this: &Host, event: &str, payload: &str);
 
+    #[wasm_bindgen(method, catch, js_name = copyLoad)]
+    pub async fn copy_load(this: &Host) -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = copyWrite)]
+    pub async fn copy_write(this: &Host, changes: &str) -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(method, catch, js_name = copyClear)]
+    pub async fn copy_clear(this: &Host) -> Result<JsValue, JsValue>;
+
     #[wasm_bindgen(method, catch, js_name = startVoice)]
     pub async fn start_voice(this: &Host) -> Result<JsValue, JsValue>;
 

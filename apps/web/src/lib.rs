@@ -1,5 +1,6 @@
 pub mod account;
 pub mod away_book;
+pub mod browser_copy;
 pub mod client;
 pub mod dm_book;
 pub mod files;

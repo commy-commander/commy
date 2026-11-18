@@ -143,6 +143,8 @@ pub struct Book {
     saved: SavedStore,
     saved_at: HashMap<String, i64>,
     relations: HashMap<UserId, i64>,
+    restored: HashMap<ServerId, (Option<String>, HashMap<StreamId, u64>)>,
+    dirty: HashSet<ServerId>,
 }
 
 impl Book {
@@ -334,6 +336,8 @@ impl Book {
         for stream in streams {
             self.after.remove(&stream);
         }
+        self.restored.remove(&server);
+        self.dirty.insert(server);
     }
 
     pub fn leave(&mut self, server: ServerId, at: DateTime<Utc>) {
@@ -390,6 +394,7 @@ impl Book {
                 Some(held) if *held != socket => self.move_server(*server, &mut plan),
                 _ => {}
             }
+            self.take_restored(*server, &socket);
             self.hosts.insert(*server, socket);
         }
         let keep: HashSet<StreamId> = wanted.values().flatten().map(|w| w.keys.id).collect();
@@ -441,10 +446,53 @@ impl Book {
 
     pub fn advance(&mut self, stream: StreamId, seq: u64) {
         let slot = self.after.entry(stream).or_default();
-        *slot = (*slot).max(seq);
+        if seq <= *slot {
+            return;
+        }
+        *slot = seq;
+        if let Some((server, _)) = self.routes.get(&stream) {
+            self.dirty.insert(*server);
+        }
+    }
+
+    pub fn restore(&mut self, server: ServerId, socket: Option<String>, cursors: HashMap<StreamId, u64>) {
+        self.restored.insert(server, (socket, cursors));
+    }
+
+    fn take_restored(&mut self, server: ServerId, socket: &Option<String>) {
+        let Some((saved, cursors)) = self.restored.remove(&server) else { return };
+        if saved != *socket {
+            return;
+        }
+        for (stream, seq) in cursors {
+            let slot = self.after.entry(stream).or_default();
+            *slot = (*slot).max(seq);
+        }
+    }
+
+    pub fn cursors_of(&self, server: ServerId) -> HashMap<StreamId, u64> {
+        self.routes
+            .iter()
+            .filter(|(_, (sid, _))| *sid == server)
+            .filter_map(|(stream, _)| Some((*stream, *self.after.get(stream).filter(|seq| **seq > 0)?)))
+            .collect()
+    }
+
+    pub fn touch(&mut self, server: ServerId) {
+        self.dirty.insert(server);
+    }
+
+    pub fn take_dirty(&mut self) -> HashSet<ServerId> {
+        std::mem::take(&mut self.dirty)
     }
 
     pub fn caught_up(&mut self, stream: StreamId, seq: u64) -> bool {
+        if seq < self.after(stream) {
+            self.after.insert(stream, seq);
+            if let Some((server, _)) = self.routes.get(&stream) {
+                self.dirty.insert(*server);
+            }
+        }
         self.advance(stream, seq);
         if !self.routes.contains_key(&stream) {
             return false;
@@ -969,5 +1017,68 @@ mod tests {
         assert_eq!(book.recorded_host(server), None);
         let desktop = format!(r#"{{"k":"sync_host","server":"{server}","host":"https://sync.example.org","at":12}}"#);
         assert_eq!(book.fold(Record::parse(desktop.as_bytes())), Change::Keys, "the desktop app's records read the same");
+    }
+
+    #[test]
+    fn a_kept_copy_picks_each_stream_up_where_the_last_visit_left_it() {
+        let server = ServerId::new();
+        let channel = commy_core::ChannelId::new();
+        let (state, text) = (want(server, Lane::State, true), want(server, Lane::Channel(channel), true));
+        let mut book = Book::new(EntryList::default());
+        book.restore(server, None, [(state.keys.id, 120), (text.keys.id, 33)].into());
+        let plan = book.replan([(server, vec![state.clone(), text.clone()])].into());
+        let after: HashMap<StreamId, u64> = plan.follow.iter().map(|f| (f.1.id, f.2)).collect();
+        assert_eq!(after, [(state.keys.id, 120), (text.keys.id, 33)].into());
+        assert_eq!(book.cursors_of(server), after);
+    }
+
+    #[test]
+    fn a_kept_copy_from_another_sync_service_is_read_from_the_start() {
+        let server = ServerId::new();
+        let state = want(server, Lane::State, true);
+        let mut book = Book::new(EntryList::default());
+        book.restore(server, Some("wss://old.example.org/sync".into()), [(state.keys.id, 120)].into());
+        let plan = book.replan_at([(server, vec![state.clone()])].into(), &HashMap::from([(server, "wss://new.example.org/sync".to_string())]));
+        assert_eq!(plan.follow[0].2, 0);
+    }
+
+    #[test]
+    fn a_kept_copy_waits_until_its_server_is_followed() {
+        let (server, other) = (ServerId::new(), ServerId::new());
+        let (state, theirs) = (want(server, Lane::State, true), want(other, Lane::State, true));
+        let mut book = Book::new(EntryList::default());
+        book.restore(server, None, [(state.keys.id, 7)].into());
+        book.replan([(other, vec![theirs])].into());
+        let plan = book.replan([(server, vec![state])].into());
+        assert_eq!(plan.follow[0].2, 7);
+    }
+
+    #[test]
+    fn a_stream_the_service_holds_less_of_than_we_read_starts_over() {
+        let server = ServerId::new();
+        let state = want(server, Lane::State, true);
+        let mut book = Book::new(EntryList::default());
+        book.restore(server, None, [(state.keys.id, 500)].into());
+        book.replan([(server, vec![state.clone()])].into());
+        book.caught_up(state.keys.id, 0);
+        assert_eq!(book.after(state.keys.id), 0);
+        assert_eq!(book.take_dirty(), [server].into());
+    }
+
+    #[test]
+    fn moving_a_stream_forward_marks_its_server_to_be_kept() {
+        let server = ServerId::new();
+        let state = want(server, Lane::State, true);
+        let mut book = Book::new(EntryList::default());
+        book.replan([(server, vec![state.clone()])].into());
+        assert!(book.take_dirty().is_empty());
+        book.advance(state.keys.id, 4);
+        assert_eq!(book.take_dirty(), [server].into());
+        book.advance(state.keys.id, 4);
+        assert!(book.take_dirty().is_empty(), "an entry seen again changes nothing");
+        book.caught_up(state.keys.id, 5);
+        assert_eq!(book.take_dirty(), [server].into());
+        book.advance(StreamId([3; 32]), 9);
+        assert!(book.take_dirty().is_empty(), "streams of no server are not kept");
     }
 }

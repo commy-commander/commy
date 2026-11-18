@@ -24,8 +24,10 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
+use super::copy::Resume;
 use super::checkpoints::{self, Checkpoints};
 use super::Session;
+use crate::browser_copy::Keeping;
 use crate::client::Applied;
 #[derive(Default)]
 struct Places {
@@ -62,8 +64,9 @@ pub(super) struct Live {
     url: String,
     claims: HashMap<String, ClaimBook<ServerId>>,
     written_hosts: HashMap<ServerId, Option<String>>,
-    account: StreamId,
+    pub(super) account: StreamId,
     account_live: bool,
+    pub(super) keeping: Keeping,
     pub(super) book: Book,
     pub(super) node: [u8; 32],
     greeted: HashSet<ServerId>,
@@ -88,18 +91,27 @@ impl Live {
 }
 
 impl Session {
-    pub(super) async fn start_sync(self: Rc<Self>, key: SealKey, list: EntryList) {
+    pub(super) async fn start_sync(self: Rc<Self>, key: SealKey, list: EntryList, resume: Resume) {
         if self.sync.borrow().is_some() {
             return;
         }
         let Some(url) = self.sync_service_url().await else { return };
+        if self.sync.borrow().is_some() {
+            return;
+        }
         let Ok(account) = self.account() else { return };
         let node = *iroh::SecretKey::from_bytes(&self.device_secret(&account)).public().as_bytes();
         let (mut pool, events) = Pool::new(&url);
         let service = url.clone();
         let stream = sync_streams::account_stream(&key);
         let account = stream.id;
-        pool.follow(stream, 0);
+        let Resume { home, mut log, cursors, opened, waiting } = resume;
+        let same_home = home.as_deref() == Some(url.as_str());
+        if !same_home {
+            log.restart();
+        }
+        let replay: Vec<Vec<u8>> = log.entries().map(|(_, plain)| plain.to_vec()).collect();
+        pool.follow(stream, log.after());
         let pictures = commy_view::pictures::pictures_url(&url);
         let wake = commy_net::server_wake::ring_url(&url);
         *self.sync.borrow_mut() = Some(Live {
@@ -119,9 +131,16 @@ impl Session {
             wake,
             all_rings: AllRings::default(),
             deepened: HashSet::new(),
+            keeping: Keeping { log, saved: opened, ..Default::default() },
             checkpoints: Checkpoints::default(),
         });
+        if same_home {
+            self.restore_cursors(cursors);
+        }
+        self.replay_account(replay);
+        self.open_waiting(waiting, same_home);
         spawn_local(self.clone().run_sync(events));
+        spawn_local(self.clone().tend_copy());
         self.start_away();
         spawn_local(self.clone().tend_sync());
         spawn_local(self.clone().tend_presence());
@@ -151,6 +170,9 @@ impl Session {
                 SyncEvent::Unreadable { stream, seq } => {
                     self.dms.borrow_mut().advance(stream, seq);
                     if let Some(live) = self.sync.borrow_mut().as_mut() {
+                        if stream == live.account {
+                            live.keeping.log.skip(seq);
+                        }
                         live.book.advance(stream, seq);
                     }
                 }
@@ -608,6 +630,7 @@ impl Session {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
             if stream == live.account {
+                live.keeping.log.note(seq, plain);
                 let change = live.book.fold(Record::parse(plain));
                 let settled = live.account_live;
                 drop(guard);
@@ -648,6 +671,18 @@ impl Session {
         let applied = self.apply_stored(server, event, action, rings, now_live);
         if lanes_changed && now_live && applied != Applied::Nothing {
             self.refresh_sync();
+        }
+    }
+
+    fn replay_account(self: &Rc<Self>, entries: Vec<Vec<u8>>) {
+        for plain in entries {
+            let change = match self.sync.borrow_mut().as_mut() {
+                Some(live) => live.book.fold(Record::parse(&plain)),
+                None => return,
+            };
+            if matches!(change, Change::Partner(..) | Change::Relations(_)) {
+                self.on_account_change(change);
+            }
         }
     }
 
@@ -693,6 +728,9 @@ impl Session {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
             if stream == live.account {
+                if seq < live.keeping.log.after() {
+                    live.keeping.log.restart();
+                }
                 let settled = std::mem::replace(&mut live.account_live, true);
                 drop(guard);
                 if !settled {

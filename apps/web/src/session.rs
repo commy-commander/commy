@@ -35,6 +35,7 @@ mod calls;
 mod checkpoints;
 mod cloud_files;
 mod community;
+mod copy;
 mod directory;
 mod dms;
 mod drive;
@@ -630,7 +631,12 @@ impl Session {
             "set_profile_privacy" => self.profile_command(cmd, args).await,
             "watch_screen" | "watch_camera" | "stop_watching" | "stop_watching_camera" | "send_stream_ink" => self.watch_command(cmd, args).await,
             "start_screen_share" | "stop_screen_share" | "own_share_frame" | "start_camera" | "stop_camera" | "push_camera_frame" => self.share_command(cmd, args).await,
+            "web_keep_copy" => {
+                self.keep_copy();
+                Ok(Value::Null)
+            }
             "web_farewell" => {
+                self.keep_copy();
                 self.stop_all_watching();
                 self.hang_up_on_farewell().await;
                 self.say_goodbye();
@@ -709,6 +715,7 @@ impl Session {
         n0_future::time::sleep(FAREWELL_LINGER).await;
         self.stop_sync();
         *self.dms.borrow_mut() = DmBook::default();
+        self.forget_copy().await;
     }
 
     async fn sign_out(&self) -> Result<Value, String> {
@@ -751,6 +758,7 @@ impl Session {
         }
         self.stop_sync();
         *self.dms.borrow_mut() = DmBook::default();
+        self.forget_copy().await;
         for key in account::kept_for_account(&account.id) {
             self.host.remove(&key);
         }
@@ -842,6 +850,7 @@ impl Session {
             Ok(account) => account,
             Err(_) => {
                 self.set_unlock(Unlock::SignedOut, "Sign in first");
+                self.forget_copy().await;
                 return Ok(self.unlock_view());
             }
         };
@@ -1128,6 +1137,9 @@ impl Session {
     }
 
     fn finish(self: &Rc<Self>, list: EntryList, key: SealKey) -> Result<(), String> {
+        if self.status.borrow().unlock == Unlock::Unlocked {
+            return Ok(());
+        }
         let identity = list.shared_identity().ok_or(
             "Your server list does not carry your identity yet. Update Commy on your computer and let it sync.",
         )?;
@@ -1142,8 +1154,12 @@ impl Session {
         self.load_dms();
         self.status.borrow_mut().key = Some(key.clone());
         self.set_unlock(Unlock::Unlocked, "");
-        spawn_local(self.clone().load_servers(tickets));
-        spawn_local(self.clone().start_sync(key, list));
+        let this = self.clone();
+        spawn_local(async move {
+            let resume = this.resume_from_copy(&key).await;
+            spawn_local(this.clone().load_servers(tickets));
+            this.start_sync(key, list, resume).await;
+        });
         Ok(())
     }
 
@@ -1201,7 +1217,11 @@ impl Session {
         let Ok(copies) = commy_net::mirror::fetch(&endpoint, device, &request).await else { return };
         let mut installed = false;
         for copy in copies {
-            installed |= self.client.borrow().install_mirror(copy.server, &copy.snapshot).unwrap_or(false);
+            let opened = self.client.borrow().install_mirror(copy.server, &copy.snapshot).unwrap_or(false);
+            if opened {
+                self.touch_copy(copy.server);
+            }
+            installed |= opened;
         }
         if installed {
             self.emit("servers-changed", Value::Null);
@@ -1320,6 +1340,7 @@ impl Session {
 
     async fn run_changes(self: Rc<Self>, mut changed: mpsc::UnboundedReceiver<ServerId>) {
         while let Some(server) = changed.recv().await {
+            self.touch_copy(server);
             self.emit("server-event", json!(server.to_string()));
             self.follow_owner(server);
             self.retire_if_gone(server);
