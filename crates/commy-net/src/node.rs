@@ -1276,6 +1276,10 @@ impl CommyNode {
         rand::random()
     }
 
+    pub fn id_of_secret(secret: &[u8; 32]) -> [u8; 32] {
+        *iroh::SecretKey::from_bytes(secret).public().as_bytes()
+    }
+
     pub async fn spawn(
         secret: Option<[u8; 32]>,
     ) -> Result<(
@@ -2184,6 +2188,15 @@ mod tests {
             chrono::Utc::now().timestamp_millis(),
         );
         write_frame(x, &hello).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_node_id_is_known_from_its_secret_before_the_node_starts() {
+        let secret = CommyNode::generate_secret();
+        let expected = CommyNode::id_of_secret(&secret);
+        let (node, _, _, _) = CommyNode::spawn_with(Some(secret), None).await.unwrap();
+        assert_eq!(node.node_id_bytes(), expected);
+        node.shutdown().await.unwrap();
     }
 
     #[tokio::test]

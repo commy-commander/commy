@@ -468,6 +468,10 @@ impl Book {
         self.removed.holds(server, &self.host_of(server).unwrap_or_default())
     }
 
+    pub fn answered(&self, server: ServerId) -> bool {
+        self.host_removed(server) || self.state_link(server) == StateLink::Current
+    }
+
     pub fn state_link(&self, server: ServerId) -> StateLink {
         let usable: Vec<StreamId> = self
             .routes
@@ -831,6 +835,20 @@ mod tests {
         let sockets: HashMap<ServerId, String> = [(server, "wss://sync.example.org/sync".to_string())].into();
         book.replan_at([(server, vec![state])].into(), &sockets);
         assert!(!book.host_removed(server), "moving to another sync server lifts it");
+    }
+
+    #[test]
+    fn a_server_counts_as_answered_once_its_state_is_read_or_its_host_removed_it() {
+        let (read, removed, waiting) = (ServerId::new(), ServerId::new(), ServerId::new());
+        let (read_state, removed_state) = (want(read, Lane::State, false), want(removed, Lane::State, false));
+        let mut book = Book::new(EntryList::default());
+        book.replan([(read, vec![read_state.clone()]), (removed, vec![removed_state.clone()]), (waiting, vec![want(waiting, Lane::State, false)])].into());
+        assert!(!book.answered(read) && !book.answered(removed) && !book.answered(waiting));
+        book.caught_up(read_state.keys.id, 0);
+        book.note_removed(removed_state.keys.id);
+        assert!(book.answered(read), "the service answered and holds no owner copy");
+        assert!(book.answered(removed), "a server its host removed never loads");
+        assert!(!book.answered(waiting));
     }
 
     #[test]

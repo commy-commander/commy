@@ -3,7 +3,7 @@ use crate::media_engine::{CameraSession, MicTest, ScreenShareSession, ScreenWatc
 use commy_audio::VoiceProcessor;
 use commy_core::identity::IdentityKey;
 use commy_core::{action, DmStore, Identity, ServerEvent, ServerId, ServerState, SignedEvent, UserId, UserProfile};
-use commy_net::{CommyNode, ServerTicket, WirePayload};
+use commy_net::{CommyNode, NetEvent, ServerTicket, WirePayload};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -190,6 +190,12 @@ impl Default for VoiceSettings {
     }
 }
 
+#[derive(Clone)]
+pub struct SyncFeed {
+    pub events: tokio::sync::mpsc::UnboundedSender<NetEvent>,
+    pub node: [u8; 32],
+}
+
 pub struct App {
     pub profile: Mutex<Option<UserProfile>>,
     pub servers: Mutex<HashMap<ServerId, ServerState>>,
@@ -199,6 +205,7 @@ pub struct App {
     pub processor: std::sync::Arc<Mutex<VoiceProcessor>>,
     pub net: tokio::sync::Mutex<Option<CommyNode>>,
     pub node_hex: Mutex<Option<String>>,
+    pub sync_feed: Mutex<Option<SyncFeed>>,
     pub base_dir: OnceLock<PathBuf>,
     pub data_dir: DataDir,
     pub voice_session: Mutex<Option<VoiceSession>>,
@@ -285,6 +292,7 @@ impl Default for App {
             processor: std::sync::Arc::new(Mutex::new(VoiceProcessor::new())),
             net: tokio::sync::Mutex::new(None),
             node_hex: Mutex::new(None),
+            sync_feed: Mutex::new(None),
             base_dir: OnceLock::new(),
             data_dir: DataDir::default(),
             voice_session: Mutex::new(None),
@@ -361,6 +369,7 @@ impl App {
         *self.voice.lock_or_recover() = VoiceSettings::default();
         *self.processor.lock_or_recover() = VoiceProcessor::new();
         *self.node_hex.lock_or_recover() = None;
+        *self.sync_feed.lock_or_recover() = None;
         *self.voice_session.lock_or_recover() = None;
         *self.dm_call.lock_or_recover() = None;
         *self.screen_share.lock_or_recover() = None;

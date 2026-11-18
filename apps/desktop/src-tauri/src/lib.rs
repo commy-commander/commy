@@ -7745,6 +7745,28 @@ pub(crate) async fn broadcast(app: &App, server: ServerId, payload: WirePayload)
     }
 }
 
+fn settle_placeholders(app: &App, invites: &std::collections::HashMap<ServerId, String>, node: [u8; 32]) {
+    catchup::mark_joined_placeholders(app, invites, node);
+    catchup::release_own_servers(app, invites);
+}
+
+fn start_server_sync(handle: &tauri::AppHandle, events: tokio::sync::mpsc::UnboundedSender<NetEvent>, node: [u8; 32]) -> bool {
+    let app = handle.state::<App>();
+    let invites = app.data_dir().map(|dir| persist::load_invites(dir)).unwrap_or_default();
+    settle_placeholders(&app, &invites, node);
+    *app.sync_feed.lock_or_recover() = Some(state::SyncFeed { events, node });
+    account_session::spawn(community_sync::run(handle.clone()));
+    true
+}
+
+async fn forward_net_events(mut from: tokio::sync::mpsc::UnboundedReceiver<NetEvent>, to: tokio::sync::mpsc::UnboundedSender<NetEvent>) {
+    while let Some(event) = from.recv().await {
+        if to.send(event).is_err() {
+            return;
+        }
+    }
+}
+
 async fn run_net_loop(
     handle: tauri::AppHandle,
     mut events: tokio::sync::mpsc::UnboundedReceiver<NetEvent>,
@@ -8508,10 +8530,14 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
     server_guard::keep_home_card(&handle);
     let session_check = account_session::spawn(account::verify_saved_session(handle.clone()));
     account_session::spawn(account::watch_session(handle.clone()));
+    let (net_events, net_received) = tokio::sync::mpsc::unbounded_channel();
+    account_session::spawn(run_net_loop(handle.clone(), net_received));
+    let sync_started = node_key.as_ref().is_some_and(|key| start_server_sync(&handle, net_events.clone(), CommyNode::id_of_secret(key)));
     account_session::spawn(async move {
         match CommyNode::spawn_on_port(node_key, node_port).await {
             Ok((mut node, events, media, dms)) => {
                 let app = handle.state::<App>();
+                let node_id = node.node_id_bytes();
                 if let (Some(dir), Some(port)) = (app.data_dir(), node.bound_port()) {
                     persist::save_node_port(dir, port);
                 }
@@ -8532,8 +8558,9 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                     .data_dir()
                     .map(|d| persist::load_invites(d))
                     .unwrap_or_default();
-                catchup::mark_joined_placeholders(&app, &stored_invites, node.node_id_bytes());
-                catchup::release_own_servers(&app, &stored_invites);
+                if !sync_started {
+                    settle_placeholders(&app, &stored_invites, node_id);
+                }
                 let awaiting = app.awaiting_snapshot.lock_or_recover().clone();
                 let to_restore: Vec<(ServerId, String, bool)> = {
                     let servers = app.servers.lock_or_recover();
@@ -8634,13 +8661,15 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 account_session::spawn(run_mesh_healer(handle.clone()));
                 account_session::spawn(run_storage_roster(handle.clone()));
                 account_session::spawn(channel_lock::run(handle.clone()));
-                account_session::spawn(community_sync::run(handle.clone()));
+                if !sync_started {
+                    start_server_sync(&handle, net_events.clone(), node_id);
+                }
                 account_session::spawn(voice_gate::run(handle.clone()));
                 account_session::spawn(wake::run_watchdog(handle.clone()));
                 account_session::spawn(run_blob_restore(handle.clone()));
                 account_session::spawn(catchup::run_periodic(handle.clone()));
                 account_session::spawn(outbox::run_dm_outbox(handle.clone()));
-                run_net_loop(handle.clone(), events).await;
+                forward_net_events(events, net_events).await;
             }
             Err(e) => tracing::error!("P2P stack failed to start: {e}"),
         }

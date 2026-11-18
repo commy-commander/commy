@@ -1149,7 +1149,7 @@ impl Session {
     fn announce_if_loaded(&self) {
         let loaded = {
             let client = self.client.borrow();
-            client.tickets.keys().all(|server| client.has(*server))
+            client.tickets.keys().all(|server| client.has(*server) || self.answered_by_sync(*server))
         };
         if loaded {
             self.emit("web-servers-loaded", json!(self.client.borrow().list_servers().len()));

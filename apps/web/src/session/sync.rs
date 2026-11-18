@@ -158,6 +158,7 @@ impl Session {
                     });
                     if let Some(server) = removed {
                         self.tell_host_removed(server);
+                        self.announce_if_loaded();
                     }
                 }
                 SyncEvent::Disconnected { streams } => {
@@ -174,6 +175,10 @@ impl Session {
         let name = self.client.borrow().summary(server).map(|s| s.name);
         self.emit("host-removed", json!({ "server": server.to_string(), "name": name }));
         self.emit("servers-changed", Value::Null);
+    }
+
+    pub(super) fn answered_by_sync(&self, server: ServerId) -> bool {
+        self.sync.borrow().as_ref().is_some_and(|live| live.book.answered(server))
     }
 
     pub(super) fn host_removed(&self, server: ServerId) -> bool {
@@ -672,6 +677,9 @@ impl Session {
             self.retire_if_gone(server);
         } else {
             self.adopt(server);
+        }
+        if state_lane {
+            self.announce_if_loaded();
         }
     }
 

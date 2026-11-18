@@ -402,7 +402,7 @@ async fn tend(handle: &AppHandle) {
     }
     let same = LIVE.lock_or_recover().as_ref().is_some_and(|l| l.url == url && l.dir == dir && l.me == me);
     if !same {
-        let Some((net, node)) = app.net.lock().await.as_ref().map(|node| (node.local_events(), node.node_id_bytes())) else { return };
+        let Some(crate::state::SyncFeed { events: net, node }) = app.sync_feed.lock_or_recover().clone() else { return };
         stop();
         let (events, received) = mpsc::unbounded_channel();
         let task = crate::account_session::spawn(listen(handle.clone(), received));
