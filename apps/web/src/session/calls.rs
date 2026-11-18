@@ -64,6 +64,7 @@ struct Link {
     leaving_idle: bool,
     peers: HashMap<UserId, Peer>,
     answered: HashMap<UserId, i64>,
+    unanswered: calls::Unanswered,
     generation: u64,
     gates: VoiceGates,
 }
@@ -140,6 +141,7 @@ impl Link {
             leaving_idle: false,
             peers: HashMap::new(),
             answered: HashMap::new(),
+            unanswered: calls::Unanswered::default(),
             generation: 0,
             gates: VoiceGates::default(),
         }
@@ -752,6 +754,7 @@ impl Session {
                 });
             }
             let room = link.server;
+            link.unanswered.keep_only(|user| wanted.contains_key(user));
             for (user, node) in wanted {
                 let since = room.and_then(|server| self.client.borrow().voice_join(server, user));
                 let after_us = since.is_some_and(|since| since > link.since_ms);
@@ -763,8 +766,11 @@ impl Session {
                 if room.is_some() && peer.follow_join(since) && peer.theirs.reset() {
                     gone.push(user);
                 }
-                if peer.out.is_none() && !peer.dialing && calls::should_dial(&ours, &node) {
-                    peer.dialing = true;
+                let (linked, dialing) = (peer.out.is_some(), peer.dialing);
+                if !dialing && link.unanswered.dials(user, &ours, &node, linked, now_ms()) {
+                    if let Some(peer) = link.peers.get_mut(&user) {
+                        peer.dialing = true;
+                    }
                     dial.push((user, node));
                 }
             }

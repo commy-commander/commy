@@ -550,7 +550,7 @@ test("the browser waits for a current server before joining voice, like the desk
   const calls = read("apps", "web", "src", "session", "calls.rs");
   const join = calls.indexOf('"set_voice_channel" =>');
   assert.ok(join > 0 && calls.indexOf("self.voice_wait(server)", join) > join);
-  assert.match(read("apps", "web", "src", "session", "voice_gate.rs"), /use commy_net::voice_gate::\{wait_for/);
+  assert.match(read("apps", "web", "src", "session", "voice_gate.rs"), /use commy_net::voice_gate::\{[^}]*\bwait_for\b/);
 });
 
 test("the browser keeps its own sign-in words each time the dialog shows", () => {

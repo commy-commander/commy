@@ -145,6 +145,10 @@ pub fn public_relays() -> Vec<Arc<RelayConfig>> {
     iroh::defaults::prod::default_relay_map().relays::<Vec<Arc<RelayConfig>>>()
 }
 
+pub fn public_relay_urls() -> Vec<RelayUrl> {
+    iroh::defaults::prod::default_relay_map().urls::<Vec<RelayUrl>>()
+}
+
 #[derive(Clone)]
 pub struct Relays {
     own: Arc<Vec<RelayUrl>>,
@@ -195,6 +199,20 @@ impl Relays {
         let rooms = self.rooms();
         let own = self.own.iter().filter(|url| !rooms.contains(url)).cloned().collect::<Vec<_>>();
         rooms.into_iter().chain(own).collect()
+    }
+
+    pub fn dial_hints(&self) -> Vec<RelayUrl> {
+        let mut hints = self.hints();
+        for public in public_relay_urls() {
+            if !hints.contains(&public) {
+                hints.push(public);
+            }
+        }
+        hints
+    }
+
+    pub fn uses_rooms(&self, rooms: &[RelayUrl]) -> bool {
+        self.rooms() == rooms
     }
 
     pub fn is_empty(&self) -> bool {
@@ -374,6 +392,29 @@ mod tests {
         assert!(Relays::new(Vec::new()).is_empty());
     }
 
+    #[test]
+    fn calls_also_look_for_people_on_the_public_relays() {
+        let own: RelayUrl = DEFAULT_COMMY_RELAY.parse().unwrap();
+        let relays = Relays::new(vec![own.clone()]);
+        let public = public_relay_urls();
+        assert_eq!(relays.dial_hints()[0], own, "our relay comes first");
+        assert!(public.iter().all(|url| relays.dial_hints().contains(url)), "someone from another home waits on a public relay");
+        relays.set_rooms(public.clone());
+        assert_eq!(relays.dial_hints().len(), public.len() + 1, "each relay is hinted once");
+    }
+
+    #[test]
+    fn the_relays_in_use_are_known_per_community() {
+        let own: RelayUrl = DEFAULT_COMMY_RELAY.parse().unwrap();
+        let relays = Relays::new(vec![own]);
+        let room = room_relay_url("https://sync.example.org").unwrap();
+        assert!(relays.uses_rooms(&[]));
+        relays.set_rooms(vec![room.clone()]);
+        assert!(relays.uses_rooms(std::slice::from_ref(&room)));
+        assert!(!relays.uses_rooms(&[]), "our own relay is not the one in use");
+        assert!(!relays.uses_rooms(&public_relay_urls()));
+    }
+
     async fn endpoint_on(relay: &Arc<RelayConfig>) -> iroh::Endpoint {
         let map = RelayMap::empty();
         map.insert(relay.url.clone(), relay.clone());
@@ -472,6 +513,74 @@ mod tests {
         assert!(relays.failed_recently(&room));
         assert!(home_becomes(&endpoint, std::slice::from_ref(&ours), ROOM_RELAY_WAIT).await, "our relay comes back");
         assert!(relays.use_room(&endpoint, Some(only(&room_map, &room))).await.unwrap_err().to_string().contains("a moment ago"));
+        endpoint.close().await;
+    }
+
+    async fn connected_to(endpoint: &iroh::Endpoint, url: &RelayUrl, wait: std::time::Duration) -> bool {
+        let mut status = endpoint.home_relay_status();
+        let reached = async {
+            loop {
+                let now = iroh::Watcher::get(&mut status);
+                if now.iter().any(|s| s.is_connected() && s.url() == url) {
+                    return;
+                }
+                n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        };
+        n0_future::time::timeout(wait, reached).await.is_ok()
+    }
+
+    async fn until_it_stops_answering(relays: &Relays, endpoint: &iroh::Endpoint, room: Arc<RelayConfig>) {
+        let started = std::time::Instant::now();
+        loop {
+            match relays.use_room(endpoint, Some(room.clone())).await {
+                Ok(false) => {}
+                Ok(true) => panic!("the room was already in use"),
+                Err(e) => {
+                    assert!(e.to_string().contains("stopped answering"), "{e}");
+                    return;
+                }
+            }
+            assert!(started.elapsed() < std::time::Duration::from_secs(60), "a dead room relay is noticed");
+            n0_future::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn after_a_room_relay_dies_our_relay_connects_again() {
+        let (ours_map, ours, _ours) = iroh::test_utils::run_relay_server().await.unwrap();
+        let (room_map, room, room_server) = iroh::test_utils::run_relay_server().await.unwrap();
+        let (public_map, public, _public) = iroh::test_utils::run_relay_server().await.unwrap();
+        let endpoint = endpoint_on(&only(&ours_map, &ours)).await;
+        assert!(connected_to(&endpoint, &ours, ROOM_RELAY_WAIT).await);
+        let relays = Relays::new(vec![ours.clone()]);
+        assert!(relays.use_room(&endpoint, Some(only(&room_map, &room))).await.unwrap());
+        assert!(connected_to(&endpoint, &room, ROOM_RELAY_WAIT).await);
+        room_server.shutdown().await.ok();
+
+        until_it_stops_answering(&relays, &endpoint, only(&room_map, &room)).await;
+        assert!(relays.use_rooms(&endpoint, vec![only(&public_map, &public)]).await.unwrap(), "the public relays stand in");
+        assert!(connected_to(&endpoint, &public, ROOM_RELAY_WAIT).await);
+
+        assert!(relays.use_room(&endpoint, None).await.unwrap());
+        assert!(connected_to(&endpoint, &ours, std::time::Duration::from_secs(20)).await, "our relay is connected again, not only named");
+        endpoint.close().await;
+    }
+
+    #[tokio::test]
+    async fn after_a_room_relay_dies_without_a_stand_in_our_relay_connects_again() {
+        let (ours_map, ours, _ours) = iroh::test_utils::run_relay_server().await.unwrap();
+        let (room_map, room, room_server) = iroh::test_utils::run_relay_server().await.unwrap();
+        let endpoint = endpoint_on(&only(&ours_map, &ours)).await;
+        assert!(connected_to(&endpoint, &ours, ROOM_RELAY_WAIT).await);
+        let relays = Relays::new(vec![ours.clone()]);
+        assert!(relays.use_room(&endpoint, Some(only(&room_map, &room))).await.unwrap());
+        assert!(connected_to(&endpoint, &room, ROOM_RELAY_WAIT).await);
+        room_server.shutdown().await.ok();
+
+        until_it_stops_answering(&relays, &endpoint, only(&room_map, &room)).await;
+        assert!(!relays.use_room(&endpoint, None).await.unwrap());
+        assert!(connected_to(&endpoint, &ours, std::time::Duration::from_secs(20)).await, "our relay is connected again, not only named");
         endpoint.close().await;
     }
 

@@ -1,7 +1,7 @@
 use crate::lock_or_recover::LockOrRecover;
 use crate::state::App;
 use commy_core::ServerId;
-use commy_net::voice_gate::{wait_for, GateView, Signals, StateLink, Wait, WaitView};
+use commy_net::voice_gate::{keep_settling, relay_for, wait_for, GateView, Signals, StateLink, Wait, WaitView, RELAY_SETTLE_STEP};
 use commy_net::RelayLink;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -17,15 +17,24 @@ struct NetSignals {
     up: bool,
     relay: RelayLink,
     peers: BTreeMap<ServerId, usize>,
+    switch: Option<commy_net::node::RelaySwitch>,
+}
+
+impl NetSignals {
+    fn relay_of(&self, server: ServerId) -> RelayLink {
+        let Some(switch) = self.switch.as_ref() else { return self.relay };
+        let in_place = crate::community_sync::room_relay_of(server).in_place(|room| switch.on_room(room), || switch.on_public());
+        relay_for(in_place, self.relay)
+    }
 }
 
 async fn net_signals(app: &App, servers: &[ServerId]) -> NetSignals {
     let net = app.net.lock().await;
     let Some(node) = net.as_ref() else {
-        return NetSignals { up: false, relay: RelayLink::NotUsed, peers: BTreeMap::new() };
+        return NetSignals { up: false, relay: RelayLink::NotUsed, peers: BTreeMap::new(), switch: None };
     };
     let peers = servers.iter().map(|sid| (*sid, node.neighbor_count(*sid))).collect();
-    NetSignals { up: true, relay: node.connection_checker().relay(), peers }
+    NetSignals { up: true, relay: node.connection_checker().relay(), peers, switch: Some(node.relay_switch()) }
 }
 
 fn online_for(up: bool) -> Duration {
@@ -66,7 +75,7 @@ async fn waits(app: &App, servers: &[ServerId]) -> BTreeMap<ServerId, Wait> {
         .filter_map(|sid| {
             let signals = Signals {
                 network_up: net.up,
-                relay: net.relay,
+                relay: net.relay_of(*sid),
                 loading: app.awaits_snapshot(*sid),
                 state: state_link(app, *sid),
                 peers: net.peers.get(sid).copied().unwrap_or(0),
@@ -82,7 +91,14 @@ pub async fn check(app: &App, server: ServerId) -> Option<Wait> {
     if !app.voice.lock_or_recover().wait_for_connection {
         return None;
     }
-    waits(app, &[server]).await.remove(&server)
+    let started = Instant::now();
+    loop {
+        let wait = waits(app, &[server]).await.remove(&server);
+        if !keep_settling(wait, started.elapsed()) {
+            return wait;
+        }
+        tokio::time::sleep(RELAY_SETTLE_STEP).await;
+    }
 }
 
 async fn view(app: &App) -> GateView {

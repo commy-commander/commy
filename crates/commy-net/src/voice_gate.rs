@@ -27,6 +27,17 @@ pub fn link_of(streams: &[StreamId], current: &HashSet<StreamId>, lost: &HashSet
 
 pub const PEER_WAIT: Duration = Duration::from_secs(20);
 
+pub const RELAY_SETTLE: Duration = Duration::from_secs(5);
+pub const RELAY_SETTLE_STEP: Duration = Duration::from_millis(250);
+
+pub fn relay_for(in_place: bool, endpoint: RelayLink) -> RelayLink {
+    if in_place { endpoint } else { RelayLink::NotUsed }
+}
+
+pub fn keep_settling(wait: Option<Wait>, waited: Duration) -> bool {
+    wait == Some(Wait::NoRelay) && waited < RELAY_SETTLE
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Wait {
@@ -136,6 +147,23 @@ mod tests {
     fn joining_waits_while_the_network_starts_or_the_relay_is_out_of_reach() {
         assert_eq!(wait_for(&Signals { network_up: false, ..ready() }), Some(Wait::Starting));
         assert_eq!(wait_for(&Signals { relay: RelayLink::Unreachable, ..ready() }), Some(Wait::NoRelay));
+    }
+
+    #[test]
+    fn a_relay_the_community_does_not_use_never_blocks_its_voice() {
+        assert_eq!(relay_for(true, RelayLink::Unreachable), RelayLink::Unreachable);
+        assert_eq!(relay_for(true, RelayLink::Connected), RelayLink::Connected);
+        assert_eq!(relay_for(false, RelayLink::Unreachable), RelayLink::NotUsed, "a dead relay from another community is left behind on joining");
+        assert_eq!(wait_for(&Signals { relay: relay_for(false, RelayLink::Unreachable), ..ready() }), None);
+    }
+
+    #[test]
+    fn joining_gives_a_reconnecting_relay_a_few_seconds() {
+        assert!(keep_settling(Some(Wait::NoRelay), Duration::ZERO));
+        assert!(keep_settling(Some(Wait::NoRelay), RELAY_SETTLE - RELAY_SETTLE_STEP));
+        assert!(!keep_settling(Some(Wait::NoRelay), RELAY_SETTLE), "a relay that stays down still refuses");
+        assert!(!keep_settling(Some(Wait::CatchingUp), Duration::ZERO), "only the relay is waited on");
+        assert!(!keep_settling(None, Duration::ZERO));
     }
 
     #[test]

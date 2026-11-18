@@ -2034,10 +2034,18 @@ fn dial_voice_members(
             .collect()
     };
     for (user, their_hex) in targets {
-        if should_dial(&our_hex, &their_hex) && claim_voice_dial(app, channel, user) {
+        if claim_voice_dial_to(app, channel, user, &our_hex, &their_hex) {
             dial_voice_peer(handle, sid, user, their_hex, channel, me.id);
         }
     }
+}
+
+fn claim_voice_dial_to(app: &App, channel: ChannelId, user: UserId, our_hex: &str, their_hex: &str) -> bool {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    app.voice_session
+        .lock_or_recover()
+        .as_mut()
+        .is_some_and(|session| session.channel == channel && session.claim_dial_to(user, our_hex, their_hex, now_ms))
 }
 
 fn drop_links_outside(app: &App, sid: ServerId, channel: ChannelId) {
@@ -2047,6 +2055,7 @@ fn drop_links_outside(app: &App, sid: ServerId, channel: ChannelId) {
     };
     let mut session = app.voice_session.lock_or_recover();
     let Some(session) = session.as_mut().filter(|s| s.server == sid && s.channel == channel) else { return };
+    session.keep_unanswered(|user| seated.contains(user));
     for user in session.linked_users().into_iter().filter(|user| !seated.contains(user)) {
         session.detach_peer(user);
     }

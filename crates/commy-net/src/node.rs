@@ -759,6 +759,18 @@ impl RelaySwitch {
     pub fn failed_recently(&self, room: &str) -> bool {
         crate::relays::room_relay_url(room).is_ok_and(|url| self.relays.failed_recently(&url))
     }
+
+    pub fn on_room(&self, room: Option<&str>) -> bool {
+        match room.map(crate::relays::room_relay_url) {
+            None => self.relays.uses_rooms(&[]),
+            Some(Ok(url)) => self.relays.uses_rooms(&[url]),
+            Some(Err(_)) => false,
+        }
+    }
+
+    pub fn on_public(&self) -> bool {
+        self.relays.uses_rooms(&crate::relays::public_relay_urls())
+    }
 }
 
 pub const MEDIA_DIAL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -773,7 +785,7 @@ pub struct MediaDialer {
 impl MediaDialer {
     pub async fn connect(&self, node_hex: &str, hello: MediaHello) -> Result<MediaChannel> {
         let node_id = parse_node_hex(node_hex)?;
-        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays.hints());
+        hint_relays(&self.lookup, &self.endpoint, node_id, &self.relays.dial_hints());
         let dial = async {
             let connection = self
                 .endpoint

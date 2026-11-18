@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use commy_core::ServerId;
-use commy_net::voice_gate::{wait_for, GateView, Signals, StateLink, Wait, WaitView};
+use commy_net::voice_gate::{keep_settling, relay_for, wait_for, GateView, Signals, StateLink, Wait, WaitView, RELAY_SETTLE_STEP};
 use commy_net::RelayLink;
 use serde_json::json;
 use wasm_bindgen_futures::spawn_local;
@@ -16,6 +16,7 @@ struct NetSignals {
     up: bool,
     relay: RelayLink,
     peers: BTreeMap<ServerId, usize>,
+    switch: Option<commy_net::node::RelaySwitch>,
 }
 
 impl Session {
@@ -50,7 +51,20 @@ impl Session {
     }
 
     pub(super) async fn voice_wait(&self, server: ServerId) -> Option<Wait> {
-        self.gate_waits(&[server]).await.remove(&server)
+        let started = web_time::Instant::now();
+        loop {
+            let wait = self.gate_waits(&[server]).await.remove(&server);
+            if !keep_settling(wait, started.elapsed()) {
+                return wait;
+            }
+            n0_future::time::sleep(RELAY_SETTLE_STEP).await;
+        }
+    }
+
+    fn relay_of(&self, net: &NetSignals, server: ServerId) -> RelayLink {
+        let Some(switch) = net.switch.as_ref() else { return net.relay };
+        let in_place = self.room_relay_of(server).in_place(|room| switch.on_room(room), || switch.on_public());
+        relay_for(in_place, net.relay)
     }
 
     fn gate_servers(&self) -> Vec<ServerId> {
@@ -69,8 +83,9 @@ impl Session {
                 up: true,
                 relay: node.connection_checker().relay(),
                 peers: servers.iter().map(|sid| (*sid, node.neighbor_count(*sid))).collect(),
+                switch: Some(node.relay_switch()),
             },
-            None => NetSignals { up: false, relay: RelayLink::NotUsed, peers: BTreeMap::new() },
+            None => NetSignals { up: false, relay: RelayLink::NotUsed, peers: BTreeMap::new(), switch: None },
         }
     }
 
@@ -97,7 +112,7 @@ impl Session {
                 let others = state.is_some_and(|state| state.server.members.iter().any(|m| Some(m.user) != me && state.server.is_current_member(m.user)));
                 let signals = Signals {
                     network_up: net.up,
-                    relay: net.relay,
+                    relay: self.relay_of(&net, *sid),
                     loading: state.is_none(),
                     state: sync.as_ref().map_or(StateLink::NotUsed, |live| live.book.state_link(*sid)),
                     peers: net.peers.get(sid).copied().unwrap_or(0),

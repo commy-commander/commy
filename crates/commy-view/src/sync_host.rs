@@ -34,6 +34,15 @@ impl RoomRelay {
             _ => None,
         }
     }
+
+    pub fn in_place(&self, on_room: impl Fn(Option<&str>) -> bool, on_public: impl Fn() -> bool) -> bool {
+        match self {
+            RoomRelay::Ours => on_room(None),
+            RoomRelay::Theirs { url, public_fallback } => on_room(Some(url)) || (*public_fallback && on_public()),
+            RoomRelay::Public => on_public(),
+            RoomRelay::Unavailable(_) => true,
+        }
+    }
 }
 
 pub const HOST_REMOVED: &str = "This server's sync server removed it, so new messages here no longer reach anyone.";
@@ -162,6 +171,22 @@ mod tests {
         assert_eq!(falls_back.refusal_before_joining(|_| true), None, "the public relays stand in");
         assert_eq!(RoomRelay::Unavailable(ROOM_RELAY_MISSING).refusal_before_joining(|_| false), Some(ROOM_RELAY_MISSING));
         assert_eq!(RoomRelay::Ours.refusal_before_joining(|_| true), None);
+    }
+
+    #[test]
+    fn a_community_relay_is_in_place_only_when_the_app_uses_it() {
+        let on_dev = |room: Option<&str>| room == Some("https://dev.example.org");
+        let at_home = |room: Option<&str>| room.is_none();
+        let dev = RoomRelay::Theirs { url: "https://dev.example.org".into(), public_fallback: false };
+        assert!(dev.in_place(on_dev, || false));
+        assert!(!RoomRelay::Ours.in_place(on_dev, || false), "still on a dead outside relay, our own is not in place yet");
+        assert!(RoomRelay::Ours.in_place(at_home, || false));
+        assert!(!dev.in_place(at_home, || true));
+        let dev_or_public = RoomRelay::Theirs { url: "https://dev.example.org".into(), public_fallback: true };
+        assert!(dev_or_public.in_place(at_home, || true), "the public relays standing in count");
+        assert!(RoomRelay::Public.in_place(at_home, || true));
+        assert!(!RoomRelay::Public.in_place(at_home, || false));
+        assert!(RoomRelay::Unavailable(ROOM_RELAY_MISSING).in_place(at_home, || false));
     }
 
     #[test]

@@ -44,6 +44,7 @@ pub struct VoiceSession {
     link_loss: LinkLoss,
     links: HashMap<UserId, (commy_net::node::Connection, Arc<Mutex<JitterMeter>>)>,
     dialing: HashSet<UserId>,
+    unanswered: commy_view::calls::Unanswered,
     linked_at: HashMap<UserId, std::time::Instant>,
     link_joins: HashMap<UserId, i64>,
     answered: HashMap<UserId, i64>,
@@ -249,6 +250,7 @@ impl VoiceSession {
             link_loss,
             links: HashMap::new(),
             dialing: HashSet::new(),
+            unanswered: commy_view::calls::Unanswered::default(),
             linked_at: HashMap::new(),
             link_joins: HashMap::new(),
             answered: HashMap::new(),
@@ -299,6 +301,15 @@ impl VoiceSession {
 
     pub fn claim_dial(&mut self, user: UserId) -> bool {
         !self.has_peer(user) && self.dialing.insert(user)
+    }
+
+    pub fn claim_dial_to(&mut self, user: UserId, our_node: &str, their_node: &str, now_ms: i64) -> bool {
+        let linked = self.has_peer(user);
+        self.unanswered.dials(user, our_node, their_node, linked, now_ms) && self.claim_dial(user)
+    }
+
+    pub fn keep_unanswered(&mut self, here: impl Fn(&UserId) -> bool) {
+        self.unanswered.keep_only(here);
     }
 
     pub fn dial_failed(&mut self, user: UserId) {

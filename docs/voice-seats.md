@@ -134,6 +134,18 @@ into its room, made after its own, with its seat (`voice_links::new_join`).
 The app log says when a voice link comes up, ends, is dropped for a new
 join, or is refused at the door, so a bench run can show which side failed.
 
+## Who dials
+
+- The device with the lower node id dials (`commy_view::calls::should_dial`).
+- When that dial never arrives, for example because the dialer sits on the
+  public relays and cannot use ours, the other device dials after 15 seconds
+  (`commy_view::calls::Unanswered`), so every pair links from one side.
+- Calls and screen views look for the other device on our relays, the
+  community's relay and the public relays (`Relays::dial_hints`), because a
+  member from another home waits on a public relay.
+- Joining voice checks the relay the new community uses, not the one the app
+  is leaving, and gives a reconnecting relay a few seconds before refusing.
+
 ## Late joiners
 
 - Every device's greeting (`here`) carries its `DeviceAnnounce` and, when in

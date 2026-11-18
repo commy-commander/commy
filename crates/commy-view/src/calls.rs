@@ -175,6 +175,31 @@ pub fn should_dial(our_node: &str, their_node: &str) -> bool {
     our_node < their_node
 }
 
+pub const ANSWER_GRACE_MS: i64 = 15_000;
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Unanswered {
+    since: HashMap<UserId, i64>,
+}
+
+impl Unanswered {
+    pub fn dials(&mut self, user: UserId, our_node: &str, their_node: &str, linked: bool, now_ms: i64) -> bool {
+        if linked {
+            self.since.remove(&user);
+            return false;
+        }
+        if should_dial(our_node, their_node) {
+            return true;
+        }
+        let since = *self.since.entry(user).or_insert(now_ms);
+        now_ms - since >= ANSWER_GRACE_MS
+    }
+
+    pub fn keep_only(&mut self, here: impl Fn(&UserId) -> bool) {
+        self.since.retain(|user, _| here(user));
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct VoiceGates {
     pub muted: bool,
@@ -315,6 +340,21 @@ mod tests {
         assert!(should_dial("aa", "bb"));
         assert!(!should_dial("bb", "aa"));
         assert!(!should_dial("aa", "aa"));
+    }
+
+    #[test]
+    fn a_member_who_never_dials_us_gets_dialed_after_a_grace() {
+        let mut unanswered = Unanswered::default();
+        let them = UserId::new();
+        assert!(unanswered.dials(them, "aa", "bb", false, 0), "the lower node dials at once");
+        assert!(!unanswered.dials(them, "bb", "aa", false, 1_000), "the higher node waits for that dial");
+        assert!(!unanswered.dials(them, "bb", "aa", false, 1_000 + ANSWER_GRACE_MS - 1));
+        assert!(unanswered.dials(them, "bb", "aa", false, 1_000 + ANSWER_GRACE_MS), "their dial never came, so we dial");
+        assert!(!unanswered.dials(them, "bb", "aa", true, 1_000 + ANSWER_GRACE_MS), "a live link needs no dial");
+        assert!(!unanswered.dials(them, "bb", "aa", false, 50_000), "a dropped link waits a fresh grace");
+        assert!(unanswered.dials(them, "bb", "aa", false, 50_000 + ANSWER_GRACE_MS));
+        unanswered.keep_only(|user| *user != them);
+        assert!(!unanswered.dials(them, "bb", "aa", false, 90_000), "someone who left and came back starts over");
     }
 
     #[test]
