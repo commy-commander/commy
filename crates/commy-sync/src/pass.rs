@@ -14,6 +14,8 @@ pub const EPOCH_DAYS: i64 = 7;
 pub const PASS_KEYS_PATH: &str = "/api/auth/commy/passes/keys";
 pub const PASS_ISSUE_PATH: &str = "/api/auth/commy/passes";
 pub const MAX_PASSES_PER_REQUEST: usize = 10;
+pub const WALLET_TARGET: usize = 10;
+pub const WALLET_LOW: usize = 4;
 const HASH_BYTES: usize = 48;
 const SALT_BYTES: usize = 48;
 const PUBLIC_EXPONENT: u32 = 65_537;
@@ -36,6 +38,8 @@ pub enum PassError {
     BadSignature,
     #[error("the pass key cannot sign this message")]
     Unsignable,
+    #[error("the account server lists no pass key for this week")]
+    NoKey,
 }
 
 pub fn epoch_of(now_ms: i64) -> u32 {
@@ -102,6 +106,110 @@ impl PassKey {
         } else {
             Err(PassError::BadSignature)
         }
+    }
+}
+
+#[derive(Deserialize)]
+struct PublishedKeys {
+    keys: Vec<PublishedKey>,
+}
+
+#[derive(Deserialize)]
+struct PublishedKey {
+    epoch: u32,
+    der: String,
+}
+
+pub fn current_key(published: &str, now_ms: i64) -> Result<PassKey, PassError> {
+    let epoch = epoch_of(now_ms);
+    let keys: PublishedKeys = serde_json::from_str(published).map_err(|_| PassError::NoKey)?;
+    let key = keys.keys.into_iter().find(|k| k.epoch == epoch).ok_or(PassError::NoKey)?;
+    let der = data_encoding::BASE64URL_NOPAD.decode(key.der.as_bytes()).map_err(|_| PassError::BadKey)?;
+    PassKey::from_der(epoch, &der)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IssueRequest {
+    pub epoch: u32,
+    pub blinded: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct IssueReply {
+    pub epoch: u32,
+    pub signatures: Vec<String>,
+}
+
+pub fn ask(key: &PassKey, count: usize, rng: &mut (impl RngCore + CryptoRng)) -> Result<(IssueRequest, Vec<PendingPass>), PassError> {
+    let mut blinded = Vec::new();
+    let mut pending = Vec::new();
+    for _ in 0..count.min(MAX_PASSES_PER_REQUEST) {
+        let (message, waiting) = key.blind(rng)?;
+        blinded.push(data_encoding::BASE64URL_NOPAD.encode(&message));
+        pending.push(waiting);
+    }
+    Ok((IssueRequest { epoch: key.epoch, blinded }, pending))
+}
+
+pub fn collect(key: &PassKey, pending: Vec<PendingPass>, reply: &IssueReply) -> Vec<Pass> {
+    if reply.epoch != key.epoch {
+        return Vec::new();
+    }
+    pending
+        .into_iter()
+        .zip(&reply.signatures)
+        .filter_map(|(waiting, sig)| key.finish(waiting, &data_encoding::BASE64URL_NOPAD.decode(sig.as_bytes()).ok()?).ok())
+        .collect()
+}
+
+pub fn same_issuer(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/').eq_ignore_ascii_case(b.trim_end_matches('/'))
+}
+
+fn usable(pass: &Pass, now_ms: i64) -> bool {
+    let now = epoch_of(now_ms);
+    pass.epoch == now || pass.epoch.checked_add(1) == Some(now)
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Wallet {
+    pub issuer: String,
+    pub passes: Vec<Pass>,
+}
+
+impl Wallet {
+    pub fn new(issuer: &str) -> Self {
+        Self { issuer: issuer.trim_end_matches('/').to_string(), passes: Vec::new() }
+    }
+
+    pub fn resume(saved: Option<Wallet>, issuer: &str) -> Self {
+        saved.filter(|w| same_issuer(&w.issuer, issuer)).unwrap_or_else(|| Wallet::new(issuer))
+    }
+
+    pub fn take(&mut self, issuer: &str, now_ms: i64) -> Option<Pass> {
+        if !same_issuer(&self.issuer, issuer) {
+            return None;
+        }
+        self.passes.retain(|pass| usable(pass, now_ms));
+        self.passes.sort_by_key(|pass| pass.epoch);
+        (!self.passes.is_empty()).then(|| self.passes.remove(0))
+    }
+
+    pub fn wanted(&self, now_ms: i64) -> usize {
+        let fresh = self.passes.iter().filter(|pass| pass.epoch == epoch_of(now_ms)).count();
+        if fresh >= WALLET_LOW {
+            0
+        } else {
+            WALLET_TARGET - fresh
+        }
+    }
+
+    pub fn add(&mut self, passes: Vec<Pass>, now_ms: i64) {
+        self.passes.extend(passes);
+        self.passes.retain(|pass| usable(pass, now_ms));
+        self.passes.sort_by_key(|pass| pass.epoch);
+        let extra = self.passes.len().saturating_sub(WALLET_TARGET * 2);
+        self.passes.drain(..extra);
     }
 }
 
@@ -246,6 +354,63 @@ mod tests {
         assert_eq!(epoch_of(7 * DAY_MS - 1), 0);
         assert_eq!(epoch_of(7 * DAY_MS), 1);
         assert_eq!(epoch_of(-5), 0);
+    }
+
+    fn published(epochs: &[u32]) -> String {
+        use rsa::pkcs8::EncodePublicKey;
+        let der = issuer().to_public_key().to_public_key_der().unwrap();
+        let keys: Vec<serde_json::Value> =
+            epochs.iter().map(|e| serde_json::json!({ "epoch": e, "der": data_encoding::BASE64URL_NOPAD.encode(der.as_bytes()) })).collect();
+        serde_json::json!({ "keys": keys }).to_string()
+    }
+
+    const WEEK_MS: i64 = EPOCH_DAYS * DAY_MS;
+
+    #[test]
+    fn a_batch_is_asked_for_and_collected_against_this_weeks_key() {
+        let now = 40 * WEEK_MS + 5;
+        assert_eq!(current_key(&published(&[39, 41]), now).err(), Some(PassError::NoKey));
+        assert_eq!(current_key("junk", now).err(), Some(PassError::NoKey));
+        let key = current_key(&published(&[39, 40, 41]), now).unwrap();
+        assert_eq!(key.epoch(), 40);
+        let (request, pending) = ask(&key, MAX_PASSES_PER_REQUEST + 5, &mut rand::thread_rng()).unwrap();
+        assert_eq!((request.epoch, request.blinded.len(), pending.len()), (40, MAX_PASSES_PER_REQUEST, MAX_PASSES_PER_REQUEST));
+        let mut signatures: Vec<String> = request
+            .blinded
+            .iter()
+            .map(|b| data_encoding::BASE64URL_NOPAD.encode(&raw_sign(&data_encoding::BASE64URL_NOPAD.decode(b.as_bytes()).unwrap())))
+            .collect();
+        signatures.truncate(7);
+        signatures[0] = "AAAA".into();
+        let passes = collect(&key, pending, &IssueReply { epoch: 40, signatures });
+        assert_eq!(passes.len(), 6, "a short or broken answer keeps only what checks out");
+        assert!(passes.iter().all(|p| key.verify(p)));
+        let (_, pending) = ask(&key, 1, &mut rand::thread_rng()).unwrap();
+        assert!(collect(&key, pending, &IssueReply { epoch: 41, signatures: vec![] }).is_empty());
+    }
+
+    #[test]
+    fn a_wallet_spends_oldest_first_and_only_for_its_issuer() {
+        let now = 40 * WEEK_MS;
+        let pass = |epoch: u32| Pass { epoch, token: Bytes(rand::random()), randomizer: Bytes([2; 32]), sig: Blob(vec![3; 256]) };
+        let mut wallet = Wallet::new("https://accounts.example.org/");
+        assert_eq!(wallet.wanted(now), WALLET_TARGET);
+        wallet.add(vec![pass(40), pass(39), pass(38), pass(40)], now);
+        assert_eq!(wallet.passes.len(), 3, "a pass two weeks old is dropped");
+        assert_eq!(wallet.take("https://other.example.org", now), None);
+        assert_eq!(wallet.take("https://ACCOUNTS.example.org", now).unwrap().epoch, 39, "last week's go first");
+        assert_eq!(wallet.wanted(now), WALLET_TARGET - 2);
+        wallet.add((0..WALLET_TARGET * 3).map(|_| pass(40)).collect(), now);
+        assert_eq!(wallet.passes.len(), WALLET_TARGET * 2);
+        assert_eq!(wallet.wanted(now), 0);
+        assert_eq!(wallet.wanted(now + WEEK_MS), WALLET_TARGET, "a new week asks for fresh ones while last week's still count");
+        assert!(wallet.take("https://accounts.example.org", now + WEEK_MS).is_some());
+        assert_eq!(wallet.take("https://accounts.example.org", now + 2 * WEEK_MS), None);
+        let json = serde_json::to_string(&wallet).unwrap();
+        assert_eq!(serde_json::from_str::<Wallet>(&json).unwrap(), wallet);
+        assert_eq!(Wallet::resume(Some(wallet.clone()), "https://accounts.example.org"), wallet);
+        assert_eq!(Wallet::resume(Some(wallet), "https://other.example.org"), Wallet::new("https://other.example.org"));
+        assert_eq!(Wallet::resume(None, "https://other.example.org/"), Wallet::new("https://other.example.org"));
     }
 
     #[test]

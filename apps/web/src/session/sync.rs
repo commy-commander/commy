@@ -145,6 +145,7 @@ impl Session {
         spawn_local(self.clone().tend_sync());
         spawn_local(self.clone().tend_presence());
         spawn_local(self.clone().tend_file_storage());
+        spawn_local(self.clone().tend_passes());
         self.refresh_sync();
     }
 

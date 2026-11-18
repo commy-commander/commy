@@ -17,12 +17,12 @@ pub mod pool;
 pub mod reporting;
 
 pub use file::FileKey;
-pub use pass::{Pass, PassKey};
+pub use pass::{Pass, PassKey, Wallet};
 pub use picture::PictureKey;
 pub use stream::{Eraser, SealError, StreamId, StreamKeys, StreamSecret};
 pub use wire::{ClientFrame, ErrorCode, ServerFrame, WireEntry};
 
 #[cfg(feature = "client")]
-pub use client::{AppendError, Purse, SyncClient, SyncEvent};
+pub use client::{carry_everywhere, AppendError, Keeper, Purse, SyncClient, SyncEvent};
 #[cfg(feature = "client")]
 pub use pool::Pool;

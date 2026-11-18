@@ -47,6 +47,7 @@ mod join_waits;
 mod homes;
 mod links;
 mod moved;
+mod passes;
 mod pictures;
 mod profile;
 mod servers;

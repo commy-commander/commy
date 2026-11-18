@@ -55,6 +55,7 @@ mod profile_images;
 mod notify_anyway;
 mod official_check;
 mod push_wake;
+mod passes;
 mod read_state;
 mod relaunch;
 mod relay_ping;
@@ -8654,6 +8655,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                     });
                 }
                 account_session::spawn(read_state::run(handle.clone()));
+                account_session::spawn(passes::run(handle.clone()));
                 account_session::spawn(run_share_heartbeat(handle.clone()));
                 account_session::spawn(liveness::run(handle.clone()));
                 account_session::spawn(run_activity_watcher(handle.clone()));

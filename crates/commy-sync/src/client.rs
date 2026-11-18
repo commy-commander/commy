@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use n0_future::time::{self, Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::pass::Pass;
+use crate::pass::{Pass, Wallet};
 use crate::stream::{SealError, StreamId, StreamKeys, APPEND_NONCE_BYTES};
 use crate::wire::{
     ClientFrame, ErrorCode, Greeting, OpenRequest, ServerFrame, WatchRequest, KEEPALIVE_SECS, MAX_STREAMS_PER_CONNECTION, MAX_WATCHES_PER_FRAME, OPEN_MANY_SINCE, SIGNALS_SINCE,
@@ -67,6 +67,60 @@ enum Command {
 type Heard = std::sync::Arc<std::sync::Mutex<Option<Greeting>>>;
 
 pub type Purse = std::sync::Arc<dyn Fn(&str) -> Option<Pass> + Send + Sync>;
+
+static EVERYWHERE: std::sync::RwLock<Option<Purse>> = std::sync::RwLock::new(None);
+
+pub fn carry_everywhere(purse: Option<Purse>) {
+    *EVERYWHERE.write().unwrap() = purse;
+}
+
+fn purse_everywhere() -> Option<Purse> {
+    EVERYWHERE.read().unwrap().clone()
+}
+
+#[derive(Clone)]
+pub struct Keeper {
+    wallet: std::sync::Arc<std::sync::Mutex<Wallet>>,
+    low: std::sync::Arc<tokio::sync::Notify>,
+    clock: fn() -> i64,
+}
+
+impl Keeper {
+    pub fn new(wallet: Wallet, clock: fn() -> i64) -> Self {
+        Self { wallet: std::sync::Arc::new(std::sync::Mutex::new(wallet)), low: std::sync::Arc::default(), clock }
+    }
+
+    pub fn purse(&self) -> Purse {
+        let keeper = self.clone();
+        std::sync::Arc::new(move |issuer: &str| {
+            let now = (keeper.clock)();
+            let mut wallet = keeper.wallet.lock().unwrap();
+            let pass = wallet.take(issuer, now);
+            if wallet.wanted(now) > 0 {
+                keeper.low.notify_one();
+            }
+            pass
+        })
+    }
+
+    pub fn wanted(&self) -> usize {
+        self.wallet.lock().unwrap().wanted((self.clock)())
+    }
+
+    pub async fn until_low(&self) {
+        if self.wanted() == 0 {
+            self.low.notified().await;
+        }
+    }
+
+    pub fn add(&self, passes: Vec<Pass>) {
+        self.wallet.lock().unwrap().add(passes, (self.clock)());
+    }
+
+    pub fn wallet(&self) -> Wallet {
+        self.wallet.lock().unwrap().clone()
+    }
+}
 
 #[derive(Clone)]
 pub struct SyncClient {
@@ -438,13 +492,14 @@ impl Link {
     }
 
     fn pass_for(&mut self, stream: &StreamId) -> Option<Pass> {
+        let issuer = self.passes_from.clone()?;
         let followed = self.streams.get_mut(stream)?;
         if !followed.wants_pass() {
             return None;
         }
         if followed.pass.is_none() {
-            let issuer = self.passes_from.as_deref()?;
-            followed.pass = (self.purse.as_ref()?)(issuer);
+            let purse = self.purse.clone().or_else(purse_everywhere)?;
+            followed.pass = purse(&issuer);
         }
         followed.pass.clone()
     }
@@ -729,6 +784,25 @@ mod tests {
         link.passes_from = None;
         link.streams.get_mut(&ids[2]).unwrap().after = 0;
         assert_eq!(link.pass_for(&ids[2]), None, "a service that takes no passes gets none");
+    }
+
+    fn week_forty() -> i64 {
+        40 * crate::pass::EPOCH_DAYS * 24 * 60 * 60 * 1000
+    }
+
+    #[tokio::test]
+    async fn a_keeper_says_when_it_runs_low() {
+        let keeper = Keeper::new(crate::pass::Wallet::new("https://commy.example"), week_forty);
+        keeper.add((0..crate::pass::WALLET_LOW + 1).map(|_| sample_pass(40)).collect());
+        assert_eq!(keeper.wanted(), 0);
+        let purse = keeper.purse();
+        assert!(purse("https://commy.example").is_some());
+        assert!(tokio::time::timeout(Duration::from_millis(50), keeper.until_low()).await.is_err(), "still enough in hand");
+        assert!(purse("https://commy.example").is_some());
+        tokio::time::timeout(Duration::from_secs(1), keeper.until_low()).await.expect("low now");
+        assert_eq!(keeper.wanted(), crate::pass::WALLET_TARGET - (crate::pass::WALLET_LOW - 1));
+        assert_eq!(keeper.wallet().passes.len(), crate::pass::WALLET_LOW - 1);
+        assert_eq!(purse("https://elsewhere.example"), None);
     }
 
     #[test]
