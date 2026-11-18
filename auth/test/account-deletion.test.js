@@ -22,7 +22,7 @@ function start(env) {
   const options = buildAuthOptions(config, { pool: null, send: async (mail) => outbox.push(mail) });
   db = {
     user: [],
-    session: [],
+    session: [], commyIdentity: [],
     account: [],
     verification: [],
     deviceCode: [],

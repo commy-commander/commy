@@ -36,7 +36,7 @@ function listen(handler) {
 function buildAuth(config) {
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
   options.database = sealedAtRest(
-    memoryAdapter({ user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [], twoFactor: [], passkey: [] }),
+    memoryAdapter({ user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [], twoFactor: [], passkey: [] }),
     options.secret,
   );
   options.rateLimit = { enabled: false };

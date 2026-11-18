@@ -188,7 +188,7 @@ function listingServer(checkerProbes = probes()) {
   const send = async (mail) => sent.push(mail);
   const checker = createChecker({ oldest: "0.2.0", probes: checkerProbes, now: () => NOW });
   const options = buildAuthOptions(config, { pool: null, send, listing: { checker, onChange: () => changes.push(1) } });
-  const db = { user: [], session: [], account: [], verification: [], listedServer: [] };
+  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], listedServer: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);

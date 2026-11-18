@@ -1,6 +1,7 @@
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
+import { suspendedAmong } from "./suspension.js";
 import { COMMY_NET_SEALED_FORMAT } from "./vault.js";
 
 const MODEL = "invite";
@@ -311,10 +312,14 @@ export const commyInvites = ({ serverUrl, requireAccount = false, maxPermanent =
 
 async function liveInvite(adapter, value) {
   const row = await findInvite(adapter, value);
-  if (!row || new Date(row.expiresAt) < new Date()) {
+  if (!row || new Date(row.expiresAt) < new Date() || (await madeBySuspendedAccount(adapter, row))) {
     throw new APIError("NOT_FOUND", { message: "This invite is invalid or has expired" });
   }
   return row;
+}
+
+async function madeBySuspendedAccount(adapter, row) {
+  return Boolean(row.createdBy) && (await suspendedAmong(adapter, [row.createdBy])).has(row.createdBy);
 }
 
 export async function removeInvite(adapter, code) {

@@ -24,7 +24,7 @@ beforeEach(() => {
   const options = buildAuthOptions(config, { pool: null, send: async (mail) => outbox.push(mail) });
   options.database = sealedAtRest(memoryAdapter({
     user: [],
-    session: [],
+    session: [], commyIdentity: [],
     account: [],
     verification: [],
     deviceCode: [],

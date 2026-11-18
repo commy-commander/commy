@@ -34,7 +34,7 @@ test("discovery points at the proof endpoint, which answers without a session", 
   const config = loadConfig(ENV);
   assert.equal(discoveryDocument(config).endpoints.serverProof, `${ORIGIN}/api/auth/commy/server-proof`);
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
-  options.database = sealedAtRest(memoryAdapter({ user: [], session: [], account: [], verification: [] }), options.secret);
+  options.database = sealedAtRest(memoryAdapter({ user: [], session: [], commyIdentity: [], account: [], verification: [] }), options.secret);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
   const get = (nonce) => auth.handler(new Request(`${ORIGIN}/api/auth/commy/server-proof?nonce=${nonce}`));

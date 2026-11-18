@@ -88,7 +88,7 @@ test("a card request must be signed by the identity it names and be recent", () 
 
 test("a signed-in app gets a home card, a signed-out one does not", async () => {
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {} });
-  options.database = sealedAtRest(memoryAdapter({ user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], commyMove: [] }), options.secret);
+  options.database = sealedAtRest(memoryAdapter({ user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], commyMove: [] }), options.secret);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
   const call = async (path, { body, cookie } = {}) => {

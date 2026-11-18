@@ -171,7 +171,20 @@ pub fn describe(stored: &StoredReport) -> String {
         lines.push(format!("  [{}] #{} {}: {}", m.at, m.channel, m.author.name, m.text));
     }
     lines.push(format!("Streams the reporter's app listed for this community: {}", r.streams.len()));
+    if let Some(command) = suspend_command(&r.reported.id) {
+        lines.push(format!("If the reported account lives on your own account server, suspend it with: {command}"));
+    }
     lines.join("\n")
+}
+
+const HYPHENS_AT: [usize; 4] = [8, 13, 18, 23];
+
+fn is_commy_user_id(text: &str) -> bool {
+    text.len() == 36 && text.char_indices().all(|(at, c)| if HYPHENS_AT.contains(&at) { c == '-' } else { c.is_ascii_hexdigit() })
+}
+
+pub fn suspend_command(commy_user: &str) -> Option<String> {
+    is_commy_user_id(commy_user).then(|| format!("docker compose exec auth node src/suspension-cli.js suspend {} \"<reason>\"", commy_user.to_ascii_lowercase()))
 }
 
 impl Store {
@@ -377,6 +390,19 @@ mod tests {
         assert!(text.contains("Community: Night Owls (c1)"));
         assert!(text.contains("#general Nova: buy now"));
         assert!(text.contains("as the reporter's app showed them"));
+        assert!(!text.contains("suspension-cli"), "sample ids are not Commy ids, so no command is offered");
+    }
+
+    #[test]
+    fn the_operator_is_shown_how_to_suspend_a_reported_account() {
+        let mut report = sample(vec![]);
+        report.reported.id = "6F1C1D6E-2B7A-4C55-9D4E-0D8A1B2C3D4E".into();
+        let text = describe(&StoredReport { id: "r2".into(), received: 1, state: ReportState::Open, report });
+        assert!(text.contains("docker compose exec auth node src/suspension-cli.js suspend 6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4e \"<reason>\""));
+        assert_eq!(suspend_command("6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4"), None);
+        assert_eq!(suspend_command("6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4e; rm -rf /"), None);
+        assert_eq!(suspend_command("6f1c1d6e2b7a-4c55-9d4e-0d8a1b2c3d4e-"), None);
+        assert_eq!(suspend_command("6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4g"), None);
     }
 
     #[test]

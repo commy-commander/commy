@@ -70,7 +70,7 @@ const SKIP = "no Redis: set REDIS_TEST_URL or install redis-server";
 async function makeAuth({ doorbell, rateLimit = false, shared = redis } = {}) {
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {}, redis: shared });
   if (doorbell) options.plugins = options.plugins.map((p) => (p.id === "commy-doorbell" ? commyDoorbell({ redis: shared, ...doorbell }) : p));
-  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
+  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   if (!rateLimit) options.rateLimit = { enabled: false };
   const auth = betterAuth(options);

@@ -21,7 +21,7 @@ let db;
 function start(env = {}) {
   const config = loadConfig({ ...BASE_ENV, ...env });
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
-  db = { user: [], session: [], account: [], verification: [], twoFactor: [], passkey: [], deviceCode: [], linkedDevice: [] };
+  db = { user: [], session: [], commyIdentity: [], account: [], verification: [], twoFactor: [], passkey: [], deviceCode: [], linkedDevice: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   options.socialProviders.apple.verifyIdToken = async (_token, nonce) => nonce === NONCE;

@@ -101,7 +101,7 @@ let outbox = [];
 
 test("nothing readable about an account is left in the stored rows", { timeout: 30000 }, async () => {
   outbox = [];
-  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [], twoFactor: [], passkey: [] };
+  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [], twoFactor: [], passkey: [] };
   const call = client(memoryAuth(db));
 
   const signUp = await call("POST", "/sign-up/email", { body: { email: EMAIL, password: PASSWORD, name: NAME } });

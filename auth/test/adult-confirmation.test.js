@@ -18,7 +18,7 @@ function makeAuth(env = {}, outbox = []) {
     ...env,
   });
   const options = buildAuthOptions(config, { pool: null, send: async (mail) => outbox.push(mail) });
-  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
+  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   return { auth: betterAuth(options), db, config };

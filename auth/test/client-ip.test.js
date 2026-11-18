@@ -55,7 +55,7 @@ test("TRUSTED_PROXIES picks which proxies may name the visitor", () => {
 function serve(trustedProxies) {
   const config = loadConfig(ENV);
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
-  options.database = memoryAdapter({ user: [], session: [], account: [], verification: [], deviceCode: [] });
+  options.database = memoryAdapter({ user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [] });
   const handler = createRequestHandler({
     authHandler: toNodeHandler(betterAuth(options)),
     basePath: config.basePath,

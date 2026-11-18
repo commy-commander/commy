@@ -20,7 +20,7 @@ let base;
 before(async () => {
   const config = loadConfig(ENV);
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
-  options.database = sealedAtRest(memoryAdapter({ user: [], session: [], account: [], verification: [], linkedDevice: [] }), options.secret);
+  options.database = sealedAtRest(memoryAdapter({ user: [], session: [], commyIdentity: [], account: [], verification: [], linkedDevice: [] }), options.secret);
   const auth = betterAuth(options);
   const { adapter } = await auth.$context;
   const user = await adapter.create({ model: "user", data: { name: "Linked", email: "linked@example.com", emailVerified: true, createdAt: new Date(), updatedAt: new Date() } });

@@ -772,6 +772,23 @@ server or channel a log belongs to.
   goes to that account server's operator. Blocking a person works on the
   reporter's own devices and needs nothing from any server.
 
+  When the reported person's account lives on your own account server, `show`
+  ends with the command that suspends it. Suspending signs the account out on
+  every device, refuses new sign-ins with a note that names
+  `COMMY_ABUSE_CONTACT`, and hides its Discover listings and invite links until
+  you lift it:
+
+  ```sh
+  docker compose exec auth node src/suspension-cli.js find <commy id|email>
+  docker compose exec auth node src/suspension-cli.js suspend <commy id|email> "<reason>"
+  docker compose exec auth node src/suspension-cli.js lift <commy id|email>
+  docker compose exec auth node src/suspension-cli.js list
+  ```
+
+  The account server learns which Commy id an account uses when its app asks
+  for a home card, which every app does after signing in and again each week.
+  A Commy id claimed by more than one account suspends all of them.
+
 ## iroh relay
 
 The stack runs its own [iroh](https://iroh.computer) relay. It answers at

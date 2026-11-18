@@ -29,6 +29,7 @@ import { commyVault } from "./vault.js";
 import { commyVerifyEmailResult } from "./verify-email-result.js";
 import { commyFolderLock } from "./folder-lock.js";
 import { createMailer } from "./mailer.js";
+import { commySuspension, refuseSuspendedSessions, suspensionFields } from "./suspension.js";
 import { commyThrowawayEmails, loadThrowawayDomains, refuseThrowawayEmail } from "./throwaway-email.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
 
@@ -37,7 +38,15 @@ const OAUTH_STATE_SECONDS = 600;
 
 const withAName = (user) => (user.name ? user : { ...user, name: cleanAccountName(String(user.email ?? "").split("@")[0]) });
 
-const storeSessionWithoutIpOrUserAgent = async (session) => ({ data: { ...session, ipAddress: null, userAgent: null } });
+const withoutIpOrUserAgent = (session) => ({ ...session, ipAddress: null, userAgent: null });
+
+function startSessions(abuseContact) {
+  const refuseSuspended = refuseSuspendedSessions({ abuseContact });
+  return async (session, ctx) => {
+    await refuseSuspended(session, ctx);
+    return { data: withoutIpOrUserAgent(session) };
+  };
+}
 
 function refuseWithoutAccessCode(accessCode, ctx) {
   if (!accessCode) return;
@@ -120,6 +129,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
     commyServerProof({ serverKey: config.serverKey, origin: config.baseURL }),
     commyHomeKeys({ homeKeys: homeKeys ?? createHomeKeys({ ownHome: config.baseURL, ownKey: config.serverKey.published, ownSync: config.syncUrl }) }),
     commyMoved({ home: config.baseURL }),
+    commySuspension(),
   ];
 
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
@@ -201,7 +211,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
     verification: { storeIdentifier: "hashed" },
     socialProviders: socialProviders(config),
     user: {
-      additionalFields: adultConfirmationField,
+      additionalFields: { ...adultConfirmationField, ...suspensionFields },
       changeEmail: {
         enabled: Boolean(config.smtp),
         sendChangeEmailConfirmation: ({ user, newEmail, url }) =>
@@ -242,7 +252,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
       },
       session: {
         create: {
-          before: storeSessionWithoutIpOrUserAgent,
+          before: startSessions(config.abuseContact),
         },
       },
       account: {

@@ -86,7 +86,7 @@ test("discovery tells apps where moves are recorded", () => {
 test("a signed-in person records a move, anyone can read it, the old home stops vouching for them, and moving back undoes it", async () => {
   const config = loadConfig(ENV);
   const options = buildAuthOptions(config, { pool: null, send: async () => {}, fetch });
-  const db = { user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], commyMove: [] };
+  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], commyMove: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);

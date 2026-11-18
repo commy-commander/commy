@@ -37,7 +37,7 @@ before(async () => {
   process.on("uncaughtException", recordUnhandled);
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {} });
   options.database = sealedAtRest(memoryAdapter({
-    user: [], session: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [],
+    user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [],
   }), options.secret);
   options.rateLimit = { enabled: false };
   server = await listen(toNodeHandler(betterAuth(options)));

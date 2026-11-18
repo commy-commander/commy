@@ -20,6 +20,8 @@ const MAX_CODE: usize = 40;
 const TOTP_DIGITS: usize = 6;
 const ACCESS_COOKIE: &str = "commy_access";
 const SHEET_PROVIDERS: [&str; 2] = ["google", "twitch"];
+const MAX_SUSPENDED_NOTE: usize = 240;
+const SUSPENDED_FALLBACK: &str = "This account is suspended for breaking the Terms. If you think this is a mistake, write to this account server's contact.";
 const SHEET_RETURN_SCHEME: &str = "commy";
 const SHEET_RETURN_HOST: &str = "signed-in";
 const MAX_HANDOFF: usize = 64;
@@ -149,6 +151,15 @@ fn cookie_pairs<'a>(set_cookies: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect()
 }
 
+fn suspended_note(message: &str) -> String {
+    let note: String = message.chars().filter(|c| !c.is_control()).take(MAX_SUSPENDED_NOTE).collect();
+    if note.trim().is_empty() {
+        SUSPENDED_FALLBACK.into()
+    } else {
+        note
+    }
+}
+
 fn read_reply(answer: &Answer) -> Result<Reply, String> {
     if (200..300).contains(&answer.status) {
         if answer.body.get("twoFactorRedirect").and_then(Value::as_bool) == Some(true) {
@@ -170,6 +181,7 @@ fn read_reply(answer: &Answer) -> Result<Reply, String> {
         "USER_ALREADY_EXISTS" | "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" => return Err("An account already uses this email. Sign in instead.".into()),
         "PASSWORD_TOO_SHORT" => return Err("Use a password with at least 8 characters.".into()),
         "PASSWORD_TOO_LONG" => return Err("Use a password with 128 characters or fewer.".into()),
+        "ACCOUNT_SUSPENDED" => return Err(suspended_note(message)),
         "THROWAWAY_EMAIL" => return Err("Use an email address you keep. Throwaway inboxes can't make accounts.".into()),
         "ACCOUNT_NOT_LINKED" => {
             return Err("An account already uses this email. Sign in with your email and password, then confirm your email if asked.".into())
@@ -777,6 +789,16 @@ mod tests {
         assert!(read_reply(&answer(429, json!({}))).unwrap_err().contains("Too many"));
         assert!(read_reply(&answer(400, json!({ "code": "MISSING_RESPONSE" }))).unwrap_err().contains("safety check"));
         assert!(read_reply(&answer(500, Value::Null)).unwrap_err().contains("browser"));
+    }
+
+    #[test]
+    fn a_suspended_account_hears_why_and_whom_to_write_to() {
+        let told = read_reply(&answer(403, json!({ "code": "ACCOUNT_SUSPENDED", "message": "This account is suspended. Write to safety@example.org." }))).unwrap_err();
+        assert_eq!(told, "This account is suspended. Write to safety@example.org.");
+        assert_eq!(read_reply(&answer(403, json!({ "code": "ACCOUNT_SUSPENDED" }))).unwrap_err(), SUSPENDED_FALLBACK);
+        let long = read_reply(&answer(403, json!({ "code": "ACCOUNT_SUSPENDED", "message": format!("a\u{7}{}", "b".repeat(500)) }))).unwrap_err();
+        assert_eq!(long.chars().count(), MAX_SUSPENDED_NOTE);
+        assert!(!long.contains('\u{7}'));
     }
 
     #[test]

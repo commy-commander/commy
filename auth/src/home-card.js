@@ -2,6 +2,7 @@ import * as z from "zod";
 import { APIError, createAuthEndpoint, sessionMiddleware } from "better-auth/api";
 import { movedAway } from "./moved.js";
 import { verifyNodeSignature } from "./proof.js";
+import { rememberCommyUser } from "./suspension.js";
 
 export const HOME_CARD_PATH = "/commy/home-card";
 export const CARD_PURPOSE = "home-card";
@@ -49,6 +50,7 @@ export const commyHomeCard = ({ serverKey, home }) => ({
         if (problem) throw new APIError("BAD_REQUEST", { message: problem });
         const moved = await movedAway(ctx.context.adapter, home, request.identity);
         if (moved) throw new APIError("CONFLICT", { code: "ACCOUNT_MOVED", message: `This account moved to ${moved.to}.` });
+        await rememberCommyUser(ctx.context.adapter, ctx.context.session.user.id, request.user);
         return ctx.json({ card: issueCard(serverKey, home, request.user, request.identity) });
       },
     ),

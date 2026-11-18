@@ -1,6 +1,7 @@
 import * as z from "zod";
 import { APIError, createAuthEndpoint, getSessionFromCtx } from "better-auth/api";
 import { findInvite, isPermanent, linkCodeSpellings } from "./invites.js";
+import { suspendedAmong } from "./suspension.js";
 
 const MODEL = "directoryListing";
 const INVITE_MODEL = "invite";
@@ -205,7 +206,8 @@ export const commyDirectory = () => ({
           where: category ? [{ field: "category", value: category }] : [],
           limit: MAX_SCAN,
         });
-        const matching = sortListings(rows.filter((row) => matchesWords(row, words)));
+        const suspended = await suspendedAmong(adapter, rows.map((row) => row.createdBy));
+        const matching = sortListings(rows.filter((row) => !suspended.has(row.createdBy) && matchesWords(row, words)));
         const page = matching.slice(offset, offset + PAGE_SIZE);
         const live = await liveInviteCodes(adapter, page.map((row) => row.code));
         const gone = page.filter((row) => !live.has(row.code));
