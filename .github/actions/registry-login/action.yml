@@ -1,0 +1,28 @@
+name: Registry login
+description: Log in to the container registry, trying again while the registry is slow to answer
+inputs:
+  registry:
+    required: true
+  username:
+    required: true
+  password:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Log in to the registry
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        REGISTRY_USER: ${{ inputs.username }}
+        REGISTRY_PASSWORD: ${{ inputs.password }}
+      run: |
+        for attempt in 1 2 3 4 5; do
+          if printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY" --username "$REGISTRY_USER" --password-stdin; then
+            exit 0
+          fi
+          echo "registry login attempt $attempt failed, trying again"
+          sleep $((attempt * 15))
+        done
+        echo "::error::could not log in to $REGISTRY after 5 attempts"
+        exit 1
