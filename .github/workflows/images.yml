@@ -607,13 +607,16 @@ jobs:
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
           IMAGE: ${{ env.IMAGES }}/commy-${{ matrix.service }}@${{ matrix.service == 'sync' && needs.sync-image.outputs.digest || matrix.service == 'relay' && needs.relay-image.outputs.digest || needs.image.outputs.auth-digest }}
+          DEV_IMAGE: ${{ env.IMAGES }}/commy-${{ matrix.service }}:dev
         run: |
           newest=true
           if [ "$GITHUB_REF" = refs/heads/main ]; then
-            images='^(auth/|apps/web/|deploy/|crates/commy-sync/|crates/commy-sync-server/|\.dockerignore$|\.github/workflows/images\.yml$)'
+            on_dev="$(docker buildx imagetools inspect "$DEV_IMAGE" --format '{{json .Image}}' 2>/dev/null | grep -oE '"org.opencontainers.image.revision":"[0-9a-f]+"' | head -n 1 | cut -d'"' -f4)"
             git fetch -q origin main
-            later="$(git diff --name-only "$GITHUB_SHA" origin/main | grep -cE "$images" || true)"
-            [ "$later" = 0 ] || { newest=false; echo "a later commit on main changes the images, leaving :dev to its run"; }
+            if [ -n "$on_dev" ] && [ "$on_dev" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$GITHUB_SHA" "$on_dev" 2>/dev/null; then
+              newest=false
+              echo ":dev already has $on_dev, which includes this commit"
+            fi
           fi
           args=""
           for tag in $TAGS; do
