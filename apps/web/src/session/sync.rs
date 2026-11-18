@@ -961,6 +961,9 @@ impl Session {
     }
 
     pub(super) fn adopted(self: &Rc<Self>, server: ServerId) {
+        if let Some(live) = self.sync.borrow_mut().as_mut() {
+            live.book.touch(server);
+        }
         self.release_parked(server);
         self.emit("servers-changed", Value::Null);
         self.emit("server-event", json!(server.to_string()));
