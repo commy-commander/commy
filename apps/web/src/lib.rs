@@ -7,6 +7,7 @@ pub mod files;
 pub mod knocks;
 pub mod mic_gate;
 pub mod recording;
+pub mod relays;
 pub mod sharing;
 pub mod store;
 pub mod sync_book;

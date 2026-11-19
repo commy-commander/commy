@@ -96,7 +96,10 @@ joined in page order, and a script that opens with `"use strict"` never shares
 a file with one that does not. Build settings:
 
 - `COMMY_WEB_RELAYS`: a comma-separated list of relays the page may use. The
-  page's content security policy allows only its own site and these relays.
+  page's content security policy allows these relays in full. Any other relay,
+  such as a public relay or a community's own, is reached only over a secure
+  websocket and at its `/ping` timing check, which the browser needs before it
+  can make that relay its home.
   The first one is the page's relay unless the site serving it says otherwise.
   Without it, `COMMY_DEFAULT_RELAY` or `https://relay.commy.chat:8443`.
 - `COMMY_WEB_BASE`: the path the page is served under, such as `/web/`.

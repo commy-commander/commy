@@ -11,7 +11,6 @@ use commy_net::sealed::SealKey;
 use commy_net::{
     CommyNode, EntryKeyReply, EntryKeyRequest, MirrorRequest, NetEvent, ServerTicket, SharedCatchupStore, WirePayload,
 };
-use iroh::{RelayConfig, RelayMap, RelayUrl};
 use n0_future::FutureExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -27,6 +26,7 @@ use crate::account::{self, AccountUser, KeyCopy, Reply};
 use crate::client::{Applied, Client, PollForm};
 use crate::dm_book::DmBook;
 use crate::host::Host;
+use crate::relays::{public_fallback_for, relay_map_of};
 use crate::store::WebStore;
 
 mod activities;
@@ -1019,9 +1019,14 @@ impl Session {
         if slot.is_some() {
             return Ok(());
         }
-        let (mut node, events, media, incoming) = CommyNode::spawn_with(Some(secret), Some(relay_map_of(&self.relays)?))
+        let relays = relay_map_of(&self.relays)?;
+        let fallback = public_fallback_for(&relays);
+        let (mut node, events, media, incoming) = CommyNode::spawn_with(Some(secret), Some(relays))
             .await
             .map_err(|e| format!("Could not connect to the Commy network: {e}"))?;
+        if !fallback.is_empty() {
+            spawn_local(commy_net::relays::fall_back_when_unreachable(node.endpoint(), fallback));
+        }
         let (changed_tx, changed_rx) = mpsc::unbounded_channel();
         let store: SharedCatchupStore = Arc::new(WebStore {
             servers: self.client.borrow().servers.clone(),
@@ -1517,13 +1522,4 @@ impl Session {
 
 fn node_id_of(secret: &[u8; 32]) -> String {
     data_encoding::HEXLOWER.encode(iroh::SecretKey::from_bytes(secret).public().as_bytes())
-}
-
-fn relay_map_of(relays: &[String]) -> Result<RelayMap, String> {
-    let map = RelayMap::empty();
-    for url in relays {
-        let url: RelayUrl = url.parse().map_err(|_| format!("invalid relay {url}"))?;
-        map.insert(url.clone(), Arc::new(RelayConfig::new(url, None)));
-    }
-    Ok(map)
 }

@@ -10,12 +10,13 @@ export const SPEECH_VOICE_ORIGINS = ["https://cdn.jsdelivr.net", "https://huggin
 export const SYNC_HOST_ORIGINS = ["wss:"];
 export const SYNC_HOST_READS = ["https://*/sync/"];
 export const INVITE_READS = ["https://*/api/auth/commy/invites/"];
+export const RELAY_PROBES = ["https://*/ping"];
 
 export function contentSecurityPolicy(relays) {
   return [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
-    `connect-src 'self' blob: ${[...relays, ...FILE_STORAGE_ORIGINS, ...GIF_SEARCH_ORIGINS, ...SPEECH_VOICE_ORIGINS, ...SYNC_HOST_ORIGINS, ...SYNC_HOST_READS, ...INVITE_READS].join(" ")}`,
+    `connect-src 'self' blob: ${[...relays, ...FILE_STORAGE_ORIGINS, ...GIF_SEARCH_ORIGINS, ...SPEECH_VOICE_ORIGINS, ...SYNC_HOST_ORIGINS, ...SYNC_HOST_READS, ...INVITE_READS, ...RELAY_PROBES].join(" ")}`,
     "img-src 'self' data: blob:",
     "media-src 'self' data: blob:",
     "style-src 'self' 'unsafe-inline'",

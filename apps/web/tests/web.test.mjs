@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, INVITE_READS, SPEECH_VOICE_ORIGINS, SYNC_HOST_ORIGINS, SYNC_HOST_READS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
+import { FILE_STORAGE_ORIGINS, GIF_SEARCH_ORIGINS, INVITE_READS, RELAY_PROBES, SPEECH_VOICE_ORIGINS, SYNC_HOST_ORIGINS, SYNC_HOST_READS, contentSecurityPolicy, injectWebShell, relayOrigins, webRelayList } from "../shell.mjs";
 
 const require = createRequire(import.meta.url);
 const { WEB_BYTE_COMMANDS, WEB_PICKED_COMMANDS, WEB_VIDEO_ACCEPT, webPickFile, webSaveFile, webSavedImageName, WEB_DEFAULTS, webDefault, webFileSrc, webSignInUrl, webUnlockText, webReplyLine, webRelays, webNotice, webNoticeTarget, webInviteFromHash, webMovedHome, WEB_IMAGE_ACCEPT, webReadDataUrl, WEB_SOUND_ACCEPT, webSoundName, webCatalogPath, webCatalogRefusal, webShareQuality, webFrameSize, webShareError, WEB_SHARE_REFUSED, WEB_SESSION_CHECK_MS, WEB_SESSION_CHECK_SOONEST_MS, webSessionCheckDue } = require("../ui/web-commands.js");
@@ -154,16 +154,17 @@ test("replies cross into the backend as a status line and body", () => {
 test("the page may only talk to its own site, the relay, server file storage, GIF search, the voice downloads and secure sync servers, and frames nothing but the YouTube player", () => {
   const csp = contentSecurityPolicy(relayOrigins("https://relay.commy.chat:8443"));
   assert.match(csp, /default-src 'self'/);
-  assert.match(csp, /connect-src 'self' blob: https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/\*\.workers\.dev https:\/\/api\.klipy\.com https:\/\/api\.giphy\.com https:\/\/cdn\.jsdelivr\.net https:\/\/huggingface\.co https:\/\/\*\.hf\.co wss: https:\/\/\*\/sync\/ https:\/\/\*\/api\/auth\/commy\/invites\/;/);
+  assert.match(csp, /connect-src 'self' blob: https:\/\/relay\.commy\.chat:8443 wss:\/\/relay\.commy\.chat:8443 https:\/\/\*\.workers\.dev https:\/\/api\.klipy\.com https:\/\/api\.giphy\.com https:\/\/cdn\.jsdelivr\.net https:\/\/huggingface\.co https:\/\/\*\.hf\.co wss: https:\/\/\*\/sync\/ https:\/\/\*\/api\/auth\/commy\/invites\/ https:\/\/\*\/ping;/);
   assert.deepEqual(SYNC_HOST_ORIGINS, ["wss:"], "community sync servers are reached over secure websockets only");
   assert.deepEqual(SYNC_HOST_READS, ["https://*/sync/"], "other sync servers are read over https only under their /sync/ path");
   assert.deepEqual(INVITE_READS, ["https://*/api/auth/commy/invites/"], "other account servers are read only for invites");
+  assert.deepEqual(RELAY_PROBES, ["https://*/ping"], "any relay, public or a community's own, may be timed at its /ping so the browser can make it home");
   assert.match(csp, /frame-src https:\/\/www\.youtube-nocookie\.com;/);
   assert.deepEqual(FILE_STORAGE_ORIGINS, ["https://*.workers.dev"]);
   assert.deepEqual(GIF_SEARCH_ORIGINS, ["https://api.klipy.com", "https://api.giphy.com"]);
   assert.deepEqual(SPEECH_VOICE_ORIGINS, ["https://cdn.jsdelivr.net", "https://huggingface.co", "https://*.hf.co"]);
-  const pathBound = [...SYNC_HOST_READS, ...INVITE_READS].reduce((rest, read) => rest.replace(` ${read}`, ""), csp);
-  assert.doesNotMatch(pathBound.replace(" https://*.workers.dev ", " ").replace(" https://*.hf.co ", " "), /\*/, "file storage on workers.dev, the voice download mirror and the path-bound sync and invite reads are the only wildcards");
+  const pathBound = [...SYNC_HOST_READS, ...INVITE_READS, ...RELAY_PROBES].reduce((rest, read) => rest.replace(` ${read}`, ""), csp);
+  assert.doesNotMatch(pathBound.replace(" https://*.workers.dev ", " ").replace(" https://*.hf.co ", " "), /\*/, "file storage on workers.dev, the voice download mirror and the path-bound sync, invite and relay probe reads are the only wildcards");
 });
 
 test("the bridge loads before the app and the policy lands in the head", () => {
