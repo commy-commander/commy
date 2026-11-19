@@ -112,6 +112,16 @@ test("the web page loads a handful of hashed files instead of every script and s
   assert.deepEqual([...dist.removed].sort(), Object.keys(FAKE_PACKAGE).sort());
 });
 
+test("every bundled script is asked for from the head, so the browser fetches them side by side", () => {
+  const dist = repoDist();
+  const html = bundleWebPage(realPage(), { ...dist, wasmPackage });
+  const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
+  const preloads = [...html.matchAll(/<link rel="preload" href="([^"]+)" as="script" \/>/g)].map(m => m[1]);
+  assert.deepEqual(preloads, scripts);
+  assert.ok(html.indexOf('as="script"') < html.indexOf("</head>"));
+  assert.ok(html.indexOf('rel="preload" href="assets/commy_web_client_bg') < html.indexOf('as="script"'), "the wasm is asked for first");
+});
+
 test("every bundled script still compiles, so no two scripts declare the same name", () => {
   const dist = repoDist();
   const html = bundleWebPage(realPage(), { ...dist, wasmPackage });

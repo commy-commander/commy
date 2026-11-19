@@ -160,11 +160,18 @@ export function preloadTags({ js, wasm }) {
   return [`<link rel="modulepreload" href="${js}" />`, `<link rel="preload" href="${wasm}" as="fetch" type="application/wasm" crossorigin />`];
 }
 
+export function scriptPreloadTags(html) {
+  return [...html.matchAll(SCRIPT_SRC)].map(([, src]) => `<link rel="preload" href="${src}" as="script" />`);
+}
+
 export function bundleWebPage(html, { read, write, remove, wasmPackage }) {
   const assets = createAssetStore({ read, write });
   const pkg = hashWasmPackage(wasmPackage.js, wasmPackage.wasm, assets, { read, remove });
   const firstStylesheet = html.search(LINK_TAG);
   if (firstStylesheet < 0) throw new Error("the web page has no stylesheet to bundle");
-  const preloaded = html.slice(0, firstStylesheet) + preloadTags(pkg).join("\n  ") + "\n  " + html.slice(firstStylesheet);
-  return bundleScripts(bundleStylesheets(preloaded, assets, read), assets, read);
+  const tags = preloadTags(pkg);
+  const preloaded = html.slice(0, firstStylesheet) + tags.join("\n  ") + "\n  " + html.slice(firstStylesheet);
+  const bundled = bundleScripts(bundleStylesheets(preloaded, assets, read), assets, read);
+  const last = tags.at(-1);
+  return bundled.replace(last, [last, ...scriptPreloadTags(bundled)].join("\n  "));
 }
