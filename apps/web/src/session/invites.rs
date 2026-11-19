@@ -55,8 +55,10 @@ impl Session {
             "get_invite" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 self.need_permission(server, Permissions::CREATE_INVITES, "invite people")?;
-                let (ticket, _) = self.client.borrow().invite_ticket(server, None)?;
-                Ok(Value::String(self.reachable(ticket).await.encode()))
+                let (ticket, community) = self.client.borrow().invite_ticket(server, None)?;
+                let asks_to_join = self.client.borrow().servers.lock().unwrap().get(&server).is_some_and(|s| s.server.join_approval);
+                let community = community.filter(|_| !asks_to_join);
+                Ok(Value::String(self.reachable(ticket).await.encode_with_key(community.as_ref().map(|(key, secret)| (*key, secret)))))
             }
             "create_invite_link" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
@@ -184,11 +186,15 @@ impl Session {
     }
 
     async fn join_invited(self: &Rc<Self>, raw: &str, note: &str) -> Result<Value, String> {
-        let ticket = ServerTicket::decode(raw.trim()).map_err(|_| "That invite is damaged".to_string())?;
+        let (ticket, carried) = ServerTicket::decode_with_key(raw.trim()).map_err(|_| "That invite is damaged".to_string())?;
         let server = ticket.server_id;
         if let Some(summary) = self.client.borrow().summary(server) {
             return to_json(&summary);
         }
+        if let Some(carried) = carried {
+            self.invited.borrow_mut().entry(server).or_insert(carried);
+        }
+        let raw = &ticket.encode();
         let asked_at = Utc::now().timestamp_millis();
         match self.knock(&ticket, note, asked_at).await {
             Some(KnockReply::Waiting(lobby)) => {

@@ -296,8 +296,11 @@ async fn join_server(
     if let Some(link) = link.as_deref() {
         invite_link::confirm_join_from_link(&app, link, &ticket);
     }
-    let ticket = ServerTicket::decode(&ticket).map_err(err_to_string)?;
+    let (ticket, carried) = ServerTicket::decode_with_key(&ticket).map_err(err_to_string)?;
     let id = ticket.server_id;
+    if let Some((key, secret)) = carried {
+        community_sync::remember_invite_key(id, key, secret);
+    }
     let joined = knock::knock_then_join(&app, &handle, ticket, note.as_deref().unwrap_or("")).await?;
     if matches!(joined, knock::Joined::Server(_)) {
         entry_list::record_join(&app, id);
@@ -665,7 +668,9 @@ async fn get_invite(app: tauri::State<'_, App>, server_id: String) -> CmdResult<
     let id = server_id.parse().map_err(err_to_string)?;
     require_invite_permission(&app, id)?;
     let ticket = owner_vouched_ticket(&app, id)?;
-    Ok(reachable_ticket(&app, ticket).await.encode())
+    let asks_to_join = app.servers.lock_or_recover().get(&id).is_some_and(|s| s.server.join_approval);
+    let community = (!asks_to_join).then(|| community_sync::invite_key(&app, id)).flatten();
+    Ok(reachable_ticket(&app, ticket).await.encode_with_key(community.as_ref().map(|(key, secret)| (*key, secret))))
 }
 
 pub(crate) fn owner_vouched_ticket(app: &App, server: ServerId) -> CmdResult<ServerTicket> {

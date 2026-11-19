@@ -1,3 +1,4 @@
+use commy_core::channel_key::{ChannelSecret, KeyId};
 use commy_core::identity::IdentityKey;
 use commy_core::{ServerId, UserId};
 use data_encoding::BASE32_NOPAD;
@@ -13,6 +14,7 @@ const FIRST_TICKET_VERSION: u8 = 1;
 pub const MAX_BOOTSTRAP: usize = 6;
 pub const MAX_INVITE_NEIGHBORS: usize = 4;
 const MAX_DIRECT_ADDRESSES: usize = 4;
+const CARRIED_KEY_LEN: usize = 16 + 32;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum TicketError {
@@ -133,8 +135,16 @@ impl ServerTicket {
     }
 
     pub fn encode(&self) -> String {
+        self.encode_with_key(None)
+    }
+
+    pub fn encode_with_key(&self, community: Option<(KeyId, &ChannelSecret)>) -> String {
         let mut bytes = vec![TICKET_VERSION];
         bytes.extend(postcard::to_stdvec(self).expect("ticket serialization cannot fail"));
+        if let Some((id, secret)) = community {
+            bytes.extend_from_slice(&id.0);
+            bytes.extend_from_slice(secret.bytes());
+        }
         format!(
             "{PREFIX}{}",
             BASE32_NOPAD.encode(&bytes).to_ascii_lowercase()
@@ -142,6 +152,10 @@ impl ServerTicket {
     }
 
     pub fn decode(input: &str) -> Result<Self, TicketError> {
+        Self::decode_with_key(input).map(|(ticket, _)| ticket)
+    }
+
+    pub fn decode_with_key(input: &str) -> Result<(Self, Option<(KeyId, ChannelSecret)>), TicketError> {
         let input = input.trim();
         let encoded = input.strip_prefix(PREFIX).ok_or(TicketError::BadPrefix)?;
         let bytes = BASE32_NOPAD
@@ -149,14 +163,25 @@ impl ServerTicket {
             .map_err(|_| TicketError::Corrupt)?;
         let (&version, rest) = bytes.split_first().ok_or(TicketError::Corrupt)?;
         match version {
-            TICKET_VERSION => postcard::from_bytes(rest).map_err(|_| TicketError::Corrupt),
+            TICKET_VERSION => {
+                let (ticket, tail) = postcard::take_from_bytes::<Self>(rest).map_err(|_| TicketError::Corrupt)?;
+                Ok((ticket, carried_key(tail)))
+            }
             FIRST_TICKET_VERSION => {
                 let first: FirstTicket = postcard::from_bytes(rest).map_err(|_| TicketError::Corrupt)?;
-                Ok(Self::new(first.server_id, first.server_name, first.topic, first.bootstrap))
+                Ok((Self::new(first.server_id, first.server_name, first.topic, first.bootstrap), None))
             }
             other => Err(TicketError::BadVersion(other)),
         }
     }
+}
+
+fn carried_key(tail: &[u8]) -> Option<(KeyId, ChannelSecret)> {
+    if tail.len() != CARRIED_KEY_LEN {
+        return None;
+    }
+    let (id, secret) = tail.split_at(16);
+    Some((KeyId(id.try_into().ok()?), ChannelSecret::from_bytes(secret.try_into().ok()?)))
 }
 
 #[cfg(test)]
@@ -181,6 +206,30 @@ mod tests {
         assert!(encoded.starts_with("commy"));
         let decoded = ServerTicket::decode(&encoded).unwrap();
         assert_eq!(ticket, decoded);
+    }
+
+    #[test]
+    fn an_invite_code_can_carry_the_community_key() {
+        let ticket = sample();
+        let (id, secret) = (KeyId([4; 16]), ChannelSecret::from_bytes([9; 32]));
+        let code = ticket.encode_with_key(Some((id, &secret)));
+        assert_ne!(code, ticket.encode());
+        let (decoded, carried) = ServerTicket::decode_with_key(&code).unwrap();
+        assert_eq!(decoded, ticket);
+        let (carried_id, carried_secret) = carried.unwrap();
+        assert_eq!((carried_id, carried_secret.bytes()), (id, secret.bytes()));
+        assert_eq!(ServerTicket::decode(&code).unwrap(), ticket);
+        assert_eq!(ServerTicket::decode(&code).unwrap().encode(), ticket.encode());
+        assert!(ServerTicket::decode_with_key(&ticket.encode()).unwrap().1.is_none());
+    }
+
+    #[test]
+    fn older_apps_read_a_code_that_carries_a_key() {
+        let ticket = sample();
+        let code = ticket.encode_with_key(Some((KeyId([4; 16]), &ChannelSecret::from_bytes([9; 32]))));
+        let bytes = BASE32_NOPAD.decode(code.strip_prefix(PREFIX).unwrap().to_ascii_uppercase().as_bytes()).unwrap();
+        let older: ServerTicket = postcard::from_bytes(&bytes[1..]).unwrap();
+        assert_eq!(older, ticket);
     }
 
     #[test]
