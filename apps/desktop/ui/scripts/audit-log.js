@@ -222,6 +222,28 @@ function filterAudit(entries, { group = "all", by = "" } = {}) {
   return (entries || []).filter(e => (group === "all" || auditGroup(e.kind) === group) && (!by || e.by === by));
 }
 
+function auditGroupLabel(kind) {
+  const group = auditGroup(kind);
+  const found = AUDIT_FILTERS.find(([id]) => id === group);
+  return found ? found[1] : "Server settings";
+}
+
+function auditWhen(at, locale) {
+  return new Date(at).toLocaleString(locale, { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function auditKey(entry) {
+  return [entry.at, entry.by, entry.kind, entry.target || "", entry.label || "", entry.detail || ""].join("|");
+}
+
+function auditFacts(entry, locale) {
+  return [
+    ["Kind", auditGroupLabel(entry.kind)],
+    ["By", entry.by_name || "Someone"],
+    ["When", auditWhen(entry.at, locale)],
+  ];
+}
+
 function auditActors(entries) {
   const seen = new Map();
   for (const e of entries || []) if (!seen.has(e.by)) seen.set(e.by, e.by_name || "Someone");
@@ -229,5 +251,5 @@ function auditActors(entries) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { AUDIT_FILTERS, auditGroup, describeAudit, auditParts, auditText, filterAudit, auditActors };
+  module.exports = { AUDIT_FILTERS, auditGroup, auditGroupLabel, auditWhen, auditKey, auditFacts, describeAudit, auditParts, auditText, filterAudit, auditActors };
 }

@@ -16640,7 +16640,7 @@ async function renderReportSettings(server) {
     if (report.note) card.appendChild(el("div", "report-note", report.note));
     const actions = el("div", "report-actions");
     if (report.channel && report.message) {
-      const jump = el("button", "btn-secondary btn-small", "Jump to Message");
+      const jump = el("button", "btn-secondary btn-small report-jump", "Jump to Message");
       jump.onclick = async () => {
         await closeSettingsLayers();
         await openNotificationTarget(`channel:${report.server}:${report.channel}`);
@@ -26206,7 +26206,7 @@ function openServerSettings(tab) {
   openSettingsLayer("server-settings", current);
 }
 
-const auditView = { serverId: null, entries: [] };
+const auditView = { serverId: null, entries: [], open: null };
 
 async function renderAuditLog(server) {
   try {
@@ -26214,6 +26214,7 @@ async function renderAuditLog(server) {
     if (!state.currentServer || state.currentServer.id !== server.id) return;
     const fresh = auditView.serverId !== server.id;
     Object.assign(auditView, { serverId: server.id, entries });
+    if (fresh) auditView.open = null;
     fillAuditFilters(fresh);
     paintAuditLog();
   } catch (e) {
@@ -26234,18 +26235,67 @@ function fillAuditFilters(reset) {
   actor.value = actors.some(a => a.id === keepActor) ? keepActor : "";
 }
 
-function auditRow(entry) {
-  const row = el("div", "audit-row");
-  row.appendChild(makeAvatar(entry.by, entry.by_name, "avatar avatar-sm"));
-  const text = el("div", "audit-text");
+function auditSentence(entry) {
+  const text = el("span", "audit-text");
   for (const part of auditParts(entry)) text.appendChild(part.strong ? el("strong", null, part.text) : document.createTextNode(part.text));
-  text.title = auditText(entry);
-  row.appendChild(text);
+  return text;
+}
+
+function auditTime(entry) {
   const when = new Date(entry.at);
   const time = el("time", "audit-time", formatTime(when.toISOString()));
   time.dateTime = when.toISOString();
-  time.title = when.toLocaleString();
-  row.appendChild(time);
+  return time;
+}
+
+function auditFilterKey(label, apply) {
+  const key = el("button", "btn-secondary btn-small audit-only", label);
+  key.type = "button";
+  key.onclick = () => {
+    apply();
+    paintAuditLog();
+  };
+  return key;
+}
+
+function auditMore(entry, id) {
+  const more = el("div", "audit-more");
+  more.id = id;
+  const facts = el("dl", "audit-facts");
+  for (const [term, value] of auditFacts(entry)) facts.append(el("dt", null, term), el("dd", null, value));
+  more.appendChild(facts);
+  const keys = el("div", "audit-keys");
+  if ($("audit-actor").value !== entry.by) keys.appendChild(auditFilterKey("Only this person", () => { $("audit-actor").value = entry.by; }));
+  const group = auditGroup(entry.kind);
+  if ($("audit-group").value !== group) keys.appendChild(auditFilterKey("Only this kind", () => { $("audit-group").value = group; }));
+  if (keys.childElementCount) more.appendChild(keys);
+  return more;
+}
+
+function auditRow(entry, index) {
+  const key = auditKey(entry);
+  const open = auditView.open === key;
+  const row = el("div", open ? "audit-row open" : "audit-row");
+  const head = el("button", "audit-head");
+  head.type = "button";
+  head.setAttribute("aria-expanded", String(open));
+  head.appendChild(makeAvatar(entry.by, entry.by_name, "avatar avatar-sm"));
+  const main = el("span", "audit-main");
+  main.append(auditSentence(entry), auditTime(entry));
+  head.appendChild(main);
+  const chevron = el("span", "audit-chevron");
+  chevron.appendChild(svgIcon("chevronDown", 18));
+  head.appendChild(chevron);
+  head.onclick = () => {
+    auditView.open = open ? null : key;
+    paintAuditLog();
+  };
+  row.appendChild(head);
+  if (open) {
+    const id = `audit-more-${index}`;
+    head.setAttribute("aria-controls", id);
+    row.appendChild(auditMore(entry, id));
+  }
   return row;
 }
 
@@ -26257,7 +26307,12 @@ function paintAuditLog() {
     list.replaceChildren(el("div", "manage-empty", empty));
     return;
   }
+  const focused = document.activeElement && list.contains(document.activeElement) ? [...list.querySelectorAll(".audit-head")].indexOf(document.activeElement) : -1;
   list.replaceChildren(...shown.map(auditRow));
+  if (focused >= 0) {
+    const heads = list.querySelectorAll(".audit-head");
+    if (heads[focused]) heads[focused].focus({ preventScroll: true });
+  }
 }
 
 const INVITE_BACKGROUND_MAX = 400 * 1024;

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { AUDIT_FILTERS, auditGroup, describeAudit, auditParts, auditText, filterAudit, auditActors } = require("../scripts/audit-log.js");
+const { AUDIT_FILTERS, auditGroup, auditGroupLabel, auditWhen, auditKey, auditFacts, describeAudit, auditParts, auditText, filterAudit, auditActors } = require("../scripts/audit-log.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const rustKinds = () => {
@@ -123,4 +123,32 @@ test("search keys are logged without the key itself", () => {
   assert.equal(auditText(entry("gif_key", {})), "Mia removed the GIF search key");
   assert.equal(auditText(entry("game_db", { detail: "set" })), "Mia connected the IGDB game database");
   assert.equal(auditText(entry("game_db", { detail: "removed" })), "Mia disconnected the IGDB game database");
+});
+
+test("a row's details name its kind, who made it and the full date", () => {
+  const at = Date.UTC(2026, 10, 18, 23, 36);
+  const facts = auditFacts(entry("role_assign", { at, label: "Theo", detail: "Moderator" }), "en-US");
+  assert.deepEqual(facts.map(([term]) => term), ["Kind", "By", "When"]);
+  assert.equal(facts[0][1], "Members");
+  assert.equal(facts[1][1], "Mia");
+  assert.equal(facts[2][1], auditWhen(at, "en-US"));
+  assert.match(facts[2][1], /2026/);
+  assert.match(facts[2][1], /November/);
+  assert.equal(auditFacts(entry("auto_mod", { by_name: "" }))[1][1], "Someone");
+});
+
+test("every kind has a readable group label from the filter list", () => {
+  const labels = new Set(AUDIT_FILTERS.map(([, label]) => label));
+  for (const kind of rustKinds()) assert.ok(labels.has(auditGroupLabel(kind)), kind);
+  assert.equal(auditGroupLabel("message_pin"), "Messages");
+  assert.equal(auditGroupLabel("not_a_kind"), "Server settings");
+});
+
+test("each row has its own key so only the tapped one opens", () => {
+  const a = entry("role_assign", { at: 5, label: "Theo", detail: "Moderator" });
+  const b = entry("role_unassign", { at: 5, label: "Theo", detail: "Moderator" });
+  const c = entry("role_assign", { at: 5, label: "Theo", detail: "Helper" });
+  assert.equal(auditKey(a), auditKey({ ...a }));
+  assert.notEqual(auditKey(a), auditKey(b));
+  assert.notEqual(auditKey(a), auditKey(c));
 });

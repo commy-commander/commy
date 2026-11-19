@@ -4467,18 +4467,31 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
 .audit-filters { display: flex; gap: 8px; margin-bottom: 12px; }
 .audit-list { display: flex; flex-direction: column; gap: 4px; }
 .audit-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 52px;
-  padding: 0 12px;
   background: var(--bg-dark);
   border: 1px solid transparent;
   border-radius: var(--radius);
   transition: border-color .12s;
 }
-.audit-row:hover { border-color: var(--bg-active); }
-.audit-row .avatar { flex-shrink: 0; }
+.audit-row:hover,
+.audit-row.open { border-color: var(--bg-active); }
+.audit-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.audit-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.audit-head .avatar { flex-shrink: 0; }
+.audit-main { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; }
 .audit-text {
   flex: 1;
   min-width: 0;
@@ -4488,8 +4501,16 @@ button svg, .channel-icon svg, .vs-icon svg { display: block; flex-shrink: 0; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.audit-row.open .audit-text { padding: 8px 0; white-space: normal; overflow-wrap: anywhere; }
 .audit-text strong { color: var(--text-normal); font-weight: 600; }
 .audit-time { flex-shrink: 0; font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.audit-chevron { display: inline-flex; flex-shrink: 0; color: var(--text-faint); transition: transform .15s; }
+.audit-row.open .audit-chevron { transform: rotate(180deg); }
+.audit-more { display: grid; gap: 12px; padding: 0 12px 12px 56px; }
+.audit-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 13px; }
+.audit-facts dt { color: var(--text-faint); }
+.audit-facts dd { margin: 0; color: var(--text-normal); overflow-wrap: anywhere; }
+.audit-keys { display: flex; flex-wrap: wrap; gap: 8px; }
 .report-card { background: var(--bg-dark); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .report-head { display: flex; align-items: center; gap: 10px; }
 .report-who { flex: 1; min-width: 0; }
