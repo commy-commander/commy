@@ -14440,28 +14440,9 @@ function renderSyncHostEditor(server) {
     .catch(() => {});
   $("sync-host-input").value = "";
   $("sync-host-status").textContent = "";
-  $("sync-host-save").textContent = "Check and Move";
+  $("sync-host-save").textContent = "Check";
   $("sync-host-home").textContent = syncHostHomeButton(ownerHome);
   $("sync-host-home").classList.toggle("hidden", !host);
-  renderSyncHostGuide();
-}
-
-function renderSyncHostGuide() {
-  const done = syncHostGuideDone(localStorage);
-  $("sync-host-guide").classList.toggle("hidden", done);
-  $("sync-host-guide-again").classList.toggle("hidden", !done);
-  const list = $("sync-host-guide-steps");
-  if (list.childElementCount) return;
-  for (const step of syncHostGuideSteps()) {
-    const item = el("li");
-    item.append(el("b", null, step.title), el("span", null, step.text));
-    list.appendChild(item);
-  }
-}
-
-function setSyncHostGuideDone(done) {
-  finishSyncHostGuide(localStorage, done);
-  renderSyncHostGuide();
 }
 
 function openHelp(page) {
@@ -14510,7 +14491,7 @@ async function moveSyncHost(home) {
     $("sync-host-status").textContent = "Moved. Keep Commy open for a few minutes while this device copies the history over.";
   } catch (err) {
     syncHostPending = null;
-    save.textContent = "Check and Move";
+    save.textContent = "Check";
     status.textContent = String(err);
   } finally {
     save.disabled = false;
@@ -14616,11 +14597,9 @@ function wireServerTagEditor() {
   $("file-store-save").onclick = () => saveFileStore(false);
   $("sync-host-save").onclick = () => moveSyncHost(false);
   $("sync-host-home").onclick = () => moveSyncHost(true);
-  $("sync-host-guide-done").onclick = () => setSyncHostGuideDone(true);
-  $("sync-host-guide-again").onclick = () => setSyncHostGuideDone(false);
   $("sync-host-input").addEventListener("input", () => {
     syncHostPending = null;
-    $("sync-host-save").textContent = "Check and Move";
+    $("sync-host-save").textContent = "Check";
   });
   $("file-store-remove").onclick = () => saveFileStore(true);
   $("file-store-guide").onclick = () => openOutsideLink(FILE_STORE_GUIDE);

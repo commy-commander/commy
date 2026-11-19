@@ -3381,33 +3381,30 @@
         </section>
         <section class="settings-page" data-page="sync-host">
           <h1>Sync Server</h1>
-          <div class="settings-card sync-host-guide" id="sync-host-guide" data-search="sync server move walkthrough how moving works">
-            <div class="sync-host-guide-head">
-              <div class="setting-title">How moving works</div>
-              <button class="btn-link" id="sync-host-guide-done">Got It</button>
-            </div>
-            <ol class="sync-host-guide-steps" id="sync-host-guide-steps"></ol>
-          </div>
-          <button class="btn-link sync-host-guide-again hidden" id="sync-host-guide-again">How moving works</button>
-          <div class="settings-card integration-card" id="sync-host-card">
-            <div class="integration-head">
+          <div class="settings-card integration-card" id="sync-host-card" data-search="sync server move walkthrough how moving works">
+            <div class="integration-head title-only">
               <div class="integration-logo integration-logo-deck">
                 <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M4 7h11l-3-3M20 17H9l3 3"/></svg>
               </div>
               <div class="integration-copy">
-                <div class="setting-title">Choose where this server's messages sync</div>
-                <div class="setting-sub">Messages and server settings travel through a sync server. They are sealed on members' devices first, so the sync server can't read them. Until you move it, this server syncs through its owner's account server, which is Commy.chat for most servers.</div>
-                <div class="setting-sub">Moving copies the server's setup and its recent messages, up to 1,000 per channel, from this device to the new sync server. Members follow on their own the next time an up to date Commy opens. Accounts, direct messages and phone notifications stay with each member's account server. <button class="btn-link inline-help" data-help="syncServers">Learn more</button></div>
+                <div class="setting-title">Where this server's messages sync</div>
               </div>
             </div>
             <div class="setting-sub" id="sync-host-now" role="status"></div>
+            <div class="setting-sub">Messages are locked on members' devices before they're sent, so the sync server can't read them. Most servers never need to move. Move only if your community wants its own sync server. <button class="btn-link inline-help" data-help="syncServers">Learn more</button></div>
+            <ol class="integration-steps sync-host-steps">
+              <li><strong>Get a sync server.</strong> Set up your own, or use one run by someone you trust.</li>
+              <li><strong>Check it.</strong> Type its address below and choose Check. Nothing moves yet.</li>
+              <li><strong>Move.</strong> Choose Move Now. This device copies the server's settings and the last 1,000 messages in each channel. Keep Commy open until it's done.</li>
+              <li><strong>Members follow on their own.</strong> Their Commy switches over the next time it opens. People joining by invite are asked to OK the new sync server first.</li>
+            </ol>
             <label class="field-label">Sync server address
               <input id="sync-host-input" type="text" inputmode="url" maxlength="200" autocomplete="off" spellcheck="false" placeholder="sync.yourcommunity.org" />
             </label>
             <div class="setting-sub" id="sync-host-status"></div>
             <div class="form-actions">
               <button class="btn-link hidden" id="sync-host-home"></button>
-              <button class="btn-primary btn-small" id="sync-host-save">Check and Move</button>
+              <button class="btn-primary btn-small" id="sync-host-save">Check</button>
             </div>
           </div>
         </section>

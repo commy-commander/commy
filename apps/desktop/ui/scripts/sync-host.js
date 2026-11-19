@@ -34,15 +34,25 @@ function syncHostPlace(host, release) {
   return operator && operator.toLowerCase() !== host.toLowerCase() ? `${operator} at ${host}` : host;
 }
 
+function syncHostIsOfficial(host) {
+  return host === SYNC_HOST_HOME || String(host).toLowerCase() === "commy.chat";
+}
+
 function syncHostNow(server, release, ownerHome) {
   const host = (server && server.sync_host) || syncHostHomeLabel(ownerHome);
-  const now = `This server syncs through ${syncHostPlace(host, release)}.`;
+  if (syncHostIsOfficial(host)) {
+    const now = "Right now this server syncs through Commy.chat, Commy's official sync server.";
+    const notice = syncHostAppNotice(release);
+    return notice ? `${now} ${notice}` : now;
+  }
+  const now = `Right now this server syncs through ${syncHostPlace(host, release)}.`;
   return release && release.text ? `${now} ${release.text}` : now;
 }
 
 function syncHostReady(label, release, home) {
   const runs = release && release.text ? ` ${release.text}` : "";
-  return `${label} is ready.${runs} Choose ${home ? syncHostHomeButton(label) : "Move Now"} again to move this server there.`;
+  const next = home ? `Choose ${syncHostHomeButton(label)} again to move it back.` : "Choose Move Now to move this server there.";
+  return `${label} is ready.${runs} ${next}`;
 }
 
 function syncHostAppNotice(release) {

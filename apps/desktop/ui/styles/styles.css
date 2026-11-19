@@ -5135,6 +5135,7 @@ html[data-reduced-motion] .server-tag.st-fx-shine::after { display: none; }
 #mute-btn.talking { color: var(--green); }
 
 .integration-head { display: flex; gap: 14px; align-items: flex-start; }
+.integration-head.title-only { align-items: center; }
 .integration-logo { flex: none; width: 52px; height: 52px; border-radius: 10px; background: #9147ff; color: #fff; font-weight: 800; font-size: 14px; display: flex; align-items: center; justify-content: center; letter-spacing: .03em; }
 .integration-state { margin-left: 6px; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 8px; }
 .integration-state.on { background: rgba(53, 194, 107, .18); color: var(--green); }
@@ -9021,10 +9022,6 @@ body.mobile-app .header-actions .icon-btn:not(.active):hover { background: none;
 .btn-link.inline-help { display: inline; padding: 0; border: 0; background: none; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; }
 .btn-link.inline-help:hover { text-decoration: underline; }
 .account-line-keys { display: flex; align-items: center; gap: 12px; flex: none; }
-.sync-host-guide-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.sync-host-guide-steps { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
-.sync-host-guide-steps b { display: block; color: var(--header-primary); font-size: 14px; }
-.sync-host-guide-again { align-self: flex-start; margin: 0 0 12px; }
 
 .avatar-crop-stage {
   position: relative;

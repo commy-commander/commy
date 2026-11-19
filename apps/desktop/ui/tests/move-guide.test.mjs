@@ -5,12 +5,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { HELP_PAGES, helpUrl, shownHost, movePlan, movedInWelcome, signInHelp, syncHostGuideSteps, syncHostGuideDone, finishSyncHostGuide } = require("../scripts/move-guide.js");
-
-const memoryStorage = () => {
-  const items = new Map();
-  return { getItem: k => (items.has(k) ? items.get(k) : null), setItem: (k, v) => items.set(k, String(v)), removeItem: k => items.delete(k) };
-};
+const { HELP_PAGES, helpUrl, shownHost, movePlan, movedInWelcome, signInHelp } = require("../scripts/move-guide.js");
 
 test("help links open the matching guide on the website", () => {
   assert.equal(helpUrl("moving"), "https://commy.chat/docs/moving-your-account");
@@ -60,13 +55,3 @@ test("invite warnings link to the guide on choosing a server", () => {
   assert.match(phone, /id="pt-invite-learn" data-help="choosing"/);
 });
 
-test("the owner walkthrough is shown until it is dismissed, and can come back", () => {
-  const storage = memoryStorage();
-  assert.equal(syncHostGuideDone(storage), false);
-  finishSyncHostGuide(storage, true);
-  assert.equal(syncHostGuideDone(storage), true);
-  finishSyncHostGuide(storage, false);
-  assert.equal(syncHostGuideDone(storage), false);
-  assert.equal(syncHostGuideDone({ getItem() { throw new Error("blocked"); } }), false);
-  assert.equal(syncHostGuideSteps().length, 4);
-});

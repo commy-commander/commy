@@ -5,7 +5,6 @@ const HELP_PAGES = {
   syncServers: "sync-servers",
   choosing: "choosing-a-server",
 };
-const SYNC_HOST_GUIDE_KEY = "commy.syncHostGuideDone";
 
 function helpUrl(page) {
   const slug = HELP_PAGES[page];
@@ -51,30 +50,6 @@ function signInHelp(noteKey) {
     : { page: "accountServers", key: "signin.server.help" };
 }
 
-function syncHostGuideSteps() {
-  return [
-    { title: "Get a sync server", text: "Run your own with Commy's sync server setup, or use one run by someone you trust." },
-    { title: "Check it", text: "Type its address and choose Check and Move. Commy checks that it's ready and up to date before anything moves." },
-    { title: "Move", text: "This device copies the server's setup and recent messages, up to 1,000 per channel. Messages stay sealed, so the sync server can't read them." },
-    { title: "Members follow", text: "Members switch over the next time an up to date Commy opens. New members joining by invite are asked to trust a sync server that isn't on Commy's list." },
-  ];
-}
-
-function syncHostGuideDone(storage) {
-  try {
-    return storage.getItem(SYNC_HOST_GUIDE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function finishSyncHostGuide(storage, done) {
-  try {
-    if (done) storage.setItem(SYNC_HOST_GUIDE_KEY, "1");
-    else storage.removeItem(SYNC_HOST_GUIDE_KEY);
-  } catch {}
-}
-
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     HELP_PAGES,
@@ -83,8 +58,5 @@ if (typeof module !== "undefined" && module.exports) {
     movePlan,
     movedInWelcome,
     signInHelp,
-    syncHostGuideSteps,
-    syncHostGuideDone,
-    finishSyncHostGuide,
   };
 }
