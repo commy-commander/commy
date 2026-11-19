@@ -262,7 +262,8 @@ impl Session {
 
     fn tend_claims(self: &Rc<Self>) {
         let Some(root) = self.client.borrow().identity_secret() else { return };
-        let owned: HashSet<ServerId> = self.client.borrow().owned_servers().into_iter().collect();
+        let owned: HashSet<ServerId> = self.client.borrow().claimable_servers();
+        let handed_on: HashSet<ServerId> = self.client.borrow().handed_on_servers();
         let by_host: HashMap<String, (HashSet<ServerId>, HashMap<ServerId, Vec<StreamKeys>>)> = {
             let guard = self.sync.borrow();
             let Some(live) = guard.as_ref() else { return };
@@ -282,15 +283,22 @@ impl Session {
             grouped
         };
         for (url, (owned, followed)) in by_host {
-            self.tend_claims_on(url, root, owned, followed);
+            self.tend_claims_on(url, root, owned, &handed_on, followed);
         }
     }
 
-    fn tend_claims_on(self: &Rc<Self>, url: String, root: [u8; 32], owned: HashSet<ServerId>, followed: HashMap<ServerId, Vec<StreamKeys>>) {
+    fn tend_claims_on(
+        self: &Rc<Self>,
+        url: String,
+        root: [u8; 32],
+        owned: HashSet<ServerId>,
+        handed_on: &HashSet<ServerId>,
+        followed: HashMap<ServerId, Vec<StreamKeys>>,
+    ) {
         let (given, round) = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
-            let round = live.claims.entry(url.clone()).or_default().round(&url, root, owned, &followed, Instant::now());
+            let round = live.claims.entry(url.clone()).or_default().round(&url, root, owned, |server| handed_on.contains(server), &followed, Instant::now());
             (live.book.given(), round)
         };
         let mut work = Vec::new();

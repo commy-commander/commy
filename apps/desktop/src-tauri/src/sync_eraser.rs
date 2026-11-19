@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use commy_core::channel_key::{KeyScope, Keyring};
-use commy_core::{ServerId, UserId};
+use commy_core::{IdentityKey, ServerId, ServerState, UserId};
 use commy_net::community_streams as streams;
 use commy_sync::errands::{self, owner_work, ClaimBook, Errand, Finished, Instant, OwnerWork};
 use commy_sync::{StreamId, StreamKeys};
@@ -26,9 +26,16 @@ pub fn fresh_streams_made(sid: ServerId, scope: KeyScope) {
 }
 
 fn want_fresh_streams(stolen: &[StreamId], scopes: &HashMap<StreamId, (ServerId, KeyScope)>) {
-    let mut guard = FRESH.lock_or_recover();
-    let wanted = guard.get_or_insert_with(HashSet::new);
-    wanted.extend(stolen.iter().filter_map(|stream| scopes.get(stream).copied()));
+    let moving = worth_moving(stolen, &crate::community_sync::settled_writes(), scopes);
+    if moving.is_empty() {
+        return;
+    }
+    tracing::warn!("moving {} server key scopes to fresh streams because another key holds their erasers", moving.len());
+    FRESH.lock_or_recover().get_or_insert_with(HashSet::new).extend(moving);
+}
+
+fn worth_moving(stolen: &[StreamId], settled_writes: &HashSet<StreamId>, scopes: &HashMap<StreamId, (ServerId, KeyScope)>) -> HashSet<(ServerId, KeyScope)> {
+    stolen.iter().filter(|stream| settled_writes.contains(*stream)).filter_map(|stream| scopes.get(stream).copied()).collect()
 }
 
 fn scopes_of_streams(app: &App, sids: impl IntoIterator<Item = ServerId>) -> HashMap<StreamId, (ServerId, KeyScope)> {
@@ -113,11 +120,31 @@ pub fn plan(app: &App, sid: ServerId) -> Option<Plan> {
 }
 
 fn owned_servers(app: &App, me: UserId) -> HashSet<ServerId> {
-    app.servers.lock_or_recover().iter().filter(|(_, state)| state.server.owner == me && !state.is_deleted()).map(|(sid, _)| *sid).collect()
+    let Some(identity) = app.identity() else { return HashSet::new() };
+    let ours = identity.public();
+    app.servers
+        .lock_or_recover()
+        .iter()
+        .filter(|(_, state)| state.server.owner == me && !state.is_deleted() && speaks_for_owner(state, me, ours))
+        .map(|(sid, _)| *sid)
+        .collect()
 }
 
-fn still_here(app: &App, sid: ServerId) -> bool {
-    app.servers.lock_or_recover().get(&sid).is_some_and(|state| !state.is_deleted())
+fn speaks_for_owner(state: &ServerState, me: UserId, ours: IdentityKey) -> bool {
+    state.identity_of(me).is_none_or(|known| known == ours)
+}
+
+fn handed_on_servers(app: &App, me: UserId) -> HashSet<ServerId> {
+    app.servers
+        .lock_or_recover()
+        .iter()
+        .filter(|(sid, state)| has_new_owner(state, me) && !app.awaits_snapshot(**sid))
+        .map(|(sid, _)| *sid)
+        .collect()
+}
+
+fn has_new_owner(state: &ServerState, me: UserId) -> bool {
+    !state.is_deleted() && state.server.owner != me
 }
 
 fn host_of(sid: ServerId, hosts: &HashMap<ServerId, String>, account_url: &str) -> String {
@@ -137,25 +164,26 @@ pub fn tend(app: &App) {
     let Some(me) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return };
     let hosts = crate::community_sync::community_hosts();
     let owned = owned_servers(app, me);
+    let handed_on = handed_on_servers(app, me);
     let followed = by_host(crate::community_sync::followed_streams(), &hosts, &account_url);
     let mut every_host: HashSet<String> = followed.keys().cloned().collect();
     every_host.insert(account_url.clone());
     for url in every_host {
         let owned_here: HashSet<ServerId> = owned.iter().copied().filter(|sid| host_of(*sid, &hosts, &account_url) == url).collect();
         let followed_here = followed.get(&url).cloned().unwrap_or_default();
-        tend_host(app, url, identity.to_bytes(), owned_here, followed_here);
+        tend_host(app, url, identity.to_bytes(), owned_here, &handed_on, followed_here);
     }
 }
 
-fn tend_host(app: &App, url: String, root: [u8; 32], owned: HashSet<ServerId>, followed: HashMap<ServerId, Vec<StreamKeys>>) {
+fn tend_host(app: &App, url: String, root: [u8; 32], owned: HashSet<ServerId>, handed_on: &HashSet<ServerId>, followed: HashMap<ServerId, Vec<StreamKeys>>) {
     let owned_here = owned.clone();
     let round = {
         let mut guard = CLAIMS.lock_or_recover();
         let books = guard.get_or_insert_with(HashMap::new);
-        books.entry(url.clone()).or_default().round(&url, root, owned, &followed, Instant::now())
+        books.entry(url.clone()).or_default().round(&url, root, owned, |sid| handed_on.contains(sid), &followed, Instant::now())
     };
     let mut work: Vec<OwnerWork> = Vec::new();
-    for sid in round.given_up.into_iter().filter(|sid| still_here(app, *sid)) {
+    for sid in round.given_up {
         if let Some(plan) = plan(app, sid) {
             tracing::info!("letting go of the sync erasers of {sid} for its new owner");
             work.extend(owner_work(&plan.root, &plan.streams, |_| Errand::Release));
@@ -207,6 +235,43 @@ pub fn erase_deleted(plan: Plan, sid: ServerId, notices: Vec<(StreamId, u64)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stream() -> StreamId {
+        commy_sync::StreamSecret::random().keys().id
+    }
+
+    #[test]
+    fn only_a_stream_we_write_now_moves_to_a_fresh_one() {
+        let sid = ServerId::new();
+        let (written, older, unknown) = (stream(), stream(), stream());
+        let scopes = HashMap::from([(written, (sid, KeyScope::Community)), (older, (sid, KeyScope::Community))]);
+        let settled = HashSet::from([written]);
+        assert_eq!(worth_moving(&[written, older, unknown], &settled, &scopes), HashSet::from([(sid, KeyScope::Community)]));
+        assert!(worth_moving(&[older], &settled, &scopes).is_empty(), "an older key's stream is only read, so moving on again helps nobody");
+        assert!(worth_moving(&[written], &HashSet::new(), &scopes).is_empty(), "a device still catching up never moves the server on");
+    }
+
+    #[test]
+    fn a_device_with_another_identity_does_not_claim_for_the_owner() {
+        let account = commy_core::Identity::generate();
+        let mut profile = commy_core::UserProfile::new("owner");
+        profile.identity = Some(account.public());
+        let me = profile.id;
+        let mut state = ServerState::new(commy_core::Server::new("s", me));
+        assert!(speaks_for_owner(&state, me, commy_core::Identity::generate().public()), "nothing known yet");
+        state.profiles.insert(me, profile);
+        assert!(speaks_for_owner(&state, me, account.public()));
+        assert!(!speaks_for_owner(&state, me, commy_core::Identity::generate().public()));
+    }
+
+    #[test]
+    fn only_a_server_with_a_new_owner_is_handed_on() {
+        let me = UserId::new();
+        let mine = ServerState::new(commy_core::Server::new("s", me));
+        assert!(!has_new_owner(&mine, me));
+        let theirs = ServerState::new(commy_core::Server::new("s", UserId::new()));
+        assert!(has_new_owner(&theirs, me));
+    }
 
     #[test]
     fn each_community_is_tended_on_its_own_sync_host() {

@@ -488,12 +488,7 @@ impl Client {
         let Some(state) = servers.get(&server).filter(|s| s.server.owner == profile.id && !s.is_deleted()) else { return Vec::new() };
         let mut snapshot = build_sync_response_within(state, 0, profile.id, streams::SNAPSHOT_BYTES);
         sign_sync_response(&mut snapshot, Utc::now().timestamp_millis(), &identity);
-        let keys = state
-            .signed_actions()
-            .into_iter()
-            .filter(|signed| matches!(signed.event, ServerEvent::CommunityKeyAdd { .. }))
-            .map(|signed| WirePayload::Signed(signed.clone()));
-        std::iter::once(snapshot).chain(keys).collect()
+        std::iter::once(snapshot).chain(streams::owner_key_records(state)).collect()
     }
 
     pub fn owner_checkpoints(&self, server: ServerId, covers: &[u64]) -> Vec<Vec<Vec<u8>>> {
@@ -542,6 +537,18 @@ impl Client {
     pub fn owned_servers(&self) -> Vec<ServerId> {
         let Some(me) = self.me_id() else { return Vec::new() };
         self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()
+    }
+
+    pub fn claimable_servers(&self) -> HashSet<ServerId> {
+        let Some((me, ours)) = self.me.lock().unwrap().as_ref().map(|(profile, identity)| (profile.id, identity.public())) else { return HashSet::new() };
+        let servers = self.servers.lock().unwrap();
+        let speaks_for_owner = |state: &ServerState| state.identity_of(me).is_none_or(|known| known == ours);
+        servers.iter().filter(|(_, s)| s.server.owner == me && !s.is_deleted() && speaks_for_owner(s)).map(|(id, _)| *id).collect()
+    }
+
+    pub fn handed_on_servers(&self) -> HashSet<ServerId> {
+        let Some(me) = self.me_id() else { return HashSet::new() };
+        self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.owner != me && !s.is_deleted()).map(|(id, _)| *id).collect()
     }
 
     pub fn summary(&self, server: ServerId) -> Option<ServerSummary> {

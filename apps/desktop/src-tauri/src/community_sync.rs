@@ -735,20 +735,21 @@ fn share_keys(app: &App) {
                 let state = servers.get(sid)?;
                 let ring = holder.community_ring(state, None)?;
                 let (newest, secret) = ring.newest_in(state, KeyScope::Community)?;
-                let held = ring.held_records(state, KeyScope::Community);
-                let at = |id: KeyId| held.iter().find(|(record, _)| record.id == id).map(|(record, _)| record.at);
-                let behind = match stored.get(sid) {
-                    None => true,
-                    Some(id) if *id == newest => unvouched.contains(sid),
-                    Some(id) => at(*id).zip(at(newest)).is_some_and(|(old, new)| old < new),
-                };
-                behind.then(|| (*sid, newest, secret.clone()))
+                shared_key_behind(state, stored.get(sid).copied(), newest, unvouched.contains(sid)).then(|| (*sid, newest, secret.clone()))
             })
             .collect()
     };
     for (sid, key, secret) in due {
         tracing::info!("sharing the key of {sid} with your other devices");
         crate::account_log::share_community_key(app, sid, key, &secret, owners.get(&sid).copied());
+    }
+}
+
+fn shared_key_behind(state: &commy_core::ServerState, stored: Option<KeyId>, newest: KeyId, unvouched: bool) -> bool {
+    match stored {
+        None => true,
+        Some(id) if id == newest => unvouched,
+        Some(id) => state.community_keys().record(id).is_some(),
     }
 }
 
@@ -1348,6 +1349,26 @@ pub fn followed_streams() -> HashMap<ServerId, Vec<commy_sync::StreamKeys>> {
         .collect()
 }
 
+pub fn settled_writes() -> HashSet<StreamId> {
+    let guard = LIVE.lock_or_recover();
+    let Some(live) = guard.as_ref() else { return HashSet::new() };
+    live.communities.values().filter(|community| state_caught_up(live, community)).flat_map(written_streams).collect()
+}
+
+fn state_caught_up(live: &Live, community: &Community) -> bool {
+    community.wants.iter().any(|(stream, want)| want.lane == Lane::State && want.writes && live.caught_up.contains(stream))
+}
+
+fn written_streams(community: &Community) -> Vec<StreamId> {
+    let writes = community.wants.values().filter(|want| want.writes);
+    writes
+        .flat_map(|want| {
+            let checkpoint = (want.lane == Lane::State).then(|| checkpoint::keys_for(&want.keys).id);
+            std::iter::once(want.keys.id).chain(checkpoint)
+        })
+        .collect()
+}
+
 pub fn wake_keys(server: ServerId, private: Option<commy_core::ChannelId>) -> Option<commy_sync::StreamKeys> {
     let guard = LIVE.lock_or_recover();
     let community = guard.as_ref()?.communities.get(&server)?;
@@ -1835,12 +1856,7 @@ pub fn backfill_for(state: &commy_core::ServerState, lane: Lane, seen: &HashSet<
 }
 
 pub fn key_records(state: &commy_core::ServerState) -> Vec<WirePayload> {
-    state
-        .signed_actions()
-        .into_iter()
-        .filter(|signed| matches!(signed.event, ServerEvent::CommunityKeyAdd { .. }))
-        .map(|signed| WirePayload::Signed(signed.clone()))
-        .collect()
+    streams::owner_key_records(state)
 }
 
 async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
@@ -2146,7 +2162,7 @@ mod tests {
     }
 
     #[test]
-    fn the_owner_republishes_key_records_but_not_grants() {
+    fn the_owner_republishes_key_records_and_only_its_own_grant() {
         let identity = Identity::generate();
         let mut profile = UserProfile::new("owner");
         profile.identity = Some(identity.public());
@@ -2160,15 +2176,59 @@ mod tests {
             let signed = commy_core::action::SignedEvent::sign(server, owner, now_ms(), event, &identity);
             state.apply_signed(&signed).unwrap();
         }
-        let records = key_records(&state);
-        assert_eq!(records.len(), 1);
-        assert!(matches!(&records[0], WirePayload::Signed(signed) if matches!(signed.event, ServerEvent::CommunityKeyAdd { .. })));
+        let adds = key_records(&state).iter().filter(|record| matches!(record, WirePayload::Signed(signed) if matches!(signed.event, ServerEvent::CommunityKeyAdd { .. }))).count();
+        assert_eq!(adds, 1);
+        let member_identity = Identity::generate();
+        let mut member = UserProfile::new("member");
+        member.identity = Some(member_identity.public());
+        state.apply(ServerEvent::MemberJoin { server, profile: member.clone() }).unwrap();
+        let ring = Keyring::unlock_community(&state, owner, &identity);
+        let newest = ring.newest_in(&state, KeyScope::Community).unwrap().0;
+        for event in ring.grant_events(&state, KeyScope::Community, newest, &[owner, member.id]) {
+            let signed = commy_core::action::SignedEvent::sign(server, owner, now_ms(), event, &identity);
+            state.apply_signed(&signed).unwrap();
+        }
+        let grants: Vec<UserId> = key_records(&state)
+            .iter()
+            .filter_map(|record| match record {
+                WirePayload::Signed(signed) => match &signed.event {
+                    ServerEvent::CommunityKeyGrant { user, .. } => Some(*user),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(grants, vec![owner], "a new device of the owner can always open the newest key; members' grants are not repeated");
         let (key, secret) = Keyring::unlock_community(&state, owner, &identity).newest_in(&state, KeyScope::Community).map(|(k, s)| (k, s.clone())).unwrap();
         let shared = SharedKey::of(key, &secret);
         let (back, opened) = shared.open().unwrap();
         assert_eq!(back, key);
         assert_eq!(opened.bytes(), secret.bytes());
         assert!(SharedKey { id: "zz".into(), secret: shared.secret.clone() }.open().is_none());
+    }
+
+    #[test]
+    fn a_newer_key_replaces_the_shared_one_even_when_this_device_never_held_the_old_one() {
+        let identity = Identity::generate();
+        let mut profile = UserProfile::new("owner");
+        profile.identity = Some(identity.public());
+        let owner = profile.id;
+        let mut state = ServerState::new(Server::new("s", owner));
+        state.profiles.insert(owner, profile);
+        let holder = commy_view::keys::KeyHolder::as_user(owner, identity);
+        for event in holder.scope_events(&state, KeyScope::Community) {
+            state.apply(event).unwrap();
+        }
+        let first = state.community_keys().newest().unwrap().id;
+        for event in holder.rotation_events(&state, KeyScope::Community) {
+            state.apply(event).unwrap();
+        }
+        let newest = state.community_keys().newest().unwrap().id;
+        assert!(shared_key_behind(&state, None, newest, false));
+        assert!(shared_key_behind(&state, Some(first), newest, false), "an older key in the chain is replaced, held or not");
+        assert!(!shared_key_behind(&state, Some(newest), newest, false));
+        assert!(shared_key_behind(&state, Some(newest), newest, true), "a key shared without its owner is shared again with it");
+        assert!(!shared_key_behind(&state, Some(KeyId::random()), newest, false), "a key we have not heard of yet may be newer");
     }
 
     #[test]

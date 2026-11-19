@@ -66,12 +66,20 @@ impl<K> Default for ClaimBook<K> {
 }
 
 impl<K: Hash + Eq + Copy> ClaimBook<K> {
-    pub fn round(&mut self, url: &str, root: [u8; 32], owned: HashSet<K>, followed: &HashMap<K, Vec<StreamKeys>>, now: Instant) -> Round<K> {
+    pub fn round(
+        &mut self,
+        url: &str,
+        root: [u8; 32],
+        owned: HashSet<K>,
+        handed_on: impl Fn(&K) -> bool,
+        followed: &HashMap<K, Vec<StreamKeys>>,
+        now: Instant,
+    ) -> Round<K> {
         if self.url != url || self.root != root {
             *self = ClaimBook { url: url.to_string(), root, ..ClaimBook::default() };
         }
-        let given_up: Vec<K> = self.owned.difference(&owned).copied().collect();
-        self.owned = owned;
+        let (given_up, still_ours): (Vec<K>, Vec<K>) = self.owned.difference(&owned).copied().partition(|server| handed_on(server));
+        self.owned = owned.into_iter().chain(still_ours).collect();
         let mine = followed.iter().filter(|(server, _)| self.owned.contains(*server)).flat_map(|(_, streams)| streams);
         let claims = mine
             .filter(|keys| self.due(keys.id, now))
@@ -112,7 +120,7 @@ impl<K: Hash + Eq + Copy> ClaimBook<K> {
                     self.taken.remove(stream);
                 }
                 (Errand::Claim, Outcome::Theirs) => {
-                    tracing::warn!("another key holds the eraser of a server stream you own; moving it to a fresh stream");
+                    tracing::warn!("another key holds the eraser of a server stream you own");
                     self.taken.insert(*stream, now + TAKEN_WAIT);
                     stolen.push(*stream);
                 }
@@ -318,7 +326,7 @@ mod tests {
     use crate::StreamSecret;
 
     fn book_with(owned: &[u8], followed: &HashMap<u8, Vec<StreamKeys>>, book: &mut ClaimBook<u8>, now: Instant) -> Round<u8> {
-        book.round("wss://a/sync", [1; 32], owned.iter().copied().collect(), followed, now)
+        book.round("wss://a/sync", [1; 32], owned.iter().copied().collect(), |_| true, followed, now)
     }
 
     #[test]
@@ -392,6 +400,21 @@ mod tests {
     }
 
     #[test]
+    fn a_server_that_only_drops_out_for_a_moment_keeps_its_claims() {
+        let keys = StreamSecret::random().keys();
+        let followed = HashMap::from([(1u8, vec![keys.clone()])]);
+        let mut book = ClaimBook::default();
+        let now = Instant::now();
+        book_with(&[1], &followed, &mut book, now);
+        book.finish(&[(keys.id, Errand::Claim)], &[(keys.id, Outcome::Done)], now);
+        let flicker = book.round("wss://a/sync", [1; 32], HashSet::new(), |_| false, &HashMap::new(), now);
+        assert!(flicker.given_up.is_empty(), "a server still ours is never let go, even while it is out of the owned list");
+        assert!(book.round("wss://a/sync", [1; 32], HashSet::from([1]), |_| false, &followed, now).claims.is_empty(), "and its claims still hold");
+        let handed = book.round("wss://a/sync", [1; 32], HashSet::new(), |_| true, &followed, now);
+        assert_eq!(handed.given_up, vec![1], "once it really has a new owner it is let go");
+    }
+
+    #[test]
     fn another_account_or_service_starts_the_claims_over() {
         let keys = StreamSecret::random().keys();
         let followed = HashMap::from([(1u8, vec![keys.clone()])]);
@@ -399,9 +422,9 @@ mod tests {
         let now = Instant::now();
         book_with(&[1], &followed, &mut book, now);
         book.finish(&[(keys.id, Errand::Claim)], &[(keys.id, Outcome::Done)], now);
-        assert!(book.round("wss://b/sync", [1; 32], HashSet::from([1]), &followed, now).claims.len() == 1);
+        assert!(book.round("wss://b/sync", [1; 32], HashSet::from([1]), |_| true, &followed, now).claims.len() == 1);
         book.finish(&[(keys.id, Errand::Claim)], &[(keys.id, Outcome::Done)], now);
-        let other = book.round("wss://b/sync", [2; 32], HashSet::from([1]), &followed, now);
+        let other = book.round("wss://b/sync", [2; 32], HashSet::from([1]), |_| true, &followed, now);
         assert_eq!(other.claims.len(), 1);
         assert!(other.given_up.is_empty(), "a new account has nothing to let go of");
     }

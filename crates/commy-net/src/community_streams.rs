@@ -173,6 +173,19 @@ pub fn is_key_event(event: &ServerEvent) -> bool {
     )
 }
 
+pub fn owner_key_records(state: &ServerState) -> Vec<WirePayload> {
+    let owner = state.server.owner;
+    state.signed_actions().into_iter().filter(|signed| republished_key_record(&signed.event, owner)).map(|signed| WirePayload::Signed(signed.clone())).collect()
+}
+
+fn republished_key_record(event: &ServerEvent, owner: UserId) -> bool {
+    match event {
+        ServerEvent::CommunityKeyAdd { .. } => true,
+        ServerEvent::CommunityKeyGrant { user, .. } => *user == owner,
+        _ => false,
+    }
+}
+
 pub fn changes_lanes(event: &ServerEvent) -> bool {
     is_key_event(event)
         || matches!(
