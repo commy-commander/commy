@@ -5,7 +5,7 @@ import { memoryAdapter } from "better-auth/adapters/memory";
 import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
-import { MAX_VAULT_BYTES, normalizeVaultName, validSealed } from "../src/vault.js";
+import { EARLIER_DAYS, MAX_VAULT_BYTES, NEWEST_EARLIER_KEPT, cleanWriter, earlierToDrop, normalizeVaultName, validSealed } from "../src/vault.js";
 
 const ORIGIN = "http://localhost:3001";
 const ENV = { BETTER_AUTH_SECRET: "test-secret-".repeat(4), DATABASE_URL: "postgres://unused", BETTER_AUTH_URL: ORIGIN };
@@ -13,7 +13,7 @@ const SEALED = (n) => "sealed1." + `Ab-_${n}`.padEnd(60, "x");
 
 function makeAuth() {
   const options = buildAuthOptions(loadConfig(ENV), { pool: null, send: async () => {} });
-  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], vaultItem: [], doorbellRing: [] };
+  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], vaultItem: [], vaultEarlier: [], doorbellRing: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);
@@ -84,4 +84,107 @@ test("writes must name the version they replace", async () => {
 
   await call("POST", "/commy/vault/delete", { cookie: alice, body: { name: "servers" } });
   assert.equal(db.vaultItem.length, 0);
+});
+
+const DAY = 24 * 60 * 60 * 1000;
+
+async function putServers(call, cookie, n, version, writer) {
+  const r = await call("POST", "/commy/vault/put", { cookie, body: { name: "servers", data: SEALED(n), version, writer } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  return r.json.version;
+}
+
+test("discovery lists the earlier copies", () => {
+  const d = discoveryDocument(loadConfig(ENV));
+  assert.equal(d.endpoints.vaultEarlier, `${ORIGIN}/api/auth/commy/vault/earlier`);
+  assert.equal(d.features.vaultEarlier, true);
+});
+
+test("every replaced server list is kept, newest first, with the build that wrote it", async () => {
+  const { call, signUp } = makeAuth();
+  const alice = await signUp("alice@example.test");
+  let version = await putServers(call, alice, 1, 0, "Commy 0.2.4 (windows)");
+  version = await putServers(call, alice, 2, version, "Commy 1.0.0-rc.2 (ios)");
+  await putServers(call, alice, 3, version);
+
+  const earlier = await call("GET", "/commy/vault/earlier", { cookie: alice, query: { name: "servers" } });
+  assert.equal(earlier.status, 200, JSON.stringify(earlier.json));
+  assert.deepEqual(
+    earlier.json.items.map(({ version, data, writer }) => ({ version, data, writer })),
+    [
+      { version: 2, data: SEALED(2), writer: "Commy 1.0.0-rc.2 (ios)" },
+      { version: 1, data: SEALED(1), writer: "Commy 0.2.4 (windows)" },
+    ],
+  );
+  assert.ok(earlier.json.items.every((item) => item.replacedAt && item.updatedAt));
+  assert.equal((await call("GET", "/commy/vault", { cookie: alice, query: { name: "servers" } })).json.data, SEALED(3));
+});
+
+test("a refused write keeps no copy and the current list stays", async () => {
+  const { db, call, signUp } = makeAuth();
+  const alice = await signUp("alice@example.test");
+  await putServers(call, alice, 1, 0);
+  assert.equal((await call("POST", "/commy/vault/put", { cookie: alice, body: { name: "servers", data: SEALED(2), version: 0 } })).status, 409);
+  assert.equal(db.vaultEarlier.length, 0);
+});
+
+test("deleting the list keeps the last copy so it can be brought back", async () => {
+  const { call, signUp } = makeAuth();
+  const alice = await signUp("alice@example.test");
+  await putServers(call, alice, 1, 0);
+  await call("POST", "/commy/vault/delete", { cookie: alice, body: { name: "servers" } });
+  const earlier = await call("GET", "/commy/vault/earlier", { cookie: alice, query: { name: "servers" } });
+  assert.deepEqual(earlier.json.items.map((item) => item.data), [SEALED(1)]);
+});
+
+test("earlier copies stay with their account and only for kept items", async () => {
+  const { call, signUp } = makeAuth();
+  const alice = await signUp("alice@example.test");
+  const bob = await signUp("bob@example.test");
+  const version = await putServers(call, alice, 1, 0);
+  await putServers(call, alice, 2, version);
+  assert.equal((await call("GET", "/commy/vault/earlier", { query: { name: "servers" } })).status, 401);
+  assert.deepEqual((await call("GET", "/commy/vault/earlier", { cookie: bob, query: { name: "servers" } })).json.items, []);
+  assert.equal((await call("GET", "/commy/vault/earlier", { cookie: alice, query: { name: "read-state" } })).status, 400);
+});
+
+test("the escrowed list key keeps earlier copies too", async () => {
+  const { call, signUp } = makeAuth();
+  const alice = await signUp("alice@example.test");
+  await call("POST", "/commy/vault/put", { cookie: alice, body: { name: "entry-key", data: SEALED(1), version: 0 } });
+  await call("POST", "/commy/vault/put", { cookie: alice, body: { name: "entry-key", data: SEALED(2), version: 1 } });
+  const earlier = await call("GET", "/commy/vault/earlier", { cookie: alice, query: { name: "entry-key" } });
+  assert.deepEqual(earlier.json.items.map((item) => item.data), [SEALED(1)]);
+});
+
+test("writer labels are short printable text", () => {
+  assert.equal(cleanWriter(" Commy 1.0.0 (ios) "), "Commy 1.0.0 (ios)");
+  assert.equal(cleanWriter("x".repeat(200)).length, 80);
+  assert.equal(cleanWriter("a\u0000b\nc"), "abc");
+  assert.equal(cleanWriter(undefined), null);
+  assert.equal(cleanWriter(""), null);
+});
+
+function copies(count, { start, everyMs }) {
+  return Array.from({ length: count }, (_, i) => ({ id: `c${i}`, version: i + 1, replacedAt: new Date(start + i * everyMs) }));
+}
+
+test("a burst of bad writes cannot push out the copy from before the burst", () => {
+  const now = new Date("2026-11-19T12:00:00Z");
+  const before = { id: "good", version: 1, replacedAt: new Date("2026-11-18T09:00:00Z") };
+  const burst = copies(500, { start: Date.parse("2026-11-19T00:00:00Z"), everyMs: 1000 }).map((row) => ({ ...row, version: row.version + 1 }));
+  const drop = new Set(earlierToDrop([before, ...burst], now));
+  assert.ok(!drop.has("good"), "the last copy of the day before survives");
+  assert.ok(!drop.has("c0"), "the first copy replaced in the bad day survives");
+  const kept = 501 - drop.size;
+  assert.equal(kept, NEWEST_EARLIER_KEPT + 2);
+});
+
+test("one copy a day is kept for the retention window, then dropped", () => {
+  const now = new Date("2026-11-19T12:00:00Z");
+  const daily = copies(80, { start: now.getTime() - 79 * DAY, everyMs: DAY });
+  const drop = new Set(earlierToDrop(daily, now));
+  const kept = daily.filter((row) => !drop.has(row.id));
+  assert.equal(kept.length, EARLIER_DAYS + 1);
+  assert.ok(kept.every((row) => now - row.replacedAt <= (EARLIER_DAYS + 1) * DAY));
 });

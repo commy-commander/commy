@@ -13,7 +13,7 @@ const LOCK = "0123456789abcdef0123456789abcdef";
 
 function makeAuth(env = ENV) {
   const options = buildAuthOptions(loadConfig(env), { pool: null, send: async () => {} });
-  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], vaultItem: [], doorbellRing: [] };
+  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], vaultItem: [], vaultEarlier: [], doorbellRing: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   const auth = betterAuth(options);

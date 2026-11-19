@@ -21,7 +21,7 @@ function makeAuth() {
     SMTP_PASSWORD: "unused",
   });
   const options = buildAuthOptions(config, { pool: null, send: async () => {} });
-  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [], vaultItem: [], passkey: [], twoFactor: [], directoryListing: [], commyMove: [] };
+  const db = { user: [], session: [], commyIdentity: [], account: [], verification: [], deviceCode: [], linkedDevice: [], deviceRequest: [], invite: [], inviteBackground: [], doorbellRing: [], vaultItem: [], vaultEarlier: [], passkey: [], twoFactor: [], directoryListing: [], commyMove: [] };
   options.database = sealedAtRest(memoryAdapter(db), options.secret);
   options.rateLimit = { enabled: false };
   return { auth: betterAuth(options), db };

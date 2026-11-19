@@ -31,7 +31,7 @@ function start(env) {
     invite: [],
     inviteBackground: [],
     directoryListing: [],
-    vaultItem: [],
+    vaultItem: [], vaultEarlier: [],
     doorbellRing: [],
     twoFactor: [],
     passkey: [],
@@ -90,6 +90,7 @@ function giveThingsTo(userId, tag) {
   const later = new Date(Date.now() + 3600_000);
   db.linkedDevice.push({ id: `dev-${tag}`, userId, nodeId: `node-${tag}`, createdAt: now, lastSeenAt: now });
   db.vaultItem.push({ id: `vault-${tag}`, userId, name: "entries", data: "sealed1.x", version: 1, updatedAt: now });
+  db.vaultEarlier.push({ id: `earlier-${tag}`, userId, name: "servers", data: "sealed1.y", version: 1, updatedAt: now, replacedAt: now });
   db.passkey.push({ id: `pk-${tag}`, userId, publicKey: "k", credentialID: `cred-${tag}`, counter: 0, deviceType: "singleDevice", backedUp: false, createdAt: now });
   db.invite.push({ id: `inv-${tag}`, code: `code-${tag}`, ticket: "t", serverName: "", createdBy: userId, createdAt: now, expiresAt: later });
   db.inviteBackground.push({ id: `bg-${tag}`, code: `code-${tag}`, data: "x", expiresAt: later });
@@ -99,7 +100,7 @@ function giveThingsTo(userId, tag) {
 }
 
 const owned = (userId) =>
-  ["session", "account", "linkedDevice", "vaultItem", "passkey", "commyMove", "commyIdentity"].flatMap((model) => db[model].filter((row) => row.userId === userId)).length +
+  ["session", "account", "linkedDevice", "vaultItem", "vaultEarlier", "passkey", "commyMove", "commyIdentity"].flatMap((model) => db[model].filter((row) => row.userId === userId)).length +
   db.invite.filter((row) => row.createdBy === userId).length +
   db.directoryListing.filter((row) => row.createdBy === userId).length;
 

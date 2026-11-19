@@ -11,6 +11,7 @@ const MAX_PASSWORD = 128;
 const OWNED_ROWS = [
   { model: "linkedDevice", field: "userId" },
   { model: "vaultItem", field: "userId" },
+  { model: "vaultEarlier", field: "userId" },
   { model: "passkey", field: "userId" },
   { model: "twoFactor", field: "userId" },
   { model: "deviceCode", field: "userId" },
