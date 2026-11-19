@@ -31,6 +31,10 @@ Avoid emojis and M-Dashes. Use generated assets and icon libraries.
 
 No code comments, in any language or file type (Rust, JavaScript, CSS, HTML, shell, YAML, TOML, Dockerfiles, Caddyfiles). Rust doc comments (`///`, `//!`) count as comments. Make the code say it instead: clear names, named constants, small functions, and tests for the behaviour that matters. The only exceptions are license or SPDX headers, `// SAFETY:` notes on unsafe blocks, and tool directives (`#[allow]`, `eslint-disable`, `@ts-` directives, `# shellcheck disable`, shebangs). `deploy/.env.example` keeps its notes because it is the operator's setup guide, not code.
 
+### Wire Data
+
+Apps on older versions must keep reading what newer ones write. A new field on a postcard wire type (`Server`, `UserProfile`, `Message`, event payloads) goes at the end with `#[serde(default, with = "crate::wire_layout::later")]`; never reorder, retype or remove fields, and only add variants to `ServerEvent`, `WirePayload` or `CatchupFrame`. `crates/commy-net/tests/wire_shape.rs` checks this against the shape 0.2.4 reads (`tests/fixtures/wire-shape-0.2.4.json`).
+
 ### Testing Approach
 
 Create Robust Unit Tests for all new modules written, QA testing is high priority. 

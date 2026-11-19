@@ -42,6 +42,8 @@ bao-tree = { version = "0.16", default-features = false }
 iroh-blobs = { version = "0.103", default-features = false }
 
 [dev-dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
 iroh = { workspace = true, features = ["unstable-net-report", "test-utils"] }
 commy-core = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true }

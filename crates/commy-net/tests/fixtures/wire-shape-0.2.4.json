@@ -1,0 +1,4794 @@
+{
+  "Action": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/action.rs",
+      "fields": [
+        {
+          "name": "by",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "sig",
+          "ty": "Signature",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Activity": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/activity.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "kind",
+          "ty": "ActivityKind",
+          "later": false
+        },
+        {
+          "name": "starter",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "started_at",
+          "ty": "i64",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "ActivityInput": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/activity.rs",
+      "variants": [
+        {
+          "name": "Join",
+          "fields": []
+        },
+        {
+          "name": "Leave",
+          "fields": []
+        },
+        {
+          "name": "Playback",
+          "fields": [
+            {
+              "name": "playing",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "position",
+              "ty": "f64",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "i64",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Move",
+          "fields": [
+            {
+              "name": "cell",
+              "ty": "u8",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Rematch",
+          "fields": []
+        },
+        {
+          "name": "Sync",
+          "fields": [
+            {
+              "name": "participants",
+              "ty": "Vec<UserId>",
+              "later": false
+            },
+            {
+              "name": "players",
+              "ty": "Vec<UserId>",
+              "later": false
+            },
+            {
+              "name": "board",
+              "ty": "Vec<u8>",
+              "later": false
+            },
+            {
+              "name": "playing",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "position",
+              "ty": "f64",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "i64",
+              "later": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "ActivityKind": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/activity.rs",
+      "variants": [
+        {
+          "name": "Watch",
+          "fields": [
+            {
+              "name": "source",
+              "ty": "WatchSource",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "TicTacToe",
+          "fields": []
+        }
+      ]
+    }
+  ],
+  "Answer": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/onboarding.rs",
+      "fields": [
+        {
+          "name": "label",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "roles",
+          "ty": "Vec<RoleId>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Attachment": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/message.rs",
+      "fields": [
+        {
+          "name": "blob",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "filename",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "size_bytes",
+          "ty": "u64",
+          "later": false
+        },
+        {
+          "name": "mime_type",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "provider",
+          "ty": "Option<String>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "AutoMod": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/automod.rs",
+      "fields": [
+        {
+          "name": "blocked_terms",
+          "ty": "Vec<String>",
+          "later": false
+        },
+        {
+          "name": "block_links",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "max_mentions",
+          "ty": "Option<u8>",
+          "later": false
+        },
+        {
+          "name": "burst",
+          "ty": "Option<Burst>",
+          "later": false
+        },
+        {
+          "name": "exempt_roles",
+          "ty": "Vec<RoleId>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "BanRecord": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/removals.rs",
+      "fields": [
+        {
+          "name": "by",
+          "ty": "Option<UserId>",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "until",
+          "ty": "Option<i64>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "BotCommand": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/command.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "description",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "options",
+          "ty": "Vec<CommandOption>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "BucketDigest": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/catchup.rs",
+      "fields": [
+        {
+          "name": "key",
+          "ty": "BucketKey",
+          "later": false
+        },
+        {
+          "name": "count",
+          "ty": "u32",
+          "later": false
+        },
+        {
+          "name": "hash",
+          "ty": "[u8;16]",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "BucketKey": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/catchup.rs",
+      "variants": [
+        {
+          "name": "Messages",
+          "fields": [
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "day",
+              "ty": "u32",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Tombstones",
+          "fields": [
+            {
+              "name": "day",
+              "ty": "u32",
+              "later": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "Burst": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/automod.rs",
+      "fields": [
+        {
+          "name": "messages",
+          "ty": "u8",
+          "later": false
+        },
+        {
+          "name": "seconds",
+          "ty": "u16",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "CallSignal": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/dm.rs",
+      "variants": [
+        {
+          "name": "Ring",
+          "fields": []
+        },
+        {
+          "name": "Accept",
+          "fields": []
+        },
+        {
+          "name": "Decline",
+          "fields": []
+        },
+        {
+          "name": "HangUp",
+          "fields": []
+        }
+      ]
+    }
+  ],
+  "Care": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/pet.rs",
+      "variants": [
+        {
+          "name": "Feed",
+          "fields": []
+        },
+        {
+          "name": "Pat",
+          "fields": []
+        },
+        {
+          "name": "Play",
+          "fields": []
+        }
+      ]
+    }
+  ],
+  "CareLog": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/pet.rs",
+      "fields": [
+        {
+          "name": "fed",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "patted",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "played",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "count",
+          "ty": "u32",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "CatchupFrame": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-net/src/catchup.rs",
+      "variants": [
+        {
+          "name": "Hello",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "identity",
+              "ty": "IdentityKey",
+              "later": false
+            },
+            {
+              "name": "ts_ms",
+              "ty": "i64",
+              "later": false
+            },
+            {
+              "name": "sig",
+              "ty": "Signature",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Refused",
+          "fields": [
+            {
+              "name": "reason",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "retry_after_ms",
+              "ty": "Option<u64>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Digests",
+          "fields": [
+            {
+              "name": "0",
+              "ty": "Vec<BucketDigest>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Items",
+          "fields": [
+            {
+              "name": "0",
+              "ty": "Vec<BucketItems>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Want",
+          "fields": [
+            {
+              "name": "0",
+              "ty": "Vec<MessageId>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Push",
+          "fields": [
+            {
+              "name": "messages",
+              "ty": "Vec<Message>",
+              "later": false
+            },
+            {
+              "name": "tombstones",
+              "ty": "Vec<TombstoneProof>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Done",
+          "fields": []
+        },
+        {
+          "name": "ItemsEnd",
+          "fields": [
+            {
+              "name": "omitted",
+              "ty": "Vec<BucketKey>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Profiles",
+          "fields": [
+            {
+              "name": "0",
+              "ty": "Vec<UserProfile>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Applied",
+          "fields": [
+            {
+              "name": "held",
+              "ty": "Vec<MessageId>",
+              "later": false
+            },
+            {
+              "name": "rejected",
+              "ty": "Vec<MessageId>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Reactions",
+          "fields": [
+            {
+              "name": "0",
+              "ty": "Vec<ReactionChange>",
+              "later": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "Channel": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "ChannelId",
+          "later": false
+        },
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "kind",
+          "ty": "ChannelKind",
+          "later": false
+        },
+        {
+          "name": "topic",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "parent",
+          "ty": "Option<ChannelId>",
+          "later": false
+        },
+        {
+          "name": "position",
+          "ty": "u32",
+          "later": false
+        },
+        {
+          "name": "retention_days",
+          "ty": "Option<u32>",
+          "later": false
+        },
+        {
+          "name": "user_limit",
+          "ty": "u32",
+          "later": false
+        },
+        {
+          "name": "banner",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "color",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "view_roles",
+          "ty": "Vec<RoleId>",
+          "later": false
+        },
+        {
+          "name": "send_roles",
+          "ty": "Vec<RoleId>",
+          "later": false
+        },
+        {
+          "name": "slow_mode",
+          "ty": "u32",
+          "later": false
+        },
+        {
+          "name": "sensitive",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "threads",
+          "ty": "BTreeMap<MessageId,Thread>",
+          "later": false
+        },
+        {
+          "name": "voice_status",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "tags",
+          "ty": "Vec<ForumTag>",
+          "later": false
+        },
+        {
+          "name": "posts",
+          "ty": "BTreeMap<MessageId,ForumPost>",
+          "later": false
+        },
+        {
+          "name": "speakers",
+          "ty": "Vec<UserId>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "ChannelKind": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/server.rs",
+      "variants": [
+        {
+          "name": "Text",
+          "fields": []
+        },
+        {
+          "name": "Voice",
+          "fields": []
+        },
+        {
+          "name": "Announcement",
+          "fields": []
+        },
+        {
+          "name": "Category",
+          "fields": []
+        },
+        {
+          "name": "Forum",
+          "fields": []
+        },
+        {
+          "name": "Stage",
+          "fields": []
+        },
+        {
+          "name": "Drive",
+          "fields": []
+        }
+      ]
+    }
+  ],
+  "CommandOption": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/command.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "description",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "required",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "kind",
+          "ty": "OptionKind",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "CustomEmoji": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "blob",
+          "ty": "String",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "DmAction": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/dm.rs",
+      "variants": [
+        {
+          "name": "Post",
+          "fields": []
+        },
+        {
+          "name": "Edit",
+          "fields": [
+            {
+              "name": "target",
+              "ty": "MessageId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Delete",
+          "fields": [
+            {
+              "name": "target",
+              "ty": "MessageId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "React",
+          "fields": [
+            {
+              "name": "target",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "emoji",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "active",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Call",
+          "fields": [
+            {
+              "name": "call",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "signal",
+              "ty": "CallSignal",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "GroupInvite",
+          "fields": [
+            {
+              "name": "ticket",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Nudge",
+          "fields": [
+            {
+              "name": "target",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "server",
+              "ty": "Option<ServerId>",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "Option<ChannelId>",
+              "later": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "DmEnvelope": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-net/src/dm.rs",
+      "fields": [
+        {
+          "name": "message",
+          "ty": "DmMessage",
+          "later": false
+        },
+        {
+          "name": "sender",
+          "ty": "UserProfile",
+          "later": false
+        },
+        {
+          "name": "note",
+          "ty": "Option<String>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "DmMessage": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/dm.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "MessageId",
+          "later": false
+        },
+        {
+          "name": "from",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "to",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "content",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "created_at",
+          "ty": "DateTime<Utc>",
+          "later": false
+        },
+        {
+          "name": "from_node",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "sig",
+          "ty": "Option<Signature>",
+          "later": false
+        },
+        {
+          "name": "attachments",
+          "ty": "Vec<Attachment>",
+          "later": false
+        },
+        {
+          "name": "reply_to",
+          "ty": "Option<MessageId>",
+          "later": false
+        },
+        {
+          "name": "action",
+          "ty": "DmAction",
+          "later": false
+        },
+        {
+          "name": "edited_at",
+          "ty": "Option<DateTime<Utc>>",
+          "later": false
+        },
+        {
+          "name": "reactions",
+          "ty": "Vec<Reaction>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "DriveFile": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/drive.rs",
+      "fields": [
+        {
+          "name": "blob",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "size",
+          "ty": "u64",
+          "later": false
+        },
+        {
+          "name": "mime",
+          "ty": "String",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "DriveItem": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/drive.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "DriveId",
+          "later": false
+        },
+        {
+          "name": "channel",
+          "ty": "ChannelId",
+          "later": false
+        },
+        {
+          "name": "parent",
+          "ty": "Option<DriveId>",
+          "later": false
+        },
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "file",
+          "ty": "Option<DriveFile>",
+          "later": false
+        },
+        {
+          "name": "by",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "holders",
+          "ty": "BTreeMap<UserId,String>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Emoticon": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "text",
+          "ty": "String",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Entry": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-net/src/community_streams.rs",
+      "fields": [
+        {
+          "name": "version",
+          "ty": "u16",
+          "later": false
+        },
+        {
+          "name": "payload",
+          "ty": "WirePayload",
+          "later": false
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "file": "crates/commy-net/src/entry_list.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "ticket",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "since",
+          "ty": "DateTime<Utc>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Envelope": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-net/src/protocol.rs",
+      "fields": [
+        {
+          "name": "version",
+          "ty": "u16",
+          "later": false
+        },
+        {
+          "name": "sender",
+          "ty": "[u8;32]",
+          "later": false
+        },
+        {
+          "name": "payload",
+          "ty": "WirePayload",
+          "later": false
+        },
+        {
+          "name": "nonce",
+          "ty": "u64",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "ForumPost": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "title",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "tags",
+          "ty": "Vec<TagId>",
+          "later": false
+        },
+        {
+          "name": "author",
+          "ty": "UserId",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "ForumTag": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "TagId",
+          "later": false
+        },
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "emoji",
+          "ty": "Option<String>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "GameDbKey": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/search_keys.rs",
+      "fields": [
+        {
+          "name": "client_id",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "client_secret",
+          "ty": "String",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "GameTagMeta": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "igdb_id",
+          "ty": "u64",
+          "later": false
+        },
+        {
+          "name": "cover",
+          "ty": "Option<String>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "GifKey": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/search_keys.rs",
+      "fields": [
+        {
+          "name": "provider",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "key",
+          "ty": "String",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "JoinRequest": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/join_request.rs",
+      "fields": [
+        {
+          "name": "profile",
+          "ty": "UserProfile",
+          "later": false
+        },
+        {
+          "name": "note",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "i64",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "KeyId": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/channel_key.rs",
+      "fields": [
+        {
+          "name": "0",
+          "ty": "[u8;16]",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "KeyLink": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/channel_key.rs",
+      "fields": [
+        {
+          "name": "prev",
+          "ty": "KeyId",
+          "later": false
+        },
+        {
+          "name": "nonce",
+          "ty": "[u8;12]",
+          "later": false
+        },
+        {
+          "name": "sealed",
+          "ty": "Vec<u8>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "KeyRecord": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/channel_key.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "KeyId",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "links",
+          "ty": "Vec<KeyLink>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Kick": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/removals.rs",
+      "fields": [
+        {
+          "name": "user",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "by",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "i64",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Member": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "user",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "nickname",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "roles",
+          "ty": "Vec<RoleId>",
+          "later": false
+        },
+        {
+          "name": "joined_at",
+          "ty": "DateTime<Utc>",
+          "later": false
+        },
+        {
+          "name": "timeout",
+          "ty": "Option<Timeout>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Message": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/message.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "MessageId",
+          "later": false
+        },
+        {
+          "name": "channel",
+          "ty": "ChannelId",
+          "later": false
+        },
+        {
+          "name": "author",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "content",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "created_at",
+          "ty": "DateTime<Utc>",
+          "later": false
+        },
+        {
+          "name": "edited_at",
+          "ty": "Option<DateTime<Utc>>",
+          "later": false
+        },
+        {
+          "name": "attachments",
+          "ty": "Vec<Attachment>",
+          "later": false
+        },
+        {
+          "name": "reactions",
+          "ty": "Vec<Reaction>",
+          "later": false
+        },
+        {
+          "name": "reply_to",
+          "ty": "Option<MessageId>",
+          "later": false
+        },
+        {
+          "name": "sig",
+          "ty": "Option<Signature>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Onboarding": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/onboarding.rs",
+      "fields": [
+        {
+          "name": "questions",
+          "ty": "Vec<Question>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "OptionKind": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/command.rs",
+      "variants": [
+        {
+          "name": "String",
+          "fields": []
+        },
+        {
+          "name": "Integer",
+          "fields": []
+        },
+        {
+          "name": "User",
+          "fields": []
+        },
+        {
+          "name": "Channel",
+          "fields": []
+        }
+      ]
+    }
+  ],
+  "Permissions": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/permissions.rs",
+      "fields": [
+        {
+          "name": "0",
+          "ty": "u64",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Pet": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/pet.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "suit",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "adopted",
+          "ty": "i64",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Pin": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "channel",
+          "ty": "ChannelId",
+          "later": false
+        },
+        {
+          "name": "message",
+          "ty": "MessageId",
+          "later": false
+        },
+        {
+          "name": "by",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "DateTime<Utc>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Presence": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/user.rs",
+      "variants": [
+        {
+          "name": "Online",
+          "fields": []
+        },
+        {
+          "name": "Idle",
+          "fields": []
+        },
+        {
+          "name": "DoNotDisturb",
+          "fields": []
+        },
+        {
+          "name": "Invisible",
+          "fields": []
+        },
+        {
+          "name": "Offline",
+          "fields": []
+        }
+      ]
+    }
+  ],
+  "Question": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/onboarding.rs",
+      "fields": [
+        {
+          "name": "title",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "description",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "multiple",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "answers",
+          "ty": "Vec<Answer>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Reaction": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/message.rs",
+      "fields": [
+        {
+          "name": "emoji",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "users",
+          "ty": "Vec<UserId>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "ReactionChange": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/catchup.rs",
+      "fields": [
+        {
+          "name": "message",
+          "ty": "MessageId",
+          "later": false
+        },
+        {
+          "name": "emoji",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "active",
+          "ty": "bool",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Role": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "RoleId",
+          "later": false
+        },
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "color",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "permissions",
+          "ty": "Permissions",
+          "later": false
+        },
+        {
+          "name": "position",
+          "ty": "u32",
+          "later": false
+        },
+        {
+          "name": "hoist",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "self_assignable",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "tag",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "banner",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "mentionable",
+          "ty": "bool",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Rsvp": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/server.rs",
+      "variants": [
+        {
+          "name": "Going",
+          "fields": []
+        },
+        {
+          "name": "Interested",
+          "fields": []
+        }
+      ]
+    }
+  ],
+  "ScheduledEvent": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "title",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "description",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "start",
+          "ty": "DateTime<Utc>",
+          "later": false
+        },
+        {
+          "name": "end",
+          "ty": "Option<DateTime<Utc>>",
+          "later": false
+        },
+        {
+          "name": "channel",
+          "ty": "Option<ChannelId>",
+          "later": false
+        },
+        {
+          "name": "creator",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "rsvps",
+          "ty": "Vec<(UserId,Rsvp)>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "SealedKey": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/channel_key.rs",
+      "fields": [
+        {
+          "name": "key",
+          "ty": "KeyId",
+          "later": false
+        },
+        {
+          "name": "ephemeral",
+          "ty": "[u8;32]",
+          "later": false
+        },
+        {
+          "name": "nonce",
+          "ty": "[u8;12]",
+          "later": false
+        },
+        {
+          "name": "sealed",
+          "ty": "Vec<u8>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Server": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "ServerId",
+          "later": false
+        },
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "icon",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "owner",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "channels",
+          "ty": "Vec<Channel>",
+          "later": false
+        },
+        {
+          "name": "roles",
+          "ty": "Vec<Role>",
+          "later": false
+        },
+        {
+          "name": "members",
+          "ty": "Vec<Member>",
+          "later": false
+        },
+        {
+          "name": "emojis",
+          "ty": "Vec<CustomEmoji>",
+          "later": false
+        },
+        {
+          "name": "soundboard",
+          "ty": "Vec<SoundboardSound>",
+          "later": false
+        },
+        {
+          "name": "created_at",
+          "ty": "DateTime<Utc>",
+          "later": false
+        },
+        {
+          "name": "deleted_channels",
+          "ty": "Vec<ChannelId>",
+          "later": false
+        },
+        {
+          "name": "afk_channel_id",
+          "ty": "Option<ChannelId>",
+          "later": false
+        },
+        {
+          "name": "afk_disabled",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "banner",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "emojis_shareable",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "soundboard_open",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "sounds_shareable",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "pronouns",
+          "ty": "BTreeMap<UserId,String>",
+          "later": false
+        },
+        {
+          "name": "game_tags",
+          "ty": "Vec<String>",
+          "later": false
+        },
+        {
+          "name": "game_tag_meta",
+          "ty": "Vec<GameTagMeta>",
+          "later": false
+        },
+        {
+          "name": "rules",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "rules_accepted",
+          "ty": "Vec<UserId>",
+          "later": false
+        },
+        {
+          "name": "events",
+          "ty": "Vec<ScheduledEvent>",
+          "later": false
+        },
+        {
+          "name": "deleted_events",
+          "ty": "Vec<String>",
+          "later": false
+        },
+        {
+          "name": "server_muted",
+          "ty": "Vec<UserId>",
+          "later": false
+        },
+        {
+          "name": "server_deafened",
+          "ty": "Vec<UserId>",
+          "later": false
+        },
+        {
+          "name": "banned",
+          "ty": "Vec<UserId>",
+          "later": false
+        },
+        {
+          "name": "afk_timeout_minutes",
+          "ty": "Option<u32>",
+          "later": false
+        },
+        {
+          "name": "public",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "group",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "pins",
+          "ty": "Vec<Pin>",
+          "later": false
+        },
+        {
+          "name": "stickers",
+          "ty": "Vec<Sticker>",
+          "later": false
+        },
+        {
+          "name": "emoticons",
+          "ty": "Vec<Emoticon>",
+          "later": false
+        },
+        {
+          "name": "stickers_shareable",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "emoticons_shareable",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "onboarding",
+          "ty": "Option<Onboarding>",
+          "later": false
+        },
+        {
+          "name": "defaults_version",
+          "ty": "u32",
+          "later": false
+        },
+        {
+          "name": "activities_enabled",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "stepped_down",
+          "ty": "BTreeMap<UserId,i64>",
+          "later": false
+        },
+        {
+          "name": "join_sounds",
+          "ty": "BTreeMap<UserId,String>",
+          "later": false
+        },
+        {
+          "name": "join_sounds_off",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "tag",
+          "ty": "Option<ServerTag>",
+          "later": false
+        },
+        {
+          "name": "join_approval",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "join_requests",
+          "ty": "Vec<JoinRequest>",
+          "later": false
+        },
+        {
+          "name": "turned_away",
+          "ty": "Vec<UserId>",
+          "later": false
+        },
+        {
+          "name": "join_approval_since",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "tip_jar",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "pet",
+          "ty": "Option<Pet>",
+          "later": false
+        },
+        {
+          "name": "pet_care",
+          "ty": "BTreeMap<UserId,CareLog>",
+          "later": false
+        },
+        {
+          "name": "drive",
+          "ty": "Vec<DriveItem>",
+          "later": false
+        },
+        {
+          "name": "bans",
+          "ty": "BTreeMap<UserId,BanRecord>",
+          "later": false
+        },
+        {
+          "name": "kicked",
+          "ty": "Vec<Kick>",
+          "later": false
+        },
+        {
+          "name": "upload_limit_mb",
+          "ty": "Option<u32>",
+          "later": false
+        },
+        {
+          "name": "upload_limit_since",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "tts_off",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "file_store",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "gif_key",
+          "ty": "Option<GifKey>",
+          "later": false
+        },
+        {
+          "name": "game_db",
+          "ty": "Option<GameDbKey>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "ServerEvent": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/event.rs",
+      "variants": [
+        {
+          "name": "MessageCreate",
+          "fields": [
+            {
+              "name": "message",
+              "ty": "Message",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MessageEdit",
+          "fields": [
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "message",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "content",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "edited_at",
+              "ty": "DateTime<Utc>",
+              "later": false
+            },
+            {
+              "name": "sig",
+              "ty": "Signature",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MessageDelete",
+          "fields": [
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "message",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "DateTime<Utc>",
+              "later": false
+            },
+            {
+              "name": "sig",
+              "ty": "Signature",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ReactionToggle",
+          "fields": [
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "message",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "emoji",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MemberJoin",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "profile",
+              "ty": "UserProfile",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MemberLeave",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "PresenceUpdate",
+          "fields": [
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "presence",
+              "ty": "Presence",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelCreate",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "Channel",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelDelete",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "VoiceState",
+          "fields": [
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "Option<ChannelId>",
+              "later": false
+            },
+            {
+              "name": "muted",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "deafened",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "since",
+              "ty": "Option<i64>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "TypingStart",
+          "fields": [
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ScreenShare",
+          "fields": [
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "active",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ServerRename",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ProfileUpdate",
+          "fields": [
+            {
+              "name": "profile",
+              "ty": "UserProfile",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "RoleCreate",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "role",
+              "ty": "Role",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "RoleDelete",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "role",
+              "ty": "RoleId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "RoleAssign",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "role",
+              "ty": "RoleId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "RoleUnassign",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "role",
+              "ty": "RoleId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "AfkChannelSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "Option<ChannelId>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelUpdate",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "retention_days",
+              "ty": "Option<u32>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "CameraState",
+          "fields": [
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "active",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ServerImages",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "icon",
+              "ty": "Option<String>",
+              "later": false
+            },
+            {
+              "name": "banner",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ReactionSet",
+          "fields": [
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "message",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "emoji",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "active",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "EmojiAdd",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "emoji",
+              "ty": "CustomEmoji",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "EmojiRemove",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "SoundAdd",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "sound",
+              "ty": "SoundboardSound",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "SoundRemove",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ExpressionSettings",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "emojis_shareable",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "soundboard_open",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "PublicSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "public",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "SoundboardPlay",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "GameTagsSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "tags",
+              "ty": "Vec<String>",
+              "later": false
+            },
+            {
+              "name": "meta",
+              "ty": "Vec<GameTagMeta>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "RulesSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "rules",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "RulesAccept",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "EventUpsert",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "event",
+              "ty": "ScheduledEvent",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "EventDelete",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "event",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "EventRsvp",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "event",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "rsvp",
+              "ty": "Option<Rsvp>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelLayout",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "parent",
+              "ty": "Option<ChannelId>",
+              "later": false
+            },
+            {
+              "name": "position",
+              "ty": "u32",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelLimit",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "user_limit",
+              "ty": "u32",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "RoleUpdate",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "role",
+              "ty": "Role",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "VoiceModerate",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "muted",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "deafened",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MemberBan",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MemberUnban",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "AfkTimeoutSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "minutes",
+              "ty": "Option<u32>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "DoorbellSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "node",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "url",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "key",
+              "ty": "Option<DoorbellKey>",
+              "later": false
+            },
+            {
+              "name": "sig",
+              "ty": "Signature",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelBanner",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "banner",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelColor",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "color",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MessagePin",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "message",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "DateTime<Utc>",
+              "later": false
+            },
+            {
+              "name": "pinned",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelKindSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "kind",
+              "ty": "ChannelKind",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "AutoModSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "rules",
+              "ty": "AutoMod",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "BotSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "bot",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "SoundSharingSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "shareable",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "SharedSoundPlay",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "blob",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "volume",
+              "ty": "f32",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "PronounsSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "pronouns",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ServerDelete",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "InviteTrack",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "invite",
+              "ty": "TrackedInvite",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "InviteRevoke",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "origin",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "code",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "creator",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "InviteBackgroundSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "background",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "StickerAdd",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "sticker",
+              "ty": "Sticker",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "StickerRemove",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "EmoticonAdd",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "emoticon",
+              "ty": "Emoticon",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "EmoticonRemove",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ExpressionSharingSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "stickers",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "emoticons",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelAccessSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "view",
+              "ty": "Vec<RoleId>",
+              "later": false
+            },
+            {
+              "name": "send",
+              "ty": "Vec<RoleId>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelKeyAdd",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "key",
+              "ty": "KeyRecord",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelKeyGrant",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "grant",
+              "ty": "SealedKey",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MemberTimeout",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "DateTime<Utc>",
+              "later": false
+            },
+            {
+              "name": "until",
+              "ty": "Option<DateTime<Utc>>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MemberNickname",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "nickname",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "OwnerTransfer",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelSlowMode",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "seconds",
+              "ty": "u32",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "PollVote",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "message",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "choices",
+              "ty": "Vec<u8>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "PollClose",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "message",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "VoiceMove",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "Option<ChannelId>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ChannelSensitiveSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "sensitive",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "OnboardingSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "onboarding",
+              "ty": "Option<Onboarding>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ThreadSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "root",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "Option<String>",
+              "later": false
+            },
+            {
+              "name": "archived",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "locked",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "VoiceStatusSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "text",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ForumTagsSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "tags",
+              "ty": "Vec<ForumTag>",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ForumPost",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "message",
+              "ty": "MessageId",
+              "later": false
+            },
+            {
+              "name": "title",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "tags",
+              "ty": "Vec<TagId>",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "StageSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "speaker",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "HandRaise",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "raised",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "BotCommandsSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "bot",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "commands",
+              "ty": "Vec<BotCommand>",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ActivitySet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "activity",
+              "ty": "Option<Activity>",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ActivityInput",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "seq",
+              "ty": "u64",
+              "later": false
+            },
+            {
+              "name": "input",
+              "ty": "ActivityInput",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ActivitiesSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "enabled",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "DeviceAnnounce",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "node",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "voice",
+              "ty": "Option<ChannelId>",
+              "later": false
+            },
+            {
+              "name": "since",
+              "ty": "Option<i64>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "CommunityKeyAdd",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "key",
+              "ty": "KeyRecord",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "CommunityKeyGrant",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "grant",
+              "ty": "SealedKey",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "JoinSoundSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "sound",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "JoinSoundsAllowed",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "allowed",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "ServerTagSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "tag",
+              "ty": "Option<ServerTag>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "JoinApprovalSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "on",
+              "ty": "bool",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "i64",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "JoinAsk",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "profile",
+              "ty": "UserProfile",
+              "later": false
+            },
+            {
+              "name": "note",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "i64",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "JoinAnswer",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "admit",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "TipJarSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "url",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "PetSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "pet",
+              "ty": "Option<Pet>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "PetCare",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "care",
+              "ty": "Care",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "i64",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "DriveAdd",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "item",
+              "ty": "DriveItem",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "DriveEdit",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "item",
+              "ty": "DriveId",
+              "later": false
+            },
+            {
+              "name": "name",
+              "ty": "String",
+              "later": false
+            },
+            {
+              "name": "parent",
+              "ty": "Option<DriveId>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "DriveRemove",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "item",
+              "ty": "DriveId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "DriveHold",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "item",
+              "ty": "DriveId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "node",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "MemberBanUntil",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "user",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "i64",
+              "later": false
+            },
+            {
+              "name": "until",
+              "ty": "Option<i64>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "UploadLimitSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "megabytes",
+              "ty": "Option<u32>",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "i64",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "TtsAllowed",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "allowed",
+              "ty": "bool",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "FileStoreSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "url",
+              "ty": "Option<String>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "GifKeySet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "gifs",
+              "ty": "Option<GifKey>",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "GameDbSet",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "ServerId",
+              "later": false
+            },
+            {
+              "name": "games",
+              "ty": "Option<GameDbKey>",
+              "later": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "ServerTag": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server_tag.rs",
+      "fields": [
+        {
+          "name": "letters",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "emoji",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "color",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "effect",
+          "ty": "String",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "SignalEntry": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-net/src/community_streams.rs",
+      "fields": [
+        {
+          "name": "version",
+          "ty": "u16",
+          "later": false
+        },
+        {
+          "name": "node",
+          "ty": "[u8;32]",
+          "later": false
+        },
+        {
+          "name": "payload",
+          "ty": "WirePayload",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "SignedBytes": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/action.rs",
+      "fields": [
+        {
+          "name": "domain",
+          "ty": "&'staticstr",
+          "later": false
+        },
+        {
+          "name": "server",
+          "ty": "ServerId",
+          "later": false
+        },
+        {
+          "name": "by",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "event",
+          "ty": "&'aServerEvent",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "SignedEvent": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/action.rs",
+      "fields": [
+        {
+          "name": "action",
+          "ty": "Action",
+          "later": false
+        },
+        {
+          "name": "event",
+          "ty": "ServerEvent",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "SoundboardSound": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "blob",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "volume",
+          "ty": "f32",
+          "later": false
+        },
+        {
+          "name": "emoji",
+          "ty": "Option<String>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Sticker": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "blob",
+          "ty": "String",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "SyncMember": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-net/src/protocol.rs",
+      "fields": [
+        {
+          "name": "user",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "nickname",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "roles",
+          "ty": "Vec<RoleId>",
+          "later": false
+        },
+        {
+          "name": "joined_ms",
+          "ty": "i64",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "SyncVoice": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-net/src/protocol.rs",
+      "fields": [
+        {
+          "name": "user",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "channel",
+          "ty": "ChannelId",
+          "later": false
+        },
+        {
+          "name": "muted",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "deafened",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "since",
+          "ty": "Option<i64>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Thread": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "archived",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "locked",
+          "ty": "bool",
+          "later": false
+        },
+        {
+          "name": "by",
+          "ty": "UserId",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "Timeout": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server.rs",
+      "fields": [
+        {
+          "name": "since",
+          "ty": "DateTime<Utc>",
+          "later": false
+        },
+        {
+          "name": "until",
+          "ty": "DateTime<Utc>",
+          "later": false
+        },
+        {
+          "name": "by",
+          "ty": "UserId",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "TombstoneProof": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/message.rs",
+      "fields": [
+        {
+          "name": "channel",
+          "ty": "ChannelId",
+          "later": false
+        },
+        {
+          "name": "message",
+          "ty": "MessageId",
+          "later": false
+        },
+        {
+          "name": "by",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "at",
+          "ty": "DateTime<Utc>",
+          "later": false
+        },
+        {
+          "name": "sig",
+          "ty": "Signature",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "TrackedInvite": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/invites.rs",
+      "fields": [
+        {
+          "name": "origin",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "code",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "creator",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "created_at",
+          "ty": "i64",
+          "later": false
+        },
+        {
+          "name": "expires_at",
+          "ty": "Option<i64>",
+          "later": false
+        },
+        {
+          "name": "revoke_key",
+          "ty": "String",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "UserProfile": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/user.rs",
+      "fields": [
+        {
+          "name": "id",
+          "ty": "UserId",
+          "later": false
+        },
+        {
+          "name": "username",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "display_name",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "avatar",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "presence",
+          "ty": "Presence",
+          "later": false
+        },
+        {
+          "name": "custom_status",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "node",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "status_emoji",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "activity",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "activity_cover",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "activity_since",
+          "ty": "Option<i64>",
+          "later": false
+        },
+        {
+          "name": "about",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "identity",
+          "ty": "Option<IdentityKey>",
+          "later": false
+        },
+        {
+          "name": "presence_until",
+          "ty": "Option<i64>",
+          "later": false
+        },
+        {
+          "name": "banner",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "server_tag",
+          "ty": "Option<WornTag>",
+          "later": false
+        },
+        {
+          "name": "avatar_border",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "card_effect",
+          "ty": "Option<String>",
+          "later": false
+        },
+        {
+          "name": "phone_until",
+          "ty": "Option<i64>",
+          "later": false
+        }
+      ]
+    }
+  ],
+  "WatchSource": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-core/src/activity.rs",
+      "variants": [
+        {
+          "name": "Link",
+          "fields": [
+            {
+              "name": "url",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Attachment",
+          "fields": [
+            {
+              "name": "attachment",
+              "ty": "Attachment",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "YouTube",
+          "fields": [
+            {
+              "name": "video",
+              "ty": "String",
+              "later": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "WirePayload": [
+    {
+      "kind": "enum",
+      "file": "crates/commy-net/src/protocol.rs",
+      "variants": [
+        {
+          "name": "Event",
+          "fields": [
+            {
+              "name": "0",
+              "ty": "ServerEvent",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "SyncRequest",
+          "fields": []
+        },
+        {
+          "name": "SyncResponse",
+          "fields": [
+            {
+              "name": "server",
+              "ty": "Server",
+              "later": false
+            },
+            {
+              "name": "members",
+              "ty": "Vec<SyncMember>",
+              "later": false
+            },
+            {
+              "name": "profiles",
+              "ty": "Vec<UserProfile>",
+              "later": false
+            },
+            {
+              "name": "recent_messages",
+              "ty": "Vec<Message>",
+              "later": false
+            },
+            {
+              "name": "voice",
+              "ty": "Vec<SyncVoice>",
+              "later": false
+            },
+            {
+              "name": "by",
+              "ty": "UserId",
+              "later": false
+            },
+            {
+              "name": "at",
+              "ty": "i64",
+              "later": false
+            },
+            {
+              "name": "sig",
+              "ty": "Signature",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "VoiceDial",
+          "fields": [
+            {
+              "name": "channel",
+              "ty": "ChannelId",
+              "later": false
+            },
+            {
+              "name": "from_user",
+              "ty": "UserId",
+              "later": false
+            }
+          ]
+        },
+        {
+          "name": "Signed",
+          "fields": [
+            {
+              "name": "0",
+              "ty": "SignedEvent",
+              "later": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "WornTag": [
+    {
+      "kind": "struct",
+      "file": "crates/commy-core/src/server_tag.rs",
+      "fields": [
+        {
+          "name": "server",
+          "ty": "ServerId",
+          "later": false
+        },
+        {
+          "name": "name",
+          "ty": "String",
+          "later": false
+        },
+        {
+          "name": "tag",
+          "ty": "ServerTag",
+          "later": false
+        }
+      ]
+    }
+  ]
+}
