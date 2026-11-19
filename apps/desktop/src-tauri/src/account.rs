@@ -1231,6 +1231,14 @@ pub async fn ensure_linked(app: &App) -> bool {
     true
 }
 
+pub async fn link_this_device(handle: AppHandle) {
+    let app = handle.state::<App>();
+    let already_linked = app.account.lock_or_recover().device_linked;
+    if !already_linked && ensure_linked(&app).await {
+        let _ = handle.emit("account-changed", ());
+    }
+}
+
 #[tauri::command]
 pub async fn account_sign_out(app: tauri::State<'_, App>, handle: AppHandle) -> Result<AccountView, String> {
     let (token, server) = {

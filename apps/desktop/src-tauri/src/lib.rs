@@ -8562,6 +8562,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
     account_session::spawn(directory::keep_listings_current(handle.clone()));
     server_guard::keep_home_card(&handle);
     let session_check = account_session::spawn(account::verify_saved_session(handle.clone()));
+    account_session::spawn(account::link_this_device(handle.clone()));
     account_session::spawn(account::watch_session(handle.clone()));
     let (net_events, net_received) = tokio::sync::mpsc::unbounded_channel();
     account_session::spawn(run_net_loop(handle.clone(), net_received));
