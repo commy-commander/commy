@@ -18,7 +18,7 @@ Cloudflare account nor Cloudflare can open them or tell what they are.
 The worker is also private to the server. Every upload and every read is
 signed by a member's Commy identity, and the worker only answers members on
 the list it keeps. The server owner's app, and the apps of people whose role
-has **Manage Cloudflare Storage**, keep that list up to date as people join
+has **Manage File Backup**, keep that list up to date as people join
 and leave. Only they see the worker's address in Commy; other members' apps
 use it without showing it. Each member can upload at most 500 MB a day.
 
@@ -51,7 +51,7 @@ The Workers free plan covers 100,000 requests a day. See Cloudflare's
    member's upload count for the day.
 4. Copy the worker's address, like `https://commy-files.yourname.workers.dev`.
    Opening it in a browser shows `{"commy_files":2,...}`.
-5. In Commy, open **Server Settings > Integrations > Cloudflare Storage**,
+5. In Commy, open **Server Settings > Integrations > File Backup**,
    paste the address and the setup code, and choose **Save**. Commy checks
    that the address answers, then hands the worker the server's member list.
 
@@ -73,7 +73,7 @@ browser those files load peer to peer.
   someone joins, the owner's or a manager's app adds them within a couple of
   minutes while it is open; when someone leaves or is banned, it takes them
   off the same way.
-- **People whose role has Manage Cloudflare Storage** can see and change the
+- **People whose role has Manage File Backup** can see and change the
   address, and their apps keep the member list up to date. The owner's app
   decides who they are: when you give or take away that role, the change
   reaches the worker the next time your app is open.

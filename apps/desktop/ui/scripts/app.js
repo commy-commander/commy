@@ -14419,7 +14419,7 @@ function renderFileStoreEditor(server) {
   $("file-store-input").disabled = !editable;
   $("file-store-code").value = "";
   $("file-store-code").disabled = !editable;
-  $("file-store-status").textContent = fileStoreStatus(server);
+  $("file-store-status").textContent = "";
   checkIntegration("file-storage");
   $("file-store-save").classList.toggle("hidden", !editable);
   $("file-store-remove").classList.toggle("hidden", !editable || !server.file_store);
@@ -14516,7 +14516,7 @@ async function saveFileStore(remove) {
     }
     await invoke("set_file_store", { serverId: server.id, url, setupCode: url ? setupCode : null });
     $("file-store-code").value = "";
-    toast(url ? "File storage connected" : "Files here are peer to peer only again");
+    toast(url ? "File backup is on" : "File backup is off");
     integrationChecks.clear();
     await refreshCurrentServer();
     renderFileStoreEditor(state.currentServer);
@@ -25715,7 +25715,7 @@ const PERMISSION_LABELS = [
   ["kick_members", "Kick Members"],
   ["create_invites", "Create Invites"],
   ["view_audit_log", "View Audit Log"],
-  ["manage_file_storage", "Manage Cloudflare Storage"],
+  ["manage_file_storage", "Manage File Backup"],
   ["ban_members", "Ban Members"],
   ["mute_members", "Mute Members"],
   ["time_out_members", "Time Out Members"],

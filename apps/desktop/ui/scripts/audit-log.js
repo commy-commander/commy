@@ -146,7 +146,7 @@ function describeAudit(entry) {
     case "tip_jar": return detail ? ["set the tip jar to ", auditStrong(tipJarText(detail))] : ["removed the tip jar"];
     case "blocked_homes": return detail ? ["blocked people from ", auditStrong(String(detail))] : ["unblocked every server"];
     case "sync_host": return detail ? ["moved syncing to ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["moved syncing back to Commy.chat"];
-    case "file_store": return detail ? ["connected file storage at ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["turned off file storage"];
+    case "file_store": return detail ? ["turned on file backup at ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["turned off file backup"];
     case "gif_key": return detail ? ["gave GIF search a ", auditStrong(detail === "giphy" ? "GIPHY" : "KLIPY"), " key"] : ["removed the GIF search key"];
     case "game_db": return detail === "set" ? ["connected the IGDB game database"] : ["disconnected the IGDB game database"];
     case "join_approval": return [detail === "on" ? "asked new people to wait until a moderator lets them in" : "let new people join straight away"];

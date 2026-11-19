@@ -33,15 +33,6 @@ function cleanFileStore(input) {
   return path === null ? `https://${host.toLowerCase()}` : `https://${host.toLowerCase()}/${path}`;
 }
 
-function fileStoreLabel(url) {
-  return url ? url.replace(/^https:\/\//, "") : "";
-}
-
-function fileStoreStatus(server) {
-  if (!server || !server.file_store) return "Files here travel between members' devices only.";
-  return `Encrypted copies go to Cloudflare storage at ${fileStoreLabel(server.file_store)}.`;
-}
-
 if (typeof module !== "undefined") {
-  module.exports = { FILE_STORE_MAX_CHARS, FILE_STORE_GUIDE, FILE_STORE_INVALID, cleanFileStore, fileStoreLabel, fileStoreStatus, storeHostOk };
+  module.exports = { FILE_STORE_MAX_CHARS, FILE_STORE_GUIDE, FILE_STORE_INVALID, cleanFileStore, storeHostOk };
 }
