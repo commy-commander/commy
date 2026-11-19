@@ -1,7 +1,8 @@
 const START_KEYS = { "btn-primary": "key primary", "btn-secondary": "key" };
+const WAITING_COVERS = ["reopen", "app-lock"];
 
 function startStarState(cardId) {
-  return cardId === "reopen" ? "waiting" : "working";
+  return WAITING_COVERS.includes(cardId) ? "waiting" : "working";
 }
 
 function startKeyFor(classList) {
@@ -50,6 +51,8 @@ function studioStartKeys(root) {
   const roomy = startRoomy();
   const skip = document.getElementById("startup-skip");
   if (skip) studioKeyDress(skip, "key", roomy);
+  const unlock = document.getElementById("app-lock-unlock");
+  if (unlock) studioKeyDress(unlock, "key primary", roomy);
   if (!root) return;
   for (const key of root.querySelectorAll(":scope > :is(.welcome-home, .dm-empty) :is(.btn-primary, .btn-secondary)")) {
     const classes = startKeyFor(key.classList);

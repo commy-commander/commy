@@ -78,6 +78,14 @@
       <p class="reopen-text" id="reopen-text" data-i18n="reopen.text">Go to your Home Screen, then open Commy to finish.</p>
     </div>
   </div>
+  <div class="startup app-lock hidden" id="app-lock" role="dialog" aria-modal="true" aria-labelledby="app-lock-title" aria-describedby="app-lock-text">
+    <div class="startup-card">
+      <img class="startup-logo" src="images/commy-star.svg" alt="" width="64" height="64" draggable="false" />
+      <h1 class="startup-title" id="app-lock-title">Commy is locked</h1>
+      <p class="reopen-text" id="app-lock-text">Unlock to see your messages.</p>
+      <button class="btn-primary app-lock-unlock" id="app-lock-unlock" type="button">Unlock</button>
+    </div>
+  </div>
   <div class="offline-chip hidden" id="offline-chip" role="status"><span class="offline-dot" aria-hidden="true"></span><span>Offline. Showing what is saved on this device.</span></div>
   <div id="titlebar" class="titlebar hidden">
     <div class="titlebar-drag" id="titlebar-drag">
@@ -1843,6 +1851,29 @@
         <section class="settings-page" data-page="privacy" data-search="safety block security">
           <h1 data-i18n="settings.tab.privacy">Privacy &amp; Safety</h1>
           <p class="settings-intro" data-i18n="settings.intro.privacy">Who can reach you, what they see, and who you have blocked.</p>
+          <h2 class="settings-subhead mobile-only native-only app-lock-part hidden">App Lock</h2>
+          <div class="settings-card mobile-only native-only app-lock-part hidden" id="app-lock-card">
+            <label class="setting-row" data-search="app lock face id touch id fingerprint passcode pin unlock">
+              <div>
+                <div class="setting-title">Lock Commy</div>
+                <div class="setting-sub" id="app-lock-sub">Ask for Face ID, your fingerprint or your phone's passcode to open Commy.</div>
+              </div>
+              <input type="checkbox" id="app-lock-toggle" class="switch" aria-label="Lock Commy" />
+            </label>
+            <div class="setting-row hidden" id="app-lock-after-row">
+              <div>
+                <div class="setting-title">Lock after</div>
+                <div class="setting-sub">How long Commy can be in the background before it asks again. Commy always asks when it starts.</div>
+              </div>
+              <select id="app-lock-after" class="compact-select" aria-label="Lock after">
+                <option value="0">Immediately</option>
+                <option value="60">After 1 minute</option>
+                <option value="300">After 5 minutes</option>
+                <option value="900">After 15 minutes</option>
+                <option value="3600">After 1 hour</option>
+              </select>
+            </div>
+          </div>
           <h2 class="settings-subhead">Direct Messages</h2>
           <div class="settings-card">
             <div class="setting-row" data-search="dm requests strangers">
@@ -3853,6 +3884,7 @@
   <script src="scripts/accessibility.js"></script>
   <script src="scripts/updates.js"></script>
   <script src="scripts/startup.js"></script>
+  <script src="scripts/app-lock.js"></script>
   <script src="scripts/diagnostics.js"></script>
   <script src="scripts/data-folder.js"></script>
   <script src="scripts/server-templates.js"></script>

@@ -86,6 +86,7 @@ export const GRADLE_DEPENDENCIES = [
   "androidx.credentials:credentials:1.3.0",
   "androidx.credentials:credentials-play-services-auth:1.3.0",
   "com.google.crypto.tink:tink-android:1.24.0",
+  "androidx.biometric:biometric:1.1.0",
 ];
 
 export function withCommyDependencies(gradle) {

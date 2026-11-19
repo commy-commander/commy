@@ -1074,6 +1074,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "commy-app-lock"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
 name = "commy-apple-sign-in"
 version = "0.1.0"
 dependencies = [
@@ -1144,6 +1153,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "chrono",
+ "commy-app-lock",
  "commy-apple-sign-in",
  "commy-audio",
  "commy-core",

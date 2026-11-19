@@ -50,6 +50,7 @@ open = "5"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
+commy-app-lock = { path = "../app-lock" }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 commy-ios-push = { path = "../../../crates/commy-ios-push" }

@@ -181,6 +181,10 @@ test("the sign-in page and passkeys have their Android libraries", () => {
   }
 });
 
+test("the app lock has the Android library for Face Unlock, fingerprints and the phone's PIN", () => {
+  assert.ok(GRADLE_DEPENDENCIES.some(coordinate => coordinate.startsWith("androidx.biometric:biometric:")));
+});
+
 test("a manifest without the main screen is refused", () => {
   assert.throws(() => withCommyNeeds(generated.replace('android:name=".MainActivity"', 'android:name=".Other"')), /MainActivity/);
 });

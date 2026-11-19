@@ -8,6 +8,8 @@
   <string>Commy uses the camera for video calls.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>Commy lets you share photos and videos in chat.</string>
+  <key>NSFaceIDUsageDescription</key>
+  <string>Commy uses Face ID to unlock the app when you turn on the app lock.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>Commy connects straight to friends on the same network when it can.</string>
   <key>ITSAppUsesNonExemptEncryption</key>

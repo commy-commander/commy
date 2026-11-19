@@ -150,6 +150,13 @@ html[data-look="studio"]:not([data-fit="slim"]) .startup-skip.key {
   margin: 14px 0 0;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .startup-skip.key:not(.shown) { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) .app-lock-unlock {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  justify-self: end;
+  min-width: 0;
+  margin: 16px 0 0;
+}
 
 html[data-look="studio"]:not([data-fit="slim"]) .offline-chip {
   gap: 8px;

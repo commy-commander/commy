@@ -50,6 +50,7 @@ test("the glue loads once after the star and the room, and starts once after the
 test("the star is busy while Commy starts and waits for you everywhere else", () => {
   assert.equal(startStarState("startup"), "working");
   assert.equal(startStarState("reopen"), "waiting");
+  assert.equal(startStarState("app-lock"), "waiting");
   assert.ok(glue.includes('startStar(intro, "waiting")'));
   assert.ok(glue.includes('startStar(home, "waiting", home.querySelector(":scope > .welcome-mark"))'));
 });

@@ -147,3 +147,12 @@ html[data-look="studio"][data-fit="slim"] .offline-chip > .offline-dot { backgro
 @media (prefers-reduced-motion: reduce) {
   html[data-look="studio"][data-fit="slim"] .startup-step[data-state="working"] .startup-mark { animation: none; }
 }
+html[data-look="studio"][data-fit="slim"] .app-lock-unlock {
+  width: 100%;
+  height: 50px;
+  margin: 26px 0 0;
+  border-radius: var(--radius-pill);
+  font: 600 16px/1 var(--font);
+  transition: scale var(--t-hover) var(--ease-spring);
+}
+html[data-look="studio"][data-fit="slim"] .app-lock-unlock:active { scale: .98 .97; transition-duration: var(--t-press); }

@@ -1,0 +1,15 @@
+[package]
+name = "commy-app-lock"
+description = "Face ID, Touch ID, fingerprint and passcode app lock for the Commy phone apps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "commy-app-lock"
+publish = false
+
+[dependencies]
+tauri = { version = "2" }
+serde_json = { workspace = true }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

@@ -5,6 +5,7 @@ mod account_move;
 mod account_session;
 mod away_homes;
 mod app_icon;
+mod app_lock;
 mod app_sign_in;
 mod browser;
 mod cloud_files;
@@ -8763,7 +8764,8 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_opener::init());
+        .plugin(tauri_plugin_opener::init())
+        .plugin(commy_app_lock::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(commy_apple_sign_in::init());
     #[cfg(target_os = "android")]
@@ -8874,6 +8876,7 @@ pub fn run() {
                     std::process::exit(1);
                 }
                 let _ = app.base_dir.set(dir.clone());
+                app_lock::start(&handle, &dir);
                 account_folder::remove_doomed_folders(&dir);
                 link_safety::start(&handle, &dir);
                 server_guard::start(&handle, &dir);
@@ -9045,6 +9048,11 @@ pub fn run() {
             is_mobile_app,
             can_share_screen,
             share_sheet::share_link,
+            app_lock::app_lock_status,
+            app_lock::app_lock_away,
+            app_lock::app_lock_back,
+            app_lock::app_lock_unlock,
+            app_lock::app_lock_set,
             init_user,
             get_user,
             create_server,
@@ -9263,7 +9271,12 @@ pub fn run() {
             #[cfg(mobile)]
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = &event {
                 note_phone_moved(handle, true);
+                app_lock::came_back(handle);
                 on_resumed(handle);
+            }
+            #[cfg(target_os = "android")]
+            if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Suspended, .. } = &event {
+                app_lock::went_away();
             }
             #[cfg(target_os = "ios")]
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Suspended, .. } = &event {
