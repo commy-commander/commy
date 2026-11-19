@@ -1,19 +1,92 @@
-# Commy
+<a id="readme-top"></a>
 
-Free, open source voice and text chat for communities, written in Rust.
+<div align="center">
 
-Commy servers live on their members' own computers. Chat, voice, files and
-screen shares travel directly between the people in a server, so there is no
-central service reading your messages and nothing to pay for. The only hosted
-pieces are the account server and the website at [commy.chat](https://commy.chat).
+[![License: AGPL-3.0][license-shield]][license-url]
+[![Latest release][release-shield]][release-url]
+[![Support Commy on Ko-fi][kofi-shield]][kofi-url]
 
-## What you can do
+<br />
+
+<a href="https://commy.chat">
+  <img src="auth/pages/src/logo.svg" alt="Commy logo" width="96" height="96">
+</a>
+
+<h1 align="center">Commy</h1>
+
+<p align="center">
+  Free, open source voice and text chat for communities, written in Rust.
+  <br />
+  <a href="https://commy.chat"><strong>Visit commy.chat »</strong></a>
+  <br />
+  <br />
+  <a href="https://commy.chat/download">Download</a>
+  &middot;
+  <a href="https://github.com/commy-commander/commy/issues/new?template=bug_report.yml">Report a bug</a>
+  &middot;
+  <a href="https://github.com/commy-commander/commy/issues/new?template=feature_request.yml">Request a feature</a>
+  &middot;
+  <a href="https://ko-fi.com/commychat">Support on Ko-fi</a>
+</p>
+
+</div>
+
+<details>
+  <summary>Table of contents</summary>
+  <ol>
+    <li>
+      <a href="#about-the-project">About the project</a>
+      <ul>
+        <li><a href="#what-you-can-do">What you can do</a></li>
+        <li><a href="#built-with">Built with</a></li>
+        <li><a href="#how-it-works">How it works</a></li>
+      </ul>
+    </li>
+    <li>
+      <a href="#getting-started">Getting started</a>
+      <ul>
+        <li><a href="#download">Download</a></li>
+        <li><a href="#verifying-a-download">Verifying a download</a></li>
+        <li><a href="#prerequisites">Prerequisites</a></li>
+        <li><a href="#build-from-source">Build from source</a></li>
+        <li><a href="#phone-apps-early">Phone apps (early)</a></li>
+      </ul>
+    </li>
+    <li>
+      <a href="#usage">Usage</a>
+      <ul>
+        <li><a href="#self-hosting">Self-hosting</a></li>
+      </ul>
+    </li>
+    <li><a href="#roadmap">Roadmap</a></li>
+    <li><a href="#contributing">Contributing</a></li>
+    <li><a href="#support-commy">Support Commy</a></li>
+    <li><a href="#license">License</a></li>
+    <li><a href="#contact">Contact</a></li>
+    <li><a href="#acknowledgments">Acknowledgments</a></li>
+  </ol>
+</details>
+
+## About the project
+
+Commy is a place for communities to talk: text channels, voice channels,
+screen and game streaming, and direct messages, in a desktop app, a browser
+client and early phone apps.
+
+Voice, video, screen shares and files travel directly between the people in a
+server. Messages and server settings sync through a sync service that keeps
+each community's data sealed end to end, so members who were offline catch up
+and nobody running the service can read what is said. The account server never
+sees messages, files, voice, video or which servers an account belongs to.
+Commy is free to use, and anyone can run their own sync host.
+
+### What you can do
 
 - **Servers and channels.** Create a server from scratch or a starter
   template, add text and voice channels, forum channels for posts with tags,
   group servers into folders, and invite people with a link, and list a
-  public server in Discover so others can find it. A Ctrl+K quick switcher jumps to any channel, conversation or
-  server by name. Mark a channel age-restricted and it asks people to confirm
+  public server in Discover so others can find it. A Ctrl+K quick switcher
+  jumps to any channel, conversation or server by name. Mark a channel age-restricted and it asks people to confirm
   they are 18 or older before showing anything. Copy any server's channels,
   roles and rules as a template code so others can start from the same
   layout, and hand a server you own to another member. Onboarding questions
@@ -97,7 +170,78 @@ Windows is the primary platform today. macOS and Linux builds are published
 with each release; a few features, such as the game overlay and notification
 toasts, are Windows only for now.
 
-## Download
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Built with
+
+[![Rust][rust-shield]][rust-url]
+[![Tauri][tauri-shield]][tauri-url]
+[![WebAssembly][wasm-shield]][wasm-url]
+[![Node.js][node-shield]][node-url]
+[![PostgreSQL][postgres-shield]][postgres-url]
+[![Redis][redis-shield]][redis-url]
+[![Docker][docker-shield]][docker-url]
+
+The desktop and phone apps are a Rust core inside a Tauri 2 shell, with a
+frontend in plain HTML, CSS and JavaScript. The browser client runs the same
+frontend on a WebAssembly build of the same Rust code. The account server uses
+Better Auth on Node.js with Postgres and Redis, and the sync service is Rust on
+Postgres. Voice uses the Opus codec.
+
+### How it works
+
+```
+apps/desktop            Tauri 2 desktop app
+  src-tauri             Rust shell: commands, app state, network event loop
+  ui                    Frontend (plain HTML, CSS and JavaScript)
+apps/web                Browser build: the same UI on a WebAssembly backend
+crates/commy-core       Domain model: servers, channels, messages,
+                        permissions, replicated state (no I/O)
+crates/commy-net        Peer to peer transport: invite tickets, gossip
+                        protocol, node wrapper, blob transfer
+crates/commy-view       The view models the UI renders, shared by both apps
+crates/commy-audio      Voice processing: noise cancellation, mute gate,
+                        voice activity detection, voice filters, Opus codec
+crates/commy-media      Device I/O: microphone, playback mixing with jitter
+                        buffers, screen and window capture
+crates/commy-bot        Headless member that enforces auto moderation
+crates/commy-sync       Sealed sync streams: key derivation, padding, wire
+                        format and a native client
+crates/commy-sync-server
+                        Sync service that orders and fans out sealed
+                        entries it cannot read
+auth                    Account server: Better Auth, Postgres, Redis
+deploy                  Self-hosting stack and deploy pipeline
+```
+
+- Every running app is identified by an Ed25519 key. Connections between
+  members are direct and encrypted; relays are only a fallback for people who
+  cannot reach each other directly, never a place where content is stored.
+- A Commy server is a gossip topic. Every change is an event broadcast to the
+  topic and applied idempotently to each member's copy of the server state.
+- Messages and server state also go through the sync service as sealed
+  entries, so they reach members who were offline. The service orders and
+  fans them out without being able to read them.
+- Invites are self-contained tickets. Short invite links store the ticket
+  sealed with a key that only the link carries, so the account server cannot
+  read it.
+- Files, avatars, emoji and soundboard clips move as content-addressed blobs;
+  chat messages carry only the hash.
+- What the app keeps on disk (messages, direct messages, keys, the sign-in
+  token, cached pictures) is encrypted with AES-256-GCM under a key that
+  Windows (DPAPI) or the macOS Keychain holds for your user account. If that
+  key is ever lost, the unreadable files are moved to an `unreadable` folder
+  instead of being deleted, and a signed-in account can get its identity and
+  server list back from another device signed in to it.
+- Voice and screen shares use direct media connections between members. What
+  the account server does hold is listed in
+  [deploy/HOSTING.md](deploy/HOSTING.md#what-the-operator-can-see).
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Getting started
+
+### Download
 
 Downloads are at [commy.chat/download](https://commy.chat/download), served from
 releases.commy.chat: every version keeps its files under its tag, such as
@@ -145,55 +289,8 @@ was built by that workflow from this repository.
 Builds are not code signed yet, so Windows SmartScreen and macOS Gatekeeper
 will ask you to confirm before the first launch.
 
-## How it works
 
-```
-apps/desktop            Tauri 2 desktop app
-  src-tauri             Rust shell: commands, app state, network event loop
-  ui                    Frontend (plain HTML, CSS and JavaScript)
-apps/web                Browser build: the same UI on a WebAssembly backend
-crates/commy-core       Domain model: servers, channels, messages,
-                        permissions, replicated state (no I/O)
-crates/commy-net        Peer to peer transport: invite tickets, gossip
-                        protocol, node wrapper, blob transfer
-crates/commy-view       The view models the UI renders, shared by both apps
-crates/commy-audio      Voice processing: noise cancellation, mute gate,
-                        voice activity detection, voice filters, Opus codec
-crates/commy-media      Device I/O: microphone, playback mixing with jitter
-                        buffers, screen and window capture
-crates/commy-bot        Headless member that enforces auto moderation
-crates/commy-sync       Sealed sync streams: key derivation, padding, wire
-                        format and a native client
-crates/commy-sync-server
-                        Sync service that orders and fans out sealed
-                        entries it cannot read
-auth                    Account server: Better Auth, Postgres, Redis
-deploy                  Self-hosting stack and deploy pipeline
-```
-
-- Every running app is an [iroh](https://iroh.computer) endpoint identified by
-  an Ed25519 key. Connections are direct and encrypted; relays are only a
-  fallback transport for people who cannot reach each other directly, never a
-  place where content is stored.
-- A Commy server is a gossip topic. Every change is an event broadcast to the
-  topic and applied idempotently to each member's copy of the server state.
-- Invites are self-contained tickets. Short invite links store the ticket
-  sealed with a key that only the link carries, so the account server cannot
-  read it.
-- Files, avatars, emoji and soundboard clips move as content-addressed blobs;
-  chat messages carry only the hash.
-- What the app keeps on disk (messages, direct messages, keys, the sign-in
-  token, cached pictures) is encrypted with AES-256-GCM under a key that
-  Windows (DPAPI) or the macOS Keychain holds for your user account. If that
-  key is ever lost, the unreadable files are moved to an `unreadable` folder
-  instead of being deleted, and a signed-in account can get its identity and
-  server list back from another device signed in to it.
-- Voice and screen shares use direct media connections between members. The
-  account server never sees messages, files, voice, video or which servers an
-  account belongs to. What it does hold is listed in
-  [deploy/HOSTING.md](deploy/HOSTING.md#what-the-operator-can-see).
-
-## Build from source
+### Prerequisites
 
 You need Rust (stable), Node.js and the Tauri 2 CLI.
 
@@ -217,10 +314,11 @@ brew install node
 cargo install tauri-cli --version "^2"
 ```
 
-Then:
+
+### Build from source
 
 ```sh
-git clone https://github.com/commy-commander/commy.git
+git clone https://git.commy.chat/commy/commy.git
 cd commy
 
 # Run the Rust tests (core, net, audio, media, bot)
@@ -234,22 +332,9 @@ cargo tauri dev
 The frontend is embedded at build time, so UI edits need a rebuild. To preview
 the UI alone in a browser with a mock backend, open `apps/desktop/ui/index.html`.
 
-To test voice, streaming and direct messages on one machine, run a second
-instance with its own data directory and join your own server with an invite.
-Commy runs one copy per data directory, so starting it again with the same
-one only brings the open window forward:
-
-```powershell
-$env:COMMY_DATA_DIR = "$env:APPDATA\chat.commy.desktop-2"
-cargo run -p commy-desktop
-```
-
-The web client is an early preview with text channels only. Building it needs
-the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at the version in
+The web client runs the same UI in the browser. Building it needs the
+`wasm32-unknown-unknown` target and `wasm-bindgen-cli` at the version in
 `Cargo.lock`; see [apps/web/README.md](apps/web/README.md).
-
-`auth/docker-compose.dev.yml` runs a local account server with a mail catcher
-and Redis.
 
 ### Phone apps (early)
 
@@ -317,13 +402,52 @@ builds with an `-rc` version are not sent, and production releases stay a manual
 step in Play Console. Screen sharing, the overlay, hotkeys, the
 tray and Stream Deck are desktop only.
 
-## Self-hosting
 
-You do not need to host anything to use Commy. If you want your own account
-server, [deploy/HOSTING.md](deploy/HOSTING.md) covers the Docker Compose stack,
-sign-in providers, optional GIF search, and pointing the desktop app at your
-server. [deploy/DEPLOYING.md](deploy/DEPLOYING.md) describes the deploy
-pipeline.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Usage
+
+Download Commy, create an account, then create a server from scratch or a
+starter template and share an invite link with your friends. The guides at
+[commy.chat](https://commy.chat) walk through the rest.
+
+To test voice, streaming and direct messages on one machine, run a second
+instance with its own data directory and join your own server with an invite.
+Commy runs one copy per data directory, so starting it again with the same
+one only brings the open window forward:
+
+```powershell
+$env:COMMY_DATA_DIR = "$env:APPDATA\chat.commy.desktop-2"
+cargo run -p commy-desktop
+```
+
+`auth/docker-compose.dev.yml` runs a local account server with a mail catcher
+and Redis.
+
+### Self-hosting
+
+You do not need to host anything to use Commy. To keep your communities'
+messages and history on your own server, run a sync host; to run accounts, the
+website and sync on your own domain, run the whole stack.
+[deploy/HOSTING.md](deploy/HOSTING.md) covers both, along with sign-in
+providers, optional GIF search, and pointing the desktop app at your server.
+[deploy/DEPLOYING.md](deploy/DEPLOYING.md) describes the deploy pipeline.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Roadmap
+
+- [x] Desktop app for Windows, macOS and Linux
+- [x] Browser client running the same UI
+- [x] Run your own sync host
+- [ ] Android and iPhone apps in Google Play and the App Store (in testing now)
+- [ ] Code signed Windows builds
+- [ ] The whole app translated, starting with Spanish
+
+See the [open issues](https://github.com/commy-commander/commy/issues) for
+requested features and known problems.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Contributing
 
@@ -334,6 +458,72 @@ treat each other. Found a bug or have an idea? Open an
 a security problem, follow [SECURITY.md](SECURITY.md) instead of opening a
 public issue.
 
+1. Cut a branch from the latest `main`, named after the change's type
+   (`git switch -c feat/my-change`)
+2. Commit with [Conventional Commits](https://www.conventionalcommits.org)
+   (`git commit -m "feat(ui): add my change"`)
+3. Run `cargo clippy --workspace` and `cargo test --workspace`
+4. Push the branch (`git push -u origin feat/my-change`)
+5. Open a pull request into `main`
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Support Commy
+
+Commy is free to use. If it is useful to you or your community, you can help
+keep the servers running and the work going on
+[Ko-fi](https://ko-fi.com/commychat).
+
+[![Support Commy on Ko-fi][kofi-shield]][kofi-url]
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## License
 
 Commy is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Contact
+
+Commy Commander
+
+- Website: [commy.chat](https://commy.chat)
+- Help with the app: [support@commy.chat](mailto:support@commy.chat)
+- Security problems: see [SECURITY.md](SECURITY.md)
+- Source: [git.commy.chat/commy/commy](https://git.commy.chat/commy/commy)
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Acknowledgments
+
+- [Tauri](https://tauri.app)
+- [Opus](https://opus-codec.org)
+- [nnnoiseless](https://github.com/jneem/nnnoiseless)
+- [Better Auth](https://www.better-auth.com)
+- [Sigstore cosign](https://github.com/sigstore/cosign)
+- [Shields.io](https://shields.io)
+- [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+[license-shield]: https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=for-the-badge
+[license-url]: LICENSE
+[release-shield]: https://img.shields.io/badge/download-commy.chat-3355ff.svg?style=for-the-badge
+[release-url]: https://commy.chat/download
+[kofi-shield]: https://img.shields.io/badge/Ko--fi-support%20Commy-FF5E5B.svg?style=for-the-badge&logo=ko-fi&logoColor=white
+[kofi-url]: https://ko-fi.com/commychat
+[rust-shield]: https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white
+[rust-url]: https://www.rust-lang.org
+[tauri-shield]: https://img.shields.io/badge/Tauri_2-24C8D8?style=for-the-badge&logo=tauri&logoColor=white
+[tauri-url]: https://tauri.app
+[wasm-shield]: https://img.shields.io/badge/WebAssembly-654FF0?style=for-the-badge&logo=webassembly&logoColor=white
+[wasm-url]: https://webassembly.org
+[node-shield]: https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white
+[node-url]: https://nodejs.org
+[postgres-shield]: https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white
+[postgres-url]: https://www.postgresql.org
+[redis-shield]: https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white
+[redis-url]: https://redis.io
+[docker-shield]: https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white
+[docker-url]: https://www.docker.com
