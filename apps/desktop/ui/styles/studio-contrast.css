@@ -1,0 +1,135 @@
+html[data-look="studio"][data-high-contrast]:not([data-theme="light"]),
+html[data-look="studio"][data-high-contrast] .theme-dark {
+  --hc-edge: #9aa0ae;
+  --hc-line: #6b7180;
+
+  --header-primary: #ffffff;
+  --text-normal: #f5f6f8;
+  --text-muted: #e1e4eb;
+  --text-faint: #d2d6df;
+  --tab-label: #e1e4eb;
+  --tx-gray: #e1e4eb;
+  --link: #c3cfff;
+  --focus: #c3cfff;
+  --accent-lit: #a9b8ff;
+  --mention-ink: #e0e6ff;
+  --danger-text: #ffb3ab;
+  --signal-bad: #ffb3ab;
+  --role-off: #a3a9b8;
+
+  --bg-darkest: #050608;
+  --bg-dark: #0b0c10;
+  --section: #0d0f14;
+  --bg-mid: #12141a;
+  --panel: #0d0f14;
+  --panel-thin: #0f1117;
+  --sheet-bg: #12141a;
+  --bg-raised: #20242d;
+  --input-bg: #050608;
+  --scrim: rgba(0, 0, 0, .82);
+  --video-scrim: rgba(5, 6, 10, .9);
+  --horizon-ground: #050608;
+  --horizon-fade: rgba(5, 6, 10, .92);
+  --fx-blur: 0px;
+  --fx-sat: 1;
+
+  --line: var(--hc-line);
+  --line-strong: var(--hc-edge);
+  --rim: var(--hc-edge);
+  --rim-soft: var(--hc-line);
+
+  --glass-key: #2c313d;
+  --glass-key-hover: #363c4a;
+  --glass-key-on: #46506a;
+  --glass-key-off: #1a1d25;
+  --glass-hi: linear-gradient(transparent, transparent);
+  --glass-rim: inset 0 0 0 1px var(--hc-edge);
+  --glass-pool: inset 0 0 0 0 transparent;
+  --glass-fx: none;
+  --tog-off: #4a505e;
+  --tog-knob: #ffffff;
+  --mute-k: #1a1d25;
+
+  --slot: inset 0 0 0 1px var(--hc-edge);
+  --pillow-top: linear-gradient(transparent, transparent);
+  --pillow: inset 0 0 0 1px var(--hc-edge), 0 3px 6px -1px rgb(var(--dark) / .4);
+  --pillow-sm: inset 0 0 0 1px var(--hc-edge), 0 5px 9px -3px rgb(var(--dark) / .5);
+  --pillow-down: inset 0 0 0 2px var(--header-primary);
+  --pillow-card: inset 0 0 0 1px var(--hc-line), 0 18px 34px -14px rgb(var(--dark) / .45);
+
+  --k-plain: var(--glass-key);
+  --k-plain-hover: var(--glass-key-hover);
+  --k-plain-shadow: inset 0 0 0 1px var(--hc-edge), var(--glass-drop);
+  --k-plain-fx: none;
+  --k-latched: var(--glass-key-on);
+  --k-latched-shadow: inset 0 0 0 2px var(--header-primary);
+  --k-off: var(--glass-key-off);
+  --k-off-shadow: inset 0 0 0 1px var(--hc-line);
+  --k-mute-shadow: inset 0 0 0 1px var(--hc-edge);
+  --bar-field: #12141a;
+  --bar-field-shadow: inset 0 0 0 1px var(--hc-edge);
+  --bar-field-fx: none;
+}
+
+html[data-look="studio"][data-high-contrast][data-theme="light"],
+html[data-look="studio"][data-high-contrast] .theme-light {
+  --hc-edge: #5d6270;
+  --hc-line: #7d8290;
+
+  --header-primary: #000000;
+  --text-normal: #0b0d12;
+  --text-muted: #23272f;
+  --text-faint: #2e323b;
+  --tab-label: #23272f;
+  --tx-gray: #23272f;
+  --link: #1a32b8;
+  --focus: #1a32b8;
+  --mention-ink: #1a32b8;
+  --danger-text: #8e150f;
+  --role-off: #5d6270;
+
+  --panel: #f4f5f8;
+  --panel-thin: #eceef2;
+  --sheet-bg: #ffffff;
+  --horizon-ground: #eceef2;
+  --horizon-fade: rgba(236, 238, 242, .94);
+  --scrim: rgba(11, 13, 18, .6);
+  --fx-blur: 0px;
+  --fx-sat: 1;
+
+  --line: var(--hc-line);
+  --line-strong: var(--hc-edge);
+  --rim-soft: var(--hc-line);
+
+  --tog-off: #8a90a0;
+  --slot: inset 0 0 0 1px var(--hc-edge);
+  --pillow-top: linear-gradient(transparent, transparent);
+  --pillow: inset 0 0 0 1px var(--hc-edge), 0 2px 4px -1px rgb(var(--dark) / .22);
+  --pillow-sm: inset 0 0 0 1px var(--hc-edge), 0 4px 8px -3px rgb(var(--dark) / .26);
+  --pillow-down: inset 0 0 0 2px var(--header-primary);
+  --pillow-card: inset 0 0 0 1px var(--hc-line), 0 16px 30px -14px rgb(var(--dark) / .24);
+
+  --k-plain: var(--bg-raised);
+  --k-plain-hover: var(--bg-hover);
+  --k-plain-shadow: var(--pillow);
+  --k-latched: var(--bg-active);
+  --k-latched-shadow: var(--pillow-down);
+  --k-off: var(--bg-mid);
+  --k-off-shadow: inset 0 0 0 1px var(--hc-line);
+  --k-mute-shadow: inset 0 0 0 1px var(--hc-edge);
+  --bar-field: var(--input-bg);
+  --bar-field-shadow: inset 0 0 0 1px var(--hc-edge);
+}
+
+html[data-look="studio"][data-high-contrast] input::placeholder,
+html[data-look="studio"][data-high-contrast] textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+html[data-look="studio"][data-high-contrast] .msg-content a,
+html[data-look="studio"][data-high-contrast] .md a,
+html[data-look="studio"][data-high-contrast] .integration-steps a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

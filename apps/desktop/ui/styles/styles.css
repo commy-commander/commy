@@ -165,11 +165,6 @@ html[data-high-contrast][data-theme="light"] {
   --line-strong: rgba(23, 20, 16, .5);
   --switch-off: #8c867a;
 }
-html[data-high-contrast] .settings-card,
-html[data-high-contrast] .setting-row,
-html[data-high-contrast] input[type="text"],
-html[data-high-contrast] textarea,
-html[data-high-contrast] select { box-shadow: inset 0 0 0 1px var(--line); }
 
 html[data-reduced-motion] {
   --t-press: 0.01ms;
