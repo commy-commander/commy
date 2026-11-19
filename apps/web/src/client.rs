@@ -734,6 +734,7 @@ impl Client {
         };
         let me = self.profile().ok_or("Your servers are not unlocked yet")?;
         remote.members = members.into_iter().map(member_of).collect();
+        let expressions = commy_net::catchup::Expressions::take_from(&mut remote);
         let member = remote.is_member(me.id);
         let before_i_joined = joined_ms.is_some_and(|joined| at < joined);
         if remote.is_banned(me.id) || (!member && !before_i_joined) {
@@ -745,6 +746,7 @@ impl Client {
         }
         let mut state = ServerState::new(remote);
         state.set_action_floor(at);
+        expressions.adopt_unheard(&mut state);
         for profile in profiles {
             state.profiles.insert(profile.id, profile.as_seen_by_others());
         }
@@ -759,14 +761,16 @@ impl Client {
         Ok(true)
     }
 
-    pub fn learn_profiles(&self, server: ServerId, payload: &WirePayload) -> bool {
+    pub fn learn_from_snapshot(&self, server: ServerId, payload: &WirePayload) -> bool {
         if self.vouched(server, payload, streams::RETENTION_MS).is_err() {
             return false;
         }
-        let WirePayload::SyncResponse { profiles, .. } = payload else { return false };
+        let WirePayload::SyncResponse { server: remote, profiles, .. } = payload else { return false };
         let mut servers = self.servers.lock().unwrap();
         let Some(state) = servers.get_mut(&server) else { return false };
-        !commy_net::catchup::apply_profiles(state, profiles.clone()).is_empty()
+        let learned_profiles = !commy_net::catchup::apply_profiles(state, profiles.clone()).is_empty();
+        let learned_expressions = commy_net::catchup::Expressions::of(remote).adopt_unheard(state);
+        learned_profiles || learned_expressions
     }
 
     pub fn forget(&mut self, server: ServerId) {
@@ -1600,6 +1604,33 @@ mod tests {
         assert!(!w.client.has(w.server));
     }
 
+    fn custom_emoji(server: ServerId, name: &str) -> ServerEvent {
+        let emoji = commy_core::server::CustomEmoji { name: name.into(), blob: format!("{}@{}", "b".repeat(52), "0".repeat(64)) };
+        ServerEvent::EmojiAdd { server, emoji }
+    }
+
+    #[test]
+    fn a_service_snapshot_brings_the_servers_custom_emojis() {
+        let mut w = world();
+        w.state.apply(custom_emoji(w.server, "pepodancels")).unwrap();
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        let now = Utc::now().timestamp_millis();
+        assert!(w.client.install_service_snapshot(w.server, signed_snapshot(&w, now), None).unwrap());
+        assert_eq!(w.client.servers.lock().unwrap()[&w.server].server.emojis, w.state.server.emojis);
+    }
+
+    #[test]
+    fn a_vouched_snapshot_fills_in_custom_emojis_an_installed_server_missed() {
+        let mut w = world();
+        let owner_key = w.owner.1.public();
+        with_ticket(&mut w, owner_key);
+        w.client.install_mirror(w.server, &mirror(&w)).unwrap();
+        w.state.apply(custom_emoji(w.server, "artie_bucco")).unwrap();
+        assert!(w.client.learn_from_snapshot(w.server, &signed_snapshot(&w, Utc::now().timestamp_millis())));
+        assert_eq!(w.client.servers.lock().unwrap()[&w.server].server.emojis, w.state.server.emojis);
+    }
+
     #[test]
     fn a_vouched_snapshot_teaches_profiles_of_an_installed_server() {
         let mut w = world();
@@ -1609,11 +1640,11 @@ mod tests {
         let mut newcomer = UserProfile::new("newcomer");
         newcomer.identity = Some(Identity::generate().public());
         w.state.apply(ServerEvent::MemberJoin { server: w.server, profile: newcomer.clone() }).unwrap();
-        assert!(w.client.learn_profiles(w.server, &signed_snapshot(&w, Utc::now().timestamp_millis())));
+        assert!(w.client.learn_from_snapshot(w.server, &signed_snapshot(&w, Utc::now().timestamp_millis())));
         assert!(w.client.servers.lock().unwrap()[&w.server].identity_of(newcomer.id).is_some());
         let mut forged = build_sync_response(&w.state, 50, w.owner.0.id);
         sign_sync_response(&mut forged, Utc::now().timestamp_millis(), &Identity::generate());
-        assert!(!w.client.learn_profiles(w.server, &forged));
+        assert!(!w.client.learn_from_snapshot(w.server, &forged));
     }
 
     #[test]

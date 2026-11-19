@@ -5,8 +5,9 @@ use commy_core::catchup::{
 };
 use commy_core::{
     BucketDigest, BucketKey, ChannelId, Identity, IdentityKey, Message, MessageId, Presence, ServerEvent,
-    ServerId, ServerState, Signature, TombstoneProof, UserId, UserProfile,
+    Server, ServerId, ServerState, Signature, TombstoneProof, UserId, UserProfile,
 };
+use commy_core::server::{CustomEmoji, Emoticon, SoundboardSound, Sticker};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -320,6 +321,53 @@ pub fn profiles_of(state: &ServerState, users: &[UserId]) -> Vec<UserProfile> {
         .filter(|p| p.identity.is_some())
         .cloned()
         .collect()
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Expressions {
+    emojis: Vec<CustomEmoji>,
+    stickers: Vec<Sticker>,
+    emoticons: Vec<Emoticon>,
+    sounds: Vec<SoundboardSound>,
+}
+
+impl Expressions {
+    pub fn of(server: &Server) -> Self {
+        Self {
+            emojis: server.emojis.clone(),
+            stickers: server.stickers.clone(),
+            emoticons: server.emoticons.clone(),
+            sounds: server.soundboard.clone(),
+        }
+    }
+
+    pub fn take_from(server: &mut Server) -> Self {
+        Self {
+            emojis: std::mem::take(&mut server.emojis),
+            stickers: std::mem::take(&mut server.stickers),
+            emoticons: std::mem::take(&mut server.emoticons),
+            sounds: std::mem::take(&mut server.soundboard),
+        }
+    }
+
+    pub fn adopt_unheard(self, state: &mut ServerState) -> bool {
+        let server = state.server.id;
+        let adds = self
+            .emojis
+            .into_iter()
+            .map(|emoji| ServerEvent::EmojiAdd { server, emoji })
+            .chain(self.stickers.into_iter().map(|sticker| ServerEvent::StickerAdd { server, sticker }))
+            .chain(self.emoticons.into_iter().map(|emoticon| ServerEvent::EmoticonAdd { server, emoticon }))
+            .chain(self.sounds.into_iter().map(|sound| ServerEvent::SoundAdd { server, sound }));
+        let mut changed = false;
+        for add in adds {
+            let heard = commy_core::action::subject(&add).is_some_and(|subject| state.action_time(&subject).is_some());
+            if !heard && state.apply(add) == Ok(true) {
+                changed = true;
+            }
+        }
+        changed
+    }
 }
 
 pub fn apply_profiles(state: &mut ServerState, profiles: Vec<UserProfile>) -> Vec<UserId> {
@@ -1242,6 +1290,26 @@ mod tests {
     use std::sync::Mutex;
 
     const NODE_A: [u8; 32] = [0xa; 32];
+
+    fn emoji_named(name: &str) -> commy_core::server::CustomEmoji {
+        commy_core::server::CustomEmoji { name: name.into(), blob: format!("{}@{}", "b".repeat(52), "0".repeat(64)) }
+    }
+
+    #[test]
+    fn a_server_copy_fills_in_expressions_this_device_never_heard_about() {
+        let (mut state, _, owner) = fixture();
+        let sid = state.server.id;
+        let signed = |at, event| commy_core::SignedEvent::sign(sid, owner, at, event, &identity_for(owner));
+        state.apply_signed(&signed(1_000, ServerEvent::EmojiAdd { server: sid, emoji: emoji_named("gone") })).unwrap();
+        state.apply_signed(&signed(2_000, ServerEvent::EmojiRemove { server: sid, name: "gone".into() })).unwrap();
+        let mut copy = state.server.clone();
+        copy.emojis = vec![emoji_named("artie"), emoji_named("gone"), emoji_named("Bad Name")];
+
+        assert!(Expressions::of(&copy).adopt_unheard(&mut state));
+        let names: Vec<&str> = state.server.emojis.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["artie"], "a removal this device saw wins, and a bad name never lands");
+        assert!(!Expressions::of(&copy).adopt_unheard(&mut state), "nothing new the second time");
+    }
     const NODE_B: [u8; 32] = [0xb; 32];
     const MINUTE_MS: i64 = 60_000;
 

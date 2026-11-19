@@ -661,7 +661,7 @@ impl Session {
         }
         self.release_parked(server);
         if matches!(payload, WirePayload::SyncResponse { .. }) {
-            if self.client.borrow().learn_profiles(server, &payload) && now_live {
+            if self.client.borrow().learn_from_snapshot(server, &payload) && now_live {
                 self.emit("server-event", json!(server.to_string()));
             }
             return;

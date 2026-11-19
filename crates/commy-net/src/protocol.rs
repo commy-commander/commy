@@ -210,10 +210,6 @@ pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) 
 pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: UserId, budget: usize) -> WirePayload {
     let per_channel = if state.server.join_approval { 0 } else { per_channel };
     let mut server = state.server.clone();
-    server.emojis.clear();
-    server.stickers.clear();
-    server.emoticons.clear();
-    server.soundboard.clear();
     server.rules = None;
     server.events.clear();
     server.deleted_events.clear();
@@ -277,11 +273,15 @@ pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: U
         profiles.pop();
     }
     type Step = fn(&mut commy_core::Server);
-    let drop_structure_members_announce_anyway: [Step; 4] = [
+    let drop_structure_members_announce_anyway: [Step; 8] = [
+        |s| s.soundboard.clear(),
+        |s| s.emoticons.clear(),
+        |s| s.stickers.clear(),
         |s| (s.icon, s.banner) = (None, None),
         |s| (s.game_tags, s.game_tag_meta) = (Vec::new(), Vec::new()),
         |s| s.rules_accepted.clear(),
         |s| (s.server_muted, s.server_deafened) = (Vec::new(), Vec::new()),
+        |s| s.emojis.clear(),
     ];
     for step in drop_structure_members_announce_anyway {
         if fits(size) {
@@ -803,24 +803,39 @@ mod tests {
         assert!(signed_size(sid, &ServerEvent::AutoModSet { server: sid, rules }) <= MAX_GOSSIP_BYTES);
     }
 
-    #[test]
-    fn sync_response_leaves_out_expressions() {
+    fn expression_heavy_server(owner: UserId, each: usize) -> ServerState {
         use commy_core::server::{CustomEmoji, Emoticon, SoundboardSound, Sticker};
-        let owner = UserId::new();
         let mut server = Server::new("s", owner);
-        for i in 0..50 {
+        for i in 0..each {
             server.emojis.push(CustomEmoji { name: format!("emoji{i}"), blob: format!("{}@{}", "a".repeat(64), "b".repeat(64)) });
             server.stickers.push(Sticker { name: format!("sticker{i}"), blob: format!("{}@{}", "a".repeat(64), "b".repeat(64)) });
             server.emoticons.push(Emoticon { name: format!("face{i}"), text: "(╯°□°)╯︵ ┻━┻".repeat(4) });
             server.soundboard.push(SoundboardSound { name: format!("s{i}"), blob: "a@b".into(), volume: 1.0, emoji: None });
             server.drive.extend(commy_core::drive::DriveItem::folder(commy_core::ChannelId::new(), None, &format!("folder{i}"), owner, 1));
         }
-        let state = ServerState::new(server);
-        let payload = build_sync_response(&state, 50, owner);
+        ServerState::new(server)
+    }
+
+    #[test]
+    fn sync_response_drops_expressions_before_it_outgrows_one_frame() {
+        let owner = UserId::new();
+        let payload = build_sync_response(&expression_heavy_server(owner, 50), 50, owner);
         assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES);
         let WirePayload::SyncResponse { server, .. } = payload else { panic!("wrong payload kind") };
-        assert!(server.emojis.is_empty() && server.soundboard.is_empty());
-        assert!(server.stickers.is_empty() && server.emoticons.is_empty());
+        assert!(server.soundboard.is_empty() && server.stickers.is_empty() && server.emoticons.is_empty());
         assert!(server.drive.is_empty(), "drive items travel as their own signed actions");
+    }
+
+    #[test]
+    fn a_service_copy_carries_the_servers_expressions_so_new_devices_can_show_them() {
+        let owner = UserId::new();
+        let state = expression_heavy_server(owner, 5);
+        let payload = build_sync_response_within(&state, 0, owner, 48 * 1024);
+        let WirePayload::SyncResponse { server, .. } = payload else { panic!("wrong payload kind") };
+        assert_eq!(server.emojis, state.server.emojis);
+        assert_eq!(server.stickers, state.server.stickers);
+        assert_eq!(server.emoticons, state.server.emoticons);
+        assert_eq!(server.soundboard.len(), state.server.soundboard.len());
+        assert!(server.drive.is_empty());
     }
 }

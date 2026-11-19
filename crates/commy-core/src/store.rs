@@ -727,7 +727,7 @@ impl ServerState {
         &all[start..end]
     }
 
-    pub(crate) fn action_time(&self, subject: &str) -> Option<i64> {
+    pub fn action_time(&self, subject: &str) -> Option<i64> {
         self.action_times.get(subject).copied()
     }
 

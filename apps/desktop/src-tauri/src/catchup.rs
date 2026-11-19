@@ -973,12 +973,21 @@ pub fn checkpoint_snapshot_for(app: &App, server: ServerId) -> Option<WirePayloa
     Some(commy_net::checkpoint::snapshot_of(servers.get(&server)?, me, Utc::now().timestamp_millis(), &identity))
 }
 
-pub fn learn_service_profiles(handle: &tauri::AppHandle, server: ServerId, payload: &WirePayload) {
+pub fn learn_service_snapshot(handle: &tauri::AppHandle, server: ServerId, payload: &WirePayload) {
     if !snapshot_vouched(handle.app(), server, payload, commy_net::community_streams::RETENTION_MS) {
         return;
     }
-    if let WirePayload::SyncResponse { profiles, .. } = payload {
-        AppStore(handle.clone()).apply_profiles(server, profiles.clone());
+    let WirePayload::SyncResponse { server: remote, profiles, .. } = payload else { return };
+    AppStore(handle.clone()).apply_profiles(server, profiles.clone());
+    learn_missing_expressions(handle, server, commy_net::catchup::Expressions::of(remote));
+}
+
+fn learn_missing_expressions<A: AppAccess>(access: &A, server: ServerId, expressions: commy_net::catchup::Expressions) {
+    let app = access.app();
+    let learned = app.servers.lock_or_recover().get_mut(&server).is_some_and(|state| expressions.adopt_unheard(state));
+    if learned {
+        app.persist_server(server);
+        access.emit("server-event", server.to_string().into());
     }
 }
 
@@ -1025,6 +1034,7 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
         return false;
     }
     remote_server.members = members.into_iter().map(member_of).collect();
+    let expressions = commy_net::catchup::Expressions::take_from(&mut remote_server);
     let me = app.profile.lock_or_recover().clone();
     let me_id = me.as_ref().map(|p| p.id);
     let mut held = Vec::new();
@@ -1037,6 +1047,7 @@ fn apply_snapshot_within<A: AppAccess>(access: &A, server: ServerId, payload: Wi
         let pinned: HashMap<UserId, IdentityKey> = old.profiles.values().filter_map(|p| Some((p.id, p.identity?))).collect();
         let mut state = ServerState::new(remote_server);
         state.set_action_floor(at);
+        expressions.adopt_unheard(&mut state);
         if old.server.rules.is_some() {
             let _ = state.apply(ServerEvent::RulesSet { server, rules: old.server.rules.clone() });
         }
@@ -2330,6 +2341,21 @@ mod tests {
         invited_by(&app, sid, owner);
         assert!(apply_service_snapshot(&TestHandle::new(app.clone()), sid, copy));
         app
+    }
+
+    #[test]
+    fn a_new_device_gets_the_servers_custom_emojis_from_its_copy() {
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let emoji = commy_core::server::CustomEmoji { name: "artie_bucco".into(), blob: format!("{}@{}", "b".repeat(52), "0".repeat(64)) };
+        real.apply(ServerEvent::EmojiAdd { server: sid, emoji }).unwrap();
+        let mut copy = commy_net::protocol::build_sync_response_within(&real, 0, owner.id(), commy_net::community_streams::SNAPSHOT_BYTES);
+        commy_net::protocol::sign_sync_response(&mut copy, Utc::now().timestamp_millis(), &owner.identity);
+        let app = rejoined_from(&owner, &me, sid, copy);
+        assert_eq!(app.servers.lock().unwrap()[&sid].server.emojis, real.server.emojis);
     }
 
     #[test]

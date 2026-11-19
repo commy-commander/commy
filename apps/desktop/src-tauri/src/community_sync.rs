@@ -46,6 +46,7 @@ const GREET_SPREAD_MS: u64 = 3_000;
 const CHECKPOINT_PATIENCE: Duration = Duration::from_secs(20);
 const DOZE_AFTER: Duration = Duration::from_secs(10 * 60);
 const FROM_THE_TAIL: u64 = 0;
+const REFRESH_LASTING_EVERY_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cursors {
@@ -53,6 +54,8 @@ pub struct Cursors {
     pub after: BTreeMap<String, u64>,
     #[serde(default)]
     pub backfilled: BTreeSet<String>,
+    #[serde(default)]
+    pub refreshed_lasting: BTreeMap<String, i64>,
     #[serde(default)]
     pub announced: BTreeMap<String, String>,
     #[serde(default)]
@@ -99,9 +102,24 @@ impl Cursors {
         self.after.insert(hex, start);
     }
 
+    pub fn backfill_due(&self, stream: StreamId, lane: Lane, now: i64) -> bool {
+        let hex = stream.to_hex();
+        if !self.backfilled.contains(&hex) {
+            return true;
+        }
+        lane == Lane::State && self.refreshed_lasting.get(&hex).is_none_or(|at| now - at >= REFRESH_LASTING_EVERY_MS)
+    }
+
+    pub fn note_backfilled(&mut self, stream: StreamId, now: i64) {
+        let hex = stream.to_hex();
+        self.backfilled.insert(hex.clone());
+        self.refreshed_lasting.insert(hex, now);
+    }
+
     pub fn keep_only(&mut self, streams: &HashSet<String>) {
         self.after.retain(|stream, _| streams.contains(stream));
         self.backfilled.retain(|stream| streams.contains(stream));
+        self.refreshed_lasting.retain(|stream, _| streams.contains(stream));
         self.read_back.retain(|stream| streams.contains(stream));
         self.older_before.retain(|stream, _| streams.contains(stream));
         self.announced.retain(|stream, _| streams.contains(stream));
@@ -119,6 +137,7 @@ impl Cursors {
                 let hex = stream.to_hex();
                 self.after.remove(&hex);
                 self.backfilled.remove(&hex);
+                self.refreshed_lasting.remove(&hex);
                 self.read_back.remove(&hex);
                 self.older_before.remove(&hex);
                 self.announced.remove(&hex);
@@ -1511,7 +1530,7 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
         return;
     }
     if snapshot_time(&payload).is_some() {
-        crate::catchup::learn_service_profiles(handle, server, &payload);
+        crate::catchup::learn_service_snapshot(handle, server, &payload);
         return;
     }
     let Some((event, action)) = streams::event_of(&payload).map(|(event, action)| (event.clone(), action)) else { return };
@@ -1742,7 +1761,7 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
             tracing::info!("{server} is up to date from the sync service {} ms after launch", crate::startup::since_launch().as_millis());
         }
         let held = live.snapshots.contains_key(&server);
-        let due = want.writes && !live.cursors.backfilled.contains(&stream.to_hex()) && !live.backfilling.contains(&stream);
+        let due = want.writes && live.cursors.backfill_due(stream, want.lane, now_ms()) && !live.backfilling.contains(&stream);
         let again = want.lane == Lane::State && want.writes && live.say_again.remove(&server);
         (server, want, due, live.me, first, held, again)
     };
@@ -1786,7 +1805,7 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
         if let Some(live) = LIVE.lock_or_recover().as_mut() {
             live.backfilling.remove(&stream);
             if done {
-                live.cursors.backfilled.insert(stream.to_hex());
+                live.cursors.note_backfilled(stream, now_ms());
             }
         }
         save_soon();
@@ -1978,6 +1997,24 @@ mod tests {
         assert_eq!(cursors.after(stream), 60, "entries parked before a restart are read again");
         cursors.start_at(stream, 75);
         assert_eq!(cursors.after(stream), 60);
+    }
+
+    #[test]
+    fn the_owner_copies_lasting_server_changes_again_every_week_so_new_devices_still_find_them() {
+        let mut cursors = Cursors::default();
+        let state = commy_sync::StreamSecret::random().keys().id;
+        let texts = commy_sync::StreamSecret::random().keys().id;
+        let chat = Lane::Channel(commy_core::ChannelId::new());
+        let now = 1_000_000_000_000;
+        assert!(cursors.backfill_due(state, Lane::State, now) && cursors.backfill_due(texts, chat, now));
+        cursors.note_backfilled(state, now);
+        cursors.note_backfilled(texts, now);
+        assert!(!cursors.backfill_due(state, Lane::State, now + 1));
+        let week_later = now + REFRESH_LASTING_EVERY_MS;
+        assert!(cursors.backfill_due(state, Lane::State, week_later));
+        assert!(!cursors.backfill_due(texts, chat, week_later), "messages are copied over once");
+        cursors.refreshed_lasting.clear();
+        assert!(cursors.backfill_due(state, Lane::State, now), "an owner who copied them before this build copies them again");
     }
 
     #[test]
