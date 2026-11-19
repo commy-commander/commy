@@ -390,7 +390,8 @@ html[data-look="studio"] .integration-status {
 }
 html[data-look="studio"] .integration-status .integration-recheck { padding: 0 12px; color: var(--text-muted); font: 500 13px/1 var(--font); }
 html[data-look="studio"] .integration-status .integration-recheck:hover { color: var(--header-primary); }
-html[data-look="studio"]:not([data-fit="slim"]) .settings-tab > .tab-dot { margin-right: 4px; box-shadow: 0 0 0 3px rgb(var(--dark) / .18); }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-tab > .tab-state { margin-right: 4px; }
+html[data-look="studio"]:not([data-fit="slim"]) .settings-tab > .tab-state > .tab-dot { box-shadow: 0 0 0 3px rgb(var(--dark) / .18); }
 html[data-look="studio"] .set-pane:has(.game-search:not(.hidden)) { z-index: 5; }
 html[data-look="studio"]:not([data-fit="slim"]) .game-search {
   top: calc(100% + 8px);

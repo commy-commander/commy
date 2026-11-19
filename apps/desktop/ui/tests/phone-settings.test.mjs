@@ -54,6 +54,7 @@ test("menu rows: labels, 52 rows with the icon, a faint chevron, and red danger 
   assert.match(rule(".settings-layer .settings-nav-inner > .settings-tab > .i"), /width: 20px; height: 20px; color: var\(--text-muted\);/);
   assert.match(rule(".settings-layer .settings-nav-inner > .settings-tab > .pt-set-chev"), /margin: 0 8px 0 auto; color: var\(--text-faint\);/);
   assert.match(rule(".settings-layer .settings-nav-inner > .settings-tab.danger"), /color: var\(--danger-text\);/);
+  assert.match(rule(".settings-layer .settings-nav-inner > .settings-tab"), /line-height: 1\.2;.*white-space: normal;/);
   assert.match(rule(".settings-layer .settings-nav-inner > .settings-nav-sep"), /height: 1px; margin: 8px 12px;.*background: var\(--line\);/);
   assert.match(rule(".settings-layer .settings-nav-inner .settings-search"), /height: 44px;.*border-radius: 999px;/);
   assert.match(glue, /const wants = slim && !tab\.classList\.contains\("danger"\);/);
@@ -64,4 +65,10 @@ test("the settings screen never slides under the status bar", () => {
   assert.match(glue, /function phoneSettingsHoldStill\(frame\) \{\n\s*if \(studioSlim\(\) && \(frame\.scrollTop \|\| frame\.scrollLeft\)\) frame\.scrollTo\(0, 0\);/);
   assert.match(glue, /for \(const frame of \[layer, \.\.\.layer\.querySelectorAll\(":scope > \.settings-nav, :scope > \.settings-content"\)\]\)/);
   assert.match(rule(".settings-layer .settings-phone-bar:not(:has(> .settings-phone-sub:not(:empty))) > .settings-phone-title"), /grid-row: 1 \/ span 2; align-self: center;/);
+});
+
+test("integration rows keep the state and the chevron together on the right", () => {
+  assert.match(rule(".settings-layer .settings-nav-inner > .settings-tab > .tab-state"), /display: flex; gap: 7px; margin-left: auto; font: 500 13px\/1 var\(--font\); color: var\(--text-muted\);/);
+  assert.match(rule(".settings-layer .settings-nav-inner > .settings-tab > .tab-state > .tab-word"), /display: block;/);
+  assert.match(rule(".settings-layer .settings-nav-inner > .settings-tab > .tab-state + .pt-set-chev"), /margin-left: 10px;/);
 });

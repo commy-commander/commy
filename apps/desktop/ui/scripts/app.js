@@ -13006,15 +13006,24 @@ function paintIntegration(kind, status) {
   row.dataset.tone = status.tone;
   row.querySelector(".integration-status-text").textContent = status.text;
   row.querySelector(".integration-recheck").classList.toggle("hidden", status.tone === "busy");
-  const tab = $(`tab-${kind}`);
-  const lit = status.tone === "ok" || status.tone === "warn";
-  let dot = tab.querySelector(".tab-dot");
-  if (lit && !dot) dot = tab.appendChild(el("span", "tab-dot"));
-  if (dot) dot.classList.toggle("hidden", !lit);
-  if (lit) {
-    dot.dataset.tone = status.tone;
-    dot.title = status.text;
-  }
+  paintIntegrationTab($(`tab-${kind}`), status);
+}
+
+function integrationTabState(tab) {
+  const found = tab.querySelector(":scope > .tab-state");
+  if (found) return found;
+  const state = el("span", "tab-state");
+  state.append(el("span", "tab-dot"), el("span", "tab-word"));
+  tab.insertBefore(state, tab.querySelector(":scope > .pt-set-chev"));
+  return state;
+}
+
+function paintIntegrationTab(tab, status) {
+  const state = integrationTabState(tab);
+  state.dataset.tone = status.tone;
+  state.title = status.text;
+  state.querySelector(".tab-dot").dataset.tone = status.tone;
+  state.querySelector(".tab-word").textContent = integrationTabWord(status.tone);
 }
 
 async function checkIntegration(kind, force = false) {

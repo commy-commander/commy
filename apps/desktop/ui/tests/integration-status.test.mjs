@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
-const { INTEGRATION_FRESH_MS, INTEGRATION_KINDS, INTEGRATION_WORDS, integrationStatus, createIntegrationChecks } = require("../scripts/integration-status.js");
+const { INTEGRATION_FRESH_MS, INTEGRATION_KINDS, INTEGRATION_WORDS, integrationTabWord, integrationStatus, createIntegrationChecks } = require("../scripts/integration-status.js");
 const read = name => readFileSync(new URL(`../${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("index.html");
 const app = read("scripts/app.js");
@@ -62,4 +62,15 @@ test("each integration page has a status row, a tab and a way to check again", (
   assert.ok(app.includes('again.onclick = () => checkIntegration(again.dataset.kind, true);'));
   assert.ok(css.includes('.integration-status[data-tone="ok"] .integration-dot, .tab-dot[data-tone="ok"] { background: var(--green); }'));
   assert.ok(css.includes('.integration-status[data-tone="warn"] .integration-dot, .tab-dot[data-tone="warn"] { background: var(--accent-2); }'));
+});
+
+test("each integration tab says its state in one short word beside the dot", () => {
+  assert.equal(integrationTabWord("ok"), "Working");
+  assert.equal(integrationTabWord("warn"), "Problem");
+  assert.equal(integrationTabWord("off"), "Off");
+  assert.equal(integrationTabWord("busy"), "Checking");
+  assert.equal(integrationTabWord("nope"), "");
+  assert.ok(app.includes('state.append(el("span", "tab-dot"), el("span", "tab-word"));'));
+  assert.ok(app.includes('tab.insertBefore(state, tab.querySelector(":scope > .pt-set-chev"));'));
+  assert.ok(css.includes('.tab-state:not([data-tone="ok"], [data-tone="warn"]), .tab-word { display: none; }'));
 });

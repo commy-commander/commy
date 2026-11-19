@@ -21,6 +21,12 @@ const INTEGRATION_WORDS = {
   },
 };
 
+const INTEGRATION_TAB_WORDS = { busy: "Checking", ok: "Working", warn: "Problem", off: "Off" };
+
+function integrationTabWord(tone) {
+  return INTEGRATION_TAB_WORDS[tone] || "";
+}
+
 function integrationReason(lead, reason) {
   const text = String(reason || "").trim().replace(/[.\s]+$/, "");
   return text ? `${lead}: ${text}` : lead;
@@ -58,5 +64,5 @@ function createIntegrationChecks(now = () => Date.now()) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { INTEGRATION_FRESH_MS, INTEGRATION_KINDS, INTEGRATION_WORDS, integrationStatus, createIntegrationChecks };
+  module.exports = { INTEGRATION_FRESH_MS, INTEGRATION_KINDS, INTEGRATION_WORDS, INTEGRATION_TAB_WORDS, integrationTabWord, integrationStatus, createIntegrationChecks };
 }

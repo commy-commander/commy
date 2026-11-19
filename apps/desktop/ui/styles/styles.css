@@ -5170,7 +5170,9 @@ html[data-reduced-motion] .server-tag.st-fx-shine::after { display: none; }
 .integration-status[data-tone="warn"] .integration-dot, .tab-dot[data-tone="warn"] { background: var(--accent-2); }
 .integration-status[data-tone="busy"] .integration-dot { animation: integration-busy 1s ease-in-out infinite alternate; }
 .integration-recheck { flex: none; }
-.tab-dot { width: 8px; height: 8px; margin-left: auto; }
+.tab-state { display: flex; flex: none; align-items: center; margin-left: auto; }
+.tab-state:not([data-tone="ok"], [data-tone="warn"]), .tab-word { display: none; }
+.tab-dot { width: 8px; height: 8px; }
 @keyframes integration-busy {
   from { opacity: .3; }
   to { opacity: 1; }
