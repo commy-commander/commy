@@ -60,6 +60,11 @@ pub fn folder(base: &Path, server: &str, account: &str) -> PathBuf {
     base.join(ACCOUNTS_DIR).join(folder_name(server, account))
 }
 
+pub fn belongs_to_another(base: &Path, open: &Path, signed_in: (&str, &str), others: &[(String, String)]) -> bool {
+    open != folder(base, signed_in.0, signed_in.1)
+        && others.iter().any(|(server, account)| open == folder(base, server, account))
+}
+
 pub fn folders(base: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(base.join(ACCOUNTS_DIR)) else { return Vec::new() };
     entries.flatten().map(|entry| entry.path()).filter(|path| path.is_dir()).collect()
@@ -348,6 +353,20 @@ mod tests {
         let name = folder_name(SERVER, "user-a");
         assert_eq!(name.len(), 32);
         assert!(!name.contains("user-a"));
+    }
+
+    #[test]
+    fn a_folder_open_for_another_saved_account_is_never_this_accounts() {
+        let base = base("belongs");
+        let a = folder(&base, SERVER, "user-a");
+        let b = folder(&base, SERVER, "user-b");
+        let others = vec![(SERVER.to_string(), "user-a".to_string())];
+        assert!(belongs_to_another(&base, &a, (SERVER, "user-b"), &others));
+        assert!(!belongs_to_another(&base, &b, (SERVER, "user-b"), &others));
+        assert!(!belongs_to_another(&base, &base, (SERVER, "user-b"), &others));
+        assert!(!belongs_to_another(&base, &a, (SERVER, "user-a"), &others));
+        assert!(!belongs_to_another(&base, &a, (SERVER, "user-b"), &[]));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

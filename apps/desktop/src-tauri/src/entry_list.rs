@@ -271,7 +271,17 @@ pub(crate) struct Session {
 fn signed_in(app: &App) -> Result<(PathBuf, Session), String> {
     let dir = app.data_dir().cloned().ok_or("No data folder")?;
     let s = session(app).ok_or("Sign in first")?;
+    if open_folder_is_another_accounts(app, &dir, &s) {
+        return Err("This account's data folder isn't open yet".into());
+    }
     Ok((dir, s))
+}
+
+fn open_folder_is_another_accounts(app: &App, dir: &Path, s: &Session) -> bool {
+    let Some(base) = app.base_dir() else { return false };
+    let others: Vec<(String, String)> =
+        app.account.lock_or_recover().others.iter().map(|o| (o.server.clone(), o.user.id.clone())).collect();
+    crate::account_folder::belongs_to_another(base, dir, (&s.server, &s.account), &others)
 }
 
 pub(crate) fn session(app: &App) -> Option<Session> {
@@ -386,6 +396,10 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
     let Some(s) = session(&app) else {
         return finish(handle, "off", "Sign in to your Commy account to sync your servers.", 0, false).await;
     };
+    if open_folder_is_another_accounts(&app, &dir, &s) {
+        tracing::warn!("skipped a server list sync while another account's folder was open");
+        return Ok(());
+    }
     crate::account_move::move_in_if_due(&app, &dir, &s).await;
     if app.account.lock_or_recover().features.is_some_and(|f| !f.vault) {
         return finish(handle, "unsupported", NO_VAULT, 0, false).await;
@@ -856,8 +870,10 @@ enum Asked {
 
 async fn ask(handle: &AppHandle) -> Result<Asked, String> {
     let app = handle.state::<App>();
-    let Some(dir) = app.data_dir().cloned() else { return Ok(Asked::NoAnswer) };
-    let s = session(&app).ok_or("Sign in first")?;
+    if app.data_dir().is_none() {
+        return Ok(Asked::NoAnswer);
+    }
+    let (dir, s) = signed_in(&app)?;
     let node = crate::key_handoff::own_node(&app).ok_or("This install has no device key yet")?;
     let me = node.public().to_hex();
     if !crate::account::ensure_linked(&app).await {
@@ -935,12 +951,12 @@ async fn answer(handle: &AppHandle, peer: [u8; 32], request: &EntryKeyRequest) -
 
 pub(crate) async fn key_for_own_device(handle: &AppHandle, device: &IdentityKey) -> Option<SealKey> {
     let app = handle.state::<App>();
-    let s = session(&app)?;
+    let (dir, s) = signed_in(&app).ok()?;
     if !account_devices(&app, &s).await.ok()?.contains(&device.to_hex()) {
         tracing::warn!("a device outside this account asked for the server list key");
         return None;
     }
-    load_key(app.data_dir()?, &s.server, &s.account)
+    load_key(&dir, &s.server, &s.account)
 }
 
 #[tauri::command]
