@@ -60,7 +60,7 @@ pub struct UserProfile {
     pub card_effect: Option<String>,
     #[serde(default)]
     pub phone_until: Option<i64>,
-    #[serde(default)]
+    #[serde(default, with = "crate::wire_layout::later")]
     pub home: Option<crate::home::HomeCard>,
 }
 

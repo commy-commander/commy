@@ -45,6 +45,7 @@ const GREET_GAP: Duration = Duration::from_secs(120);
 const GREET_SPREAD_MS: u64 = 3_000;
 const CHECKPOINT_PATIENCE: Duration = Duration::from_secs(20);
 const DOZE_AFTER: Duration = Duration::from_secs(10 * 60);
+const FROM_THE_TAIL: u64 = 0;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cursors {
@@ -1044,8 +1045,7 @@ fn end_checkpoint_read(handle: &AppHandle, stream: StreamId) {
                 community.pool.follow_together_tail(vec![(read.state, after)], None);
             }
             None => {
-                let after = live.cursors.after(read.state.id);
-                community.pool.follow_together_tail(vec![(read.state, after)], Some(streams::STATE_TAIL));
+                community.pool.follow_together_tail(vec![(read.state, FROM_THE_TAIL)], Some(streams::STATE_TAIL));
             }
         }
     }

@@ -31,6 +31,11 @@ struct SignedBytes<'a> {
 }
 
 pub fn signing_bytes(server: ServerId, by: UserId, at: i64, event: &ServerEvent) -> Vec<u8> {
+    crate::wire_layout::encode(&SignedBytes { domain: ACTION_DOMAIN, server, by, at, event })
+        .expect("action serialization cannot fail")
+}
+
+fn full_layout_signing_bytes(server: ServerId, by: UserId, at: i64, event: &ServerEvent) -> Vec<u8> {
     postcard::to_stdvec(&SignedBytes { domain: ACTION_DOMAIN, server, by, at, event })
         .expect("action serialization cannot fail")
 }
@@ -44,6 +49,7 @@ impl SignedEvent {
     pub fn verify(&self, server: ServerId, key: &IdentityKey) -> bool {
         let Action { by, at, sig } = self.action;
         key.verify(&signing_bytes(server, by, at, &self.event), &sig)
+            || key.verify(&full_layout_signing_bytes(server, by, at, &self.event), &sig)
     }
 }
 

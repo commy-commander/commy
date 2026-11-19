@@ -30,10 +30,10 @@ impl DmEnvelope {
     }
 
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if let Ok(envelope) = postcard::from_bytes::<DmEnvelope>(bytes) {
+        if let Ok(envelope) = commy_core::wire_layout::decode::<DmEnvelope>(bytes) {
             return Some(envelope);
         }
-        let BareDmEnvelope { message, sender } = postcard::from_bytes(bytes).ok()?;
+        let BareDmEnvelope { message, sender } = commy_core::wire_layout::decode(bytes).ok()?;
         Some(DmEnvelope::new(message, sender))
     }
 

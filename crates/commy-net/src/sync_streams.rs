@@ -49,7 +49,7 @@ pub fn dm_stream(me: &Identity, partner: &IdentityKey, epoch: &str) -> Option<St
 }
 
 pub fn encode_dm(envelope: &DmEnvelope) -> Vec<u8> {
-    postcard::to_stdvec(envelope).expect("postcard encodes DM envelopes")
+    commy_core::wire_layout::encode(envelope).expect("postcard encodes DM envelopes")
 }
 
 #[derive(Debug, Clone, PartialEq)]

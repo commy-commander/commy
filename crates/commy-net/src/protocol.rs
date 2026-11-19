@@ -90,11 +90,11 @@ struct SnapshotBytes<'a> {
     voice: &'a [SyncVoice],
 }
 
-fn snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
+fn snapshot_fields(payload: &WirePayload) -> Option<SnapshotBytes<'_>> {
     let WirePayload::SyncResponse { server, members, profiles, recent_messages, voice, by, at, .. } = payload else {
         return None;
     };
-    let bytes = SnapshotBytes {
+    Some(SnapshotBytes {
         domain: SNAPSHOT_DOMAIN,
         server_id: server.id,
         by: *by,
@@ -104,8 +104,15 @@ fn snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
         profiles,
         recent_messages,
         voice,
-    };
-    postcard::to_stdvec(&bytes).ok()
+    })
+}
+
+fn snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
+    commy_core::wire_layout::encode(&snapshot_fields(payload)?).ok()
+}
+
+fn full_layout_snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
+    postcard::to_stdvec(&snapshot_fields(payload)?).ok()
 }
 
 pub fn sign_sync_response(payload: &mut WirePayload, at: i64, identity: &Identity) {
@@ -119,10 +126,11 @@ pub fn sign_sync_response(payload: &mut WirePayload, at: i64, identity: &Identit
 }
 
 pub fn verify_sync_response(payload: &WirePayload, key: &IdentityKey) -> bool {
-    let (Some(bytes), WirePayload::SyncResponse { sig, .. }) = (snapshot_bytes(payload), payload) else {
+    let WirePayload::SyncResponse { sig, .. } = payload else {
         return false;
     };
-    key.verify(&bytes, sig)
+    let signed = |bytes: Option<Vec<u8>>| bytes.is_some_and(|bytes| key.verify(&bytes, sig));
+    signed(snapshot_bytes(payload)) || signed(full_layout_snapshot_bytes(payload))
 }
 
 pub fn signed_size(server: ServerId, event: &ServerEvent) -> usize {
@@ -160,7 +168,7 @@ impl Envelope {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, ProtocolError> {
-        let bytes = postcard::to_stdvec(self).map_err(|_| ProtocolError::Malformed)?;
+        let bytes = commy_core::wire_layout::encode(self).map_err(|_| ProtocolError::Malformed)?;
         if bytes.len() > MAX_FRAME_BYTES {
             return Err(ProtocolError::FrameTooLarge);
         }
@@ -172,7 +180,7 @@ impl Envelope {
             return Err(ProtocolError::FrameTooLarge);
         }
         let envelope: Envelope =
-            postcard::from_bytes(bytes).map_err(|_| ProtocolError::Malformed)?;
+            commy_core::wire_layout::decode(bytes).map_err(|_| ProtocolError::Malformed)?;
         if envelope.version != PROTOCOL_VERSION {
             return Err(ProtocolError::VersionMismatch(envelope.version));
         }
@@ -187,10 +195,8 @@ pub const MAX_GOSSIP_BYTES: usize = commy_core::message::GOSSIP_FRAME_BYTES;
 const _: () = assert!(MAX_GOSSIP_BYTES < IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES);
 
 pub fn gossip_size(payload: &WirePayload) -> usize {
-    Envelope::new([0u8; 32], payload.clone())
-        .encode()
-        .map(|b| b.len())
-        .unwrap_or(usize::MAX)
+    let envelope = Envelope::new([0u8; 32], payload.clone());
+    postcard::serialize_with_flavor(&envelope, postcard::ser_flavors::Size::default()).unwrap_or(usize::MAX)
 }
 
 fn encoded<T: Serialize>(item: &T) -> usize {

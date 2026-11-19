@@ -25791,6 +25791,13 @@ async function pickCustomIcon(target) {
   renderIconPickers();
 }
 
+function refreshOwnPronouns(input) {
+  invoke("get_voice_settings").then(voice => {
+    state.voice = voice;
+    if (document.activeElement !== input) input.value = voice.pronouns || "";
+  }).catch(() => {});
+}
+
 function openUserSettings(tab) {
   if (!state.user) return;
   clearSettingsSearch();
@@ -25810,6 +25817,7 @@ function openUserSettings(tab) {
   loadStorageSettings().then(renderStorageSettings);
   $("account-about").value = decodeCustomEmojis(state.user.about);
   $("account-pronouns").value = state.voice.pronouns || "";
+  refreshOwnPronouns($("account-pronouns"));
   renderAccountServerTag();
   loadOverlaySettings().then(renderOverlaySettings);
   loadUpdateStatus();

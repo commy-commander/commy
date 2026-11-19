@@ -228,11 +228,11 @@ pub fn encode_signal(node: [u8; 32], payload: &WirePayload) -> Option<Vec<u8>> {
     if !signals(event) {
         return None;
     }
-    postcard::to_stdvec(&SignalEntry { version: PROTOCOL_VERSION, node, payload: payload.clone() }).ok()
+    commy_core::wire_layout::encode(&SignalEntry { version: PROTOCOL_VERSION, node, payload: payload.clone() }).ok()
 }
 
 pub fn decode_signal(plain: &[u8], lane: Lane) -> Option<([u8; 32], WirePayload)> {
-    let entry: SignalEntry = postcard::from_bytes(plain).ok()?;
+    let entry: SignalEntry = commy_core::wire_layout::decode(plain).ok()?;
     let (event, _) = event_of(&entry.payload)?;
     let fits = entry.version == PROTOCOL_VERSION && signals(event) && signal_lane(event) == lane && entry.node != SERVICE_SENDER;
     fits.then_some((entry.node, entry.payload))
@@ -255,11 +255,11 @@ pub fn lane_of_payload(payload: &WirePayload) -> Option<Lane> {
 
 pub fn encode_entry(payload: &WirePayload) -> Option<Vec<u8>> {
     lane_of_payload(payload)?;
-    postcard::to_stdvec(&Entry { version: PROTOCOL_VERSION, payload: payload.clone() }).ok()
+    commy_core::wire_layout::encode(&Entry { version: PROTOCOL_VERSION, payload: payload.clone() }).ok()
 }
 
 pub fn decode_entry(plain: &[u8], lane: Lane) -> Option<WirePayload> {
-    let entry: Entry = postcard::from_bytes(plain).ok()?;
+    let entry: Entry = commy_core::wire_layout::decode(plain).ok()?;
     if entry.version != PROTOCOL_VERSION {
         return None;
     }

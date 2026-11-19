@@ -143,7 +143,8 @@ where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
-    let mut bytes = postcard::to_extend(value, vec![0u8; 4]).map_err(|_| MediaError::Malformed)?;
+    let mut bytes = vec![0u8; 4];
+    bytes.extend(commy_core::wire_layout::encode(value).map_err(|_| MediaError::Malformed)?);
     let len = (bytes.len() - 4) as u32;
     if len > MAX_MEDIA_FRAME {
         return Err(MediaError::FrameTooLarge(len));
@@ -169,7 +170,7 @@ where
     let Some(buf) = read_frame_bytes(reader, max).await? else {
         return Ok(None);
     };
-    postcard::from_bytes(&buf)
+    commy_core::wire_layout::decode(&buf)
         .map(Some)
         .map_err(|_| MediaError::Malformed)
 }

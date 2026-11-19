@@ -40,6 +40,7 @@ pub mod search_keys;
 pub mod tip_jar;
 pub mod user;
 pub mod voice_invite;
+pub mod wire_layout;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

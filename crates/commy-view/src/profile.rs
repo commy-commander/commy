@@ -86,6 +86,18 @@ pub fn pronouns(raw: Option<&str>) -> Act<Option<String>> {
     }
 }
 
+pub fn own_pronouns<'a>(servers: impl Iterator<Item = &'a commy_core::Server>, me: commy_core::UserId) -> Option<String> {
+    let mut seen: Vec<(&str, usize)> = Vec::new();
+    for pronouns in servers.filter_map(|server| server.pronouns.get(&me)) {
+        match seen.iter_mut().find(|(text, _)| *text == pronouns.as_str()) {
+            Some((_, count)) => *count += 1,
+            None => seen.push((pronouns.as_str(), 1)),
+        }
+    }
+    let most = seen.iter().map(|(_, count)| *count).max()?;
+    seen.into_iter().find(|(_, count)| *count == most).map(|(text, _)| text.to_string())
+}
+
 pub fn future(at: Option<i64>, now: i64) -> Option<i64> {
     at.filter(|t| *t > now)
 }
@@ -220,6 +232,23 @@ mod tests {
         let edit = ProfileEdit { display_name: None, custom_status: None, presence: Presence::Idle, status_emoji: Some(None) };
         apply_edit(&mut profile, edit);
         assert_eq!(profile.status_emoji, None);
+    }
+
+    #[test]
+    fn own_pronouns_come_from_the_servers_that_most_agree() {
+        let me = commy_core::UserId::new();
+        let server_with = |pronouns: Option<&str>| {
+            let mut server = commy_core::Server::new("s", commy_core::UserId::new());
+            if let Some(text) = pronouns {
+                server.pronouns.insert(me, text.into());
+            }
+            server.pronouns.insert(commy_core::UserId::new(), "he / him".into());
+            server
+        };
+        let servers = [server_with(Some("she / her")), server_with(None), server_with(Some("they / them")), server_with(Some("she / her"))];
+        assert_eq!(own_pronouns(servers.iter(), me).as_deref(), Some("she / her"));
+        assert_eq!(own_pronouns(servers[1..2].iter(), me), None);
+        assert_eq!(own_pronouns(std::iter::empty(), me), None);
     }
 
     #[test]

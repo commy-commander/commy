@@ -7549,7 +7549,23 @@ async fn get_profile_image(app: tauri::State<'_, App>, blob: String, provider: O
 
 #[tauri::command]
 fn get_voice_settings(app: tauri::State<App>) -> VoiceSettings {
-    app.voice.lock_or_recover().clone()
+    let voice = app.voice.lock_or_recover().clone();
+    if voice.pronouns.is_some() {
+        return voice;
+    }
+    match pronouns_shared_in_servers(&app) {
+        Some(found) => app.update_voice(|voice| voice.pronouns = Some(found)),
+        None => voice,
+    }
+}
+
+fn pronouns_shared_in_servers(app: &App) -> Option<String> {
+    if !app.safety.lock_or_recover().profile_policy.shows_details_to_servers() {
+        return None;
+    }
+    let me = app.profile.lock_or_recover().as_ref()?.id;
+    let servers = app.servers.lock_or_recover();
+    view::profile::own_pronouns(servers.values().map(|state| &state.server), me)
 }
 
 #[tauri::command]

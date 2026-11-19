@@ -1410,6 +1410,7 @@ function fillProfileEditor() {
   $("pt-prof-dn").value = saved.name;
   $("pt-prof-dn").placeholder = (user && user.username) || "";
   $("pt-prof-pro").value = (state.voice && state.voice.pronouns) || "";
+  refreshOwnPronouns($("pt-prof-pro"));
   $("pt-prof-status").value = saved.status;
   $("pt-prof-about").value = decodeCustomEmojis(user.about);
   $("pt-prof-tag-hint").textContent = $("account-server-tag").closest(".field-label").querySelector(".setting-sub").textContent;
