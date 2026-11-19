@@ -116,3 +116,7 @@ test("back, swipe down and a scrim tap pick the safe answer", () => {
   assert.match(glue, /return backdrop\.querySelector\(":scope > \.modal:not\(\.hidden\)"\);/);
   assert.match(glue, /window\.addEventListener\("popstate", phoneDialogOnBack\);/);
 });
+
+test("a dialog checks whether it scrolls on the next frame, so its own resize never loops", () => {
+  assert.match(glue, /fitting = requestAnimationFrame\(\(\) => \{\n\s+fitting = 0;\n\s+const modal = phoneDialogShown\(\);\n\s+if \(modal\) phoneDialogFit\(modal\);/);
+});

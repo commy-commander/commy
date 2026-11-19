@@ -177,10 +177,16 @@ function pullFade(dx, dy, over) {
   return 1 - Math.min(0.6, Math.max(0, dx, dy) / over);
 }
 
+function scrollTakesPull(top, height, view, dy) {
+  const room = Math.round(height - view);
+  if (room <= 1 || !dy) return false;
+  return dy > 0 ? top > 0 : top < room - 1;
+}
+
 function touchOnly() {
   return typeof matchMedia === "function" && matchMedia("(hover: none) and (pointer: coarse)").matches;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { MOTION, MOVES, PRESSABLE, dragSpeed, keepSamples, swipeSettles, backSettles, sheetSettles, settleMs, viewportFrame, fullHeightAfter, railFades, railReveal, chatBarAfter, moveKind, gripOf, viewHolding, pinchScale, panWithin, pullFade, touchOnly };
+  module.exports = { MOTION, MOVES, PRESSABLE, dragSpeed, keepSamples, swipeSettles, backSettles, sheetSettles, settleMs, viewportFrame, fullHeightAfter, railFades, railReveal, chatBarAfter, moveKind, gripOf, viewHolding, pinchScale, panWithin, pullFade, scrollTakesPull, touchOnly };
 }

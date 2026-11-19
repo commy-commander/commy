@@ -230,9 +230,14 @@ function phoneDialogsWire() {
     if (modal) phoneDialogDress();
   }).observe(backdrop, { subtree: true, childList: true });
   if (typeof ResizeObserver === "function") {
+    let fitting = 0;
     const sizes = new ResizeObserver(() => {
-      const modal = phoneDialogShown();
-      if (modal) phoneDialogFit(modal);
+      if (fitting) return;
+      fitting = requestAnimationFrame(() => {
+        fitting = 0;
+        const modal = phoneDialogShown();
+        if (modal) phoneDialogFit(modal);
+      });
     });
     for (const modal of backdrop.querySelectorAll(":scope > .modal")) sizes.observe(modal);
   }

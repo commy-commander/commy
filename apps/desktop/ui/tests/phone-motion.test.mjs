@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { MOTION, MOVES, PRESSABLE, dragSpeed, keepSamples, swipeSettles, backSettles, sheetSettles, settleMs, viewportFrame, fullHeightAfter, railFades, railReveal, chatBarAfter, moveKind, gripOf, viewHolding, pinchScale, panWithin, pullFade } = require("../scripts/phone-motion.js");
+const { MOTION, MOVES, PRESSABLE, dragSpeed, keepSamples, swipeSettles, backSettles, sheetSettles, settleMs, viewportFrame, fullHeightAfter, railFades, railReveal, chatBarAfter, moveKind, gripOf, viewHolding, pinchScale, panWithin, pullFade, scrollTakesPull } = require("../scripts/phone-motion.js");
 const { LONG_PRESS } = require("../scripts/phone.js");
 
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -312,4 +312,22 @@ test("a settings layer that is already open is refreshed where it stands, with n
 test("the chat menu sheet sits above its scrim, so its rows are bright and can be tapped", () => {
   const touch = read("styles", "phone-touch.css");
   assert.match(touch, /^html\[data-look="studio"\]\[data-fit="slim"\] \.app\[data-pane="chat"\]\.pt-chat-menu > \.main \{ z-index: auto; \}$/m);
+});
+
+test("while the keyboard is up a drag moves only a list that can still scroll that way, never the whole page", () => {
+  assert.equal(scrollTakesPull(0, 400, 400, 12), false);
+  assert.equal(scrollTakesPull(0, 900, 400, 12), false);
+  assert.equal(scrollTakesPull(0, 900, 400, -12), true);
+  assert.equal(scrollTakesPull(500, 900, 400, -12), false);
+  assert.equal(scrollTakesPull(500, 900, 400, 12), true);
+  assert.equal(scrollTakesPull(120, 900, 400, 0), false);
+  assert.match(app, /holdPageStillWhileTyping\(root\);\n  fit\(\);/);
+  assert.match(app, /if \(!e\.cancelable \|\| e\.touches\.length !== 1 \|\| !root\.classList\.contains\("keyboard-up"\)\) return;/);
+  assert.match(app, /if \(!dragScrollsInside\(e\.target, dy\)\) e\.preventDefault\(\);\n  \}, \{ capture: true, passive: false \}\);/);
+  assert.match(touchCss, /\.pt-search-body \.search-list \{[^}]*overscroll-behavior: contain;/);
+});
+
+test("a ResizeObserver loop note is not shown as an error", () => {
+  assert.match(app, /const HARMLESS_UI_ERRORS = \/\^ResizeObserver loop\/;/);
+  assert.match(app, /if \(HARMLESS_UI_ERRORS\.test\(String\(e\.message \|\| ""\)\)\) return;\n  try \{ toast\(`UI error: \$\{e\.message\}`\); \}/);
 });

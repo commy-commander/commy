@@ -2830,7 +2830,7 @@ html[data-look="studio"][data-fit="slim"] .pt-search-body .search-scope-btn:disa
 html[data-look="studio"][data-fit="slim"] .pt-search-body .search-scope:not(:has(.search-scope-btn:enabled ~ .search-scope-btn:enabled)) { display: none; }
 html[data-look="studio"][data-fit="slim"] .pt-search-body .search-pager:not(:has(.search-page-btn:enabled)) { display: none; }
 html[data-look="studio"][data-fit="slim"] .pt-search-body .search-scope-btn.active { background: var(--k-latched); box-shadow: var(--k-latched-shadow); filter: var(--k-latched-filter); color: var(--header-primary); outline: 0; }
-html[data-look="studio"][data-fit="slim"] .pt-search-body .search-list { gap: 0; padding: 4px 0 calc(env(safe-area-inset-bottom) + 12px); scrollbar-width: none; }
+html[data-look="studio"][data-fit="slim"] .pt-search-body .search-list { gap: 0; padding: 4px 0 calc(env(safe-area-inset-bottom) + 12px); overscroll-behavior: contain; scrollbar-width: none; }
 html[data-look="studio"][data-fit="slim"] .pt-search-body .search-list::-webkit-scrollbar { display: none; }
 html[data-look="studio"][data-fit="slim"] .pt-search-body .search-list > :is(.pin-row, .mention-row) {
   flex: none;

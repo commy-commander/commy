@@ -5,7 +5,10 @@ const invoke = IS_TAURI ? window.__TAURI__.core.invoke : mockInvoke;
 const discoverState = { open: false, q: "", category: null, cursor: null, entries: [], busy: false, request: 0, host: "" };
 const discoveryState = { listing: null, dirty: false };
 
+const HARMLESS_UI_ERRORS = /^ResizeObserver loop/;
+
 window.addEventListener("error", e => {
+  if (HARMLESS_UI_ERRORS.test(String(e.message || ""))) return;
   try { toast(`UI error: ${e.message}`); } catch (_) {}
 });
 window.addEventListener("unhandledrejection", e => {
@@ -20697,7 +20700,34 @@ function lockPhoneViewport() {
   });
   view.addEventListener("resize", fit);
   view.addEventListener("scroll", fit);
+  holdPageStillWhileTyping(root);
   fit();
+}
+
+function dragScrollsInside(start, dy) {
+  for (let node = start; node && node !== document.body && node.nodeType === 1; node = node.parentElement) {
+    if (!/(auto|scroll)/.test(getComputedStyle(node).overflowY)) continue;
+    if (scrollTakesPull(node.scrollTop, node.scrollHeight, node.clientHeight, dy)) return true;
+  }
+  return false;
+}
+
+function holdPageStillWhileTyping(root) {
+  const last = { x: 0, y: 0 };
+  document.addEventListener("touchstart", e => {
+    const touch = e.touches[0];
+    if (touch) Object.assign(last, { x: touch.clientX, y: touch.clientY });
+  }, { capture: true, passive: true });
+  document.addEventListener("touchmove", e => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const dx = touch.clientX - last.x;
+    const dy = touch.clientY - last.y;
+    Object.assign(last, { x: touch.clientX, y: touch.clientY });
+    if (!e.cancelable || e.touches.length !== 1 || !root.classList.contains("keyboard-up")) return;
+    if (Math.abs(dy) < Math.abs(dx) || document.activeElement === e.target) return;
+    if (!dragScrollsInside(e.target, dy)) e.preventDefault();
+  }, { capture: true, passive: false });
 }
 
 async function markMobileApp() {
