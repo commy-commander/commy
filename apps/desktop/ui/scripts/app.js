@@ -55,11 +55,11 @@ function mockVoiceGateWaits() {
   return Object.fromEntries(Object.keys(mock.servers).map(id => [id, wait]));
 }
 
-function mockSearchMatcher({ terms, from, mentions }, named) {
+function mockSearchMatcher({ terms, from, mentions }, named, authorName = () => "") {
   return (authorId, content) => {
     if (from && authorId !== from) return false;
     if (mentions && !(named && mentionsName(content, [named.name]))) return false;
-    const text = content.toLowerCase();
+    const text = `${content}\n${authorName(authorId)}`.toLowerCase();
     return terms.every(t => text.includes(t.toLowerCase()));
   };
 }
@@ -73,7 +73,8 @@ function mockPage(hits, offset) {
 function mockSearch({ serverId, terms, from, mentions, channelId, offset }) {
   const server = mock.servers[serverId];
   const hidden = mockChatRestricted(server, "read_history");
-  const matches = mockSearchMatcher({ terms, from, mentions }, server.members.find(m => m.id === mentions));
+  const memberName = id => (server.members.find(m => m.id === id) || {}).name || "";
+  const matches = mockSearchMatcher({ terms, from, mentions }, server.members.find(m => m.id === mentions), memberName);
   const hits = server.channels
     .filter(c => holdsMessages(c) && (!channelId || c.id === channelId))
     .flatMap(c => (hidden ? historyWindow(mock.messages[c.id] || [], (mock.channelOpens || {})[c.id]) : mock.messages[c.id] || []).map(message => ({ channel: c.id, channel_name: c.name, message })))
@@ -85,7 +86,7 @@ function mockSearch({ serverId, terms, from, mentions, channelId, offset }) {
 function mockSearchDms({ terms, from, mentions, userId, offset }) {
   const contact = mock.dms[mentions];
   const named = contact ? { name: contact.name } : mentions === "me" && mock.user ? { name: mock.user.username } : null;
-  const matches = mockSearchMatcher({ terms, from, mentions }, named);
+  const matches = mockSearchMatcher({ terms, from, mentions }, named, id => (mock.dms[id] || {}).name || "");
   const dms = Object.entries(mock.dms)
     .filter(([user]) => !userId || user === userId)
     .flatMap(([user, d]) => d.messages.filter(m => matches(m.from, m.content)).map(message => ({ kind: "dm", user, name: d.name, message })));
@@ -10175,7 +10176,7 @@ function searchContext() {
   const server = state.currentServer;
   if (server) {
     return {
-      members: server.members.map(m => ({ id: m.id, name: m.name })),
+      members: server.members.map(m => ({ id: m.id, name: m.name, username: m.username })),
       channels: server.channels.filter(holdsMessages).map(c => ({ id: c.id, name: channelPlainName(c) })),
     };
   }
@@ -10410,6 +10411,35 @@ function dmSearchResultRow(hit, terms, label = dmHitKey(hit).label) {
   return searchRow(searchHitMessage(hit), terms, label, false, () => openDmSearchHit(hit));
 }
 
+function searchPersonRow(person) {
+  const row = el("button", "mention-row search-person-row");
+  row.type = "button";
+  const face = makeAvatar(person.id, person.name, "avatar avatar-sm");
+  face.addEventListener("click", e => {
+    e.stopPropagation();
+    const member = state.currentServer ? state.currentServer.members.find(m => m.id === person.id) : null;
+    const open = () => openFullProfile(member || { ...(state.people.get(person.id) || {}), id: person.id, name: person.name });
+    if (typeof studioPhone !== "undefined" && studioPhone.searchHome) closeSheets(open);
+    else open();
+  });
+  row.append(face, el("span", "mention-name", person.name), el("span", "mention-hint", "Their messages"));
+  return pickableRow(row, () => {
+    const input = $("search-input");
+    input.value = fromSearchText(person);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    $("search-box").classList.add("has-text");
+    searchUi.offset = 0;
+    runSearch(0);
+  });
+}
+
+function withSearchPeople(query, rows) {
+  const people = searchPeople(query, searchContext().members.filter(m => !state.user || m.id !== state.user.id));
+  if (!people.length) return rows;
+  return [el("div", "mention-head", state.view === "dm" ? "People" : "Members"), ...people.map(searchPersonRow), el("div", "mention-head", "Messages"), ...rows];
+}
+
 function searchTerms(query) {
   const terms = [...query.terms];
   if (query.mentions) terms.push(`@${query.mentions.name}`);
@@ -10422,10 +10452,10 @@ function renderSearchResults(query, results, scope, ctx) {
   setSearchHead(total || !studioLook() ? pageCount(total) : searchScopeTitle(scope, ctx), searchScopeLine(scope, query, ctx));
   setSearchPager(pageWindow(total, results.offset));
   if (!hits.length) {
-    setSearchItems([searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]);
+    setSearchItems(withSearchPeople(query, [searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]));
     return;
   }
-  setSearchItems(hits.map(hit => searchResultRow(hit, searchTerms(query))));
+  setSearchItems(withSearchPeople(query, hits.map(hit => searchResultRow(hit, searchTerms(query)))));
 }
 
 function renderDmSearchResults(query, results, scope, ctx) {
@@ -10434,16 +10464,16 @@ function renderDmSearchResults(query, results, scope, ctx) {
   setSearchHead(total || !studioLook() ? pageCount(total) : searchScopeTitle(scope, ctx), searchScopeLine(scope, query, ctx));
   setSearchPager(pageWindow(total, results.offset));
   if (!hits.length) {
-    setSearchItems([searchNote("No messages found", "Search covers the direct messages and groups this device keeps.")]);
+    setSearchItems(withSearchPeople(query, [searchNote("No messages found", "Search covers the direct messages and groups this device keeps.")]));
     return;
   }
   const terms = searchTerms(query);
   const runs = groupHits(hits);
   if (runs.length < 2) {
-    setSearchItems(hits.map(hit => dmSearchResultRow(hit, terms)));
+    setSearchItems(withSearchPeople(query, hits.map(hit => dmSearchResultRow(hit, terms))));
     return;
   }
-  setSearchItems(runs.flatMap(run => [el("div", "mention-head search-run-head", run.label), ...run.hits.map(hit => dmSearchResultRow(hit, terms, ""))]));
+  setSearchItems(withSearchPeople(query, runs.flatMap(run => [el("div", "mention-head search-run-head", run.label), ...run.hits.map(hit => dmSearchResultRow(hit, terms, ""))])));
 }
 
 async function runSearch(offset = searchUi.offset) {

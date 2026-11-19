@@ -134,13 +134,31 @@ impl<'a> Matcher<'a> {
         self.query.terms.iter().all(|term| haystack.contains(term.as_str()))
     }
 
-    fn matches(&self, message: &Message) -> bool {
-        self.accepts(message.author, &message.content, || searchable_text(message))
+    fn matches(&self, state: &ServerState, message: &Message) -> bool {
+        self.accepts(message.author, &message.content, || with_names(searchable_text(message), member_names(state, message.author)))
     }
 
-    fn matches_dm(&self, message: &DmMessage) -> bool {
-        self.accepts(message.from, &message.content, || dm_text(message))
+    fn matches_dm(&self, dms: &DmStore, message: &DmMessage) -> bool {
+        self.accepts(message.from, &message.content, || with_names(dm_text(message), profile_names(dms.contacts.get(&message.from))))
     }
+}
+
+fn profile_names(profile: Option<&commy_core::UserProfile>) -> Vec<String> {
+    profile.map(|p| std::iter::once(p.username.clone()).chain(p.display_name.clone()).collect()).unwrap_or_default()
+}
+
+fn member_names(state: &ServerState, user: UserId) -> Vec<String> {
+    let mut names = profile_names(state.profiles.get(&user));
+    names.extend(state.server.member(user).and_then(|m| m.nickname.clone()));
+    names
+}
+
+fn with_names(mut text: String, names: Vec<String>) -> String {
+    for name in names {
+        text.push('\n');
+        text.push_str(&name.to_lowercase());
+    }
+    text
 }
 
 fn dm_text(message: &DmMessage) -> String {
@@ -198,7 +216,7 @@ fn channel_matches<'a>(
             let floor = floor(c.id);
             state.messages(c.id).iter().filter(move |m| crate::within_history(floor, m)).map(move |m| (m, c.name.as_str()))
         })
-        .filter(move |(m, _)| keys.open(state, m).is_some_and(|opened| matcher.matches(&opened)) && sees(m))
+        .filter(move |(m, _)| keys.open(state, m).is_some_and(|opened| matcher.matches(state, &opened)) && sees(m))
 }
 
 pub fn search(
@@ -261,7 +279,7 @@ pub fn search_dms(
     };
     let mut found: Vec<Found> = partners
         .iter()
-        .flat_map(|&p| dms.posts(p).filter(|m| matcher.matches_dm(m)).map(move |m| Found::Dm(p, m)))
+        .flat_map(|&p| dms.posts(p).filter(|m| matcher.matches_dm(dms, m)).map(move |m| Found::Dm(p, m)))
         .collect();
     if partner.is_none() {
         found.extend(
@@ -418,6 +436,23 @@ mod tests {
         assert_eq!(f.find(SearchQuery::new(&words("lunch"), Some(sam), None, Some(news))), ["lunch menu is up"]);
         assert_eq!(f.find(SearchQuery::new(&[], None, Some(sam), None)), ["ping @sam about the menu", "hey @Sam Lee, lunch?"]);
         assert_eq!(f.find(SearchQuery::new(&[], None, None, Some(general))).len(), 2);
+    }
+
+    #[test]
+    fn a_name_finds_what_that_person_wrote_as_well_as_mentions_of_them() {
+        let mut f = Fixture::new();
+        let owner = f.owner();
+        let sam = f.join("alllowercase", Some("Sam Lee"));
+        let general = f.general;
+        f.post(general, sam, "first post here", 4);
+        f.post(general, owner, "thanks @alllowercase", 3);
+        f.post(general, owner, "nobody named here", 2);
+        let sid = f.state.server.id;
+        f.state.apply(ServerEvent::MemberNickname { server: sid, user: sam, nickname: Some("Sammy".into()) }).unwrap();
+        assert_eq!(f.find(SearchQuery::new(&words("ALLLOWERCASE"), None, None, None)), ["thanks @alllowercase", "first post here"]);
+        assert_eq!(f.find(SearchQuery::new(&words("sam lee"), None, None, None)), ["first post here"]);
+        assert_eq!(f.find(SearchQuery::new(&words("sammy"), None, None, None)), ["first post here"]);
+        assert_eq!(f.find(SearchQuery::new(&words("alllowercase first"), None, None, None)), ["first post here"]);
     }
 
     #[test]
@@ -597,6 +632,19 @@ mod tests {
         assert_eq!(hit_texts(&with_sam), ["lunch works", "lunch tomorrow?"]);
         let mine = inbox.find(SearchQuery::new(&[], Some(me), None, None), None, Page::newest());
         assert_eq!(hit_texts(&mine), ["lunch works"]);
+    }
+
+    #[test]
+    fn a_contact_name_finds_their_direct_messages() {
+        let mut inbox = Inbox::new();
+        let (me, sam, robin) = (inbox.me, inbox.sam, inbox.robin);
+        inbox.say(sam, me, "see you soon", 3);
+        inbox.say(robin, me, "hello there", 2);
+        inbox.say(me, robin, "say hi to sam", 1);
+        let found = inbox.find(SearchQuery::new(&words("sam"), None, None, None), None, Page::newest());
+        assert_eq!(hit_texts(&found), ["say hi to sam", "see you soon"]);
+        let by_display = inbox.find(SearchQuery::new(&words("lee"), None, None, None), None, Page::newest());
+        assert_eq!(hit_texts(&by_display), ["see you soon"]);
     }
 
     #[test]

@@ -131,6 +131,20 @@ function searchSuggestions(token, { members = [], channels = [] } = {}) {
     .slice(0, SEARCH_SUGGEST_LIMIT);
 }
 
+const SEARCH_PEOPLE_LIMIT = 3;
+
+function searchPeople(query, members = [], limit = SEARCH_PEOPLE_LIMIT) {
+  if (!query || query.from) return [];
+  const words = (query.terms || []).map(t => String(t).toLowerCase().replace(/^@/, "").trim()).filter(Boolean);
+  if (!words.length) return [];
+  const named = member => [member.name, member.username].filter(Boolean).join("\n").toLowerCase();
+  return members.filter(member => words.every(word => named(member).includes(word))).slice(0, limit);
+}
+
+function fromSearchText(person) {
+  return `from:@${person.name} `;
+}
+
 function applySearchSuggestion(text, token, item) {
   const spec = searchFilterFor(token.filter);
   const head = token.bare ? "@" : `${spec.key}:${spec.prefix}`;
@@ -205,7 +219,7 @@ function unknownFilterText(unknown, where = "in this server") {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    SEARCH_FILTERS, parseSearch, searchIsEmpty, searchArgs, searchToken, searchSuggestions,
+    SEARCH_FILTERS, parseSearch, searchIsEmpty, searchArgs, searchToken, searchSuggestions, searchPeople, fromSearchText,
     applySearchSuggestion, applySearchFilter, highlightParts, searchExcerpt, searchSummary, unknownFilterText,
   };
 }

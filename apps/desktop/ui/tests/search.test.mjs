@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const {
-  parseSearch, searchIsEmpty, searchArgs, searchToken, searchSuggestions,
+  parseSearch, searchIsEmpty, searchArgs, searchToken, searchSuggestions, searchPeople, fromSearchText,
   applySearchSuggestion, applySearchFilter, highlightParts, searchExcerpt, searchSummary, unknownFilterText,
 } = require("../scripts/search.js");
 
@@ -117,4 +117,18 @@ test("the summary counts results and says when only the newest are shown", () =>
   assert.equal(searchSummary(1, 1), "1 result");
   assert.equal(searchSummary(12, 12), "12 results");
   assert.equal(searchSummary(132, 50), "132 results, showing the newest 50");
+});
+
+test("plain words that name a member list that member above the messages", () => {
+  const people = [{ id: "u1", name: "ALLLOWERCASE", username: "alllowercase" }, { id: "u2", name: "Sam Lee", username: "sam" }, { id: "u3", name: "Robin" }];
+  assert.deepEqual(searchPeople(parseSearch("alllowercase"), people).map(p => p.id), ["u1"]);
+  assert.deepEqual(searchPeople(parseSearch("SAM"), people).map(p => p.id), ["u2"]);
+  assert.deepEqual(searchPeople(parseSearch("sam lee"), people).map(p => p.id), ["u2"]);
+  assert.deepEqual(searchPeople(parseSearch("@robin"), people).map(p => p.id), ["u3"]);
+  assert.deepEqual(searchPeople(parseSearch("sam pizza"), people), []);
+  assert.deepEqual(searchPeople(parseSearch("from:@Robin sam", { members: people }), people), []);
+  assert.deepEqual(searchPeople(parseSearch(""), people), []);
+  assert.equal(searchPeople(parseSearch("o"), people.concat({ id: "u4", name: "Bo" }, { id: "u5", name: "Jo" })).length, 3);
+  assert.equal(fromSearchText({ name: "Sam Lee" }), "from:@Sam Lee ");
+  assert.deepEqual(parseSearch(fromSearchText({ name: "Sam Lee" }), { members: people }).from, { id: "u2", name: "Sam Lee" });
 });
