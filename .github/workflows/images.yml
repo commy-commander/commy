@@ -612,7 +612,7 @@ jobs:
         run: |
           newest=true
           if [ "$GITHUB_REF" = refs/heads/main ]; then
-            on_dev="$(docker buildx imagetools inspect "$DEV_IMAGE" --format '{{json .Image}}' 2>/dev/null | grep -oE '"org.opencontainers.image.revision":"[0-9a-f]+"' | head -n 1 | cut -d'"' -f4)"
+            on_dev="$(docker buildx imagetools inspect "$DEV_IMAGE" --format '{{json .Image}}' 2>/dev/null | grep -oE '"org.opencontainers.image.revision": *"[0-9a-f]+"' | head -n 1 | cut -d'"' -f4 || true)"
             git fetch -q origin main
             if [ -n "$on_dev" ] && [ "$on_dev" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$GITHUB_SHA" "$on_dev" 2>/dev/null; then
               newest=false
