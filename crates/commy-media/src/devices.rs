@@ -344,7 +344,13 @@ fn started<S: AudioStream>(stream: S) -> Option<S> {
 }
 
 pub fn list_device_names(input: bool) -> Vec<String> {
-    let mut names = device_names(&cpal::default_host(), input);
+    choosable_names(device_names(&cpal::default_host(), input), cfg!(target_os = "ios"))
+}
+
+fn choosable_names(mut names: Vec<String>, system_picks_the_route: bool) -> Vec<String> {
+    if system_picks_the_route {
+        return Vec::new();
+    }
     names.dedup();
     names
 }
@@ -632,6 +638,18 @@ pub fn start_playback<S: FrameSource>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phones_where_the_system_picks_the_route_offer_only_the_default() {
+        let names = vec!["Default Device".to_string()];
+        assert!(choosable_names(names, true).is_empty());
+    }
+
+    #[test]
+    fn listed_devices_drop_repeats() {
+        let names = vec!["Speakers".to_string(), "Speakers".to_string(), "Headset".to_string()];
+        assert_eq!(choosable_names(names, false), vec!["Speakers".to_string(), "Headset".to_string()]);
+    }
 
     #[test]
     fn passthrough_at_native_rate() {
