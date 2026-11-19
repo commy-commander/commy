@@ -8,8 +8,9 @@ COPY Cargo.lock ./
 RUN cargo install wasm-bindgen-cli --locked --version "$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3 }' Cargo.lock)"
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    COMMY_WEB_OUT=/out COMMY_WEB_BASE=/web/ COMMY_WEB_RELAYS="$COMMY_WEB_RELAYS" node apps/web/build.mjs
+    --mount=type=cache,target=/src/target,sharing=locked \
+    find /src -path /src/target -prune -o -type f -exec touch {} + \
+    && COMMY_WEB_OUT=/out COMMY_WEB_BASE=/web/ COMMY_WEB_RELAYS="$COMMY_WEB_RELAYS" node apps/web/build.mjs
 
 FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS deps
 WORKDIR /app

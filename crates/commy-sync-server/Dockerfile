@@ -2,8 +2,9 @@ FROM rust:1.97-slim-trixie AS build
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p commy-sync-server --bin commy-sync \
+    --mount=type=cache,target=/src/target,sharing=locked \
+    find /src -path /src/target -prune -o -type f -exec touch {} + \
+    && cargo build --release --locked -p commy-sync-server --bin commy-sync \
     && install -D target/release/commy-sync /out/commy-sync
 
 FROM debian:trixie-slim
