@@ -61,6 +61,7 @@ const SOCKET_MAX_WRITE_BUFFER: usize = 4 * commy_sync::wire::MAX_FRAME_BYTES;
 pub struct Stats {
     connections: AtomicUsize,
     opens: AtomicU64,
+    watches: AtomicU64,
     appends: AtomicU64,
     pushes: AtomicU64,
     pictures: AtomicU64,
@@ -78,6 +79,10 @@ impl Stats {
 
     fn opened(&self) {
         self.opens.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn watched(&self, streams: usize) {
+        self.watches.fetch_add(streams as u64, Ordering::Relaxed);
     }
 
     fn appended(&self) {
@@ -100,9 +105,10 @@ impl Stats {
         self.connections.load(Ordering::Relaxed)
     }
 
-    fn take_counts(&self) -> (u64, u64, u64, u64, u64) {
+    fn take_counts(&self) -> (u64, u64, u64, u64, u64, u64) {
         (
             self.opens.swap(0, Ordering::Relaxed),
+            self.watches.swap(0, Ordering::Relaxed),
             self.appends.swap(0, Ordering::Relaxed),
             self.pushes.swap(0, Ordering::Relaxed),
             self.pictures.swap(0, Ordering::Relaxed),
@@ -312,9 +318,9 @@ pub fn spawn_housekeeping(service: Arc<Service>) {
         every.tick().await;
         loop {
             every.tick().await;
-            let (opens, appends, pushes, pictures, signals) = service.stats.take_counts();
+            let (opens, watches, appends, pushes, pictures, signals) = service.stats.take_counts();
             tracing::info!(
-                "sync: {} connections, {} live streams, {opens} opens, {appends} appends, {pictures} pictures, {signals} live signals sent and {pushes} wake-ups in the last 10 minutes",
+                "sync: {} connections, {} live streams, {opens} opens, {watches} watches, {appends} appends, {pictures} pictures, {signals} live signals sent and {pushes} wake-ups in the last 10 minutes",
                 service.stats.connections(),
                 service.hub.live_streams()
             );

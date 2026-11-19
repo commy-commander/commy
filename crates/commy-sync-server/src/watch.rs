@@ -68,6 +68,7 @@ impl Watching {
                 return;
             }
         };
+        service.stats.watched(taking.len());
         let now: Vec<Head> = taking.iter().map(|stream| Head { stream: *stream, head: heads.get(stream).copied().unwrap_or(0) }).collect();
         for ((stream, live), head) in taking.into_iter().zip(lives).zip(&now) {
             let watcher = tokio::spawn(watch_one(service.clone(), stream, live, head.head, out.clone()));

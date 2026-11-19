@@ -202,6 +202,7 @@ impl Community {
     fn place(&mut self, server: ServerId, group: OpenGroup) {
         let lazy = self.lazy(server);
         let (quiet, open): (OpenGroup, OpenGroup) = group.into_iter().partition(|(lane, _, _)| lazy && matches!(lane, Lane::Channel(_)));
+        tracing::info!("following {} sync streams for {server} and watching {} quiet channels", open.len(), quiet.len());
         let now = Instant::now();
         for (lane, keys, _) in &open {
             if matches!(lane, Lane::Channel(_)) {
@@ -948,7 +949,6 @@ fn refresh(handle: &AppHandle) {
             continue;
         }
         if fresh {
-            tracing::info!("following {} sync streams for {sid}", group.len());
             fresh_communities.push((sid, group));
         } else {
             community.place(sid, group);
