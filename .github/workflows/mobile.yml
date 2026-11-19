@@ -359,7 +359,12 @@ jobs:
         if: env.IOS_MODE == 'simulator'
         working-directory: apps/desktop/src-tauri
         run: |
-          npx tauri ios build --ci --debug --no-sign --target aarch64-sim --target aarch64
+          version_config=()
+          if [ -n "$APP_VERSION_INPUT" ]; then
+            source ../mobile/release-env.sh "$APP_VERSION_INPUT"
+            version_config=(--config "$(printf '{"version":"%s"}' "$release_app_version")")
+          fi
+          npx tauri ios build --ci --debug --no-sign --target aarch64-sim --target aarch64 "${version_config[@]}"
 
       - name: Build the signed app
         if: env.IOS_MODE != 'simulator'
