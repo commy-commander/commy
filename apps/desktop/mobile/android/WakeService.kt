@@ -28,6 +28,7 @@ class WakeService : FirebaseMessagingService() {
     WakePreviews.ensureChannel(this)
     val notification = NotificationCompat.Builder(this, WakePreviews.channelFor(null))
       .setSmallIcon(R.drawable.commy_notification)
+      .setColor(WakePreviews.ACCENT)
       .setSound(WakePreviews.soundFor(this, null))
       .setContentTitle("Commy")
       .setContentText("New messages in Commy")

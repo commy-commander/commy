@@ -18,10 +18,8 @@ echo "Build $build_number"
 src_tauri="$(cd "$mobile/../src-tauri" && pwd)"
 cd "$src_tauri"
 
-[ -d gen/apple ] || {
-  npx tauri ios init --ci
-  npx tauri icon ../mobile/app-icon.png
-}
+[ -d gen/apple ] || npx tauri ios init --ci
+npx tauri icon ../mobile/app-icon.png
 "$mobile/ios-entitlements.sh"
 
 config="$(printf '{"version":"%s","bundle":{"iOS":{"bundleVersion":"%s"}}}' "$release_app_version" "$build_number")"

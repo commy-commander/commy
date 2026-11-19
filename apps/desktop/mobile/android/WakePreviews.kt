@@ -43,6 +43,7 @@ object WakePreviews {
   private val recent = LinkedHashMap<String, Long>()
   private val ringing = LinkedHashMap<String, Long>()
   private const val TAG = "CommyWake"
+  val ACCENT: Int = 0xFF3355FF.toInt()
   private const val CALL_ID_MIX = 0x5a5a5a5a
 
   @Synchronized
@@ -256,6 +257,7 @@ object WakePreviews {
     val tap = tapIntent(context, shown.target)
     val notification = NotificationCompat.Builder(context, CALL_CHANNEL_ID)
       .setSmallIcon(R.drawable.commy_notification)
+      .setColor(ACCENT)
       .setContentTitle(shown.sender)
       .setContentText("Calling you")
       .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -347,6 +349,7 @@ object WakePreviews {
     }
     val notification = NotificationCompat.Builder(context, channelFor(shown.target))
       .setSmallIcon(R.drawable.commy_notification)
+      .setColor(ACCENT)
       .setSound(soundFor(context, shown.target))
       .setStyle(style)
       .setContentTitle(shown.sender)
@@ -371,6 +374,7 @@ object WakePreviews {
     val id = target?.hashCode() ?: (System.currentTimeMillis() and 0x3fffffff).toInt()
     val notification = NotificationCompat.Builder(context, channelFor(target))
       .setSmallIcon(R.drawable.commy_notification)
+      .setColor(ACCENT)
       .setSound(soundFor(context, target))
       .setContentTitle(title)
       .setContentText(body)

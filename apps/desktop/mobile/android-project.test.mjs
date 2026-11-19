@@ -280,11 +280,16 @@ test("notifications show the star as a white shape on clear ground", () => {
   assert.equal(png.readUInt32BE(16), 96);
   assert.equal(png.readUInt32BE(20), 96);
   assert.equal(png[25], 6, "the picture keeps its see-through ground");
-  for (const name of ["WakePreviews.kt", "WakeService.kt"]) {
+  for (const name of ["WakePreviews.kt", "WakeService.kt", "CallService.kt", "ScreenShareService.kt"]) {
     const source = readFileSync(new URL(`./android/${name}`, import.meta.url), "utf8");
-    assert.ok(!source.includes("android.R.drawable.stat_notify_chat"), name);
-    assert.ok(source.includes(`R.drawable.${NOTIFICATION_ICON}`), name);
+    assert.ok(!/setSmallIcon\(android\.R\.drawable\./.test(source), name);
+    const icons = source.match(/\.setSmallIcon\(R\.drawable\.(\w+)\)/g) ?? [];
+    assert.ok(icons.length > 0, name);
+    for (const icon of icons) assert.equal(icon, `.setSmallIcon(R.drawable.${NOTIFICATION_ICON})`, name);
+    assert.equal((source.match(/\.setColor\((WakePreviews\.)?ACCENT\)/g) ?? []).length, icons.length, name);
   }
+  const wake = readFileSync(new URL("./android/WakePreviews.kt", import.meta.url), "utf8");
+  assert.match(wake, /val ACCENT: Int = 0xFF3355FF\.toInt\(\)/, "the guide's ultramarine tints the star");
 });
 
 function wavSeconds(wav) {

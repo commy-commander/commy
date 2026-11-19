@@ -261,7 +261,8 @@ class ScreenShareService : Service() {
       PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
     return NotificationCompat.Builder(this, CHANNEL_ID)
-      .setSmallIcon(android.R.drawable.presence_video_online)
+      .setSmallIcon(R.drawable.commy_notification)
+      .setColor(WakePreviews.ACCENT)
       .setContentTitle("Commy")
       .setContentText("You're sharing your screen")
       .setOngoing(true)
