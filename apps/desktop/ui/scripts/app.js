@@ -8141,7 +8141,7 @@ function openBannerMenu(anchor, title, use) {
     $("banner-menu").classList.add("hidden");
     try {
       const src = stock || (await chooseImage(title, $("server-image-file")));
-      if (src) await use(src);
+      if (src) await use(src, !stock);
     } catch (err) {
       toast(String(err));
     }
@@ -8185,7 +8185,11 @@ function imageFileToAvatar(file) {
 
 const AVATAR_CROP_WHEEL_STEP = 0.0015;
 const AVATAR_CROP_RANGE_SCALE = 100;
-const avatarCrop = { crop: null, image: null, settle: null, pointers: new Map(), pinch: null };
+const avatarCrop = { crop: null, image: null, output: null, settle: null, pointers: new Map(), pinch: null };
+const AVATAR_CROP_LOOK = { title: "Adjust your avatar", round: true, width: AVATAR_CROP_OUTPUT, height: AVATAR_CROP_OUTPUT };
+const BANNER_CROP_TITLE = "Adjust your banner";
+const PROFILE_BANNER_SIZE = { width: 600, height: 240 };
+const PLACE_BANNER_SIZE = { width: 960, height: 320 };
 
 function loadPicture(src) {
   return new Promise((resolve, reject) => {
@@ -8256,14 +8260,16 @@ function avatarCropWheel(e) {
 }
 
 function avatarCropPicture() {
-  const { sx, sy, side } = avatarCropSource(avatarCrop.crop);
+  const { sx, sy, sw, sh } = avatarCropSource(avatarCrop.crop);
+  const { width, height } = avatarCrop.output;
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = AVATAR_CROP_OUTPUT;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingQuality = "high";
   ctx.fillStyle = "#313338";
-  ctx.fillRect(0, 0, AVATAR_CROP_OUTPUT, AVATAR_CROP_OUTPUT);
-  ctx.drawImage(avatarCrop.image, sx, sy, side, side, 0, 0, AVATAR_CROP_OUTPUT, AVATAR_CROP_OUTPUT);
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(avatarCrop.image, sx, sy, sw, sh, 0, 0, width, height);
   return canvas.toDataURL("image/jpeg", 0.88).split(",")[1];
 }
 
@@ -8272,6 +8278,7 @@ function settleAvatarCrop(data) {
   avatarCrop.settle = null;
   avatarCrop.crop = null;
   avatarCrop.image = null;
+  avatarCrop.output = null;
   avatarCrop.pointers.clear();
   avatarCrop.pinch = null;
   if (settle) settle(data);
@@ -8296,15 +8303,42 @@ function wireAvatarCrop() {
   };
 }
 
-async function cropAvatarPicture(src) {
+function pictureCropHint() {
+  const touch = document.body.classList.contains("mobile-app") || matchMedia("(pointer: coarse)").matches;
+  return touch ? "Drag to move it. Pinch or use the slider to zoom." : "Drag to move it. Scroll or use the slider to zoom.";
+}
+
+async function adjustPicture(src, { title, round = false, width, height }) {
   const image = await loadPicture(src);
   settleAvatarCrop(null);
+  $("avatar-crop-title").textContent = title;
+  $("avatar-crop-hint").textContent = pictureCropHint();
+  const stage = $("avatar-crop-stage");
+  stage.classList.toggle("wide", !round);
+  stage.style.setProperty("--crop-ratio", String(width / height));
   $("avatar-crop-img").src = src;
   showModal("modal-avatar-crop");
-  const stage = $("avatar-crop-stage").clientWidth || AVATAR_CROP_OUTPUT;
+  const frameWidth = stage.clientWidth || width;
+  const frameHeight = stage.clientHeight || height;
   avatarCrop.image = image;
-  setAvatarCrop(avatarCropStart(image.naturalWidth, image.naturalHeight, stage));
+  avatarCrop.output = { width, height };
+  setAvatarCrop(avatarCropStart(image.naturalWidth, image.naturalHeight, frameWidth, frameHeight));
   return new Promise(resolve => { avatarCrop.settle = resolve; });
+}
+
+function cropAvatarPicture(src) {
+  return adjustPicture(src, AVATAR_CROP_LOOK);
+}
+
+function bannerFromPicture(src, picked, size) {
+  return picked ? adjustPicture(src, { title: BANNER_CROP_TITLE, ...size }) : cropImageFile(src, size.width, size.height);
+}
+
+function saveBannerWith(size, save) {
+  return async (src, picked) => {
+    const data = await bannerFromPicture(src, picked, size);
+    if (data) await save(data);
+  };
 }
 
 async function uploadedAvatar(src) {
@@ -24129,7 +24163,7 @@ function wireEvents() {
     e.stopPropagation();
     openAvatarMenu(e.currentTarget);
   };
-  $("account-banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a profile banner", async src => saveAccountBanner(await cropImageFile(src, 600, 240)));
+  $("account-banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a profile banner", saveBannerWith(PROFILE_BANNER_SIZE, saveAccountBanner));
   $("banner-own").onclick = () => bannerMenuUse && bannerMenuUse(null);
   $("account-banner-remove").onclick = () => saveAccountBanner(null);
   $("account-banner-remove").appendChild(svgIcon("close", 14));
@@ -24463,7 +24497,7 @@ function wireEvents() {
       toast(String(err));
     }
   };
-  $("banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a server banner", async src => setServerImage("banner", await cropImageFile(src, 960, 320)));
+  $("banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a server banner", saveBannerWith(PLACE_BANNER_SIZE, data => setServerImage("banner", data)));
   $("overview-icon-remove").onclick = () => setServerImage("icon", null);
   $("banner-remove").onclick = () => setServerImage("banner", null);
   $("invite-bg-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose an invite background", saveInviteBackground);
@@ -24619,7 +24653,7 @@ function wireEvents() {
     syncChannelDirty();
   };
   $("channel-edit-emoji").onclick = e => pickChannelLead(e.currentTarget, "edit", syncChannelDirty);
-  $("channel-banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a channel banner", async src => setChannelBanner(await cropImageFile(src, 960, 320)));
+  $("channel-banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a channel banner", saveBannerWith(PLACE_BANNER_SIZE, setChannelBanner));
   $("channel-banner-remove").onclick = () => setChannelBanner(null);
   $("channel-edit-name").addEventListener("keydown", e => {
     if (e.key === "Enter") saveChannelEdits();

@@ -9043,6 +9043,7 @@ body.mobile-app .header-actions .icon-btn:not(.active):hover { background: none;
   user-select: none;
 }
 .avatar-crop-stage:active { cursor: grabbing; }
+.avatar-crop-stage.wide { width: min(360px, 100%); aspect-ratio: var(--crop-ratio, 3); }
 .avatar-crop-stage img {
   position: absolute;
   top: 0;
@@ -9059,6 +9060,7 @@ body.mobile-app .header-actions .icon-btn:not(.active):hover { background: none;
   box-shadow: 0 0 0 200px rgb(0 0 0 / .55), inset 0 0 0 2px rgb(255 255 255 / .7);
   pointer-events: none;
 }
+.avatar-crop-stage.wide::after { border-radius: inherit; box-shadow: inset 0 0 0 2px rgb(255 255 255 / .7); }
 .avatar-crop-zoom {
   display: flex;
   align-items: center;
@@ -9068,4 +9070,5 @@ body.mobile-app .header-actions .icon-btn:not(.active):hover { background: none;
   color: var(--text-muted);
 }
 .avatar-crop-zoom input { flex: 1; min-width: 0; }
+.avatar-crop-stage.wide + .avatar-crop-zoom { width: min(360px, 100%); }
 .avatar-crop-zoom-icon { display: grid; place-items: center; width: 20px; }

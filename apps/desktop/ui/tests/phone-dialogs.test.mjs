@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { PHONE_DIALOG_HEADS, PHONE_DIALOG_SAFE, phoneDialogGate, phoneDialogSafeId } = require("../scripts/phone-dialogs.js");
+const { PHONE_DIALOG_HEADS, PHONE_DIALOG_SAFE, PHONE_DIALOG_OWN_TOUCH, phoneDialogGate, phoneDialogSafeId } = require("../scripts/phone-dialogs.js");
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-dialogs.css");
 const glue = read("scripts", "phone-dialogs.js");
@@ -119,4 +119,11 @@ test("back, swipe down and a scrim tap pick the safe answer", () => {
 
 test("a dialog checks whether it scrolls on the next frame, so its own resize never loops", () => {
   assert.match(glue, /fitting = requestAnimationFrame\(\(\) => \{\n\s+fitting = 0;\n\s+const modal = phoneDialogShown\(\);\n\s+if \(modal\) phoneDialogFit\(modal\);/);
+});
+
+test("a drag on the picture crop moves the picture instead of pulling the sheet down", () => {
+  const owners = PHONE_DIALOG_OWN_TOUCH.split(",").map(part => part.trim());
+  for (const owner of ["input", "textarea", "select", ".avatar-crop-stage"]) assert.ok(owners.includes(owner), owner);
+  assert.match(glue, /if \(e\.target\.closest\(PHONE_DIALOG_OWN_TOUCH\)\) return;/);
+  assert.match(html, /class="avatar-crop-stage" id="avatar-crop-stage"/);
 });

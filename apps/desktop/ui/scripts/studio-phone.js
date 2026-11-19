@@ -1556,7 +1556,7 @@ async function wearTag(value) {
 async function chooseProfileBanner() {
   try {
     const src = await chooseImage("Choose a profile banner", $("server-image-file"));
-    if (src) await saveAccountBanner(await cropImageFile(src, 600, 240));
+    if (src) await saveBannerWith(PROFILE_BANNER_SIZE, saveAccountBanner)(src, true);
   } catch (err) {
     toast(String(err));
   }

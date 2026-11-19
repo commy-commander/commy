@@ -2,6 +2,8 @@ const PHONE_DIALOG_HEADS = ["h2", ".sw-head", ".notify-head", ".catalog-head"];
 
 const PHONE_DIALOG_SAFE = [/^(?!join-wait-).+-cancel$/, /-later$/, /-deny$/, /^create-server-back$/, /^signin-back$/, /-close$/, /-done$/];
 
+const PHONE_DIALOG_OWN_TOUCH = "input, textarea, select, .avatar-crop-stage";
+
 const phoneDialogs = { held: false, backing: false, swipe: null, swipedAt: 0, moving: false, movingTimer: 0, waiting: false };
 
 function phoneDialogGate(id, { signedIn = true, laterShown = true, acceptShown = false } = {}) {
@@ -168,7 +170,7 @@ function phoneDialogTouchStart(e) {
   if (!modal) return;
   e.stopPropagation();
   if (e.touches.length !== 1 || modal.classList.contains("pd-gate") || phoneDialogIsGate(modal) || !modal.contains(e.target)) return;
-  if (e.target.closest("input, textarea, select")) return;
+  if (e.target.closest(PHONE_DIALOG_OWN_TOUCH)) return;
   const head = e.touches[0].clientY - modal.getBoundingClientRect().top < 64;
   if (!head && !phoneDialogAtTop(modal, e.target)) return;
   const at = { t: e.timeStamp, x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -260,5 +262,5 @@ function phoneDialogsWire() {
 if (typeof document !== "undefined" && typeof studioSlim === "function") phoneDialogsWire();
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PHONE_DIALOG_HEADS, PHONE_DIALOG_SAFE, phoneDialogGate, phoneDialogSafeId };
+  module.exports = { PHONE_DIALOG_HEADS, PHONE_DIALOG_SAFE, PHONE_DIALOG_OWN_TOUCH, phoneDialogGate, phoneDialogSafeId };
 }
