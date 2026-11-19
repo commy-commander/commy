@@ -28,17 +28,17 @@ function checkInviteName(input) {
   if (!name) return { name: "", error: null };
   const shape = name.length >= INVITE_NAME_MIN && name.length <= INVITE_NAME_MAX &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name);
-  if (!shape) return { name, error: "Use 3 to 32 letters, numbers or single dashes, like pixel-pioneers." };
-  if (RESERVED_INVITE_NAMES.has(name)) return { name, error: "That name is reserved. Pick another one." };
+  if (!shape) return { name, error: t("ui.use-3-to-32-letters-numbers-or-single") };
+  if (RESERVED_INVITE_NAMES.has(name)) return { name, error: t("ui.that-name-is-reserved-pick-another-one") };
   return { name, error: null };
 }
 
 function inviteTimeLeft(expiresAt, now = Date.now()) {
-  if (expiresAt == null) return "Never expires";
+  if (expiresAt == null) return t("ui.never-expires");
   const left = expiresAt - now;
-  if (left <= 0) return "Expired";
+  if (left <= 0) return t("ui.expired");
   const minutes = Math.floor(left / 60e3);
-  if (minutes < 1) return "Less than a minute left";
+  if (minutes < 1) return t("ui.less-than-a-minute-left");
   const unit = (n, one) => `${n} ${one}${n === 1 ? "" : "s"} left`;
   if (minutes < 60) return unit(minutes, "minute");
   const hours = Math.floor(minutes / 60);
@@ -58,13 +58,13 @@ function inviteShareWay({ mobileApp, browserApp, webShare, touch }) {
 
 function inviteShareTitle(serverName) {
   const name = String(serverName || "").trim();
-  return name ? `Join ${name} on Commy` : "Join me on Commy";
+  return name ? t("ui.join-name-on-commy", { name }) : t("ui.join-me-on-commy");
 }
 
 function inviteLinkKeyLabels(sharing) {
   return sharing
-    ? { dialog: "Share Invite Link", create: "Create and Share", row: "Share" }
-    : { dialog: "Copy Invite Link", create: "Create and Copy", row: "Copy Link" };
+    ? { dialog: t("ui.share-invite-link"), create: t("ui.create-and-share"), row: t("ui.share") }
+    : { dialog: t("ui.copy-invite-link"), create: t("ui.create-and-copy"), row: t("ui.copy-link") };
 }
 
 function sortInvites(invites) {

@@ -20,7 +20,7 @@ function phoneSetServerHead() {
   const card = document.querySelector("#server-settings .overview-card");
   const pane = card && card.parentElement;
   if (!pane || !pane.classList.contains("set-pane") || pane.querySelector(":scope > .set-head")) return;
-  pane.prepend(el("h2", "settings-subhead set-head", "Server"));
+  pane.prepend(el("h2", "settings-subhead set-head", t("ui.server")));
 }
 
 function phoneSetLift(page) {

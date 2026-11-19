@@ -52,18 +52,18 @@ function tidyOnboarding(draft, roleIds) {
 function onboardingProblems(draft) {
   const problems = [];
   const questions = (draft && draft.questions) || [];
-  if (!questions.length) problems.push("Add at least one question");
-  if (questions.length > ONBOARDING_LIMITS.questions) problems.push(`Keep it to ${ONBOARDING_LIMITS.questions} questions`);
+  if (!questions.length) problems.push(t("ui.add-at-least-one-question"));
+  if (questions.length > ONBOARDING_LIMITS.questions) problems.push(t("ui.keep-it-to-questions", { questions: ONBOARDING_LIMITS.questions }));
   questions.forEach((q, i) => {
     const n = i + 1;
-    if (!cleanOnboardingText(q.title, ONBOARDING_LIMITS.titleChars)) problems.push(`Question ${n} needs a title`);
+    if (!cleanOnboardingText(q.title, ONBOARDING_LIMITS.titleChars)) problems.push(t("ui.question-needs-a-title", { n }));
     const answers = (q.answers || []).filter(a => cleanOnboardingText(a.label, ONBOARDING_LIMITS.answerChars));
-    if (answers.length < ONBOARDING_LIMITS.minAnswers) problems.push(`Question ${n} needs at least ${ONBOARDING_LIMITS.minAnswers} answers`);
-    if (answers.length > ONBOARDING_LIMITS.answers) problems.push(`Question ${n} can have at most ${ONBOARDING_LIMITS.answers} answers`);
+    if (answers.length < ONBOARDING_LIMITS.minAnswers) problems.push(t("ui.question-needs-at-least-answers", { n, minAnswers: ONBOARDING_LIMITS.minAnswers }));
+    if (answers.length > ONBOARDING_LIMITS.answers) problems.push(t("ui.question-can-have-at-most-answers", { n, answers: ONBOARDING_LIMITS.answers }));
   });
   const usage = onboardingUsage(draft);
-  if (usage.bytes > ONBOARDING_LIMITS.textBytes) problems.push(`Keep the text under ${ONBOARDING_LIMITS.textBytes} characters in all`);
-  if (usage.roles > ONBOARDING_LIMITS.roleRefs) problems.push(`Keep it to ${ONBOARDING_LIMITS.roleRefs} roles across every answer`);
+  if (usage.bytes > ONBOARDING_LIMITS.textBytes) problems.push(t("ui.keep-the-text-under-characters-in-all", { textBytes: ONBOARDING_LIMITS.textBytes }));
+  if (usage.roles > ONBOARDING_LIMITS.roleRefs) problems.push(t("ui.keep-it-to-roles-across-every-answer", { roleRefs: ONBOARDING_LIMITS.roleRefs }));
   return problems;
 }
 

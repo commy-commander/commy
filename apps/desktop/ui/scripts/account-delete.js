@@ -13,10 +13,10 @@ function deleteConfirmView(start) {
     mode,
     canUsePassword: byEmail && hasPassword,
     sentLine: byEmail
-      ? `We emailed a ${DELETE_CODE_LENGTH}-digit code to ${answer.email || "your address"}. It expires in 15 minutes.`
+      ? t("ui.we-emailed-a-digit-code-to-it-expires-in", { DELETE_CODE_LENGTH, value: answer.email || "your address" })
       : mode === "password"
-        ? "Enter your password to confirm."
-        : "Your account server does not send email, so your recent sign-in confirms this.",
+        ? t("ui.enter-your-password-to-confirm")
+        : t("ui.your-account-server-does-not-send-email"),
   };
 }
 

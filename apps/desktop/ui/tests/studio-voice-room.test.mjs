@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -6,7 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
 const { callTiles } = require("../scripts/stream-view.js");
-const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
 const css = read("../styles/studio.css");
 const app = read("../scripts/app.js");
@@ -260,7 +261,7 @@ test("other people's stream tiles carry Draw, Point, eraser, volume, expand and 
   const keys = app.slice(app.indexOf('const draw = voiceRoomTileKey("latch vr-draw"'), app.indexOf("pad.onpointercancel = finishVoiceRoomPen;"));
   const listed = keys.slice(keys.indexOf("keys.append("));
   assert.ok(listed.indexOf("draw,") < listed.indexOf("vr-point") && listed.indexOf("vr-point") < listed.indexOf("vr-wipe") && listed.indexOf("vr-wipe") < listed.indexOf("volume,") && listed.indexOf("volume,") < listed.indexOf("vr-big") && listed.indexOf("vr-big") < listed.indexOf("vr-x"));
-  assert.match(app, /const allowed = live && ink\.allowed\.get\(t\.user\) === true;\n  if \(!allowed && voiceRoom\.pen\.user === t\.user\) dropVoiceRoomTool\(\);/);
+  assert.match(app, /const allowed = live && ink\.allowed\.get\(callTile\.user\) === true;\n  if \(!allowed && voiceRoom\.pen\.user === callTile\.user\) dropVoiceRoomTool\(\);/);
   assert.match(app, /for \(const part of \["\.vr-draw", "\.vr-point", "\.vr-wipe", "\.vr-allowed"\]\) tile\.querySelector\(part\)\.classList\.toggle\("hidden", !allowed\);/);
   assert.match(app, /el\("span", null, "The room can draw on this"\)/);
 });
@@ -344,7 +345,7 @@ test("the room waits thirty seconds with a Rejoin key where hang up was, and its
   assert.match(app, /for \(const id of \["mute-btn", "deafen-btn", "vp-camera", "share-btn", "vp-soundboard", "vp-hand-key"\]\) \{\n    const key = document\.getElementById\(id\);\n    if \(key\) key\.disabled = resting;/);
   assert.match(app, /key = el\("button", "key primary vp-rejoin hidden"\);/);
   assert.match(app, /await toggleVoice\(channel, true\);/);
-  assert.match(app, /back \? `Back in \$\{channelTextName\(channel\.name\)\}\.` :/);
+  assert.match(app, /back \? t\("ui\.back-in", \{ value: channelTextName\(channel\.name\) \}\) :/);
   assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel .vp-rejoin {`));
   assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel[data-dock="left"] .vp-hangup,`));
   assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel[data-dock="left"] .vp-meter i { background: var(--text-faint); scale: 1 .08; animation: none; }`));

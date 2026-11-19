@@ -18,7 +18,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .audio-pop > .ap-title {
   letter-spacing: 0;
   text-transform: none;
 }
-html[data-look="studio"]:not([data-fit="slim"]) .audio-pop > .ap-title > span { color: var(--text-muted); font: 500 13px/1 var(--font-mono); letter-spacing: -.01em; }
+html[data-look="studio"]:not([data-fit="slim"]) .audio-pop > .ap-title > span[id] { color: var(--text-muted); font: 500 13px/1 var(--font-mono); letter-spacing: -.01em; }
 html[data-look="studio"]:not([data-fit="slim"]) .audio-pop .pops-pick { position: relative; display: flex; align-items: center; height: 36px; }
 html[data-look="studio"]:not([data-fit="slim"]) .audio-pop .pops-pick > .pops-icon,
 html[data-look="studio"]:not([data-fit="slim"]) .audio-pop .pops-pick > .pops-chev { position: absolute; top: 9px; left: 18px; display: flex; color: var(--header-primary); pointer-events: none; }

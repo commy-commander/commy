@@ -1,10 +1,11 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const read = name => readFileSync(new URL(`../${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("index.html");
-const app = read("scripts/app.js");
+const app = englishSource(read("scripts/app.js"));
 const base = read("styles/styles.css");
 const studio = read("styles/studio.css");
 const settings = read("styles/studio-settings.css");
@@ -63,7 +64,7 @@ test("searching settings hides the tabs so the results show, and camera words fi
 test("game tags under the server name and in server info open the game card, and the editor chips stay plain", () => {
   assert.equal(app.split('gameTagKey(server, tag, "game-chip small")').length - 1, 2);
   assert.ok(app.includes('const chip = gameChip(state.currentServer, tag, "game-chip");'));
-  assert.ok(html.includes('<div class="game-pop hidden" id="game-pop" role="dialog" aria-label="Game"></div>'));
+  assert.ok(html.includes('<div class="game-pop hidden" id="game-pop" role="dialog" aria-label="Game" data-i18n-aria-label="ui.game"></div>'));
   assert.match(app, /function fillGamePop\(name, details, cover, looking\) \{[\s\S]*?const steam = details && steamButton\(details\.steam\);/);
   assert.ok(app.includes('"text-style-pop", "game-pop"]) {'));
   assert.ok(app.includes('closeMenuOutside("game-pop", e.target, ".game-link");'));
@@ -78,8 +79,8 @@ test("an owner who leaves is sent to hand the server over first, then to the lea
   assert.match(app, /if \(!server\.group\) \{\n\s+const full = await serverToLeave\(serverId\);/);
   assert.ok(app.includes("if (leaving) await openLeaveServer(server.id);"));
   assert.ok(app.includes('leave: ["Hand the server over first",'));
-  assert.ok(html.includes('<h2 id="transfer-owner-title">Transfer Ownership</h2>'));
-  assert.ok(html.includes('<p id="transfer-owner-body">'));
+  assert.ok(html.includes('<h2 id="transfer-owner-title" data-i18n="ui.transfer-ownership">Transfer Ownership</h2>'));
+  assert.ok(html.includes('<p id="transfer-owner-body" data-i18n="ui.the-new-owner-gets-every-permission">'));
 });
 
 test("the profile bar is as wide as the member list and holds its place while direct messages load", () => {

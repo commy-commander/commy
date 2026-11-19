@@ -1,11 +1,11 @@
 const STUDIO_COMPACT_MARK = "data-studio-compact";
 let studioCompactStarted = false;
 const STUDIO_COMPACT_ROWS = [
-  { key: "threads", button: "threads-btn", label: "Threads", icon: "thread", open: "toggleThreadsPanel" },
-  { key: "pins", button: "pins-btn", label: "Pinned Messages", icon: "pin", open: "togglePinsPanel" },
-  { key: "saved", button: "saved-btn", label: "Saved Messages", icon: "bookmark", open: "toggleSavedView" },
+  { key: "threads", button: "threads-btn", get label() { return t("ui.threads"); }, icon: "thread", open: "toggleThreadsPanel" },
+  { key: "pins", button: "pins-btn", get label() { return t("ui.pinned-messages"); }, icon: "pin", open: "togglePinsPanel" },
+  { key: "saved", button: "saved-btn", get label() { return t("ui.saved-messages"); }, icon: "bookmark", open: "toggleSavedView" },
 ];
-const STUDIO_COMPACT_MIXED_LABEL = "Pins and Saved";
+const STUDIO_COMPACT_MIXED = { get label() { return t("ui.pins-and-saved"); } };
 
 function studioCompactRowStates(rows, read) {
   return rows.map(row => {
@@ -28,7 +28,7 @@ function studioCompactFace(rows, states) {
   if (!shown.length) return null;
   const lead = shown[0];
   if (shown.length === 1) return { icon: lead.icon, label: lead.label, single: lead.key };
-  return { icon: lead.icon, label: lead.key === "threads" ? lead.label : STUDIO_COMPACT_MIXED_LABEL, single: null };
+  return { icon: lead.icon, label: lead.key === "threads" ? lead.label : STUDIO_COMPACT_MIXED.label, single: null };
 }
 
 function studioCompactMenuLeft(anchor, width, viewport) {
@@ -187,7 +187,7 @@ function studioCompactAdd() {
     item.setAttribute(STUDIO_COMPACT_MARK, "");
     const icon = studioCompactIcon("a-large-small", 18);
     if (icon) item.appendChild(icon);
-    item.appendChild(document.createTextNode("Text Style"));
+    item.appendChild(document.createTextNode(t("ui.text-style")));
     item.addEventListener("click", studioCompactOpenTextStyle);
     plus.appendChild(item);
   }
@@ -226,5 +226,5 @@ function studioCompact() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_COMPACT_MARK, STUDIO_COMPACT_ROWS, STUDIO_COMPACT_MIXED_LABEL, studioCompactFace, studioCompactRowStates, studioCompactDot, studioCompactEmpty, studioCompactMenuLeft };
+  module.exports = { STUDIO_COMPACT_MARK, STUDIO_COMPACT_ROWS, STUDIO_COMPACT_MIXED, studioCompactFace, studioCompactRowStates, studioCompactDot, studioCompactEmpty, studioCompactMenuLeft };
 }

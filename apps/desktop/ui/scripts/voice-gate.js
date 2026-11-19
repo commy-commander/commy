@@ -13,7 +13,7 @@ function voiceGateWait(gate, serverId, voiceServerId) {
 }
 
 function voiceGateRefusal(wait) {
-  return `Voice opens once you are connected. ${wait.reason}.`;
+  return t("ui.voice-opens-once-you-are-connected", { reason: wait.reason });
 }
 
 function sameVoiceGate(a, b) {

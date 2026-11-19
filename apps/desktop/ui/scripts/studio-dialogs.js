@@ -146,7 +146,7 @@ function studioKeyNames(classes, roomy = true) {
 }
 
 function inviteRowKey(text, disabled) {
-  return String(text || "").trim() === "Sent" && disabled ? "sent" : "key sm";
+  return englishFor(String(text || "").trim()) === "Sent" && disabled ? "sent" : "key sm";
 }
 
 const LEAVING_TITLE_ICONS = { warn: "triangle-alert", block: "ban" };

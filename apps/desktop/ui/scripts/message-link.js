@@ -31,7 +31,7 @@ function forwardTargets({ servers, dms, query }) {
       if (channel.kind !== "text" && channel.kind !== "announcement") continue;
       if (channel.can_send === false) continue;
       if (server.group) {
-        if (hit(server.name)) out.push({ kind: "group", server: server.id, channel: channel.id, name: server.name, sub: "Group" });
+        if (hit(server.name)) out.push({ kind: "group", server: server.id, channel: channel.id, name: server.name, sub: t("ui.group") });
         break;
       }
       if (hit(channel.name, server.name)) out.push({ kind: "channel", server: server.id, channel: channel.id, name: `#${channel.name}`, sub: server.name });
@@ -39,7 +39,7 @@ function forwardTargets({ servers, dms, query }) {
   }
   for (const dm of dms || []) {
     if (dm.kind !== "inbox") continue;
-    if (hit(dm.name)) out.push({ kind: "dm", user: dm.user, name: dm.name, sub: "Direct message" });
+    if (hit(dm.name)) out.push({ kind: "dm", user: dm.user, name: dm.name, sub: t("ui.direct-message") });
   }
   return out;
 }

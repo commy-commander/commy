@@ -19,9 +19,11 @@ function newsCount(summary) {
 }
 
 function newsWords(items) {
-  if (!items.length) return "Your servers";
+  if (!items.length) return t("ui.your-servers");
   const names = items.map(item => serverShownName(item.server.name));
-  return `New in ${names.length > 2 ? `${names.slice(0, 2).join(", ")} and ${names.length - 2} more` : names.join(" and ")}`;
+  if (names.length > 2) return t("ui.news.many", { first: names[0], second: names[1], count: names.length - 2 });
+  if (names.length === 2) return t("ui.news.two", { first: names[0], second: names[1] });
+  return t("ui.news.one", { name: names[0] });
 }
 
 function switcherOn() {
@@ -37,21 +39,21 @@ function buildServerSwitcher() {
   const sheet = el("section", "pt-servers-sheet");
   sheet.id = "pt-servers-sheet";
   sheet.setAttribute("role", "dialog");
-  sheet.setAttribute("aria-label", "Your servers");
+  sheet.setAttribute("aria-label", t("ui.your-servers"));
   const grab = el("div", "pt-servers-grab");
   grab.setAttribute("aria-hidden", "true");
   const head = el("div", "pt-servers-head");
-  const title = el("h2", "pt-servers-title", "Your servers");
+  const title = el("h2", "pt-servers-title", t("ui.your-servers"));
   const options = studioNode("button", "key sq pt-servers-options", '<i data-i="ellipsis"></i>');
   options.type = "button";
   options.id = "pt-servers-options";
-  options.setAttribute("aria-label", "Server options");
+  options.setAttribute("aria-label", t("ui.server-options"));
   options.onclick = () => closeServerSwitcher(() => openServerMenu(state.currentServer, 0, 0));
   head.append(title, options);
   const slot = el("div", "pt-servers-slot");
   slot.id = "pt-servers-slot";
   const keys = el("div", "pt-servers-keys");
-  keys.append(switcherKey("plus", "Add a server", "add-server-btn"), switcherKey("compass", "Discover", "discover-btn"));
+  keys.append(switcherKey("plus", t("ui.add-a-server"), "add-server-btn"), switcherKey("compass", t("ui.discover"), "discover-btn"));
   sheet.append(grab, head, slot, keys);
   box.append(scrim, sheet);
   scrim.onclick = () => closeServerSwitcher();
@@ -82,7 +84,7 @@ function buildServerSwitcher() {
 }
 
 function optionsWords(server) {
-  return server ? `${serverShownName(server.name)} options` : "Server options";
+  return server ? t("ui.server-name-options", { name: serverShownName(server.name) }) : t("ui.server-options");
 }
 
 function switcherKey(icon, words, target) {

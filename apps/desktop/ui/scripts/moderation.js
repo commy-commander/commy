@@ -7,21 +7,21 @@ const BAN_LENGTHS = [
   { id: "2w", label: "2 weeks", hours: 336 },
   { id: "1mo", label: "1 month", hours: 720 },
   { id: "3mo", label: "3 months", hours: 2160 },
-  { id: "forever", label: "Until unbanned", hours: null },
+  { id: "forever", get label() { return t("ui.until-unbanned"); }, hours: null },
 ];
 
 const UPLOAD_LIMITS_MB = [8, 25, 50, 100, 250, 500, 1024, 2048];
 const BYTES_PER_MB = 1024 * 1024;
 
 function uploadLimitLabel(mb) {
-  if (!mb) return "Up to 4 GB";
-  return mb >= 1024 && mb % 1024 === 0 ? `${mb / 1024} GB` : `${mb} MB`;
+  if (!mb) return t("ui.up-to-4-gb");
+  return mb >= 1024 && mb % 1024 === 0 ? t("ui.gb", { value: mb / 1024 }) : t("ui.mb-2", { mb });
 }
 
 function uploadRefusal(server, sizeBytes) {
   const mb = server && Number(server.upload_limit_mb);
   if (!mb || Number(sizeBytes) <= mb * BYTES_PER_MB) return null;
-  return `This server allows files up to ${uploadLimitLabel(mb)}`;
+  return t("ui.this-server-allows-files-up-to", { value: uploadLimitLabel(mb) });
 }
 
 function spanWords(ms, up = false) {
@@ -40,25 +40,25 @@ function spanWords(ms, up = false) {
 function sinceWords(at, now) {
   if (!at) return null;
   const ms = Number(now) - Number(at);
-  return ms < 60000 ? "just now" : `${spanWords(ms)} ago`;
+  return ms < 60000 ? t("ui.just-now") : `${spanWords(ms)} ago`;
 }
 
 function banLine(ban, now = Date.now()) {
-  const who = ban.by_name ? `Banned by ${ban.by_name}` : "Banned";
+  const who = ban.by_name ? t("ui.banned-by", { by_name: ban.by_name }) : t("ui.banned");
   const when = sinceWords(ban.at, now);
-  const end = ban.until ? `ends in ${spanWords(Math.max(0, ban.until - now), true)}` : "until unbanned";
+  const end = ban.until ? t("ui.ends-in", { value: spanWords(Math.max(0, ban.until - now), true) }) : t("ui.until-unbanned-2");
   return `${who}${when ? ` ${when}` : ""}, ${end}`;
 }
 
 function kickLine(kick, now = Date.now()) {
   const when = sinceWords(kick.at, now);
-  return `Kicked by ${kick.by_name}${when ? ` ${when}` : ""}`;
+  return t("ui.kicked-by", { by_name: kick.by_name, value: when ? ` ${when}` : "" });
 }
 
 function banChoiceText(member, serverName, hours) {
   const length = BAN_LENGTHS.find(b => b.hours === hours);
-  if (!hours || !length) return `${member} is removed from ${serverName} and cannot rejoin until you unban them.`;
-  return `${member} is removed from ${serverName} and can rejoin with an invite after ${length.label}.`;
+  if (!hours || !length) return t("ui.is-removed-from-and-cannot-rejoin-until", { member, serverName });
+  return t("ui.is-removed-from-and-can-rejoin-with-an", { member, serverName, label: length.label });
 }
 
 function canSeeRemoved(server) {

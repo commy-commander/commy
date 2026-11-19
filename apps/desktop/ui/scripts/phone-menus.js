@@ -30,7 +30,7 @@ const PHONE_MENU_WORD_ICONS = {
   "Time out": "clock",
   "Remove timeout": "clock",
 };
-const PHONE_MENU_SWITCH_WORDS = { "sm-mute": "Mute Server" };
+const PHONE_MENU_SWITCH_WORDS = { get "sm-mute"() { return t("ui.mute-server-2"); } };
 const PHONE_MENUS = ["server-menu", "channel-menu", "fp-menu", "room-member-menu"];
 
 function phoneMenuKind(button) {
@@ -44,7 +44,7 @@ function dressPhoneMenuRow(button) {
   if (!button.querySelector(":scope > .l")) {
     const words = PHONE_MENU_SWITCH_WORDS[button.id] || button.textContent.trim();
     button.replaceChildren();
-    const icon = PHONE_MENU_ICONS[button.id] || (kind === "row" && PHONE_MENU_WORD_ICONS[words]);
+    const icon = PHONE_MENU_ICONS[button.id] || (kind === "row" && (PHONE_MENU_WORD_ICONS[words] || PHONE_MENU_WORD_ICONS[englishFor(words)]));
     if (icon) button.insertAdjacentHTML("beforeend", studioIconMarkup(icon));
     button.appendChild(el("span", "l", words));
     if (kind === "pick") button.insertAdjacentHTML("beforeend", studioIconMarkup("check", "tick"));

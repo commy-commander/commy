@@ -1,10 +1,11 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repo = join(import.meta.dirname, "..", "..", "..", "..");
-const read = (...path) => readFileSync(join(repo, ...path), "utf8");
+const read = (...path) => englishSource(readFileSync(join(repo, ...path), "utf8"));
 const appSource = read("apps", "desktop", "ui", "scripts", "app.js");
 
 test("built-in soundboard clips use the backend's ids and labels, since peers play them by id", () => {

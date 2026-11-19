@@ -5,14 +5,14 @@ function inviteAsksTrust(invite) {
 }
 
 function communityHostWarning(host) {
-  return `This community keeps its messages on ${host}, which is not on Commy's list of servers. ` +
-    `${host} cannot read the messages, but it can see when members connect. Only join if you trust it.`;
+  return t("ui.this-community-keeps-its-messages-on", { host }) +
+    t("ui.cannot-read-the-messages-but-it-can-see", { host });
 }
 
 function accountServerWarning(invite) {
-  return `This invite comes from ${invite.host}, not your account server (${invite.account_server_host}). ` +
-    "Anyone can run a Commy server, so only join if you trust the person who sent this link. " +
-    "Your account stays on your own server either way.";
+  return t("ui.this-invite-comes-from-not-your-account", { host: invite.host, account_server_host: invite.account_server_host }) +
+    t("ui.anyone-can-run-a-commy-server-so-only") +
+    t("ui.your-account-stays-on-your-own-server");
 }
 
 function inviteWarningText(invite) {

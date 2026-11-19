@@ -52,13 +52,13 @@ function phoneEventsHead() {
     const back = document.createElement("button");
     back.type = "button";
     back.className = "pe-x pe-back";
-    back.setAttribute("aria-label", "Back");
+    back.setAttribute("aria-label", t("signin.step.back"));
     back.innerHTML = phoneEventIcon("chevron-left");
     back.addEventListener("click", () => closeEvents());
     const title = document.createElement("div");
     title.className = "pe-x pe-title";
     title.append(document.createElement("b"), document.createElement("small"));
-    title.firstChild.textContent = "Events";
+    title.firstChild.textContent = t("ui.events");
     head.prepend(back, title);
     const slab = document.createElement("span");
     slab.className = "pe-x pe-slab";

@@ -6,7 +6,7 @@ const OVERLAY_LINGER_MS = 1200;
 const OVERLAY_NOTICE_MS = 3500;
 const OVERLAY_TEST_MS = 6000;
 
-const OVERLAY_CORNER_LABELS = { "top-left": "Top left", "top-right": "Top right", "bottom-left": "Bottom left", "bottom-right": "Bottom right" };
+const OVERLAY_CORNER_LABELS = { get "top-left"() { return t("ui.top-left"); }, get "top-right"() { return t("ui.top-right"); }, get "bottom-left"() { return t("ui.bottom-left"); }, get "bottom-right"() { return t("ui.bottom-right"); } };
 
 function overlayCornerLabel(corner) {
   return OVERLAY_CORNER_LABELS[overlayCorner(corner).name];
@@ -56,7 +56,7 @@ function overlayPicture(member, studio) {
 }
 
 function overlayTestMember(me, studio) {
-  const base = { id: "overlay-test", name: "You, talking" };
+  const base = { id: "overlay-test", name: t("ui.you-talking") };
   if (!studio || !me) return base;
   return { ...base, face: me.id || "", image: me.image || null, emoji: me.emoji || null };
 }
@@ -98,7 +98,7 @@ function overlayPlaceKey(config) {
 
 function overlayMovedNotice(previous, config) {
   if (!previous || overlayPlaceKey(previous) === overlayPlaceKey(config)) return null;
-  return config.layout ? "Overlay on · Your layout" : `Overlay on · ${overlayCornerLabel(config.corner)}`;
+  return config.layout ? t("ui.overlay-on-your-layout") : t("ui.overlay-on", { value: overlayCornerLabel(config.corner) });
 }
 
 function overlayStartLayout(corner) {

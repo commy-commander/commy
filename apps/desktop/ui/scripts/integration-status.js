@@ -2,26 +2,26 @@ const INTEGRATION_FRESH_MS = 10 * 60e3;
 const INTEGRATION_KINDS = ["gif-search", "game-database", "file-storage"];
 
 const INTEGRATION_WORDS = {
-  busy: "Checking the connection",
-  working: "Connected and working",
-  broken: "Connected, but not working",
+  get busy() { return t("ui.checking-the-connection"); },
+  get working() { return t("ui.connected-and-working"); },
+  get broken() { return t("ui.connected-but-not-working"); },
   "gif-search": {
-    builtin: "Working with the built-in search. No key is needed.",
-    off: "Not connected. Add a key to turn GIF search on here.",
-    down: "The built-in search is not working",
+    get builtin() { return t("ui.working-with-the-built-in-search-no-key"); },
+    get off() { return t("ui.not-connected-add-a-key-to-turn-gif"); },
+    get down() { return t("ui.the-built-in-search-is-not-working"); },
   },
   "game-database": {
-    builtin: "Working through your Commy account. No login is needed.",
-    off: "Not connected. Add a login to turn game search on here.",
-    down: "Game search through your Commy account is not working",
+    get builtin() { return t("ui.working-through-your-commy-account-no"); },
+    get off() { return t("ui.not-connected-add-a-login-to-turn-game"); },
+    get down() { return t("ui.game-search-through-your-commy-account"); },
   },
   "file-storage": {
-    off: "Not connected",
-    unpaired: "Connected, but the worker has not been set up for this server. Enter the setup code and save.",
+    get off() { return t("ui.not-connected-2"); },
+    get unpaired() { return t("ui.connected-but-the-worker-has-not-been"); },
   },
 };
 
-const INTEGRATION_TAB_WORDS = { busy: "Checking", ok: "Working", warn: "Problem", off: "Off" };
+const INTEGRATION_TAB_WORDS = { get busy() { return t("ui.integration-checking"); }, get ok() { return t("ui.integration-working"); }, get warn() { return t("ui.integration-problem"); }, get off() { return t("ui.off"); } };
 
 function integrationTabWord(tone) {
   return INTEGRATION_TAB_WORDS[tone] || "";

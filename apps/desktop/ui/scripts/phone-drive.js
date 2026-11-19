@@ -1,4 +1,6 @@
-const PHONE_DRIVE_LEAD = "Open this channel in the desktop app to see its files.";
+function phoneDriveLead() {
+  return t("ui.drive.open-on-desktop");
+}
 
 function dressPhoneDrive() {
   if (!studioSlim() || driveWorksHere()) return;
@@ -6,7 +8,7 @@ function dressPhoneDrive() {
   if (!empty || empty.querySelector(":scope > .pt-drive-well")) return;
   const well = el("span", "pt-drive-well");
   well.innerHTML = studioIconMarkup("folder");
-  empty.prepend(well, el("b", "", PHONE_DRIVE_LEAD));
+  empty.prepend(well, el("b", "", phoneDriveLead()));
 }
 
 function wirePhoneDrive() {

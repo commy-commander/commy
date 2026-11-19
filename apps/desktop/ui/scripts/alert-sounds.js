@@ -21,11 +21,11 @@ function builtInSoundLabel(name) {
 }
 
 function alertSoundChoices(builtIns, custom, canAdd) {
-  const groups = [{ label: "Built in", options: builtIns.map(name => ({ value: name, label: builtInSoundLabel(name) })) }];
-  if (custom.length) groups.push({ label: "Your sounds", options: custom.map(s => ({ value: s.id, label: s.name })) });
+  const groups = [{ label: t("ui.built-in"), options: builtIns.map(name => ({ value: name, label: builtInSoundLabel(name) })) }];
+  if (custom.length) groups.push({ label: t("ui.your-sounds-2"), options: custom.map(s => ({ value: s.id, label: s.name })) });
   const more = [];
-  if (canAdd) more.push({ value: ADD_ALERT_SOUND, label: "Add your own..." });
-  more.push({ value: NO_SOUND, label: "No sound" });
+  if (canAdd) more.push({ value: ADD_ALERT_SOUND, label: t("ui.add-your-own") });
+  more.push({ value: NO_SOUND, label: t("ui.no-sound") });
   groups.push({ label: "", options: more });
   return groups;
 }

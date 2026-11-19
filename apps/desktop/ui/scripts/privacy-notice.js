@@ -8,9 +8,9 @@ const NEW_ACCOUNT_MS = 24 * 60 * 60 * 1000;
 
 function privacyNoticeTitle(updatedOn, locale) {
   const date = updatedOn ? new Date(`${updatedOn}T12:00:00Z`) : null;
-  if (!date || isNaN(date)) return "We updated our Privacy Policy.";
+  if (!date || isNaN(date)) return t("ui.we-updated-our-privacy-policy");
   const shown = date.toLocaleDateString(locale, { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
-  return `We updated our Privacy Policy on ${shown}.`;
+  return t("ui.we-updated-our-privacy-policy-on", { shown });
 }
 
 function agreedToCurrentPolicy(user, now, updatedOn = PRIVACY_NOTICE.updatedOn) {

@@ -34,8 +34,8 @@ function groupMembers(members, roles) {
   const hoisted = (roles || []).filter(r => r.hoist).sort((a, b) => b.position - a.position);
   const isOnline = m => m.presence !== "offline" && m.presence !== "invisible";
   const groups = hoisted.map(role => ({ id: role.id, title: role.name, color: role.color || null, members: [] }));
-  const online = { id: "online", title: "Online", color: null, members: [] };
-  const offline = { id: "offline", title: "Offline", color: null, members: [], dim: true };
+  const online = { id: "online", title: t("ui.online"), color: null, members: [] };
+  const offline = { id: "offline", title: t("ui.offline-2"), color: null, members: [], dim: true };
   for (const member of members) {
     if (!isOnline(member)) {
       offline.members.push(member);

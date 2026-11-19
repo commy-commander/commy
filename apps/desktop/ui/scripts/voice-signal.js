@@ -76,32 +76,32 @@ function linkIsDirect(link) {
 }
 
 function linkPathChip(path) {
-  if (path === "relay") return { kind: "relay", label: "Relayed" };
-  if (path === "direct" || path === "mixed") return { kind: "direct", label: "Direct" };
-  return { kind: "none", label: "Connecting" };
+  if (path === "relay") return { kind: "relay", label: t("ui.relayed") };
+  if (path === "direct" || path === "mixed") return { kind: "direct", label: t("ui.direct") };
+  return { kind: "none", label: t("ui.connecting") };
 }
 
 function linkPathText(path) {
-  if (path === "direct") return "Connected directly";
-  if (path === "relay") return "Connected through a relay";
-  if (path === "mixed") return "Connected directly, relay on standby";
-  return "Connecting";
+  if (path === "direct") return t("ui.connected-directly");
+  if (path === "relay") return t("ui.connected-through-a-relay");
+  if (path === "mixed") return t("ui.connected-directly-relay-on-standby");
+  return t("ui.connecting");
 }
 
 function ownPath(links) {
   const relayed = links.filter(linkIsRelayed).length;
   const direct = links.filter(linkIsDirect).length;
-  if (!relayed && !direct) return { kind: "none", label: "Waiting", text: "Nobody else yet" };
-  if (!relayed) return { kind: "direct", label: "Direct", text: direct === 1 ? "Direct" : `All ${direct} direct` };
-  if (!direct) return { kind: "relay", label: "Relayed", text: relayed === 1 ? "Relayed" : `All ${relayed} relayed` };
-  return { kind: "mixed", label: "Some relayed", text: `${direct} direct, ${relayed} relayed` };
+  if (!relayed && !direct) return { kind: "none", label: t("ui.waiting"), text: t("ui.nobody-else-yet") };
+  if (!relayed) return { kind: "direct", label: t("ui.direct"), text: direct === 1 ? t("ui.direct") : t("ui.all-direct", { direct }) };
+  if (!direct) return { kind: "relay", label: t("ui.relayed"), text: relayed === 1 ? t("ui.relayed") : t("ui.all-relayed", { relayed }) };
+  return { kind: "mixed", label: t("ui.some-relayed"), text: t("ui.direct-relayed", { direct, relayed }) };
 }
 
 const OWN_BADGES = {
-  good: { cls: "good", label: "Good" },
-  fair: { cls: "ok", label: "Fair" },
-  poor: { cls: "bad", label: "Poor" },
-  offline: { cls: "bad", label: "Offline" },
+  good: { cls: "good", get label() { return t("ui.signal.good"); } },
+  fair: { cls: "ok", get label() { return t("ui.signal.fair"); } },
+  poor: { cls: "bad", get label() { return t("ui.signal.poor"); } },
+  offline: { cls: "bad", get label() { return t("ui.offline-2"); } },
 };
 
 function ownBadge(quality) {
@@ -109,15 +109,15 @@ function ownBadge(quality) {
 }
 
 function ownNetworkText(direct) {
-  if (direct === "open") return "Direct connections work";
-  if (direct === "limited") return "Direct with some people";
-  if (direct === "blocked") return "Relay only";
-  return "Not checked yet";
+  if (direct === "open") return t("ui.direct-connections-work");
+  if (direct === "limited") return t("ui.direct-with-some-people");
+  if (direct === "blocked") return t("ui.relay-only");
+  return t("ui.not-checked-yet");
 }
 
 function ownRelayText(me) {
-  if (!me.relay_reachable) return "Not reachable";
-  return Number.isFinite(me.relay_rtt_ms) ? `${Math.round(me.relay_rtt_ms)} ms` : "Measuring";
+  if (!me.relay_reachable) return t("ui.not-reachable");
+  return Number.isFinite(me.relay_rtt_ms) ? `${Math.round(me.relay_rtt_ms)} ms` : t("ui.measuring");
 }
 
 function connEntries(me, links) {

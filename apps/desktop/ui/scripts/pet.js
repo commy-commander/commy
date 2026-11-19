@@ -1,18 +1,18 @@
 const PET_SUITS = [
-  { id: "white", label: "Moon white", color: "#e9e6dc" },
-  { id: "orange", label: "Mars orange", color: "#ff8a3d" },
-  { id: "blue", label: "Earth blue", color: "#4d9bff" },
-  { id: "pink", label: "Nebula pink", color: "#ff6fb5" },
-  { id: "green", label: "Aurora green", color: "#3ec98a" },
-  { id: "purple", label: "Deep space purple", color: "#9b7bff" },
+  { id: "white", get label() { return t("ui.moon-white"); }, color: "#e9e6dc" },
+  { id: "orange", get label() { return t("ui.mars-orange"); }, color: "#ff8a3d" },
+  { id: "blue", get label() { return t("ui.earth-blue"); }, color: "#4d9bff" },
+  { id: "pink", get label() { return t("ui.nebula-pink"); }, color: "#ff6fb5" },
+  { id: "green", get label() { return t("ui.aurora-green"); }, color: "#3ec98a" },
+  { id: "purple", get label() { return t("ui.deep-space-purple"); }, color: "#9b7bff" },
 ];
 const PET_NAME_MAX = 24;
 const PET_HOUR = 60 * 60 * 1000;
 const PET_SKEW = 5 * 60 * 1000;
 const PET_CARES = [
-  { kind: "feed", label: "Feed", field: "fed", done: "munches a space snack" },
-  { kind: "pat", label: "Pat", field: "patted", done: "does a happy wiggle" },
-  { kind: "play", label: "Play", field: "played", done: "chases a floating ball" },
+  { kind: "feed", get label() { return t("ui.feed"); }, field: "fed", done: "munches a space snack" },
+  { kind: "pat", get label() { return t("ui.pat"); }, field: "patted", done: "does a happy wiggle" },
+  { kind: "play", get label() { return t("ui.play"); }, field: "played", done: "chases a floating ball" },
 ];
 
 function petSuitColor(suit) {
@@ -53,7 +53,7 @@ function petCareDone(pet, kind) {
 }
 
 function petLevelLabel(pet) {
-  return pet ? `Level ${pet.level}` : "";
+  return pet ? t("ui.level", { level: pet.level }) : "";
 }
 
 function petProgress(pet) {

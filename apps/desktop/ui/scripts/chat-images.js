@@ -5,9 +5,9 @@ const IMAGE_NAME_HEADER = "x-commy-name";
 const IMAGE_EXTENSIONS = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/avif": "avif", "image/bmp": "bmp" };
 const IMAGE_NAME_UNSAFE = /[\\/:*?"<>|\u0000-\u001f]/g;
 const IMAGE_ACTIONS = {
-  copy: { menu: "Copy Image", sheet: "Copy Image" },
-  save: { menu: "Save Image", sheet: "Save Image" },
-  link: { menu: "Copy Image Link", sheet: null },
+  copy: { get menu() { return t("ui.copy-image-2"); }, get sheet() { return t("ui.copy-image-2"); } },
+  save: { get menu() { return t("ui.save-image-2"); }, get sheet() { return t("ui.save-image-2"); } },
+  link: { get menu() { return t("ui.copy-image-link"); }, sheet: null },
 };
 const chatImageSources = new WeakMap();
 
@@ -58,7 +58,7 @@ function imageSaveName(name, url, mime) {
 
 async function imageBlob(src) {
   const res = await fetch(src);
-  if (!res.ok) throw new Error(`the image could not be read (${res.status})`);
+  if (!res.ok) throw new Error(t("ui.the-image-could-not-be-read", { status: res.status }));
   return res.blob();
 }
 
@@ -72,13 +72,13 @@ async function imagePng(src) {
   canvas.getContext("2d").drawImage(bitmap, 0, 0);
   if (bitmap.close) bitmap.close();
   return new Promise((resolve, reject) => {
-    canvas.toBlob(png => (png ? resolve(png) : reject(new Error("the image could not be copied"))), IMAGE_COPY_MIME);
+    canvas.toBlob(png => (png ? resolve(png) : reject(new Error(t("ui.the-image-could-not-be-copied")))), IMAGE_COPY_MIME);
   });
 }
 
 function copyImageFailed(source) {
-  if (source && source.url) copyText(source.url, "Copied the image link instead");
-  else toast("Could not copy the image");
+  if (source && source.url) copyText(source.url, t("ui.copied-the-image-link-instead"));
+  else toast(t("ui.could-not-copy-the-image"));
 }
 
 function copyChatImage(img) {
@@ -94,7 +94,7 @@ function copyChatImage(img) {
   }
   return navigator.clipboard.write([item]).then(
     () => {
-      toast("Image copied");
+      toast(t("ui.image-copied"));
       return true;
     },
     () => {
@@ -116,10 +116,10 @@ async function saveChatImage(img) {
   if (source.att && source.att.filename) return saveAttachment(source.att);
   try {
     const saved = await saveImageBytes(img, source);
-    toast(saved ? `Saved to ${saved}` : "Download cancelled");
+    toast(saved ? t("ui.saved-to-2", { saved }) : t("ui.download-cancelled"));
     return Boolean(saved);
   } catch (e) {
-    toast(source.url ? "Could not save this image. Open its link to save it from there." : String(e));
+    toast(source.url ? t("ui.could-not-save-this-image-open-its-link") : String(e));
     return false;
   }
 }
@@ -128,7 +128,7 @@ function runImageAction(action, img) {
   if (action === "copy") return copyChatImage(img);
   if (action === "save") return saveChatImage(img);
   const source = chatImageSources.get(img) || {};
-  return copyText(source.url, "Image link copied");
+  return copyText(source.url, t("ui.image-link-copied"));
 }
 
 function chatImageMenuItems(item, img) {

@@ -2,33 +2,33 @@ const ALLOWED_LINKS_KEY = "commy.trustedLinkDomains";
 const MAX_ALLOWED_LINK_DOMAINS = 500;
 
 const LINK_SIGN_TEXT = {
-  known_bad: "It is on a list of sites known for phishing or harmful downloads.",
-  disguised: "The link hides where it really goes behind another name.",
-  text_mismatch: "The link's text names a different site than the one it opens.",
-  lookalike: "The address imitates a well-known site.",
-  brand_name: "The address borrows the name of a well-known site.",
-  international: "The address uses letters from other alphabets, which can make it look like a different site.",
-  address: "It opens a numeric address instead of a site name.",
+  get known_bad() { return t("ui.it-is-on-a-list-of-sites-known-for"); },
+  get disguised() { return t("ui.the-link-hides-where-it-really-goes"); },
+  get text_mismatch() { return t("ui.the-link-s-text-names-a-different-site"); },
+  get lookalike() { return t("ui.the-address-imitates-a-well-known-site"); },
+  get brand_name() { return t("ui.the-address-borrows-the-name-of-a-well"); },
+  get international() { return t("ui.the-address-uses-letters-from-other"); },
+  get address() { return t("ui.it-opens-a-numeric-address-instead-of-a"); },
 };
 
 const LEAVING_TONES = {
   ask: {
     tone: "plain",
-    title: "Leaving Commy",
-    intro: "This link opens a site outside Commy. Continue only if you trust it.",
-    openLabel: "Open Site",
+    get title() { return t("ui.leaving-commy"); },
+    get intro() { return t("ui.this-link-opens-a-site-outside-commy"); },
+    get openLabel() { return t("ui.open-site"); },
   },
   warn: {
     tone: "warn",
-    title: "Careful With This Link",
-    intro: "This link may not go where it seems to. Commy checked it on this device.",
-    openLabel: "Open Anyway",
+    get title() { return t("ui.careful-with-this-link"); },
+    get intro() { return t("ui.this-link-may-not-go-where-it-seems-to"); },
+    get openLabel() { return t("ui.open-anyway"); },
   },
   block: {
     tone: "block",
-    title: "Harmful Site Blocked",
-    intro: "Commy checked this link on this device and stopped it.",
-    openLabel: "Open Anyway",
+    get title() { return t("ui.harmful-site-blocked"); },
+    get intro() { return t("ui.commy-checked-this-link-on-this-device"); },
+    get openLabel() { return t("ui.open-anyway"); },
   },
 };
 
@@ -97,8 +97,8 @@ function openLinkInNewTab(win, url) {
 
 function allowedLinksSummary(domains) {
   const count = (domains || []).length;
-  if (count === 0) return "Every site outside Commy asks before it opens.";
-  return `${count} ${count === 1 ? "site opens" : "sites open"} without asking on this device.`;
+  if (count === 0) return t("ui.every-site-outside-commy-asks-before-it");
+  return t("ui.without-asking-on-this-device", { count, value: count === 1 ? "site opens" : "sites open" });
 }
 
 if (typeof module !== "undefined" && module.exports) {

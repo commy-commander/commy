@@ -1,10 +1,10 @@
 const PROFILE_WASH = "linear-gradient(180deg, color-mix(in srgb, var(--pc) 46%, transparent), color-mix(in srgb, var(--pc) 12%, transparent))";
 const PROFILE_FRIEND_KEYS = {
-  none: { icon: "user-plus", title: "Add friend", cls: "key sq" },
-  outgoing: { icon: "clock", title: "Request sent", cls: "key sq mc-sent" },
-  incoming: { icon: "user-check", title: "Accept friend request", cls: "key sq primary mc-accept" },
+  none: { icon: "user-plus", get title() { return t("ui.add-friend-2"); }, cls: "key sq" },
+  outgoing: { icon: "clock", get title() { return t("ui.request-sent"); }, cls: "key sq mc-sent" },
+  incoming: { icon: "user-check", get title() { return t("ui.accept-friend-request"); }, cls: "key sq primary mc-accept" },
 };
-const PROFILE_VIEW_KEY = { icon: "user", title: "View profile", cls: "key sq mc-view" };
+const PROFILE_VIEW_KEY = { icon: "user", get title() { return t("ui.view-profile"); }, cls: "key sq mc-view" };
 const PROFILE_VIEW_PLACES = ["card", "dm"];
 const CARD_GAP = 12;
 const CARD_EDGE = 8;

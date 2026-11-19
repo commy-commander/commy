@@ -33,7 +33,7 @@ function openRoomMoves(server, member, rooms) {
       moveVoiceMember(member, room, server);
     });
   }
-  showRoomMenu(menu, `Move ${member.name} to`);
+  showRoomMenu(menu, t("ui.move-name-to", { name: member.name }));
 }
 
 function openRoomMemberMenu(member) {

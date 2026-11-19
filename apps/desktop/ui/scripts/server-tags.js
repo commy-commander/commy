@@ -1,9 +1,9 @@
 const SERVER_TAG_COLORS = ["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "gray"];
 const SERVER_TAG_EFFECTS = [
-  { value: "none", label: "None" },
-  { value: "shine", label: "Shine" },
-  { value: "glow", label: "Glow" },
-  { value: "pulse", label: "Pulse" },
+  { value: "none", get label() { return t("ui.none"); } },
+  { value: "shine", get label() { return t("ui.shine"); } },
+  { value: "glow", get label() { return t("ui.glow"); } },
+  { value: "pulse", get label() { return t("ui.pulse"); } },
 ];
 const MAX_SERVER_TAG_LETTERS = 4;
 const NO_SERVER_TAG = "";
@@ -13,7 +13,7 @@ function cleanTagLetters(raw) {
 }
 
 function serverTagTitle(tag) {
-  return tag && tag.server ? `${tag.server} server tag` : "Server tag";
+  return tag && tag.server ? t("ui.server-tag-3", { server: tag.server }) : t("ui.server-tag-2");
 }
 
 function wearableTags(servers) {

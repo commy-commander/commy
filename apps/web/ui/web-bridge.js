@@ -601,21 +601,25 @@
     },
   };
   document.documentElement.classList.add("web-app");
-  function setWebText(element, text) {
+  function setWebText(element, key, vars) {
     if (!element) return;
     element.removeAttribute("data-i18n");
-    element.textContent = text;
+    element.textContent = t(key, vars);
   }
-  setWebText(document.getElementById("signin-go"), `Sign in on ${window.location.host}`);
-  setWebText(document.querySelector("#signin-start .signin-note"), "Sign in or create your account, then come back to the web app.");
-  setWebText(document.getElementById("signin-intro"), "A free Commy account keeps servers free of spam bots. Your messages and calls stay between you and the people you talk to; the account proves you are a real person.");
-  setWebText(document.querySelector('[data-i18n="settings.intro.appearance"]'), "Theme, language and chat text.");
-  setWebText(document.querySelector('[data-i18n="settings.intro.diagnostics"]'), "Check your connection when something goes wrong.");
-  setWebText(document.querySelector(".conn-test-intro .setting-sub"), "Checks how well calls and streams can run on this network. You don't need anyone else online.");
   const settingNote = id => document.getElementById(id)?.closest(".setting-row")?.querySelector(".setting-sub");
-  setWebText(settingNote("nc-toggle"), "Removes keyboards, fans and other background noise using your browser's noise suppression.");
-  setWebText(settingNote("mic-test-btn"), "Plays your mic back to you, with the noise and echo handling you chose.");
-  setWebText(document.querySelector('[data-i18n="settings.intro.keybinds"]'), "Keys for your voice while Commy is the tab you are on, and shortcuts inside Commy.");
-  setWebText(settingNote("talk-key"), "Works while Commy is the tab you are on. Click the box and press a new combination.");
-  setWebText(settingNote("mute-key"), "Works while Commy is the tab you are on. Click the box and press a combination, or Backspace to clear it.");
+  function sayWebWords() {
+    setWebText(document.getElementById("signin-go"), "web.signin.go", { host: window.location.host });
+    setWebText(document.querySelector("#signin-start .signin-note"), "web.signin.note");
+    setWebText(document.getElementById("signin-intro"), "web.signin.intro");
+    setWebText(document.querySelector('[data-i18n="settings.intro.appearance"]'), "web.intro.appearance");
+    setWebText(document.querySelector('[data-i18n="settings.intro.diagnostics"]'), "web.intro.diagnostics");
+    setWebText(document.querySelector(".conn-test-intro .setting-sub"), "web.connTest");
+    setWebText(settingNote("nc-toggle"), "web.noiseCancel");
+    setWebText(settingNote("mic-test-btn"), "web.micTest");
+    setWebText(document.querySelector('[data-i18n="settings.intro.keybinds"]'), "web.intro.keybinds");
+    setWebText(settingNote("talk-key"), "web.talkKey");
+    setWebText(settingNote("mute-key"), "web.muteKey");
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", sayWebWords);
+  else sayWebWords();
 })();

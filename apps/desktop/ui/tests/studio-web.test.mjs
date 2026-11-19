@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -6,7 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { WEB_UNLOCK_DIALOG, WEB_UNLOCK_KEYS, CAM_FOCUS_KEY, webUnlockStarState, webDressPlan, signinGoBright } = require("../scripts/studio-web.js");
 
-const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
 const css = read("../styles/studio-web.css");
 const app = read("../scripts/app.js");
@@ -109,6 +110,6 @@ test("the desktop keeps its words; the browser drops the claims it cannot keep",
   assert.ok(html.includes("Your messages and calls still go straight between devices"));
   assert.ok(html.includes("Theme, language, chat text and the Commy icon."));
   assert.ok(app.includes('"Servers are where your friends gather: text channels, voice and screen sharing, all connected directly between members. Start one, or join a friend\'s with an invite."'));
-  assert.ok(app.includes('account.server_from_env && !inBrowserApp() ? " (set by COMMY_AUTH_URL)" : ""'));
+  assert.ok(app.includes('t(account.server_from_env && !inBrowserApp() ? "ui.account-server-from-env" : "ui.account-server-host", { host })'));
   assert.ok(html.includes('<span class="native-only"> To use a different account server, sign out and choose it on the sign-in screen.</span>'));
 });

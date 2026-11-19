@@ -1,31 +1,31 @@
 "use strict";
 
 const CONNECTION_BADGES = {
-  good: { label: "Good", tone: "good" },
-  fair: { label: "Fair", tone: "ok" },
-  poor: { label: "Poor", tone: "bad" },
-  offline: { label: "Offline", tone: "bad" },
+  good: { get label() { return t("ui.signal.good"); }, tone: "good" },
+  fair: { get label() { return t("ui.signal.fair"); }, tone: "ok" },
+  poor: { get label() { return t("ui.signal.poor"); }, tone: "bad" },
+  offline: { get label() { return t("ui.offline-2"); }, tone: "bad" },
 };
 
 const CONNECTION_SUMMARIES = {
-  good: "Calls and streams should run smoothly.",
-  fair: "Calls work, though they may lag a little or look less sharp.",
-  poor: "Calls may lag or cut out on this network.",
-  offline: "Commy can't reach its network. Check your internet connection and try again.",
+  get good() { return t("ui.calls-and-streams-should-run-smoothly"); },
+  get fair() { return t("ui.calls-work-though-they-may-lag-a-little"); },
+  get poor() { return t("ui.calls-may-lag-or-cut-out-on-this-network"); },
+  get offline() { return t("ui.commy-can-t-reach-its-network-check-your"); },
 };
 
 const DIRECT_ANSWERS = {
-  open: "Yes",
-  limited: "Sometimes",
-  blocked: "No, using the relay",
-  unchecked: "Not checked",
+  get open() { return t("ui.yes"); },
+  get limited() { return t("ui.sometimes"); },
+  get blocked() { return t("ui.no-using-the-relay"); },
+  get unchecked() { return t("ui.not-checked"); },
 };
 
 const DIRECT_DETAILS = {
-  open: "Your network lets Commy connect straight to other people, so calls and streams usually skip the relay.",
-  limited: "Your network makes direct connections hard. Some calls and streams will go through Commy's relay instead.",
-  blocked: "Your network blocks direct connections, so calls and streams go through Commy's relay. They still work, and streams are sent at a lower frame rate.",
-  unchecked: "Commy couldn't check direct connections on this network yet. Calls still connect, directly when they can and through Commy's relay when they can't.",
+  get open() { return t("ui.your-network-lets-commy-connect-straight"); },
+  get limited() { return t("ui.your-network-makes-direct-connections"); },
+  get blocked() { return t("ui.your-network-blocks-direct-connections"); },
+  get unchecked() { return t("ui.commy-couldn-t-check-direct-connections"); },
 };
 
 const BROWSER_DIRECT = "Browsers always use the relay";
@@ -33,7 +33,7 @@ const BROWSER_DETAIL = "Browsers can't connect straight to other people, so the 
 
 function relayRoundTripText(check) {
   if (Number.isFinite(check.relay_rtt_ms)) return `${Math.round(check.relay_rtt_ms)} ms`;
-  return check.relay_reachable ? "Not measured" : "Not reachable";
+  return check.relay_reachable ? t("ui.not-measured") : t("ui.not-reachable");
 }
 
 function describeConnectionCheck(check, { browser = false } = {}) {

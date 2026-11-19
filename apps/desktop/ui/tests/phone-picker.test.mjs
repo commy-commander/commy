@@ -1,15 +1,16 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = (...parts) => englishSource(readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const css = read("styles", "phone-picker.css");
 const glue = read("scripts", "phone-picker.js");
 const html = read("index.html");
 const SLIM = 'html[data-look="studio"][data-fit="slim"]';
-const { PICKER_TABS, GIF_OFF_WORDS, pickerTabFor, gifSearchOff } = require("../scripts/phone-picker.js");
+const { PICKER_TABS, gifOffWords, pickerTabFor, gifSearchOff } = require("../scripts/phone-picker.js");
 
 const rule = selector => {
   const at = css.indexOf(`${SLIM} ${selector} {`);
@@ -107,10 +108,10 @@ test("GIFs are two columns of rounded tiles, KLIPY is faint on the right, and no
   assert.match(rule(".pt-picker-sheet .gif-picker .gif-note::before"), /width: 56px;\n  height: 56px;\n  border-radius: 50%;\n  background: var\(--input-bg\);/);
   assert.match(rule(".pt-picker-sheet .gif-picker .gif-note > .btn-link"), /color: var\(--link\);/);
   assert.match(rule(".pt-picker-sheet .gif-picker.pt-gif-off > .gif-attrib"), /visibility: hidden;/);
-  assert.equal(gifSearchOff(`${GIF_OFF_WORDS} Someone who manages this server can add a GIF key in Server Settings, then Integrations. Open GIF settings`), true);
+  assert.equal(gifSearchOff(`${gifOffWords()} Someone who manages this server can add a GIF key in Server Settings, then Integrations. Open GIF settings`), true);
   assert.equal(gifSearchOff("Searching..."), false);
   assert.equal(gifSearchOff("Could not load GIFs: down. Try again"), false);
-  assert.ok(read("scripts", "app.js").includes(`note.textContent = "${GIF_OFF_WORDS} `));
+  assert.ok(read("scripts", "app.js").includes(`note.textContent = "${gifOffWords()} `));
 });
 
 test("the picker leaves the desktop picker and the off look alone", () => {

@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -13,7 +14,7 @@ const {
 
 const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const read = (...path) => readFileSync(join(repo, ...path), "utf8");
-const appSource = read("apps", "desktop", "ui", "scripts", "app.js");
+const appSource = englishSource(read("apps", "desktop", "ui", "scripts", "app.js"));
 const viewSource = read("crates", "commy-view", "src", "lib.rs");
 const rolesSource = read("crates", "commy-view", "src", "roles.rs");
 

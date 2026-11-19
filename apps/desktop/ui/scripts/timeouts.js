@@ -41,14 +41,14 @@ function timeoutLeftText(untilMs, nowMs = Date.now()) {
 }
 
 function timeoutBadgeTitle(untilMs, nowMs = Date.now()) {
-  return `Timed out for another ${timeoutLeftText(untilMs, nowMs)}`;
+  return t("ui.timed-out-for-another", { value: timeoutLeftText(untilMs, nowMs) });
 }
 
 function timeoutLock({ view, server, nowMs = Date.now() }) {
   if (view !== "server" || !server || !timeoutActive(server.my_timeout_until, nowMs)) return null;
   return {
-    title: "You are timed out",
-    text: "You can read and listen, but not send messages, react, edit or talk for another ",
+    title: t("ui.you-are-timed-out"),
+    text: t("ui.you-can-read-and-listen-but-not-send"),
     until: Number(server.my_timeout_until),
   };
 }
@@ -68,13 +68,13 @@ function canTimeOut(server, member, meId) {
 }
 
 function timeoutActionLabel(member, nowMs = Date.now()) {
-  return timeoutActive(member && member.timeout_until, nowMs) ? "Remove timeout" : "Time out";
+  return timeoutActive(member && member.timeout_until, nowMs) ? t("ui.remove-timeout") : t("ui.time-out-4");
 }
 
 function timeoutSummary(name, seconds) {
   const choice = TIMEOUT_CHOICES.find(c => c.seconds === seconds);
   const length = choice ? choice.label : `${Math.round(seconds / 60)} minutes`;
-  return `${name} is timed out for ${length}`;
+  return t("ui.is-timed-out-for", { name, count: length });
 }
 
 if (typeof module !== "undefined" && module.exports) {

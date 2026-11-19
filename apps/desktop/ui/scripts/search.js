@@ -1,7 +1,7 @@
 const SEARCH_FILTERS = [
-  { key: "from", prefix: "@", kind: "member", hint: "messages by a member" },
-  { key: "mentions", prefix: "@", kind: "member", hint: "messages that mention a member" },
-  { key: "in", prefix: "#", kind: "channel", hint: "messages in one channel" },
+  { key: "from", prefix: "@", kind: "member", get hint() { return t("ui.messages-by-a-member"); } },
+  { key: "mentions", prefix: "@", kind: "member", get hint() { return t("ui.messages-that-mention-a-member"); } },
+  { key: "in", prefix: "#", kind: "channel", get hint() { return t("ui.messages-in-one-channel"); } },
 ];
 
 const SEARCH_SUGGEST_LIMIT = 8;
@@ -206,15 +206,15 @@ function searchExcerpt(text, terms, max = SEARCH_EXCERPT_CHARS) {
 
 function searchSummary(total, shown) {
   const n = Number(total) || 0;
-  if (n === 0) return "No messages found";
-  const label = n === 1 ? "1 result" : `${n} results`;
-  return n > shown ? `${label}, showing the newest ${shown}` : label;
+  if (n === 0) return t("ui.no-messages-found");
+  const label = t(n === 1 ? "ui.n.results.one" : "ui.n.results.many", { count: n });
+  return n > shown ? t("ui.showing-the-newest", { label, shown }) : label;
 }
 
-function unknownFilterText(unknown, where = "in this server") {
+function unknownFilterText(unknown, where = t("ui.in-this-server")) {
   if (!unknown || !unknown.length) return "";
   const first = unknown[0];
-  return first.filter === "in" ? `No channel called #${first.name} here` : `Nobody called @${first.name} ${where}`;
+  return first.filter === "in" ? t("ui.no-channel-called-here", { name: first.name }) : t("ui.nobody-called", { name: first.name, where });
 }
 
 if (typeof module !== "undefined" && module.exports) {

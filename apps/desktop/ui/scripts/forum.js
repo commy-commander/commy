@@ -102,19 +102,19 @@ function forumPostViews(posts, messages, nameOf) {
 
 function replyCountLabel(n) {
   const count = Number(n) || 0;
-  if (count === 0) return "No replies";
-  return count === 1 ? "1 reply" : `${count} replies`;
+  if (count === 0) return t("ui.no-replies");
+  return t(count === 1 ? "ui.n.replies.one" : "ui.n.replies.many", { count: count });
 }
 
 function activityLabel(at, now = Date.now()) {
   const ms = Number(at) || 0;
   if (!ms) return "";
   const seconds = Math.max(0, Math.round((now - ms) / 1000));
-  if (seconds < 60) return "just now";
+  if (seconds < 60) return t("ui.just-now");
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   if (seconds < 7 * 86400) return `${Math.floor(seconds / 86400)}d ago`;
-  return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
+  return new Date(ms).toLocaleDateString(dateLocale(), { month: "short", day: "numeric" });
 }
 
 function togglePostTag(picked, tagId, max = MAX_POST_TAGS) {

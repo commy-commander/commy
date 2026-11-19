@@ -32,10 +32,10 @@ function joinWords(words) {
 }
 
 function botAbilityText(permissions) {
-  if (permissions.has("administrator")) return "Can do anything in this server (Administrator).";
+  if (permissions.has("administrator")) return t("ui.can-do-anything-in-this-server");
   const can = BOT_ABILITIES.filter(([key]) => permissions.has(key)).map(([, words]) => words);
-  if (!can.length) return "Can read and post like a member. Give it a role to let it moderate.";
-  const text = `Can ${joinWords(can)}.`;
+  if (!can.length) return t("ui.can-read-and-post-like-a-member-give-it");
+  const text = t("ui.can", { value: joinWords(can) });
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 

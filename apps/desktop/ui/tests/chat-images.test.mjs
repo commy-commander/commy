@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -6,7 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { IMAGE_COPY_MIME, IMAGE_NAME_HEADER, IMAGE_ACTIONS, clipboardTakesImages, imageActions, imageNameFromUrl, imageSaveName } = require("../scripts/chat-images.js");
 
-const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = (...parts) => englishSource(readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const glue = read("scripts", "chat-images.js");
 const app = read("scripts", "app.js");
 const minors = read("scripts", "studio-minors.js");

@@ -4,13 +4,13 @@ function voiceInviteSummary(users, { slots = VOICE_INVITE_SLOTS } = {}) {
   const list = Array.isArray(users) ? users.filter(Boolean) : [];
   const shown = list.slice(0, slots);
   const overflow = Math.max(0, list.length - slots);
-  const names = list.map(u => (typeof u === "string" ? u : u.name) || "Someone");
+  const names = list.map(u => (typeof u === "string" ? u : u.name) || t("ui.someone"));
   let text;
-  if (!list.length) text = "Nobody is in the call yet";
-  else if (list.length === 1) text = `${names[0]} is in the call`;
-  else if (list.length === 2) text = `${names[0]} and ${names[1]} are in the call`;
-  else if (list.length === 3) text = `${names[0]}, ${names[1]} and ${names[2]} are in the call`;
-  else text = `${list.length} people are in the call`;
+  if (!list.length) text = t("ui.nobody-is-in-the-call-yet");
+  else if (list.length === 1) text = t("ui.is-in-the-call", { value: names[0] });
+  else if (list.length === 2) text = t("ui.and-are-in-the-call", { value: names[0], value2: names[1] });
+  else if (list.length === 3) text = t("ui.and-are-in-the-call-2", { value: names[0], value2: names[1], value3: names[2] });
+  else text = t("ui.people-are-in-the-call", { count: list.length });
   return { shown, overflow, overflowLabel: overflow ? `+${overflow}` : "", count: list.length, text };
 }
 
@@ -21,22 +21,22 @@ function voiceInviteTitle({ channelName, serverName, live }) {
 }
 
 function voiceInviteStatus({ known, gone, canView, users, limit }) {
-  if (gone) return "This voice channel is gone";
-  if (!known) return "Join to see who is here";
-  if (canView === false) return "You cannot see this channel";
+  if (gone) return t("ui.this-voice-channel-is-gone");
+  if (!known) return t("ui.join-to-see-who-is-here");
+  if (canView === false) return t("ui.you-cannot-see-this-channel");
   const summary = voiceInviteSummary(users);
-  if (limit && summary.count >= limit) return `${summary.text} · full`;
+  if (limit && summary.count >= limit) return t("ui.full-2", { text: summary.text });
   return summary.text;
 }
 
 function voiceInviteAction({ known, gone, canView, inThisCall, hasLink, full }) {
-  if (inThisCall) return { label: "Joined", kind: "none", enabled: false, note: "You are in this call" };
-  if (gone) return { label: "Join", kind: "none", enabled: false, note: "This voice channel is gone" };
-  if (known && canView === false) return { label: "Join", kind: "none", enabled: false, note: "You cannot see this channel" };
-  if (known && full) return { label: "Join", kind: "none", enabled: false, note: "This call is full" };
-  if (known) return { label: "Join", kind: "join", enabled: true, note: "Join the call" };
-  if (hasLink) return { label: "Join", kind: "link", enabled: true, note: "Join the server, then the call" };
-  return { label: "Join", kind: "none", enabled: false, note: "Ask for an invite to this server" };
+  if (inThisCall) return { label: t("ui.joined"), kind: "none", enabled: false, note: t("ui.you-are-in-this-call") };
+  if (gone) return { label: t("ui.join"), kind: "none", enabled: false, note: t("ui.this-voice-channel-is-gone") };
+  if (known && canView === false) return { label: t("ui.join"), kind: "none", enabled: false, note: t("ui.you-cannot-see-this-channel") };
+  if (known && full) return { label: t("ui.join"), kind: "none", enabled: false, note: t("ui.this-call-is-full") };
+  if (known) return { label: t("ui.join"), kind: "join", enabled: true, note: t("ui.join-the-call") };
+  if (hasLink) return { label: t("ui.join"), kind: "link", enabled: true, note: t("ui.join-the-server-then-the-call") };
+  return { label: t("ui.join"), kind: "none", enabled: false, note: t("ui.ask-for-an-invite-to-this-server") };
 }
 
 function voiceInviteIsFull({ users, limit, inThisCall }) {

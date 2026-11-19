@@ -86,7 +86,7 @@ function reportAvatarFailure(error) {
   console.warn("Camera avatars unavailable", error);
   if (cameraAvatar.stageFailed) return;
   cameraAvatar.stageFailed = true;
-  if (cameraFxShowsAvatar(cameraFx.settings)) toast("Avatars are not available on this device, so your camera is blurred. Pick Off under Avatar in Settings, then Camera.");
+  if (cameraFxShowsAvatar(cameraFx.settings)) toast(t("ui.avatars-are-not-available-on-this-device"));
 }
 
 async function createFaceTracker() {
@@ -222,7 +222,7 @@ function renderAvatarThumbnails() {
 
 async function setCustomAvatar(bytes) {
   await prepareAvatarStage();
-  if (!cameraAvatar.stage) throw new Error("Avatars are not available on this device");
+  if (!cameraAvatar.stage) throw new Error(t("ui.avatars-are-not-available-on-this-device-2"));
   await cameraAvatar.stage.setCustom(bytes);
   await writeCustomAvatar(bytes);
   delete cameraAvatar.thumbnails.custom;

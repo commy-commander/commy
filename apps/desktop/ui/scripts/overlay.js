@@ -76,9 +76,9 @@ function showNotice(text, ms = OVERLAY_NOTICE_MS) {
 function runTest(me) {
   testMember = overlayTestMember(me, studioLook());
   overlay.testing = true;
-  showNotice("Overlay test", OVERLAY_TEST_MS);
+  showNotice(t("ui.overlay-test"), OVERLAY_TEST_MS);
   renderMembers();
-  addChatLine({ author: "Commy", text: "Messages show for a few seconds, then go away.", force: true });
+  addChatLine({ author: "Commy", text: t("ui.messages-show-for-a-few-seconds-then-go"), force: true });
   setTimeout(() => {
     overlay.testing = false;
     renderMembers();
@@ -243,7 +243,7 @@ if (!tauri && typeof location !== "undefined" && location.hash.startsWith("#prev
   ] });
   setSpeaking("ferris", true);
   setSpeaking("nova", true);
-  addChatLine({ author: "nova", color: "9b7bff", text: "push to the left side, I'll hold mid" });
+  addChatLine({ author: "nova", color: "9b7bff", text: t("ui.push-to-the-left-side-i-ll-hold-mid") });
   addChatLine({ author: "ferris", text: "on it" });
   if (opts.includes("test")) runTest({ id: "me" });
 }

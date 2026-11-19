@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -5,7 +6,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { EVENT_HEAD_KEYS, EVENT_HEAD_ICONS, eventActionKey, eventAnswerMine, eventDeleteIcon } = require("../scripts/studio-events.js");
-const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
 const app = read("../scripts/app.js");
 const glue = read("../scripts/studio-events.js");

@@ -1,6 +1,6 @@
 const SILENCE_DB = -100;
 const TALK_RELEASE_OPTIONS = [
-  [0, "Instant"],
+  [0, t("ui.instant")],
   [100, "100 ms"],
   [200, "200 ms"],
   [500, "500 ms"],
@@ -15,8 +15,8 @@ function meterPercent(db) {
 }
 
 function sensitivityLabel(auto, db) {
-  if (auto) return "Automatic";
-  return `${Math.round(Number.isFinite(db) ? db : DEFAULT_SENSITIVITY_DB)} dB`;
+  if (auto) return t("ui.automatic");
+  return t("ui.db", { value: Math.round(Number.isFinite(db) ? db : DEFAULT_SENSITIVITY_DB) });
 }
 
 function meterState(db, auto, thresholdDb, listening) {
@@ -27,15 +27,15 @@ function meterState(db, auto, thresholdDb, listening) {
 
 function inputModeCopy(mode, onPhone = false, inBrowser = false) {
   if (mode === "push_to_talk") {
-    const text = onPhone ? "Your mic sends only while you hold the Hold to talk button." : inBrowser ? "Your mic sends only while the talk key is held with Commy as the tab you are on." : "Your mic sends only while the talk key is held, in any app.";
-    return { title: "Push to Talk", text };
+    const text = onPhone ? t("ui.your-mic-sends-only-while-you-hold-the") : inBrowser ? t("ui.your-mic-sends-only-while-the-talk-key") : t("ui.your-mic-sends-only-while-the-talk-key-2");
+    return { title: t("ui.push-to-talk"), text };
   }
-  return { title: "Voice Activity", text: "Your mic opens on its own when you speak." };
+  return { title: t("ui.voice-activity"), text: t("ui.your-mic-opens-on-its-own-when-you-speak") };
 }
 
 function talkKeyTitle(mode, key, talking) {
   if (mode !== "push_to_talk") return "";
-  return talking ? `Talking (${key})` : `Hold ${key} to talk`;
+  return talking ? t("ui.talking-2", { key }) : t("ui.hold-to-talk-2", { key });
 }
 
 function voiceInputState(voice) {

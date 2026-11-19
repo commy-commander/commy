@@ -1,9 +1,9 @@
 const SEARCH_PAGE_SIZE = 50;
 
 const SEARCH_SCOPES = [
-  { key: "conversation", label: "This conversation" },
-  { key: "dms", label: "All direct messages" },
-  { key: "server", label: "This server" },
+  { key: "conversation", get label() { return t("ui.this-conversation"); } },
+  { key: "dms", get label() { return t("ui.all-direct-messages"); } },
+  { key: "server", get label() { return t("ui.this-server"); } },
 ];
 
 function scopeEnabled(key, context) {
@@ -33,20 +33,20 @@ function searchPlace(context) {
 }
 
 function searchScopeTitle(scope, context) {
-  if (scope === "dms") return "Search your direct messages";
-  if (scope === "server") return "Search this server";
+  if (scope === "dms") return t("ui.search-your-direct-messages");
+  if (scope === "server") return t("ui.search-this-server");
   const ctx = context || {};
-  return ctx.view === "server" && !ctx.group ? "Search this channel" : "Search this conversation";
+  return ctx.view === "server" && !ctx.group ? t("ui.search-this-channel") : t("ui.search-this-conversation");
 }
 
 function searchScopeLine(scope, query, context) {
   const ctx = context || {};
-  if (scope === "dms") return "Newest first, across your direct messages";
-  if (scope === "server") return query && query.channel ? `In #${query.channel.name}` : "Newest first, across this server";
-  if (ctx.view === "dm") return ctx.conversationName ? `With @${ctx.conversationName}` : "In this conversation";
-  if (ctx.group) return ctx.conversationName ? `In ${ctx.conversationName}` : "In this group";
+  if (scope === "dms") return t("ui.newest-first-across-your-direct-messages");
+  if (scope === "server") return query && query.channel ? t("ui.in", { name: query.channel.name }) : t("ui.newest-first-across-this-server");
+  if (ctx.view === "dm") return ctx.conversationName ? t("ui.with", { conversationName: ctx.conversationName }) : t("ui.in-this-conversation");
+  if (ctx.group) return ctx.conversationName ? t("ui.in-2", { conversationName: ctx.conversationName }) : t("ui.in-this-group");
   const channel = query && query.channel ? query.channel.name : ctx.conversationName;
-  return channel ? `In #${channel}` : "In this channel";
+  return channel ? t("ui.in-3", { channel }) : t("ui.in-this-channel");
 }
 
 function searchRequest(scope, args, context, offset) {
@@ -85,19 +85,19 @@ function pageWindow(total, offset, size = SEARCH_PAGE_SIZE) {
 
 function pageCount(total) {
   const n = Math.max(0, Math.floor(Number(total) || 0));
-  if (!n) return "No messages found";
-  return n === 1 ? "1 result" : `${n} results`;
+  if (!n) return t("ui.no-messages-found");
+  return t(n === 1 ? "ui.n.results.one" : "ui.n.results.many", { count: n });
 }
 
 function pageLabel(total, offset, size = SEARCH_PAGE_SIZE) {
   const page = pageWindow(total, offset, size);
   if (page.total <= page.size) return pageCount(page.total);
-  return `Showing ${page.first} to ${page.last} of ${page.total}`;
+  return t("ui.showing-to-of", { first: page.first, last: page.last, total: page.total });
 }
 
 function dmHitKey(hit) {
   if (!hit) return { key: "", label: "" };
-  if (hit.kind === "group") return { key: `group:${hit.server}`, label: hit.name || "Group" };
+  if (hit.kind === "group") return { key: `group:${hit.server}`, label: hit.name || t("ui.group") };
   return { key: `dm:${hit.user}`, label: `@${hit.name || "Unknown User"}` };
 }
 

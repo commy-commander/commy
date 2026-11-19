@@ -96,28 +96,28 @@ function parseSlashOptions(entry, rest, { members = [], channels = [] } = {}) {
   const tokens = splitSlashArgs(text);
   const options = {};
   const slots = entry.options;
-  if (!slots.length && text.trim()) return { options, problem: `/${entry.name} takes no options` };
+  if (!slots.length && text.trim()) return { options, problem: t("ui.takes-no-options", { name: entry.name }) };
   for (let i = 0; i < slots.length; i++) {
     const option = slots[i];
     const last = i === slots.length - 1;
     let token = tokens[i];
     if (last && option.kind === "string" && token && !token.quoted) token = { value: text.slice(token.index).trim(), quoted: false };
     if (!token) {
-      if (option.required) return { options, problem: `${optionPlaceholder(option)} is needed: ${slashUsage(entry)}` };
+      if (option.required) return { options, problem: t("ui.is-needed", { value: optionPlaceholder(option), value2: slashUsage(entry) }) };
       continue;
     }
     const value = token.value;
     if (option.kind === "integer") {
-      if (!/^-?\d{1,18}$/.test(value)) return { options, problem: `${option.name} needs a whole number` };
+      if (!/^-?\d{1,18}$/.test(value)) return { options, problem: t("ui.needs-a-whole-number", { name: option.name }) };
       options[option.name] = String(Number(value));
     } else if (option.kind === "user") {
       const name = value.replace(/^@/, "");
       const member = findByName(members, name) || findByName(members, name, "username");
-      if (!member) return { options, problem: `${option.name} needs a member of this server, written as @name` };
+      if (!member) return { options, problem: t("ui.needs-a-member-of-this-server-written-as", { name: option.name }) };
       options[option.name] = member.id;
     } else if (option.kind === "channel") {
       const channel = findByName(channels.filter(c => c.kind !== "category" && c.kind !== "voice"), value.replace(/^#/, ""));
-      if (!channel) return { options, problem: `${option.name} needs a text channel, written as #name` };
+      if (!channel) return { options, problem: t("ui.needs-a-text-channel-written-as-name", { name: option.name }) };
       options[option.name] = channel.id;
     } else if (value) {
       options[option.name] = value;

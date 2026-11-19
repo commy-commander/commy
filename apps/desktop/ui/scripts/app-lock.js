@@ -1,6 +1,5 @@
 const APP_LOCK_HINT_KEY = "commy.appLockOn";
 const APP_LOCK_CHANGED_EVENT = "app-lock-changed";
-const APP_LOCK_PROMPT_TEXT = "Unlock to see your messages.";
 const APP_LOCK_AFTER_CHOICES = [
   { secs: 0, label: "Immediately" },
   { secs: 60, label: "After 1 minute" },
@@ -9,12 +8,12 @@ const APP_LOCK_AFTER_CHOICES = [
   { secs: 3600, label: "After 1 hour" },
 ];
 const APP_LOCK_WAYS = {
-  face: { button: "Unlock with Face ID", setting: "Face ID" },
-  touch: { button: "Unlock with Touch ID", setting: "Touch ID" },
-  optic: { button: "Unlock with Optic ID", setting: "Optic ID" },
-  fingerprint: { button: "Unlock with fingerprint", setting: "your fingerprint" },
-  biometrics: { button: "Unlock", setting: "your face or fingerprint" },
-  passcode: { button: "Unlock with passcode", setting: "your phone's passcode" },
+  face: { get button() { return t("ui.unlock-with-face-id"); }, setting: "Face ID" },
+  touch: { get button() { return t("ui.unlock-with-touch-id"); }, setting: "Touch ID" },
+  optic: { get button() { return t("ui.unlock-with-optic-id"); }, setting: "Optic ID" },
+  fingerprint: { get button() { return t("ui.unlock-with-fingerprint"); }, get setting() { return t("ui.your-fingerprint"); } },
+  biometrics: { get button() { return t("ui.unlock"); }, get setting() { return t("ui.your-face-or-fingerprint"); } },
+  passcode: { get button() { return t("ui.unlock-with-passcode"); }, get setting() { return t("ui.your-phone-s-passcode"); } },
 };
 
 function appLockWay(unlockWith) {
@@ -26,10 +25,10 @@ function appLockButtonText(unlockWith) {
 }
 
 function appLockSettingText(status) {
-  if (!status || !status.phone_secure) return "Set a passcode on your phone first. Commy unlocks with the phone's own Face ID, fingerprint or passcode.";
+  if (!status || !status.phone_secure) return t("ui.set-a-passcode-on-your-phone-first");
   const way = appLockWay(status.unlock_with).setting;
-  const fallback = status.unlock_with === "passcode" ? "" : " Your phone's passcode works too.";
-  return `Ask for ${way} to open Commy.${fallback} The app switcher shows a blurred screen while this is on.`;
+  const fallback = status.unlock_with === "passcode" ? "" : ` ${t("ui.your-phone-s-passcode-works-too")}`;
+  return `${t("ui.ask-for-way-to-open-commy", { way })}${fallback} ${t("ui.the-app-switcher-shows-a-blurred-screen")}`;
 }
 
 function appLockHint(status) {
@@ -80,7 +79,7 @@ const AppLock = (() => {
 
   function say(text) {
     const line = byId("app-lock-text");
-    if (line) line.textContent = text || APP_LOCK_PROMPT_TEXT;
+    if (line) line.textContent = text || t("ui.unlock-to-see-your-messages");
   }
 
   function renderScreen() {

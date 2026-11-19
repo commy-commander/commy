@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -7,7 +8,7 @@ const require = createRequire(import.meta.url);
 const { REACH_NEVER, REACH_TYPED, REACH_FIELDS, CORNER_BAND, hoverless, dropHover, lockedViewport, fieldHints, typedInto, cornerRoom } = require("../scripts/phone-reach.js");
 const { touchOnly } = require("../scripts/phone-motion.js");
 
-const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = (...parts) => englishSource(readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const css = read("styles", "phone-reach.css");
 const code = read("scripts", "phone-reach.js");
 const app = read("scripts", "app.js");
@@ -152,7 +153,7 @@ test("holding a finger down never selects text, except where you type", () => {
 
 test("empty lists tell you to hold a message on the phone and to hover it with a mouse", () => {
   assert.match(app, /function messageReach\(\) \{\n  return typeof touchOnly === "function" && touchOnly\(\) \? "Hold" : "Hover";\n\}/);
-  assert.equal((app.match(/`\$\{messageReach\(\)\} a message and choose /g) || []).length, 3);
+  assert.equal((app.match(/t\("ui\.a-message-and-choose-[\w-]+", \{ value: messageReach\(\) \}\)/g) || []).length, 3);
   assert.equal(/"Hover a message/.test(app), false);
 });
 

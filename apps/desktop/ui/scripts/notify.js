@@ -12,19 +12,19 @@ function shouldNotify({ level, presence, focusedOnIt, isDm, mentioned, announcem
 function noticeText(content, hasAttachments, plain, voiceMessage) {
   const text = plain(content || "");
   if (text) return text;
-  if (voiceMessage) return "Voice message";
-  return hasAttachments ? "Sent an attachment" : "";
+  if (voiceMessage) return t("ui.voice-message");
+  return hasAttachments ? t("ui.sent-an-attachment") : "";
 }
 
 function noticeTitle(authorName, channelName, serverName) {
-  if (!serverName) return authorName || "Someone";
+  if (!serverName) return authorName || t("ui.someone");
   return `${authorName || "Someone"} (#${channelName}, ${serverName})`;
 }
 
 function messageNotice({ author_name, channel_name, server_name, content, has_attachments, announcement, voice_message }, plain) {
   const body = noticeText(content, has_attachments, plain, voice_message);
   if (announcement) {
-    return { title: `Announcement in #${channel_name} (${server_name})`, body: `${author_name || "Someone"}: ${body}` };
+    return { title: t("ui.announcement-in", { channel_name, server_name }), body: `${author_name || "Someone"}: ${body}` };
   }
   return { title: noticeTitle(author_name, channel_name, server_name), body };
 }
@@ -65,11 +65,11 @@ function withServerFilter(prefs, serverId, key, on) {
 }
 
 const MUTE_CHOICES = [
-  { id: "15m", label: "For 15 minutes", seconds: 15 * 60 },
-  { id: "1h", label: "For 1 hour", seconds: 60 * 60 },
-  { id: "8h", label: "For 8 hours", seconds: 8 * 60 * 60 },
-  { id: "24h", label: "For 24 hours", seconds: 24 * 60 * 60 },
-  { id: "forever", label: "Until I turn it back on", seconds: null },
+  { id: "15m", get label() { return t("ui.for-15-minutes"); }, seconds: 15 * 60 },
+  { id: "1h", get label() { return t("ui.for-1-hour"); }, seconds: 60 * 60 },
+  { id: "8h", get label() { return t("ui.for-8-hours"); }, seconds: 8 * 60 * 60 },
+  { id: "24h", get label() { return t("ui.for-24-hours"); }, seconds: 24 * 60 * 60 },
+  { id: "forever", get label() { return t("ui.until-i-turn-it-back-on"); }, seconds: null },
 ];
 
 function channelPref(prefs, serverId, channelId) {
@@ -136,7 +136,7 @@ function isRecent(atSecs, nowSecs) {
 function caughtUpNotice({ count, author_name, channel_name, server_name, content, has_attachments, voice_message }, plain) {
   const text = noticeText(content, has_attachments, plain, voice_message);
   const rest = count - 1;
-  const more = rest > 0 ? `${rest} more message${rest === 1 ? "" : "s"}` : "";
+  const more = rest > 0 ? t("ui.more-message", { rest, value: rest === 1 ? "" : "s" }) : "";
   return {
     title: noticeTitle(author_name, channel_name, server_name),
     body: [text, more].filter(Boolean).join(" · "),
@@ -166,7 +166,7 @@ function anywayWay({ presence, level, focusedOnIt, phoneInFront: inFront }) {
 
 function anywayNotice({ author_name, channel_name, server_name, content }, plain) {
   const { title, body } = messageNotice({ author_name, channel_name, server_name, content }, plain);
-  return { title, body: body ? `Notify anyway: ${body}` : "Wants to reach you" };
+  return { title, body: body ? t("ui.notify-anyway-2", { body }) : t("ui.wants-to-reach-you") };
 }
 
 function memberNames(member) {
@@ -180,9 +180,9 @@ function pausedMentions(content, members, meId) {
 function pausedLine(names) {
   const shown = names.filter(Boolean);
   if (!shown.length) return "";
-  if (shown.length === 1) return `${shown[0]} has notifications paused`;
+  if (shown.length === 1) return t("ui.has-notifications-paused", { value: shown[0] });
   const listed = shown.length === 2 ? `${shown[0]} and ${shown[1]}` : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
-  return `${listed} have notifications paused`;
+  return t("ui.have-notifications-paused", { listed });
 }
 
 function playsAppSound(way, onPhone) {

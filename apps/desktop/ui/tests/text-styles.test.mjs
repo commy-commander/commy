@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -9,7 +10,7 @@ const { TEXT_COLORS, TEXT_FONTS, TEXT_EFFECTS } = require("../scripts/markdown.j
 
 const ui = join(import.meta.dirname, "..");
 const css = readFileSync(join(ui, "styles", "styles.css"), "utf8");
-const app = readFileSync(join(ui, "scripts", "app.js"), "utf8");
+const app = englishSource(readFileSync(join(ui, "scripts", "app.js"), "utf8"));
 
 function block(selector) {
   const start = css.indexOf(`${selector} {`);

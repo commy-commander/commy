@@ -25,10 +25,10 @@ function readStartup(view) {
 }
 
 function startupTitle(view) {
-  if (!view) return "Starting Commy";
-  if (view.restarting) return "Restarting to finish the update";
-  if (view.ready) return view.offline ? "Opening Commy offline" : "Opening Commy";
-  return "Starting Commy";
+  if (!view) return t("ui.starting-commy");
+  if (view.restarting) return t("ui.restarting-to-finish-the-update");
+  if (view.ready) return view.offline ? t("ui.opening-commy-offline") : t("ui.opening-commy");
+  return t("ui.starting-commy");
 }
 
 const STARTUP_MIN_SHOWN_MS = 2000;
@@ -82,9 +82,9 @@ function startupPreview(scene, ms) {
   if (scene === "offline") {
     const settled = ms >= 900;
     return {
-      connection: after(900, startupPreviewStep("working", "Checking your connection"), startupPreviewStep("failed", "Offline. Opening what is saved on this device.")),
-      update: after(900, startupPreviewStep("working", "Looking for a new version"), startupPreviewStep("skipped", "Checks again once you are online")),
-      sync: after(900, startupPreviewStep("working", "Connecting to the sync service"), startupPreviewStep("skipped", "Your servers catch up once you are online")),
+      connection: after(900, startupPreviewStep("working", t("ui.checking-your-connection")), startupPreviewStep("failed", t("ui.offline-opening-what-is-saved-on-this"))),
+      update: after(900, startupPreviewStep("working", t("ui.looking-for-a-new-version-2")), startupPreviewStep("skipped", t("ui.checks-again-once-you-are-online"))),
+      sync: after(900, startupPreviewStep("working", t("ui.connecting-to-the-sync-service")), startupPreviewStep("skipped", t("ui.your-servers-catch-up-once-you-are"))),
       offline: settled, restarting: false, ready: settled, can_skip: false,
     };
   }

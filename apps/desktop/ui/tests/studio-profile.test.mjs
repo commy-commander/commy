@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -6,7 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { PROFILE_WASH, PROFILE_FRIEND_KEYS, profileHasBanner, profileSubParts, profileStatusParts, profileFriendKey, profileMenuRows, profileViewKey, memberCardLeft } = require("../scripts/studio-profile.js");
 const { STUDIO_SPARKLES, STUDIO_DUST, STUDIO_SNOW, STUDIO_BUBBLES, STUDIO_CURTAINS, STUDIO_FIREFLIES, STUDIO_RAIN, STUDIO_NIGHT, STUDIO_METEORS, STUDIO_PETALS, STUDIO_MOTES, STUDIO_CLOUDS, STUDIO_CONFETTI, studioOrnaments, studioFrame, studioSnow, studioCurtain, studioEffect } = require("../scripts/profile-look.js");
-const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
 const css = read("../styles/studio-profile.css");
 const app = read("../scripts/app.js");

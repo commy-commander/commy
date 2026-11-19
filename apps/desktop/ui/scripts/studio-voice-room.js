@@ -19,10 +19,10 @@ const VOICE_ROOM = {
   oneRow: 6,
 };
 const VOICE_ROOM_TOOLS = [
-  { id: "vr-invite", title: "Invite people", icon: "user-plus" },
-  { id: "vr-activities", title: "Activities", icon: "gamepad-2" },
-  { id: "vr-full", title: "Full screen", icon: "maximize-2" },
-  { id: "vr-chat", title: "Hide chat", icon: "message-square" },
+  { id: "vr-invite", get title() { return t("ui.invite-people-2"); }, icon: "user-plus" },
+  { id: "vr-activities", get title() { return t("ui.activities"); }, icon: "gamepad-2" },
+  { id: "vr-full", get title() { return t("ui.full-screen"); }, icon: "maximize-2" },
+  { id: "vr-chat", get title() { return t("ui.hide-chat-2"); }, icon: "message-square" },
 ];
 
 function voiceRoomCols(count) {
@@ -155,14 +155,14 @@ function voiceRoomPeople({ userIds, names, muted, deafened, speaking, shares, ca
 
 const VOICE_ROOM_REST = { left: 30000, stopped: 4000 };
 const VOICE_ROOM_ENDED = {
-  left: ["You left the room.", "Your screen stopped with you."],
-  stopped: ["You stopped sharing.", "Share Screen brings it back."],
+  get left() { return [t("ui.room-ended.left"), t("ui.room-ended.left.sub")]; },
+  get stopped() { return [t("ui.room-ended.stopped"), t("ui.room-ended.stopped.sub")]; },
 };
 
 function voiceRoomLeftWords(room, fits) {
   const name = String(room || "").trim();
-  const whole = `You left ${name}. It noticed.`;
-  return { line: "Not in voice", sub: !fits || fits(whole) ? whole : `You left ${name}.` };
+  const whole = t("ui.you-left-it-noticed", { name });
+  return { line: t("ui.not-in-voice"), sub: !fits || fits(whole) ? whole : t("ui.you-left", { name }) };
 }
 
 function voiceRoomAway(people, me) {
@@ -226,10 +226,10 @@ function mountStudioVoiceRoom(doc, makeIcon) {
   const room = doc.createElement("section");
   room.id = "voice-room";
   room.className = "voice-room hidden";
-  room.setAttribute("aria-label", "Voice room");
+  room.setAttribute("aria-label", t("appearance.stackPanel.room"));
   const head = doc.createElement("header");
   head.className = "vr-head";
-  const fold = voiceRoomKey(doc, { id: "vr-fold", title: "Show channels", icon: "panel-left" }, makeIcon);
+  const fold = voiceRoomKey(doc, { id: "vr-fold", title: t("ui.show-channels"), icon: "panel-left" }, makeIcon);
   fold.className = "vr-tool vr-fold";
   fold.setAttribute("aria-pressed", "false");
   const title = doc.createElement("h2");
@@ -249,7 +249,7 @@ function mountStudioVoiceRoom(doc, makeIcon) {
   const clock = doc.createElement("span");
   clock.id = "vr-clock";
   clock.className = "vr-clock";
-  clock.title = "Time in the room";
+  clock.title = t("ui.time-in-the-room");
   const tools = doc.createElement("div");
   tools.className = "vr-tools";
   for (const spec of VOICE_ROOM_TOOLS) tools.appendChild(voiceRoomKey(doc, spec, makeIcon));
@@ -260,13 +260,13 @@ function mountStudioVoiceRoom(doc, makeIcon) {
   const cards = doc.createElement("div");
   cards.id = "vr-cards";
   cards.className = "vr-cards";
-  cards.setAttribute("aria-label", "In the room");
+  cards.setAttribute("aria-label", t("ui.in-the-room"));
   grid.appendChild(cards);
   room.append(head, grid);
   main.after(room);
   const chatHead = main.querySelector(".chat-header");
   if (chatHead) {
-    const shut = voiceRoomKey(doc, { id: "vr-chat-x", title: "Hide chat", icon: "x" }, makeIcon);
+    const shut = voiceRoomKey(doc, { id: "vr-chat-x", title: t("ui.hide-chat-2"), icon: "x" }, makeIcon);
     shut.className = "icon-btn vr-wing-x hidden";
     chatHead.appendChild(shut);
   }
@@ -284,7 +284,7 @@ function voiceRoomSoundsPlace(dock, pane, view, place = VOICE_ROOM_SOUNDS) {
 }
 
 function voiceRoomHint(full, textWidth, room) {
-  return textWidth <= room ? full : "Message";
+  return textWidth <= room ? full : t("ui.message");
 }
 
 if (typeof document !== "undefined") {

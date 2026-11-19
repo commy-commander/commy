@@ -2532,11 +2532,27 @@ function loadAccessibility() {
   return readAccessibility(raw, availableLanguages().map(l => l.code));
 }
 
+const TRANSLATED_ATTRIBUTES = { title: "i18nTitle", placeholder: "i18nPlaceholder", "aria-label": "i18nAriaLabel", alt: "i18nAlt" };
+
+function retranslate(shown, key, write) {
+  if (isShownTranslation(key, shown)) write(t(key));
+}
+
+function tagged(root, selector) {
+  const inside = [...root.querySelectorAll(selector)];
+  return root.matches && root.matches(selector) ? [root, ...inside] : inside;
+}
+
 function applyTranslations(root) {
-  for (const node of root.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
-  for (const node of root.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
-  for (const node of root.querySelectorAll("[data-i18n-placeholder]")) node.placeholder = t(node.dataset.i18nPlaceholder);
-  for (const node of root.querySelectorAll("[data-i18n-aria-label]")) node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
+  for (const node of tagged(root, "[data-i18n]")) {
+    const shown = node.textContent;
+    retranslate(shown, node.dataset.i18n, text => { node.textContent = shown.replace(/\S[\s\S]*\S|\S/, () => text); });
+  }
+  for (const [attribute, field] of Object.entries(TRANSLATED_ATTRIBUTES)) {
+    for (const node of tagged(root, `[data-i18n-${attribute}]`)) {
+      retranslate(node.getAttribute(attribute) || "", node.dataset[field], text => node.setAttribute(attribute, text));
+    }
+  }
 }
 
 function renderAccessibilitySettings(prefs, resolved) {
@@ -2570,7 +2586,17 @@ function saveAccessibility(prefs) {
   applyAccessibility(prefs);
 }
 
+function translateAddedNodes(records) {
+  if (currentLanguageCode() === DEFAULT_LANGUAGE) return;
+  for (const record of records) {
+    for (const node of record.addedNodes) {
+      if (node.nodeType === Node.ELEMENT_NODE) applyTranslations(node);
+    }
+  }
+}
+
 function wireAccessibility() {
+  new MutationObserver(translateAddedNodes).observe(document.documentElement, { childList: true, subtree: true });
   const prefs = loadAccessibility();
   applyAccessibility(prefs);
   if (typeof matchMedia === "function") {
@@ -2597,6 +2623,8 @@ function wireAccessibility() {
   $("language-select").addEventListener("change", e => {
     prefs.language = e.target.value;
     saveAccessibility(prefs);
+    if (state.voiceChannelId || state.call) toast(t("accessibility.language.later"));
+    else window.location.reload();
   });
 }
 
@@ -2860,7 +2888,7 @@ function renderLookPickers() {
     return avatar;
   };
   $("account-border-grid").replaceChildren(
-    lookOption("None", borderPreview(null), !me.avatar_border, () => saveProfileLook(null, me.card_effect || null)),
+    lookOption(t("ui.none"), borderPreview(null), !me.avatar_border, () => saveProfileLook(null, me.card_effect || null)),
     ...AVATAR_BORDERS.map(b => lookOption(b.label, borderPreview(b.id), me.avatar_border === b.id, () => saveProfileLook(b.id, me.card_effect || null))),
   );
   const effectPreview = effect => {
@@ -2869,7 +2897,7 @@ function renderLookPickers() {
     return swatch;
   };
   $("account-effect-grid").replaceChildren(
-    lookOption("None", effectPreview(null), !me.card_effect, () => saveProfileLook(me.avatar_border || null, null)),
+    lookOption(t("ui.none"), effectPreview(null), !me.card_effect, () => saveProfileLook(me.avatar_border || null, null)),
     ...CARD_EFFECTS.map(e => lookOption(e.label, effectPreview(e.id), me.card_effect === e.id, () => saveProfileLook(me.avatar_border || null, e.id))),
   );
 }
@@ -2917,7 +2945,7 @@ function voiceChannelOf(member, server) {
 
 function memberHover(member, channel) {
   const lines = [];
-  if (channel) lines.push(`In voice · ${channelPlainName(channel)} · ${elapsedClock(member.voice_since)}`);
+  if (channel) lines.push(t("ui.in-voice", { value: channelPlainName(channel), value2: elapsedClock(member.voice_since) }));
   const game = activityWithTime(member);
   if (game) lines.push(game);
   return lines.join("\n");
@@ -2941,19 +2969,19 @@ function initials(name) {
 
 function formatTime(iso) {
   const date = new Date(iso);
-  const time = date.toLocaleTimeString([], { hour: studioLook() ? "numeric" : "2-digit", minute: "2-digit" });
+  const time = date.toLocaleTimeString(dateLocale(), { hour: studioLook() ? "numeric" : "2-digit", minute: "2-digit" });
   const day = dayLabel(date);
-  return day === "Today" ? time : `${day} at ${time}`;
+  return day === t("ui.today") ? time : t("ui.day-at-time", { day, time });
 }
 
 function dayLabel(date) {
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === today.toDateString()) return "Today";
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  if (date.toDateString() === today.toDateString()) return t("ui.today");
+  if (date.toDateString() === yesterday.toDateString()) return t("ui.yesterday");
   const sameYear = date.getFullYear() === today.getFullYear();
-  return date.toLocaleDateString([], sameYear ? { month: "long", day: "numeric" } : { year: "numeric", month: "long", day: "numeric" });
+  return date.toLocaleDateString(dateLocale(), sameYear ? { month: "long", day: "numeric" } : { year: "numeric", month: "long", day: "numeric" });
 }
 
 document.addEventListener("contextmenu", e => {
@@ -3197,7 +3225,7 @@ function syncWindowTitle() {
   const name = server ? shownServerName(server) : null;
   if (name === state.windowTitleServer) return;
   state.windowTitleServer = name;
-  document.title = name ? `${name} - Commy` : "Commy";
+  document.title = name ? t("ui.commy", { name }) : "Commy";
   invoke("set_window_title", { server: name }).catch(() => {});
 }
 
@@ -3230,21 +3258,21 @@ function openDm(user, name) {
 }
 
 function paintDmMenu(menu) {
-  menu.replaceChildren(el("div", "dm-menu-title", "Recent chats"));
+  menu.replaceChildren(el("div", "dm-menu-title", t("ui.recent-chats")));
   const threads = recentDmThreads();
-  if (!threads.length) menu.appendChild(el("div", "dm-menu-empty", "Your conversations will show up here."));
+  if (!threads.length) menu.appendChild(el("div", "dm-menu-empty", t("ui.your-conversations-will-show-up-here")));
   for (const thread of threads) {
     const row = el("button", "dm-menu-row");
     row.type = "button";
     row.appendChild(avatarWithPresence(thread.name, thread.user));
     const meta = el("span", "dm-menu-meta");
-    meta.append(el("span", "dm-menu-name", thread.name), el("span", "dm-menu-preview", plainText(thread.last_message) || "No messages yet"));
+    meta.append(el("span", "dm-menu-name", thread.name), el("span", "dm-menu-preview", plainText(thread.last_message) || t("ui.no-messages-yet")));
     row.appendChild(meta);
     if (unread.dms.get(thread.user)) row.classList.add("unread");
     row.onclick = () => openDm(thread.user, thread.name);
     menu.appendChild(row);
   }
-  const all = el("button", "dm-menu-all", "Open all messages");
+  const all = el("button", "dm-menu-all", t("ui.open-all-messages"));
   all.type = "button";
   all.onclick = () => {
     closeDmMenu();
@@ -3296,19 +3324,19 @@ function showDmCard(dm) {
   const head = el("div", "dm-card-head");
   head.appendChild(avatarWithPresence(dm.name, dm.user));
   const text = el("div", "dm-card-text");
-  const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "Sent an attachment");
+  const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? t("ui.voice-message") : t("ui.sent-an-attachment"));
   text.append(el("div", "dm-card-name", dm.name), el("div", "dm-card-body", body));
   const close = el("button", "dm-card-close", "\u00d7");
   close.type = "button";
-  close.title = "Dismiss";
-  close.setAttribute("aria-label", "Dismiss");
+  close.title = t("ui.dismiss");
+  close.setAttribute("aria-label", t("ui.dismiss"));
   head.append(text, close);
   const row = el("div", "dm-card-row");
   const input = el("input", "dm-card-input");
   input.type = "text";
-  input.placeholder = "Reply";
+  input.placeholder = t("ui.reply");
   input.autocomplete = "off";
-  const open = el("button", "dm-card-open", "Open");
+  const open = el("button", "dm-card-open", t("ui.open-3"));
   open.type = "button";
   row.append(input, open);
   card.append(head, row);
@@ -3340,7 +3368,7 @@ function showDmCard(dm) {
       await invoke("send_dm", { userId: dm.user, content: encodeCustomEmojis(content), replyTo: null });
       clearDmUnread(dm.user);
       removeDmCard(dm.user);
-      toast(`Sent to ${dm.name}`);
+      toast(t("ui.sent-to", { name: dm.name }));
     } catch (err) {
       input.disabled = false;
       toast(String(err));
@@ -3461,7 +3489,7 @@ function paintJoinWait(id) {
   $("join-wait-rules").textContent = wait.rules || "";
   $("join-wait-note-wrap").classList.toggle("hidden", wait.turned_away);
   $("join-wait-send").classList.toggle("hidden", wait.turned_away);
-  $("join-wait-cancel").textContent = wait.turned_away ? "Remove" : "Withdraw Request";
+  $("join-wait-cancel").textContent = wait.turned_away ? t("ui.remove") : t("ui.withdraw-request");
   return true;
 }
 
@@ -3490,12 +3518,12 @@ function setupJoinWait() {
     const id = joinWaitShown;
     const note = $("join-wait-note").value;
     if (!id) return;
-    if (joinNoteLeft(note) < 0) return toast(`Keep your note to ${JOIN_NOTE_MAX} characters`);
+    if (joinNoteLeft(note) < 0) return toast(t("ui.keep-your-note-to-characters", { JOIN_NOTE_MAX }));
     const button = $("join-wait-send");
     button.disabled = true;
     try {
       await invoke("send_join_note", { serverId: id, note });
-      toast("Your note is with the moderators");
+      toast(t("ui.your-note-is-with-the-moderators"));
       await refreshServers();
     } catch (e) {
       toast(String(e));
@@ -3509,7 +3537,7 @@ function paintJoinBadge() {
   const server = plainServer();
   const count = server && server.can_answer_joins ? (server.join_requests || []).length : 0;
   $("join-request-badge").classList.toggle("hidden", !count);
-  if (server && count) $("server-settings-btn").title = `Server Settings, ${count} waiting to join`;
+  if (server && count) $("server-settings-btn").title = t("ui.server-settings-waiting-to-join", { count });
 }
 
 function noteJoinRequests(server) {
@@ -3532,11 +3560,11 @@ function renderJoinRequestSettings(server) {
   $("join-approval-row").classList.toggle("readonly", !server.can_manage_server);
   const requests = server.can_answer_joins ? server.join_requests || [] : [];
   $("tab-joins").textContent = joinRequestsLabel(requests.length);
-  $("join-requests-count").textContent = requests.length ? `Waiting - ${requests.length}` : "Waiting";
+  $("join-requests-count").textContent = requests.length ? t("ui.waiting-2", { count: requests.length }) : t("ui.waiting");
   const list = $("join-request-list");
   list.replaceChildren();
   if (!requests.length) {
-    const empty = server.join_approval ? "Nobody is waiting right now." : "Turn on Ask to join to meet new people before they come in.";
+    const empty = server.join_approval ? t("ui.nobody-is-waiting-right-now") : t("ui.turn-on-ask-to-join-to-meet-new-people");
     list.appendChild(el("div", "manage-empty", empty));
     return;
   }
@@ -3546,13 +3574,13 @@ function renderJoinRequestSettings(server) {
     head.appendChild(makeAvatar(request.id, request.name, "avatar avatar-sm"));
     const who = el("div", "report-who");
     who.appendChild(el("div", "report-name", request.name));
-    who.appendChild(el("div", "report-meta", `@${request.username} - asked ${formatShortTime(request.at)}`));
+    who.appendChild(el("div", "report-meta", t("ui.asked", { username: request.username, value: formatShortTime(request.at) })));
     head.appendChild(who);
     card.appendChild(head);
     if (request.note) card.appendChild(el("div", "report-note", request.note));
     const actions = el("div", "report-actions");
-    const admit = el("button", "btn-primary btn-small", "Let In");
-    const away = el("button", "btn-secondary btn-small", "Turn Away");
+    const admit = el("button", "btn-primary btn-small", t("ui.let-in"));
+    const away = el("button", "btn-secondary btn-small", t("ui.turn-away"));
     admit.onclick = () => answerJoinRequest(server, request, true, [admit, away]);
     away.onclick = () => answerJoinRequest(server, request, false, [admit, away]);
     actions.append(admit, away);
@@ -3565,7 +3593,7 @@ async function answerJoinRequest(server, request, admit, buttons) {
   for (const button of buttons) button.disabled = true;
   try {
     await invoke("answer_join_request", { serverId: server.id, userId: request.id, admit });
-    toast(admit ? `${request.name} can come in now` : `${request.name} was turned away`);
+    toast(admit ? t("ui.can-come-in-now", { name: request.name }) : t("ui.was-turned-away", { name: request.name }));
     await refreshCurrentServer();
     if (state.currentServer && state.currentServer.id === server.id) renderJoinRequestSettings(state.currentServer);
   } catch (e) {
@@ -3621,14 +3649,14 @@ function muteChannelFor(channel, choiceId) {
   if (!channel || !state.currentServer || !choice) return;
   updateChannelPrefs(state.currentServer.id, channel.id, { mute: muteUntil(choice, nowSecs()) });
   closeFloating();
-  toast(`Muted #${channel.name} ${choice.label.replace(/^For /, "for ").replace(/^Until/, "until")}`);
+  toast(t("ui.muted", { name: channel.name, value: choice.label.replace(/^For /, "for ").replace(/^Until/, "until") }));
 }
 
 function unmuteChannel(channel) {
   if (!channel || !state.currentServer) return;
   updateChannelPrefs(state.currentServer.id, channel.id, { mute: false });
   closeFloating();
-  toast(`Unmuted #${channel.name}`);
+  toast(t("ui.unmuted", { name: channel.name }));
 }
 
 function notifyChannel() {
@@ -3659,7 +3687,7 @@ function renderChannelNotifyMenu() {
   const view = channelNotifyView(notifyPrefs(), state.currentServer.id, channel.id, nowSecs());
   $("cnm-title").replaceChildren(document.createTextNode("Notifications for #"), channelNameNode(channel));
   $("cnm-server-unmute").classList.toggle("hidden", !view.serverMuted);
-  $("cnm-default-sub").textContent = view.serverMuted ? "Server muted" : LEVEL_WORDS[view.serverLevel] || LEVEL_WORDS.all;
+  $("cnm-default-sub").textContent = view.serverMuted ? t("ui.server-muted") : LEVEL_WORDS[view.serverLevel] || LEVEL_WORDS.all;
   for (const btn of menu.querySelectorAll(".ctx-radio[data-level]")) {
     const picked = btn.dataset.level === view.level;
     btn.classList.toggle("checked", picked);
@@ -3706,7 +3734,7 @@ function wireChannelNotifyMenu() {
   $("notify-btn").onclick = toggleChannelNotifyMenu;
   const menu = $("channel-notify-menu");
   for (const btn of menu.querySelectorAll(".ctx-radio[data-level]")) {
-    const label = btn.dataset.level === "default" ? "Use server setting" : btn.textContent;
+    const label = btn.dataset.level === "default" ? t("ui.use-server-setting") : btn.textContent;
     btn.onclick = () => pickChannelLevel(notifyChannel(), btn.dataset.level, label);
   }
   for (const btn of menu.querySelectorAll(".ctx-radio[data-mute]")) btn.onclick = () => muteChannelFor(notifyChannel(), btn.dataset.mute);
@@ -3714,7 +3742,7 @@ function wireChannelNotifyMenu() {
   $("cnm-server-unmute").onclick = () => {
     if (!state.currentServer) return;
     updateServerPrefs(state.currentServer.id, { muted: false });
-    toast(`Unmuted ${shownServerName(state.currentServer)}`);
+    toast(t("ui.unmuted-2", { value: shownServerName(state.currentServer) }));
   };
   $("cnm-server").onclick = () => {
     const server = state.currentServer;
@@ -3724,11 +3752,11 @@ function wireChannelNotifyMenu() {
 }
 
 function muteWords(mute) {
-  if (mute === true) return "Muted until you turn it back on";
+  if (mute === true) return t("ui.muted-until-you-turn-it-back-on");
   const at = new Date(mute * 1000);
   const today = at.toDateString() === new Date().toDateString();
-  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return today ? `Muted until ${time}` : `Muted until ${at.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+  const time = at.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" });
+  return today ? t("ui.muted-until", { time }) : t("ui.muted-until-2", { value: at.toLocaleDateString(dateLocale(), { month: "short", day: "numeric" }), time });
 }
 
 let menuChannel = null;
@@ -3748,7 +3776,7 @@ function openChannelMenu(channel, x, y) {
   for (const btn of $("channel-menu").querySelectorAll(".ctx-radio[data-mute]")) btn.classList.toggle("hidden", mute !== null);
   $("chm-unmute").classList.toggle("hidden", mute === null);
   $("chm-unmute").textContent = mute === null ? "" : muteWords(mute);
-  $("chm-pin").textContent = channelIsPinned(server.id, channel.id) ? "Unpin Channel" : "Pin Channel";
+  $("chm-pin").textContent = channelIsPinned(server.id, channel.id) ? t("ui.unpin-channel") : t("ui.pin-channel");
   $("chm-settings").classList.toggle("hidden", !server.can_manage_channels);
   showVoiceStatusMenuItem(channel, server);
   showVoiceCallMenuItems(channel);
@@ -3759,7 +3787,7 @@ function showVoiceStatusMenuItem(channel, server) {
   const allowed = canSetVoiceStatus({ channel, server, me: state.user && state.user.id });
   const item = $("chm-voice-status");
   item.classList.toggle("hidden", !allowed);
-  item.textContent = channel.voice_status ? "Change Voice Status" : "Set Voice Status";
+  item.textContent = channel.voice_status ? t("ui.change-voice-status") : t("ui.set-voice-status");
   $("chm-read").classList.toggle("hidden", channel.kind === "voice");
 }
 
@@ -3837,9 +3865,9 @@ function studioVoiceMarks(node, userId, name, isMe) {
   node.appendChild(eq);
   const live = Boolean(userId) && Boolean(server) && (server.screen_shares || []).some(s => s.user === userId);
   if (live) {
-    const pill = el("span", "live-badge voice-live", "Live");
+    const pill = el("span", "live-badge voice-live", t("ui.live-2"));
     if (!isMe) {
-      pill.title = `Watch ${name}`;
+      pill.title = t("ui.watch-3", { name });
       pill.onclick = e => {
         e.stopPropagation();
         watchScreen(userId, name);
@@ -3847,7 +3875,7 @@ function studioVoiceMarks(node, userId, name, isMe) {
     }
     node.appendChild(pill);
   }
-  if (isMe) node.appendChild(el("span", "voice-you", "You"));
+  if (isMe) node.appendChild(el("span", "voice-you", t("settings.group.you")));
 }
 
 function decorateVoiceUser(node, channel, userId) {
@@ -3857,7 +3885,7 @@ function decorateVoiceUser(node, channel, userId) {
   if (member && member.priority_speaker) {
     const badge = el("span", "vs-icon priority");
     badge.appendChild(svgIcon("megaphone", 14));
-    badge.title = "Priority speaker";
+    badge.title = t("ui.priority-speaker");
     node.appendChild(badge);
   }
   node.classList.toggle("attenuated", attenuatedUsers(channel, server.members, state.speaking).has(userId));
@@ -3881,7 +3909,7 @@ function renderVoiceTopic(vs) {
   topic.classList.toggle("hidden", !text);
   const editable = Boolean(channel) && canSetVoiceStatus({ channel, server, me: state.user && state.user.id });
   topic.classList.toggle("editable", editable);
-  topic.title = editable ? "Change the channel status" : text;
+  topic.title = editable ? t("ui.change-the-channel-status") : text;
 }
 
 function placeMenuAt(menu, x, y, flipY = null) {
@@ -3908,13 +3936,13 @@ function openServerMenu(server, x, y, folderId) {
     btn.classList.toggle("checked", btn.dataset.level === level);
   }
   $("sm-mute").classList.toggle("checked", muted);
-  $("sm-mute").textContent = muted ? "Unmute Server" : "Mute Server";
+  $("sm-mute").textContent = muted ? t("ui.unmute-server") : t("ui.mute-server-2");
   $("sm-ungroup").classList.toggle("hidden", !menuFolderOf);
   $("sm-rules").classList.add("hidden");
   $("sm-roles").classList.add("hidden");
   $("sm-onboarding").classList.add("hidden");
   $("sm-join-sound").classList.add("hidden");
-  $("sm-settings").textContent = "Server Settings";
+  $("sm-settings").textContent = t("ui.server-settings");
   $("sm-invite").classList.add("hidden");
   invoke("get_server", { serverId: server.id }).then(full => {
     $("sm-invite").classList.toggle("hidden", !full.can_invite);
@@ -3922,7 +3950,7 @@ function openServerMenu(server, x, y, folderId) {
     $("sm-roles").classList.toggle("hidden", !selfAssignableRoles(full).length);
     $("sm-onboarding").classList.toggle("hidden", !full.onboarding);
     $("sm-join-sound").classList.toggle("hidden", !full.join_sounds_allowed || !full.can_use_soundboard);
-    $("sm-settings").textContent = canOpenServerSettings(full) ? "Server Settings" : "Server Info";
+    $("sm-settings").textContent = canOpenServerSettings(full) ? t("ui.server-settings") : t("ui.server-info");
   }).catch(() => {});
   placeMenuAt($("server-menu"), x, y);
 }
@@ -3949,7 +3977,7 @@ function updateServerPrefs(serverId, change) {
   syncNotifyButton();
 }
 
-const LEVEL_WORDS = { all: "All messages", mentions: "Only @mentions", online: "Only while I am online", none: "Nothing" };
+const LEVEL_WORDS = { get all() { return t("ui.all-messages"); }, get mentions() { return t("ui.only-mentions"); }, get online() { return t("ui.only-while-i-am-online"); }, get none() { return t("ui.nothing"); } };
 
 let notifyServer = null;
 
@@ -3959,7 +3987,7 @@ function renderServerNotify() {
   const { level, muted } = serverPrefs(notifyServer.id);
   $("server-notify-name").textContent = notifyServer.name;
   $("server-notify-mute").checked = muted;
-  $("server-notify-default").textContent = `Your setting for every server: ${LEVEL_WORDS[prefs.level] || LEVEL_WORDS.all}`;
+  $("server-notify-default").textContent = t("ui.your-setting-for-every-server", { value: LEVEL_WORDS[prefs.level] || LEVEL_WORDS.all });
   for (const btn of $("server-notify-levels").querySelectorAll(".notify-level")) {
     const picked = btn.dataset.level === level;
     btn.classList.toggle("picked", picked);
@@ -4017,19 +4045,19 @@ async function openLeaveServer(serverId) {
     }
   }
   leavingServerId = serverId;
-  $("leave-server-title").textContent = server.group ? "Leave this group?" : `Leave '${shownServerName(server)}'`;
+  $("leave-server-title").textContent = server.group ? t("ui.leave-this-group") : t("ui.leave-2", { value: shownServerName(server) });
   $("leave-server-body").textContent = server.group
-    ? "You stop seeing its messages and calls, and your copy of the conversation is removed from this device."
-    : "Are you sure you want to leave? You will not be able to rejoin unless you are invited again, and your copy of its history is removed from this device.";
-  $("leave-server-go").textContent = server.group ? "Leave Group" : "Leave Server";
+    ? t("ui.you-stop-seeing-its-messages-and-calls")
+    : t("ui.are-you-sure-you-want-to-leave-you-will");
+  $("leave-server-go").textContent = server.group ? t("ui.leave-group") : t("ui.leave-server");
   showModal("modal-leave-server");
 }
 
 let deletingServerId = null;
 
 const TRANSFER_OWNER_WORDS = {
-  stay: ["Transfer Ownership", "The new owner gets every permission, including deleting the server. You stay as a member with the roles you have now. This cannot be undone by you.", "Transfer Ownership"],
-  leave: ["Hand the server over first", "You own this server, so pick who takes it over before you leave. The new owner gets every permission, including deleting the server. This cannot be undone by you.", "Transfer and Continue"],
+  stay: [t("ui.transfer-ownership"), t("ui.the-new-owner-gets-every-permission"), t("ui.transfer-ownership")],
+  leave: [t("ui.hand-the-server-over-first"), t("ui.you-own-this-server-so-pick-who-takes-it"), t("ui.transfer-and-continue")],
 };
 
 let transferring = null;
@@ -4044,7 +4072,7 @@ function openTransferOwner(server, leaving = false) {
     pick.appendChild(option);
   }
   if (!others.length) {
-    toast("There is nobody else here to hand the server to");
+    toast(t("ui.there-is-nobody-else-here-to-hand-the"));
     return;
   }
   transferring = { server, leaving };
@@ -4076,7 +4104,7 @@ async function confirmTransferOwner() {
     const here = state.currentServer && state.currentServer.id === server.id;
     if (here) await refreshCurrentServer();
     if (here && !leaving && !$("server-settings").classList.contains("hidden")) openServerSettings("overview");
-    toast(`${name} now owns ${shownServerName(server)}`);
+    toast(t("ui.now-owns", { name, value: shownServerName(server) }));
     if (leaving) await openLeaveServer(server.id);
   } catch (e) {
     toast(String(e));
@@ -4085,7 +4113,7 @@ async function confirmTransferOwner() {
 
 function openDeleteServer(server) {
   deletingServerId = server.id;
-  $("delete-server-title").textContent = `Delete '${shownServerName(server)}'`;
+  $("delete-server-title").textContent = t("ui.delete-2", { value: shownServerName(server) });
   const input = $("delete-server-input");
   input.value = "";
   input.placeholder = server.name;
@@ -4105,7 +4133,7 @@ async function confirmDeleteServer() {
     deletingServerId = null;
     hideModals();
     await leaveServerView(serverId);
-    toast("Server deleted");
+    toast(t("ui.server-deleted"));
   } catch (e) {
     toast(String(e));
   }
@@ -4287,7 +4315,7 @@ function pinnedFirst(sections, server, canCreate) {
     kept.push({ ...section, channels: split.rest });
   }
   if (!pinned.length) return sections;
-  kept.unshift({ key: `${server.id}:pinned`, title: "Pinned", kind: "text", parent: null, fixed: true, pinned: true, channels: pinned });
+  kept.unshift({ key: `${server.id}:pinned`, title: t("ui.pinned"), kind: "text", parent: null, fixed: true, pinned: true, channels: pinned });
   return kept;
 }
 
@@ -4356,8 +4384,8 @@ function channelLockMark(row, channel) {
   const mark = el("span", "channel-lock");
   mark.appendChild(svgIcon("lock", 14));
   mark.title = channel.can_view === false
-    ? `Only ${accessWho(state.currentServer, channel.view_roles)} can read this channel`
-    : `Only ${accessWho(state.currentServer, channel.view_roles)} can see this channel`;
+    ? t("ui.only-can-read-this-channel", { value: accessWho(state.currentServer, channel.view_roles) })
+    : t("ui.only-can-see-this-channel", { value: accessWho(state.currentServer, channel.view_roles) });
   row.appendChild(mark);
   if (channel.can_view === false) row.classList.add("unreadable");
 }
@@ -4376,7 +4404,7 @@ function channelBellSlot(row, channel) {
 function channelSensitiveMark(row, channel) {
   if (!showsSensitiveBadge(channel)) return;
   const mark = el("span", "channel-age", "18+");
-  mark.title = "Age-restricted channel";
+  mark.title = t("ui.age-restricted-channel");
   row.appendChild(mark);
 }
 
@@ -4419,15 +4447,15 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
   const full = voiceFull(channel);
   if (channel.id === state.voiceChannelId) {
     row.classList.add("active", "connected");
-    row.title = studioDesk() ? "Open the room" : "Click to disconnect";
+    row.title = studioDesk() ? t("ui.open-the-room") : t("ui.click-to-disconnect");
   } else {
-    row.title = full ? "This channel is full" : isStageChannel(channel) ? "Click to join the audience" : "Click to join voice";
+    row.title = full ? t("ui.this-channel-is-full") : isStageChannel(channel) ? t("ui.click-to-join-the-audience") : t("ui.click-to-join-voice");
   }
   if (channel.activity && activityPillLabel(channel.activity)) {
     const pill = el("span", "voice-activity-pill");
     pill.appendChild(svgIcon(activityKindInfo(channel.activity).icon, 12));
     pill.appendChild(el("span", null, activityPillLabel(channel.activity)));
-    pill.title = `${activityName(channel.activity)} is running here`;
+    pill.title = t("ui.is-running-here", { value: activityName(channel.activity) });
     if (studioDesk() && channel.id === state.voiceChannelId && activityUi.run) {
       pill.classList.add("mine");
       pill.onclick = e => {
@@ -4440,13 +4468,13 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
   const count = voiceCountLabel(channel);
   if (count) {
     const badge = el("span", "voice-count" + (channel.user_limit ? " limited" : "") + (full ? " full" : ""), count);
-    if (channel.user_limit) badge.title = full ? "Full" : `${channel.voice_users.length} of ${channel.user_limit} people`;
+    if (channel.user_limit) badge.title = full ? t("ui.full") : `${channel.voice_users.length} of ${channel.user_limit} people`;
     row.appendChild(badge);
   }
   row.onclick = () => {
     if (voiceDragHoldsClick()) return;
     if (channel.can_view === false) {
-      toast(`Only ${accessWho(state.currentServer, channel.view_roles)} can join this channel`);
+      toast(t("ui.only-can-join-this-channel", { value: accessWho(state.currentServer, channel.view_roles) }));
       return;
     }
     if (studioDesk() && channel.id === state.voiceChannelId) {
@@ -4454,7 +4482,7 @@ function voiceChannelRow(channel, canCreate, pinned = false) {
       return;
     }
     if (full) {
-      toast("That voice channel is full");
+      toast(t("ui.that-voice-channel-is-full"));
       return;
     }
     toggleVoice(channel);
@@ -4479,9 +4507,9 @@ function appendVoiceUsers(list, channel) {
     return;
   }
   const { speakers, audience } = stageSections(channel);
-  if (speakers.length || audience.length) list.appendChild(stageGroupLabel("Speakers", speakers.length));
+  if (speakers.length || audience.length) list.appendChild(stageGroupLabel(t("ui.speakers"), speakers.length));
   for (const entry of speakers) list.appendChild(voiceUserRow(channel, entry, myName, "speaker"));
-  if (audience.length) list.appendChild(stageGroupLabel("Audience", audience.length));
+  if (audience.length) list.appendChild(stageGroupLabel(t("ui.audience"), audience.length));
   for (const entry of audience) list.appendChild(voiceUserRow(channel, entry, myName, "audience"));
 }
 
@@ -4513,7 +4541,7 @@ function voiceRingCells(channel) {
 function voiceRing(channel, entry) {
   const ring = el("span", "voice-user voice-ring");
   ring.dataset.room = channel.id;
-  ring.title = entry.muted ? `${entry.name} (muted)` : entry.name;
+  ring.title = entry.muted ? t("ui.muted-2", { name: entry.name }) : entry.name;
   if (entry.id) {
     ring.dataset.user = entry.id;
     ring.classList.toggle("speaking", state.speaking.has(entry.id));
@@ -4564,7 +4592,7 @@ function voiceUserRow(channel, entry, myName, role = null) {
     const slot = el("span", "hand-slot");
     if (entry.hand) {
       slot.appendChild(svgIcon("hand", 14));
-      slot.title = "Wants to speak";
+      slot.title = t("ui.wants-to-speak");
       vu.classList.add("hand");
     }
     vu.appendChild(slot);
@@ -4572,22 +4600,22 @@ function voiceUserRow(channel, entry, myName, role = null) {
   vu.appendChild(el("span", "vs-icon")).appendChild(svgIcon("mic", 14));
   if (role === "audience") {
     vu.classList.add("audience");
-    setVoiceStatus(vu.lastChild, "micOff", "In the audience");
+    setVoiceStatus(vu.lastChild, "micOff", t("ui.in-the-audience"));
     vu.lastChild.classList.remove("off");
   }
-  if (!isMe && muted && role !== "audience") setVoiceStatus(vu.lastChild, "micOff", "Muted");
+  if (!isMe && muted && role !== "audience") setVoiceStatus(vu.lastChild, "micOff", t("ui.dock.muted"));
   if (!isMe && deafened) {
     vu.appendChild(el("span", "vs-icon"));
-    setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
+    setVoiceStatus(vu.lastChild, "headsetOff", t("ui.dock.deafened"));
   }
   const server = state.currentServer;
   if (userId && server && (server.server_muted || []).includes(userId)) {
     vu.appendChild(el("span", "vs-icon forced"));
-    setVoiceStatus(vu.lastChild, "micOff", "Server Muted");
+    setVoiceStatus(vu.lastChild, "micOff", t("ui.server-muted-2"));
   }
   if (userId && server && (server.server_deafened || []).includes(userId)) {
     vu.appendChild(el("span", "vs-icon forced"));
-    setVoiceStatus(vu.lastChild, "headsetOff", "Server Deafened");
+    setVoiceStatus(vu.lastChild, "headsetOff", t("ui.server-deafened"));
   }
   if (userId && (state.voice.muted_users || []).includes(userId)) vu.classList.add("muted-for-me");
   if (userId && !isMe) {
@@ -4610,10 +4638,10 @@ function voiceUserRow(channel, entry, myName, role = null) {
     vu.onpointerdown = e => armVoiceDrag(e, vu, channel.id, userId, user);
   }
   if (isMe && channel.id === state.voiceChannelId && role !== "audience") {
-    if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", "Muted");
+    if (state.voice.muted) setVoiceStatus(vu.lastChild, "micOff", t("ui.dock.muted"));
     if (state.voice.deafened) {
       vu.appendChild(el("span", "vs-icon"));
-      setVoiceStatus(vu.lastChild, "headsetOff", "Deafened");
+      setVoiceStatus(vu.lastChild, "headsetOff", t("ui.dock.deafened"));
     }
   }
   return vu;
@@ -4736,7 +4764,7 @@ function finishVoiceDrag(x, y) {
 function joinDroppedRoom(room) {
   if (room.id === state.voiceChannelId) return;
   if (voiceFull(room)) {
-    toast("That voice channel is full");
+    toast(t("ui.that-voice-channel-is-full"));
     return;
   }
   toggleVoice(room);
@@ -4799,7 +4827,7 @@ function paintServerIcon(node, server) {
 function paintSidebarBanner() {
   const header = $("server-name-header");
   if (plainServer()) {
-    $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? "Server Settings" : "Server Info";
+    $("server-settings-btn").title = canOpenServerSettings(state.currentServer) ? t("ui.server-settings") : t("ui.server-info");
     $("invite-btn").classList.toggle("hidden", !state.currentServer.can_invite);
   }
   paintJoinBadge();
@@ -4865,7 +4893,7 @@ function cropImageFile(file, width, height, quality = 0.88) {
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject("That file is not an image we can read");
+      reject(t("ui.that-file-is-not-an-image-we-can-read"));
     };
     img.src = url;
   });
@@ -4875,7 +4903,7 @@ async function setServerImage(which, data) {
   if (!state.currentServer) return;
   try {
     await invoke("set_server_image", { serverId: state.currentServer.id, which, data: data ?? null });
-    toast(data ? ({ icon: "Server avatar updated", invite: "Invite background updated" }[which] || "Banner updated") : "Removed");
+    toast(data ? ({ icon: t("ui.server-avatar-updated"), invite: t("ui.invite-background-updated") }[which] || t("ui.banner-updated")) : t("ui.removed"));
     await refreshServers();
     await refreshCurrentServer();
     openServerSettings();
@@ -4887,11 +4915,11 @@ async function setServerImage(which, data) {
 const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", ring: "sounds/ring.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
 const STUDIO_SOUND_FILES = { notification: "sounds/studio/notification.mp3", ding: "sounds/studio/ding.mp3" };
 const SOUND_EVENTS = [
-  { id: "message", label: "New message or mention", fallback: "notification" },
-  { id: "dm", label: "Direct message", fallback: "ding" },
-  { id: "ring", label: "Incoming call", fallback: "ring" },
-  { id: "join", label: "Someone joins your voice channel", fallback: "join" },
-  { id: "leave", label: "Someone leaves your voice channel", fallback: "leave" },
+  { id: "message", get label() { return t("ui.new-message-or-mention"); }, fallback: "notification" },
+  { id: "dm", get label() { return t("ui.direct-message"); }, fallback: "ding" },
+  { id: "ring", get label() { return t("ui.incoming-call"); }, fallback: "ring" },
+  { id: "join", get label() { return t("ui.someone-joins-your-voice-channel"); }, fallback: "join" },
+  { id: "leave", get label() { return t("ui.someone-leaves-your-voice-channel"); }, fallback: "leave" },
 ];
 const SOUND_KEY = "commy.sounds";
 
@@ -5083,15 +5111,15 @@ function alertSoundSelect(event) {
 function renderAlertSoundList() {
   const list = $("sound-custom-list");
   list.replaceChildren();
-  $("sound-custom-count").textContent = `${alertSounds.list.length} of ${MAX_ALERT_SOUNDS} used.`;
+  $("sound-custom-count").textContent = t("ui.of-used", { count: alertSounds.list.length, MAX_ALERT_SOUNDS });
   for (const sound of alertSounds.list) {
     const row = el("div", "expr-row");
     const play = el("button", "icon-btn sound-preview");
-    play.title = "Preview";
+    play.title = t("ui.preview");
     play.appendChild(svgIcon("play", 18));
     play.onclick = () => playSound(null, sound.id);
     const del = el("button", "icon-btn expr-delete");
-    del.title = `Delete ${sound.name}`;
+    del.title = t("ui.delete-3", { name: sound.name });
     del.appendChild(svgIcon("trash", 18));
     del.onclick = async () => {
       try {
@@ -5104,7 +5132,7 @@ function renderAlertSoundList() {
     row.append(play, el("span", "expr-name", sound.name), del);
     list.appendChild(row);
   }
-  if (!alertSounds.list.length) list.appendChild(el("div", "manage-empty", "Pick Add your own in any list above to use your own sound"));
+  if (!alertSounds.list.length) list.appendChild(el("div", "manage-empty", t("ui.pick-add-your-own-in-any-list-above-to")));
 }
 
 function renderSoundSettings() {
@@ -5120,7 +5148,7 @@ function renderSoundSettings() {
     row.appendChild(el("span", "sound-label", event.label));
     const select = alertSoundSelect(event);
     const preview = el("button", "icon-btn sound-preview");
-    preview.title = "Preview";
+    preview.title = t("ui.preview");
     preview.appendChild(svgIcon("play", 18));
     preview.onclick = () => playSound(event.id, select.value);
     row.append(select, preview);
@@ -5254,7 +5282,7 @@ function noteFriendPresence(view) {
 function showFriendOnline(friend) {
   const avatar = makeAvatar(friend.id, friend.name, "avatar toast-avatar");
   avatar.appendChild(el("span", "presence-dot online"));
-  toast(`${friend.name} is now online`, { avatar, onClick: () => messageUser(friend.id, friend.name) });
+  toast(t("ui.is-now-online", { name: friend.name }), { avatar, onClick: () => messageUser(friend.id, friend.name) });
   if (!appFocused()) invoke("notify", friendOnlineNotice(friend)).catch(() => {});
 }
 
@@ -5406,9 +5434,9 @@ async function setChannelPinned(serverId, channelId, pinned) {
 
 function pinMark(cls) {
   const mark = el("span", cls);
-  mark.title = "Pinned for you";
+  mark.title = t("ui.pinned-for-you");
   mark.setAttribute("role", "img");
-  mark.setAttribute("aria-label", "Pinned");
+  mark.setAttribute("aria-label", t("ui.pinned"));
   mark.appendChild(svgIcon("pinOutline", 14));
   return mark;
 }
@@ -5533,10 +5561,10 @@ function renderTypingStrip() {
   const text = $("typing-text");
   text.replaceChildren();
   if (line) {
-    const split = line.lastIndexOf(" are typing");
-    const single = line.lastIndexOf(" is typing");
-    const cut = split >= 0 ? split : single;
-    if (cut > 0 && !line.startsWith("Several")) {
+    const tails = [t("ui.and-are-typing", { value: "\u0000", value2: "\u0000" }), t("ui.is-typing", { value: "\u0000" })].map(words => words.split("\u0000").pop());
+    const tail = tails.find(words => words && line.endsWith(words));
+    const cut = tail ? line.length - tail.length : -1;
+    if (cut > 0 && line !== t("ui.several-people-are-typing")) {
       text.appendChild(el("strong", null, line.slice(0, cut)));
       text.appendChild(document.createTextNode(line.slice(cut)));
     } else {
@@ -5666,7 +5694,7 @@ function loadVendorScript(src) {
     const script = document.createElement("script");
     script.src = src;
     script.onload = resolve;
-    script.onerror = () => reject(new Error("the voice engine did not load"));
+    script.onerror = () => reject(new Error(t("ui.the-voice-engine-did-not-load")));
     document.head.appendChild(script);
   });
 }
@@ -5769,7 +5797,7 @@ function stopBuiltIn() {
 
 function downloadBuiltIn(voice) {
   if (piper.downloads.has(voice.id)) return piper.downloads.get(voice.id);
-  toast(`Downloading the ${voice.name} voice (${megabytes(voice.download_bytes)}). After this it works offline.`);
+  toast(t("ui.downloading-the-voice-after-this-it", { name: voice.name, value: megabytes(voice.download_bytes) }));
   const job = invoke("voice_pack_download", { voice: voice.id })
     .then(loadVoicePack)
     .finally(() => {
@@ -5823,7 +5851,7 @@ function speechFailed(message) {
 
 function speakWithSystem(text, prefs, voiceId) {
   if (speech.native) {
-    invoke("speech_speak", { text, voice: voiceId, rate: prefs.rate, pitch: prefs.pitch }).catch(e => speechFailed(`Could not read it aloud: ${e}`));
+    invoke("speech_speak", { text, voice: voiceId, rate: prefs.rate, pitch: prefs.pitch }).catch(e => speechFailed(t("ui.could-not-read-it-aloud", { e })));
   } else if (windowSpeech()) {
     speakInWindow(text, prefs, voiceId);
   }
@@ -5835,7 +5863,7 @@ function speakNow(text, waitForVoice) {
   const voice = choice.kind === "builtin" ? builtInVoice(choice.id) : null;
   if (!voice) return speakWithSystem(text, prefs, choice.id);
   const builtIn = () => speakBuiltIn(text, voice.id, prefs).catch(e => {
-    speechFailed(`Could not read it aloud with ${voice.name}: ${e && e.message ? e.message : e}`);
+    speechFailed(t("ui.could-not-read-it-aloud-with", { name: voice.name, value: e && e.message ? e.message : e }));
     if (speechAvailable()) speakWithSystem(text, prefs, null);
   });
   if (voice.ready) return builtIn();
@@ -5848,7 +5876,7 @@ function speakNow(text, waitForVoice) {
 function speakText(text, waitForVoice = false) {
   if (!text) return false;
   if (!speech.ready || !piper.packLoad) {
-    Promise.all([loadSpeechVoices(), piper.packLoad || loadVoicePack()]).then(() => (speechUsable() ? speakNow(text, waitForVoice) : toast("Text-to-speech is not available here")));
+    Promise.all([loadSpeechVoices(), piper.packLoad || loadVoicePack()]).then(() => (speechUsable() ? speakNow(text, waitForVoice) : toast(t("ui.text-to-speech-is-not-available-here"))));
     return true;
   }
   if (!speechUsable()) return false;
@@ -5857,7 +5885,7 @@ function speakText(text, waitForVoice = false) {
 }
 
 function speakMessage(message) {
-  if (!speakText(spokenText(message.author_name, message.content, plainText), true)) toast("Text-to-speech is not available here");
+  if (!speakText(spokenText(message.author_name, message.content, plainText), true)) toast(t("ui.text-to-speech-is-not-available-here"));
 }
 
 function speakIncoming(msg, viewing) {
@@ -5905,13 +5933,13 @@ function renderTtsSettings() {
   $("tts-pitch").value = String(Math.round(prefs.pitch * 10));
   $("tts-pitch-label").textContent = `${prefs.pitch.toFixed(1)}`;
   const builtIn = builtInVoices().map(v => voiceOption(BUILT_IN_VOICE_PREFIX + v.id, ttsVoiceLabel(v)));
-  const device = [voiceOption(SYSTEM_VOICE_PREFIX, "Device default"), ...speech.voices.map(v => voiceOption(SYSTEM_VOICE_PREFIX + v.id, ttsVoiceLabel(v)))];
+  const device = [voiceOption(SYSTEM_VOICE_PREFIX, t("ui.device-default")), ...speech.voices.map(v => voiceOption(SYSTEM_VOICE_PREFIX + v.id, ttsVoiceLabel(v)))];
   const select = $("tts-voice");
-  select.replaceChildren(...(builtIn.length ? [voiceGroup("Built in", builtIn), voiceGroup("On this device", device)] : device));
+  select.replaceChildren(...(builtIn.length ? [voiceGroup(t("ui.built-in"), builtIn), voiceGroup(t("ui.on-this-device"), device)] : device));
   select.value = ttsVoiceValue(currentTtsChoice(prefs));
   renderTtsVoiceStatus();
   for (const id of ["tts-mode", "tts-voice", "tts-rate", "tts-pitch", "tts-preview"]) $(id).disabled = !usable;
-  $("tts-preview").title = usable ? "" : "Text-to-speech is not available here";
+  $("tts-preview").title = usable ? "" : t("ui.text-to-speech-is-not-available-here");
 }
 
 function onMessagesCaughtUp(payload) {
@@ -5988,7 +6016,7 @@ async function openNoticeChannel(serverId, channelId) {
 async function openNoticeDm(userId) {
   removeDmCard(userId);
   const thread = (await invoke("list_dm_threads")).find(t => t.user === userId);
-  state.currentDm = { user: userId, name: thread ? thread.name : "Direct Message" };
+  state.currentDm = { user: userId, name: thread ? thread.name : t("ui.direct-message-2") };
   await enterDmMode();
 }
 
@@ -6008,7 +6036,7 @@ async function openNotificationTarget(target) {
 function onDmReceived(dm) {
   if (dm.request) {
     if (state.view === "dm") renderDmThreads();
-    if (!dm.spam) toast(`Message request from ${dm.name}`);
+    if (!dm.spam) toast(t("ui.message-request-from", { name: dm.name }));
     return;
   }
   const viewing = state.view === "dm" && state.currentDm && state.currentDm.user === dm.user && chatPaneShowing();
@@ -6022,7 +6050,7 @@ function onDmReceived(dm) {
   const prefs = notifyPrefs();
   const way = alertWay({ level: prefs.level, presence: state.user?.presence, focusedOnIt, phoneInFront: phoneShowing(), at: Number(dm.at), frontSince: phoneFrontSince, isDm: true, mentioned: true });
   if (way !== "none") {
-    const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? "Voice message" : "");
+    const body = plainText(dm.content) || (onlyAVoiceMessage(dm.content, dm.attachments) ? t("ui.voice-message") : "");
     if (way === "system" || !carded) alertNotice(way, { title: dm.name, body }, `dm:${dm.user}`);
     alertSound(way, "dm");
   }
@@ -6113,7 +6141,7 @@ async function startCamera() {
   try {
     stream = await openCameraStream();
   } catch (e) {
-    toast(`Camera unavailable: ${e.message || e}`);
+    toast(t("ui.camera-unavailable", { value: e.message || e }));
     return;
   }
   try {
@@ -6160,7 +6188,7 @@ async function flipCamera() {
   try {
     const stream = await openCameraFacing(facing, true).catch(() => {
       facing = was;
-      toast("Could not switch camera");
+      toast(t("ui.could-not-switch-camera"));
       return openCameraFacing(was, false);
     });
     if (cameraPipelineRunning(pipe)) {
@@ -6172,7 +6200,7 @@ async function flipCamera() {
     }
   } catch (e) {
     pipe.following = false;
-    toast(`Camera unavailable: ${e.message || e}`);
+    toast(t("ui.camera-unavailable", { value: e.message || e }));
     await stopCamera();
     return;
   }
@@ -6363,7 +6391,7 @@ function paintCallDots(grid, scroller, count) {
     dots.appendChild(dot);
   }
   while (dots.children.length > count) dots.lastChild.remove();
-  [...dots.children].forEach((dot, i) => dot.setAttribute("aria-label", `Page ${i + 1} of ${count}`));
+  [...dots.children].forEach((dot, i) => dot.setAttribute("aria-label", t("ui.page-of", { value: i + 1, count })));
   markCallDot(scroller, dots);
 }
 
@@ -6388,70 +6416,70 @@ function sizeCallGrid(grid, count, layout) {
   grid.style.setProperty("--tile-w", `${Math.max(160, size.tileWidth)}px`);
 }
 
-function callTileNode(grid, t) {
-  let tile = grid.querySelector(`.cam-tile[data-key="${CSS.escape(t.key)}"]`);
+function callTileNode(grid, callTile) {
+  let tile = grid.querySelector(`.cam-tile[data-key="${CSS.escape(callTile.key)}"]`);
   if (tile) return tile;
-  tile = el("div", `cam-tile ${t.kind}`);
-  tile.dataset.key = t.key;
-  tile.dataset.user = t.user;
+  tile = el("div", `cam-tile ${callTile.kind}`);
+  tile.dataset.key = callTile.key;
+  tile.dataset.user = callTile.user;
   tile.appendChild(el("canvas", "tile-frame blank"));
   const cover = el("div", "cam-cover");
-  cover.appendChild(makeAvatar(t.user, t.name, "avatar cam-avatar"));
+  cover.appendChild(makeAvatar(callTile.user, callTile.name, "avatar cam-avatar"));
   cover.appendChild(el("span", "cam-cover-text"));
-  if (t.kind === "screen" && !t.me) {
-    const watch = el("button", "vp-pill cam-watch", "Watch");
+  if (callTile.kind === "screen" && !callTile.me) {
+    const watch = el("button", "vp-pill cam-watch", t("ui.watch"));
     watch.type = "button";
     cover.appendChild(watch);
   }
   tile.appendChild(cover);
   const name = el("div", "cam-name");
-  if (t.kind === "screen") name.appendChild(el("span", "live-badge", "LIVE"));
-  name.appendChild(el("span", "cam-name-text", t.me ? `${t.name} (you)` : t.name));
+  if (callTile.kind === "screen") name.appendChild(el("span", "live-badge", t("ui.live")));
+  name.appendChild(el("span", "cam-name-text", callTile.me ? t("ui.you", { name: callTile.name }) : callTile.name));
   tile.appendChild(name);
-  if (t.kind === "screen" && !t.me) {
+  if (callTile.kind === "screen" && !callTile.me) {
     const stop = el("button", "cam-stop");
     stop.type = "button";
-    stop.title = "Stop Watching";
-    stop.setAttribute("aria-label", "Stop Watching");
+    stop.title = t("ui.stop-watching");
+    stop.setAttribute("aria-label", t("ui.stop-watching"));
     stop.appendChild(svgIcon("close", 14));
     stop.onclick = e => {
       e.stopPropagation();
-      stopStream(t.user);
+      stopStream(callTile.user);
     };
     tile.appendChild(stop);
   }
-  tile.onclick = () => openCallTile(t);
+  tile.onclick = () => openCallTile(callTile);
   return tile;
 }
 
-function paintCallTile(tile, t, focused) {
-  const isMe = t.me;
-  tile.classList.toggle("speaking", state.speaking.has(t.user));
-  tile.classList.toggle("big", cam.bigTile === t.key);
-  tile.classList.toggle("on-stage", t.kind === "screen" && focused === t.user);
+function paintCallTile(tile, callTile, focused) {
+  const isMe = callTile.me;
+  tile.classList.toggle("speaking", state.speaking.has(callTile.user));
+  tile.classList.toggle("big", cam.bigTile === callTile.key);
+  tile.classList.toggle("on-stage", callTile.kind === "screen" && focused === callTile.user);
   const cover = tile.querySelector(".cam-cover");
   const text = tile.querySelector(".cam-cover-text");
-  if (t.kind === "camera") {
+  if (callTile.kind === "camera") {
     if (isMe) {
       if (cam.pipe && cam.pipe.canvas.parentNode !== tile) tile.prepend(cam.pipe.canvas);
       cover.classList.add("hidden");
     } else {
       const waiting = !tileHasFrame(tile);
       cover.classList.toggle("hidden", !waiting);
-      text.textContent = "Connecting";
+      text.textContent = t("ui.connecting");
     }
-    tile.title = isMe ? "Your camera" : `${t.name}'s camera`;
+    tile.title = isMe ? t("ui.your-camera") : t("ui.name-s-camera", { name: callTile.name });
     return;
   }
-  const live = isMe ? state.sharing : state.streamsWatched.has(t.user);
-  const onStage = focused === t.user;
+  const live = isMe ? state.sharing : state.streamsWatched.has(callTile.user);
+  const onStage = focused === callTile.user;
   tile.classList.toggle("watched", live && !isMe);
   if (!live) tilePainter(tile).clear();
   cover.classList.toggle("hidden", live && !onStage && tileHasFrame(tile));
-  text.textContent = onStage ? "On the big screen" : live ? "Connecting to stream" : `${t.name} is streaming`;
+  text.textContent = onStage ? t("ui.on-the-big-screen") : live ? t("ui.connecting-to-stream") : t("ui.is-streaming", { name: callTile.name });
   const watch = tile.querySelector(".cam-watch");
   if (watch) watch.classList.toggle("hidden", live);
-  tile.title = onStage ? "Back to the grid" : isMe ? "Open your stream preview" : live ? `Show ${t.name}'s stream big` : `Watch ${t.name}'s stream`;
+  tile.title = onStage ? t("ui.back-to-the-grid") : isMe ? t("ui.open-your-stream-preview") : live ? t("ui.show-s-stream-big", { name: callTile.name }) : t("ui.watch-s-stream", { name: callTile.name });
 }
 
 function frameData(frame) {
@@ -6507,7 +6535,7 @@ async function openCallTile(t) {
 function paintPhoneGridButton() {
   const showing = phoneGridShowing();
   const button = $("phone-voice-grid");
-  const label = showing ? "Hide Stream Grid" : "Show Stream Grid";
+  const label = showing ? t("ui.hide-stream-grid") : t("ui.show-stream-grid");
   button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", String(showing));
@@ -6538,7 +6566,7 @@ async function showCallGrid() {
   if (openVoiceRoom()) return;
   if (!callTilesHere().length) {
     renderCamGrid();
-    return toast("Nobody in your voice channel is streaming or on camera yet");
+    return toast(t("ui.nobody-in-your-voice-channel-is"));
   }
   if (!isPhoneWidth(window.innerWidth)) document.querySelector(".main").classList.add("stage-focus");
   paintFocusButtons();
@@ -6562,11 +6590,11 @@ function voiceRoomHasChat() {
 function fitVoiceRoomHint() {
   const input = $("message-input");
   if (!voiceRoom.open) {
-    if (voiceRoom.hint !== null && input.placeholder === "Message") input.placeholder = voiceRoom.hint;
+    if (voiceRoom.hint !== null && input.placeholder === t("ui.message")) input.placeholder = voiceRoom.hint;
     voiceRoom.hint = null;
     return;
   }
-  if (voiceRoom.hint === null || input.placeholder !== "Message") voiceRoom.hint = input.placeholder;
+  if (voiceRoom.hint === null || input.placeholder !== t("ui.message")) voiceRoom.hint = input.placeholder;
   const style = getComputedStyle(input);
   const room = input.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
   if (room <= 0) return;
@@ -6580,10 +6608,10 @@ function dressSoundboardPop(pop) {
   if (!studioDesk()) return;
   const shut = el("button", "icon-btn sb-x");
   shut.type = "button";
-  shut.title = "Close";
+  shut.title = t("settings.close");
   shut.appendChild(studioIconNode("x", 14, false));
   shut.onclick = () => pop.classList.add("hidden");
-  pop.querySelector(".sb-head").append(el("small", "sb-line", "Played to the whole room."), shut);
+  pop.querySelector(".sb-head").append(el("small", "sb-line", t("ui.played-to-the-whole-room")), shut);
 }
 
 function soundPadMark(emoji) {
@@ -6607,7 +6635,7 @@ function soundGroupsAlone(grid) {
 function soundAddPad() {
   const pad = el("button", "sb-sound sb-plus");
   pad.type = "button";
-  pad.append(studioIconNode("plus", 16, false), el("span", null, "Add sound"));
+  pad.append(studioIconNode("plus", 16, false), el("span", null, t("ui.add-sound")));
   pad.onclick = () => $("sb-add").click();
   return pad;
 }
@@ -6726,7 +6754,7 @@ function voiceRoomRejoinKey() {
   key = el("button", "key primary vp-rejoin hidden");
   key.type = "button";
   key.id = "vp-rejoin";
-  key.append(studioIconNode("phone", 19, false), el("span", null, "Rejoin"));
+  key.append(studioIconNode("phone", 19, false), el("span", null, t("ui.rejoin")));
   key.onclick = () => rejoinVoiceRoom();
   $("vp-disconnect").after(key);
   return key;
@@ -6745,7 +6773,7 @@ function paintVoiceRoomDock(left) {
   if (!resting) return;
   const channel = state.currentServer.channels.find(c => c.id === left.channel);
   const room = channel ? channelTextName(channel.name) : "";
-  rejoin.title = `Rejoin ${room}`;
+  rejoin.title = t("ui.rejoin-2", { room });
   const sub = $("vp-where");
   const style = getComputedStyle(sub);
   if (!voiceRoom.ruler) voiceRoom.ruler = document.createElement("canvas").getContext("2d");
@@ -6879,7 +6907,7 @@ function paintVoiceRoomHead(channel, left) {
   line.textContent = sub.text;
   line.dataset.kind = sub.kind;
   line.disabled = !may;
-  line.title = may ? (channel.voice_status ? "Change the room status" : "Set a room status") : "";
+  line.title = may ? (channel.voice_status ? t("ui.change-the-room-status") : t("ui.set-a-room-status")) : "";
   const at = (channel.voice_user_ids || []).indexOf(state.user && state.user.id);
   const since = at >= 0 ? Number((channel.voice_since || [])[at]) || 0 : 0;
   const clock = $("vr-clock");
@@ -6891,7 +6919,7 @@ function paintVoiceRoomHead(channel, left) {
   }
   const fold = $("vr-fold");
   fold.setAttribute("aria-pressed", String(!voiceRoom.folded));
-  fold.title = voiceRoom.folded ? "Show channels" : "Hide channels";
+  fold.title = voiceRoom.folded ? t("ui.show-channels") : t("ui.hide-channels");
   fold.setAttribute("aria-label", fold.title);
   $("vr-invite").classList.toggle("hidden", !server.can_invite || Boolean(left));
   $("vr-activities").classList.toggle("hidden", Boolean(left) || (!activityUi.run && !voiceServerAllowsActivities()));
@@ -6900,7 +6928,7 @@ function paintVoiceRoomHead(channel, left) {
   const full = $("vr-full");
   if (full.dataset.whole !== String(whole)) {
     full.dataset.whole = String(whole);
-    full.title = whole ? "Leave full screen" : "Full screen";
+    full.title = whole ? t("ui.leave-full-screen") : t("ui.full-screen");
     full.setAttribute("aria-label", full.title);
     full.replaceChildren(studioIconNode(whole ? "minimize-2" : "maximize-2", 18, false));
   }
@@ -6909,7 +6937,7 @@ function paintVoiceRoomHead(channel, left) {
   chat.classList.toggle("hidden", !voiceRoomHasChat());
   chat.classList.toggle("is-on", shown);
   chat.setAttribute("aria-pressed", String(shown));
-  chat.title = shown ? "Hide chat" : "Show chat";
+  chat.title = shown ? t("ui.hide-chat-2") : t("ui.show-chat");
   chat.setAttribute("aria-label", chat.title);
 }
 
@@ -6923,7 +6951,7 @@ function voiceRoomCardNode(person) {
   eq.setAttribute("aria-hidden", "true");
   eq.append(el("i"), el("i"), el("i"), el("i"));
   const line = el("span", "vr-st");
-  line.append(el("span", "live-badge vr-live", "Live"), eq, el("span", "vr-talk", "speaking"), el("span", "vr-mark"), el("span", "vr-word"), el("span", "vr-you", "You"));
+  line.append(el("span", "live-badge vr-live", t("ui.live-2")), eq, el("span", "vr-talk", "speaking"), el("span", "vr-mark"), el("span", "vr-word"), el("span", "vr-you", t("settings.group.you")));
   card.append(face, el("b", "vr-who", person.name), line);
   card.onclick = card.oncontextmenu = e => {
     e.preventDefault();
@@ -6948,7 +6976,7 @@ function paintVoiceRoomCards(people) {
     card.classList.toggle("live", person.live);
     card.classList.toggle("speaking", state.speaking.has(person.id));
     const quiet = person.state === "muted" || person.state === "deafened" ? person.state : "";
-    const word = person.state === "left" ? "left the room" : quiet;
+    const word = person.state === "left" ? t("ui.left-the-room") : quiet;
     card.classList.toggle("away", Boolean(person.away));
     if (card.dataset.quiet !== quiet || card.dataset.word !== word) {
       card.dataset.quiet = quiet;
@@ -6981,14 +7009,14 @@ function voiceRoomTileKey(cls, title, icon, label, run) {
   return key;
 }
 
-function dressVoiceRoomTile(tile, t) {
+function dressVoiceRoomTile(tile, callTile) {
   if (tile.querySelector(".vr-chip")) return;
   const dots = el("span", "vr-dots");
   dots.setAttribute("aria-hidden", "true");
   dots.append(el("i"), el("i"), el("i"));
   tile.querySelector(".cam-cover").appendChild(dots);
-  if (t.kind === "camera") {
-    tile.appendChild(voiceRoomChip("bl", el("span", "vr-mic"), el("b", null, t.me ? "You" : t.name)));
+  if (callTile.kind === "camera") {
+    tile.appendChild(voiceRoomChip("bl", el("span", "vr-mic"), el("b", null, callTile.me ? t("settings.group.you") : callTile.name)));
     return;
   }
   const sheet = el("canvas", "vr-ink");
@@ -6996,62 +7024,62 @@ function dressVoiceRoomTile(tile, t) {
   tile.querySelector(".cam-cover").before(sheet);
   const eye = el("i", "vr-sub vr-eye hidden");
   eye.append(studioIconNode("eye", 13, false), el("span", "vr-count"));
-  tile.appendChild(voiceRoomChip("tl", el("span", "live-badge vr-live", "Live"), el("b", null, t.me ? "Your screen" : t.name), ...(t.me ? [el("i", "vr-sub vr-source"), eye] : [])));
+  tile.appendChild(voiceRoomChip("tl", el("span", "live-badge vr-live", t("ui.live-2")), el("b", null, callTile.me ? t("ui.your-screen") : callTile.name), ...(callTile.me ? [el("i", "vr-sub vr-source"), eye] : [])));
   const keys = el("div", "vr-keys");
-  if (t.me) {
+  if (callTile.me) {
     const quality = el("span", "vr-quality");
     quality.append(el("span", "vr-word"), el("span", "vr-rest"));
     tile.appendChild(voiceRoomChip("tr vr-mode", studioIconNode("gauge", 14, false), quality));
     const left = el("div", "vr-keys l");
-    left.appendChild(voiceRoomTileKey("vr-switch", "Share another screen or window", "monitor", "Switch", () => $("vp-change-source").click()));
-    const allow = voiceRoomTileKey("latch vr-allow", "Let the room draw on your screen", "pen", "Allow drawing", () => onVoiceRoomAllow(allow));
+    left.appendChild(voiceRoomTileKey("vr-switch", t("ui.share-another-screen-or-window"), "monitor", t("ui.switch"), () => $("vp-change-source").click()));
+    const allow = voiceRoomTileKey("latch vr-allow", t("ui.let-the-room-draw-on-your-screen"), "pen", t("ui.allow-drawing"), () => onVoiceRoomAllow(allow));
     allow.append(el("b", "vr-n hidden"), el("i", "led"));
-    keys.append(allow, voiceRoomTileKey("vr-stop", "Stop sharing your screen", "monitor-x", "Stop", () => toggleShare()));
+    keys.append(allow, voiceRoomTileKey("vr-stop", t("ui.stop-sharing-your-screen"), "monitor-x", t("ui.stop"), () => toggleShare()));
     tile.append(left, keys);
     return;
   }
-  const draw = voiceRoomTileKey("latch vr-draw", `Draw on ${t.name}'s stream`, "pen", "Draw", () => setVoiceRoomTool(t.user, voiceRoomToolOn(t.user) === "pen" ? null : "pen"));
+  const draw = voiceRoomTileKey("latch vr-draw", t("ui.draw-on-s-stream", { name: callTile.name }), "pen", t("ui.draw"), () => setVoiceRoomTool(callTile.user, voiceRoomToolOn(callTile.user) === "pen" ? null : "pen"));
   draw.appendChild(el("i", "led"));
-  const volume = voiceRoomTileKey("sq vr-vol", "Stream volume", "volume-2", "", () => openVoiceRoomVolume(volume));
+  const volume = voiceRoomTileKey("sq vr-vol", t("ui.stream-volume"), "volume-2", "", () => openVoiceRoomVolume(volume));
   keys.append(
     draw,
-    voiceRoomTileKey("sq vr-point", "Point at something", "mouse-pointer-2", "", () => setVoiceRoomTool(t.user, voiceRoomToolOn(t.user) === "point" ? null : "point")),
-    voiceRoomTileKey("sq vr-wipe", "Wipe your ink", "eraser", "", () => sendVoiceRoomInk(t.user, { kind: "clear", stroke: 0, points: [] })),
+    voiceRoomTileKey("sq vr-point", t("ui.point-at-something"), "mouse-pointer-2", "", () => setVoiceRoomTool(callTile.user, voiceRoomToolOn(callTile.user) === "point" ? null : "point")),
+    voiceRoomTileKey("sq vr-wipe", t("ui.wipe-your-ink"), "eraser", "", () => sendVoiceRoomInk(callTile.user, { kind: "clear", stroke: 0, points: [] })),
     volume,
-    voiceRoomTileKey("sq vr-big", "Expand", "maximize-2", "", () => watchScreen(t.user, t.name)),
-    voiceRoomTileKey("sq vr-x", "Stop watching", "x", "", () => stopStream(t.user)),
+    voiceRoomTileKey("sq vr-big", t("ui.expand"), "maximize-2", "", () => watchScreen(callTile.user, callTile.name)),
+    voiceRoomTileKey("sq vr-x", t("ui.stop-watching-2"), "x", "", () => stopStream(callTile.user)),
   );
-  tile.append(voiceRoomChip("tr vr-allowed hidden", studioIconNode("pen", 16, false), el("span", null, "The room can draw on this")), keys);
+  tile.append(voiceRoomChip("tr vr-allowed hidden", studioIconNode("pen", 16, false), el("span", null, t("ui.the-room-can-draw-on-this"))), keys);
   const pad = tile.querySelector(".vr-ink");
-  pad.onpointerdown = e => onVoiceRoomPenDown(e, t.user, tile);
+  pad.onpointerdown = e => onVoiceRoomPenDown(e, callTile.user, tile);
   pad.onpointermove = e => onVoiceRoomPenMove(e, tile);
   pad.onpointerup = finishVoiceRoomPen;
   pad.onpointercancel = finishVoiceRoomPen;
   tile.ondblclick = () => {
-    if (voiceRoom.open && state.streamsWatched.has(t.user)) watchScreen(t.user, t.name);
+    if (voiceRoom.open && state.streamsWatched.has(callTile.user)) watchScreen(callTile.user, callTile.name);
   };
 }
 
 function dressVoiceRoomStage() {
   const view = $("stage-view");
   if (view.querySelector(".vr-big-part")) return;
-  const live = el("span", "live-badge vr-live", "Live");
+  const live = el("span", "live-badge vr-live", t("ui.live-2"));
   live.tabIndex = 0;
   const readout = el("span", "vr-readout hidden");
   readout.setAttribute("role", "status");
   const who = voiceRoomChip("tl vr-big-part vr-big-who", live, el("b", "vr-big-name"), readout);
-  const allowed = voiceRoomChip("tr vr-allowed vr-big-part hidden", studioIconNode("pen", 16, false), el("span", null, "The room can draw on this"));
+  const allowed = voiceRoomChip("tr vr-allowed vr-big-part hidden", studioIconNode("pen", 16, false), el("span", null, t("ui.the-room-can-draw-on-this")));
   const keys = el("div", "vr-keys vr-big-part");
-  const draw = voiceRoomTileKey("latch vr-draw", "Draw on the stream", "pen", "Draw", () => setVoiceRoomStageTool("pen"));
+  const draw = voiceRoomTileKey("latch vr-draw", t("ui.draw-on-the-stream"), "pen", t("ui.draw"), () => setVoiceRoomStageTool("pen"));
   draw.appendChild(el("i", "led"));
-  const volume = voiceRoomTileKey("sq vr-vol", "Stream volume", "volume-2", "", () => openVoiceRoomVolume(volume));
+  const volume = voiceRoomTileKey("sq vr-vol", t("ui.stream-volume"), "volume-2", "", () => openVoiceRoomVolume(volume));
   keys.append(
     draw,
-    voiceRoomTileKey("sq vr-point", "Point at something", "mouse-pointer-2", "", () => setVoiceRoomStageTool("point")),
-    voiceRoomTileKey("sq vr-wipe", "Wipe your ink", "eraser", "", () => clearStageInk()),
+    voiceRoomTileKey("sq vr-point", t("ui.point-at-something"), "mouse-pointer-2", "", () => setVoiceRoomStageTool("point")),
+    voiceRoomTileKey("sq vr-wipe", t("ui.wipe-your-ink"), "eraser", "", () => clearStageInk()),
     volume,
-    voiceRoomTileKey("sq vr-big", "Back to the grid", "minimize-2", "", () => backToCallGrid()),
-    voiceRoomTileKey("sq vr-x", "Stop watching", "x", "", () => closeStageButton()),
+    voiceRoomTileKey("sq vr-big", t("ui.back-to-the-grid"), "minimize-2", "", () => backToCallGrid()),
+    voiceRoomTileKey("sq vr-x", t("ui.stop-watching-2"), "x", "", () => closeStageButton()),
   );
   view.append(who, allowed, keys);
 }
@@ -7088,13 +7116,13 @@ function paintVoiceRoomStage() {
   paintVoiceRoomReadout();
 }
 
-function paintVoiceRoomTile(tile, t, person) {
-  dressVoiceRoomTile(tile, t);
+function paintVoiceRoomTile(tile, callTile, person) {
+  dressVoiceRoomTile(tile, callTile);
   const cover = tile.querySelector(".cam-cover");
   const text = tile.querySelector(".cam-cover-text");
-  const joining = text.textContent.startsWith("Connecting");
+  const joining = text.textContent.startsWith(t("ui.connecting"));
   cover.classList.toggle("vr-joining", joining);
-  if (t.kind === "camera") {
+  if (callTile.kind === "camera") {
     const quiet = person && (person.state === "muted" || person.state === "deafened") ? person.state : "";
     const mic = tile.querySelector(".vr-mic");
     if (mic.dataset.quiet !== quiet || !mic.firstChild) {
@@ -7103,12 +7131,12 @@ function paintVoiceRoomTile(tile, t, person) {
     }
     return;
   }
-  if (t.me) return paintVoiceRoomMine(tile);
-  const live = state.streamsWatched.has(t.user);
+  if (callTile.me) return paintVoiceRoomMine(tile);
+  const live = state.streamsWatched.has(callTile.user);
   tile.querySelector(".vr-keys").classList.toggle("hidden", !live);
-  const allowed = live && ink.allowed.get(t.user) === true;
-  if (!allowed && voiceRoom.pen.user === t.user) dropVoiceRoomTool();
-  const tool = voiceRoomToolOn(t.user);
+  const allowed = live && ink.allowed.get(callTile.user) === true;
+  if (!allowed && voiceRoom.pen.user === callTile.user) dropVoiceRoomTool();
+  const tool = voiceRoomToolOn(callTile.user);
   for (const part of [".vr-draw", ".vr-point", ".vr-wipe", ".vr-allowed"]) tile.querySelector(part).classList.toggle("hidden", !allowed);
   for (const [part, name] of [[".vr-draw", "pen"], [".vr-point", "point"]]) {
     const key = tile.querySelector(part);
@@ -7286,7 +7314,7 @@ function openVoiceRoomVolume(anchor) {
   range.min = "0";
   range.max = String(STREAM_VOLUME_MAX_PERCENT);
   range.value = String(percent);
-  range.setAttribute("aria-label", "Stream volume");
+  range.setAttribute("aria-label", t("ui.stream-volume"));
   const read = el("span", "vr-pop-num", `${percent}%`);
   range.oninput = () => {
     read.textContent = `${range.value}%`;
@@ -7295,7 +7323,7 @@ function openVoiceRoomVolume(anchor) {
   syncRangeFill(range);
   const row = el("label", "vr-slider");
   row.append(studioIconNode("volume-2", 16, false), range, read);
-  showVoiceRoomPop(anchor, "volume", [el("div", "vr-pop-title", "Stream volume"), row]);
+  showVoiceRoomPop(anchor, "volume", [el("div", "vr-pop-title", t("ui.stream-volume")), row]);
 }
 
 function voiceRoomDrawerRow(drawer) {
@@ -7306,7 +7334,7 @@ function voiceRoomDrawerRow(drawer) {
   dot.style.background = inkColor(drawer.id);
   const stop = el("button", "key sm sq vr-pop-x");
   stop.type = "button";
-  stop.title = `Stop ${drawer.name} drawing on your stream`;
+  stop.title = t("ui.stop-drawing-on-your-stream", { name: drawer.name });
   stop.setAttribute("aria-label", stop.title);
   stop.appendChild(studioIconNode("x", 14, false));
   stop.onclick = () => invoke("block_stream_ink", { userId: drawer.id }).catch(e => toast(String(e)));
@@ -7318,10 +7346,10 @@ function voiceRoomDrawParts() {
   const flip = el("input", "switch");
   flip.type = "checkbox";
   flip.checked = Boolean(state.shareInk);
-  flip.setAttribute("aria-label", "Allow drawing");
+  flip.setAttribute("aria-label", t("ui.allow-drawing"));
   flip.onchange = () => setStreamInk(flip.checked);
   const first = el("label", "vr-pop-row vr-pop-flip");
-  first.append(el("b", null, "Allow drawing"), flip);
+  first.append(el("b", null, t("ui.allow-drawing")), flip);
   return [first, ...voiceRoom.drawers.map(voiceRoomDrawerRow)];
 }
 
@@ -7351,7 +7379,7 @@ function paintVoiceRoomMine(tile = state.user ? $("cam-grid").querySelector(`.ca
   tile.querySelector(".vr-source").classList.toggle("hidden", !state.shareSource);
   const eye = tile.querySelector(".vr-eye");
   eye.classList.toggle("hidden", !voiceRoom.viewers);
-  eye.title = voiceRoom.viewers === 1 ? "1 person is watching" : `${voiceRoom.viewers} people are watching`;
+  eye.title = voiceRoom.viewers === 1 ? t("ui.1-person-is-watching") : t("ui.people-are-watching", { viewers: voiceRoom.viewers });
   eye.querySelector(".vr-count").textContent = String(voiceRoom.viewers);
   const allow = tile.querySelector(".vr-allow");
   allow.classList.toggle("hidden", !(streamInkSetting() || state.shareInk));
@@ -7500,10 +7528,10 @@ async function toggleCameraPreview() {
     watchCameraTrack(previewPipe);
     $("cam-stage").appendChild(previewPipe.canvas);
     $("cam-stage").classList.add("running");
-    $("cam-preview-btn").textContent = "Stop Test";
+    $("cam-preview-btn").textContent = t("ui.stop-test");
     loadCameraDevices();
   } catch (e) {
-    toast(`Camera unavailable: ${e.message || e}`);
+    toast(t("ui.camera-unavailable", { value: e.message || e }));
   }
 }
 
@@ -7511,19 +7539,19 @@ function stopCameraPreview() {
   stopCameraPipeline(previewPipe);
   previewPipe = null;
   $("cam-stage").classList.remove("running");
-  $("cam-preview-btn").textContent = "Test Camera";
+  $("cam-preview-btn").textContent = t("ui.test-camera");
 }
 
 const CAMERA_FX_NOTES = {
-  idle: "Effects run on this device. People in the call see what this preview shows.",
-  "avatar-loading": "Getting your avatar ready. People in the call never see your camera picture.",
-  "avatar-ready": "Your avatar follows your face on this device. People see it, never your camera.",
-  "avatar-still": "Face tracking is not available here, so your avatar holds still.",
-  "avatar-missing": "Choose a VRM avatar file to use your own. People see a plain background until then.",
-  "avatar-failed": "Avatars are not available here, so your picture is blurred. Pick Off under Avatar.",
-  loading: "Getting background effects ready. Your picture stays blurred until then.",
-  ready: "Effects run on this device. People in the call see what this preview shows.",
-  failed: "Effects are not available here, so your whole picture is blurred. Pick Off to send it clear.",
+  get idle() { return t("ui.effects-run-on-this-device-people-in-the"); },
+  get "avatar-loading"() { return t("ui.getting-your-avatar-ready-people-in-the"); },
+  get "avatar-ready"() { return t("ui.your-avatar-follows-your-face-on-this"); },
+  get "avatar-still"() { return t("ui.face-tracking-is-not-available-here-so"); },
+  get "avatar-missing"() { return t("ui.choose-a-vrm-avatar-file-to-use-your-own"); },
+  get "avatar-failed"() { return t("ui.avatars-are-not-available-here-so-your"); },
+  get loading() { return t("ui.getting-background-effects-ready-your"); },
+  get ready() { return t("ui.effects-run-on-this-device-people-in-the"); },
+  get failed() { return t("ui.effects-are-not-available-here-so-your"); },
 };
 
 function renderCameraFx(status = cameraFxStatus()) {
@@ -7589,7 +7617,7 @@ async function pickCameraAvatar(kind) {
 
 async function chooseCameraBackdrop() {
   try {
-    const src = await chooseImage("Choose a camera background", $("server-image-file"));
+    const src = await chooseImage(t("ui.choose-a-camera-background"), $("server-image-file"));
     if (!src) return;
     setCameraBackdrop(await cropImageFile(src, CAMERA_BACKDROP_WIDTH, CAMERA_BACKDROP_HEIGHT));
     updateCameraFx({ background: "image" });
@@ -7623,7 +7651,7 @@ async function saveAudioDevices() {
       input: $("input-device").value || null,
       output: $("output-device").value || null,
     });
-    toast("Audio devices updated");
+    toast(t("ui.audio-devices-updated"));
   } catch (e) {
     toast(String(e));
   }
@@ -7750,7 +7778,7 @@ function tonedEmoji(entry, tone = emojiTone()) {
   return withSkinTone(entry.emoji, entry.skin, tone, EMOJI_TONES);
 }
 
-function buildEmojiBrowser(root, { placeholder = "Find the perfect emoji" } = {}) {
+function buildEmojiBrowser(root, { placeholder = t("ui.find-the-perfect-emoji") } = {}) {
   const head = el("div", "eb-head");
   const field = el("label", "eb-search");
   const search = el("input");
@@ -7759,18 +7787,18 @@ function buildEmojiBrowser(root, { placeholder = "Find the perfect emoji" } = {}
   search.autocomplete = "off";
   search.spellcheck = false;
   field.append(svgIcon("search", 16), search);
-  const clear = el("button", "btn-secondary btn-small eb-clear hidden", "Remove");
+  const clear = el("button", "btn-secondary btn-small eb-clear hidden", t("ui.remove"));
   clear.type = "button";
   const tone = el("button", "eb-tone");
   tone.type = "button";
-  tone.title = "Skin tone";
+  tone.title = t("ui.skin-tone");
   const tones = el("div", "eb-tones hidden");
   tones.setAttribute("role", "listbox");
-  tones.setAttribute("aria-label", "Skin tone");
+  tones.setAttribute("aria-label", t("ui.skin-tone"));
   head.append(field, clear, tone, tones);
   const main = el("div", "eb-main");
   const rail = el("nav", "eb-rail");
-  rail.setAttribute("aria-label", "Emoji categories");
+  rail.setAttribute("aria-label", t("ui.emoji-categories"));
   const body = el("div", "eb-body");
   main.append(rail, body);
   const foot = el("div", "eb-foot");
@@ -7910,7 +7938,7 @@ function renderEmojiBrowser(b) {
   const groups = customEmojiGroupsFor(b.opts.custom);
   if (q) renderEmojiSearch(b, q, groups);
   else renderEmojiSections(b, groups);
-  if (!b.body.childElementCount) b.body.appendChild(el("div", "picker-empty", "No matches"));
+  if (!b.body.childElementCount) b.body.appendChild(el("div", "picker-empty", t("ui.no-matches")));
   if (!q) renderEmojiRail(b);
   markEmojiRail(b);
   showEmojiFoot(b, b.body.querySelector("button[data-value], button[data-token]"));
@@ -7923,7 +7951,7 @@ function appendFrequentSection(b, groups) {
   const usable = key => tokens.has(key) || (!key.startsWith("<:") && emojiIndexOf(key) !== undefined && (EMOJI_DATA[emojiIndexOf(key)][5] || 0) <= version);
   const keys = frequentEmoji(frequentEmojiStore(), usable);
   if (!keys.length) return;
-  const cells = emojiSection(b, "frequent", "Frequently Used", { icon: "emojiClock" });
+  const cells = emojiSection(b, "frequent", t("ui.frequently-used"), { icon: "emojiClock" });
   for (const key of keys) {
     const custom = tokens.get(key);
     if (custom) cells.appendChild(customEmojiButton(custom.emoji, custom.where));
@@ -7935,7 +7963,7 @@ function appendComposerAddPrompt(b, groups) {
   if (!b.opts.composer || !canAddHere("emojis") || groups.some(g => g.local)) return;
   const here = serverHere();
   const cells = emojiSection(b, `server:${here.id}`, here.name, { server: here, addKind: "emojis" });
-  cells.appendChild(el("div", "picker-empty", `No ${EXPRESSION_KINDS.emojis.many} here yet`));
+  cells.appendChild(el("div", "picker-empty", t("ui.no-here-yet", { many: EXPRESSION_KINDS.emojis.many })));
 }
 
 function appendCatalogBrowserSection(b, q) {
@@ -7978,7 +8006,7 @@ function renderEmojiSearch(b, q, groups) {
   appendCatalogBrowserSection(b, q);
   const found = searchEmoji(usableEmojiRows(), q);
   if (!found.length) return;
-  const cells = emojiSection(b, "results", "Emoji", { icon: "emojiSmile" });
+  const cells = emojiSection(b, "results", t("ui.emoji"), { icon: "emojiSmile" });
   const tone = emojiTone();
   for (const { entry } of found) cells.appendChild(standardEmojiButton(tonedEmoji(entry, tone), emojiIndexOf(entry.emoji), entry.label));
 }
@@ -8203,7 +8231,7 @@ function imageFileToAvatar(file) {
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject("That file is not an image we can read");
+      reject(t("ui.that-file-is-not-an-image-we-can-read"));
     };
     img.src = url;
   });
@@ -8212,8 +8240,7 @@ function imageFileToAvatar(file) {
 const AVATAR_CROP_WHEEL_STEP = 0.0015;
 const AVATAR_CROP_RANGE_SCALE = 100;
 const avatarCrop = { crop: null, image: null, output: null, settle: null, pointers: new Map(), pinch: null };
-const AVATAR_CROP_LOOK = { title: "Adjust your avatar", round: true, width: AVATAR_CROP_OUTPUT, height: AVATAR_CROP_OUTPUT };
-const BANNER_CROP_TITLE = "Adjust your banner";
+const AVATAR_CROP_LOOK = { get title() { return t("ui.adjust-your-avatar"); }, round: true, width: AVATAR_CROP_OUTPUT, height: AVATAR_CROP_OUTPUT };
 const PROFILE_BANNER_SIZE = { width: 600, height: 240 };
 const PLACE_BANNER_SIZE = { width: 960, height: 320 };
 
@@ -8221,7 +8248,7 @@ function loadPicture(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("That file is not an image we can read"));
+    img.onerror = () => reject(new Error(t("ui.that-file-is-not-an-image-we-can-read")));
     img.src = src;
   });
 }
@@ -8331,7 +8358,7 @@ function wireAvatarCrop() {
 
 function pictureCropHint() {
   const touch = document.body.classList.contains("mobile-app") || matchMedia("(pointer: coarse)").matches;
-  return touch ? "Drag to move it. Pinch or use the slider to zoom." : "Drag to move it. Scroll or use the slider to zoom.";
+  return touch ? t("ui.drag-to-move-it-pinch") : t("ui.drag-to-move-it-scroll-or-use-the-slider");
 }
 
 async function adjustPicture(src, { title, round = false, width, height }) {
@@ -8357,7 +8384,7 @@ function cropAvatarPicture(src) {
 }
 
 function bannerFromPicture(src, picked, size) {
-  return picked ? adjustPicture(src, { title: BANNER_CROP_TITLE, ...size }) : cropImageFile(src, size.width, size.height);
+  return picked ? adjustPicture(src, { title: t("ui.adjust-your-banner"), ...size }) : cropImageFile(src, size.width, size.height);
 }
 
 function saveBannerWith(size, save) {
@@ -8377,7 +8404,7 @@ async function pictureToAvatar(src, { keepStill = false } = {}) {
   const blob = await (await fetch(src)).blob();
   const plan = avatarPicturePlan(new Uint8Array(await blob.arrayBuffer()), { keepStill });
   if (plan === "keep") return blobToBase64(blob);
-  if (plan === "too-large") throw new Error(`GIF avatars can be up to ${AVATAR_MAX_BYTES / 1024} KB. Try a smaller GIF.`);
+  if (plan === "too-large") throw new Error(t("ui.gif-avatars-can-be-up-to-kb-try-a", { value: AVATAR_MAX_BYTES / 1024 }));
   if (keepStill) return (await prepareEmojiImage(src, { size: 256, maxGif: 0 })).data;
   return imageFileToAvatar(src);
 }
@@ -8387,7 +8414,7 @@ async function pickEmojiAvatar(picked) {
   if (!custom) return applyAvatar("emoji", picked);
   try {
     const src = await expressionUrl(custom.image);
-    if (!src) throw new Error("That emoji could not be loaded right now. Try again in a moment.");
+    if (!src) throw new Error(t("ui.that-emoji-could-not-be-loaded-right-now"));
     await applyAvatar("image", await pictureToAvatar(src, { keepStill: true }));
   } catch (e) {
     toast(String(e.message || e));
@@ -8414,7 +8441,7 @@ async function applyAvatar(kind, data) {
       paintAvatar($("account-avatar"), state.user.id, name);
     }
     if (state.currentServer) await refreshCurrentServer();
-    toast(kind === "none" ? "Avatar removed" : "Avatar updated");
+    toast(kind === "none" ? t("ui.avatar-removed") : t("ui.avatar-updated"));
   } catch (e) {
     toast(String(e));
   }
@@ -8424,7 +8451,7 @@ let editingChannelId = null;
 
 function channelGear(channel) {
   const gear = el("button", "channel-gear");
-  gear.title = "Edit Channel";
+  gear.title = t("ui.edit-channel");
   gear.appendChild(svgIcon("gear", 16));
   gear.onclick = e => {
     e.stopPropagation();
@@ -8488,7 +8515,7 @@ function holdsAnyRole(server, ids) {
 
 function paintAccessChips(container, server, ids, onChange) {
   container.replaceChildren();
-  const everyone = el("button", "access-chip" + (ids.length ? "" : " picked"), "Everyone");
+  const everyone = el("button", "access-chip" + (ids.length ? "" : " picked"), t("ui.everyone"));
   everyone.type = "button";
   everyone.onclick = () => onChange([]);
   container.appendChild(everyone);
@@ -8507,7 +8534,7 @@ function paintChannelAccess() {
   const channel = editingChannel();
   const server = state.currentServer;
   if (!channel || !server || !accessDraft) return;
-  $("channel-view-title").textContent = isVoiceKind(channel.kind) ? "Who can see and join this channel" : "Who can see this channel";
+  $("channel-view-title").textContent = isVoiceKind(channel.kind) ? t("ui.who-can-see-and-join-this-channel") : t("ui.who-can-see-this-channel");
   $("channel-send-card").classList.toggle("hidden", !holdsMessages(channel));
   paintAccessChips($("channel-view-roles"), server, accessDraft.view, ids => {
     accessDraft.view = ids;
@@ -8518,8 +8545,8 @@ function paintChannelAccess() {
     paintChannelAccess();
   });
   let note = "";
-  if (!server.roles.length) note = "Create roles in Server Settings to lock this channel to them.";
-  else if (accessDraft.view.length && !holdsAnyRole(server, accessDraft.view)) note = "You don't hold any of these roles, so you won't be able to read this channel.";
+  if (!server.roles.length) note = t("ui.create-roles-in-server-settings-to-lock");
+  else if (accessDraft.view.length && !holdsAnyRole(server, accessDraft.view)) note = t("ui.you-don-t-hold-any-of-these-roles-so-you");
   $("channel-access-note").textContent = note;
   const dirty = !sameAccess(accessDraft.view, channel.view_roles) || !sameAccess(accessDraft.send, channel.send_roles);
   $("channel-access-save-bar").classList.toggle("hidden", !dirty);
@@ -8535,7 +8562,7 @@ async function saveChannelAccess() {
       viewRoles: accessDraft.view,
       sendRoles: holdsMessages(channel) ? accessDraft.send : [],
     });
-    toast(accessDraft.view.length ? `Only ${accessSummary(state.currentServer, accessDraft.view)} can see this channel now` : "Channel access saved");
+    toast(accessDraft.view.length ? t("ui.only-can-see-this-channel-now", { value: accessSummary(state.currentServer, accessDraft.view) }) : t("ui.channel-access-saved"));
     await refreshCurrentServer();
     openChannelSettings(channel.id, "permissions");
   } catch (e) {
@@ -8558,8 +8585,8 @@ function paintChannelBannerCard(channel) {
   const preview = $("channel-banner-preview");
   preview.innerHTML = "";
   paintBanner(preview, channel.banner, "var(--bg-active)");
-  if (!channel.banner) preview.appendChild(el("span", null, "No banner"));
-  $("channel-banner-upload").textContent = channel.banner ? "Change Banner" : "Upload Banner";
+  if (!channel.banner) preview.appendChild(el("span", null, t("ui.no-banner")));
+  $("channel-banner-upload").textContent = channel.banner ? t("ui.change-banner-2") : t("ui.upload-banner");
   $("channel-banner-remove").classList.toggle("hidden", !channel.banner);
 }
 
@@ -8571,7 +8598,7 @@ async function setChannelBanner(data) {
     await refreshCurrentServer();
     openChannelSettings(channel.id);
     if (state.currentChannel && state.currentChannel.id === channel.id) await selectChannel(editingChannel());
-    toast(data ? "Channel banner saved" : "Channel banner removed");
+    toast(data ? t("ui.channel-banner-saved") : t("ui.channel-banner-removed"));
   } catch (e) {
     toast(String(e));
   }
@@ -8663,7 +8690,7 @@ async function saveChannelEdits() {
     if (edits.color !== (edits.channel.color || null)) {
       await invoke("set_channel_color", { serverId: state.currentServer.id, channelId: edits.channel.id, color: edits.color });
     }
-    toast("Channel updated");
+    toast(t("ui.channel-updated"));
     await refreshCurrentServer();
     openChannelSettings(edits.channel.id);
   } catch (e) {
@@ -8703,7 +8730,7 @@ function syncSlowMode() {
   pill.classList.toggle("waiting", view.waiting > 0);
   if (view.shown) {
     $("composer-slow-text").textContent = view.text;
-    pill.title = view.waiting ? `Slow mode: you can send again in ${view.waiting}s` : `Slow mode: one message every ${slowModeOptionText(view.seconds)}`;
+    pill.title = view.waiting ? t("ui.slow-mode-you-can-send-again-in-s", { waiting: view.waiting }) : t("ui.slow-mode-one-message-every", { value: slowModeOptionText(view.seconds) });
   }
   if (view.waiting > 0 && !slowTimer) slowTimer = setInterval(syncSlowMode, 1000);
   if (view.waiting === 0 && slowTimer) {
@@ -8714,14 +8741,14 @@ function syncSlowMode() {
 
 function syncLimitLabel() {
   const n = Number($("channel-limit").value) || 0;
-  $("channel-limit-label").textContent = n ? `${n} ${n === 1 ? "person" : "people"}` : "No limit";
+  $("channel-limit-label").textContent = n ? t(n === 1 ? "ui.n.people.one" : "ui.n.people.many", { count: n }) : t("ui.no-limit");
 }
 
 function openDeleteChannel() {
   const channel = editingChannel();
   if (!channel) return;
   const label = isVoiceKind(channel.kind) ? channelShownName(channel) : `#${channelShownName(channel)}`;
-  $("delete-channel-title").textContent = `Delete ${label}?`;
+  $("delete-channel-title").textContent = t("ui.delete-4", { label });
   $("delete-channel-name").textContent = channel.name;
   $("delete-channel-confirm").value = "";
   $("delete-channel-go").disabled = true;
@@ -8736,7 +8763,7 @@ async function confirmDeleteChannel() {
     await invoke("delete_channel", { serverId: state.currentServer.id, channelId: channel.id });
     hideModals();
     await closeSettingsLayers();
-    toast(`Deleted ${isVoiceKind(channel.kind) ? channelShownName(channel) : "#" + channelShownName(channel)}`);
+    toast(t("ui.deleted", { value: isVoiceKind(channel.kind) ? channelShownName(channel) : "#" + channelShownName(channel) }));
     editingChannelId = null;
     await refreshCurrentServer();
   } catch (e) {
@@ -8771,7 +8798,7 @@ function setCreateChannelKind(kind) {
 
 function channelNamePlaceholder(kind) {
   const stageHint = stageCreateHint(kind);
-  return stageHint ? stageHint.placeholder : kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : kind === "drive" ? "shared-files" : "new-channel";
+  return stageHint ? stageHint.placeholder : kind === "voice" ? t("ui.hangout") : kind === "category" ? t("ui.games") : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : kind === "drive" ? "shared-files" : "new-channel";
 }
 
 async function createServerChannel(serverId, name, kind, parentId = null) {
@@ -8798,7 +8825,7 @@ async function saveCreateChannel() {
   try {
     await createServerChannel(state.currentServer.id, name, createChannelKind, createChannelParent);
     hideModals();
-    toast(`Created ${createChannelKind === "text" ? "#" : ""}${name}`);
+    toast(t("ui.created", { value: createChannelKind === "text" ? "#" : "", name }));
     await refreshCurrentServer();
     if (kindHoldsMessages(createChannelKind) || createChannelKind === DRIVE_KIND) {
       const made = state.currentServer.channels.filter(c => c.kind === createChannelKind).pop();
@@ -8878,8 +8905,8 @@ function renderMembers() {
       if (member.needs_key) nameRow.appendChild(needsKeyBadge());
       if (homeBlocked(member)) nameRow.appendChild(homeChip(member));
       if (sharers.has(member.id)) {
-        const live = el("span", "live-badge", "LIVE");
-        live.title = "Watch screen";
+        const live = el("span", "live-badge", t("ui.live"));
+        live.title = t("ui.watch-screen");
         live.onclick = e => {
           e.stopPropagation();
           watchScreen(member.id, member.name);
@@ -8951,17 +8978,17 @@ function buildSensitiveGate(channel) {
   const wrap = el("div", "age-gate-wrap");
   const panel = el("div", "age-gate");
   panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-label", "Age-restricted channel");
+  panel.setAttribute("aria-label", t("ui.age-restricted-channel"));
   const icon = el("div", "age-gate-icon");
   icon.appendChild(svgIcon("warning", 40));
   const name = el("div", "age-gate-channel");
   name.append(document.createTextNode("#"), channelNameNode(channel));
   const text = sensitiveGateText(channelPlainName(channel));
   const actions = el("div", "age-gate-actions");
-  const no = el("button", "btn-secondary age-gate-btn", "Nevermind");
+  const no = el("button", "btn-secondary age-gate-btn", t("ui.nevermind"));
   no.type = "button";
   no.onclick = leaveSensitiveChannel;
-  const yes = el("button", "btn-primary age-gate-btn", "Continue");
+  const yes = el("button", "btn-primary age-gate-btn", t("signin.continue"));
   yes.type = "button";
   yes.onclick = () => confirmSensitiveChannel(channel);
   actions.append(no, yes);
@@ -8987,7 +9014,7 @@ async function leaveSensitiveChannel() {
 
 async function resetSensitiveConfirmations() {
   try { localStorage.removeItem(SENSITIVE_KEY); } catch {}
-  toast("Age-restricted channels will ask again");
+  toast(t("ui.age-restricted-channels-will-ask-again"));
   if (state.view === "server" && ageGated(state.currentChannel)) {
     $("messages").dataset.view = "";
     await selectChannel(state.currentChannel);
@@ -9231,7 +9258,7 @@ function renderForumTags(channel) {
     };
     return button;
   };
-  row.appendChild(chip("All", null));
+  row.appendChild(chip(t("ui.all"), null));
   for (const tag of channel.tags || []) row.appendChild(chip(tagLabel(tag), tag.id));
 }
 
@@ -9263,7 +9290,7 @@ function forumEditButton(post) {
   if (!canEditPost(post, me, manages)) return el("span", "forum-edit-slot");
   const button = el("button", "icon-btn forum-edit");
   button.type = "button";
-  button.title = "Edit post";
+  button.title = t("ui.edit-post");
   button.appendChild(svgIcon("pencil", 16));
   button.onclick = e => {
     e.stopPropagation();
@@ -9306,7 +9333,7 @@ function forumPostCard(channel, post) {
   top.append(el("div", "forum-post-title", post.title), forumEditButton(post));
   const foot = el("div", "forum-card-foot");
   foot.append(forumTagPills(channel, post.tags), forumPostMeta(post));
-  card.append(top, el("p", "forum-card-excerpt", postExcerpt(forumPostBody(post), 200) || "No text"), foot);
+  card.append(top, el("p", "forum-card-excerpt", postExcerpt(forumPostBody(post), 200) || t("ui.no-text")), foot);
   forumOpenOn(card, post);
   return card;
 }
@@ -9324,8 +9351,8 @@ function renderForumPosts(channel) {
     const filtered = all.length > 0;
     empty.append(
       mark,
-      el("h2", null, filtered ? "No posts with this tag" : "No posts yet"),
-      el("p", null, filtered ? "Pick another tag or show all posts." : channel.topic || "Start the first post. Replies gather under it like a thread."),
+      el("h2", null, filtered ? t("ui.no-posts-with-this-tag") : t("ui.no-posts-yet")),
+      el("p", null, filtered ? t("ui.pick-another-tag-or-show-all-posts") : channel.topic || t("ui.start-the-first-post-replies-gather")),
     );
     box.appendChild(empty);
     return;
@@ -9356,11 +9383,11 @@ function openForumComposer(post = null) {
   const channel = state.currentChannel;
   if (!isForumChannel(channel)) return;
   forumUi.draft = { editing: post ? post.message : null, tags: post ? [...post.tags] : [] };
-  $("forum-post-heading").textContent = post ? "Edit post" : "New post";
+  $("forum-post-heading").textContent = post ? t("ui.edit-post") : t("ui.new-post");
   $("forum-post-title").value = post ? post.title : "";
   $("forum-post-body").value = "";
   $("forum-post-body-label").classList.toggle("hidden", Boolean(post));
-  $("forum-post-save").textContent = post ? "Save" : "Post";
+  $("forum-post-save").textContent = post ? t("ui.save") : t("ui.post");
   paintForumPostTags();
   syncForumDraft();
   showModal("modal-forum-post");
@@ -9374,7 +9401,7 @@ function paintForumPostTags() {
   box.replaceChildren();
   if (!draft) return;
   const tags = (channel && channel.tags) || [];
-  if (!tags.length) box.appendChild(el("span", "forum-no-tags", "This forum has no tags yet."));
+  if (!tags.length) box.appendChild(el("span", "forum-no-tags", t("ui.this-forum-has-no-tags-yet")));
   for (const tag of tags) {
     const chip = el("button", "access-chip" + (draft.tags.includes(tag.id) ? " picked" : ""), tagLabel(tag));
     chip.type = "button";
@@ -9411,7 +9438,7 @@ async function saveForumPost() {
     else await invoke("post_forum", { ...args, content: encodeOutgoing(draft.body) });
     hideModals();
     forumUi.draft = null;
-    toast(editing ? "Post updated" : "Posted");
+    toast(editing ? t("ui.post-updated") : t("ui.posted"));
     await refreshCurrentServer();
   } catch (e) {
     toast(String(e));
@@ -9422,7 +9449,7 @@ function setForumTagEmoji(picked) {
   forumUi.tagEmoji = picked || null;
   const button = $("channel-forum-emoji");
   button.replaceChildren(picked ? el("span", "forum-tag-emoji-pick", picked) : svgIcon("smile", 18));
-  button.title = picked ? "Change the emoji" : "Pick an emoji";
+  button.title = picked ? t("ui.change-the-emoji") : t("ui.pick-an-emoji");
 }
 
 function paintForumTagsCard(channel) {
@@ -9432,12 +9459,12 @@ function paintForumTagsCard(channel) {
   const rows = $("channel-forum-tags");
   rows.replaceChildren();
   const tags = channel.tags || [];
-  if (!tags.length) rows.appendChild(el("div", "forum-tag-empty", "No tags yet. Add a few so posts can be filtered."));
+  if (!tags.length) rows.appendChild(el("div", "forum-tag-empty", t("ui.no-tags-yet-add-a-few-so-posts-can-be")));
   tags.forEach((tag, i) => {
     const row = el("div", "forum-tag-row");
     const remove = el("button", "icon-btn forum-tag-remove");
     remove.type = "button";
-    remove.title = "Remove tag";
+    remove.title = t("ui.remove-tag-2");
     remove.appendChild(svgIcon("close", 16));
     remove.onclick = () => saveForumTags(tagsAfterRemove(tags, i));
     row.append(el("span", "forum-tag-row-emoji", tag.emoji || ""), el("span", "forum-tag-row-name", tag.name), remove);
@@ -9453,7 +9480,7 @@ async function addForumTag() {
   if (!channel) return;
   const next = tagsAfterAdd(channel.tags || [], $("channel-forum-name").value, forumUi.tagEmoji);
   if (!next) {
-    toast(`A tag with that name is already here, or the forum has its ${MAX_FORUM_TAGS} tags`);
+    toast(t("ui.a-tag-with-that-name-is-already-here-or", { MAX_FORUM_TAGS }));
     return;
   }
   await saveForumTags(next);
@@ -9544,7 +9571,7 @@ async function openDrive(channel, fresh) {
 }
 
 function driveRootName() {
-  return state.currentChannel ? channelPlainName(state.currentChannel) : "Drive";
+  return state.currentChannel ? channelPlainName(state.currentChannel) : t("ui.drive");
 }
 
 function renderDrive() {
@@ -9567,14 +9594,14 @@ function renderDrive() {
   const full = driveRoomLeft(view) === 0;
   $("drive-new-folder").disabled = !works || !view.can_add || full;
   $("drive-upload").disabled = !works || !view.can_upload || full;
-  $("drive-upload").title = full ? "This server's drives are full" : view.can_upload ? "Share a file from this computer" : "You can't upload files here";
+  $("drive-upload").title = full ? t("ui.this-server-s-drives-are-full") : view.can_upload ? t("ui.share-a-file-from-this-computer") : t("ui.you-can-t-upload-files-here");
   const list = $("drive-list");
   list.replaceChildren();
   const here = driveChildren(items, driveUi.folder);
   if (!here.length) {
     const empty = el("div", "drive-empty");
     empty.appendChild(svgIcon("folder", 32));
-    empty.appendChild(el("span", null, works ? (driveUi.folder ? "This folder is empty" : "Nothing here yet. Upload a file or make a folder to get started.") : studioLook() ? $("drive-desktop-note").textContent : "Open this channel in the desktop app to see its files."));
+    empty.appendChild(el("span", null, works ? (driveUi.folder ? t("ui.this-folder-is-empty") : t("ui.nothing-here-yet-upload-a-file-or-make-a")) : studioLook() ? $("drive-desktop-note").textContent : t("ui.drive.open-on-desktop")));
     list.appendChild(empty);
     return;
   }
@@ -9610,14 +9637,14 @@ function driveRow(item, items) {
     return button;
   };
   if (!item.folder) {
-    const download = action("download", item.kept_here ? "Save a copy" : "Download", () => downloadDriveItem(item));
+    const download = action("download", item.kept_here ? t("ui.save-a-copy") : t("ui.download"), () => downloadDriveItem(item));
     download.disabled = driveUnavailable(item) || driveUi.busy.has(item.id);
     if (driveUi.busy.has(item.id)) download.classList.add("busy");
-    if (item.kept_here) action("close", "Stop keeping this file", () => stopKeepingDriveItem(item));
+    if (item.kept_here) action("close", t("ui.stop-keeping-this-file"), () => stopKeepingDriveItem(item));
   }
   if (item.can_edit) {
-    action("pencil", "Rename or move", () => openDriveItemDialog("edit", item));
-    action("trash", "Remove", () => openDriveItemDialog("remove", item), " danger");
+    action("pencil", t("ui.rename-or-move"), () => openDriveItemDialog("edit", item));
+    action("trash", t("ui.remove"), () => openDriveItemDialog("remove", item), " danger");
   }
   row.appendChild(actions);
   return row;
@@ -9632,7 +9659,7 @@ function openDriveItemDialog(mode, item = null) {
   const view = driveUi.view;
   if (!view) return;
   driveUi.dialog = { mode, item };
-  const titles = { folder: "New folder", edit: `Change ${item ? item.name : ""}`, remove: `Remove ${item ? item.name : ""}?` };
+  const titles = { folder: t("ui.new-folder"), edit: t("ui.change-2", { value: item ? item.name : "" }), remove: t("ui.remove-3", { value: item ? item.name : "" }) };
   $("drive-item-title").textContent = titles[mode];
   const naming = mode !== "remove";
   $("drive-item-name").closest("label").classList.toggle("hidden", !naming);
@@ -9650,12 +9677,12 @@ function openDriveItemDialog(mode, item = null) {
     }
   }
   if (mode === "remove") {
-    const inside = item.folder ? " and everything in it" : "";
-    const kept = !item.folder && item.kept_here ? " Your own copy stays where you saved it, but this device stops sharing it." : "";
-    $("drive-item-text").textContent = `This removes ${item.name}${inside} from the drive for everyone.${kept}`;
+    const inside = item.folder ? t("ui.and-everything-in-it") : "";
+    const kept = !item.folder && item.kept_here ? t("ui.your-own-copy-stays-where-you-saved-it") : "";
+    $("drive-item-text").textContent = t("ui.this-removes-from-the-drive-for-everyone", { name: item.name, inside, kept });
   }
   const save = $("drive-item-save");
-  save.textContent = mode === "remove" ? "Remove" : mode === "folder" ? "Create" : "Save";
+  save.textContent = mode === "remove" ? t("ui.remove") : mode === "folder" ? t("ui.create") : t("ui.save");
   save.classList.toggle("btn-danger", mode === "remove");
   save.classList.toggle("btn-primary", mode !== "remove");
   syncDriveItemDialog();
@@ -9705,7 +9732,7 @@ async function uploadToDrive() {
   if (!server || !driveUi.channel) return;
   try {
     const added = await invoke("drive_upload", { serverId: server.id, channelId: driveUi.channel, parentId: driveUi.folder });
-    if (added) toast(inBrowserApp() ? "Shared. It stays available while this tab is open, or while someone who downloaded it in the desktop app is online" : "Shared. It stays available while this computer, or someone who downloads it, is online");
+    if (added) toast(inBrowserApp() ? t("ui.shared-it-stays-available-while-this-tab") : t("ui.shared-it-stays-available-while-this"));
     await refreshDrive();
   } catch (e) {
     toast(String(e));
@@ -9719,7 +9746,7 @@ async function downloadDriveItem(item) {
   renderDrive();
   try {
     const path = await invoke("drive_download", { serverId: server.id, itemId: item.id, name: item.name });
-    toast(path ? (inBrowserApp() ? `Downloaded ${path}` : `Saved to ${path}. You now help keep it available`) : "Download cancelled");
+    toast(path ? (inBrowserApp() ? t("ui.downloaded", { path }) : t("ui.saved-to-you-now-help-keep-it-available", { path })) : t("ui.download-cancelled"));
   } catch (e) {
     toast(String(e));
   } finally {
@@ -9740,7 +9767,7 @@ async function stopKeepingDriveItem(item) {
   if (!server) return;
   try {
     await invoke("drive_stop_keeping", { serverId: server.id, itemId: item.id });
-    toast(`This device no longer shares ${item.name}`);
+    toast(t("ui.this-device-no-longer-shares", { name: item.name }));
     await refreshDrive();
   } catch (e) {
     toast(String(e));
@@ -9766,8 +9793,8 @@ function buildGroupIntro(server) {
   intro.appendChild(mark);
   intro.appendChild(el("h2", null, shownServerName(server)));
   const others = server.members.filter(m => !state.user || m.id !== state.user.id).map(m => m.name);
-  const who = others.length > 1 ? `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]}` : others[0] || "just you so far";
-  intro.appendChild(el("p", null, `This is the start of your group with ${who}. Messages and calls ${inBrowserApp() ? "stay" : "go straight"} between the people in it.`));
+  const who = others.length > 1 ? `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]}` : others[0] || t("ui.just-you-so-far");
+  intro.appendChild(el("p", null, t(inBrowserApp() ? "ui.group-start-browser" : "ui.group-start-desktop", { who })));
   return intro;
 }
 
@@ -9785,12 +9812,12 @@ function buildChannelIntro(channel) {
   else if (announcement) mark.appendChild(svgIcon("megaphone", 34));
   else mark.appendChild(el("span", "channel-intro-hash", "#"));
   intro.appendChild(mark);
-  const title = el("h2", null, isVoiceKind(channel.kind) ? "Welcome to " : "Welcome to #");
+  const title = el("h2", null, isVoiceKind(channel.kind) ? t("ui.welcome-to") : t("ui.welcome-to-2"));
   title.appendChild(channelNameNode(channel));
   intro.appendChild(title);
   const fallback = announcement
-    ? "News for everyone in the server. Only members allowed to post announcements write here."
-    : "This is the start of the channel. Say something.";
+    ? t("ui.news-for-everyone-in-the-server-only")
+    : t("ui.this-is-the-start-of-the-channel-say");
   intro.appendChild(el("p", null, channel.topic || fallback));
   return intro;
 }
@@ -9812,8 +9839,8 @@ function dayDivider(date) {
 function newDivider() {
   const row = el("div", "new-divider");
   row.setAttribute("role", "separator");
-  row.setAttribute("aria-label", "New messages");
-  row.appendChild(el("span", "new-divider-label", "NEW"));
+  row.setAttribute("aria-label", t("ui.new-messages"));
+  row.appendChild(el("span", "new-divider-label", t("ui.new")));
   return row;
 }
 
@@ -9836,27 +9863,27 @@ function pendingMark() {
 
 function pinnedMark() {
   const mark = el("span", "msg-pinned");
-  mark.title = "Pinned";
+  mark.title = t("ui.pinned");
   mark.setAttribute("role", "img");
-  mark.setAttribute("aria-label", "Pinned");
+  mark.setAttribute("aria-label", t("ui.pinned"));
   mark.appendChild(svgIcon("pin", 13));
-  mark.appendChild(document.createTextNode("Pinned"));
+  mark.appendChild(document.createTextNode(t("ui.pinned")));
   return mark;
 }
 
 function ttsMark() {
   const mark = el("span", "msg-tts");
-  mark.title = "Sent as text-to-speech. Read Aloud is in the message menu.";
+  mark.title = t("ui.sent-as-text-to-speech-read-aloud-is-in");
   mark.setAttribute("role", "img");
-  mark.setAttribute("aria-label", "Text-to-speech");
+  mark.setAttribute("aria-label", t("ui.text-to-speech"));
   mark.appendChild(svgIcon("speaker", 13));
-  mark.appendChild(document.createTextNode("Spoken"));
+  mark.appendChild(document.createTextNode(t("ui.spoken")));
   return mark;
 }
 
 function heldMark(reason) {
   const mark = el("span", "msg-held");
-  mark.title = "Members don't see this message. Auto moderation held it.";
+  mark.title = t("ui.members-don-t-see-this-message-auto");
   mark.setAttribute("role", "img");
   mark.setAttribute("aria-label", heldLabel(reason));
   mark.appendChild(svgIcon("eyeOff", 13));
@@ -9924,7 +9951,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   if (message.sealed) {
     const sealed = el("div", "msg-content msg-sealed");
     sealed.appendChild(svgIcon("lock", 14));
-    sealed.appendChild(el("span", null, "Sealed message. It opens once this channel's key reaches you."));
+    sealed.appendChild(el("span", null, t("ui.sealed-message-it-opens-once-this")));
     body.appendChild(sealed);
   }
   if (inlineMark) body.prepend(pendingMark());
@@ -9936,7 +9963,7 @@ function buildMessageRow(message, grouped, { replies = 0, inThread = false } = {
   const pills = reactionPills(message);
   if (pills) body.appendChild(pills);
   if (replies && !inThread) {
-    const link = el("button", "thread-link", `${replies} ${replies === 1 ? "reply" : "replies"}`);
+    const link = el("button", "thread-link", t(replies === 1 ? "ui.n.replies.one" : "ui.n.replies.many", { count: replies }));
     link.prepend(svgIcon("thread", 14));
     link.onclick = () => openThread(message.id);
     body.appendChild(link);
@@ -9949,12 +9976,12 @@ async function setPinned(message, pinned) {
   if (!state.currentServer || !state.currentChannel) return;
   const channel = state.currentChannel;
   if (pinned && !pinRoomLeft(channel.pins)) {
-    toast(`A channel holds up to ${MAX_PINS_PER_CHANNEL} pinned messages. Unpin one first.`);
+    toast(t("ui.a-channel-holds-up-to-pinned-messages", { MAX_PINS_PER_CHANNEL }));
     return;
   }
   try {
     await invoke("pin_message", { serverId: state.currentServer.id, channelId: channel.id, messageId: message.id, pinned });
-    toast(pinned ? "Pinned" : "Unpinned");
+    toast(pinned ? t("ui.pinned") : t("ui.unpinned"));
     await refreshCurrentServer();
     if (!$("pins-pop").classList.contains("hidden")) await renderPinsPanel();
   } catch (e) {
@@ -10074,10 +10101,10 @@ function pinsEmptyState() {
   const mark = el("div", "pins-empty-mark");
   mark.appendChild(svgIcon("pin", 26));
   empty.appendChild(mark);
-  empty.appendChild(el("strong", null, "No pinned messages yet"));
+  empty.appendChild(el("strong", null, t("ui.no-pinned-messages-yet")));
   const hint = canPinIn(state.currentServer, state.currentChannel)
-    ? `${messageReach()} a message and choose Pin to keep it here for everyone.`
-    : "Members who can pin messages keep the important ones here.";
+    ? t("ui.a-message-and-choose-pin-to-keep-it", { value: messageReach() })
+    : t("ui.members-who-can-pin-messages-keep-the");
   empty.appendChild(el("span", null, hint));
   return empty;
 }
@@ -10113,12 +10140,12 @@ function pinRow(pin, { jump, showChannel = false } = {}) {
     thumb.classList.add("pin-thumb");
     body.appendChild(thumb);
   }
-  body.appendChild(el("div", "pin-by", `Pinned by ${pin.by_name}`));
+  body.appendChild(el("div", "pin-by", t("ui.pinned-by", { by_name: pin.by_name })));
   row.appendChild(body);
   if (state.currentServer && state.currentServer.can_pin) {
     const unpin = el("button", "pin-unpin");
-    unpin.title = "Unpin";
-    unpin.setAttribute("aria-label", "Unpin");
+    unpin.title = t("ui.unpin");
+    unpin.setAttribute("aria-label", t("ui.unpin"));
     unpin.appendChild(svgIcon("close", 16));
     unpin.onclick = async e => {
       e.stopPropagation();
@@ -10151,7 +10178,7 @@ async function jumpToPin(pin, fromPanel = false) {
   if (!state.currentChannel || state.currentChannel.id !== pin.channel) {
     const channel = state.currentServer.channels.find(c => c.id === pin.channel);
     if (!channel) {
-      toast("That channel is gone");
+      toast(t("ui.that-channel-is-gone"));
       return;
     }
     await selectChannel(channel);
@@ -10162,7 +10189,7 @@ async function jumpToPin(pin, fromPanel = false) {
 async function openServerPins() {
   if (!state.currentServer) return;
   closeFloating();
-  $("pins-modal-title").textContent = `Pinned in ${shownServerName(state.currentServer)}`;
+  $("pins-modal-title").textContent = t("ui.pinned-in", { value: shownServerName(state.currentServer) });
   showModal("modal-pins");
   await renderServerPins();
 }
@@ -10177,8 +10204,8 @@ async function renderServerPins() {
   }
   list.innerHTML = "";
   $("pins-modal-sub").textContent = pins.length
-    ? `${pins.length} pinned ${pins.length === 1 ? "message" : "messages"} across this server, newest first.`
-    : "Nothing is pinned in this server yet.";
+    ? t(pins.length === 1 ? "ui.server-pins.one" : "ui.server-pins.many", { count: pins.length })
+    : t("ui.nothing-is-pinned-in-this-server-yet");
   for (const group of groupPinsByChannel(pins)) {
     markPinsSeen(group.channel, group.pins);
     const head = el("div", "pins-group-head");
@@ -10341,7 +10368,7 @@ function pickableRow(row, onPick) {
 
 function renderSearchHints() {
   const ctx = searchScopeContext();
-  setSearchHead(searchScopeTitle(searchUi.scope, ctx), "Runs on this device, over the history it keeps");
+  setSearchHead(searchScopeTitle(searchUi.scope, ctx), t("ui.runs-on-this-device-over-the-history-it"));
   setSearchPager(null);
   const filters = SEARCH_FILTERS.filter(filter => filter.key !== "in" || searchContext().channels.length);
   const rows = filters.map(filter => {
@@ -10362,11 +10389,11 @@ function renderSearchHints() {
     row.append(el("span", "search-filter-key", key), el("span", "mention-hint", hint));
     return row;
   });
-  setSearchItems([el("div", "mention-head", "Filters"), ...rows, el("div", "mention-head search-tips-head", "Also works"), ...tips]);
+  setSearchItems([el("div", "mention-head", t("ui.filters")), ...rows, el("div", "mention-head search-tips-head", t("ui.also-works")), ...tips]);
 }
 
 function renderSearchSuggestions(token, items) {
-  setSearchHead(token.kind === "member" ? (state.view === "dm" ? "People" : "Members") : "Channels", "");
+  setSearchHead(token.kind === "member" ? (state.view === "dm" ? t("ui.people-2") : t("ui.members")) : t("ui.channels-2"), "");
   setSearchPager(null);
   const rows = items.map(item => {
     const row = el("button", "mention-row");
@@ -10443,7 +10470,7 @@ function searchPersonRow(person) {
     if (typeof studioPhone !== "undefined" && studioPhone.searchHome) closeSheets(open);
     else open();
   });
-  row.append(face, el("span", "mention-name", person.name), el("span", "mention-hint", "Their messages"));
+  row.append(face, el("span", "mention-name", person.name), el("span", "mention-hint", t("ui.their-messages")));
   return pickableRow(row, () => {
     const input = $("search-input");
     input.value = fromSearchText(person);
@@ -10473,7 +10500,7 @@ function renderSearchResults(query, results, scope, ctx) {
   setSearchHead(total || !studioLook() ? pageCount(total) : searchScopeTitle(scope, ctx), searchScopeLine(scope, query, ctx));
   setSearchPager(pageWindow(total, results.offset));
   if (!hits.length) {
-    setSearchItems(withSearchPeople(query, [searchNote("No messages found", "Search covers what this device keeps. Older history may have rolled off in Settings > Storage.")]));
+    setSearchItems(withSearchPeople(query, [searchNote(t("ui.no-messages-found"), t("ui.search-covers-what-this-device-keeps"))]));
     return;
   }
   setSearchItems(withSearchPeople(query, hits.map(hit => searchResultRow(hit, searchTerms(query)))));
@@ -10485,7 +10512,7 @@ function renderDmSearchResults(query, results, scope, ctx) {
   setSearchHead(total || !studioLook() ? pageCount(total) : searchScopeTitle(scope, ctx), searchScopeLine(scope, query, ctx));
   setSearchPager(pageWindow(total, results.offset));
   if (!hits.length) {
-    setSearchItems(withSearchPeople(query, [searchNote("No messages found", "Search covers the direct messages and groups this device keeps.")]));
+    setSearchItems(withSearchPeople(query, [searchNote(t("ui.no-messages-found"), t("ui.search-covers-the-direct-messages-and"))]));
     return;
   }
   const terms = searchTerms(query);
@@ -10507,8 +10534,8 @@ async function runSearch(offset = searchUi.offset) {
   if (query.unknown.length) {
     setSearchHead(searchScopeTitle(scope, ctx), "");
     setSearchPager(null);
-    const where = ctx.view === "dm" ? "in your direct messages" : "in this server";
-    setSearchItems([searchNote(unknownFilterText(query.unknown, where), "Pick a name from the list as you type.")]);
+    const where = ctx.view === "dm" ? t("ui.in-your-direct-messages") : t("ui.in-this-server");
+    setSearchItems([searchNote(unknownFilterText(query.unknown, where), t("ui.pick-a-name-from-the-list-as-you-type"))]);
     return;
   }
   if (searchIsEmpty(query)) return renderSearchHints();
@@ -10519,7 +10546,7 @@ async function runSearch(offset = searchUi.offset) {
   } catch (e) {
     if (token === searchUi.token) {
       setSearchPager(null);
-      setSearchItems([searchNote("Search did not finish", String(e))]);
+      setSearchItems([searchNote(t("ui.search-did-not-finish"), String(e))]);
     }
     return;
   }
@@ -10587,7 +10614,7 @@ async function openSearchHit(hit) {
   if (!state.currentServer) return;
   const channel = state.currentServer.channels.find(c => c.id === hit.channel);
   if (!channel) {
-    toast("That channel is gone");
+    toast(t("ui.that-channel-is-gone"));
     return;
   }
   if (!state.currentChannel || state.currentChannel.id !== channel.id) await selectChannel(channel);
@@ -10642,7 +10669,7 @@ function wireSearch() {
 }
 
 const SWITCHER_RECENT_KEY = "commy.switcher.recent";
-const SWITCHER_MOD = /mac/i.test(navigator.platform || "") ? "Cmd" : "Ctrl";
+const SWITCHER_MOD = /mac/i.test(navigator.platform || "") ? t("ui.cmd") : "Ctrl";
 const switcher = { items: [], shown: [], at: 0, views: {}, open: false, recent: [] };
 
 function loadSwitcherRecent() {
@@ -10660,8 +10687,8 @@ function rememberSwitcherRecent(key) {
 
 function switcherActions() {
   return [
-    { id: "settings", name: "Settings", subtitle: "Account, voice, appearance" },
-    { id: "create-server", name: "Create a server", subtitle: "From scratch or a template" },
+    { id: "settings", name: t("nav.settings"), subtitle: t("ui.account-voice-appearance") },
+    { id: "create-server", name: t("ui.create-a-server-2"), subtitle: t("ui.from-scratch-or-a-template") },
   ];
 }
 
@@ -10720,7 +10747,7 @@ function renderSwitcher() {
   switcher.at = Math.min(switcher.at, Math.max(0, switcher.shown.length - 1));
   list.innerHTML = "";
   if (!switcher.shown.length) {
-    list.appendChild(el("div", "switcher-empty", switcher.items.length ? "Nothing matches" : "Join or create a server first"));
+    list.appendChild(el("div", "switcher-empty", switcher.items.length ? t("ui.nothing-matches") : t("ui.join-or-create-a-server-first")));
     return;
   }
   switcher.shown.forEach((item, at) => {
@@ -10784,7 +10811,7 @@ async function runSwitcherItem(item) {
   }
   if (!state.currentServer || state.currentServer.id !== item.serverId) await selectServer(item.serverId);
   const channel = state.currentServer && state.currentServer.channels.find(c => c.id === item.channelId);
-  if (!channel) return toast("That channel is gone");
+  if (!channel) return toast(t("ui.that-channel-is-gone"));
   if (isVoiceKind(channel.kind)) {
     if (state.voiceChannelId !== channel.id) await toggleVoice(channel);
     return;
@@ -10837,7 +10864,7 @@ function replyReference(message) {
     ref.appendChild(el("span", "reply-ref-name", preview.author_name));
     ref.appendChild(el("span", "reply-ref-text", plainText(preview.excerpt)));
   } else {
-    ref.appendChild(el("span", "reply-ref-text missing", "Original message was deleted"));
+    ref.appendChild(el("span", "reply-ref-text missing", t("ui.original-message-was-deleted")));
   }
   ref.onclick = () => jumpToMessage(message.reply_to);
   return ref;
@@ -10880,8 +10907,8 @@ async function showMessageInHistory(id) {
 function historyPill() {
   const pill = el("div", "history-pill");
   pill.setAttribute("role", "status");
-  pill.appendChild(el("span", null, "Viewing older messages"));
-  const back = el("button", "btn-primary btn-small", "Jump to present");
+  pill.appendChild(el("span", null, t("ui.viewing-older-messages")));
+  const back = el("button", "btn-primary btn-small", t("ui.jump-to-present"));
   back.onclick = jumpToPresent;
   pill.appendChild(back);
   return pill;
@@ -10898,7 +10925,7 @@ async function jumpToMessage(id) {
   let row = messageRow(id);
   if (!row) row = await showMessageInHistory(id).catch(() => null);
   if (!row) {
-    toast("That message is no longer on this device");
+    toast(t("ui.that-message-is-no-longer-on-this-device"));
     return;
   }
   phoneShowChat();
@@ -10946,7 +10973,7 @@ async function notifyAnyway() {
     }
   }
   if (refused.length) toast(refused[0]);
-  else toast(people.length === 1 ? `Notified ${people[0].name}` : "Notified them");
+  else toast(people.length === 1 ? t("ui.notified", { value: people[0].name }) : t("ui.notified-them"));
 }
 
 function onNotifyAnyway(nudge) {
@@ -11025,9 +11052,9 @@ function renderThreadHead(root, replies) {
   if (!renaming) threadRenaming = null;
   const title = $("thread-title");
   const post = root ? forumPostFor(root.id) : null;
-  title.textContent = post ? post.title : root ? threadName(root, meta, plainText) : "Thread";
+  title.textContent = post ? post.title : root ? threadName(root, meta, plainText) : t("ui.thread");
   title.disabled = !manages;
-  title.title = manages ? "Rename Thread" : "";
+  title.title = manages ? t("ui.rename-thread") : "";
   title.classList.toggle("hidden", renaming);
   $("thread-title-input").classList.toggle("hidden", !renaming);
   $("thread-status").textContent = root ? threadStatusLine({ meta, replies }) : "";
@@ -11038,8 +11065,8 @@ function renderThreadHead(root, replies) {
     btn.setAttribute("aria-pressed", String(on));
     btn.title = on ? onTitle : offTitle;
   };
-  flag("thread-archive", Boolean(meta && meta.archived), "Unarchive Thread", "Archive Thread");
-  flag("thread-lock", Boolean(meta && meta.locked), "Unlock Thread", "Lock Thread");
+  flag("thread-archive", Boolean(meta && meta.archived), t("ui.unarchive-thread-2"), t("ui.archive-thread"));
+  flag("thread-lock", Boolean(meta && meta.locked), t("ui.unlock-thread-2"), t("ui.lock-thread"));
   const composer = threadComposerState({ meta, canManageMessages: canManageMessagesHere() });
   const input = $("thread-input");
   input.disabled = composer.disabled;
@@ -11131,7 +11158,7 @@ function renderThreadsPanel() {
   if (!state.currentChannel) return;
   const { active, archived } = buildThreadList(state.renderedMessages || [], currentThreads(), { plain: plainText });
   const where = `#${channelPlainName(state.currentChannel)}`;
-  $("threads-pop-sub").textContent = active.length ? `${active.length} active in ${where}` : `None active in ${where}`;
+  $("threads-pop-sub").textContent = active.length ? t("ui.active-in", { count: active.length, where }) : t("ui.none-active-in", { where });
   if (!active.length && !archived.length) {
     list.appendChild(threadsEmptyState());
     return;
@@ -11142,7 +11169,7 @@ function renderThreadsPanel() {
   toggle.type = "button";
   toggle.setAttribute("aria-expanded", String(threadsArchivedOpen));
   toggle.appendChild(svgIcon(threadsArchivedOpen ? "chevronDown" : "chevronRight", 16));
-  toggle.appendChild(el("span", null, `Archived (${archived.length})`));
+  toggle.appendChild(el("span", null, t("ui.archived", { count: archived.length })));
   toggle.onclick = () => {
     threadsArchivedOpen = !threadsArchivedOpen;
     renderThreadsPanel();
@@ -11156,8 +11183,8 @@ function threadsEmptyState() {
   const mark = el("div", "pins-empty-mark");
   mark.appendChild(svgIcon("thread", 26));
   empty.appendChild(mark);
-  empty.appendChild(el("strong", null, "No threads yet"));
-  empty.appendChild(el("span", null, `${messageReach()} a message and choose Open Thread to start one.`));
+  empty.appendChild(el("strong", null, t("ui.no-threads-yet")));
+  empty.appendChild(el("span", null, t("ui.a-message-and-choose-open-thread-to", { value: messageReach() })));
   return empty;
 }
 
@@ -11171,8 +11198,8 @@ function threadRow(thread) {
   row.appendChild(tile);
   const body = el("div", "thread-row-body");
   body.appendChild(el("div", "thread-row-name", thread.name));
-  const meta = [`${thread.replies} ${thread.replies === 1 ? "reply" : "replies"}`];
-  if (thread.locked) meta.push("Locked");
+  const meta = [t(thread.replies === 1 ? "ui.n.replies.one" : "ui.n.replies.many", { count: thread.replies })];
+  if (thread.locked) meta.push(t("ui.locked"));
   meta.push(formatShortTime(new Date(thread.lastAt).toISOString()));
   body.appendChild(el("div", "thread-row-meta", meta.join(" · ")));
   row.appendChild(body);
@@ -11198,7 +11225,7 @@ function renderThread() {
   const items = root ? messages.filter(m => m.id === root.id || (m.reply_to && threadRootOf(m, byId) === root.id)) : [];
   renderThreadHead(root, Math.max(0, items.length - 1));
   if (!root) {
-    box.appendChild(el("div", "manage-empty", "This thread's first message is no longer loaded."));
+    box.appendChild(el("div", "manage-empty", t("ui.this-thread-s-first-message-is-no-longer")));
     return;
   }
   items.forEach((m, i) => {
@@ -11207,7 +11234,7 @@ function renderThread() {
     box.appendChild(row);
     if (i === 0) {
       const n = items.length - 1;
-      box.appendChild(el("div", "thread-divider", n ? `${n} ${n === 1 ? "reply" : "replies"}` : "No replies yet"));
+      box.appendChild(el("div", "thread-divider", n ? t(n === 1 ? "ui.n.replies.one" : "ui.n.replies.many", { count: n }) : t("ui.no-replies-yet")));
     }
   });
   box.scrollTop = box.scrollHeight;
@@ -11246,13 +11273,13 @@ function reactionPills(message) {
     if (custom) pill.appendChild(customEmojiImg(custom.name, custom.image, "custom-emoji reaction-emoji"));
     else pill.appendChild(el("span", "reaction-emoji", r.emoji));
     pill.appendChild(el("span", "reaction-count", String(r.count)));
-    const names = r.users.map(id => (state.user && id === state.user.id ? "You" : avatarNameFor(id))).join(", ");
-    pill.title = `${names} reacted with ${custom ? `:${custom.name}:` : r.emoji}`;
+    const names = r.users.map(id => (state.user && id === state.user.id ? t("settings.group.you") : avatarNameFor(id))).join(", ");
+    pill.title = t("ui.reacted-with", { names, value: custom ? `:${custom.name}:` : r.emoji });
     pill.onclick = () => setReaction(message, r.emoji, !mine);
     wrap.appendChild(pill);
   }
   const add = el("button", "reaction add");
-  add.title = "Add Reaction";
+  add.title = t("ui.add-reaction");
   add.appendChild(svgIcon("smilePlus", 16));
   add.onclick = e => openEmojiPop(e.currentTarget, emoji => setReaction(message, emoji, true), { custom: true });
   wrap.appendChild(add);
@@ -11278,7 +11305,7 @@ function currentServerMember(id) {
 function avatarNameFor(userId) {
   if (inDmView() && userId === state.currentDm.user) return state.currentDm.name;
   const member = currentServerMember(userId);
-  return member ? member.name : "Someone";
+  return member ? member.name : t("ui.someone");
 }
 
 async function setReaction(message, emoji, active) {
@@ -11344,8 +11371,8 @@ function setHidden(id, hidden) {
 function hiddenPlaceholder(message) {
   const row = el("div", "msg-hidden");
   row.appendChild(svgIcon("eyeOff", 14));
-  row.appendChild(el("span", null, `You hid a message from ${message.author_name}`));
-  const show = el("button", "btn-link", "Show");
+  row.appendChild(el("span", null, t("ui.you-hid-a-message-from", { author_name: message.author_name })));
+  const show = el("button", "btn-link", t("ui.show-2"));
   show.onclick = () => setHidden(message.id, false);
   row.appendChild(show);
   return row;
@@ -11380,27 +11407,27 @@ function messageActionList(message, inThread = false, replies = 0) {
   const list = [];
   const add = (id, icon, title, run, extra = {}) => list.push({ id, icon, title, run, ...extra });
   if (state.view === "server" || inDmView()) {
-    add("react", "smilePlus", "Add Reaction", anchor => openEmojiPop(anchor, emoji => setReaction(message, emoji, true), { custom: true }));
+    add("react", "smilePlus", t("ui.add-reaction"), anchor => openEmojiPop(anchor, emoji => setReaction(message, emoji, true), { custom: true }));
     if (inThread) {
-      add("reply", "reply", "Reply", () => $("thread-input").focus());
+      add("reply", "reply", t("ui.reply"), () => $("thread-input").focus());
     } else {
-      add("reply", "reply", "Reply", () => startReply(message));
+      add("reply", "reply", t("ui.reply"), () => startReply(message));
       if (state.view === "server" && threadEntryShown({ replies, meta: threadMetaOf(message.id), canCreate: canCreateThreads(state.currentServer) })) {
-        add("thread", "thread", "Open Thread", () => openThread(message.id));
+        add("thread", "thread", t("ui.open-thread-2"), () => openThread(message.id));
       }
     }
   }
   if ((state.view === "server" || inDmView()) && isOwnMessage(message) && message.content && !parseStickerToken(message.content)) {
-    add("edit", "pencil", "Edit", () => startEditMessage(message.id), { label: "Edit Message" });
+    add("edit", "pencil", t("ui.edit"), () => startEditMessage(message.id), { label: t("ui.edit-message") });
   }
   if (state.view === "server" && canPinIn(state.currentServer, state.currentChannel)) {
-    if (message.pinned) add("pin", "pinOff", "Unpin", () => setPinned(message, false), { label: "Unpin Message" });
-    else add("pin", "pin", "Pin", () => setPinned(message, true), { label: "Pin Message" });
+    if (message.pinned) add("pin", "pinOff", t("ui.unpin"), () => setPinned(message, false), { label: t("ui.unpin-message") });
+    else add("pin", "pin", t("ui.pin"), () => setPinned(message, true), { label: t("ui.pin-message") });
   }
   savedMessageActions(add, message);
-  if (!isOwnMessage(message)) add("hide", "eyeOff", "Hide for Me", () => setHidden(message.id, true));
+  if (!isOwnMessage(message)) add("hide", "eyeOff", t("ui.hide-for-me-2"), () => setHidden(message.id, true));
   if (state.view === "server" && reportableIn(state.currentServer, message.author_id)) {
-    add("report", "flag", "Report Message", () => openReport({
+    add("report", "flag", t("ui.report-message-2"), () => openReport({
       serverId: state.currentServer.id,
       userId: message.author_id,
       name: message.author_name,
@@ -11411,10 +11438,10 @@ function messageActionList(message, inThread = false, replies = 0) {
   }
   if (canDeleteMessage(message)) {
     const own = isOwnMessage(message);
-    add("delete", "trash", own ? "Delete" : "Delete (Moderator)", (anchor, e) => {
+    add("delete", "trash", own ? "Delete" : t("ui.delete-moderator"), (anchor, e) => {
       if (e && e.shiftKey) deleteMessage(message);
       else openDeleteMessage(message);
-    }, { label: own ? "Delete Message" : "Delete Message (Moderator)", tail: true, danger: true });
+    }, { label: own ? t("ui.delete-message") : t("ui.delete-message-moderator"), tail: true, danger: true });
   }
   return list;
 }
@@ -11436,7 +11463,7 @@ function messageActions(message, inThread = false, replies = 0) {
   };
   const { quick, rest } = splitMessageActions(actions);
   for (const action of quick) add(action.icon, action.title, e => action.run(e.currentTarget, e), action.danger ? "danger" : "");
-  if (rest.length || messageMenuExtras(message).length) add("more", "More", e => openMessageMenu(message, e.currentTarget, null, rest));
+  if (rest.length || messageMenuExtras(message).length) add("more", t("ui.more"), e => openMessageMenu(message, e.currentTarget, null, rest));
   return bar;
 }
 
@@ -11453,7 +11480,7 @@ function startEditMessage(id) {
   input.rows = Math.min(8, input.value.split("\n").length);
   editor.appendChild(input);
   const hint = el("div", "msg-editor-hint");
-  hint.innerHTML = "escape to <a>cancel</a> &middot; enter to <a>save</a>";
+  hint.innerHTML = `${t("ui.edit-hint-escape")} <a>${t("ui.edit-hint-cancel")}</a> &middot; ${t("ui.edit-hint-enter")} <a>${t("ui.edit-hint-save")}</a>`;
   const [cancelLink, saveLink] = hint.querySelectorAll("a");
   editor.appendChild(hint);
   if (content) content.replaceWith(editor);
@@ -11539,9 +11566,9 @@ async function deleteMessage(message) {
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes < 1024 * 1024) return t("ui.kb", { value: (bytes / 1024).toFixed(1) });
+  if (bytes < 1024 ** 3) return t("ui.mb", { value: (bytes / 1024 ** 2).toFixed(1) });
+  return t("ui.gb", { value: (bytes / 1024 ** 3).toFixed(2) });
 }
 
 const voiceClips = new Map();
@@ -11562,10 +11589,10 @@ async function loadVoiceClip(att) {
 
 function renderVoiceMessage(att) {
   const box = el("div", "voice-msg");
-  box.title = "Voice message";
+  box.title = t("ui.voice-message");
   const play = el("button", "voice-play");
   play.type = "button";
-  play.title = "Play";
+  play.title = t("ui.play");
   play.appendChild(svgIcon("play", 16));
   const wave = el("div", "voice-wave");
   const bars = waveformBars(att.blob).map(height => {
@@ -11587,7 +11614,7 @@ function renderVoiceMessage(att) {
   };
   const showPlaying = playing => {
     play.replaceChildren(svgIcon(playing ? "pause" : "play", 16));
-    play.title = playing ? "Pause" : "Play";
+    play.title = playing ? t("ui.pause") : t("ui.play");
     box.classList.toggle("playing", playing);
   };
   loadVoiceClip(att).then(clip => {
@@ -11623,7 +11650,7 @@ function renderVoiceMessage(att) {
         };
         audio.onerror = () => {
           showPlaying(false);
-          toast("This voice message could not be played");
+          toast(t("ui.this-voice-message-could-not-be-played"));
         };
       } catch (e) {
         toast(String(e));
@@ -11632,7 +11659,7 @@ function renderVoiceMessage(att) {
       }
       play.disabled = false;
     }
-    audio.play().catch(() => toast("This voice message could not be played"));
+    audio.play().catch(() => toast(t("ui.this-voice-message-could-not-be-played")));
   };
   return box;
 }
@@ -11654,18 +11681,18 @@ function renderAttachment(att) {
   meta.appendChild(el("div", "file-name", name));
   const size = meta.appendChild(el("div", "file-size", formatSize(att.size_bytes)));
   box.appendChild(meta);
-  const btn = studio ? el("button", "key sm sq file-save") : el("button", "btn-secondary btn-small", "Download");
+  const btn = studio ? el("button", "key sm sq file-save") : el("button", "btn-secondary btn-small", t("ui.download"));
   if (studio) {
     btn.type = "button";
-    btn.title = `Save ${name}`;
-    btn.setAttribute("aria-label", `Save ${name}`);
+    btn.title = t("ui.save-3", { name });
+    btn.setAttribute("aria-label", t("ui.save-3", { name }));
     btn.appendChild(studioIconNode("download", 18));
   }
   const words = studio ? size : btn;
   const rest = words.textContent;
   btn.onclick = async () => {
     btn.disabled = true;
-    words.textContent = isBigFile(att.size_bytes) ? "Choose where" : "Fetching";
+    words.textContent = isBigFile(att.size_bytes) ? t("ui.choose-where") : t("ui.fetching");
     const watching = (downloadButtons.get(att.blob) || new Set()).add(words);
     downloadButtons.set(att.blob, watching);
     const saved = await saveAttachment(att);
@@ -11673,10 +11700,10 @@ function renderAttachment(att) {
     if (!watching.size) downloadButtons.delete(att.blob);
     btn.disabled = false;
     const failed = studio && !saved;
-    words.textContent = failed ? "Couldn't save" : rest;
+    words.textContent = failed ? t("ui.couldn-t-save") : rest;
     words.classList.toggle("file-failed", failed);
     if (studio) {
-      btn.title = failed ? "Retry" : `Save ${name}`;
+      btn.title = failed ? t("ui.retry") : t("ui.save-3", { name });
       btn.setAttribute("aria-label", btn.title);
     }
   };
@@ -11699,7 +11726,7 @@ async function saveAttachment(att) {
       sizeBytes: att.size_bytes ?? null,
       serverId: att.server ?? null,
     });
-    toast(path ? `Saved to ${path}` : "Download cancelled");
+    toast(path ? t("ui.saved-to", { path }) : t("ui.download-cancelled"));
     return true;
   } catch (e) {
     toast(String(e));
@@ -11735,7 +11762,7 @@ function paintUpdateChip() {
   const offline = !$("offline-chip").classList.contains("hidden");
   const dismissed = !!notice && dismissedUpdateNotice === notice;
   $("update-chip-text").textContent = notice || "";
-  $("update-chip-open").textContent = ready ? "Restart" : "Update";
+  $("update-chip-open").textContent = ready ? t("ui.restart") : t("ui.update");
   $("update-chip").classList.toggle("hidden", !notice || (offline && !ready) || dismissed);
 }
 
@@ -11765,7 +11792,7 @@ function openUpdateSettings() {
 
 function renderUpdateStatus() {
   const s = updateStatus || {};
-  $("update-version").textContent = s.current ? `Commy ${s.current}` : "Commy";
+  $("update-version").textContent = s.current ? t("ui.commy-2", { current: s.current }) : "Commy";
   $("update-state").textContent = updateStatusText(s);
   const { label, action, disabled } = updateAction(s);
   const btn = $("update-action");
@@ -11804,7 +11831,7 @@ async function runConnectionTest() {
   const button = $("conn-test-run");
   const card = button.closest(".conn-test");
   button.disabled = true;
-  button.textContent = "Testing...";
+  button.textContent = t("ui.testing");
   card.classList.add("running");
   try {
     renderConnectionTest(await invoke("run_connection_check"));
@@ -11813,7 +11840,7 @@ async function runConnectionTest() {
   } finally {
     connectionTestRunning = false;
     button.disabled = false;
-    button.textContent = "Run Again";
+    button.textContent = t("ui.run-again");
     card.classList.remove("running");
   }
 }
@@ -11858,7 +11885,7 @@ async function setVerboseLogging(enabled) {
 async function saveLogBundle() {
   try {
     const saved = await invoke("save_log_bundle");
-    if (saved) toast(`Logs saved to ${saved}`);
+    if (saved) toast(t("ui.logs-saved-to", { saved }));
   } catch (err) {
     toast(String(err));
   }
@@ -11915,7 +11942,7 @@ function pushOverlayRoster(force = false) {
 function pushOverlayChat(authorId, author, content, hasAttachments) {
   if (!overlaySettings || !overlaySettings.show_chat) return;
   const member = currentServerMember(authorId);
-  const text = plainText(content) || (hasAttachments ? "sent an attachment" : "");
+  const text = plainText(content) || (hasAttachments ? t("ui.sent-an-attachment-2") : "");
   if (text) emitToOverlay("overlay-chat", { author, color: member && member.color, text: text.slice(0, 200) });
 }
 
@@ -11943,7 +11970,7 @@ function renderOverlaySettings() {
   $("overlay-chat-key").value = s.chat_hotkey;
   invoke("overlay_hotkey_problems").then(taken => {
     const warn = $("overlay-hotkey-warning");
-    warn.textContent = taken.length ? `${taken.join(" and ")} ${taken.length === 1 ? "is" : "are"} already used by another app. Pick a different combination.` : "";
+    warn.textContent = taken.length ? t("ui.already-used-by-another-app-pick-a", { value: taken.join(" and "), value2: taken.length === 1 ? "is" : "are" }) : "";
     warn.classList.toggle("hidden", !taken.length);
   }).catch(() => {});
 }
@@ -11977,19 +12004,19 @@ function renderOverlayLayout() {
     box.style.setProperty("--h", `${area.h * 100}%`);
     box.setAttribute("aria-valuetext", `${Math.round(spot.x * 100)}% across, ${Math.round(spot.y * 100)}% down`);
   }
-  map.querySelector('[data-part="voice"] span').textContent = s.layout ? "Voice" : (s.show_chat ? "Voice + chat" : "Voice");
+  map.querySelector('[data-part="voice"] span').textContent = s.layout ? t("settings.tab.voice") : (s.show_chat ? t("ui.voice-chat") : t("settings.tab.voice"));
   const list = $("overlay-layout-list");
   list.replaceChildren();
   for (const saved of s.layouts || []) {
     const chip = el("span", "overlay-layout-chip" + (overlaySameLayout(saved, s.layout) ? " selected" : ""));
     const use = el("button", null, saved.name);
     use.type = "button";
-    use.title = `Use ${saved.name}`;
+    use.title = t("ui.use", { name: saved.name });
     use.onclick = () => moveOverlayTo({ voice: saved.voice, chat: saved.chat });
     const remove = el("button", "remove", "\u00d7");
     remove.type = "button";
-    remove.title = `Forget ${saved.name}`;
-    remove.setAttribute("aria-label", `Forget ${saved.name}`);
+    remove.title = t("ui.forget", { name: saved.name });
+    remove.setAttribute("aria-label", t("ui.forget", { name: saved.name }));
     remove.onclick = () => saveOverlaySettings({ layouts: s.layouts.filter(l => l !== saved) });
     chip.append(use, remove);
     list.appendChild(chip);
@@ -12050,10 +12077,10 @@ function wireOverlayLayout() {
   }
   const save = () => {
     const name = overlayLayoutName($("overlay-layout-name").value);
-    if (!overlaySettings.layout) return toast("Drag the voice list or chat first");
-    if (!name) return toast("Give the layout a name");
+    if (!overlaySettings.layout) return toast(t("ui.drag-the-voice-list-or-chat-first"));
+    if (!name) return toast(t("ui.give-the-layout-a-name"));
     $("overlay-layout-name").value = "";
-    saveOverlaySettings({ layouts: overlaySaveLayout(overlaySettings.layouts, name, overlaySettings.layout) }).then(() => toast(`Saved ${name}`));
+    saveOverlaySettings({ layouts: overlaySaveLayout(overlaySettings.layouts, name, overlaySettings.layout) }).then(() => toast(t("ui.saved-2", { name })));
   };
   $("overlay-layout-save").addEventListener("click", save);
   $("overlay-layout-name").addEventListener("keydown", e => {
@@ -12103,7 +12130,7 @@ function renderVoiceInputSettings() {
   renderUserPanel();
   invoke("voice_hotkey_problems").then(taken => {
     const warn = $("voice-hotkey-warning");
-    warn.textContent = taken.length ? `${taken.join(" and ")} ${taken.length === 1 ? "is" : "are"} already used by another app. Pick a different combination.` : "";
+    warn.textContent = taken.length ? t("ui.already-used-by-another-app-pick-a", { value: taken.join(" and "), value2: taken.length === 1 ? "is" : "are" }) : "";
     warn.classList.toggle("hidden", !taken.length);
   }).catch(() => {});
 }
@@ -12214,7 +12241,7 @@ function setTalking(talking) {
   $("mute-btn").classList.toggle("talking", talking && !state.voice.muted);
   for (const btn of talkButtons()) {
     btn.classList.toggle("on", talking);
-    btn.textContent = talking ? "Talking" : "Hold to talk";
+    btn.textContent = talking ? t("ui.talking") : t("ui.hold-to-talk");
   }
   renderUserPanel();
 }
@@ -12249,7 +12276,7 @@ function renderPhoneVoice() {
   const live = Boolean(state.voiceChannelId && vs);
   $("phone-voice").classList.toggle("hidden", !live);
   if (!live) return;
-  $("phone-voice-name").textContent = vs.call ? `Call with ${vs.name}` : vs.channelName;
+  $("phone-voice-name").textContent = vs.call ? t("ui.call-with", { name: vs.name }) : vs.channelName;
   $("phone-voice-grid").classList.toggle("hidden", Boolean(vs.call));
   paintPhoneGridButton();
   $("phone-voice-signal").replaceChildren(svgIcon("signal", 14));
@@ -12258,8 +12285,8 @@ function renderPhoneVoice() {
   setIcon($("phone-voice-hangup"), "hangup", 20);
   $("phone-voice-mute").classList.toggle("danger", state.voice.muted);
   $("phone-voice-deafen").classList.toggle("danger", state.voice.deafened);
-  $("phone-voice-mute").title = state.voice.muted ? "Unmute" : "Mute";
-  $("phone-voice-deafen").title = state.voice.deafened ? "Undeafen" : "Deafen";
+  $("phone-voice-mute").title = state.voice.muted ? t("ui.unmute") : t("ui.mute");
+  $("phone-voice-deafen").title = state.voice.deafened ? t("ui.undeafen") : t("ui.deafen");
 }
 
 function wirePhoneVoice() {
@@ -12280,7 +12307,7 @@ function hotkeyFromEvent(e) {
   if (e.ctrlKey) parts.push("Ctrl");
   if (e.altKey) parts.push("Alt");
   if (e.shiftKey) parts.push("Shift");
-  if (e.metaKey) parts.push("Super");
+  if (e.metaKey) parts.push(t("ui.super"));
   if (!parts.length) return null;
   let key = e.code;
   if (/^Key[A-Z]$/.test(key)) key = key.slice(3);
@@ -12292,10 +12319,10 @@ function hotkeyFromEvent(e) {
 function wireHotkeyInput(input, onPick, { clearable = false } = {}) {
   input.addEventListener("focus", () => {
     input.dataset.prev = input.value;
-    input.value = "Press keys...";
+    input.value = t("ui.press-keys");
   });
   input.addEventListener("blur", () => {
-    if (input.value === "Press keys...") input.value = input.dataset.prev || "";
+    if (input.value === t("ui.press-keys")) input.value = input.dataset.prev || "";
   });
   input.addEventListener("keydown", e => {
     e.preventDefault();
@@ -12326,7 +12353,7 @@ const signalTracker = createSignalTracker();
 
 function formatRate(bytesPerSec) {
   const kbps = (bytesPerSec * 8) / 1000;
-  return kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${Math.round(kbps)} kbps`;
+  return kbps >= 1000 ? t("ui.mbps", { value: (kbps / 1000).toFixed(1) }) : `${Math.round(kbps)} kbps`;
 }
 
 async function refreshConnPop() {
@@ -12343,7 +12370,7 @@ async function refreshConnPop() {
   const rx = stats.links.reduce((a, l) => a + l.rx_bytes, 0);
   if (connLast && now > connLast.at) {
     const secs = (now - connLast.at) / 1000;
-    $("conn-rates").textContent = `Up ${formatRate(Math.max(0, tx - connLast.tx) / secs)} - Down ${formatRate(Math.max(0, rx - connLast.rx) / secs)}`;
+    $("conn-rates").textContent = t("ui.up-down", { value: formatRate(Math.max(0, tx - connLast.tx) / secs), value2: formatRate(Math.max(0, rx - connLast.rx) / secs) });
   }
   connLast = { at: now, tx, rx };
   const list = $("conn-links");
@@ -12356,8 +12383,8 @@ async function refreshConnPop() {
   tabs.classList.toggle("hidden", entries.length < 2);
   for (const entry of entries) tabs.appendChild(connTab(entry, entry === current));
   if (current) list.appendChild(current.self ? ownConnCard(current) : linkConnCard(current));
-  if (!stats.links.length) list.appendChild(el("div", "conn-empty", "Nobody else is connected yet."));
-  $("conn-foot").textContent = `Audio: ${stats.codec}, ${stats.bitrate_kbps} kbps per person`;
+  if (!stats.links.length) list.appendChild(el("div", "conn-empty", t("ui.nobody-else-is-connected-yet")));
+  $("conn-foot").textContent = t("ui.audio-kbps-per-person", { codec: stats.codec, bitrate_kbps: stats.bitrate_kbps });
   paintSignal(stats.links);
 }
 
@@ -12370,7 +12397,7 @@ function connTab(entry, active) {
   tab.dataset.quality = entry.quality;
   tab.classList.toggle("active", active);
   tab.appendChild(makeAvatar(entry.user, entry.name, "avatar avatar-xs"));
-  tab.appendChild(el("span", "conn-tab-name", entry.self ? "You" : entry.name));
+  tab.appendChild(el("span", "conn-tab-name", entry.self ? t("settings.group.you") : entry.name));
   tab.appendChild(el("span", `conn-path ${entry.chip.kind}`, entry.chip.label));
   tab.appendChild(el("span", "conn-dot"));
   tab.onclick = () => {
@@ -12384,7 +12411,7 @@ function connCard(entry, badge, rows) {
   const row = el("div", "conn-link");
   const head = el("div", "conn-link-head");
   head.appendChild(makeAvatar(entry.user, entry.name, "avatar avatar-xs"));
-  head.appendChild(el("span", "conn-name", entry.self ? `${entry.name} (you)` : entry.name));
+  head.appendChild(el("span", "conn-name", entry.self ? t("ui.you", { name: entry.name }) : entry.name));
   head.appendChild(el("span", `conn-badge ${badge.cls}`, badge.label));
   row.appendChild(head);
   const grid = el("div", "conn-grid");
@@ -12397,20 +12424,20 @@ function connCard(entry, badge, rows) {
 }
 
 function linkConnCard(link) {
-  const badge = { cls: link.quality, label: { good: "Good", ok: "Fair", bad: "Poor" }[link.quality] };
+  const badge = { cls: link.quality, label: { good: t("ui.signal.good"), ok: t("ui.signal.fair"), bad: t("ui.signal.poor") }[link.quality] };
   return connCard(link, badge, [
-    ["Ping", `${Math.round(link.rtt_ms)} ms`],
-    ["Packet loss", `${link.loss_pct.toFixed(link.loss_pct < 1 ? 2 : 1)}%`],
-    ["Jitter", `${link.jitter_ms.toFixed(1)} ms`],
-    ["Connection", linkPathText(link.path)],
+    [t("ui.ping"), `${Math.round(link.rtt_ms)} ms`],
+    [t("ui.packet-loss"), `${link.loss_pct.toFixed(link.loss_pct < 1 ? 2 : 1)}%`],
+    [t("ui.jitter"), `${link.jitter_ms.toFixed(1)} ms`],
+    [t("ui.connection"), linkPathText(link.path)],
   ]);
 }
 
 function ownConnCard(me) {
   return connCard(me, ownBadge(me.quality), [
-    ["Ping to relay", ownRelayText(me)],
-    ["Your network", ownNetworkText(me.direct)],
-    ["Your calls", me.path_text],
+    [t("ui.ping-to-relay"), ownRelayText(me)],
+    [t("ui.your-network"), ownNetworkText(me.direct)],
+    [t("ui.your-calls"), me.path_text],
   ]);
 }
 
@@ -12486,10 +12513,10 @@ async function fillVoicePop() {
     fillDeviceSelect($("vop-mic"), devices.inputs, state.voice.input_device);
     fillDeviceSelect($("vop-speakers"), devices.outputs, state.voice.output_device);
   } catch {
-    for (const id of ["vop-mic", "vop-speakers"]) $(id).replaceChildren(new Option("No devices found", ""));
+    for (const id of ["vop-mic", "vop-speakers"]) $(id).replaceChildren(new Option(t("ui.no-devices-found"), ""));
   }
   const camera = $("vop-camera");
-  fillPicks(camera, await cameraPicksHere(), [new Option("Off", "off")]);
+  fillPicks(camera, await cameraPicksHere(), [new Option(t("ui.off"), "off")]);
   if (!state.cameraOn) camera.value = "off";
 }
 
@@ -12502,7 +12529,7 @@ function openVoicePop() {
   $("vop-room").classList.toggle("hidden", call);
   $("vop-room-name").textContent = call ? "" : channelTextName(vs.channelName);
   for (const node of pop.querySelectorAll(".vop-cam")) node.classList.toggle("hidden", call);
-  for (const id of ["vop-mic", "vop-speakers", "vop-camera"]) $(id).replaceChildren(new Option("Loading...", ""));
+  for (const id of ["vop-mic", "vop-speakers", "vop-camera"]) $(id).replaceChildren(new Option(t("ui.loading-2"), ""));
   paintVoicePop();
   pop.classList.remove("hidden");
   placeVoicePop();
@@ -12528,8 +12555,8 @@ function wireVoicePop() {
       toast(String(err));
     }
   };
-  $("vop-mic").addEventListener("change", e => useAudio(e.target.value, state.voice.output_device, "Microphone changed"));
-  $("vop-speakers").addEventListener("change", e => useAudio(state.voice.input_device, e.target.value, "Speakers changed"));
+  $("vop-mic").addEventListener("change", e => useAudio(e.target.value, state.voice.output_device, t("ui.microphone-changed")));
+  $("vop-speakers").addEventListener("change", e => useAudio(state.voice.input_device, e.target.value, t("ui.speakers-changed")));
   $("vop-camera").addEventListener("change", async e => {
     if (e.target.value === "off") await stopCamera();
     else {
@@ -12571,7 +12598,7 @@ async function toggleVideoPop(anchor) {
   closeFloating();
   renderCameraFx();
   const select = $("vpop-device");
-  select.replaceChildren(el("option", null, "Loading cameras..."));
+  select.replaceChildren(el("option", null, t("ui.loading-cameras")));
   pop.classList.remove("hidden");
   placePopup(pop, anchor, "above");
   fillPicks(select, await cameraPicksHere());
@@ -12586,10 +12613,10 @@ async function toggleAudioPop(which, anchor) {
   closeFloating();
   pop.dataset.which = which;
   const input = which === "input";
-  $("ap-title").textContent = input ? "Input Device" : "Output Device";
-  $("ap-volume-title").firstChild.textContent = input ? "Input Volume " : "Output Volume ";
+  $("ap-title").textContent = input ? t("ui.input-device") : t("ui.output-device");
+  $("ap-volume-title").firstChild.textContent = input ? t("ui.input-volume-2") : t("ui.output-volume-2");
   const select = $("ap-device");
-  select.replaceChildren(el("option", null, "Loading devices..."));
+  select.replaceChildren(el("option", null, t("ui.loading-devices")));
   const level = Math.round(((input ? state.voice.input_gain : state.voice.output_volume) ?? 1) * 100);
   $("ap-volume").value = String(level);
   $("ap-volume-label").textContent = `${level}%`;
@@ -12603,7 +12630,7 @@ async function toggleAudioPop(which, anchor) {
     const names = input ? devices.inputs : devices.outputs;
     fillDeviceSelect(select, names, input ? state.voice.input_device : state.voice.output_device);
   } catch (e) {
-    select.replaceChildren(el("option", null, "No devices found"));
+    select.replaceChildren(el("option", null, t("ui.no-devices-found")));
   }
 }
 
@@ -12723,7 +12750,7 @@ function splitEffectLetters(root) {
 function renderSpoiler(node) {
   const span = el("span", "spoiler");
   span.setAttribute("role", "button");
-  span.title = "Click to reveal";
+  span.title = t("ui.click-to-reveal");
   renderInlineInto(span, node.children);
   span.addEventListener("click", e => {
     if (span.classList.contains("revealed")) return;
@@ -12746,7 +12773,7 @@ const TIMESTAMP_FORMATS = {
 function relativeTimestamp(date) {
   const seconds = Math.round((date.getTime() - Date.now()) / 1000);
   const units = [["year", 31536000], ["month", 2592000], ["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60]];
-  const rtf = new Intl.RelativeTimeFormat([], { numeric: "auto" });
+  const rtf = new Intl.RelativeTimeFormat(dateLocale(), { numeric: "auto" });
   for (const [unit, size] of units) {
     if (Math.abs(seconds) >= size) return rtf.format(Math.round(seconds / size), unit);
   }
@@ -12757,8 +12784,8 @@ function renderTimestamp(node) {
   const date = new Date(node.unix * 1000);
   const time = el("time", "md-time");
   time.dateTime = date.toISOString();
-  time.textContent = node.style === "R" ? relativeTimestamp(date) : date.toLocaleString([], TIMESTAMP_FORMATS[node.style] || TIMESTAMP_FORMATS.f);
-  time.title = date.toLocaleString([], TIMESTAMP_FORMATS.F);
+  time.textContent = node.style === "R" ? relativeTimestamp(date) : date.toLocaleString(dateLocale(), TIMESTAMP_FORMATS[node.style] || TIMESTAMP_FORMATS.f);
+  time.title = date.toLocaleString(dateLocale(), TIMESTAMP_FORMATS.F);
   return time;
 }
 
@@ -12770,7 +12797,7 @@ function appendMessageText(parent, text) {
     if (match.index > last) appendRichText(parent, text.slice(last, match.index));
     const url = match[0];
     const a = wireOutsideLink(el("a", null, url), url);
-    a.title = `Open ${url}`;
+    a.title = t("ui.open-4", { url });
     parent.appendChild(a);
     last = match.index + url.length;
   }
@@ -12827,7 +12854,7 @@ function steamButton(appId) {
   if (!url) return null;
   const btn = el("button", "ac-steam");
   btn.type = "button";
-  btn.append(svgIcon("steam", 18), el("span", null, "Get on Steam"));
+  btn.append(svgIcon("steam", 18), el("span", null, t("ui.get-on-steam")));
   btn.onclick = e => {
     e.stopPropagation();
     invoke("open_url", { url }).catch(err => toast(String(err)));
@@ -12860,7 +12887,7 @@ function fillGamePop(name, details, cover, looking) {
   const main = el("div", "gp-main");
   main.append(coverSlot("gp-cover", (details && details.cover) || cover, "t_cover_big"), info);
   const steam = details && steamButton(details.steam);
-  pop.replaceChildren(main, steam || el("div", "gp-note", looking ? "Looking for the store page" : "No Steam page found for this game"));
+  pop.replaceChildren(main, steam || el("div", "gp-note", looking ? t("ui.looking-for-the-store-page") : t("ui.no-steam-page-found-for-this-game")));
 }
 
 function openGamePop(anchor, name, cover = null) {
@@ -12894,7 +12921,7 @@ function activityTime(person) {
   const time = el("div", "ac-time");
   time.appendChild(svgIcon("gamepad", 14));
   if (person.activity_since) time.appendChild(liveElapsed(person.activity_since, "clock"));
-  else time.appendChild(el("span", null, "In game"));
+  else time.appendChild(el("span", null, t("ui.in-game")));
   return time;
 }
 
@@ -12923,7 +12950,7 @@ function fillActivity(box, person, afterLookup) {
   const game = isShowingActivity(person) && gameFromActivity(person.activity);
   box.classList.toggle("hidden", !game);
   if (!game) return;
-  box.append(el("div", "ac-label", "Playing"), activityCard(person));
+  box.append(el("div", "ac-label", t("ui.playing")), activityCard(person));
   if (knownGames.has(gameKey(game))) return;
   lookUpGame(game).then(() => {
     if (!knownGames.has(gameKey(game)) || !box.isConnected || box.dataset.user !== person.id) return;
@@ -12952,7 +12979,7 @@ function activityChip(member) {
   const details = knownGames.get(gameKey(game));
   const chip = el("button", "now-card");
   chip.type = "button";
-  chip.title = `${member.name} is playing ${game}`;
+  chip.title = t("ui.is-playing", { name: member.name, game });
   const text = el("div", "acc-text");
   const who = el("div", "acc-who");
   const name = el("span", null, member.name);
@@ -12982,7 +13009,7 @@ function activityChip(member) {
 
 function renderPlayingGroup(list, playing) {
   if (!playing.length) return;
-  list.appendChild(memberGroupHeading("Playing", playing.length));
+  list.appendChild(memberGroupHeading(t("ui.playing"), playing.length));
   const group = el("div", "playing-now");
   for (const member of playing) group.appendChild(activityChip(member));
   list.appendChild(group);
@@ -13083,7 +13110,7 @@ async function saveServerGifKey(remove) {
   const key = remove ? "" : $("server-gif-key").value.trim();
   try {
     if (key) {
-      result.textContent = "Checking the key...";
+      result.textContent = t("ui.checking-the-key");
       await searchGifs("hello", { provider, key });
     }
     await invoke("set_gif_key", { serverId: server.id, provider, key: key || null });
@@ -13092,13 +13119,13 @@ async function saveServerGifKey(remove) {
     renderServerGifEditor(state.currentServer);
     syncGifButton();
     if (key) {
-      result.textContent = "Working";
+      result.textContent = t("ui.working");
       result.classList.add("ok");
     } else {
-      toast("GIF search here uses the built-in search again");
+      toast(t("ui.gif-search-here-uses-the-built-in-search"));
     }
   } catch (e) {
-    result.textContent = e && e.message ? `That key did not work: ${e.message}` : String(e);
+    result.textContent = e && e.message ? t("ui.that-key-did-not-work", { message: e.message }) : String(e);
     result.classList.add("bad");
   }
 }
@@ -13107,7 +13134,7 @@ function renderGameDbEditor(server) {
   const login = server.game_db;
   $("game-db-client-id").value = login ? login.client_id : "";
   $("game-db-client-secret").value = "";
-  $("game-db-client-secret").placeholder = login ? "Saved (leave blank to keep)" : "";
+  $("game-db-client-secret").placeholder = login ? t("ui.saved-leave-blank-to-keep") : "";
   checkIntegration("game-database");
   $("game-db-remove").classList.toggle("hidden", !login);
   $("game-db-result").textContent = "";
@@ -13118,7 +13145,7 @@ async function saveGameDb(remove) {
   if (!server) return;
   const result = $("game-db-result");
   result.className = "integration-result";
-  result.textContent = remove ? "" : "Checking with Twitch and IGDB...";
+  result.textContent = remove ? "" : t("ui.checking-with-twitch-and-igdb");
   try {
     const sample = await invoke("set_game_db", {
       serverId: server.id,
@@ -13129,7 +13156,7 @@ async function saveGameDb(remove) {
     await refreshCurrentServer();
     renderGameDbEditor(state.currentServer);
     if (!remove) {
-      result.textContent = sample.length ? `Working: found ${sample[0].name}` : "Connected";
+      result.textContent = sample.length ? t("ui.working-found", { value: sample[0].name }) : t("ui.connected");
       result.classList.add("ok");
     }
   } catch (e) {
@@ -13141,7 +13168,7 @@ async function saveGameDb(remove) {
 let streamDeck = { enabled: false, status: "off", decks: [] };
 let streamDeckPairing = null;
 
-const STREAM_DECK_STATE_LABELS = { listening: "On", starting: "Starting", busy: "Unavailable" };
+const STREAM_DECK_STATE_LABELS = { get listening() { return t("ui.on"); }, get starting() { return t("ui.starting"); }, get busy() { return t("ui.unavailable"); } };
 
 async function loadStreamDeck() {
   try {
@@ -13155,7 +13182,7 @@ function renderStreamDeck() {
   $("stream-deck-state").textContent = label;
   $("stream-deck-state").classList.toggle("on", streamDeck.enabled && streamDeck.status === "listening");
   $("stream-deck-note").textContent = streamDeck.enabled && streamDeck.status === "busy"
-    ? "Another Commy app on this computer is already connected to Stream Deck. Close it, then turn this off and on again."
+    ? t("ui.another-commy-app-on-this-computer-is")
     : "";
   $("stream-deck-decks").replaceChildren(...streamDeck.decks.map(streamDeckRow));
 }
@@ -13163,8 +13190,8 @@ function renderStreamDeck() {
 function streamDeckRow(deck) {
   const row = el("div", "stream-deck-deck");
   row.appendChild(el("span", "stream-deck-deck-name", deck.name));
-  row.appendChild(el("span", "stream-deck-deck-since", `Allowed ${new Date(deck.paired_at).toLocaleDateString()}`));
-  const remove = el("button", "btn-link danger", "Remove");
+  row.appendChild(el("span", "stream-deck-deck-since", t("ui.allowed", { value: new Date(deck.paired_at).toLocaleDateString() })));
+  const remove = el("button", "btn-link danger", t("ui.remove"));
   remove.onclick = async () => {
     try {
       streamDeck = await invoke("forget_stream_deck", { id: deck.id });
@@ -13190,7 +13217,7 @@ async function setStreamDeckEnabled(enabled) {
 function onStreamDeckPair(prompt) {
   streamDeckPairing = prompt.request;
   $("stream-deck-pair-body").textContent =
-    `${prompt.name} wants to control Commy: play and add sounds, mute, switch channels and more. Only allow it if you just set up the Commy plugin on this computer.`;
+    t("ui.wants-to-control-commy-play-and-add", { name: prompt.name });
   showModal("modal-stream-deck");
 }
 
@@ -13301,7 +13328,7 @@ function gameTagKey(server, tag, cls) {
   const meta = (server.game_tag_meta || []).find(m => m.name === tag);
   chip.setAttribute("role", "button");
   chip.tabIndex = 0;
-  chip.title = `About ${tag}`;
+  chip.title = t("ui.about", { tag });
   gameLink(chip, tag, meta ? meta.cover : null, () => chip);
   chip.onkeydown = e => {
     if (e.key !== "Enter" && e.key !== " ") return;
@@ -13326,14 +13353,14 @@ function paintGameTagChips(editable) {
     const chip = gameChip(state.currentServer, tag, "game-chip");
     if (editable) {
       const x = el("button", "game-chip-x");
-      x.title = `Remove ${tag}`;
+      x.title = t("ui.remove-2", { tag });
       x.appendChild(svgIcon("close", 12));
       x.onclick = () => saveGameTags(gameTagDraft.filter(t => t !== tag), gameTagMetaDraft.filter(m => m.name !== tag));
       chip.appendChild(x);
     }
     chips.appendChild(chip);
   }
-  if (!gameTagDraft.length && !editable) chips.appendChild(el("span", "setting-sub", "No games tagged"));
+  if (!gameTagDraft.length && !editable) chips.appendChild(el("span", "setting-sub", t("ui.no-games-tagged")));
 }
 
 async function saveGameTags(tags, meta = gameTagMetaDraft) {
@@ -13364,28 +13391,28 @@ function renderServerExtras(list, server) {
   }
   const upcoming = upcomingEventCount(server);
   const linksCollapsed = collapsedSections().has(SERVER_LINKS_KEY);
-  const linksHead = sectionHeader({ key: SERVER_LINKS_KEY, title: "Community" }, linksCollapsed, false);
-  if (linksCollapsed && server.needs_rules) linksHead.appendChild(el("span", "sidebar-link-badge", "Accept"));
+  const linksHead = sectionHeader({ key: SERVER_LINKS_KEY, title: t("ui.community") }, linksCollapsed, false);
+  if (linksCollapsed && server.needs_rules) linksHead.appendChild(el("span", "sidebar-link-badge", t("ui.accept")));
   list.appendChild(linksHead);
   if (!linksCollapsed) {
     const events = el("div", "channel sidebar-link");
     events.appendChild(el("span", "channel-icon")).appendChild(svgIcon("calendar", 18));
-    events.appendChild(el("span", "channel-label", upcoming ? `${upcoming} Event${upcoming === 1 ? "" : "s"}` : "Events"));
+    events.appendChild(el("span", "channel-label", upcoming ? t("ui.event", { upcoming, value: upcoming === 1 ? "" : "s" }) : t("ui.events")));
     events.onclick = () => openEvents();
     list.appendChild(events);
     if (server.rules) {
       const rules = el("div", "channel sidebar-link");
       rules.appendChild(el("span", "channel-icon")).appendChild(svgIcon("book", 18));
-      rules.appendChild(el("span", "channel-label", "Server Rules"));
-      if (server.needs_rules) rules.appendChild(el("span", "sidebar-link-badge", "Accept"));
+      rules.appendChild(el("span", "channel-label", t("ui.server-rules")));
+      if (server.needs_rules) rules.appendChild(el("span", "sidebar-link-badge", t("ui.accept")));
       rules.onclick = () => openRules();
       list.appendChild(rules);
     }
     if (selfAssignableRoles(server).length) {
       const roles = el("div", "channel sidebar-link");
       roles.appendChild(el("span", "channel-icon")).appendChild(svgIcon("roles", 18));
-      roles.appendChild(el("span", "channel-label", "Roles"));
-      roles.title = "Pick roles for yourself";
+      roles.appendChild(el("span", "channel-label", t("ui.roles")));
+      roles.title = t("ui.pick-roles-for-yourself");
       roles.onclick = () => openChooseRoles();
       list.appendChild(roles);
     }
@@ -13393,8 +13420,8 @@ function renderServerExtras(list, server) {
   if (server.tip_jar) {
     const tip = el("div", "channel sidebar-link");
     tip.appendChild(el("span", "channel-icon")).appendChild(svgIcon("coffee", 18));
-    tip.appendChild(el("span", "channel-label", "Support this server"));
-    tip.title = `Opens ${tipJarLabel(server.tip_jar)} in your browser`;
+    tip.appendChild(el("span", "channel-label", t("ui.support-this-server")));
+    tip.title = t("ui.opens-in-your-browser", { value: tipJarLabel(server.tip_jar) });
     tip.onclick = () => openOutsideLink(server.tip_jar);
     list.appendChild(tip);
   }
@@ -13406,7 +13433,7 @@ const rulesPrompted = new Set();
 function openRules() {
   const server = state.currentServer;
   if (!server || !server.rules) return;
-  $("rules-title").textContent = `${shownServerName(server)} Rules`;
+  $("rules-title").textContent = t("ui.rules-2", { value: shownServerName(server) });
   $("rules-body").replaceChildren(renderMarkdown(server.rules));
   $("rules-accept").classList.toggle("hidden", !server.needs_rules);
   showModal("modal-rules");
@@ -13423,7 +13450,7 @@ async function acceptRules() {
     else if (selfAssignableRoles(state.currentServer).length) openServerWelcome("roles");
     else {
       hideModals();
-      toast("Thanks! You can chat now");
+      toast(t("ui.thanks-you-can-chat-now"));
     }
   } catch (e) {
     toast(String(e));
@@ -13436,12 +13463,12 @@ function openServerWelcome(step) {
   closeFloating();
   const hasRoles = selfAssignableRoles(server).length > 0;
   const twoSteps = Boolean(server.rules) && (hasRoles || Boolean(server.onboarding));
-  $("sw-steps").lastElementChild.textContent = server.onboarding ? "Questions" : "Roles";
+  $("sw-steps").lastElementChild.textContent = server.onboarding ? t("ui.questions") : t("ui.roles");
   paintServerIcon($("sw-icon"), server);
-  $("sw-title").textContent = step === "rules" ? `Welcome to ${shownServerName(server)}` : `You are in, ${state.user ? state.user.username : "friend"}`;
+  $("sw-title").textContent = step === "rules" ? t("ui.welcome-to-3", { value: shownServerName(server) }) : t("ui.you-are-in", { value: state.user ? state.user.username : "friend" });
   $("sw-sub").textContent = step === "rules"
-    ? "This server asks new members to read its rules before posting."
-    : `${shownServerName(server)} has roles you can give yourself.`;
+    ? t("ui.this-server-asks-new-members-to-read-its")
+    : t("ui.has-roles-you-can-give-yourself", { value: shownServerName(server) });
   $("sw-steps").classList.toggle("hidden", !twoSteps);
   for (const dot of $("sw-steps").children) {
     dot.classList.toggle("active", dot.dataset.step === step);
@@ -13452,7 +13479,7 @@ function openServerWelcome(step) {
   if (step === "rules") $("sw-rules").replaceChildren(renderMarkdown(server.rules || ""));
   else renderRolePicker(server, $("sw-role-list"));
   $("sw-later").classList.toggle("hidden", step === "rules" && server.needs_rules);
-  $("sw-next").textContent = step === "rules" ? "I Have Read and Agree" : "Done";
+  $("sw-next").textContent = step === "rules" ? t("ui.i-have-read-and-agree") : t("settings.done");
   $("sw-next").onclick = step === "rules" ? acceptRules : hideModals;
   showModal("modal-server-welcome");
   $("sw-next").focus();
@@ -13468,7 +13495,7 @@ async function enterJoinedServer(summary) {
   rolePromptPending.add(summary.id);
   await refreshServers();
   await selectServer(summary.id);
-  toast("Joined server, syncing from peers");
+  toast(t("ui.joined-server-syncing-from-peers"));
 }
 
 function maybePromptRoles() {
@@ -13514,8 +13541,8 @@ function awaitedText(count) {
   const n = Number(count);
   if (!Number.isInteger(n) || n <= 0) return null;
   return n === 1
-    ? "1 message is waiting for you. It arrives when someone who has it comes online."
-    : `${n} messages are waiting for you. They arrive when someone who has them comes online.`;
+    ? t("ui.1-message-is-waiting-for-you-it-arrives")
+    : t("ui.messages-are-waiting-for-you-they-arrive", { n });
 }
 
 let awaitedSeq = 0;
@@ -13562,7 +13589,7 @@ function roleDots(server, roleIds) {
     wrap.appendChild(dot);
     names.push(role.name);
   }
-  if (names.length) wrap.title = `Gives you ${names.join(", ")}`;
+  if (names.length) wrap.title = t("ui.gives-you", { value: names.join(", ") });
   return wrap;
 }
 
@@ -13581,14 +13608,14 @@ function openOnboarding(mode, draft) {
   paintServerIcon($("ob-icon"), server);
   const who = state.user ? state.user.username : "friend";
   const copy = {
-    join: [`Welcome in, ${who}`, `${shownServerName(server)} uses your answers to hand out roles and open the right channels.`],
-    change: ["Your answers", "Change what you picked when you joined. Your roles update right away."],
-    preview: ["Welcome in, friend", "This is what new members see after the rules. Nothing picked here is saved."],
+    join: [t("ui.welcome-in", { who }), t("ui.uses-your-answers-to-hand-out-roles-and", { value: shownServerName(server) })],
+    change: [t("ui.your-answers"), t("ui.change-what-you-picked-when-you-joined")],
+    preview: [t("ui.welcome-in-friend"), t("ui.this-is-what-new-members-see-after-the")],
   }[mode];
   $("ob-title").textContent = copy[0];
   $("ob-sub").textContent = copy[1];
   $("ob-preview-badge").classList.toggle("hidden", mode !== "preview");
-  $("ob-later").textContent = { join: "Later", change: "Cancel", preview: "Close" }[mode];
+  $("ob-later").textContent = { join: t("ui.later"), change: t("signin.cancel"), preview: t("settings.close") }[mode];
   renderOnboardingPage();
   showModal("modal-onboarding");
   $("ob-next").focus();
@@ -13632,7 +13659,7 @@ function renderOnboardingPage() {
   }
   list.scrollTop = 0;
   $("ob-back").classList.toggle("hidden", page === 0);
-  $("ob-next").textContent = page >= pages.length - 1 ? "Done" : "Next";
+  $("ob-next").textContent = page >= pages.length - 1 ? t("settings.done") : t("ui.next");
 }
 
 function turnOnboardingPage(delta) {
@@ -13648,20 +13675,20 @@ async function advanceOnboarding() {
   if (!server) return hideModals();
   if (onboardingFlow.mode === "preview") {
     hideModals();
-    toast("Preview only, nothing was saved");
+    toast(t("ui.preview-only-nothing-was-saved"));
     return;
   }
   const { grant, revoke } = answerDiff(onboardingFlow.onboarding, onboardingFlow.picks, myHeldRoles(server));
   if (!grant.length && !revoke.length) {
     hideModals();
-    toast(onboardingFlow.mode === "join" ? "You are all set" : "Your answers are unchanged");
+    toast(onboardingFlow.mode === "join" ? t("ui.you-are-all-set") : t("ui.your-answers-are-unchanged"));
     return;
   }
   try {
     await invoke("answer_onboarding", { serverId: server.id, grant, revoke });
     await refreshCurrentServer();
     hideModals();
-    toast(onboardingFlow.mode === "join" ? "You are all set" : "Answers saved");
+    toast(onboardingFlow.mode === "join" ? t("ui.you-are-all-set") : t("ui.answers-saved"));
   } catch (e) {
     toast(String(e));
   }
@@ -13711,8 +13738,8 @@ function iconButton(icon, title, onClick) {
 
 function paintOnboardingAnswer(server, question, answer, index, repaint) {
   const row = el("div", "ob-answer-row");
-  row.appendChild(onboardingTextField(answer.label, `Answer ${index + 1}`, ONBOARDING_LIMITS.answerChars, v => { answer.label = v; }));
-  row.appendChild(iconButton("close", "Remove answer", () => {
+  row.appendChild(onboardingTextField(answer.label, t("ui.answer", { value: index + 1 }), ONBOARDING_LIMITS.answerChars, v => { answer.label = v; }));
+  row.appendChild(iconButton("close", t("ui.remove-answer"), () => {
     question.answers.splice(index, 1);
     repaint();
   }));
@@ -13727,7 +13754,7 @@ function paintOnboardingAnswer(server, question, answer, index, repaint) {
     chip.append(dot, document.createTextNode(role.name));
     const x = el("button", "game-chip-x");
     x.type = "button";
-    x.title = `Stop giving ${role.name}`;
+    x.title = t("ui.stop-giving", { name: role.name });
     x.appendChild(svgIcon("close", 12));
     x.onclick = () => {
       answer.roles = answer.roles.filter(r => r !== id);
@@ -13739,8 +13766,8 @@ function paintOnboardingAnswer(server, question, answer, index, repaint) {
   const left = eligible.filter(r => !answer.roles.includes(r.id));
   if (left.length && answer.roles.length < ONBOARDING_LIMITS.rolesPerAnswer) {
     const select = el("select", "compact-select");
-    select.title = "Give a role to members who pick this";
-    fillOptions(select, [{ value: "", label: answer.roles.length ? "Add another role" : "Gives no role" }, ...left.map(r => ({ value: r.id, label: r.name }))], "");
+    select.title = t("ui.give-a-role-to-members-who-pick-this");
+    fillOptions(select, [{ value: "", label: answer.roles.length ? t("ui.add-another-role") : t("ui.gives-no-role") }, ...left.map(r => ({ value: r.id, label: r.name }))], "");
     select.onchange = () => {
       if (!select.value) return;
       answer.roles.push(select.value);
@@ -13748,7 +13775,7 @@ function paintOnboardingAnswer(server, question, answer, index, repaint) {
     };
     chips.appendChild(select);
   } else if (!eligible.length) {
-    chips.appendChild(el("span", "setting-sub", "Create a role under Roles to hand it out here"));
+    chips.appendChild(el("span", "setting-sub", t("ui.create-a-role-under-roles-to-hand-it-out")));
   }
   row.appendChild(chips);
   return row;
@@ -13757,27 +13784,27 @@ function paintOnboardingAnswer(server, question, answer, index, repaint) {
 function paintOnboardingQuestion(server, question, index, repaint) {
   const card = el("div", "settings-card ob-card");
   const head = el("div", "ob-card-head");
-  head.appendChild(el("div", "setting-title", `Question ${index + 1}`));
+  head.appendChild(el("div", "setting-title", t("ui.question-2", { value: index + 1 })));
   const type = el("select", "compact-select");
-  fillOptions(type, [{ value: "single", label: "Pick one" }, { value: "multiple", label: "Pick any" }], question.multiple ? "multiple" : "single");
+  fillOptions(type, [{ value: "single", label: t("ui.pick-one") }, { value: "multiple", label: t("ui.pick-any") }], question.multiple ? "multiple" : "single");
   type.onchange = () => { question.multiple = type.value === "multiple"; };
   head.appendChild(type);
-  head.appendChild(iconButton("trash", "Remove question", () => {
+  head.appendChild(iconButton("trash", t("ui.remove-question"), () => {
     onboardingDraft.questions.splice(index, 1);
     repaint();
   }));
   card.appendChild(head);
   const title = el("div", "ob-field");
-  title.appendChild(onboardingTextField(question.title, "What do you want to ask?", ONBOARDING_LIMITS.titleChars, v => { question.title = v; }));
+  title.appendChild(onboardingTextField(question.title, t("ui.what-do-you-want-to-ask"), ONBOARDING_LIMITS.titleChars, v => { question.title = v; }));
   card.appendChild(title);
   const sub = el("div", "ob-field");
-  sub.appendChild(onboardingTextField(question.description, "Optional one-line description", ONBOARDING_LIMITS.descriptionChars, v => { question.description = v; }));
+  sub.appendChild(onboardingTextField(question.description, t("ui.optional-one-line-description"), ONBOARDING_LIMITS.descriptionChars, v => { question.description = v; }));
   card.appendChild(sub);
   const rows = el("div", "ob-answer-rows");
   question.answers.forEach((answer, ai) => rows.appendChild(paintOnboardingAnswer(server, question, answer, ai, repaint)));
   card.appendChild(rows);
   if (question.answers.length < ONBOARDING_LIMITS.answers) {
-    const add = el("button", "btn-secondary btn-small ob-add-answer", "Add Answer");
+    const add = el("button", "btn-secondary btn-small ob-add-answer", t("ui.add-answer"));
     add.type = "button";
     add.onclick = () => {
       question.answers.push({ label: "", roles: [] });
@@ -13794,7 +13821,7 @@ function paintOnboardingEditor(server) {
   const repaint = () => paintOnboardingEditor(server);
   onboardingDraft.questions.forEach((q, i) => editor.appendChild(paintOnboardingQuestion(server, q, i, repaint)));
   if (!onboardingDraft.questions.length) {
-    editor.appendChild(el("div", "manage-empty", "No questions yet. Add one to ask new members something when they join."));
+    editor.appendChild(el("div", "manage-empty", t("ui.no-questions-yet-add-one-to-ask-new")));
   }
   $("ob-add-question").classList.toggle("hidden", onboardingDraft.questions.length >= ONBOARDING_LIMITS.questions);
   syncOnboardingCount();
@@ -13823,7 +13850,7 @@ async function saveOnboarding(remove) {
     await refreshCurrentServer();
     onboardingDraftSource = null;
     renderOnboardingSettings(state.currentServer);
-    toast(remove ? "Onboarding questions removed" : "Onboarding saved");
+    toast(remove ? t("ui.onboarding-questions-removed") : t("ui.onboarding-saved"));
   } catch (e) {
     toast(String(e));
   }
@@ -13845,7 +13872,7 @@ function renderRulesSettings(server) {
 
 function syncRulesPreview() {
   const text = $("rules-input").value;
-  $("rules-preview").replaceChildren(text.trim() ? renderMarkdown(text) : el("div", "setting-sub", "Preview shows here"));
+  $("rules-preview").replaceChildren(text.trim() ? renderMarkdown(text) : el("div", "setting-sub", t("ui.preview-shows-here")));
   const bytes = new TextEncoder().encode(text).length;
   $("rules-count").textContent = `${bytes} / 3000`;
   $("rules-count").classList.toggle("over", bytes > 3000);
@@ -13858,7 +13885,7 @@ async function saveRules(remove) {
     await invoke("set_rules", { serverId: server.id, rules: remove ? null : $("rules-input").value });
     await refreshCurrentServer();
     renderRulesSettings(state.currentServer);
-    toast(remove ? "Rules removed" : "Rules saved");
+    toast(remove ? t("ui.rules-removed") : t("ui.rules-saved"));
   } catch (e) {
     toast(String(e));
   }
@@ -13905,7 +13932,7 @@ async function saveAutomod() {
   if (!server) return;
   const exemptRoles = [...$("automod-roles").querySelectorAll("input:checked")].map(box => box.value);
   if (exemptRoles.length > AUTOMOD_MAX_EXEMPT_ROLES) {
-    toast(`Pick up to ${AUTOMOD_MAX_EXEMPT_ROLES} exempt roles`);
+    toast(t("ui.pick-up-to-exempt-roles", { AUTOMOD_MAX_EXEMPT_ROLES }));
     return;
   }
   const rules = automodPayload({
@@ -13919,7 +13946,7 @@ async function saveAutomod() {
     await invoke("set_automod", { serverId: server.id, rules });
     await refreshCurrentServer();
     renderAutomodSettings(state.currentServer);
-    toast("Auto moderation saved");
+    toast(t("ui.auto-moderation-saved"));
   } catch (e) {
     toast(String(e));
   }
@@ -13934,7 +13961,7 @@ function openEvents() {
   const first = new Date();
   eventsView.month = new Date(first.getFullYear(), first.getMonth(), 1);
   eventsView.day = null;
-  $("events-title").textContent = `${shownServerName(state.currentServer)} Events`;
+  $("events-title").textContent = t("ui.events-2", { value: shownServerName(state.currentServer) });
   $("event-create").classList.toggle("hidden", !canCreateEvents(state.currentServer));
   $("events-layer").classList.remove("hidden");
   renderEvents();
@@ -13954,8 +13981,8 @@ function renderEvents() {
     body.appendChild(renderEventCalendar(server));
     if (eventsView.day) {
       const day = eventsOnDay(server, eventsView.day);
-      body.appendChild(el("h3", "events-day-title", eventsView.day.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })));
-      if (!day.length) body.appendChild(el("div", "manage-empty", "Nothing scheduled"));
+      body.appendChild(el("h3", "events-day-title", eventsView.day.toLocaleDateString(dateLocale(), { weekday: "long", month: "long", day: "numeric" })));
+      if (!day.length) body.appendChild(el("div", "manage-empty", t("ui.nothing-scheduled")));
       for (const event of day) body.appendChild(eventCard(server, event));
     }
     return;
@@ -13965,8 +13992,8 @@ function renderEvents() {
   if (!upcoming.length) {
     const empty = el("div", "events-empty");
     empty.appendChild(svgIcon("calendar", 40));
-    empty.appendChild(el("h3", null, "No upcoming events"));
-    empty.appendChild(el("p", null, canCreateEvents(server) ? "Schedule one so people know when to show up." : "Check back later."));
+    empty.appendChild(el("h3", null, t("ui.no-upcoming-events")));
+    empty.appendChild(el("p", null, canCreateEvents(server) ? t("ui.schedule-one-so-people-know-when-to-show") : t("ui.check-back-later")));
     body.appendChild(empty);
     return;
   }
@@ -13986,23 +14013,23 @@ function renderEventCalendar(server) {
   const month = eventsView.month;
   const head = el("div", "cal-head");
   const prev = el("button", "icon-btn");
-  prev.title = "Previous month";
+  prev.title = t("ui.previous-month");
   prev.appendChild(svgIcon("chevronLeft", 18));
   prev.onclick = () => {
     eventsView.month = new Date(month.getFullYear(), month.getMonth() - 1, 1);
     renderEvents();
   };
   const next = el("button", "icon-btn");
-  next.title = "Next month";
+  next.title = t("ui.next-month");
   next.appendChild(svgIcon("chevronRight", 18));
   next.onclick = () => {
     eventsView.month = new Date(month.getFullYear(), month.getMonth() + 1, 1);
     renderEvents();
   };
-  head.append(prev, el("span", "cal-month", month.toLocaleDateString([], { month: "long", year: "numeric" })), next);
+  head.append(prev, el("span", "cal-month", month.toLocaleDateString(dateLocale(), { month: "long", year: "numeric" })), next);
   wrap.appendChild(head);
   const grid = el("div", "cal-grid");
-  for (const d of ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]) grid.appendChild(el("div", "cal-dow", d));
+  for (const d of [t("ui.sun"), t("ui.mon"), t("ui.tue"), t("ui.wed"), t("ui.thu"), t("ui.fri"), t("ui.sat")]) grid.appendChild(el("div", "cal-dow", d));
   const start = new Date(month.getFullYear(), month.getMonth(), 1 - month.getDay());
   const today = new Date();
   for (let i = 0; i < 42; i++) {
@@ -14014,7 +14041,7 @@ function renderEventCalendar(server) {
     cell.appendChild(el("span", "cal-num", String(day.getDate())));
     const events = eventsOnDay(server, day);
     for (const event of events.slice(0, 2)) cell.appendChild(el("span", "cal-event", event.title));
-    if (events.length > 2) cell.appendChild(el("span", "cal-more", `+${events.length - 2} more`));
+    if (events.length > 2) cell.appendChild(el("span", "cal-more", t("ui.more-2", { value: events.length - 2 })));
     cell.onclick = () => {
       eventsView.day = day;
       renderEvents();
@@ -14028,12 +14055,12 @@ function renderEventCalendar(server) {
 function formatEventTime(event) {
   const start = new Date(event.start);
   const opts = { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
-  let text = start.toLocaleString([], opts);
+  let text = start.toLocaleString(dateLocale(), opts);
   if (event.end) {
     const end = new Date(event.end);
     text += sameDay(start, end)
-      ? ` - ${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-      : ` - ${end.toLocaleString([], opts)}`;
+      ? ` - ${end.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" })}`
+      : ` - ${end.toLocaleString(dateLocale(), opts)}`;
   }
   return text;
 }
@@ -14043,11 +14070,11 @@ function eventCard(server, event) {
   const start = new Date(event.start);
   const live = start.getTime() <= Date.now() && (!event.end || new Date(event.end).getTime() > Date.now());
   const badge = el("div", "event-date");
-  badge.appendChild(el("span", "event-date-month", start.toLocaleDateString([], { month: "short" }).toUpperCase()));
+  badge.appendChild(el("span", "event-date-month", start.toLocaleDateString(dateLocale(), { month: "short" }).toUpperCase()));
   badge.appendChild(el("span", "event-date-day", String(start.getDate())));
   card.appendChild(badge);
   const main = el("div", "event-main");
-  const when = el("div", "event-when" + (live ? " live" : ""), live ? "Happening now" : formatEventTime(event));
+  const when = el("div", "event-when" + (live ? " live" : ""), live ? t("ui.happening-now") : formatEventTime(event));
   main.appendChild(when);
   main.appendChild(el("div", "event-title", event.title));
   if (event.channel_name) {
@@ -14065,9 +14092,9 @@ function eventCard(server, event) {
     return btn;
   };
   const actions = el("div", "event-actions");
-  actions.append(rsvp("interested", "Interested"), rsvp("going", "Going"));
+  actions.append(rsvp("interested", t("ui.interested")), rsvp("going", t("ui.going")));
   if (event.channel && live) {
-    const join = el("button", "btn-primary btn-small", "Join Voice");
+    const join = el("button", "btn-primary btn-small", t("ui.join-voice"));
     join.onclick = () => {
       const channel = server.channels.find(c => c.id === event.channel);
       closeEvents();
@@ -14077,11 +14104,11 @@ function eventCard(server, event) {
   }
   if (event.can_edit) {
     const edit = el("button", "icon-btn");
-    edit.title = "Edit Event";
+    edit.title = t("ui.edit-event");
     edit.appendChild(svgIcon("pencil", 16));
     edit.onclick = () => openEventEditor(event);
     const del = el("button", "icon-btn danger");
-    del.title = "Delete Event";
+    del.title = t("ui.delete-event");
     del.appendChild(svgIcon("trash", 16));
     del.onclick = () => deleteEvent(event);
     actions.append(edit, del);
@@ -14103,7 +14130,7 @@ async function setRsvp(event, rsvp) {
 }
 
 async function deleteEvent(event) {
-  if (!(await confirm(`Delete the event "${event.title}"?`))) return;
+  if (!(await confirm(t("ui.delete-the-event", { title: event.title })))) return;
   try {
     await invoke("delete_event", { serverId: state.currentServer.id, eventId: event.id });
     await refreshCurrentServer();
@@ -14126,13 +14153,13 @@ function fillVoiceChannelSelect(select, noneLabel, server, value) {
 function openEventEditor(event) {
   const server = state.currentServer;
   editingEventId = event ? event.id : null;
-  $("event-editor-title").textContent = event ? "Edit Event" : "Create Event";
+  $("event-editor-title").textContent = event ? t("ui.edit-event") : t("ui.create-event");
   $("event-title").value = event ? event.title : "";
   $("event-description").value = event ? event.description : "";
   const start = event ? new Date(event.start) : new Date(Math.ceil(Date.now() / 3600e3) * 3600e3 + 3600e3);
   $("event-start").value = toLocalInput(start);
   $("event-end").value = event && event.end ? toLocalInput(new Date(event.end)) : "";
-  fillVoiceChannelSelect($("event-channel"), "No voice channel", server, event && event.channel ? event.channel : "");
+  fillVoiceChannelSelect($("event-channel"), t("ui.no-voice-channel"), server, event && event.channel ? event.channel : "");
   showModal("modal-event");
   $("event-title").focus();
 }
@@ -14141,7 +14168,7 @@ async function saveEvent() {
   const startValue = $("event-start").value;
   const endValue = $("event-end").value;
   if (!$("event-title").value.trim() || !startValue) {
-    toast("Events need a topic and a start time");
+    toast(t("ui.events-need-a-topic-and-a-start-time"));
     return;
   }
   try {
@@ -14157,7 +14184,7 @@ async function saveEvent() {
     hideModals();
     await refreshCurrentServer();
     renderEvents();
-    toast(editingEventId ? "Event updated" : "Event created");
+    toast(editingEventId ? t("ui.event-updated") : t("ui.event-created"));
   } catch (e) {
     toast(String(e));
   }
@@ -14192,8 +14219,8 @@ function channelSections(server, canCreate) {
   const looseText = loose.filter(c => holdsMessages(c) || isDriveChannel(c)).sort(byPos);
   const looseVoice = loose.filter(c => isVoiceKind(c.kind)).sort(byPos);
   const named = title => categories.some(c => c.name.toLowerCase() === title.toLowerCase());
-  if (looseText.length || (canCreate && !named("Text Channels"))) sections.push({ key: `${server.id}:text`, title: "Text Channels", kind: "text", parent: null, channels: looseText });
-  if (looseVoice.length || (canCreate && !named("Voice Channels"))) sections.push({ key: `${server.id}:voice`, title: "Voice Channels", kind: "voice", parent: null, channels: looseVoice });
+  if (looseText.length || (canCreate && !named(t("ui.text-channels")))) sections.push({ key: `${server.id}:text`, title: t("ui.text-channels"), kind: "text", parent: null, channels: looseText });
+  if (looseVoice.length || (canCreate && !named(t("ui.voice-channels")))) sections.push({ key: `${server.id}:voice`, title: t("ui.voice-channels"), kind: "voice", parent: null, channels: looseVoice });
   for (const category of categories) {
     sections.push({
       key: category.id,
@@ -14204,7 +14231,7 @@ function channelSections(server, canCreate) {
       channels: channels.filter(c => c.parent === category.id && c.kind !== "category").sort(byPos),
     });
   }
-  if (afk) sections.push({ key: `${server.id}:afk`, title: "AFK", kind: "voice", parent: null, fixed: true, channels: [afk] });
+  if (afk) sections.push({ key: `${server.id}:afk`, title: t("ui.afk"), kind: "voice", parent: null, fixed: true, channels: [afk] });
   return sections;
 }
 
@@ -14264,7 +14291,7 @@ async function sectionMoves(server, sections, order) {
   const moves = [];
   for (const section of loose) {
     const category = made.get(section.key);
-    if (!category) throw new Error("Could not turn " + section.title + " into a category");
+    if (!category) throw new Error(t("ui.could-not-turn") + section.title + " into a category");
     ids.set(section.key, category.id);
     moves.push(...sectionChannelMoves(section.channels, category.id));
   }
@@ -14319,7 +14346,7 @@ function sectionHeader(section, collapsed, canCreate) {
     header.addEventListener("dragstart", e => startChannelDrag(e, { kind: "section", id: section.key }));
     header.addEventListener("dragend", endChannelDrag);
     const add = el("button", "dm-group-add");
-    add.title = "Create Channel";
+    add.title = t("ui.create-channel");
     add.appendChild(svgIcon("plus", 16));
     add.onclick = e => {
       e.stopPropagation();
@@ -14357,8 +14384,8 @@ function soundEmojiNode(value) {
 }
 
 function botTag() {
-  const chip = el("span", "bot-tag", "BOT");
-  chip.title = "Bot: runs on its own, not a person";
+  const chip = el("span", "bot-tag", t("ui.bot"));
+  chip.title = t("ui.bot-runs-on-its-own-not-a-person");
   return chip;
 }
 
@@ -14388,10 +14415,10 @@ function paintServerTagEditor() {
   paintEmojiSlot($("server-tag-emoji"), serverTagEdit.emoji);
   for (const swatch of $("server-tag-colors").children) swatch.setAttribute("aria-checked", String(swatch.dataset.color === serverTagEdit.color));
   const preview = $("server-tag-preview");
-  const me = state.user ? state.user.display_name || state.user.username : "You";
+  const me = state.user ? state.user.display_name || state.user.username : t("settings.group.you");
   preview.replaceChildren(el("span", null, me));
   if (serverTagEdit.letters) preview.appendChild(serverTagChip({ ...serverTagEdit, server: shownServerName(state.currentServer) }));
-  else preview.appendChild(el("span", "setting-sub", "Type some letters to see the tag"));
+  else preview.appendChild(el("span", "setting-sub", t("ui.type-some-letters-to-see-the-tag")));
 }
 
 let petSuitPick = "white";
@@ -14419,7 +14446,7 @@ function setPetHidden(serverId, hidden) {
 }
 
 function petRestore(serverId) {
-  const row = el("button", "pet-restore", "Show server pet");
+  const row = el("button", "pet-restore", t("ui.show-server-pet"));
   row.type = "button";
   row.onclick = () => setPetHidden(serverId, false);
   return row;
@@ -14436,19 +14463,19 @@ function petWidget(server) {
   const head = el("div", "pet-head");
   const dismiss = el("button", "pet-dismiss", "\u00d7");
   dismiss.type = "button";
-  dismiss.title = "Hide pet";
-  dismiss.setAttribute("aria-label", "Hide pet");
+  dismiss.title = t("ui.hide-pet");
+  dismiss.setAttribute("aria-label", t("ui.hide-pet"));
   dismiss.onclick = () => setPetHidden(server.id, true);
   head.append(el("span", "pet-name", pet.name), el("span", "pet-level", petLevelLabel(pet)), dismiss);
   const bar = el("div", "pet-bar");
   bar.appendChild(el("span")).style.width = `${Math.round(petProgress(pet) * 100)}%`;
-  bar.title = `${pet.xp} care points`;
+  bar.title = t("ui.care-points", { xp: pet.xp });
   const actions = el("div", "pet-actions");
   for (const care of PET_CARES) {
     const button = el("button", "pet-care", care.label);
     button.type = "button";
     const wait = petCareWait(pet, care.kind, now);
-    if (wait > 0) button.title = `Ready again in ${Math.ceil(wait / 60000)} min`;
+    if (wait > 0) button.title = t("ui.ready-again-in-min", { value: Math.ceil(wait / 60000) });
     button.onclick = () => careForPet(server, care.kind, figure, button);
     actions.appendChild(button);
   }
@@ -14479,7 +14506,7 @@ function renderPetEditor(server) {
   petSuitPick = pet ? pet.suit : petSuitPick;
   $("pet-name").value = pet ? pet.name : "";
   $("pet-name").disabled = !editable;
-  $("pet-save").textContent = pet ? "Save" : "Adopt";
+  $("pet-save").textContent = pet ? t("ui.save") : t("ui.adopt");
   $("pet-save").classList.toggle("hidden", !editable);
   $("pet-release").classList.toggle("hidden", !editable || !pet);
   paintPetEditor(editable);
@@ -14512,10 +14539,10 @@ async function savePet(release) {
   const server = state.currentServer;
   if (!server) return;
   const name = release ? null : petCleanName($("pet-name").value);
-  if (!release && !name) return toast("Give your astronaut a name");
+  if (!release && !name) return toast(t("ui.give-your-astronaut-a-name"));
   try {
     await invoke("set_pet", { serverId: server.id, name, color: petSuitPick });
-    toast(release ? `Said goodbye to ${server.pet ? server.pet.name : "the astronaut"}` : server.pet ? `${name} is all set` : `${name} moved in`);
+    toast(release ? t("ui.said-goodbye-to", { value: server.pet ? server.pet.name : "the astronaut" }) : server.pet ? t("ui.is-all-set", { name }) : t("ui.moved-in", { name }));
     await refreshCurrentServer();
     renderPetEditor(state.currentServer);
   } catch (err) {
@@ -14558,7 +14585,7 @@ function renderSyncHostEditor(server) {
     .catch(() => {});
   $("sync-host-input").value = "";
   $("sync-host-status").textContent = "";
-  $("sync-host-save").textContent = "Check";
+  $("sync-host-save").textContent = t("ui.check");
   $("sync-host-home").textContent = syncHostHomeButton(ownerHome);
   $("sync-host-home").classList.toggle("hidden", !host);
 }
@@ -14591,25 +14618,25 @@ async function moveSyncHost(home) {
   try {
     if (!confirmed) {
       if (target) {
-        status.textContent = "Checking the sync server...";
+        status.textContent = t("ui.checking-the-sync-server");
         const checked = await invoke("test_sync_host", { host: target });
         release = checked && checked.release;
         if (release && release.fit === "app_behind") throw release.text;
       }
       syncHostPending = { label, at: Date.now() };
       status.textContent = syncHostReady(label, release, home);
-      if (!home) save.textContent = "Move Now";
+      if (!home) save.textContent = t("ui.move-now");
       return;
     }
-    status.textContent = "Moving...";
+    status.textContent = t("ui.moving");
     await invoke("set_sync_host", { serverId: server.id, host: target });
-    toast(`${shownServerName(server)} now syncs through ${label}`);
+    toast(t("ui.now-syncs-through", { value: shownServerName(server), label }));
     await refreshCurrentServer();
     renderSyncHostEditor(state.currentServer);
-    $("sync-host-status").textContent = "Moved. Keep Commy open for a few minutes while this device copies the history over.";
+    $("sync-host-status").textContent = t("ui.moved-keep-commy-open-for-a-few-minutes");
   } catch (err) {
     syncHostPending = null;
-    save.textContent = "Check";
+    save.textContent = t("ui.check");
     status.textContent = String(err);
   } finally {
     save.disabled = false;
@@ -14627,14 +14654,14 @@ async function saveFileStore(remove) {
   try {
     const setupCode = $("file-store-code").value.trim() || null;
     if (url) {
-      $("file-store-status").textContent = "Checking the address...";
+      $("file-store-status").textContent = t("ui.checking-the-address");
       const info = await invoke("test_file_store", { url });
-      if (info && !info.paired && !setupCode) throw "Enter the setup code you gave the worker on Cloudflare";
-      if (setupCode) $("file-store-status").textContent = "Handing the worker this server's member list...";
+      if (info && !info.paired && !setupCode) throw t("ui.enter-the-setup-code-you-gave-the-worker");
+      if (setupCode) $("file-store-status").textContent = t("ui.handing-the-worker-this-server-s-member");
     }
     await invoke("set_file_store", { serverId: server.id, url, setupCode: url ? setupCode : null });
     $("file-store-code").value = "";
-    toast(url ? "File backup is on" : "File backup is off");
+    toast(url ? t("ui.file-backup-is-on") : t("ui.file-backup-is-off"));
     integrationChecks.clear();
     await refreshCurrentServer();
     renderFileStoreEditor(state.currentServer);
@@ -14650,10 +14677,10 @@ async function saveTipJar(remove) {
   if (!server) return;
   const typed = $("tip-jar-input").value.trim();
   const url = remove || !typed ? null : cleanTipJar(typed);
-  if (!remove && typed && !url) return toast("Use your Ko-fi page, like ko-fi.com/yourname");
+  if (!remove && typed && !url) return toast(t("ui.use-your-ko-fi-page-like-ko-fi-com"));
   try {
     await invoke("set_tip_jar", { serverId: server.id, url });
-    toast(url ? "Tip jar saved" : "Tip jar removed");
+    toast(url ? t("ui.tip-jar-saved") : t("ui.tip-jar-removed"));
     await refreshCurrentServer();
     renderTipJarEditor(state.currentServer);
   } catch (err) {
@@ -14667,7 +14694,7 @@ async function saveServerTag(remove) {
   const letters = remove ? null : serverTagEdit.letters || null;
   try {
     await invoke("set_server_tag", { serverId: server.id, letters, emoji: serverTagEdit.emoji || null, color: serverTagEdit.color, effect: serverTagEdit.effect });
-    toast(letters ? "Server tag saved" : "Server tag removed");
+    toast(letters ? t("ui.server-tag-saved") : t("ui.server-tag-removed"));
     await refreshServers();
     await refreshCurrentServer();
     renderServerTagEditor(state.currentServer);
@@ -14717,7 +14744,7 @@ function wireServerTagEditor() {
   $("sync-host-home").onclick = () => moveSyncHost(true);
   $("sync-host-input").addEventListener("input", () => {
     syncHostPending = null;
-    $("sync-host-save").textContent = "Check";
+    $("sync-host-save").textContent = t("ui.check");
   });
   $("file-store-remove").onclick = () => saveFileStore(true);
   $("file-store-guide").onclick = () => openOutsideLink(FILE_STORE_GUIDE);
@@ -14734,7 +14761,7 @@ function wireServerTagEditor() {
   $("account-server-tag").addEventListener("change", async e => {
     try {
       state.user = await invoke("wear_server_tag", { serverId: e.target.value || null });
-      toast(e.target.value ? "You are wearing that tag" : "Server tag hidden");
+      toast(e.target.value ? t("ui.you-are-wearing-that-tag") : t("ui.server-tag-hidden"));
       if (state.currentServer) await refreshCurrentServer();
     } catch (err) {
       toast(String(err));
@@ -14747,7 +14774,7 @@ function renderAccountServerTag() {
   const select = $("account-server-tag");
   const worn = wornServerId(state.user);
   const options = wearableTags(state.servers);
-  select.replaceChildren(new Option("None", NO_SERVER_TAG), ...options.map(o => new Option(o.label, o.value)));
+  select.replaceChildren(new Option(t("ui.none"), NO_SERVER_TAG), ...options.map(o => new Option(o.label, o.value)));
   select.value = options.some(o => o.value === worn) ? worn : NO_SERVER_TAG;
   select.disabled = !options.length && !worn;
 }
@@ -14816,8 +14843,8 @@ async function friendAction(userId, action, name, note) {
   try {
     await invoke("friend_action", { userId, action, note: note || null });
     await loadFriends();
-    const done = { request: `Friend request sent to ${name}`, accept: `You and ${name} are now friends`, decline: "Request declined", remove: `Removed ${name} from friends` };
-    toast(done[action] || "Done");
+    const done = { request: t("ui.friend-request-sent-to", { name }), accept: t("ui.you-and-are-now-friends", { name }), decline: t("ui.request-declined"), remove: t("ui.removed-from-friends", { name }) };
+    toast(done[action] || t("settings.done"));
     if (state.view === "dm") renderDmThreads();
   } catch (e) {
     toast(String(e));
@@ -14826,18 +14853,18 @@ async function friendAction(userId, action, name, note) {
 
 function friendButton(person, onDone) {
   const st = friendState(person.id);
-  const labels = { none: "Add Friend", outgoing: "Request Sent", incoming: "Accept Friend", friend: "Friends" };
+  const labels = { none: t("ui.add-friend"), outgoing: t("ui.request-sent-2"), incoming: t("ui.accept-friend"), friend: t("ui.friends-2") };
   const btn = el("button", "mc-action" + (st === "friend" ? " on" : ""));
   btn.appendChild(svgIcon(st === "friend" ? "check" : "friendAdd", 16));
   btn.appendChild(el("span", null, labels[st]));
-  btn.title = st === "friend" ? "Remove friend" : st === "outgoing" ? "Cancel request" : labels[st];
+  btn.title = st === "friend" ? t("ui.remove-friend") : st === "outgoing" ? t("ui.cancel-request") : labels[st];
   btn.onclick = async () => {
     if (st === "none") {
       openAddFriend(person, onDone);
       return;
     }
     const action = st === "incoming" ? "accept" : "remove";
-    if (action === "remove" && st === "friend" && !(await confirm(`Remove ${person.name} from your friends?`))) return;
+    if (action === "remove" && st === "friend" && !(await confirm(t("ui.remove-from-your-friends", { name: person.name })))) return;
     await friendAction(person.id, action, person.name);
     if (onDone) onDone();
   };
@@ -14897,7 +14924,7 @@ function invitableServers(userId) {
 
 async function openInviteMenu(person, anchor) {
   const menu = $("invite-menu");
-  menu.replaceChildren(el("div", "ctx-title", `Invite ${person.name} to`));
+  menu.replaceChildren(el("div", "ctx-title", t("ui.invite-to", { name: person.name })));
   await refreshPeople();
   const servers = invitableServers(person.id);
   for (const server of servers) {
@@ -14907,15 +14934,15 @@ async function openInviteMenu(person, anchor) {
       try {
         const ticket = await invoke("get_invite", { serverId: server.id });
         await invoke("open_dm", { userId: person.id });
-        const sent = await invoke("send_dm", { userId: person.id, content: `Come join me in ${shownServerName(server)}! ${ticket}` });
-        dmSentToast(sent, person.name, `Invited ${person.name} to ${shownServerName(server)}`);
+        const sent = await invoke("send_dm", { userId: person.id, content: t("ui.come-join-me-in", { value: shownServerName(server), ticket }) });
+        dmSentToast(sent, person.name, t("ui.invited-to", { name: person.name, value: shownServerName(server) }));
       } catch (e) {
         toast(String(e));
       }
     };
     menu.appendChild(btn);
   }
-  if (!servers.length) menu.appendChild(el("div", "ctx-empty", "They are already in all your servers"));
+  if (!servers.length) menu.appendChild(el("div", "ctx-empty", t("ui.they-are-already-in-all-your-servers")));
   const r = anchor.getBoundingClientRect();
   placeMenuAt(menu, r.right + 4, r.top);
 }
@@ -14929,8 +14956,8 @@ function inviteCard(text) {
   if (!m) return null;
   const card = el("div", "invite-card");
   if (studioLook()) card.appendChild(inviteCardMark());
-  card.appendChild(el("div", "invite-card-title", "You've been invited to join a server"));
-  const join = el("button", "btn-primary btn-small", "Join");
+  card.appendChild(el("div", "invite-card-title", t("ui.you-ve-been-invited-to-join-a-server")));
+  const join = el("button", "btn-primary btn-small", t("ui.join"));
   join.onclick = async () => {
     join.disabled = true;
     try {
@@ -14967,8 +14994,8 @@ function studioProfilePane(person, place, reopen) {
   if (rows.length) {
     const more = pane.appendChild(el("button", "key sq mc-more theme-dark"));
     more.type = "button";
-    more.title = "More";
-    more.setAttribute("aria-label", "More options");
+    more.title = t("ui.more");
+    more.setAttribute("aria-label", t("ui.more-options"));
     more.appendChild(studioIconNode("ellipsis", 17, false));
     more.onclick = e => {
       e.stopPropagation();
@@ -14994,12 +15021,12 @@ function studioProfilePane(person, place, reopen) {
     btn.onclick = onClick;
   };
   if (isMe) {
-    key("key sm", "pencil", "Edit profile", "", () => {
+    key("key sm", "pencil", t("ui.edit-profile-2"), "", () => {
       leave();
       openUserSettings("account");
     });
   } else if (place === "full" && !person.bot && !isBlocked(person.id)) {
-    key("key sm primary", "message-circle", "Message", "", () => {
+    key("key sm primary", "message-circle", t("ui.message"), "", () => {
       leave();
       messageUser(person.id, person.name);
     });
@@ -15040,12 +15067,12 @@ function studioProfilePane(person, place, reopen) {
   }
   showActivityIn(body.appendChild(el("div", "play-box hidden")), person);
   if (person.about) {
-    body.appendChild(el("div", "mc-label", "About me"));
+    body.appendChild(el("div", "mc-label", t("ui.about-me-2")));
     setEmojiText(body.appendChild(el("div", "mc-about")), person.about);
   }
   const held = member ? (state.currentServer.roles || []).filter(r => (member.roles || []).includes(r.id)) : [];
   if (held.length) {
-    body.appendChild(el("div", "mc-label", "Roles"));
+    body.appendChild(el("div", "mc-label", t("ui.roles")));
     const roles = body.appendChild(el("div", "mc-roles"));
     for (const role of held) {
       const chip = roles.appendChild(el("span", "mc-role"));
@@ -15056,7 +15083,7 @@ function studioProfilePane(person, place, reopen) {
   }
   const servers = isMe ? [] : mutualServersOf(person.id);
   if (servers.length) {
-    body.appendChild(el("div", "mc-label", "Mutual servers"));
+    body.appendChild(el("div", "mc-label", t("ui.mutual-servers-2")));
     body.appendChild(el("div", "prof-servers")).append(...mutualServerRows(servers, leave));
   }
   return pane;
@@ -15116,7 +15143,7 @@ async function openFullProfile(member) {
   const own = !!state.user && person.id === state.user.id;
   $("fp-mutual-label").classList.toggle("hidden", own);
   $("fp-servers").classList.toggle("hidden", own);
-  $("fp-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
+  $("fp-mutual-label").textContent = t("ui.mutual-servers-3", { count: servers.length });
   $("fp-servers").replaceChildren(...servers.map(s => {
     const row = el("button", "dm-profile-server");
     row.appendChild(el("span", "server-chip", initials(shownServerName(s))));
@@ -15127,23 +15154,23 @@ async function openFullProfile(member) {
     };
     return row;
   }));
-  if (!servers.length) $("fp-servers").appendChild(el("div", "dm-preview", "No servers in common right now"));
+  if (!servers.length) $("fp-servers").appendChild(el("div", "dm-preview", t("ui.no-servers-in-common-right-now")));
   const st = friendState(person.id);
   $("fp-friend-wrap").classList.toggle("hidden", st === "none");
-  $("fp-friend").textContent = { friend: "You are friends", outgoing: "Friend request sent", incoming: "Wants to be your friend" }[st] || "";
+  $("fp-friend").textContent = { friend: t("ui.you-are-friends"), outgoing: t("ui.friend-request-sent"), incoming: t("ui.wants-to-be-your-friend") }[st] || "";
   const buttons = $("fp-buttons");
   buttons.replaceChildren();
   const isMe = state.user && person.id === state.user.id;
   if (!isMe) {
-    const msg = el("button", "btn-primary btn-small", "Message");
+    const msg = el("button", "btn-primary btn-small", t("ui.message"));
     msg.onclick = () => {
       hideModals();
       messageUser(person.id, person.name);
     };
     const more = el("button", "icon-btn fp-more");
     more.type = "button";
-    more.title = "More";
-    more.setAttribute("aria-label", "More options");
+    more.title = t("ui.more");
+    more.setAttribute("aria-label", t("ui.more-options"));
     more.appendChild(svgIcon("more", 20));
     more.onclick = e => {
       e.stopPropagation();
@@ -15192,29 +15219,29 @@ function openProfileMenu(person, x, y, keepOpen, card = null) {
   const rows = {
     invite: () => {
       const btn = el("button");
-      btn.append(svgIcon("serverAdd", 18), document.createTextNode("Invite to a server"));
+      btn.append(svgIcon("serverAdd", 18), document.createTextNode(t("ui.invite-to-a-server")));
       btn.onclick = () => {
         menu.classList.add("hidden");
         openInviteMenu(person, card.anchor);
       };
       menu.appendChild(btn);
     },
-    nickname: () => item("Nickname", "pencil", () => openNicknameModal(currentServerMember(person.id))),
+    nickname: () => item(t("ui.nickname"), "pencil", () => openNicknameModal(currentServerMember(person.id))),
     notify: () => {
       const wants = wantsFriendOnline(notifyPrefs(), person.id);
-      item("Notify when online", "signal", () => toggleFriendOnlinePick(person.id), "ctx-check" + (wants ? " checked" : ""), keepOpen);
+      item(t("ui.notify-when-online"), "signal", () => toggleFriendOnlinePick(person.id), "ctx-check" + (wants ? " checked" : ""), keepOpen);
     },
-    unfriend: () => item("Remove friend", "close", async () => {
-      if (await confirm(`Remove ${person.name} from your friends?`)) await friendAction(person.id, "remove", person.name);
+    unfriend: () => item(t("ui.remove-friend"), "close", async () => {
+      if (await confirm(t("ui.remove-from-your-friends", { name: person.name }))) await friendAction(person.id, "remove", person.name);
     }),
-    block: () => item(blocked ? "Unblock" : "Block", "block", () => {
+    block: () => item(blocked ? t("ui.unblock") : t("ui.block"), "block", () => {
       if (blocked) setBlocked(person.id, person.name, false);
       else {
         hideModals();
         openBlock(person.id, person.name);
       }
     }, card ? "danger" : ""),
-    report: () => item("Report", "flag", () => {
+    report: () => item(t("ui.report"), "flag", () => {
       hideModals();
       openReport({ serverId: targets[0].id, servers: targets, userId: person.id, name: person.name });
     }, "danger"),
@@ -15363,12 +15390,12 @@ function openMemberCard(member, anchor) {
       return btn;
     };
     if (isMe) {
-      key("key sm", "pencil", "Edit profile", "", () => {
+      key("key sm", "pencil", t("ui.edit-profile-2"), "", () => {
         closeFloating();
         openUserSettings("account");
       }).id = "mc-edit";
     } else if (!member.bot && !isBlocked(member.id)) {
-      key("key sm primary", "message-circle", "Message", "", () => {
+      key("key sm primary", "message-circle", t("ui.message"), "", () => {
         closeFloating();
         messageUser(member.id, member.name);
       });
@@ -15395,18 +15422,18 @@ function openMemberCard(member, anchor) {
   };
   if (!studio && !isMe && !member.bot) {
     actions.appendChild(friendButton(member, () => openMemberCard(member, anchor)));
-    action("serverAdd", "Invite", e => openInviteMenu(member, e.currentTarget));
+    action("serverAdd", t("ui.invite"), e => openInviteMenu(member, e.currentTarget));
   }
-  if (!studio) action("person", "View profile", () => openFullProfile(member));
+  if (!studio) action("person", t("ui.view-profile"), () => openFullProfile(member));
   if (!studio && moderates) {
     const active = timeoutActive(currentTimeoutOf(member));
     action("clock", timeoutActionLabel(member), () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
   }
-  if (!studio && isMe && canChangeOwnNickname()) action("pencil", "Nickname", () => openNicknameModal(currentServerMember(member.id)));
+  if (!studio && isMe && canChangeOwnNickname()) action("pencil", t("ui.nickname"), () => openNicknameModal(currentServerMember(member.id)));
   $("mc-composer").classList.toggle("hidden", isMe || member.bot || isBlocked(member.id));
   const input = $("mc-input");
   input.value = "";
-  input.placeholder = `Message @${member.name}`;
+  input.placeholder = t("ui.message-2", { name: member.name });
   input.dataset.user = member.id;
   input.dataset.name = member.name;
   card.classList.remove("hidden");
@@ -15518,16 +15545,16 @@ function renderRolePicker(server, list) {
     };
     list.appendChild(row);
   }
-  if (!list.childElementCount) list.appendChild(el("div", "manage-empty", "This server has no roles to pick yet"));
+  if (!list.childElementCount) list.appendChild(el("div", "manage-empty", t("ui.this-server-has-no-roles-to-pick-yet")));
 }
 
 function uploadRoleBanner(server, role, anchor) {
-  openBannerMenu(anchor, "Choose a role banner", async src => {
+  openBannerMenu(anchor, t("ui.choose-a-role-banner"), async src => {
     const data = await cropImageFile(src, 600, 240);
     await invoke("set_role_banner", { serverId: server.id, roleId: role.id, data });
     await refreshCurrentServer();
     openServerSettings();
-    toast("Role banner saved");
+    toast(t("ui.role-banner-saved"));
   });
 }
 
@@ -15544,10 +15571,10 @@ async function removeRoleBanner(server, role) {
 const ROLE_COLORS = ["ff4d4d", "ff8a4d", "5fd08a", "3dc4b8", "4d9bff", "7b6bff", "c05ccf", "ff6fa8", "99aab5"];
 
 const PERMISSION_GROUPS = [
-  ["Server", ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "create_events", "manage_events", "view_audit_log", "manage_file_storage"]],
-  ["Chat", ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "embed_links", "read_message_history", "create_threads", "send_polls", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
-  ["Members", ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
-  ["Voice", ["priority_speaker", "use_voice_filters"]],
+  [t("ui.server"), ["manage_server", "manage_channels", "manage_roles", "manage_expressions", "create_events", "manage_events", "view_audit_log", "manage_file_storage"]],
+  [t("appearance.stackPanel.chat"), ["manage_messages", "pin_messages", "attach_files", "send_voice_messages", "send_tts_messages", "embed_links", "read_message_history", "create_threads", "send_polls", "post_announcements", "mention_everyone", "bypass_slow_mode", "create_invites"]],
+  [t("ui.members"), ["kick_members", "ban_members", "mute_members", "time_out_members", "move_members", "manage_nicknames", "change_nickname"]],
+  [t("settings.tab.voice"), ["priority_speaker", "use_voice_filters"]],
 ];
 
 function roleForm(server, role, onClose) {
@@ -15564,7 +15591,7 @@ function roleForm(server, role, onClose) {
   bannerBtn.type = "button";
   const bannerClear = el("button", "role-banner-btn icon");
   bannerClear.type = "button";
-  bannerClear.title = "Remove banner";
+  bannerClear.title = t("ui.remove-banner");
   bannerClear.appendChild(svgIcon("close", 14));
   tools.append(bannerClear, bannerBtn);
   preview.append(tools, previewName);
@@ -15573,7 +15600,7 @@ function roleForm(server, role, onClose) {
   name.type = "text";
   name.maxLength = 50;
   name.value = role ? role.name : "";
-  name.placeholder = "Role name";
+  name.placeholder = t("ui.role-name");
 
   const hasBanner = () => bannerChange ? true : bannerChange === undefined && Boolean(role && role.banner);
   const paintPreview = () => {
@@ -15587,13 +15614,13 @@ function roleForm(server, role, onClose) {
       preview.style.backgroundImage = "";
       preview.style.background = fallback;
     }
-    bannerBtn.replaceChildren(svgIcon("plus", 14), el("span", null, hasBanner() ? "Change banner" : "Add banner"));
+    bannerBtn.replaceChildren(svgIcon("plus", 14), el("span", null, hasBanner() ? t("ui.change-banner") : t("ui.add-banner")));
     bannerClear.classList.toggle("hidden", !hasBanner());
     previewName.replaceChildren();
     if (tagValue) previewName.appendChild(roleTagChip(tagValue, color));
-    previewName.appendChild(el("span", null, name.value.trim() || "Role name"));
+    previewName.appendChild(el("span", null, name.value.trim() || t("ui.role-name")));
   };
-  bannerBtn.onclick = e => openBannerMenu(e.currentTarget, "Choose a role banner", async src => {
+  bannerBtn.onclick = e => openBannerMenu(e.currentTarget, t("ui.choose-a-role-banner"), async src => {
     bannerChange = await cropImageFile(src, 600, 240);
     paintPreview();
   });
@@ -15610,7 +15637,7 @@ function roleForm(server, role, onClose) {
   const paintTag = () => {
     tagBtn.replaceChildren(tagValue ? roleTagChip(tagValue, color) : svgIcon("smilePlus", 20));
     tagBtn.classList.toggle("set", Boolean(tagValue));
-    tagBtn.title = tagValue ? "Change the role emoji" : "Add an emoji shown next to members with this role";
+    tagBtn.title = tagValue ? t("ui.change-the-role-emoji") : t("ui.add-an-emoji-shown-next-to-members-with");
     paintPreview();
   };
   tagBtn.onclick = e => openEmojiPop(e.currentTarget, emoji => {
@@ -15625,15 +15652,15 @@ function roleForm(server, role, onClose) {
   });
   name.addEventListener("input", paintPreview);
   nameWrap.append(tagBtn, name);
-  body.appendChild(el("div", "setting-title", "Name"));
+  body.appendChild(el("div", "setting-title", t("ui.name")));
   body.appendChild(nameWrap);
-  body.appendChild(el("div", "setting-sub rf-name-sub", "The emoji shows next to the names of members with this role."));
+  body.appendChild(el("div", "setting-sub rf-name-sub", t("ui.the-emoji-shows-next-to-the-names-of")));
 
-  body.appendChild(el("div", "setting-title", "Colour"));
+  body.appendChild(el("div", "setting-title", t("ui.colour")));
   const swatches = el("div", "rf-swatches");
   const custom = el("input");
   custom.type = "color";
-  custom.title = "Pick any colour";
+  custom.title = t("ui.pick-any-colour");
   const paintSwatches = () => {
     for (const swatch of swatches.querySelectorAll(".rf-swatch")) swatch.classList.toggle("on", swatch.dataset.color === color);
     custom.value = `#${color}`;
@@ -15643,7 +15670,7 @@ function roleForm(server, role, onClose) {
     swatch.type = "button";
     swatch.dataset.color = value;
     swatch.style.background = `#${value}`;
-    swatch.setAttribute("aria-label", `Colour ${value}`);
+    swatch.setAttribute("aria-label", t("ui.colour-2", { value }));
     swatch.onclick = () => {
       color = value;
       paintSwatches();
@@ -15677,7 +15704,7 @@ function roleForm(server, role, onClose) {
     wrap.append(input, text);
     return wrap;
   };
-  body.appendChild(el("div", "setting-title role-perms-title", "Permissions"));
+  body.appendChild(el("div", "setting-title role-perms-title", t("ui.permissions")));
   for (const [title, values] of PERMISSION_GROUPS) {
     body.appendChild(el("div", "rf-group", title));
     const grid = el("div", "perm-grid");
@@ -15685,28 +15712,28 @@ function roleForm(server, role, onClose) {
     body.appendChild(grid);
   }
   const admin = permRow("administrator", "rf-admin");
-  admin.appendChild(el("span", "setting-sub", "Everything above, and nothing can be refused. Give it to as few people as you can."));
+  admin.appendChild(el("span", "setting-sub", t("ui.everything-above-and-nothing-can-be")));
   body.appendChild(admin);
 
   const pick = el("label", "role-self");
   const check = el("input");
   check.type = "checkbox";
   check.checked = role ? role.self_assignable : false;
-  pick.append(check, el("span", null, "Members can pick this role themselves (Choose Roles)"));
+  pick.append(check, el("span", null, t("ui.members-can-pick-this-role-themselves")));
   body.appendChild(pick);
 
   const separate = el("label", "role-self");
   const hoistCheck = el("input");
   hoistCheck.type = "checkbox";
   hoistCheck.checked = role ? !!role.hoist : false;
-  separate.append(hoistCheck, el("span", null, "Show members with this role in their own group in the people list"));
+  separate.append(hoistCheck, el("span", null, t("ui.show-members-with-this-role-in-their-own")));
   body.appendChild(separate);
 
   const pingRow = el("label", "rf-mention");
   const pingText = el("div", "rf-mention-text");
   pingText.append(
-    el("div", "setting-title", "Allow anyone to mention this role"),
-    el("div", "setting-sub", "Off means only members allowed to mention everyone can notify the people holding it."),
+    el("div", "setting-title", t("ui.allow-anyone-to-mention-this-role")),
+    el("div", "setting-sub", t("ui.off-means-only-members-allowed-to")),
   );
   const pingCheck = el("input", "switch");
   pingCheck.type = "checkbox";
@@ -15715,10 +15742,10 @@ function roleForm(server, role, onClose) {
   body.appendChild(pingRow);
 
   const actions = el("div", "form-actions");
-  const save = el("button", "btn-primary btn-small", creating ? "Create Role" : "Save Role");
+  const save = el("button", "btn-primary btn-small", creating ? t("ui.create-role") : t("ui.save-role"));
   save.onclick = async () => {
     if (!name.value.trim()) {
-      toast("Give the role a name");
+      toast(t("ui.give-the-role-a-name"));
       name.focus();
       return;
     }
@@ -15755,19 +15782,19 @@ function roleForm(server, role, onClose) {
       if (creating) onClose();
       await refreshCurrentServer();
       openServerSettings();
-      toast(creating ? "Role created" : "Role saved");
+      toast(creating ? t("ui.role-created") : t("ui.role-saved"));
     } catch (e) {
       toast(String(e));
     }
   };
   if (creating) {
-    const cancel = el("button", "btn-secondary btn-small", "Cancel");
+    const cancel = el("button", "btn-secondary btn-small", t("signin.cancel"));
     cancel.onclick = onClose;
     actions.append(cancel, save);
   } else {
-    const del = el("button", "btn-danger btn-small", "Delete Role");
+    const del = el("button", "btn-danger btn-small", t("ui.delete-role"));
     del.onclick = async () => {
-      if (!(await confirm(`Delete role ${role.name}?`))) return;
+      if (!(await confirm(t("ui.delete-role-2", { name: role.name })))) return;
       try {
         await invoke("delete_role", { serverId: server.id, roleId: role.id });
         await refreshCurrentServer();
@@ -15798,7 +15825,7 @@ function isBlocked(userId) {
   return Boolean(userId) && safety.blocked.some(b => b.id === userId);
 }
 
-const KEEP_LABELS = { 30: "30 days", 90: "90 days", 180: "6 months", 365: "1 year", forever: "Forever" };
+const KEEP_LABELS = { 30: "30 days", 90: "90 days", 180: "6 months", 365: "1 year", get forever() { return t("ui.forever"); } };
 let storageSettings = { keep: "90", servers: {}, store_for_others_mb: 25 };
 
 async function loadStorageSettings() {
@@ -15826,13 +15853,13 @@ function renderStorageSettings() {
   for (const server of railServers()) {
     const row = el("div", "keep-row");
     row.appendChild(el("span", "keep-name", shownServerName(server)));
-    const select = keepSelect(storageSettings.servers[server.id] || "", `Default (${KEEP_LABELS[storageSettings.keep]})`);
-    select.setAttribute("aria-label", `Keep messages from ${shownServerName(server)} for`);
+    const select = keepSelect(storageSettings.servers[server.id] || "", t("ui.default-2", { value: KEEP_LABELS[storageSettings.keep] }));
+    select.setAttribute("aria-label", t("ui.keep-messages-from-for", { value: shownServerName(server) }));
     select.onchange = () => setHistoryWindow(server.id, select.value || null);
     row.appendChild(select);
     list.appendChild(row);
   }
-  if (!railServers().length) list.appendChild(el("div", "manage-empty", "You are not in any servers yet"));
+  if (!railServers().length) list.appendChild(el("div", "manage-empty", t("ui.you-are-not-in-any-servers-yet")));
 }
 
 async function setHistoryWindow(serverId, keep) {
@@ -15882,7 +15909,7 @@ async function loadStorageUsage() {
   try {
     renderStorageUsage(describeUsage(await invoke("storage_usage")));
   } catch (e) {
-    $("storage-total").textContent = "Could not measure the data folder";
+    $("storage-total").textContent = t("ui.could-not-measure-the-data-folder");
     $("storage-free").textContent = String(e);
   }
   $("storage-refresh").disabled = false;
@@ -15906,7 +15933,7 @@ function renderStorageUsage(usage) {
     line.append(dot, el("span", "storage-part-name", row.label), el("span", "storage-part-size", row.size));
     list.appendChild(line);
   }
-  if (!usage.rows.length) list.appendChild(el("div", "manage-empty", "Nothing saved yet"));
+  if (!usage.rows.length) list.appendChild(el("div", "manage-empty", t("ui.nothing-saved-yet")));
 }
 
 async function chooseDataFolder() {
@@ -16021,12 +16048,12 @@ function renderSafetySettings() {
     const row = el("div", "blocked-row");
     row.appendChild(makeAvatar(person.id, person.name, "avatar avatar-sm"));
     row.appendChild(el("span", "blocked-name", person.name));
-    const unblock = el("button", "btn-secondary btn-small", "Unblock");
+    const unblock = el("button", "btn-secondary btn-small", t("ui.unblock"));
     unblock.onclick = () => setBlocked(person.id, person.name, false);
     row.appendChild(unblock);
     list.appendChild(row);
   }
-  if (!safety.blocked.length) list.appendChild(el("div", "manage-empty", "You have not blocked anyone"));
+  if (!safety.blocked.length) list.appendChild(el("div", "manage-empty", t("ui.you-have-not-blocked-anyone")));
 }
 
 async function saveDmSettings() {
@@ -16042,7 +16069,7 @@ let blockTarget = null;
 
 function openBlock(userId, name) {
   blockTarget = { userId, name };
-  $("block-title").textContent = `Block ${name}?`;
+  $("block-title").textContent = t("ui.block-2", { name });
   showModal("modal-block");
 }
 
@@ -16050,7 +16077,7 @@ async function setBlocked(userId, name, blocked) {
   try {
     await invoke("set_blocked", { userId, blocked });
     await loadSafety();
-    toast(blocked ? `Blocked ${name}` : `Unblocked ${name}`);
+    toast(blocked ? t("ui.blocked", { name }) : t("ui.unblocked", { name }));
     afterSafetyChange();
   } catch (e) {
     toast(String(e));
@@ -16074,8 +16101,8 @@ async function afterSafetyChange() {
 function blockedPlaceholder(run) {
   const row = el("div", "msg-hidden blocked");
   row.appendChild(svgIcon("block", 14));
-  row.appendChild(el("span", null, run.length === 1 ? "1 blocked message" : `${run.length} blocked messages`));
-  const show = el("button", "btn-link", "Show");
+  row.appendChild(el("span", null, run.length === 1 ? t("ui.1-blocked-message") : t("ui.blocked-messages", { count: run.length })));
+  const show = el("button", "btn-link", t("ui.show-2"));
   show.onclick = () => {
     for (const m of run) revealedBlocked.add(m.id);
     renderMessages(state.renderedMessages || []);
@@ -16138,34 +16165,34 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
   menu.replaceChildren(el("div", "ctx-title", member.name));
   const { item, sep, slider } = contextMenuBuilder(menu);
 
-  item("Profile", () => openMemberCard(fullMember(member), { getBoundingClientRect: () => ({ left: x, top: y }) }));
+  item(t("settings.tab.profile"), () => openMemberCard(fullMember(member), { getBoundingClientRect: () => ({ left: x, top: y }) }));
   if (!(dm && state.currentDm && state.currentDm.user === member.id)) {
-    item("Message", () => messageUser(member.id, member.name));
+    item(t("ui.message"), () => messageUser(member.id, member.name));
   }
   if (server && (server.screen_shares || []).some(s => s.user === member.id)) {
     const watching = state.watchingUser === member.id;
-    item(watching ? "Stop Watching" : "Watch Stream", () => (watching ? stopWatching() : watchScreen(member.id, member.name)));
+    item(watching ? t("ui.stop-watching") : t("ui.watch-stream"), () => (watching ? stopWatching() : watchScreen(member.id, member.name)));
   }
   if (dm && (state.dmThreads || []).some(t => t.user === member.id)) {
     const pinned = dmIsPinned(member.id);
-    item(pinned ? "Unpin" : "Pin", () => setDmPinned(member.id, !pinned));
+    item(pinned ? t("ui.unpin") : t("ui.pin"), () => setDmPinned(member.id, !pinned));
   }
   if (friendState(member.id) === "friend") {
     const wants = wantsFriendOnline(notifyPrefs(), member.id);
-    const ping = item("Notify when online", () => toggleFriendOnlinePick(member.id), "ctx-check" + (wants ? " checked" : ""));
-    ping.title = "A toast when they come online";
+    const ping = item(t("ui.notify-when-online"), () => toggleFriendOnlinePick(member.id), "ctx-check" + (wants ? " checked" : ""));
+    ping.title = t("ui.a-toast-when-they-come-online");
   }
   sep();
 
   const voice = state.voice || {};
   const mutedForMe = (voice.muted_users || []).includes(member.id);
-  const mute = item(mutedForMe ? "Unmute" : "Mute", () => setUserVoice(member.id, { muted: !mutedForMe }), "ctx-check" + (mutedForMe ? " checked" : ""));
-  mute.title = "Only you stop hearing them";
+  const mute = item(mutedForMe ? t("ui.unmute") : t("ui.mute"), () => setUserVoice(member.id, { muted: !mutedForMe }), "ctx-check" + (mutedForMe ? " checked" : ""));
+  mute.title = t("ui.only-you-stop-hearing-them");
   const volume = Math.round(((voice.user_volumes || {})[member.id] ?? 1) * 100);
-  slider("User Volume", volume, v => setUserVoice(member.id, { volume: v }));
+  slider(t("ui.user-volume"), volume, v => setUserVoice(member.id, { volume: v }));
   sep();
 
-  item(isBlocked(member.id) ? "Unblock" : "Block", () => {
+  item(isBlocked(member.id) ? t("ui.unblock") : t("ui.block"), () => {
     if (isBlocked(member.id)) setBlocked(member.id, member.name, false);
     else openBlock(member.id, member.name);
   });
@@ -16173,7 +16200,7 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     ? reportServersFor(member.id).filter(s => reportableIn(s, member.id))
     : (reportableIn(server, member.id) ? [server] : []);
   if (reportTargets.length) {
-    item("Report", () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
+    item(t("ui.report"), () => openReport({ serverId: reportTargets[0].id, servers: reportTargets, userId: member.id, name: member.name }), "danger");
   }
 
   const moderates = inServer && (server.can_mute || server.can_move || server.can_kick || server.can_ban || server.can_time_out || server.can_manage_nicknames || server.can_manage_stage);
@@ -16190,23 +16217,23 @@ function openMemberMenu(member, x, y, { dm = false } = {}) {
     if (server.can_mute) {
       const sm = (server.server_muted || []).includes(member.id);
       const sd = (server.server_deafened || []).includes(member.id);
-      item("Server Mute", () => moderateVoice(member, !sm, sd), "ctx-check" + (sm ? " checked" : ""));
-      item("Server Deafen", () => moderateVoice(member, sm, !sd), "ctx-check" + (sd ? " checked" : ""));
+      item(t("ui.server-mute"), () => moderateVoice(member, !sm, sd), "ctx-check" + (sm ? " checked" : ""));
+      item(t("ui.server-deafen"), () => moderateVoice(member, sm, !sd), "ctx-check" + (sd ? " checked" : ""));
     }
-    if (server.can_manage_nicknames) item("Change Nickname", () => openNicknameModal(member));
+    if (server.can_manage_nicknames) item(t("ui.change-nickname"), () => openNicknameModal(member));
     if (canTimeOut(server, member, state.user && state.user.id)) {
       const active = timeoutActive(currentTimeoutOf(member));
-      item(active ? "Remove timeout" : `Time out ${member.name}`, () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
+      item(active ? t("ui.remove-timeout") : t("ui.time-out-2", { name: member.name }), () => (active ? clearMemberTimeout(member) : openTimeoutPicker(member)), active ? "" : "danger");
     }
     const inVoice = server.can_move ? (server.members.find(m => m.id === member.id) || {}).voice_channel : null;
     if (inVoice) {
       for (const channel of server.channels.filter(c => isVoiceKind(c.kind) && c.id !== inVoice && c.can_view !== false)) {
-        item(`Move to ${channelPlainName(channel)}`, () => moveVoiceMember(member, channel));
+        item(t("ui.move-to", { value: channelPlainName(channel) }), () => moveVoiceMember(member, channel));
       }
-      item("Disconnect from Voice", () => moveVoiceMember(member, null), "danger");
+      item(t("ui.disconnect-from-voice-2"), () => moveVoiceMember(member, null), "danger");
     }
-    if (server.can_kick) item(`Kick ${member.name}`, () => confirmKick(member), "danger");
-    if (server.can_ban) item(`Ban ${member.name}`, () => confirmBan(member), "danger");
+    if (server.can_kick) item(t("ui.kick-name", { name: member.name }), () => confirmKick(member), "danger");
+    if (server.can_ban) item(t("ui.ban-name", { name: member.name }), () => confirmBan(member), "danger");
   }
   placeMenuAt(menu, x, y);
 }
@@ -16250,14 +16277,14 @@ function renderBanLengths(member, server, ban) {
 function confirmKick(member, server = state.currentServer) {
   if (!server) return;
   askModeration({
-    title: `Kick ${member.name}`,
+    title: t("ui.kick-name", { name: member.name }),
     member,
-    text: `They are removed from ${shownServerName(server)} and can rejoin with a new invite.`,
-    label: "Kick",
+    text: t("ui.they-are-removed-from-and-can-rejoin", { value: shownServerName(server) }),
+    label: t("ui.kick"),
     run: async () => {
       await invoke("kick_member", { serverId: server.id, userId: member.id });
       await refreshCurrentServer();
-      toast(`Kicked ${member.name}`);
+      toast(t("ui.kicked-2", { name: member.name }));
     },
   });
 }
@@ -16266,16 +16293,16 @@ function confirmBan(member, server = state.currentServer) {
   if (!server) return;
   const ban = { hours: null };
   askModeration({
-    title: `Ban ${member.name}`,
+    title: t("ui.ban-name", { name: member.name }),
     member,
     text: banChoiceText(member.name, shownServerName(server), null),
-    label: "Ban",
+    label: t("ui.ban"),
     lengths: () => renderBanLengths(member, server, ban),
     run: async () => {
       await invoke("ban_member", { serverId: server.id, userId: member.id, hours: ban.hours });
       await refreshCurrentServer();
       const length = BAN_LENGTHS.find(b => b.hours === ban.hours);
-      toast(ban.hours ? `Banned ${member.name} for ${length.label}` : `Banned ${member.name}`);
+      toast(ban.hours ? t("ui.banned-for", { name: member.name, label: length.label }) : t("ui.banned-2", { name: member.name }));
     },
   });
 }
@@ -16311,7 +16338,7 @@ function openMemberRowMenu(member, anchor) {
   let any = false;
   if (canTimeOut(server, member, state.user && state.user.id)) {
     const active = timeoutActive(member.timeout_until);
-    item(active ? "Remove timeout" : "Time out...", async () => {
+    item(active ? t("ui.remove-timeout") : t("ui.time-out-3"), async () => {
       if (active) {
         await clearMemberTimeout(member);
         openServerSettings();
@@ -16323,8 +16350,8 @@ function openMemberRowMenu(member, anchor) {
   }
   if (!isSelf && !isOwner && (server.can_kick || server.can_ban)) {
     if (any) sep();
-    if (server.can_kick) item("Kick...", () => confirmKick(member), "danger");
-    if (server.can_ban) item("Ban...", () => confirmBan(member), "danger");
+    if (server.can_kick) item(t("ui.kick-2"), () => confirmKick(member), "danger");
+    if (server.can_ban) item(t("ui.ban-2"), () => confirmBan(member), "danger");
   }
   const rect = anchor.getBoundingClientRect();
   placeMenuAt(menu, rect.left, rect.bottom + 4);
@@ -16347,7 +16374,7 @@ async function toggleHand(raised) {
   if (!state.voiceServer) return;
   try {
     await invoke("raise_hand", { serverId: state.voiceServer.id, raised });
-    toast(raised ? "Hand raised" : "Hand lowered");
+    toast(raised ? t("ui.hand-raised") : t("ui.hand-lowered"));
     if (state.currentServer && state.currentServer.id === state.voiceServer.id) await refreshCurrentServer();
     else renderVoicePanel();
   } catch (e) {
@@ -16370,24 +16397,24 @@ function openSelfVoiceMenu(x, y) {
     }
   };
 
-  item("Profile", () => openMemberCard(fullMember(state.user), { getBoundingClientRect: () => ({ left: x, top: y }) }));
-  if (canChangeOwnNickname()) item("Change Nickname", () => openNicknameModal(currentServerMember(state.user.id)));
+  item(t("settings.tab.profile"), () => openMemberCard(fullMember(state.user), { getBoundingClientRect: () => ({ left: x, top: y }) }));
+  if (canChangeOwnNickname()) item(t("ui.change-nickname"), () => openNicknameModal(currentServerMember(state.user.id)));
   sep();
-  item(state.voice.muted ? "Unmute" : "Mute", async () => {
+  item(state.voice.muted ? t("ui.unmute") : t("ui.mute"), async () => {
     state.voice = await invoke("set_muted", { muted: !state.voice.muted });
     renderUserPanel();
     renderChannels();
   }, "ctx-check" + (state.voice.muted ? " checked" : ""));
-  item(state.voice.deafened ? "Undeafen" : "Deafen", async () => {
+  item(state.voice.deafened ? t("ui.undeafen") : t("ui.deafen"), async () => {
     state.voice = await invoke("set_deafened", { deafened: !state.voice.deafened });
     renderUserPanel();
     renderChannels();
   }, "ctx-check" + (state.voice.deafened ? " checked" : ""));
-  level("Microphone", "input_gain", v => setLevels(state.voice.output_volume ?? 1, v));
-  level("Speakers", "output_volume", v => setLevels(v, state.voice.input_gain ?? 1));
+  level(t("ui.microphone"), "input_gain", v => setLevels(state.voice.output_volume ?? 1, v));
+  level(t("ui.speakers"), "output_volume", v => setLevels(v, state.voice.input_gain ?? 1));
   sep();
-  item("Voice Settings", () => openUserSettings("voice"));
-  item("Disconnect", () => disconnectVoice(), "danger");
+  item(t("ui.voice-settings"), () => openUserSettings("voice"));
+  item(t("ui.disconnect"), () => disconnectVoice(), "danger");
   placeMenuAt(menu, x, y);
 }
 
@@ -16451,7 +16478,7 @@ function openTimeoutPicker(member) {
   if (!server || !canTimeOut(server, member, state.user && state.user.id)) return;
   closeFloating();
   timeoutTarget = { serverId: server.id, member, seconds: TIMEOUT_CHOICES[1].seconds };
-  $("timeout-title").textContent = `Time out ${member.name}`;
+  $("timeout-title").textContent = t("ui.time-out-2", { name: member.name });
   modWho($("timeout-who"), member);
   $("timeout-custom").value = "";
   renderTimeoutChoices();
@@ -16504,7 +16531,7 @@ async function moveVoiceMember(member, channel, server = state.currentServer) {
   try {
     await invoke("move_voice_member", { serverId, userId: member.id, channelId: channel ? channel.id : null });
     await refreshCurrentServer();
-    toast(channel ? `Moving ${member.name} to ${roomName}` : `Disconnecting ${member.name} from voice`);
+    toast(channel ? t("ui.moving-to", { name: member.name, roomName }) : t("ui.disconnecting-from-voice", { name: member.name }));
     setTimeout(() => checkVoiceMove(serverId, member, channel ? channel.id : null, roomName), VOICE_MOVE_CHECK_MS);
   } catch (e) {
     toast(String(e));
@@ -16523,7 +16550,7 @@ async function clearMemberTimeout(member) {
   try {
     await invoke("clear_timeout", { serverId: server.id, userId: member.id });
     await refreshCurrentServer();
-    toast(`Removed the timeout on ${member.name}`);
+    toast(t("ui.removed-the-timeout-on", { name: member.name }));
   } catch (e) {
     toast(String(e));
   }
@@ -16556,7 +16583,7 @@ function openNicknameModal(member) {
   $("nickname-hint").textContent = nicknamePrompt(member, server && { ...server, name: shownServerName(server) }, state.user && state.user.id);
   const input = $("nickname-input");
   input.value = member.nickname || "";
-  input.placeholder = member.username || "Nickname";
+  input.placeholder = member.username || t("ui.nickname");
   $("nickname-clear").disabled = !member.nickname;
   showModal("modal-nickname");
   input.focus();
@@ -16653,7 +16680,7 @@ function openReport(target) {
     reportTarget.messageId = null;
     showReportDestination();
   };
-  $("report-title").textContent = target.messageId ? `Report message from ${target.name}` : `Report ${target.name}`;
+  $("report-title").textContent = target.messageId ? t("ui.report-message-from", { name: target.name }) : t("ui.report-2", { name: target.name });
   for (const radio of document.querySelectorAll('input[name="report-reason"]')) radio.checked = false;
   $("report-note").value = "";
   $("report-block").checked = false;
@@ -16664,25 +16691,25 @@ function openReport(target) {
 async function submitReport() {
   const reason = document.querySelector('input[name="report-reason"]:checked');
   if (!reason) {
-    toast("Pick a reason for the report");
+    toast(t("ui.pick-a-reason-for-the-report"));
     return;
   }
-  const t = reportTarget;
+  const target = reportTarget;
   const go = $("report-go");
   go.disabled = true;
   try {
     const messageIds = reportPicked(reportChoices);
     const sent = await invoke("report_user", {
-      serverId: t.serverId,
-      userId: t.userId,
-      channelId: messageIds.length ? t.pickChannelId : null,
+      serverId: target.serverId,
+      userId: target.userId,
+      channelId: messageIds.length ? target.pickChannelId : null,
       messageIds,
       reason: reason.value,
       note: $("report-note").value,
     });
     hideModals();
     toast(reportSentToast(sent));
-    if ($("report-block").checked) await setBlocked(t.userId, t.name, true);
+    if ($("report-block").checked) await setBlocked(target.userId, target.name, true);
   } catch (e) {
     toast(String(e));
   } finally {
@@ -16691,11 +16718,11 @@ async function submitReport() {
 }
 
 const REPORT_REASON_LABELS = {
-  spam: "Spam or scams",
-  harassment: "Harassment or hate",
-  inappropriate: "Inappropriate content",
-  impersonation: "Impersonation",
-  other: "Something else",
+  get spam() { return t("ui.spam-or-scams"); },
+  get harassment() { return t("ui.harassment-or-hate"); },
+  get inappropriate() { return t("ui.inappropriate-content"); },
+  get impersonation() { return t("ui.impersonation"); },
+  get other() { return t("ui.something-else"); },
 };
 
 async function renderReportSettings(server) {
@@ -16708,14 +16735,14 @@ async function renderReportSettings(server) {
     list.appendChild(el("div", "manage-empty", String(e)));
     return;
   }
-  $("tab-reports").textContent = reports.length ? `Reports (${reports.length})` : "Reports";
+  $("tab-reports").textContent = reports.length ? t("ui.reports-2", { count: reports.length }) : t("ui.reports");
   for (const report of reports) {
     const card = el("div", "report-card");
     const head = el("div", "report-head");
     head.appendChild(makeAvatar(report.reported, report.reported_name, "avatar avatar-sm"));
     const who = el("div", "report-who");
     who.appendChild(el("div", "report-name", report.reported_name));
-    who.appendChild(el("div", "report-meta", `Reported by ${report.reporter_name} - ${formatShortTime(report.created_at)}`));
+    who.appendChild(el("div", "report-meta", t("ui.reported-by", { reporter_name: report.reporter_name, value: formatShortTime(report.created_at) })));
     head.appendChild(who);
     head.appendChild(el("span", "report-reason", REPORT_REASON_LABELS[report.reason] || report.reason));
     card.appendChild(head);
@@ -16727,7 +16754,7 @@ async function renderReportSettings(server) {
     if (report.note) card.appendChild(el("div", "report-note", report.note));
     const actions = el("div", "report-actions");
     if (report.channel && report.message) {
-      const jump = el("button", "btn-secondary btn-small report-jump", "Jump to Message");
+      const jump = el("button", "btn-secondary btn-small report-jump", t("ui.jump-to-message"));
       jump.onclick = async () => {
         await closeSettingsLayers();
         await openNotificationTarget(`channel:${report.server}:${report.channel}`);
@@ -16737,20 +16764,20 @@ async function renderReportSettings(server) {
     }
     const isMember = server.members.some(m => m.id === report.reported);
     if (server.can_kick && isMember) {
-      const kick = el("button", "btn-danger btn-small", "Kick");
+      const kick = el("button", "btn-danger btn-small", t("ui.kick"));
       kick.onclick = async () => {
-        if (!(await confirm(`Kick ${report.reported_name} from the server?`))) return;
+        if (!(await confirm(t("ui.kick-from-the-server", { reported_name: report.reported_name })))) return;
         try {
           await invoke("kick_member", { serverId: server.id, userId: report.reported });
           await refreshCurrentServer();
-          toast(`Kicked ${report.reported_name}`);
+          toast(t("ui.kicked-3", { reported_name: report.reported_name }));
         } catch (e) {
           toast(String(e));
         }
       };
       actions.appendChild(kick);
     }
-    const dismiss = el("button", "btn-link", "Dismiss");
+    const dismiss = el("button", "btn-link", t("ui.dismiss"));
     dismiss.onclick = async () => {
       await invoke("dismiss_report", { reportId: report.id });
       renderReportSettings(state.currentServer);
@@ -16759,13 +16786,13 @@ async function renderReportSettings(server) {
     card.appendChild(actions);
     list.appendChild(card);
   }
-  if (!reports.length) list.appendChild(el("div", "manage-empty", "No reports. All quiet."));
+  if (!reports.length) list.appendChild(el("div", "manage-empty", t("ui.no-reports-all-quiet")));
 }
 
 function onReportReceived(report) {
   const server = state.servers.find(s => s.id === report.server);
   invoke("notify", {
-    title: `New report${server ? ` in ${shownServerName(server)}` : ""}`,
+    title: t("ui.new-report", { value: server ? ` in ${shownServerName(server)}` : "" }),
     body: `${report.reporter_name} reported ${report.reported_name}`,
     target: null,
   }).catch(() => {});
@@ -16782,10 +16809,10 @@ function renderDmRequestBar(thread) {
   if (!isRequest) return;
   $("dm-request-title").textContent = thread.kind === "spam"
     ? `${thread.name} might be spam`
-    : `${thread.name} wants to message you`;
+    : t("ui.wants-to-message-you", { name: thread.name });
   $("dm-request-sub").textContent = thread.kind === "spam"
-    ? "This looked like spam, so you were not notified."
-    : "Accept to reply, or decline to delete the request.";
+    ? t("ui.this-looked-like-spam-so-you-were-not")
+    : t("ui.accept-to-reply-or-decline-to-delete-the");
 }
 
 async function answerDmRequest(action) {
@@ -16823,8 +16850,8 @@ function untilFromChoice(choice) {
 function formatUntil(secs) {
   const d = new Date(secs * 1000);
   const sameDay = d.toDateString() === new Date().toDateString();
-  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return sameDay ? time : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  const time = d.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" });
+  return sameDay ? time : `${d.toLocaleDateString(dateLocale(), { weekday: "short" })} ${time}`;
 }
 
 async function setStatusExpiry(changes) {
@@ -16845,10 +16872,10 @@ function openDurations(mode, anchor) {
   durationMode = mode;
   $("pp-durations-title").textContent = mode.kind === "presence"
     ? `${({ invisible: "Appear Offline", ...PRESENCE_LABELS })[mode.presence] || "Status"} for how long?`
-    : "Clear custom status after";
-  $("pp-durations-never").textContent = mode.kind === "presence" ? "Until I turn it off" : "Don't clear";
+    : t("ui.clear-custom-status-after");
+  $("pp-durations-never").textContent = mode.kind === "presence" ? t("ui.until-i-turn-it-off") : t("ui.don-t-clear");
   $("pp-durations-note").textContent = mode.kind === "presence" && mode.presence === "do_not_disturb"
-    ? "Others see when you are back."
+    ? t("ui.others-see-when-you-are-back")
     : "";
   $("pp-durations-note").classList.toggle("hidden", !$("pp-durations-note").textContent);
   $("pp-custom-time").value = toLocalInput(new Date(Date.now() + 2 * 3600e3));
@@ -16888,13 +16915,13 @@ function renderStatusExpiry() {
     if (!small.dataset.text) small.dataset.text = small.textContent;
     const active = btn.dataset.presence === (user.presence || "online");
     const until = active && btn.dataset.presence !== "online" ? v.presence_until : null;
-    small.textContent = until ? `Until ${formatUntil(until)}` : small.dataset.text;
+    small.textContent = until ? t("ui.until", { value: formatUntil(until) }) : small.dataset.text;
     small.classList.toggle("pp-until", Boolean(until));
   }
   const hasStatus = Boolean(user.custom_status || user.status_emoji);
   const expiry = $("pp-status-expiry");
   expiry.classList.toggle("hidden", !hasStatus);
-  expiry.textContent = v.status_until ? `Clears at ${formatUntil(v.status_until)}` : "Clear after: Never";
+  expiry.textContent = v.status_until ? t("ui.clears-at", { value: formatUntil(v.status_until) }) : t("ui.clear-after-never");
 }
 
 const EMOJI_TOKEN_RE = /<:([a-z0-9_]{2,32}):([A-Za-z0-9]{1,128}@[A-Za-z0-9]{1,128})>/g;
@@ -16933,7 +16960,7 @@ function parseEmojiToken(text) {
 
 function decodeCustomEmojis(text) {
   const sticker = parseStickerToken(text);
-  if (sticker) return `:${sticker.name}: sticker`;
+  if (sticker) return t("ui.sticker", { name: sticker.name });
   return String(text || "").replace(EMOJI_TOKEN_RE, ":$1:");
 }
 
@@ -17049,12 +17076,12 @@ function appendRichText(div, text) {
 function pickerSection(grid, title, { other = false, addKind = null } = {}) {
   const head = el("div", "emoji-section");
   head.appendChild(el("span", "emoji-section-name", title));
-  if (other) head.appendChild(el("span", "emoji-section-tag", "Other Server"));
+  if (other) head.appendChild(el("span", "emoji-section-tag", t("ui.other-server")));
   if (addKind) {
     const add = el("button", "emoji-section-add");
     add.type = "button";
-    add.title = `Add ${EXPRESSION_KINDS[addKind].one} to this server`;
-    add.append(svgIcon("plus", 12), el("span", null, "Add"));
+    add.title = t("ui.add-to-this-server", { value: EXPRESSION_KINDS[addKind].one });
+    add.append(svgIcon("plus", 12), el("span", null, t("ui.add")));
     add.onclick = e => {
       e.stopPropagation();
       openAddExpression(addKind);
@@ -17075,7 +17102,7 @@ function appendExpressionGroups(grid, kind, query, renderItem, { localOnly = fal
   const addable = add && canAddHere(kind) && !query;
   if (addable && !groups.some(g => g.local)) {
     pickerSection(grid, serverHere().name, { addKind: kind });
-    grid.appendChild(el("div", "picker-empty", `No ${EXPRESSION_KINDS[kind].many} here yet`));
+    grid.appendChild(el("div", "picker-empty", t("ui.no-here-yet-2", { value: EXPRESSION_KINDS[kind].many })));
   }
   let any = false;
   for (const group of groups) {
@@ -17127,7 +17154,7 @@ function appendCatalogSection(grid, q, kind) {
   if (spec.external && !account.server_emojis) {
     if (!q) return false;
     pickerSection(grid, "emoji.gg");
-    grid.appendChild(el("div", "picker-empty", "Your account server doesn't offer emoji.gg search yet."));
+    grid.appendChild(el("div", "picker-empty", t("ui.your-account-server-doesn-t-offer-emoji")));
     return true;
   }
   pickerSection(grid, spec.label);
@@ -17144,7 +17171,7 @@ function appendCatalogSection(grid, q, kind) {
     const results = all.slice(0, spec.slots);
     if (!results.length) {
       const box = kind === "emojis" ? "emojis" : "stickers";
-      slots[0].replaceWith(el("div", `picker-empty catalog-none ${box}`, `Nothing on ${spec.label} matches that`));
+      slots[0].replaceWith(el("div", `picker-empty catalog-none ${box}`, t("ui.nothing-on-matches-that", { label: spec.label })));
       for (const slot of slots.slice(1)) slot.remove();
       return;
     }
@@ -17198,7 +17225,7 @@ async function useCatalogSticker(item, slot) {
     const prepared = await prepareEmojiImage(src, CATALOG_SIZES.stickers);
     const name = expressionName(item.title, "sticker");
     const token = parseStickerToken(await invoke("store_catalog_sticker", { name, data: prepared.data }));
-    if (!token) throw new Error("that sticker could not be saved");
+    if (!token) throw new Error(t("ui.that-sticker-could-not-be-saved"));
     catalogStickers.set(item.id, token);
     sendSticker(token);
   } catch (e) {
@@ -17224,7 +17251,7 @@ async function useCatalogEmoji(item, slot) {
     const src = await invoke("fetch_catalog_image", { url: item.url });
     const prepared = await prepareEmojiImage(src, CATALOG_SIZES.emojis);
     const token = parseEmojiToken(await invoke("store_catalog_emoji", { name, data: prepared.data }));
-    if (!token) throw new Error("that emoji could not be saved");
+    if (!token) throw new Error(t("ui.that-emoji-could-not-be-saved"));
     catalogPicks.set(item.id, token);
     insertIntoComposer(`:${token.name}: `);
   } catch (e) {
@@ -17243,7 +17270,7 @@ async function prepareEmojiImage(src, { size = 128, maxGif = 256 * 1024 } = {}) 
   const img = await new Promise((resolve, reject) => {
     const i = new Image();
     i.onload = () => resolve(i);
-    i.onerror = () => reject(new Error("could not read that image"));
+    i.onerror = () => reject(new Error(t("ui.could-not-read-that-image")));
     i.src = src;
   });
   const scale = Math.min(1, EMOJI_SIZE_PX / Math.max(img.naturalWidth, img.naturalHeight));
@@ -17289,14 +17316,14 @@ function pendingExpressionRow(preview, name, onSave) {
   input.spellcheck = false;
   row.appendChild(input);
   const actions = el("div", "expr-actions");
-  const save = el("button", "btn-primary btn-small", "Save");
-  const cancel = el("button", "btn-link", "Cancel");
+  const save = el("button", "btn-primary btn-small", t("ui.save"));
+  const cancel = el("button", "btn-link", t("signin.cancel"));
   actions.append(cancel, save);
   row.appendChild(actions);
   const submit = async () => {
     const clean = expressionName(input.value, "");
     if (!clean) {
-      toast("Names need at least 2 letters, numbers or underscores");
+      toast(t("ui.names-need-at-least-2-letters-numbers-or"));
       return;
     }
     save.disabled = true;
@@ -17340,7 +17367,7 @@ function expressionDeleteButton(label, onDelete) {
 
 function renderImageExpressions(server, { kind, listId, countId, max, removeCommand, previewClass, label }) {
   const items = server[kind] || [];
-  $(countId).textContent = `${items.length} of ${max} slots used`;
+  $(countId).textContent = t("ui.of-slots-used", { count: items.length, max });
   const list = $(listId);
   list.replaceChildren();
   for (const item of items) {
@@ -17348,11 +17375,11 @@ function renderImageExpressions(server, { kind, listId, countId, max, removeComm
     row.appendChild(customEmojiImg(item.name, item.image, previewClass));
     row.appendChild(el("span", "expr-name", `:${item.name}:`));
     if (server.can_manage_expressions) {
-      row.appendChild(expressionDeleteButton(`Delete :${item.name}:`, () => invoke(removeCommand, { serverId: server.id, name: item.name })));
+      row.appendChild(expressionDeleteButton(t("ui.delete-6", { name: item.name }), () => invoke(removeCommand, { serverId: server.id, name: item.name })));
     }
     list.appendChild(row);
   }
-  if (!items.length) list.appendChild(el("div", "manage-empty", `No ${label} yet`));
+  if (!items.length) list.appendChild(el("div", "manage-empty", t("ui.no-yet", { label })));
 }
 
 function renderEmojiSettings(server) {
@@ -17367,7 +17394,7 @@ function renderEmojiSettings(server) {
   renderRoleAccess(server, "emojis");
   renderImageExpressions(server, {
     kind: "emojis", listId: "emoji-list", countId: "emoji-count", max: MAX_EMOJIS,
-    removeCommand: "remove_emoji", previewClass: "custom-emoji expr-preview", label: "custom emojis",
+    removeCommand: "remove_emoji", previewClass: "custom-emoji expr-preview", label: t("ui.custom-emojis"),
   });
 }
 
@@ -17394,7 +17421,7 @@ function renderEmoticonSettings(server) {
   $("emoticon-share-row").classList.toggle("readonly", !server.can_manage_server);
   $("emoticon-add").classList.toggle("hidden", !server.can_add_emoticons);
   $("emoticon-add").disabled = faces.length >= MAX_EMOTICONS;
-  $("emoticon-count").textContent = `${faces.length} of ${MAX_EMOTICONS} slots used`;
+  $("emoticon-count").textContent = t("ui.of-slots-used-2", { count: faces.length, MAX_EMOTICONS });
   renderRoleAccess(server, "emoticons");
   const list = $("emoticon-list");
   list.replaceChildren();
@@ -17403,11 +17430,11 @@ function renderEmoticonSettings(server) {
     row.appendChild(el("span", "expr-face", face.text));
     row.appendChild(el("span", "expr-name", `:${face.name}:`));
     if (server.can_manage_expressions) {
-      row.appendChild(expressionDeleteButton(`Delete :${face.name}:`, () => invoke("remove_emoticon", { serverId: server.id, name: face.name })));
+      row.appendChild(expressionDeleteButton(t("ui.delete-6", { name: face.name }), () => invoke("remove_emoticon", { serverId: server.id, name: face.name })));
     }
     list.appendChild(row);
   }
-  if (!faces.length) list.appendChild(el("div", "manage-empty", "No emoticons yet"));
+  if (!faces.length) list.appendChild(el("div", "manage-empty", t("ui.no-emoticons-yet")));
 }
 
 async function uploadEmoji() {
@@ -17415,7 +17442,7 @@ async function uploadEmoji() {
   if (!server) return;
   let src;
   try {
-    src = await chooseImage("Choose an emoji image", $("server-image-file"));
+    src = await chooseImage(t("ui.choose-an-emoji-image"), $("server-image-file"));
   } catch (e) {
     toast(String(e));
     return;
@@ -17428,15 +17455,15 @@ async function uploadEmoji() {
     toast(String(e.message || e));
     return;
   }
-  if (prepared.flattened) toast("That GIF is over 256 KB, so it will be saved as a still image");
+  if (prepared.flattened) toast(t("ui.that-gif-is-over-256-kb-so-it-will-be"));
   const preview = el("img", "custom-emoji expr-preview");
   preview.src = prepared.url;
   const taken = (server.emojis || []).map(e => e.name);
   const row = pendingExpressionRow(preview, freeExpressionName("emoji", taken), async clean => {
-    if (taken.includes(clean) && !(await confirm(`Replace the existing :${clean}: emoji?`))) return;
+    if (taken.includes(clean) && !(await confirm(t("ui.replace-the-existing-emoji", { clean })))) return;
     await invoke("add_emoji", { serverId: server.id, name: clean, data: prepared.data });
     await refreshExpressions();
-    toast(`Added :${clean}:`);
+    toast(t("ui.added", { clean }));
   });
   $("emoji-list").querySelector(".manage-empty")?.remove();
   $("emoji-list").prepend(row);
@@ -17464,10 +17491,10 @@ function saveSoundboardPrefs(prefs) {
 }
 
 const DEFAULT_SOUNDS = [
-  { id: "airhorn", label: "Airhorn", file: "sounds/soundboard/airhorn.mp3" },
-  { id: "ba_dum_tss", label: "Ba Dum Tss", file: "sounds/soundboard/ba-dum-tss.mp3" },
-  { id: "cricket", label: "Crickets", file: "sounds/soundboard/cricket.mp3" },
-  { id: "losing_horn", label: "Losing Horn", file: "sounds/soundboard/losing_horn.mp3" },
+  { id: "airhorn", get label() { return t("ui.airhorn"); }, file: "sounds/soundboard/airhorn.mp3" },
+  { id: "ba_dum_tss", get label() { return t("ui.ba-dum-tss"); }, file: "sounds/soundboard/ba-dum-tss.mp3" },
+  { id: "cricket", get label() { return t("ui.crickets"); }, file: "sounds/soundboard/cricket.mp3" },
+  { id: "losing_horn", get label() { return t("ui.losing-horn"); }, file: "sounds/soundboard/losing_horn.mp3" },
 ];
 
 function defaultSound(name) {
@@ -17525,7 +17552,7 @@ function pickSoundFile() {
       const file = input.files && input.files[0];
       if (!file) return resolve(null);
       if (file.size > SOUND_SOURCE_MAX_BYTES) {
-        toast(`Pick an audio file under ${SOUND_SOURCE_MAX_BYTES / 1024 / 1024} MB`);
+        toast(t("ui.pick-an-audio-file-under-mb", { value: SOUND_SOURCE_MAX_BYTES / 1024 / 1024 }));
         return resolve(null);
       }
       const reader = new FileReader();
@@ -17539,7 +17566,7 @@ function pickSoundFile() {
 function soundRow(server, sound, canDelete) {
   const row = el("div", "expr-row");
   const play = el("button", "icon-btn sound-preview");
-  play.title = "Preview";
+  play.title = t("ui.preview");
   play.appendChild(svgIcon("play", 18));
   play.onclick = () => playExpressionSound(sound.blob, (sound.volume ?? 1) * soundboardPrefs().volume);
   row.appendChild(play);
@@ -17548,7 +17575,7 @@ function soundRow(server, sound, canDelete) {
     icon.type = "button";
     icon.replaceChildren(sound.emoji ? soundEmojiNode(sound.emoji) : svgIcon("smilePlus", 18));
     if (canDelete) {
-      icon.title = "Choose an emoji for this sound";
+      icon.title = t("ui.choose-an-emoji-for-this-sound");
       const setEmoji = async emoji => {
         try {
           await invoke("set_sound_emoji", { serverId: server.id, name: sound.name, emoji });
@@ -17566,7 +17593,7 @@ function soundRow(server, sound, canDelete) {
   row.appendChild(el("span", "expr-name", sound.name));
   if (canDelete) {
     const del = el("button", "icon-btn expr-delete");
-    del.title = `Delete ${sound.name}`;
+    del.title = t("ui.delete-3", { name: sound.name });
     del.appendChild(svgIcon("trash", 18));
     del.onclick = async () => {
       try {
@@ -17599,7 +17626,7 @@ function renderSoundboardSettings(server) {
   const list = $("sound-list");
   list.replaceChildren();
   for (const sound of sounds) list.appendChild(soundRow(server, sound, server.can_manage_expressions));
-  if (!sounds.length) list.appendChild(el("div", "manage-empty", "No sounds yet"));
+  if (!sounds.length) list.appendChild(el("div", "manage-empty", t("ui.no-sounds-yet")));
   const builtins = $("sound-default-list");
   builtins.replaceChildren(...DEFAULT_SOUNDS.map(s => soundRow(server, { name: s.label, blob: `default:${s.id}`, volume: 1 }, false)));
 }
@@ -17624,11 +17651,11 @@ async function openSoundUpload(server, afterSave = null, alert = null) {
     bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
     buffer = await decodeSoundSource(bytes);
   } catch {
-    toast("Could not read that sound file");
+    toast(t("ui.could-not-read-that-sound-file"));
     return;
   }
   if (buffer.duration > SOUND_SOURCE_MAX_SECONDS) {
-    toast(`Pick a clip under ${SOUND_SOURCE_MAX_SECONDS / 60} minutes`);
+    toast(t("ui.pick-a-clip-under-minutes", { value: SOUND_SOURCE_MAX_SECONDS / 60 }));
     return;
   }
   stopSoundPreview();
@@ -17641,10 +17668,10 @@ async function openSoundUpload(server, afterSave = null, alert = null) {
     return bar;
   }));
   $("sound-hint").textContent = buffer.duration > MAX_SOUND_SECONDS + 0.2
-    ? `This clip is ${formatTrimTime(buffer.duration)} long. Drag the handles to pick up to ${MAX_SOUND_SECONDS} seconds.`
-    : alert ? "Drag the handles to trim the start or end, then give it a name." : "Drag the handles to trim the start or end, then give it a name and an emoji.";
-  $("sound-title").textContent = alert ? "Add your own sound" : "Add a sound";
-  $("sound-save").textContent = alert ? "Save" : "Add";
+    ? t("ui.this-clip-is-long-drag-the-handles-to", { value: formatTrimTime(buffer.duration), MAX_SOUND_SECONDS })
+    : alert ? t("ui.drag-the-handles-to-trim-the-start-or") : t("ui.drag-the-handles-to-trim-the-start-or-2");
+  $("sound-title").textContent = alert ? t("ui.add-your-own-sound") : t("ui.add-a-sound");
+  $("sound-save").textContent = alert ? t("ui.save") : t("ui.add");
   $("sound-emoji").classList.toggle("hidden", Boolean(alert));
   const taken = alert ? alertSounds.list.map(s => s.name) : (server.sounds || []).map(s => s.name);
   $("sound-name").value = freeExpressionName(expressionName(stem, "sound"), taken);
@@ -17676,7 +17703,7 @@ function paintSoundSelection() {
     const mid = ((i + 0.5) / bars.length) * buffer.duration;
     bars[i].classList.toggle("on", mid >= sel.start && mid <= sel.end);
   }
-  $("sound-trim-times").textContent = `${formatTrimTime(sel.start)} to ${formatTrimTime(sel.end)}, ${(sel.end - sel.start).toFixed(1)} s`;
+  $("sound-trim-times").textContent = t("ui.to-s", { value: formatTrimTime(sel.start), value2: formatTrimTime(sel.end), value3: (sel.end - sel.start).toFixed(1) });
 }
 
 function moveSoundDraft(which, at) {
@@ -17731,7 +17758,7 @@ function nudgeSoundHandle(which, e) {
 function paintSoundPreviewButton() {
   const playing = Boolean(soundDraft.preview);
   $("sound-trim-play").replaceChildren(svgIcon(playing ? "pause" : "play", 16));
-  $("sound-trim-play").title = playing ? "Stop" : "Play the selected part";
+  $("sound-trim-play").title = playing ? t("ui.stop") : t("ui.play-the-selected-part");
   $("sound-playhead").classList.toggle("hidden", !playing);
 }
 
@@ -17772,19 +17799,19 @@ function toggleSoundPreview() {
 async function saveAlertSoundDraft() {
   const name = expressionName($("sound-name").value, "");
   if (!name) {
-    toast("Names are 2 to 32 letters, numbers or underscores");
+    toast(t("ui.names-are-2-to-32-letters-numbers-or"));
     return;
   }
   stopSoundPreview();
   $("sound-save").disabled = true;
   try {
     const bytes = await renderTrimmedSound(soundDraft.bytes, soundDraft.buffer, soundDraft.sel);
-    if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error("That clip is still over 1 MB, pick a shorter part");
+    if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error(t("ui.that-clip-is-still-over-1-mb-pick-a"));
     const id = await saveAlertSound(name, bytes);
     hideModals();
     chooseAlertSound(soundDraft.alert.eventId, id);
     renderSoundSettings();
-    toast(`Saved ${name} on this device`);
+    toast(t("ui.saved-on-this-device", { name }));
   } catch (e) {
     toast(String(e.message || e));
   } finally {
@@ -17798,24 +17825,24 @@ async function saveSoundDraft() {
   if (!server || !soundDraft.buffer) return;
   const name = expressionName($("sound-name").value, "");
   if (!name) {
-    toast("Names are 2 to 32 letters, numbers or underscores");
+    toast(t("ui.names-are-2-to-32-letters-numbers-or"));
     return;
   }
   const exists = (server.sounds || []).some(s => s.name === name);
   if (exists && !server.can_manage_expressions) {
-    toast(`${name} is taken, pick another name`);
+    toast(t("ui.is-taken-pick-another-name", { name }));
     return;
   }
-  if (exists && !(await confirm(`Replace the existing ${name}?`))) return;
+  if (exists && !(await confirm(t("ui.replace-the-existing", { name })))) return;
   stopSoundPreview();
   $("sound-save").disabled = true;
   try {
     const bytes = await renderTrimmedSound(soundDraft.bytes, soundDraft.buffer, soundDraft.sel);
-    if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error("That clip is still over 1 MB, pick a shorter part");
+    if (bytes.length > SOUND_STORE_MAX_BYTES) throw new Error(t("ui.that-clip-is-still-over-1-mb-pick-a"));
     await invoke("add_sound", { serverId: server.id, name, data: await blobToBase64(new Blob([bytes])), volume: 1, emoji });
     hideModals();
     await refreshExpressions();
-    toast(`Added ${name} to the soundboard`);
+    toast(t("ui.added-to-the-soundboard", { name }));
     if (afterSave) afterSave();
   } catch (e) {
     toast(String(e.message || e));
@@ -17850,7 +17877,7 @@ function wireSoundUpload() {
 let soundboardCooldown = 0;
 
 function joinSoundLabel(name) {
-  if (!name) return "None, you get the usual join chime";
+  if (!name) return t("ui.none-you-get-the-usual-join-chime");
   return defaultSound(name)?.label || name;
 }
 
@@ -17874,9 +17901,9 @@ async function openJoinSoundPicker(serverId) {
 
 function renderJoinSoundPicker(server, picked) {
   const choices = [
-    { name: null, label: "None", sub: "The usual join sound" },
+    { name: null, label: t("ui.none"), sub: t("ui.the-usual-join-sound") },
     ...(server.sounds || []).map(s => ({ name: s.name, label: s.name, emoji: s.emoji, clip: s.blob, volume: s.volume })),
-    ...DEFAULT_SOUNDS.map(s => ({ name: `default:${s.id}`, label: s.label, sub: "Built in", clip: `default:${s.id}`, volume: 1 })),
+    ...DEFAULT_SOUNDS.map(s => ({ name: `default:${s.id}`, label: s.label, sub: t("ui.built-in"), clip: `default:${s.id}`, volume: 1 })),
   ];
   const list = $("join-sound-list");
   list.replaceChildren();
@@ -17932,7 +17959,7 @@ async function toggleSoundboardPop() {
     const mark = soundPadMark(emoji);
     if (mark) btn.appendChild(mark);
     btn.appendChild(el("span", null, label));
-    btn.title = `Play ${label} for everyone in the channel`;
+    btn.title = t("ui.play-for-everyone-in-the-channel", { label });
     btn.disabled = !server.can_use_soundboard;
     btn.onclick = async () => {
       const now = Date.now();
@@ -17950,8 +17977,8 @@ async function toggleSoundboardPop() {
   for (const sound of server.sounds || []) addButton(sound.name, sound.name, sound.emoji);
   if (!(server.sounds || []).length) {
     grid.appendChild(el("div", "sb-empty", server.can_upload_sounds
-      ? "No server sounds yet. Choose Add sound to upload one."
-      : "This server has no sounds of its own yet."));
+      ? t("ui.no-server-sounds-yet-choose-add-sound-to")
+      : t("ui.this-server-has-no-sounds-of-its-own-yet")));
   }
   const addPad = canAdd && studioDesk() ? soundAddPad() : null;
   if (addPad) grid.appendChild(addPad);
@@ -17969,7 +17996,7 @@ async function toggleSoundboardPop() {
     const mark = soundPadMark(sound.emoji);
     if (mark) btn.appendChild(mark);
     btn.appendChild(el("span", null, sound.name));
-    btn.title = `Play ${sound.name} from ${serverShownName(sound.server_name)} for everyone in the channel`;
+    btn.title = t("ui.play-from-for-everyone-in-the-channel", { name: sound.name, value: serverShownName(sound.server_name) });
     btn.disabled = !server.can_use_soundboard;
     btn.onclick = async () => {
       const now = Date.now();
@@ -17983,7 +18010,7 @@ async function toggleSoundboardPop() {
     };
     grid.appendChild(btn);
   }
-  grid.appendChild(el("div", "sb-section", "Default"));
+  grid.appendChild(el("div", "sb-section", t("ui.default")));
   for (const sound of DEFAULT_SOUNDS) addButton(`default:${sound.id}`, sound.label);
   const alone = soundGroupsAlone(grid);
   grid.classList.toggle("sb-one", alone);
@@ -17996,8 +18023,8 @@ async function toggleSoundboardPop() {
 }
 
 const EVERYONE_CANDIDATES = [
-  { id: "everyone", name: "everyone", special: "Notify everyone in this server", rank: 2 },
-  { id: "here", name: "here", special: "Notify everyone online", rank: 2 },
+  { id: "everyone", name: "everyone", get special() { return t("ui.notify-everyone-in-this-server"); }, rank: 2 },
+  { id: "here", name: "here", get special() { return t("ui.notify-everyone-online"); }, rank: 2 },
 ];
 
 function mentionPeople() {
@@ -18019,7 +18046,7 @@ function mentionCandidates() {
   if (state.view === "dm" || !state.currentServer || !state.user) return people;
   const server = state.currentServer;
   const roles = mentionableRoles(server, state.user.id)
-    .map(r => ({ id: r.id, name: r.name, color: r.color, role: true, special: `Notify members with ${r.name}`, rank: 1 }));
+    .map(r => ({ id: r.id, name: r.name, color: r.color, role: true, special: t("ui.notify-members-with", { name: r.name }), rank: 1 }));
   const everyone = memberCanMentionEveryone(server, state.user.id) ? EVERYONE_CANDIDATES : [];
   return [...people, ...roles, ...everyone];
 }
@@ -18152,17 +18179,17 @@ function slashUsageNode(item) {
 }
 
 function suggestHeading(token) {
-  if (token.kind === "command") return "Commands";
-  if (token.kind === "emoji") return `Emoji matching :${token.query}`;
-  const what = state.view === "dm" ? "Members" : "Members and roles";
-  return token.query ? `${what} matching @${token.query}` : what;
+  if (token.kind === "command") return t("ui.commands");
+  if (token.kind === "emoji") return t("ui.emoji-matching", { query: token.query });
+  const what = state.view === "dm" ? t("ui.members") : t("ui.members-and-roles");
+  return token.query ? t("ui.matching", { what, query: token.query }) : what;
 }
 
 function commandHint(item) {
   if (item.name === TTS_COMMAND) return ttsCommandHint(item);
   if (item.bot) return item.args === null ? item.entry.description : slashHint(item.entry, item.args).text;
-  if (!item.available) return "GIF search is not set up";
-  return item.args ? "Search GIFs" : "Search for a GIF";
+  if (!item.available) return t("ui.gif-search-is-not-set-up");
+  return item.args ? t("ui.search-gifs") : t("ui.search-for-a-gif");
 }
 
 function suggestionRow(item) {
@@ -18361,8 +18388,8 @@ function jumpCard(target) {
   const known = state.servers.find(s => s.id === target.server);
   const here = state.currentServer && state.currentServer.id === target.server ? state.currentServer.channels.find(c => c.id === target.channel) : null;
   const gated = sensitiveGated({ view: "server", channel: here, confirmed: sensitiveConfirmed() });
-  card.appendChild(el("span", "jump-card-text", gated ? `${SENSITIVE_PREVIEW} in ${known.name}` : known ? `Message in ${known.name}` : "Message in a server you are not in"));
-  const go = el("button", "btn-primary btn-small", "Jump");
+  card.appendChild(el("span", "jump-card-text", gated ? `${SENSITIVE_PREVIEW} in ${known.name}` : known ? t("ui.message-in", { name: known.name }) : t("ui.message-in-a-server-you-are-not-in")));
+  const go = el("button", "btn-primary btn-small", t("ui.jump"));
   go.disabled = !known;
   go.onclick = () => openMessageLink(target);
   card.appendChild(go);
@@ -18372,14 +18399,14 @@ function jumpCard(target) {
 async function openMessageLink(target) {
   if (!state.currentServer || state.currentServer.id !== target.server) {
     if (!state.servers.some(s => s.id === target.server)) {
-      toast("That message is in a server you are not in");
+      toast(t("ui.that-message-is-in-a-server-you-are-not"));
       return;
     }
     await selectServer(target.server);
   }
   const channel = state.currentServer && state.currentServer.channels.find(c => c.id === target.channel);
   if (!channel) {
-    toast("That channel is gone");
+    toast(t("ui.that-channel-is-gone"));
     return;
   }
   if (!state.currentChannel || state.currentChannel.id !== channel.id) await selectChannel(channel);
@@ -18387,19 +18414,19 @@ async function openMessageLink(target) {
 }
 
 function copyText(text, done) {
-  navigator.clipboard.writeText(text).then(() => toast(done), () => toast("Could not copy"));
+  navigator.clipboard.writeText(text).then(() => toast(done), () => toast(t("ui.could-not-copy")));
 }
 
 function messageMenuExtras(message) {
   const extras = [];
   const textual = Boolean(message.content) && !parseStickerToken(message.content);
-  if (textual) extras.push({ label: "Copy Text", run: () => copyText(plainText(message.content), "Text copied") });
+  if (textual) extras.push({ label: t("ui.copy-text-2"), run: () => copyText(plainText(message.content), t("ui.text-copied")) });
   if (state.view === "server" && state.currentChannel && !state.currentServer.group) {
-    extras.push({ label: "Copy Message Link", run: () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), "Message link copied") });
+    extras.push({ label: t("ui.copy-message-link"), run: () => copyText(messageLink({ server: state.currentServer.id, channel: state.currentChannel.id, message: message.id }), t("ui.message-link-copied")) });
   }
-  if (textual) extras.push({ label: "Forward", run: () => openForward(message) });
-  if (textual && speechUsable()) extras.push({ label: "Read Aloud", run: () => speakMessage(message) });
-  if (state.view === "server" && state.currentChannel && !message.pending) extras.push({ label: "Mark as Unread", run: () => markUnreadFrom(message) });
+  if (textual) extras.push({ label: t("ui.forward"), run: () => openForward(message) });
+  if (textual && speechUsable()) extras.push({ label: t("ui.read-aloud"), run: () => speakMessage(message) });
+  if (state.view === "server" && state.currentChannel && !message.pending) extras.push({ label: t("ui.mark-as-unread"), run: () => markUnreadFrom(message) });
   return extras;
 }
 
@@ -18458,7 +18485,7 @@ async function toggleSaved(message) {
   const saved = !isSavedMessage(message.id);
   try {
     applySavedStore(await invoke("saved_set", { entry: messageEntry(message, savedContext()), saved }));
-    toast(saved ? "Message saved" : "Removed from Saved");
+    toast(saved ? t("ui.message-saved") : t("ui.removed-from-saved"));
     renderMessages(state.renderedMessages || []);
   } catch (e) {
     toast(String(e));
@@ -18468,14 +18495,14 @@ async function toggleSaved(message) {
 function savedMessageActions(add, message) {
   if (message.pending || message.held) return;
   const saved = isSavedMessage(message.id);
-  add("save", saved ? "bookmarkOn" : "bookmark", saved ? "Unsave" : "Save", () => toggleSaved(message), { label: saved ? "Remove from Saved" : "Save Message" });
-  add("remind", "bell", "Remind Me", anchor => openRemindPop(message, anchor));
+  add("save", saved ? "bookmarkOn" : "bookmark", saved ? t("ui.unsave") : t("ui.save"), () => toggleSaved(message), { label: saved ? t("ui.remove-from-saved-2") : t("ui.save-message-2") });
+  add("remind", "bell", t("ui.remind-me-2"), anchor => openRemindPop(message, anchor));
 }
 
 function openRemindPop(message, anchor) {
   closeFloating();
   const pop = $("remind-pop");
-  pop.replaceChildren(el("div", "ctx-title", "Remind me about this"));
+  pop.replaceChildren(el("div", "ctx-title", t("ui.remind-me-about-this")));
   const choose = (label, onPick) => {
     const btn = el("button", null, label);
     btn.onclick = () => {
@@ -18490,18 +18517,18 @@ function openRemindPop(message, anchor) {
   }
   pop.appendChild(el("div", "ctx-sep"));
   const pick = el("div", "remind-pick");
-  pick.appendChild(el("span", "remind-pick-label", "Pick a time"));
+  pick.appendChild(el("span", "remind-pick-label", t("ui.pick-a-time")));
   const input = el("input");
   input.type = "datetime-local";
   input.min = toDateTimeLocal(Date.now() + 60e3);
   input.value = toDateTimeLocal(Date.now() + 3600e3);
-  input.setAttribute("aria-label", "Reminder time");
+  input.setAttribute("aria-label", t("ui.reminder-time"));
   pick.appendChild(input);
-  const set = el("button", "btn-primary btn-small", "Set");
+  const set = el("button", "btn-primary btn-small", t("ui.set"));
   set.onclick = () => {
     const due = parseReminderTime(input.value, Date.now());
     if (!due) {
-      toast("Pick a time that is still ahead");
+      toast(t("ui.pick-a-time-that-is-still-ahead"));
       return;
     }
     closeRemindPop();
@@ -18521,7 +18548,7 @@ async function setReminder(message, due) {
   if (!due) return;
   try {
     applySavedStore(await invoke("reminder_set", { entry: messageEntry(message, savedContext()), due }));
-    toast(`Reminder set · ${reminderLabel(due, Date.now())}`);
+    toast(t("ui.reminder-set", { value: reminderLabel(due, Date.now()) }));
   } catch (e) {
     toast(String(e));
   }
@@ -18564,7 +18591,7 @@ function savedSidebarRow() {
   mark.appendChild(svgIcon("bookmark", 18));
   row.appendChild(mark);
   const meta = el("div", "dm-meta");
-  meta.appendChild(el("div", "dm-name", "Saved"));
+  meta.appendChild(el("div", "dm-name", t("ui.saved")));
   meta.appendChild(el("div", "dm-preview", savedSummary(savedState.saved, savedState.reminders, Date.now())));
   row.appendChild(meta);
   row.onclick = toggleSavedView;
@@ -18605,10 +18632,10 @@ function renderSavedView() {
   list.replaceChildren();
   const now = Date.now();
   if (savedState.reminders.length) {
-    list.appendChild(savedSectionHead("Reminders", savedState.reminders.length));
+    list.appendChild(savedSectionHead(t("ui.reminders"), savedState.reminders.length));
     for (const reminder of savedState.reminders) list.appendChild(savedRow(reminder.entry, { reminder, now }));
   }
-  list.appendChild(savedSectionHead("Saved messages", savedState.saved.length));
+  list.appendChild(savedSectionHead(t("ui.saved-messages-2"), savedState.saved.length));
   if (!savedState.saved.length) {
     list.appendChild(savedEmptyState());
     return;
@@ -18621,8 +18648,8 @@ function savedEmptyState() {
   const mark = el("div", "saved-empty-mark");
   mark.appendChild(svgIcon("bookmark", 26));
   empty.appendChild(mark);
-  empty.appendChild(el("strong", null, "Nothing saved yet"));
-  empty.appendChild(el("span", null, `${messageReach()} a message and choose Save to keep it here, or Remind Me to hear about it later. Saved messages stay on this device.`));
+  empty.appendChild(el("strong", null, t("ui.nothing-saved-yet")));
+  empty.appendChild(el("span", null, t("ui.a-message-and-choose-save-to-keep-it", { value: messageReach() })));
   return empty;
 }
 
@@ -18634,7 +18661,7 @@ function savedRow(entry, { reminder = null, now }) {
   row.appendChild(makeAvatar(entry.author_id, entry.author_name));
   const body = el("div", "saved-body");
   const line = el("div", "saved-line");
-  line.appendChild(el("span", "saved-author", entry.author_name || "Someone"));
+  line.appendChild(el("span", "saved-author", entry.author_name || t("ui.someone")));
   line.appendChild(el("span", "saved-origin", savedOrigin(entry.server_name ? { ...entry, server_name: serverShownName(entry.server_name) } : entry)));
   if (reminder) {
     const chip = el("span", "saved-chip" + (reminder.due <= now ? " due" : ""));
@@ -18651,7 +18678,7 @@ function savedRow(entry, { reminder = null, now }) {
   body.appendChild(excerpt);
   row.appendChild(body);
   const remove = el("button", "saved-remove");
-  remove.title = reminder ? "Cancel Reminder" : "Unsave";
+  remove.title = reminder ? t("ui.cancel-reminder") : t("ui.unsave");
   remove.setAttribute("aria-label", remove.title);
   remove.appendChild(svgIcon("close", 16));
   remove.onclick = async e => {
@@ -18690,12 +18717,12 @@ async function jumpToSaved(entry) {
         state.currentChannel = null;
         renderServerRail();
       }
-      if (!state.currentDm || state.currentDm.user !== entry.dm) await selectDm(entry.dm, entry.dm_name || "Direct Message");
+      if (!state.currentDm || state.currentDm.user !== entry.dm) await selectDm(entry.dm, entry.dm_name || t("ui.direct-message-2"));
       await jumpToMessage(entry.message);
     } else if (entry.server && entry.channel) {
       await openMessageLink({ server: entry.server, channel: entry.channel, message: entry.message });
     } else {
-      toast("That message has no place to jump to");
+      toast(t("ui.that-message-has-no-place-to-jump-to"));
     }
   } catch (e) {
     toast(String(e));
@@ -18755,7 +18782,7 @@ function renderForwardList() {
   const list = $("forward-list");
   list.innerHTML = "";
   if (!forwarding || !forwarding.targets) {
-    list.appendChild(el("div", "dm-list-empty", "Loading places to send to"));
+    list.appendChild(el("div", "dm-list-empty", t("ui.loading-places-to-send-to")));
     return;
   }
   const targets = forwardTargets({ ...forwarding.targets, query: $("forward-search").value });
@@ -18772,7 +18799,7 @@ function renderForwardList() {
     row.onclick = () => sendForward(target);
     list.appendChild(row);
   }
-  if (!targets.length) list.appendChild(el("div", "dm-list-empty", "Nowhere matches that name."));
+  if (!targets.length) list.appendChild(el("div", "dm-list-empty", t("ui.nowhere-matches-that-name")));
 }
 
 function forwardOrigin() {
@@ -18790,7 +18817,7 @@ async function sendForward(target) {
     else await invoke("send_message", { serverId: target.server, channelId: target.channel, content, replyTo: null, previewUrl: null });
     hideModals();
     forwarding = null;
-    toast(`Forwarded to ${target.name}`);
+    toast(t("ui.forwarded-to", { name: target.name }));
   } catch (e) {
     toast(String(e));
   }
@@ -18886,7 +18913,7 @@ function showLeavingPrompt(check) {
   $("leaving-intro").textContent = prompt.intro;
   $("leaving-host-prefix").textContent = prompt.host.prefix;
   $("leaving-host-site").textContent = prompt.host.site;
-  $("leaving-spelled").textContent = prompt.spelled ? `Spelled out: ${prompt.spelled}` : "";
+  $("leaving-spelled").textContent = prompt.spelled ? t("ui.spelled-out", { spelled: prompt.spelled }) : "";
   $("leaving-spelled").classList.toggle("hidden", !prompt.spelled);
   $("leaving-notes").replaceChildren(...prompt.notes.map(note => el("li", null, note)));
   $("leaving-notes").classList.toggle("hidden", prompt.notes.length === 0);
@@ -18930,7 +18957,7 @@ function videoLinkThumbs(message) {
 
 function renderVideoLinkThumb({ url, thumbnail }) {
   const box = el("div", "chat-video video-link-thumb");
-  box.title = `Open ${url}`;
+  box.title = t("ui.open-4", { url });
   const picture = el("img", "video-link-picture");
   picture.alt = "";
   picture.loading = "lazy";
@@ -18938,7 +18965,7 @@ function renderVideoLinkThumb({ url, thumbnail }) {
   picture.src = viaAccountServer(thumbnail);
   const play = el("button", "chat-video-play");
   play.type = "button";
-  play.setAttribute("aria-label", `Open ${url}`);
+  play.setAttribute("aria-label", t("ui.open-4", { url }));
   play.appendChild(svgIcon("play", 30));
   box.onclick = () => openOutsideLink(url);
   box.append(picture, play);
@@ -18953,7 +18980,7 @@ function renderLinkPreview(preview) {
   if (site) text.appendChild(el("div", "link-card-site", site));
   if (preview.title) {
     const title = wireOutsideLink(el("a", "link-card-title", preview.title), preview.url);
-    title.title = `Open ${preview.url}`;
+    title.title = t("ui.open-4", { url: preview.url });
     text.appendChild(title);
   }
   if (preview.description) text.appendChild(el("div", "link-card-description", preview.description));
@@ -19000,7 +19027,7 @@ function renderImageEmbed(url) {
   const host = imageHost(url) || url;
   const wrap = el("div", "image-embed");
   const source = wireOutsideLink(el("a", "embed-source", host), url);
-  source.title = `Open ${url}`;
+  source.title = t("ui.open-4", { url });
   wrap.appendChild(source);
   if (failedImageLinks.has(url)) {
     wrap.appendChild(imageGate(url, host, { failed: true }));
@@ -19220,7 +19247,7 @@ function missingImage(att) {
 }
 
 function largeImageGate(att) {
-  const size = typeof att.size_bytes === "number" ? formatSize(att.size_bytes) : "size unknown";
+  const size = typeof att.size_bytes === "number" ? formatSize(att.size_bytes) : t("ui.size-unknown");
   const text = largeImageGateText(size);
   const gate = el("div", "image-gate attachment-gate");
   const lines = el("div", "image-gate-text");
@@ -19366,10 +19393,10 @@ function renderInlineVideo(att) {
   }
   const play = el("button", "chat-video-play");
   play.type = "button";
-  play.title = "Play Video";
+  play.title = t("ui.play-video");
   play.appendChild(svgIcon("play", 30));
   const wait = videoWaits.get(att.blob);
-  const label = el("span", "chat-video-label", wait ? wait.text.label : `Video, ${formatSize(att.size_bytes)}`);
+  const label = el("span", "chat-video-label", wait ? wait.text.label : t("ui.video", { value: formatSize(att.size_bytes) }));
   if (wait) box.title = wait.text.title;
   box.append(play, label);
   if (att.poster) box.prepend(videoPosterImage(att));
@@ -19377,7 +19404,7 @@ function renderInlineVideo(att) {
   play.onclick = async () => {
     play.disabled = true;
     box.classList.add("loading");
-    label.textContent = "Loading video";
+    label.textContent = t("ui.loading-video");
     const earlier = videoWaits.get(att.blob);
     if (earlier) earlier.left = VIDEO_RETRIES;
     try {
@@ -19400,9 +19427,9 @@ function renderInlineVideo(att) {
 
 function offerFindAgain(box, att, play) {
   if (box.querySelector(".chat-video-find")) return;
-  const find = el("button", "btn-secondary btn-small chat-video-find", "Choose File");
+  const find = el("button", "btn-secondary btn-small chat-video-find", t("ui.choose-file"));
   find.type = "button";
-  find.title = "Choose the file you sent";
+  find.title = t("ui.choose-the-file-you-sent");
   find.onclick = async () => {
     find.disabled = true;
     try {
@@ -19422,8 +19449,8 @@ function offerFindAgain(box, att, play) {
 function renderShareButton() {
   const btn = $("share-btn");
   btn.classList.toggle("active", state.sharing);
-  btn.title = state.sharing ? "Stop sharing your screen" : "Share your screen";
-  btn.replaceChildren(svgIcon("screen", 16), el("span", null, state.sharing ? (studioDesk() ? "Sharing" : "Stop Sharing") : "Share Screen"));
+  btn.title = state.sharing ? t("ui.stop-sharing-your-screen") : t("ui.share-your-screen-2");
+  btn.replaceChildren(svgIcon("screen", 16), el("span", null, state.sharing ? (studioDesk() ? t("ui.sharing") : t("ui.stop-sharing-2")) : t("ui.share-screen-2")));
   renderVoicePanel();
 }
 
@@ -19444,16 +19471,16 @@ function paintStudioDock() {
   paintVoiceRoomDock(null);
   const call = vs.call ? state.call : null;
   const words = studioDockWords({
-    status: call && call.state !== "active" ? "Calling" : "Voice Connected",
-    where: call ? `Call with ${vs.name}` : `${channelTextName(vs.channelName)} / ${vs.name}`,
+    status: call && call.state !== "active" ? t("ui.calling") : t("ui.voice-connected"),
+    where: call ? t("ui.call-with", { name: vs.name }) : `${channelTextName(vs.channelName)} / ${vs.name}`,
     muted: state.voice.muted,
     deafened: state.voice.deafened,
   });
   panel.dataset.dock = words.state;
   $("vp-status-text").textContent = words.line;
   $("vp-where").textContent = words.sub;
-  $("vp-conn-meta").title = "Connection and devices";
-  $("vp-disconnect").title = "Hang up";
+  $("vp-conn-meta").title = t("ui.connection-and-devices");
+  $("vp-disconnect").title = t("ui.hang-up");
   const here = !call && state.view === "server" && state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
   const invite = $("vp-invite");
   if (invite) invite.classList.toggle("hidden", !(here && here.can_invite));
@@ -19469,8 +19496,8 @@ function renderVoicePanel() {
   if (!state.voiceChannelId || !vs) return renderCamGrid();
 
   const call = vs.call ? state.call : null;
-  $("vp-status-text").textContent = call && call.state !== "active" ? "Calling" : "Voice Connected";
-  $("vp-where").textContent = call ? `Call with ${vs.name}` : `${channelTextName(vs.channelName)} / ${vs.name}`;
+  $("vp-status-text").textContent = call && call.state !== "active" ? t("ui.calling") : t("ui.voice-connected");
+  $("vp-where").textContent = call ? t("ui.call-with", { name: vs.name }) : `${channelTextName(vs.channelName)} / ${vs.name}`;
   renderVoiceTopic(call ? null : vs);
   $("vp-camera-split").classList.toggle("hidden", Boolean(call));
   $("vp-grid").classList.toggle("hidden", Boolean(call));
@@ -19478,8 +19505,8 @@ function renderVoicePanel() {
   const gameBtn = $("vp-game-share");
   gameBtn.classList.toggle("hidden", !playing || Boolean(call));
   if (playing) {
-    gameBtn.replaceChildren(svgIcon("screen", 16), el("span", null, `Share ${playing}`));
-    gameBtn.title = `Stream ${playing} to your voice channel at 60 fps`;
+    gameBtn.replaceChildren(svgIcon("screen", 16), el("span", null, t("ui.share-2", { playing })));
+    gameBtn.title = t("ui.stream-to-your-voice-channel-at-60-fps", { playing });
   }
   $("vp-signal").replaceChildren(studioLook() ? studioDockSignal(document, 14) : svgIcon("signal", 14));
   renderTalkButton();
@@ -19487,17 +19514,17 @@ function renderVoicePanel() {
 
   $("vp-camera-icon").replaceChildren(svgIcon(state.cameraOn ? "camera" : "cameraOff", 18));
   $("vp-camera").classList.toggle("active", Boolean(state.cameraOn));
-  $("vp-camera").title = state.cameraOn ? "Turn Off Camera" : "Turn On Camera";
+  $("vp-camera").title = state.cameraOn ? t("ui.turn-off-camera-2") : t("ui.turn-on-camera");
   renderCamGrid();
 
   renderVoicePanelActivity();
   $("vp-live").classList.toggle("hidden", !state.sharing);
   renderStreamInkSwitch();
-  $("vp-live-source").textContent = state.shareSource ? `Streaming ${state.shareSource}` : "";
-  $("vp-live-title").textContent = `Live in ${vs.channelName}`;
+  $("vp-live-source").textContent = state.shareSource ? t("ui.streaming", { shareSource: state.shareSource }) : "";
+  $("vp-live-title").textContent = t("ui.live-in", { channelName: vs.channelName });
 
   $("vp-watch").classList.toggle("hidden", !state.watchingUser);
-  $("vp-watch-label").textContent = state.watchingUser ? `Watching ${state.watchingName || "a stream"}` : "";
+  $("vp-watch-label").textContent = state.watchingUser ? t("ui.watching", { value: state.watchingName || "a stream" }) : "";
 
   const streams = $("vp-streams");
   streams.innerHTML = "";
@@ -19509,10 +19536,10 @@ function renderVoicePanel() {
   for (const share of others) {
     const row = el("div", "vp-stream");
     const head = el("div", "vp-stream-head");
-    head.appendChild(el("span", "live-badge", "LIVE"));
-    head.appendChild(el("span", "vp-stream-name", `${share.name} is sharing their screen`));
+    head.appendChild(el("span", "live-badge", t("ui.live")));
+    head.appendChild(el("span", "vp-stream-name", t("ui.is-sharing-their-screen", { name: share.name })));
     row.appendChild(head);
-    const watch = el("button", "vp-pill vp-stream-watch", "Watch Stream");
+    const watch = el("button", "vp-pill vp-stream-watch", t("ui.watch-stream"));
     watch.onclick = () => watchScreen(share.user, share.name);
     row.appendChild(watch);
     streams.appendChild(row);
@@ -19583,10 +19610,10 @@ function activityMe() {
 }
 
 function activityMemberName(id) {
-  if (id === activityMe()) return state.user.display_name || state.user.username || "You";
+  if (id === activityMe()) return state.user.display_name || state.user.username || t("settings.group.you");
   const members = (state.currentServer && state.currentServer.members) || [];
   const member = members.find(m => m.id === id);
-  return member ? member.nickname || member.name : "Someone";
+  return member ? member.nickname || member.name : t("ui.someone");
 }
 
 function activityChannelView() {
@@ -19626,7 +19653,7 @@ function endActivityLocally(by) {
   activityUi.run = null;
   activityUi.open = false;
   releaseActivityVideo();
-  if (was && by && by !== activityMe()) toast(`${activityMemberName(by)} ended ${activityName(was.activity)}`);
+  if (was && by && by !== activityMe()) toast(t("ui.ended-activity", { name: activityMemberName(by), activity: activityName(was.activity) }));
   renderActivityUi();
 }
 
@@ -19721,8 +19748,8 @@ function renderVoicePanelActivity() {
   btn.classList.toggle("hidden", !vs || Boolean(vs.call) || (!run && !voiceServerAllowsActivities()));
   btn.classList.toggle("running", Boolean(run));
   const info = run ? activityKindInfo(run.activity) : null;
-  btn.replaceChildren(svgIcon(info ? info.icon : "gamepad", 16), el("span", null, run ? `Open ${activityName(run.activity)}` : "Activities"));
-  btn.title = run ? `${activityName(run.activity)} is running in your voice channel` : "Start something together with everyone in the channel";
+  btn.replaceChildren(svgIcon(info ? info.icon : "gamepad", 16), el("span", null, run ? t("ui.open-5", { value: activityName(run.activity) }) : t("ui.activities")));
+  btn.title = run ? t("ui.is-running-in-your-voice-channel", { value: activityName(run.activity) }) : t("ui.start-something-together-with-everyone");
   btn.onclick = () => (run ? toggleActivityPanel() : openActivityPicker());
 }
 
@@ -19736,7 +19763,7 @@ function renderActivityPanel() {
   const info = activityKindInfo(run.activity);
   $("activity-icon").replaceChildren(svgIcon(info ? info.icon : "gamepad", 20));
   $("activity-title").textContent = activityName(run.activity);
-  $("activity-sub").textContent = `Started by ${activityMemberName(run.starter)}`;
+  $("activity-sub").textContent = t("ui.started-by", { value: activityMemberName(run.starter) });
   renderActivityPeople(run);
   const joined = isParticipant(run, me);
   const starter = run.starter === me;
@@ -19794,14 +19821,14 @@ function renderTicTacToe(run, me) {
     cell.classList.toggle("x", mark === MARK_X);
     cell.classList.toggle("win", line.includes(i));
     cell.classList.toggle("open", canMoveAt(run, me, i));
-    cell.setAttribute("aria-label", mark ? `Cell ${i + 1}, ${MARK_GLYPHS[mark]}` : `Cell ${i + 1}, empty`);
+    cell.setAttribute("aria-label", mark ? t("ui.cell", { value: i + 1, value2: MARK_GLYPHS[mark] }) : t("ui.cell-empty", { value: i + 1 }));
   }
   $("ttt-rematch").classList.toggle("hidden", !status.canRematch);
   const hint = $("ttt-hint");
   if (status.canRematch) hint.textContent = "";
-  else if (status.over) hint.textContent = "Waiting for a rematch";
-  else if (run.players.length < 2) hint.textContent = isPlayer(run, me) ? "Share the voice channel to find an opponent" : "The first to join plays O";
-  else hint.textContent = isPlayer(run, me) ? `You are ${MARK_GLYPHS[markOf(run, me)]}` : "You are watching";
+  else if (status.over) hint.textContent = t("ui.waiting-for-a-rematch");
+  else if (run.players.length < 2) hint.textContent = isPlayer(run, me) ? t("ui.share-the-voice-channel-to-find-an") : t("ui.the-first-to-join-plays-o");
+  else hint.textContent = isPlayer(run, me) ? t("ui.you-are", { value: MARK_GLYPHS[markOf(run, me)] }) : t("ui.you-are-watching");
 }
 
 function renderActivityWatch(run, me) {
@@ -19828,7 +19855,7 @@ function renderActivityYouTube(run, me) {
   const yt = activityUi.yt;
   if (joined && allowed && video && yt.video !== video) mountYouTube(video);
   else if ((!joined || !allowed) && yt.frame) releaseYouTube();
-  if (!joined) showActivityScreenNote("Join to watch. This video plays from YouTube.", false);
+  if (!joined) showActivityScreenNote(t("ui.join-to-watch-this-video-plays-from"), false);
   else if (!allowed) showActivityScreenNote(YOUTUBE_NOTICE, true);
   else showActivityScreenNote(yt.error || "", false);
 }
@@ -19848,7 +19875,7 @@ function allowYouTubeForRun() {
 function mountYouTube(video) {
   releaseYouTube();
   const frame = document.createElement("iframe");
-  frame.title = "YouTube video player";
+  frame.title = t("ui.youtube-video-player");
   frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation");
   frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
   frame.allowFullscreen = true;
@@ -19959,25 +19986,25 @@ function renderActivitySyncLabel(run) {
     const yt = activityUi.yt;
     const joined = isParticipant(run, activityMe());
     if (!joined || !yt.ready || !yt.seen || yt.error) {
-      label.textContent = joined ? "" : "Join to control playback";
+      label.textContent = joined ? "" : t("ui.join-to-control-playback");
       label.className = "activity-sync";
       return;
     }
     const now = Date.now();
     const current = youtubeExpectedTime(yt.seen, now);
     const off = current === null || youtubeNeedsSeek(current, watchTargetPosition(run.playback, now)) || youtubePlaying(yt.seen.state) !== Boolean(run.playback.playing);
-    label.textContent = off ? "Catching up" : "In sync";
+    label.textContent = off ? t("ui.catching-up") : t("ui.in-sync");
     label.className = `activity-sync ${off ? "catching" : "good"}`;
     return;
   }
   const video = $("activity-video");
   if (!video.src || !isParticipant(run, activityMe())) {
-    label.textContent = isParticipant(run, activityMe()) ? "" : "Join to control playback";
+    label.textContent = isParticipant(run, activityMe()) ? "" : t("ui.join-to-control-playback");
     label.className = "activity-sync";
     return;
   }
   const off = watchNeedsSeek(video.currentTime, watchTargetPosition(run.playback, Date.now()));
-  label.textContent = off ? "Catching up" : "In sync";
+  label.textContent = off ? t("ui.catching-up") : t("ui.in-sync");
   label.className = `activity-sync ${off ? "catching" : "good"}`;
 }
 
@@ -20006,7 +20033,7 @@ async function loadActivityVideo(run) {
     videoUrls.set(att.blob, objectUrl);
     if (activityUi.run && activityUi.run.id === run.id) video.src = objectUrl;
   } catch (e) {
-    toast(`Could not load the video: ${e}`);
+    toast(t("ui.could-not-load-the-video", { e }));
   } finally {
     $("activity-video-wait").classList.add("hidden");
   }
@@ -20047,7 +20074,7 @@ function onActivityVideoChange() {
 
 function openActivityPicker() {
   if (!state.voiceServer || !state.voiceChannelId) {
-    toast("Join a voice channel first");
+    toast(t("ui.join-a-voice-channel-first"));
     return;
   }
   activityUi.pick = "tictactoe";
@@ -20093,7 +20120,7 @@ function renderActivityPicker() {
     };
     chips.appendChild(chip);
   }
-  $("activity-start").textContent = watch ? "Start watching" : "Start game";
+  $("activity-start").textContent = watch ? t("ui.start-watching") : t("ui.start-game");
 }
 
 function pickedActivity() {
@@ -20104,12 +20131,12 @@ function pickedActivity() {
   if (url) {
     const youtube = youtubeVideoId(url);
     if (youtube) return makeActivity("watch", activityMe(), now, id, watchYouTubeSource(youtube));
-    if (!isVideoLink(url)) throw new Error("Paste a YouTube link, or a direct https link that ends in .mp4, .webm or .ogg");
+    if (!isVideoLink(url)) throw new Error(t("ui.paste-a-youtube-link-or-a-direct-https"));
     if (inBrowserApp()) throw new Error(WEB_DIRECT_LINK_NOTE);
     return makeActivity("watch", activityMe(), now, id, watchLinkSource(url));
   }
   if (activityUi.chip) return makeActivity("watch", activityMe(), now, id, watchAttachmentSource(activityUi.chip));
-  throw new Error("Paste a video link or pick an attached video");
+  throw new Error(t("ui.paste-a-video-link-or-pick-an-attached"));
 }
 
 function initActivityUi() {
@@ -20168,7 +20195,7 @@ async function disconnectVoice() {
     state.shareSource = null;
     if (state.watchingUser) await stopWatching();
     if (state.stageMode === "self") closeStage();
-    if (!voiceRoom.left) toast("Disconnected from voice");
+    if (!voiceRoom.left) toast(t("ui.disconnected-from-voice"));
     playSound("leave");
     renderShareButton();
     if (state.currentServer) await refreshCurrentServer();
@@ -20186,7 +20213,7 @@ function renderUserPanel() {
   $("me-avatar").appendChild(el("span", "presence-dot " + presence));
   paintBarEffect($("user-chip").parentElement, state.user.card_effect);
   const back = backLine(state.user);
-  const label = presence === "invisible" ? "Appearing offline" : (back || PRESENCE_LABELS[presence] || "Online");
+  const label = presence === "invisible" ? t("ui.appearing-offline") : (back || PRESENCE_LABELS[presence] || t("ui.online"));
   $("me-status").textContent = label;
   $("me-status").classList.toggle("back", Boolean(back));
   $("mute-btn").classList.toggle("danger", state.voice.muted);
@@ -20196,9 +20223,9 @@ function renderUserPanel() {
   setIcon($("settings-btn"), "gear");
   const v = voiceInputState(state.voice);
   const talkTitle = talkKeyTitle(v.mode, v.talkKey, Boolean(state.talking));
-  $("mute-btn").title = state.voice.muted ? "Unmute" : talkTitle || "Mute";
+  $("mute-btn").title = state.voice.muted ? t("ui.unmute") : talkTitle || t("ui.mute");
   $("mute-btn").classList.toggle("talking", Boolean(state.talking) && !state.voice.muted);
-  $("deafen-btn").title = state.voice.deafened ? "Undeafen" : "Deafen";
+  $("deafen-btn").title = state.voice.deafened ? t("ui.undeafen") : t("ui.deafen");
   paintStudioDock();
   renderPhoneVoice();
   if (state.currentServer && state.voiceChannelId && state.view === "server") renderChannels();
@@ -20291,7 +20318,7 @@ function applyMembersLayout() {
   const btn = $("members-btn");
   btn.classList.toggle("active", !collapsed);
   btn.setAttribute("aria-pressed", String(!collapsed));
-  btn.title = collapsed ? "Show Members" : "Hide Members";
+  btn.title = collapsed ? t("ui.show-members") : t("ui.hide-members");
 }
 
 function narrowSplit() {
@@ -20325,7 +20352,7 @@ function paintNarrowRail() {
 function paintNarrowServers(server) {
   const active = $("narrow-active");
   paintNarrowServerIcon(active.querySelector(".narrow-active-icon"), server);
-  active.title = server ? `${shownServerName(server)}: server controls` : "Direct Messages";
+  active.title = server ? t("ui.server-controls", { value: shownServerName(server) }) : t("nav.dms");
   const others = railServers().filter(s => !server || s.id !== server.id);
   const shown = others.length > 4 ? others.slice(0, 3) : others;
   const cells = shown.map(other => {
@@ -20338,7 +20365,7 @@ function paintNarrowServers(server) {
   if (!cells.length) cells.push(svgIcon(server ? "chatBubble" : "plus", 20));
   grid.classList.toggle("lone", !others.length);
   grid.replaceChildren(...cells);
-  grid.title = others.length ? `Switch server: ${others.map(shownServerName).join(", ")}` : "Switch server";
+  grid.title = others.length ? t("ui.switch-server", { value: others.map(shownServerName).join(", ") }) : t("ui.switch-server-2");
   grid.classList.toggle("unread", others.some(s => serverUnreadCount(s.id) > 0));
 }
 
@@ -20346,12 +20373,12 @@ function narrowChannelTile(server) {
   const channel = state.currentChannel;
   const tile = el("button", "narrow-channel");
   tile.id = "narrow-channel";
-  tile.title = server && channel ? `${channelTextName(channel.name)}: switch channel` : "Switch channel";
+  tile.title = server && channel ? t("ui.switch-channel", { value: channelTextName(channel.name) }) : t("ui.switch-channel-2");
   const mark = el("span", "narrow-channel-mark");
   mark.appendChild(server && channel ? channelMark(channel) : svgIcon("chat", 18));
   const name = el("span", "narrow-channel-name");
   if (server && channel) name.appendChild(channelNameNode(channel));
-  else name.textContent = state.currentDm ? state.currentDm.name : "Messages";
+  else name.textContent = state.currentDm ? state.currentDm.name : t("ui.messages");
   tile.append(mark, name, svgIcon("chevronDown", 12));
   tile.classList.toggle("unread", Boolean(server) && server.channels.some(c => (!channel || c.id !== channel.id) && shownUnread(server.id, c.id)));
   tile.onclick = () => toggleNarrowChannels(tile);
@@ -20375,7 +20402,7 @@ function narrowVoiceTile(channel) {
   const connected = channel.id === state.voiceChannelId;
   const tile = el("button", "narrow-voice-tile" + (connected ? " connected" : ""));
   tile.dataset.room = channel.id;
-  tile.title = connected ? `You are in ${channelShownName(channel)}` : `Join ${channelShownName(channel)}`;
+  tile.title = connected ? t("ui.you-are-in-2", { value: channelShownName(channel) }) : t("ui.join-2", { value: channelShownName(channel) });
   const grid = el("span", "narrow-voice-grid");
   grid.append(...voiceRingCells(channel));
   const head = el("span", "narrow-voice-head");
@@ -20383,7 +20410,7 @@ function narrowVoiceTile(channel) {
   tile.append(grid, head);
   tile.onclick = () => {
     if (connected || voiceDragHoldsClick()) return;
-    if (voiceFull(channel)) toast("That voice channel is full");
+    if (voiceFull(channel)) toast(t("ui.that-voice-channel-is-full"));
     else toggleVoice(channel);
   };
   return tile;
@@ -20408,10 +20435,10 @@ function narrowGlyph(name) {
 function serverSwitchRows() {
   const current = narrowViewServer();
   return [
-    narrowMenuRow("Direct Messages", icon => paintNarrowServerIcon(icon, null), enterDmMode, !current),
+    narrowMenuRow(t("nav.dms"), icon => paintNarrowServerIcon(icon, null), enterDmMode, !current),
     ...railServers().map(server => narrowMenuRow(shownServerName(server), icon => paintNarrowServerIcon(icon, server), () => selectServer(server.id), Boolean(current) && server.id === current.id)),
-    narrowMenuRow("Add a Server", narrowGlyph("plus"), () => $("add-server-btn").click()),
-    narrowMenuRow("Discover Servers", narrowGlyph("globe"), () => $("discover-btn").click()),
+    narrowMenuRow(t("nav.addServer"), narrowGlyph("plus"), () => $("add-server-btn").click()),
+    narrowMenuRow(t("nav.discover"), narrowGlyph("globe"), () => $("discover-btn").click()),
   ];
 }
 
@@ -20419,14 +20446,14 @@ function serverControlRows(server) {
   const events = upcomingEventCount(server);
   const rows = [
     el("div", "narrow-menu-title", shownServerName(server)),
-    narrowMenuRow(events ? `${events} Event${events === 1 ? "" : "s"}` : "Events", narrowGlyph("calendar"), () => openEvents()),
+    narrowMenuRow(events ? t(events === 1 ? "ui.events-count.one" : "ui.events-count.many", { count: events }) : t("ui.events"), narrowGlyph("calendar"), () => openEvents()),
   ];
-  if (server.rules) rows.push(narrowMenuRow("Server Rules", narrowGlyph("book"), () => openRules()));
-  if (selfAssignableRoles(server).length) rows.push(narrowMenuRow("Roles", narrowGlyph("roles"), () => openChooseRoles()));
-  if (server.tip_jar) rows.push(narrowMenuRow("Support this server", narrowGlyph("coffee"), () => openOutsideLink(server.tip_jar)));
+  if (server.rules) rows.push(narrowMenuRow(t("ui.server-rules"), narrowGlyph("book"), () => openRules()));
+  if (selfAssignableRoles(server).length) rows.push(narrowMenuRow(t("ui.roles"), narrowGlyph("roles"), () => openChooseRoles()));
+  if (server.tip_jar) rows.push(narrowMenuRow(t("ui.support-this-server"), narrowGlyph("coffee"), () => openOutsideLink(server.tip_jar)));
   rows.push(el("div", "narrow-menu-sep"));
-  if (server.can_invite) rows.push(narrowMenuRow("Invite People", narrowGlyph("friendAdd"), () => $("invite-btn").click()));
-  rows.push(narrowMenuRow("Server Settings", narrowGlyph("gear"), () => $("server-settings-btn").click()));
+  if (server.can_invite) rows.push(narrowMenuRow(t("ui.invite-people"), narrowGlyph("friendAdd"), () => $("invite-btn").click()));
+  rows.push(narrowMenuRow(t("ui.server-settings"), narrowGlyph("gear"), () => $("server-settings-btn").click()));
   return rows;
 }
 
@@ -20583,16 +20610,16 @@ function wireSettingsPhoneBars() {
   for (const layer of document.querySelectorAll(".settings-layer")) {
     const bar = el("div", "settings-phone-bar");
     const back = el("button", "icon-btn settings-phone-back");
-    back.title = "Back";
-    back.setAttribute("aria-label", "Back");
+    back.title = t("signin.step.back");
+    back.setAttribute("aria-label", t("signin.step.back"));
     back.appendChild(svgIcon("chevronLeft", 22));
     back.onclick = () => {
       if (history.state && history.state.page) history.back();
       else settingsPhoneView(layer, "menu");
     };
     const close = el("button", "icon-btn settings-phone-close");
-    close.title = "Close";
-    close.setAttribute("aria-label", "Close");
+    close.title = t("settings.close");
+    close.setAttribute("aria-label", t("settings.close"));
     close.appendChild(svgIcon("close", 20));
     close.onclick = () => {
       const depth = history.state && history.state.settings ? (history.state.page ? 2 : 1) : 0;
@@ -20648,7 +20675,7 @@ function wireTouchMessages() {
 }
 
 function messageReach() {
-  return typeof touchOnly === "function" && touchOnly() ? "Hold" : "Hover";
+  return typeof touchOnly === "function" && touchOnly() ? t("ui.hold") : t("ui.hover");
 }
 
 function wireLongPressMenus() {
@@ -20921,10 +20948,10 @@ function paintGroupHeader() {
   const count = server.members.length;
   $("chat-hash").replaceChildren(svgIcon("people", 22));
   $("channel-name").textContent = server.name;
-  $("channel-topic").textContent = `${count} ${count === 1 ? "member" : "members"}`;
-  $("message-input").placeholder = `Message ${server.name}`;
-  $("group-add-btn").title = "Add People";
-  $("group-leave-btn").title = "Leave Group";
+  $("channel-topic").textContent = t(count === 1 ? "ui.n.members.one" : "ui.n.members.many", { count: count });
+  $("message-input").placeholder = t("ui.message-3", { name: server.name });
+  $("group-add-btn").title = t("ui.add-people");
+  $("group-leave-btn").title = t("ui.leave-group");
   renderCallButton();
 }
 
@@ -20932,7 +20959,7 @@ function toggleGroupCall() {
   const channel = groupVoiceChannel(state.currentServer);
   if (!channel) return;
   if (channel.user_limit && channel.voice_users.length >= channel.user_limit && state.voiceChannelId !== channel.id) {
-    toast("That call is full");
+    toast(t("ui.that-call-is-full"));
     return;
   }
   toggleVoice(channel);
@@ -20942,11 +20969,11 @@ let groupModal = { server: null, picked: new Set() };
 
 function openGroupModal(serverId, preselect = []) {
   groupModal = { server: serverId, picked: new Set(preselect) };
-  $("group-modal-title").textContent = serverId ? "Add People" : "New Group";
+  $("group-modal-title").textContent = serverId ? t("ui.add-people") : t("ui.new-group");
   $("group-modal-sub").textContent = serverId
-    ? "They join this group and see its messages from now on."
-    : "Pick the people for this group. Everyone in it can message, call and add others.";
-  $("group-go").textContent = serverId ? "Add" : "Create Group";
+    ? t("ui.they-join-this-group-and-see-its")
+    : t("ui.pick-the-people-for-this-group-everyone");
+  $("group-go").textContent = serverId ? t("ui.add") : t("ui.create-group");
   $("group-search").value = "";
   renderGroupList();
   showModal("modal-group");
@@ -20973,7 +21000,7 @@ function renderGroupList() {
     row.appendChild(avatarWithPresence(person.name, person.id));
     const meta = el("div", "dm-meta");
     meta.appendChild(el("div", "dm-name", person.name));
-    meta.appendChild(el("div", "dm-preview", already ? "Already in this group" : person.servers.map(shownServerName).join(", ")));
+    meta.appendChild(el("div", "dm-preview", already ? t("ui.already-in-this-group") : person.servers.map(shownServerName).join(", ")));
     row.appendChild(meta);
     const pick = el("span", "pick");
     pick.appendChild(svgIcon("check", 14));
@@ -20987,11 +21014,11 @@ function renderGroupList() {
     list.appendChild(row);
   }
   if (!people.length) {
-    list.appendChild(el("div", "dm-list-empty", state.people.size ? "Nobody matches that name." : "Join or create a server first. You can add anyone you share a server with."));
+    list.appendChild(el("div", "dm-list-empty", state.people.size ? t("ui.nobody-matches-that-name") : t("ui.join-or-create-a-server-first-you-can")));
   }
   const n = groupModal.picked.size;
   $("group-go").disabled = n === 0;
-  $("group-go").textContent = groupModal.server ? (n > 1 ? `Add ${n}` : "Add") : "Create Group";
+  $("group-go").textContent = groupModal.server ? (n > 1 ? t("ui.add-2", { n }) : t("ui.add")) : t("ui.create-group");
 }
 
 async function confirmGroupModal() {
@@ -21003,7 +21030,7 @@ async function confirmGroupModal() {
       hideModals();
       await refreshServers();
       await selectServer(groupModal.server);
-      toast(ids.length === 1 ? "Added to the group" : `Added ${ids.length} people to the group`);
+      toast(ids.length === 1 ? t("ui.added-to-the-group") : t("ui.added-people-to-the-group", { count: ids.length }));
     } else {
       const summary = await invoke("create_group_dm", { userIds: ids });
       hideModals();
@@ -21048,12 +21075,12 @@ function formatShortTime(iso) {
   const date = new Date(iso);
   const now = new Date();
   if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return date.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" });
   }
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (date.toDateString() === yesterday.toDateString()) return t("ui.yesterday");
+  return date.toLocaleDateString(dateLocale(), { month: "short", day: "numeric" });
 }
 
 async function enterDmMode(openFirst = true) {
@@ -21081,12 +21108,12 @@ async function enterDmMode(openFirst = true) {
 
 function renderDmHome() {
   $("chat-hash").textContent = "@";
-  $("channel-name").textContent = "Direct Messages";
+  $("channel-name").textContent = t("nav.dms");
   $("channel-topic").textContent = "";
   $("chat-presence").classList.add("hidden");
   $("dm-profile").classList.add("hidden");
   $("dm-profile-btn").classList.add("hidden");
-  $("message-input").placeholder = "Pick a conversation to start chatting";
+  $("message-input").placeholder = t("ui.pick-a-conversation-to-start-chatting");
   const box = $("messages");
   box.innerHTML = "";
   if (!railServers().length) {
@@ -21097,9 +21124,9 @@ function renderDmHome() {
   const art = el("div", "dm-empty-art");
   art.appendChild(svgIcon("chat", 56));
   empty.appendChild(art);
-  empty.appendChild(el("h3", null, "No direct messages yet"));
-  empty.appendChild(el("p", null, inBrowserApp() ? "Private chats stay between you and the other person." : "Private chats go straight to the other person over P2P. Nothing is stored on a server."));
-  const start = el("button", "btn-primary", "Start a Conversation");
+  empty.appendChild(el("h3", null, t("ui.no-direct-messages-yet")));
+  empty.appendChild(el("p", null, inBrowserApp() ? t("ui.private-chats-stay-between-you-and-the") : t("ui.private-chats-go-straight-to-the-other")));
+  const start = el("button", "btn-primary", t("ui.start-a-conversation"));
   start.onclick = openNewDm;
   empty.appendChild(start);
   box.appendChild(empty);
@@ -21113,12 +21140,12 @@ function buildWelcomeHome() {
   mark.draggable = false;
   home.appendChild(mark);
   const name = state.user ? state.user.username : "";
-  home.appendChild(el("h3", null, name ? `Welcome, ${name}` : "Welcome to Commy"));
-  home.appendChild(el("p", null, inBrowserApp() ? "Servers are where your friends gather: text channels, voice and screen sharing. Start one, or join a friend's with an invite." : "Servers are where your friends gather: text channels, voice and screen sharing, all connected directly between members. Start one, or join a friend's with an invite."));
+  home.appendChild(el("h3", null, name ? t("ui.welcome-3", { name }) : t("ui.welcome-to-commy")));
+  home.appendChild(el("p", null, inBrowserApp() ? t("ui.servers-are-where-your-friends-gather") : t("ui.servers-are-where-your-friends-gather-2")));
   const actions = el("div", "welcome-actions");
-  const create = el("button", "btn-primary", "Create a Server");
+  const create = el("button", "btn-primary", t("ui.create-a-server"));
   create.onclick = () => { showModal("modal-add-server"); $("create-name-input").focus(); };
-  const join = el("button", "btn-secondary", "Join with an Invite");
+  const join = el("button", "btn-secondary", t("ui.join-with-an-invite"));
   join.onclick = () => { showModal("modal-add-server"); $("join-ticket-input").focus(); };
   actions.append(create, join);
   home.appendChild(actions);
@@ -21137,30 +21164,30 @@ async function renderDmThreads() {
   const requests = matches.filter(t => t.kind !== "inbox" && t.kind !== "group");
 
   const group = el("div", "channel-group dm-group");
-  group.appendChild(el("span", null, "Direct Messages"));
+  group.appendChild(el("span", null, t("nav.dms")));
   const add = el("button", "dm-group-add");
-  add.title = "New Message";
+  add.title = t("ui.new-message");
   add.appendChild(svgIcon("plus", 16));
   add.onclick = openNewDm;
   group.appendChild(add);
   list.appendChild(group);
 
   if (!threads.length) {
-    list.appendChild(el("div", "dm-list-empty", "Your conversations will show up here."));
+    list.appendChild(el("div", "dm-list-empty", t("ui.your-conversations-will-show-up-here")));
   } else if (!matches.length) {
-    list.appendChild(el("div", "dm-list-empty", "No conversations match."));
+    list.appendChild(el("div", "dm-list-empty", t("ui.no-conversations-match")));
   }
   const split = splitPinned(shown, listPins.dms, t => t.user);
   if (split.pinned.length) {
-    list.appendChild(el("div", "channel-group dm-group", "Pinned"));
+    list.appendChild(el("div", "channel-group dm-group", t("ui.pinned")));
     for (const thread of split.pinned) list.appendChild(dmThreadRow(thread, true));
   }
   const friendsShown = !query && (friends.friends.length || friends.incoming.length);
   if (split.pinned.length && !friendsShown && (split.rest.length || requests.length)) {
-    list.appendChild(el("div", "channel-group dm-group", "Direct Messages"));
+    list.appendChild(el("div", "channel-group dm-group", t("nav.dms")));
   }
   if (friendsShown) {
-    list.appendChild(el("div", "channel-group dm-group", `Friends - ${friends.friends.length}`));
+    list.appendChild(el("div", "channel-group dm-group", t("ui.friends", { count: friends.friends.length })));
     for (const req of friends.incoming) {
       const row = el("div", "channel dm-thread friend-request");
       row.dataset.person = req.id;
@@ -21172,14 +21199,14 @@ async function renderDmThreads() {
       meta.appendChild(line);
       row.appendChild(meta);
       const yes = el("button", "icon-btn friend-yes");
-      yes.title = "Accept";
+      yes.title = t("ui.accept");
       yes.appendChild(svgIcon("check", 16));
       yes.onclick = e => {
         e.stopPropagation();
         friendAction(req.id, "accept", req.name);
       };
       const no = el("button", "icon-btn friend-no");
-      no.title = "Decline";
+      no.title = t("ui.decline");
       no.appendChild(svgIcon("close", 16));
       no.onclick = e => {
         e.stopPropagation();
@@ -21206,14 +21233,14 @@ async function renderDmThreads() {
       };
       list.appendChild(row);
     }
-    list.appendChild(el("div", "channel-group dm-group", "Direct Messages"));
+    list.appendChild(el("div", "channel-group dm-group", t("nav.dms")));
   }
   const rows = [...split.rest];
   if (requests.length) {
-    rows.push({ header: `Message Requests - ${requests.length}` });
+    rows.push({ header: t("ui.message-requests", { count: requests.length }) });
     rows.push(...requests.filter(t => t.kind === "request"));
     const spam = requests.filter(t => t.kind === "spam");
-    if (spam.length) rows.push({ header: `Spam - ${spam.length}` }, ...spam);
+    if (spam.length) rows.push({ header: t("ui.spam-2", { count: spam.length }) }, ...spam);
   }
   for (const thread of rows) {
     if (thread.header) {
@@ -21228,7 +21255,7 @@ async function renderDmThreads() {
       .filter(p => !known.has(p.id) && p.name.toLowerCase().includes(query))
       .slice(0, 8);
     if (extra.length) {
-      list.appendChild(el("div", "channel-group", "Start a Conversation"));
+      list.appendChild(el("div", "channel-group", t("ui.start-a-conversation")));
       for (const person of extra) {
         const row = el("div", "channel dm-thread");
         row.appendChild(avatarWithPresence(person.name, person.id));
@@ -21257,7 +21284,7 @@ function dmThreadRow(thread, pinned) {
   if (pinned) top.appendChild(pinMark("dm-pin"));
   top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
   meta.appendChild(top);
-  meta.appendChild(el("div", "dm-preview", thread.kind === "spam" ? "Hidden as possible spam" : plainText(thread.last_message) || "No messages yet"));
+  meta.appendChild(el("div", "dm-preview", thread.kind === "spam" ? t("ui.hidden-as-possible-spam") : plainText(thread.last_message) || t("ui.no-messages-yet")));
   if (thread.kind !== "inbox") row.classList.add("dm-request");
   row.appendChild(meta);
   row.onclick = () => selectDm(thread.user, thread.name);
@@ -21286,7 +21313,7 @@ function groupThreadRow(thread, pinned = false) {
   if (pinned) top.appendChild(pinMark("dm-pin"));
   top.appendChild(el("span", "dm-time", formatShortTime(thread.last_at)));
   meta.appendChild(top);
-  meta.appendChild(el("div", "dm-preview", plainText(thread.last_message) || "No messages yet"));
+  meta.appendChild(el("div", "dm-preview", plainText(thread.last_message) || t("ui.no-messages-yet")));
   row.appendChild(meta);
   row.onclick = () => selectServer(thread.user);
   row.oncontextmenu = e => {
@@ -21301,15 +21328,15 @@ function openGroupMenu(thread, x, y) {
   const menu = $("member-menu");
   menu.replaceChildren(el("div", "ctx-title", thread.name));
   const { item, sep } = contextMenuBuilder(menu);
-  item("Open", () => selectServer(thread.user));
+  item(t("ui.open-3"), () => selectServer(thread.user));
   const pinned = dmIsPinned(thread.user);
-  item(pinned ? "Unpin" : "Pin", () => setDmPinned(thread.user, !pinned));
-  item("Add People", async () => {
+  item(pinned ? t("ui.unpin") : t("ui.pin"), () => setDmPinned(thread.user, !pinned));
+  item(t("ui.add-people"), async () => {
     if (!isGroupView() || state.currentServer.id !== thread.user) await selectServer(thread.user);
     openGroupModal(thread.user);
   });
   sep();
-  item("Leave Group", () => openLeaveServer(thread.user), "danger");
+  item(t("ui.leave-group"), () => openLeaveServer(thread.user), "danger");
   placeMenuAt(menu, x, y);
 }
 
@@ -21325,7 +21352,7 @@ async function selectDm(userId, name) {
   $("chat-hash").textContent = "@";
   $("channel-name").textContent = name;
   renderDmHeader(userId, name);
-  $("message-input").placeholder = `Message @${name}`;
+  $("message-input").placeholder = t("ui.message-2", { name });
   $("dm-profile-btn").classList.remove("hidden");
   renderCallButton();
   const threads = await renderDmThreads();
@@ -21342,17 +21369,17 @@ function renderCallButton() {
     const joined = Boolean(channel) && state.voiceChannelId === channel.id && state.voiceServer && state.voiceServer.id === state.currentServer.id;
     btn.classList.toggle("hidden", !channel);
     btn.replaceChildren(svgIcon(joined ? "hangup" : "phone", 20));
-    btn.title = joined ? "Leave Call" : "Start Group Call";
+    btn.title = joined ? t("ui.leave-call") : t("ui.start-group-call");
     btn.classList.toggle("active", joined);
     return;
   }
   const dm = inDmView();
   btn.classList.toggle("hidden", !dm);
   if (!dm) return;
-  $("group-add-btn").title = "Start a Group";
+  $("group-add-btn").title = t("ui.start-a-group");
   const talking = state.call && state.call.user === state.currentDm.user;
   btn.replaceChildren(svgIcon(talking ? "hangup" : "phone", 20));
-  btn.title = talking ? "End Call" : "Start Voice Call";
+  btn.title = talking ? t("ui.end-call") : t("ui.start-voice-call");
   btn.classList.toggle("active", Boolean(talking));
 }
 
@@ -21382,7 +21409,7 @@ function startCallRing() {
 
 function callPanel(view) {
   state.voiceChannelId = view ? "call" : null;
-  state.voiceServer = view ? { id: null, call: view.user, name: view.name, channelName: "Call" } : null;
+  state.voiceServer = view ? { id: null, call: view.user, name: view.name, channelName: t("ui.call") } : null;
   renderVoicePanel();
   renderCallButton();
 }
@@ -21415,15 +21442,15 @@ async function endDmCall() {
 }
 
 function callEndedLine(view) {
-  const name = view.name || "They";
+  const name = view.name || t("ui.they");
   switch (view.reason) {
-    case "declined": return `${name} declined the call`;
-    case "unanswered": return `${name} did not answer`;
-    case "missed": return `Missed call from ${name}`;
-    case "elsewhere": return "Answered on another device";
-    case "failed": return "The call could not connect";
-    case "offline": return `${name} is offline right now`;
-    default: return "Call ended";
+    case "declined": return t("ui.declined-the-call", { name });
+    case "unanswered": return t("ui.did-not-answer", { name });
+    case "missed": return t("ui.missed-call-from", { name });
+    case "elsewhere": return t("ui.answered-on-another-device");
+    case "failed": return t("ui.the-call-could-not-connect");
+    case "offline": return t("ui.is-offline-right-now", { name });
+    default: return t("ui.call-ended");
   }
 }
 
@@ -21472,12 +21499,12 @@ function renderDmProfile(userId, name) {
   $("dm-profile").querySelector(":scope > .profile-pane")?.remove();
   if (studioLook()) {
     $("dm-profile-btn").classList.toggle("active", state.showDmProfile);
-    $("dm-profile-btn").title = state.showDmProfile ? "Hide User Profile" : "Show User Profile";
+    $("dm-profile-btn").title = state.showDmProfile ? t("ui.hide-user-profile") : t("ui.show-user-profile");
     $("dm-profile").appendChild(studioProfilePane({ ...(person || {}), id: userId, name: (person && person.name) || name, presence }, "dm", () => renderDmProfile(userId, name)));
     return;
   }
   $("dm-profile-btn").classList.toggle("active", state.showDmProfile);
-  $("dm-profile-btn").title = state.showDmProfile ? "Hide User Profile" : "Show User Profile";
+  $("dm-profile-btn").title = state.showDmProfile ? t("ui.hide-user-profile") : t("ui.show-user-profile");
   paintAvatar($("dm-profile-avatar"), userId, name);
   $("dm-profile-presence").className = `presence-dot ${presenceDot({ ...(person || {}), presence })}`;
   $("dm-profile-banner").style.background = bannerColor(userId);
@@ -21486,7 +21513,7 @@ function renderDmProfile(userId, name) {
   setEmojiText($("dm-profile-status"), (person && (isShowingActivity(seen) ? statusBesideGame(seen) : subLine(seen))) || presenceLabel(seen));
   showActivityIn($("dm-profile-activity"), person && seen);
   const servers = person ? person.servers : [];
-  $("dm-profile-mutual-label").textContent = `Mutual Servers - ${servers.length}`;
+  $("dm-profile-mutual-label").textContent = t("ui.mutual-servers-3", { count: servers.length });
   const list = $("dm-profile-servers");
   list.innerHTML = "";
   for (const server of servers) {
@@ -21496,7 +21523,7 @@ function renderDmProfile(userId, name) {
     row.onclick = () => selectServer(server.id).then(phoneShowChat);
     list.appendChild(row);
   }
-  if (!servers.length) list.appendChild(el("div", "dm-preview", "No servers in common right now"));
+  if (!servers.length) list.appendChild(el("div", "dm-preview", t("ui.no-servers-in-common-right-now")));
   $("dm-profile-block").onclick = () => openBlock(userId, name);
 }
 
@@ -21528,13 +21555,14 @@ function buildDmIntro() {
   intro.appendChild(makeAvatar(user, name, "avatar avatar-xl"));
   intro.appendChild(el("h2", null, name));
   const line = el("p");
-  line.appendChild(document.createTextNode("This is the beginning of your direct message history with "));
+  const [before, after] = t("ui.dm-start", { name: "\u0000" }).split("\u0000");
+  line.appendChild(document.createTextNode(before));
   line.appendChild(el("strong", null, name));
-  line.appendChild(document.createTextNode("."));
+  line.appendChild(document.createTextNode(after));
   intro.appendChild(line);
   if (person && person.servers.length) {
     const n = person.servers.length;
-    intro.appendChild(el("div", "dm-intro-mutual", `${n} mutual server${n === 1 ? "" : "s"}`));
+    intro.appendChild(el("div", "dm-intro-mutual", t("ui.mutual-server", { n, value: n === 1 ? "" : "s" })));
   }
   return intro;
 }
@@ -21551,20 +21579,20 @@ function renderInvitePeople() {
     row.appendChild(avatarWithPresence(person.name, person.id));
     const meta = el("div", "dm-meta");
     meta.appendChild(el("div", "dm-name", person.name));
-    meta.appendChild(el("div", "dm-preview", person.friend ? "Friend" : person.servers.map(shownServerName).join(", ")));
+    meta.appendChild(el("div", "dm-preview", person.friend ? t("ui.friend") : person.servers.map(shownServerName).join(", ")));
     row.appendChild(meta);
     const sent = state.invitedNow.has(person.id);
-    const btn = el("button", sent ? "btn-secondary btn-small" : "btn-primary btn-small", sent ? "Sent" : "Invite");
+    const btn = el("button", sent ? "btn-secondary btn-small" : "btn-primary btn-small", sent ? t("ui.sent") : t("ui.invite"));
     btn.disabled = sent;
     btn.onclick = async () => {
       btn.disabled = true;
       try {
         await invoke("open_dm", { userId: person.id });
-        const sentDm = await invoke("send_dm", { userId: person.id, content: `Come join me in ${shownServerName(server)}! ${$("invite-text").value}` });
+        const sentDm = await invoke("send_dm", { userId: person.id, content: t("ui.come-join-me-in-2", { value: shownServerName(server), value2: $("invite-text").value }) });
         state.invitedNow.add(person.id);
         btn.className = "btn-secondary btn-small";
-        btn.textContent = "Sent";
-        dmSentToast(sentDm, person.name, `Invited ${person.name} to ${shownServerName(server)}`);
+        btn.textContent = t("ui.sent");
+        dmSentToast(sentDm, person.name, t("ui.invited-to", { name: person.name, value: shownServerName(server) }));
       } catch (e) {
         btn.disabled = false;
         toast(String(e));
@@ -21573,7 +21601,7 @@ function renderInvitePeople() {
     row.appendChild(btn);
     list.appendChild(row);
   }
-  if (!people.length) list.appendChild(el("div", "dm-list-empty", query.trim() ? "Nobody matches that name." : "Everyone you know is already here."));
+  if (!people.length) list.appendChild(el("div", "dm-list-empty", query.trim() ? t("ui.nobody-matches-that-name") : t("ui.everyone-you-know-is-already-here")));
 }
 
 function openNewDm() {
@@ -21591,8 +21619,8 @@ function renderNewDmList() {
     const row = el("button", "person-row new-group");
     row.appendChild(groupAvatar());
     const meta = el("div", "dm-meta");
-    meta.appendChild(el("div", "dm-name", "New Group"));
-    meta.appendChild(el("div", "dm-preview", "A private chat for a few friends"));
+    meta.appendChild(el("div", "dm-name", t("ui.new-group")));
+    meta.appendChild(el("div", "dm-preview", t("ui.a-private-chat-for-a-few-friends")));
     row.appendChild(meta);
     row.onclick = () => {
       hideModals();
@@ -21618,8 +21646,8 @@ function renderNewDmList() {
   }
   if (!people.length) {
     list.appendChild(el("div", "dm-list-empty", state.people.size
-      ? "Nobody matches that name."
-      : "Join or create a server first. You can message anyone you share a server with."));
+      ? t("ui.nobody-matches-that-name")
+      : t("ui.join-or-create-a-server-first-you-can-2")));
   }
 }
 
@@ -21641,7 +21669,7 @@ function dmToRenderable(m) {
 }
 
 function dmSentToast(sent, name, done) {
-  toast(sent && sent.pending ? `Will send to ${name} when they come online` : done);
+  toast(sent && sent.pending ? t("ui.will-send-to-when-they-come-online", { name }) : done);
 }
 
 async function messageUser(userId, name) {
@@ -21692,10 +21720,10 @@ async function selectChannel(channel) {
   syncAwaitedBar();
   if (channel) clearChannelUnread(channel.id);
   renderChannels();
-  $("channel-name").replaceChildren(channel ? channelNameNode(channel) : document.createTextNode("no channel"));
+  $("channel-name").replaceChildren(channel ? channelNameNode(channel) : document.createTextNode(t("ui.no-channel")));
   $("chat-hash").replaceChildren(channelHeaderMark(channel));
   $("channel-topic").textContent = (channel && channel.topic) || "";
-  $("message-input").placeholder = channel ? `Message #${channelPlainName(channel)}` : "Select a channel";
+  $("message-input").placeholder = channel ? t("ui.message-4", { value: channelPlainName(channel) }) : t("ui.select-a-channel");
   syncPinButton();
   syncSlowMode();
   renderTypingStrip();
@@ -21747,7 +21775,7 @@ async function sendMessage() {
   const { tts, content } = parseTtsPrefix(typed);
   if (!content || !state.currentServer || !state.currentChannel) return;
   if (tts && !canSendTtsHere()) {
-    toast("You can't send text-to-speech messages in this server");
+    toast(t("ui.you-can-t-send-text-to-speech-messages"));
     return;
   }
   stopSpeaking();
@@ -21968,7 +21996,7 @@ async function searchGifs(query, settings = gifSettings()) {
     const common = "per_page=24&page=1&content_filter=medium&format_filter=gif";
     const url = q ? `${base}/search?q=${q}&${common}` : `${base}/trending?${common}`;
     const res = await fetch(url);
-    if (res.status === 429) throw new Error("your KLIPY key hit its limit for now (test keys allow 100 searches an hour)");
+    if (res.status === 429) throw new Error(t("ui.your-klipy-key-hit-its-limit-for-now"));
     const body = await res.json().catch(() => ({}));
     if (!res.ok || body.result === false) {
       const reason = body?.errors?.message?.[0];
@@ -21979,7 +22007,7 @@ async function searchGifs(query, settings = gifSettings()) {
       preview: klipyUrl(item.file, ["sm", "xs", "md"]),
       ratio: klipyRatio(item.file, ["sm", "xs", "md"]),
       url: klipyUrl(item.file, ["md", "sm", "hd"]),
-      title: item.title || "GIF",
+      title: item.title || t("ui.gif"),
     })).filter(g => g.preview && g.url);
   }
   const base = "https://api.giphy.com/v1/gifs";
@@ -21993,7 +22021,7 @@ async function searchGifs(query, settings = gifSettings()) {
     preview: g.images?.fixed_width?.url,
     ratio: Number(g.images?.fixed_width?.height) / Number(g.images?.fixed_width?.width) || 0,
     url: g.images?.downsized_medium?.url || g.images?.original?.url,
-    title: g.title || "GIF",
+    title: g.title || t("ui.gif"),
   })).filter(g => g.preview && g.url);
 }
 
@@ -22003,9 +22031,9 @@ const popGifs = { grid: "emoji-pop-gif-grid", attrib: "emoji-pop-gif-attrib", se
 async function renderGifResults(query, view = composerGifs) {
   const grid = $(view.grid);
   const token = ++view.token;
-  grid.replaceChildren(el("div", "gif-note", "Searching..."));
+  grid.replaceChildren(el("div", "gif-note", t("ui.searching")));
   const settings = gifSettings();
-  $(view.attrib).textContent = settings.key && settings.provider === "giphy" ? "Powered by GIPHY" : "Powered by KLIPY";
+  $(view.attrib).textContent = settings.key && settings.provider === "giphy" ? t("ui.powered-by-giphy") : t("ui.powered-by-klipy");
   try {
     const gifs = await searchGifs(query, settings);
     if (token !== view.token) return;
@@ -22029,14 +22057,14 @@ async function renderGifResults(query, view = composerGifs) {
       heights[target] += ratio;
     }
     if (gifs.length) grid.append(...cols);
-    if (!gifs.length) grid.appendChild(el("div", "gif-note", "No GIFs found."));
+    if (!gifs.length) grid.appendChild(el("div", "gif-note", t("ui.no-gifs-found")));
   } catch (e) {
     if (token !== view.token) return;
     const note = el("div", "gif-note");
     if (e.message === "no-key") {
-      note.textContent = "Your account server does not offer GIF search. Someone who manages this server can add a GIF key in Server Settings, then Integrations. ";
+      note.textContent = t("ui.your-account-server-does-not-offer-gif");
       if (state.currentServer && state.currentServer.can_manage_server) {
-        const link = el("button", "btn-link", "Open GIF settings");
+        const link = el("button", "btn-link", t("ui.open-gif-settings"));
         link.onclick = () => {
           view.close();
           openServerSettings("gif-search");
@@ -22045,9 +22073,9 @@ async function renderGifResults(query, view = composerGifs) {
       }
     } else {
       note.textContent = settings.key
-        ? `Could not load GIFs: ${e.message}. Check this server's GIF key in Server Settings, then Integrations. `
-        : `Could not load GIFs: ${e.message}. `;
-      const retry = el("button", "btn-link", "Try again");
+        ? t("ui.could-not-load-gifs-check-key", { error: e.message })
+        : t("ui.could-not-load-gifs", { error: e.message });
+      const retry = el("button", "btn-link", t("claim.retry"));
       retry.onclick = () => renderGifResults($(view.search).value, view);
       note.appendChild(retry);
     }
@@ -22077,7 +22105,7 @@ function toggleComposerMenu() {
   const files = state.view !== "server" || canAttachHere();
   const voice = state.view !== "server" || canSendVoiceHere();
   if (!files && !voice) {
-    toast("You can't send files or voice messages in this server");
+    toast(t("ui.you-can-t-send-files-or-voice-messages"));
     return;
   }
   if (!menu.classList.contains("hidden")) {
@@ -22133,7 +22161,7 @@ function addPollRow(text) {
   };
   const remove = el("button", "poll-row-remove");
   remove.type = "button";
-  remove.title = "Remove this answer";
+  remove.title = t("ui.remove-this-answer");
   remove.appendChild(svgIcon("close", 16));
   remove.onclick = () => {
     row.remove();
@@ -22147,7 +22175,7 @@ function addPollRow(text) {
 function syncPollRows() {
   const rows = [...$("poll-rows").children];
   rows.forEach((row, i) => {
-    row.querySelector("input").placeholder = `Answer ${i + 1}`;
+    row.querySelector("input").placeholder = t("ui.answer", { value: i + 1 });
     row.querySelector("button").disabled = rows.length <= MIN_POLL_OPTIONS;
   });
   $("poll-add").disabled = rows.length >= MAX_POLL_OPTIONS;
@@ -22211,7 +22239,7 @@ async function startVoiceRecording() {
   const target = voiceRecordingTarget();
   if (!target || voiceRec.target) return;
   if (target.server && !canSendVoiceHere()) {
-    toast("You can't send voice messages in this server");
+    toast(t("ui.you-can-t-send-voice-messages-in-this"));
     return;
   }
   try {
@@ -22253,7 +22281,7 @@ function renderPoll(message) {
     const row = el("button", "poll-option" + (option.mine ? " mine" : "") + (poll.multi ? " multi" : ""));
     row.type = "button";
     row.disabled = closed;
-    if (!closed) row.title = option.mine ? "Take your vote back" : "Vote for this";
+    if (!closed) row.title = option.mine ? t("ui.take-your-vote-back") : t("ui.vote-for-this");
     const fill = el("div", "poll-fill");
     fill.style.width = `${shares[i].percent}%`;
     const mark = el("span", "poll-mark");
@@ -22273,7 +22301,7 @@ function renderPoll(message) {
   foot.appendChild(el("span", "poll-status", pollFooter(poll, now)));
   const canManage = Boolean(state.currentServer && state.currentServer.can_manage_messages);
   if (state.view === "server" && canClosePoll({ poll, own: isOwnMessage(message), canManage, now })) {
-    const close = el("button", "poll-close", "Close poll");
+    const close = el("button", "poll-close", t("ui.close-poll"));
     close.type = "button";
     close.onclick = e => {
       e.stopPropagation();
@@ -22305,7 +22333,7 @@ async function votePoll(message, choices) {
 
 async function closePoll(message) {
   if (!state.currentServer) return;
-  if (!(await confirm("Close this poll now? Nobody can vote after that."))) return;
+  if (!(await confirm(t("ui.close-this-poll-now-nobody-can-vote")))) return;
   try {
     await invoke("close_poll", { serverId: state.currentServer.id, messageId: message.id });
     await refreshChannelInPlace();
@@ -22484,7 +22512,7 @@ async function sendGif(url) {
       if (state.view === "dm" && state.currentDm && state.currentDm.user === dmTarget.user) {
         await selectDm(dmTarget.user, dmTarget.name);
       } else {
-        dmSentToast(sent, dmTarget.name, `GIF sent to ${dmTarget.name}`);
+        dmSentToast(sent, dmTarget.name, t("ui.gif-sent-to", { name: dmTarget.name }));
       }
     } catch (e) {
       toast(String(e));
@@ -22602,7 +22630,7 @@ async function toggleVoice(channel, back = false) {
       state.sharing = false;
       state.shareSource = null;
     }
-    if (!leaving || !voiceRoom.left) toast(leaving ? "Disconnected from voice" : back ? `Back in ${channelTextName(channel.name)}.` : isStageChannel(channel) ? `Joined the stage: ${channelShownName(channel)}` : `Joined voice: ${channelShownName(channel)}`);
+    if (!leaving || !voiceRoom.left) toast(leaving ? t("ui.disconnected-from-voice") : back ? t("ui.back-in", { value: channelTextName(channel.name) }) : isStageChannel(channel) ? t("ui.joined-the-stage", { value: channelShownName(channel) }) : t("ui.joined-voice", { value: channelShownName(channel) }));
     if (leaving) playSound("leave");
     else playJoinCue(state.currentServer, [state.user.id]);
     renderShareButton();
@@ -22622,7 +22650,7 @@ async function stopSharing() {
     state.sharing = false;
     state.shareSource = null;
     if (state.stageMode === "self") closeStage();
-    if (!voiceRoom.open || !studioDesk()) toast("Stopped sharing");
+    if (!voiceRoom.open || !studioDesk()) toast(t("ui.stopped-sharing"));
     renderShareButton();
   } catch (e) {
     toast(String(e));
@@ -22641,9 +22669,9 @@ async function toggleShare() {
 
 const SHARE_QUALITY_KEY = "commy.shareQuality";
 const SHARE_QUALITY_HINTS = {
-  smooth: "Best for games and video. Lower resolution, more frames.",
-  balanced: "A good default for most screens.",
-  sharp: "Best for code and documents. Crisp text, fewer frames.",
+  get smooth() { return t("ui.best-for-games-and-video-lower"); },
+  get balanced() { return t("ui.a-good-default-for-most-screens"); },
+  get sharp() { return t("ui.best-for-code-and-documents-crisp-text"); },
 };
 
 const sharePicker = { sources: [], kind: "monitor", picked: null, thumbs: new Map(), token: 0, audioSupported: null };
@@ -22693,10 +22721,10 @@ async function openSharePicker() {
   setShareQuality(shareQuality());
   renderShareAudioRow();
   renderShareInkRow();
-  $("share-go").textContent = state.sharing ? "Switch Stream" : "Go Live";
+  $("share-go").textContent = state.sharing ? t("ui.switch-stream") : t("ui.go-live");
   const list = $("share-source-list");
   list.innerHTML = "";
-  list.appendChild(el("div", "share-loading", "Looking for screens and windows..."));
+  list.appendChild(el("div", "share-loading", t("ui.looking-for-screens-and-windows")));
   renderShareTabs();
   showModal("modal-share");
   try {
@@ -22708,7 +22736,7 @@ async function openSharePicker() {
     if (game) {
       sharePicker.kind = "window";
       setShareQuality("smooth");
-      $("share-go").textContent = state.sharing ? "Switch Stream" : `Share ${game.game}`;
+      $("share-go").textContent = state.sharing ? t("ui.switch-stream") : t("ui.share-3", { game: game.game });
     }
     renderShareGrid();
     loadShareThumbs(token);
@@ -22764,8 +22792,8 @@ function renderShareGrid() {
   }
   if (!sources.length) {
     list.appendChild(el("div", "share-loading", sharePicker.kind === "monitor"
-      ? "No screens found."
-      : "No open windows found. Minimized windows are hidden."));
+      ? t("ui.no-screens-found")
+      : t("ui.no-open-windows-found-minimized-windows")));
   }
   const pickedVisible = sharePicker.picked && sharePicker.picked.kind === sharePicker.kind;
   $("share-go").disabled = !pickedVisible;
@@ -22859,12 +22887,12 @@ function startOwnPreview() {
       if (own.jpeg && performance.now() - ownFrameAt > 2000) {
         showOwnFrame(own);
       }
-      $("vp-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
+      $("vp-viewers").textContent = t(own.viewers === 1 ? "ui.n.watching.one" : "ui.n.watching.many", { count: own.viewers });
       $("vp-viewers").classList.toggle("hidden", !own.viewers);
       voiceRoom.viewers = Number(own.viewers) || 0;
       paintVoiceRoomMine();
       if (state.stageMode === "self") {
-        $("stage-viewers").textContent = own.viewers === 1 ? "1 watching" : `${own.viewers} watching`;
+        $("stage-viewers").textContent = t(own.viewers === 1 ? "ui.n.watching.one" : "ui.n.watching.many", { count: own.viewers });
         $("stage-viewers").classList.toggle("hidden", !own.viewers);
       }
       if (typeof own.ink === "boolean" && own.ink !== state.shareInk) {
@@ -22912,14 +22940,14 @@ setInterval(() => {
       invoke("stop_watching", { userId: user }).catch(() => {}).then(() => watchScreen(user, name, { retry: true }));
       return;
     }
-    toast(`Couldn't reach ${name ? `${name}'s` : "the"} stream. Try again in a moment.`);
+    toast(t("ui.couldn-t-reach-stream-try-again-in-a", { value: name ? `${name}'s` : "the" }));
     stopWatching();
     return;
   }
   if (!state.watchingUser || !stageStats.lastAt) return;
   if (performance.now() - stageStats.lastAt < STREAM_STALL_MS) return;
   stageStats.lastAt = 0;
-  toast(state.watchingName ? `${state.watchingName}'s stream ended` : "The stream ended");
+  toast(state.watchingName ? t("ui.s-stream-ended", { watchingName: state.watchingName }) : t("ui.the-stream-ended"));
   stopWatching();
 }, 2000);
 
@@ -22935,7 +22963,7 @@ function openStage(mode, label) {
   $("stage-wait").classList.remove("hidden");
   $("video-pane").classList.remove("hidden");
   $("video-pane").classList.toggle("self", mode === "self");
-  $("video-close").title = mode === "self" ? "Close Preview" : "Stop Watching";
+  $("video-close").title = mode === "self" ? t("ui.close-preview") : t("ui.stop-watching");
   renderStageVolume(streamVolumePercent(state.voice));
   renderCamGrid();
 }
@@ -22988,9 +23016,9 @@ function toggleStageFocus() {
 
 function paintFocusButtons() {
   const focused = document.querySelector(".main").classList.contains("stage-focus");
-  $("stage-focus").title = focused ? "Exit Focus Mode" : "Focus Mode";
+  $("stage-focus").title = focused ? t("ui.exit-focus-mode") : t("ui.focus-mode");
   setIcon($("stage-focus"), focused ? "collapse" : "expand", 20);
-  $("cam-grid-focus").title = focused ? "Show Chat" : "Hide Chat";
+  $("cam-grid-focus").title = focused ? t("ui.show-chat-2") : t("ui.hide-chat");
   setIcon($("cam-grid-focus"), focused ? "collapse" : "expand", 18);
 }
 
@@ -23063,7 +23091,7 @@ function renderStageInkTools() {
   $("stage-ink-tools").classList.toggle("hidden", !(watching || self));
   $("stage-ink-point").classList.toggle("hidden", !watching);
   $("stage-ink-pen").classList.toggle("hidden", !watching);
-  $("stage-ink-clear").title = self ? "Clear all drawings" : "Clear my drawings";
+  $("stage-ink-clear").title = self ? t("ui.clear-all-drawings") : t("ui.clear-my-drawings");
   if (!watching && ink.tool) setInkTool(null);
   paintVoiceRoomStage();
 }
@@ -23107,14 +23135,14 @@ function renderStageDrawers(drawers) {
   ink.drawersKey = key;
   const chip = $("stage-drawers");
   chip.classList.toggle("hidden", !list.length);
-  const items = [el("span", "stage-drawers-label", "Drawing")];
+  const items = [el("span", "stage-drawers-label", t("ui.drawing"))];
   for (const drawer of list) {
     const who = el("span", "stage-drawer");
     const dot = el("span", "stage-drawer-dot");
     dot.style.background = inkColor(drawer.id);
     const stop = el("button", "stage-drawer-stop");
     stop.type = "button";
-    stop.title = `Stop ${drawer.name} drawing on this stream`;
+    stop.title = t("ui.stop-drawing-on-this-stream", { name: drawer.name });
     stop.setAttribute("aria-label", stop.title);
     stop.appendChild(svgIcon("close", 12));
     stop.onclick = () => invoke("block_stream_ink", { userId: drawer.id }).catch(e => toast(String(e)));
@@ -23253,15 +23281,15 @@ function toggleStageFullscreen() {
 async function uploadFileObject(file) {
   const dm = inDmView();
   if (!dm && (state.view !== "server" || !state.currentServer || !state.currentChannel)) {
-    toast("Open a channel or conversation to share files");
+    toast(t("ui.open-a-channel-or-conversation-to-share"));
     return;
   }
   if (!dm && !canAttachHere()) {
-    toast("You can't send files or images in this server");
+    toast(t("ui.you-can-t-send-files-or-images-in-this"));
     return;
   }
   if (file.size > 512 * 1024 * 1024) {
-    toast("File is too large (512 MB max)");
+    toast(t("ui.file-is-too-large-512-mb-max"));
     return;
   }
   const refusal = dm ? null : uploadRefusal(state.currentServer, file.size);
@@ -23310,7 +23338,7 @@ async function watchScreen(userId, name, { retry = false } = {}) {
   try {
     if (state.watchingUser !== userId) await releaseStage();
     if (!retry) {
-      openStage("watch", `${name}'s screen`);
+      openStage("watch", t("ui.name-s-screen", { name }));
       phoneShowChat();
     }
     state.watchingUser = userId;
@@ -23336,7 +23364,7 @@ async function watchScreen(userId, name, { retry = false } = {}) {
 function showWatchedStream() {
   if (!state.watchingUser) return;
   if (state.stageMode !== "watch") {
-    openStage("watch", `${state.watchingName || "Their"}'s screen`);
+    openStage("watch", t("ui.s-screen", { value: state.watchingName || "Their" }));
     if (stageStats.lastAt) $("stage-wait").classList.add("hidden");
   }
   phoneShowChat();
@@ -23366,7 +23394,7 @@ async function closeStageButton() {
 async function openOwnPreview() {
   if (!state.sharing) return;
   await releaseStage();
-  openStage("self", "Your stream preview");
+  openStage("self", t("ui.your-stream-preview"));
 }
 
 async function releaseStage() {
@@ -23532,7 +23560,7 @@ function wireEvents() {
     try {
       const code = await invoke("export_server_template", { serverId: state.currentServer.id });
       await navigator.clipboard.writeText(code);
-      toast("Template code copied. Anyone can paste it under Create a Server.");
+      toast(t("ui.template-code-copied-anyone-can-paste-it"));
     } catch (e) {
       toast(String(e));
     }
@@ -23580,7 +23608,7 @@ function wireEvents() {
 
   $("invite-copy").onclick = async () => {
     await navigator.clipboard.writeText($("invite-text").value);
-    toast("Invite copied to clipboard");
+    toast(t("ui.invite-copied-to-clipboard"));
   };
 
   $("settings-btn").onclick = () => {
@@ -23631,8 +23659,8 @@ function wireEvents() {
         if (!(await askForMicrophoneOnPhones())) return;
         await invoke("start_mic_test");
         state.micTesting = true;
-        $("mic-test-btn").textContent = "Stop Test";
-        toast("Mic test running: you should hear yourself");
+        $("mic-test-btn").textContent = t("ui.stop-test");
+        toast(t("ui.mic-test-running-you-should-hear"));
       }
     } catch (e) {
       toast(String(e));
@@ -23768,7 +23796,7 @@ function wireEvents() {
     try {
       await invoke("set_upload_limit", { serverId: server.id, megabytes });
       server.upload_limit_mb = megabytes;
-      toast(megabytes ? `Files here are now limited to ${uploadLimitLabel(megabytes)}` : "Files here can be up to 4 GB again");
+      toast(megabytes ? t("ui.files-here-are-now-limited-to", { value: uploadLimitLabel(megabytes) }) : t("ui.files-here-can-be-up-to-4-gb-again"));
     } catch (err) {
       toast(String(err));
       openServerSettings();
@@ -23811,7 +23839,7 @@ function wireEvents() {
   });
   $("sound-open-toggle").addEventListener("change", saveExpressionSettings);
 
-  $("vp-soundboard").replaceChildren(svgIcon("soundboard", 16), el("span", null, "Soundboard"));
+  $("vp-soundboard").replaceChildren(svgIcon("soundboard", 16), el("span", null, t("ui.soundboard")));
   $("vp-soundboard").onclick = toggleSoundboardPop;
   $("join-sounds-hear-toggle").addEventListener("change", e => {
     saveSoundboardPrefs({ ...soundboardPrefs(), joinSounds: e.target.checked });
@@ -23835,7 +23863,7 @@ function wireEvents() {
     const minutes = Number(e.target.value) || null;
     try {
       await invoke("set_server_afk_timeout", { serverId: state.currentServer.id, minutes });
-      toast(minutes ? `Idle members are moved after ${minutes} minute${minutes === 1 ? "" : "s"}` : "Server AFK limit turned off");
+      toast(minutes ? t("ui.idle-members-are-moved-after-minute", { minutes, value: minutes === 1 ? "" : "s" }) : t("ui.server-afk-limit-turned-off"));
       await refreshCurrentServer();
     } catch (err) {
       toast(String(err));
@@ -23847,7 +23875,7 @@ function wireEvents() {
     try {
       await invoke("set_afk_channel", { serverId: state.currentServer.id, channelId });
       const name = channelId ? e.target.selectedOptions[0].textContent : null;
-      toast(name ? `AFK channel set to ${name}` : "AFK channel turned off");
+      toast(name ? t("ui.afk-channel-set-to", { name }) : t("ui.afk-channel-turned-off"));
       await refreshCurrentServer();
       openServerSettings();
     } catch (err) {
@@ -23861,7 +23889,7 @@ function wireEvents() {
         serverId: state.currentServer.id,
         name: $("rename-input").value,
       });
-      toast("Server renamed");
+      toast(t("ui.server-renamed"));
       await refreshServers();
       await refreshCurrentServer();
       openServerSettings();
@@ -23922,7 +23950,7 @@ function wireEvents() {
       });
       renderUserPanel();
       if (state.currentServer) await refreshCurrentServer();
-      toast("Profile updated");
+      toast(t("ui.profile-updated"));
     } catch (e) {
       toast(String(e));
     }
@@ -23930,18 +23958,18 @@ function wireEvents() {
 
   $("nc-toggle").onchange = async e => {
     state.voice = await invoke("set_noise_cancellation", { enabled: e.target.checked });
-    toast(`Noise cancellation ${state.voice.noise_cancellation ? "on" : "off"}`);
+    toast(t("ui.noise-cancellation-2", { value: state.voice.noise_cancellation ? "on" : "off" }));
     renderVoicePanel();
   };
 
   $("ec-toggle").onchange = async e => {
     state.voice = await invoke("set_echo_cancellation", { enabled: e.target.checked });
-    toast(`Echo cancellation ${state.voice.echo_cancellation ? "on" : "off"}`);
+    toast(t("ui.echo-cancellation-2", { value: state.voice.echo_cancellation ? "on" : "off" }));
   };
 
   $("agc-toggle").onchange = async e => {
     state.voice = await invoke("set_auto_level", { enabled: e.target.checked });
-    toast(`Automatic mic level ${state.voice.auto_level ? "on" : "off"}`);
+    toast(t("ui.automatic-mic-level-2", { value: state.voice.auto_level ? "on" : "off" }));
   };
 
   $("mute-btn").onclick = async () => {
@@ -23966,7 +23994,7 @@ function wireEvents() {
         input: which === "input" ? e.target.value || null : state.voice.input_device || null,
         output: which === "output" ? e.target.value || null : state.voice.output_device || null,
       });
-      toast(which === "input" ? "Microphone changed" : "Speakers changed");
+      toast(which === "input" ? t("ui.microphone-changed") : t("ui.speakers-changed"));
     } catch (err) {
       toast(String(err));
     }
@@ -24077,7 +24105,7 @@ function wireEvents() {
     try {
       state.voice = await invoke("set_afk_timeout", { minutes: Number(e.target.value) });
       const m = state.voice.afk_timeout_minutes;
-      toast(m ? `You'll go AFK after ${m === 60 ? "1 hour" : `${m} minute${m === 1 ? "" : "s"}`} of inactivity` : "Automatic AFK turned off");
+      toast(m ? t("ui.you-ll-go-afk-after-of-inactivity", { value: m === 60 ? t("ui.1-hour") : t(m === 1 ? "ui.n.minutes.one" : "ui.n.minutes.many", { count: m }) }) : t("ui.automatic-afk-turned-off"));
     } catch (err) {
       toast(String(err));
     }
@@ -24087,7 +24115,7 @@ function wireEvents() {
     try {
       state.voice = await invoke("set_wait_for_connection", { enabled: e.target.checked });
       await loadVoiceGate();
-      toast(e.target.checked ? "Voice waits for a steady connection" : "Voice joins right away");
+      toast(e.target.checked ? t("ui.voice-waits-for-a-steady-connection") : t("ui.voice-joins-right-away"));
     } catch (err) {
       e.target.checked = !e.target.checked;
       toast(String(err));
@@ -24097,7 +24125,7 @@ function wireEvents() {
   $("share-activity-toggle").addEventListener("change", async e => {
     try {
       state.voice = await invoke("set_share_activity", { enabled: e.target.checked });
-      toast(e.target.checked ? "Sharing your activity" : "Activity sharing turned off");
+      toast(e.target.checked ? t("ui.sharing-your-activity") : t("ui.activity-sharing-turned-off"));
     } catch (err) {
       toast(String(err));
     }
@@ -24150,7 +24178,7 @@ function wireEvents() {
   $("pp-custom-set").onclick = () => {
     const when = new Date($("pp-custom-time").value).getTime();
     if (!when || when <= Date.now()) {
-      toast("Pick a time in the future");
+      toast(t("ui.pick-a-time-in-the-future"));
       return;
     }
     applyDuration(Math.floor(when / 1000));
@@ -24170,7 +24198,7 @@ function wireEvents() {
     try {
       await invoke("open_dm", { userId });
       const sent = await invoke("send_dm", { userId, content: encodeCustomEmojis(text) });
-      dmSentToast(sent, name, `Sent to ${name}`);
+      dmSentToast(sent, name, t("ui.sent-to", { name }));
     } catch (err) {
       input.value = text;
       toast(String(err));
@@ -24193,7 +24221,7 @@ function wireEvents() {
     try {
       state.voice = await invoke("set_pronouns", { pronouns: e.target.value });
       e.target.value = state.voice.pronouns || "";
-      toast(state.voice.pronouns ? "Pronouns saved" : "Pronouns removed");
+      toast(state.voice.pronouns ? t("ui.pronouns-saved") : t("ui.pronouns-removed"));
     } catch (err) {
       toast(String(err));
     }
@@ -24201,7 +24229,7 @@ function wireEvents() {
   $("account-about").addEventListener("change", async e => {
     try {
       state.user = await invoke("set_about", { about: encodeCustomEmojis(e.target.value) });
-      toast("About Me saved");
+      toast(t("ui.about-me-saved"));
     } catch (err) {
       toast(String(err));
     }
@@ -24254,7 +24282,7 @@ function wireEvents() {
     e.stopPropagation();
     openAvatarMenu(e.currentTarget);
   };
-  $("account-banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a profile banner", saveBannerWith(PROFILE_BANNER_SIZE, saveAccountBanner));
+  $("account-banner-upload").onclick = e => openBannerMenu(e.currentTarget, t("ui.choose-a-profile-banner"), saveBannerWith(PROFILE_BANNER_SIZE, saveAccountBanner));
   $("banner-own").onclick = () => bannerMenuUse && bannerMenuUse(null);
   $("account-banner-remove").onclick = () => saveAccountBanner(null);
   $("account-banner-remove").appendChild(svgIcon("close", 14));
@@ -24274,7 +24302,7 @@ function wireEvents() {
   $("avatar-upload").onclick = async () => {
     $("avatar-menu").classList.add("hidden");
     try {
-      const src = await chooseImage("Choose your avatar", $("avatar-file"));
+      const src = await chooseImage(t("ui.choose-your-avatar"), $("avatar-file"));
       const data = src ? await uploadedAvatar(src) : null;
       if (data) await applyAvatar("image", data);
     } catch (err) {
@@ -24390,7 +24418,7 @@ function wireEvents() {
     const muted = !isServerMuted(menuServer.id);
     updateServerPrefs(menuServer.id, { muted });
     closeFloating();
-    toast(muted ? `Muted ${menuServer.name}` : `Unmuted ${menuServer.name}`);
+    toast(muted ? t("ui.muted-3", { name: menuServer.name }) : t("ui.unmuted-3", { name: menuServer.name }));
   };
   $("sm-notify").onclick = () => {
     const server = menuServer;
@@ -24582,16 +24610,16 @@ function wireEvents() {
 
   $("overview-icon").onclick = async () => {
     try {
-      const src = await chooseImage("Choose a server avatar", $("server-image-file"));
+      const src = await chooseImage(t("ui.choose-a-server-avatar"), $("server-image-file"));
       if (src) await setServerImage("icon", await cropImageFile(src, 256, 256));
     } catch (err) {
       toast(String(err));
     }
   };
-  $("banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a server banner", saveBannerWith(PLACE_BANNER_SIZE, data => setServerImage("banner", data)));
+  $("banner-upload").onclick = e => openBannerMenu(e.currentTarget, t("ui.choose-a-server-banner"), saveBannerWith(PLACE_BANNER_SIZE, data => setServerImage("banner", data)));
   $("overview-icon-remove").onclick = () => setServerImage("icon", null);
   $("banner-remove").onclick = () => setServerImage("banner", null);
-  $("invite-bg-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose an invite background", saveInviteBackground);
+  $("invite-bg-upload").onclick = e => openBannerMenu(e.currentTarget, t("ui.choose-an-invite-background"), saveInviteBackground);
   $("invite-bg-remove").onclick = () => setServerImage("invite", null);
   $("invite-custom-name").addEventListener("input", paintInviteNameCheck);
   $("invite-custom-name").addEventListener("keydown", e => {
@@ -24627,7 +24655,7 @@ function wireEvents() {
     renderTtsSettings();
   });
   $("tts-preview").onclick = () => {
-    if (!speakText(spokenText(state.user ? state.user.display_name || state.user.username : "Commy", "this is how text-to-speech sounds"), true)) toast("Text-to-speech is not available here");
+    if (!speakText(spokenText(state.user ? state.user.display_name || state.user.username : "Commy", "this is how text-to-speech sounds"), true)) toast(t("ui.text-to-speech-is-not-available-here"));
   };
   $("close-to-tray-toggle").addEventListener("change", async e => {
     try {
@@ -24675,7 +24703,7 @@ function wireEvents() {
     playSound("message", soundFor("message") === "none" ? "notification" : soundFor("message"));
   });
   $("notify-test").onclick = () =>
-    invoke("notify", { title: "Commy", body: "Notifications are working." }).then(() => playSound("message")).catch(e => toast(String(e)));
+    invoke("notify", { title: "Commy", body: t("ui.notifications-are-working") }).then(() => playSound("message")).catch(e => toast(String(e)));
   window.addEventListener("focus", () => {
     if (!chatPaneShowing()) return;
     if (state.view === "server" && state.currentChannel) {
@@ -24744,7 +24772,7 @@ function wireEvents() {
     syncChannelDirty();
   };
   $("channel-edit-emoji").onclick = e => pickChannelLead(e.currentTarget, "edit", syncChannelDirty);
-  $("channel-banner-upload").onclick = e => openBannerMenu(e.currentTarget, "Choose a channel banner", saveBannerWith(PLACE_BANNER_SIZE, setChannelBanner));
+  $("channel-banner-upload").onclick = e => openBannerMenu(e.currentTarget, t("ui.choose-a-channel-banner"), saveBannerWith(PLACE_BANNER_SIZE, setChannelBanner));
   $("channel-banner-remove").onclick = () => setChannelBanner(null);
   $("channel-edit-name").addEventListener("keydown", e => {
     if (e.key === "Enter") saveChannelEdits();
@@ -24762,7 +24790,7 @@ function wireEvents() {
     const kind = e.target.checked ? "announcement" : "text";
     try {
       await invoke("set_channel_kind", { serverId: state.currentServer.id, channelId: channel.id, kind });
-      toast(kind === "announcement" ? "Now an announcement channel" : "Now a text channel");
+      toast(kind === "announcement" ? t("ui.now-an-announcement-channel") : t("ui.now-a-text-channel"));
       await refreshCurrentServer();
       openChannelSettings(channel.id);
     } catch (err) {
@@ -24776,7 +24804,7 @@ function wireEvents() {
     const sensitive = e.target.checked;
     try {
       await invoke("set_channel_sensitive", { serverId: state.currentServer.id, channelId: channel.id, sensitive });
-      toast(sensitive ? "Channel is now age-restricted" : "Age restriction removed");
+      toast(sensitive ? t("ui.channel-is-now-age-restricted") : t("ui.age-restriction-removed"));
       await refreshCurrentServer();
       openChannelSettings(channel.id);
     } catch (err) {
@@ -24855,7 +24883,7 @@ function wireEvents() {
     renderShareButton();
   });
   wireVoiceRoom();
-  document.querySelector(".vp-status").title = "Connection details";
+  document.querySelector(".vp-status").title = t("ui.connection-details");
   document.querySelector(".vp-status").addEventListener("click", e => {
     if (studioDesk()) return;
     e.stopPropagation();
@@ -24894,7 +24922,7 @@ function wireEvents() {
     try {
       state.voice = await invoke("set_noise_cancellation", { enabled: e.target.checked });
       $("nc-toggle").checked = state.voice.noise_cancellation;
-      toast(`Noise cancellation ${state.voice.noise_cancellation ? "on" : "off"}`);
+      toast(t("ui.noise-cancellation-2", { value: state.voice.noise_cancellation ? "on" : "off" }));
     } catch (err) {
       e.target.checked = Boolean(state.voice.noise_cancellation);
       toast(String(err));
@@ -24982,9 +25010,9 @@ function wireEvents() {
   setIcon($("link-draft-dismiss"), "close", 16);
   $("link-draft-dismiss").onclick = dismissLinkDraft;
   setIcon($("lightbox-open"), "openExternal", 16);
-  $("lightbox-open").append("Open original");
+  $("lightbox-open").append(t("ui.open-original"));
   setIcon($("lightbox-save"), "download", 16);
-  $("lightbox-save").append("Save");
+  $("lightbox-save").append(t("ui.save"));
   renderLinkPreviewSettings();
   renderAllowedLinkSettings();
   $("link-preview-send-toggle").addEventListener("change", onLinkPreviewSettingsChange);
@@ -25075,38 +25103,38 @@ function wireEvents() {
       await loadFriends();
       const p = event.payload || {};
       if (p.signal === "request" && friendState(p.user) === "incoming") {
-        toast(`${p.name} sent you a friend request`);
-        const body = p.note ? `${p.name}: ${p.note}` : `${p.name} wants to be friends`;
-        invoke("notify", { title: "Friend request", body, target: `dm:${p.user}` }).catch(() => {});
+        toast(t("ui.sent-you-a-friend-request", { name: p.name }));
+        const body = p.note ? `${p.name}: ${p.note}` : t("ui.wants-to-be-friends-2", { name: p.name });
+        invoke("notify", { title: t("ui.friend-request"), body, target: `dm:${p.user}` }).catch(() => {});
         playSound("message");
       } else if (p.signal === "accept" && friendState(p.user) === "friend") {
-        toast(`You and ${p.name} are now friends`);
+        toast(t("ui.you-and-are-now-friends", { name: p.name }));
       }
       if (state.view === "dm") renderDmThreads();
     });
     window.__TAURI__.event.listen("voice-moderated", event => {
       const { muted, deafened } = event.payload;
-      toast(deafened ? "A moderator server-deafened you" : muted ? "A moderator server-muted you" : "A moderator lifted your server mute");
+      toast(deafened ? t("ui.a-moderator-server-deafened-you") : muted ? t("ui.a-moderator-server-muted-you") : t("ui.a-moderator-lifted-your-server-mute"));
       document.body.classList.toggle("server-muted", muted || deafened);
       renderChannels();
     });
     window.__TAURI__.event.listen("voice-filter-held", event => onVoiceFilterHeld(event.payload));
     window.__TAURI__.event.listen("stage-role", event => {
       const { audience } = event.payload || {};
-      toast(audience ? "You are in the audience now" : "You can speak now");
+      toast(audience ? t("ui.you-are-in-the-audience-now") : t("ui.you-can-speak-now"));
       renderVoicePanel();
       renderChannels();
     });
     window.__TAURI__.event.listen("timed-out", event => {
       const { until } = event.payload || {};
-      toast(timeoutActive(until) ? `A moderator timed you out for ${timeoutLeftText(until)}` : "A moderator removed your timeout");
+      toast(timeoutActive(until) ? t("ui.a-moderator-timed-you-out-for", { value: timeoutLeftText(until) }) : t("ui.a-moderator-removed-your-timeout"));
     });
     window.__TAURI__.event.listen("owner-changed", event => {
       const { name, who, mine } = event.payload;
-      toast(mine ? `You now own ${name || "a server"}` : `${who || "Someone else"} now owns ${name || "a server"}`);
+      toast(mine ? t("ui.you-now-own", { value: name || "a server" }) : t("ui.now-owns-2", { value: who || t("ui.someone-else"), value2: name || "a server" }));
     });
     window.__TAURI__.event.listen("server-deleted", async event => {
-      toast(`${event.payload.name || "A server"} was deleted by its owner`);
+      toast(t("ui.was-deleted-by-its-owner", { value: event.payload.name || t("ui.a-server") }));
       await leaveServerView(event.payload.server);
     });
     const putOut = (say) => async event => {
@@ -25122,12 +25150,11 @@ function wireEvents() {
         await enterDmMode();
       }
     };
-    const removedFrom = (verb) => putOut(name => `You were ${verb} ${name}`);
-    window.__TAURI__.event.listen("banned", removedFrom("banned from"));
-    window.__TAURI__.event.listen("kicked", removedFrom("removed from"));
-    window.__TAURI__.event.listen("home-blocked", putOut(name => `You were removed from ${name} because it no longer lets in people from your home server`));
+    window.__TAURI__.event.listen("banned", putOut(name => t("ui.you-were-banned-from", { name })));
+    window.__TAURI__.event.listen("kicked", putOut(name => t("ui.you-were-removed-from", { name })));
+    window.__TAURI__.event.listen("home-blocked", putOut(name => t("ui.you-were-removed-from-because-it-no", { name })));
     window.__TAURI__.event.listen("host-removed", async event => {
-      toast(`${event.payload.name || "A server"}: ${HOST_REMOVED_TEXT}`);
+      toast(`${event.payload.name || t("ui.a-server")}: ${HOST_REMOVED_TEXT}`);
       await refreshServers();
       if (state.currentServer && state.currentServer.id === event.payload.server) {
         await refreshCurrentServer();
@@ -25137,7 +25164,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("join-waits-changed", refreshServers);
     window.__TAURI__.event.listen("join-request-accepted", async event => {
       const { server, name } = event.payload || {};
-      toast(`${name || "The server"} let you in`);
+      toast(t("ui.let-you-in", { value: name || t("ui.the-server") }));
       const waiting = joinWaitShown === server && !$("modal-join-wait").classList.contains("hidden");
       await refreshServers();
       if (waiting) {
@@ -25150,7 +25177,7 @@ function wireEvents() {
         state.voiceChannelId = null;
         state.voiceServer = null;
         state.sharing = false;
-        toast("You left voice because that channel is now locked to other roles");
+        toast(t("ui.you-left-voice-because-that-channel-is"));
       }
       await refreshCurrentServer();
     });
@@ -25196,7 +25223,7 @@ function wireEvents() {
       });
     }
     window.__TAURI__.event.listen("afk-disconnected", async () => {
-      toast("You were disconnected from voice for inactivity");
+      toast(t("ui.you-were-disconnected-from-voice-for"));
       state.voiceChannelId = null;
       state.voiceServer = null;
       state.sharing = false;
@@ -25206,7 +25233,7 @@ function wireEvents() {
       if (state.currentServer) await refreshCurrentServer();
     });
     window.__TAURI__.event.listen("voice-elsewhere", async () => {
-      toast("Your voice moved to your other device");
+      toast(t("ui.your-voice-moved-to-your-other-device"));
       state.voiceChannelId = null;
       state.voiceServer = null;
       state.sharing = false;
@@ -25221,14 +25248,14 @@ function wireEvents() {
     window.__TAURI__.event.listen("voice-moved", async event => {
       const { server, channel, name } = event.payload;
       if (!channel) {
-        toast("A moderator disconnected you from voice");
+        toast(t("ui.a-moderator-disconnected-you-from-voice"));
         state.voiceChannelId = null;
         state.voiceServer = null;
         state.sharing = false;
         clearSpeaking();
         playSound("leave");
       } else {
-        toast(`A moderator moved you to ${name || "another channel"}`);
+        toast(t("ui.a-moderator-moved-you-to", { value: name || "another channel" }));
         state.voiceChannelId = channel;
         if (state.voiceServer && state.voiceServer.id === server && name) state.voiceServer.channelName = name;
       }
@@ -25237,7 +25264,7 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("voice-relay-down", async event => {
       const { server, text } = event.payload || {};
-      toast(text || "This server's voice relay isn't answering, so voice here is off for now.");
+      toast(text || t("ui.this-server-s-voice-relay-isn-t"));
       state.voiceChannelId = null;
       state.voiceServer = null;
       state.sharing = false;
@@ -25248,7 +25275,7 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("afk-moved", async event => {
       const { server, channel, name } = event.payload || {};
-      toast("You were moved to AFK for inactivity");
+      toast(t("ui.you-were-moved-to-afk-for-inactivity"));
       if (channel) state.voiceChannelId = channel;
       if (name && state.voiceServer && state.voiceServer.id === server) state.voiceServer.channelName = name;
       renderVoicePanel();
@@ -25297,7 +25324,7 @@ function wireEvents() {
     window.__TAURI__.event.listen("voice-settings-changed", event => {
       state.voice = event.payload;
       renderUserPanel();
-      toast(state.voice.deafened ? "Deafened" : state.voice.muted ? "Muted" : "Unmuted");
+      toast(state.voice.deafened ? t("ui.dock.deafened") : state.voice.muted ? t("ui.dock.muted") : t("ui.unmuted-4"));
     });
     window.__TAURI__.event.listen("talk-key", event => setTalking(Boolean(event.payload)));
     window.__TAURI__.event.listen("voice-speaking", event => {
@@ -25312,13 +25339,13 @@ function wireEvents() {
 async function stopMicTest() {
   try { await invoke("stop_mic_test"); } catch (e) {}
   state.micTesting = false;
-  $("mic-test-btn").textContent = "Start Test";
+  $("mic-test-btn").textContent = t("ui.start-test");
 }
 
 const EXPRESSION_KINDS = {
-  emojis: { one: "an emoji", many: "emojis", search: "Search emojis" },
-  stickers: { one: "a sticker", many: "stickers", search: "Search stickers" },
-  emoticons: { one: "an emoticon", many: "emoticons", search: "Search emoticons" },
+  emojis: { one: "an emoji", many: "emojis", get search() { return t("ui.search-emojis"); } },
+  stickers: { one: "a sticker", many: "stickers", get search() { return t("ui.search-stickers"); } },
+  emoticons: { one: "an emoticon", many: "emoticons", get search() { return t("ui.search-emoticons"); } },
 };
 let pickerKind = "emojis";
 
@@ -25363,7 +25390,7 @@ function renderEmojiGrid(query) {
   const q = query.trim().toLowerCase();
   if (pickerKind === "stickers") renderStickerTab(grid, q);
   else renderEmoticonTab(grid, q);
-  if (!grid.childElementCount) grid.appendChild(el("div", "picker-empty", "No matches"));
+  if (!grid.childElementCount) grid.appendChild(el("div", "picker-empty", t("ui.no-matches")));
 }
 
 function renderStickerTab(grid, q) {
@@ -25375,7 +25402,7 @@ function renderStickerTab(grid, q) {
     return btn;
   });
   if (!any && !q && !grid.childElementCount) {
-    grid.appendChild(el("div", "picker-empty", "No stickers here yet. Servers add them in Server Settings, then Stickers."));
+    grid.appendChild(el("div", "picker-empty", t("ui.no-stickers-here-yet-servers-add-them-in")));
   }
   appendCatalogSection(grid, q, account.server_stickers ? "klipy" : "stickers");
 }
@@ -25430,7 +25457,7 @@ function openAddExpression(kind) {
 }
 
 const catalog = { kind: "emojis", source: "emoji.gg", query: "", category: null, page: 0, results: [], picked: null, seq: 0, timer: null, busy: false };
-const KLIPY_CATALOG_CHIPS = [{ id: null, name: "Stickers" }, { id: "gifs", name: "GIFs" }];
+const KLIPY_CATALOG_CHIPS = [{ id: null, get name() { return t("ui.stickers"); } }, { id: "gifs", get name() { return t("ui.gifs"); } }];
 
 function catalogSource(kind) {
   if (kind === "stickers" && account.server_stickers) return "KLIPY";
@@ -25439,7 +25466,7 @@ function catalogSource(kind) {
 
 function syncCatalogBrowse() {
   const source = catalogSource("stickers");
-  $("sticker-browse").textContent = `Browse ${source || "KLIPY"}`;
+  $("sticker-browse").textContent = t("ui.browse", { value: source || "KLIPY" });
   return source;
 }
 const CATALOG_SIZES = {
@@ -25453,9 +25480,9 @@ function openCatalog(kind, { upload = false } = {}) {
   closeFloating();
   const source = catalogSource(kind);
   Object.assign(catalog, { kind, source, query: "", category: null, page: 0, results: [], picked: null, busy: false });
-  $("catalog-title").textContent = kind === "stickers" ? "Add a sticker" : "Add an emoji";
+  $("catalog-title").textContent = kind === "stickers" ? t("ui.add-a-sticker") : t("ui.add-an-emoji");
   $("catalog-search").value = "";
-  $("catalog-search").placeholder = source === "KLIPY" ? "Search KLIPY stickers and GIFs" : "Search emoji.gg";
+  $("catalog-search").placeholder = source === "KLIPY" ? t("ui.search-klipy-stickers-and-gifs") : t("ui.search-emoji-gg");
   $("catalog-attrib-source").textContent = source || "emoji.gg";
   $("catalog-chips").replaceChildren();
   renderCatalogPick();
@@ -25466,7 +25493,7 @@ function openCatalog(kind, { upload = false } = {}) {
     loadCatalog();
   } else {
     $("catalog-search").disabled = true;
-    $("catalog-grid").replaceChildren(el("div", "catalog-note", "Sign in to an account server with image search to browse. You can still upload an image."));
+    $("catalog-grid").replaceChildren(el("div", "catalog-note", t("ui.sign-in-to-an-account-server-with-image")));
   }
   if (upload) uploadToCatalog();
 }
@@ -25474,7 +25501,7 @@ function openCatalog(kind, { upload = false } = {}) {
 async function loadCatalog(append = false) {
   const seq = ++catalog.seq;
   const grid = $("catalog-grid");
-  if (!append) grid.replaceChildren(el("div", "catalog-note", `Loading ${catalog.source}`));
+  if (!append) grid.replaceChildren(el("div", "catalog-note", t("ui.loading", { source: catalog.source })));
   try {
     const klipy = catalog.source === "KLIPY";
     const page = klipy
@@ -25482,7 +25509,7 @@ async function loadCatalog(append = false) {
       : await invoke("search_emoji_catalog", { query: catalog.query, category: catalog.category, page: catalog.page });
     if (seq !== catalog.seq) return;
     if (!$("catalog-chips").childElementCount) {
-      renderCatalogChips(klipy ? KLIPY_CATALOG_CHIPS : [{ id: null, name: "Popular" }, ...(page.categories || [])]);
+      renderCatalogChips(klipy ? KLIPY_CATALOG_CHIPS : [{ id: null, name: t("ui.popular") }, ...(page.categories || [])]);
     }
     catalog.results = append ? catalog.results.concat(page.results) : page.results;
     renderCatalogGrid(Boolean(page.more));
@@ -25521,7 +25548,7 @@ function renderCatalogGrid(more) {
     img.src = viaAccountServer(item.preview || item.url);
     img.onerror = () => tile.classList.add("missing");
     tile.appendChild(img);
-    if (item.animated) tile.appendChild(el("span", "catalog-gif", "GIF"));
+    if (item.animated) tile.appendChild(el("span", "catalog-gif", t("ui.gif")));
     tile.onclick = () => {
       catalog.picked = { ...item, src: img.src };
       for (const t of grid.querySelectorAll(".catalog-tile.picked")) t.classList.remove("picked");
@@ -25530,9 +25557,9 @@ function renderCatalogGrid(more) {
     };
     grid.appendChild(tile);
   }
-  if (!catalog.results.length) grid.appendChild(el("div", "catalog-note", `Nothing on ${catalog.source} matches that`));
+  if (!catalog.results.length) grid.appendChild(el("div", "catalog-note", t("ui.nothing-on-matches-that-2", { source: catalog.source })));
   if (more) {
-    const next = el("button", "btn-secondary btn-small catalog-more", "Load More");
+    const next = el("button", "btn-secondary btn-small catalog-more", t("ui.load-more-2"));
     next.onclick = () => {
       catalog.page += 1;
       next.remove();
@@ -25566,7 +25593,7 @@ function renderCatalogPick() {
 async function uploadToCatalog() {
   let src;
   try {
-    src = await chooseImage(catalog.kind === "stickers" ? "Choose a sticker image" : "Choose an emoji image", $("server-image-file"));
+    src = await chooseImage(catalog.kind === "stickers" ? t("ui.choose-a-sticker-image") : t("ui.choose-an-emoji-image"), $("server-image-file"));
   } catch (e) {
     toast(String(e));
     return;
@@ -25586,18 +25613,18 @@ async function addFromCatalog() {
   const spec = CATALOG_SIZES[catalog.kind];
   const name = expressionName($("catalog-name").value, "");
   if (!name) {
-    toast("Names are 2 to 32 letters, numbers or underscores");
+    toast(t("ui.names-are-2-to-32-letters-numbers-or"));
     return;
   }
   const items = server[spec.list] || [];
   const exists = items.some(e => e.name === name);
   if (exists && !server.can_manage_expressions) {
-    toast(`:${name}: is taken, pick another name`);
+    toast(t("ui.is-taken-pick-another-name-2", { name }));
     return;
   }
-  if (exists && !(await confirm(`Replace the existing :${name}:?`))) return;
+  if (exists && !(await confirm(t("ui.replace-the-existing-2", { name })))) return;
   if (!exists && items.length >= spec.max) {
-    toast(`This server already has ${spec.max} ${catalog.kind}`);
+    toast(t("ui.this-server-already-has", { max: spec.max, kind: catalog.kind }));
     return;
   }
   catalog.busy = true;
@@ -25605,12 +25632,12 @@ async function addFromCatalog() {
   try {
     const src = picked.local ? picked.src : await invoke("fetch_catalog_image", { url: picked.url });
     const prepared = await prepareEmojiImage(src, spec);
-    if (prepared.flattened) toast(`That GIF is over ${spec.maxGif / 1024} KB, so it was saved as a still image`);
+    if (prepared.flattened) toast(t("ui.that-gif-is-over-kb-so-it-was-saved-as-a", { value: spec.maxGif / 1024 }));
     await invoke(spec.command, { serverId: server.id, name, data: prepared.data });
     await refreshExpressions();
     catalog.picked = null;
     for (const t of $("catalog-grid").querySelectorAll(".catalog-tile.picked")) t.classList.remove("picked");
-    toast(`Added :${name}: to ${shownServerName(server)}`);
+    toast(t("ui.added-to", { name, value: shownServerName(server) }));
   } catch (e) {
     toast(String(e.message || e));
   } finally {
@@ -25646,24 +25673,24 @@ async function saveEmoticon() {
   const text = $("emoticon-text").value.trim();
   const name = expressionName($("emoticon-name").value, "");
   if (!text) {
-    toast("Type an emoticon first");
+    toast(t("ui.type-an-emoticon-first"));
     return;
   }
   if (!name) {
-    toast("Names are 2 to 32 letters, numbers or underscores");
+    toast(t("ui.names-are-2-to-32-letters-numbers-or"));
     return;
   }
   const exists = (server.emoticons || []).some(e => e.name === name);
   if (exists && !server.can_manage_expressions) {
-    toast(`:${name}: is taken, pick another name`);
+    toast(t("ui.is-taken-pick-another-name-2", { name }));
     return;
   }
-  if (exists && !(await confirm(`Replace the existing :${name}:?`))) return;
+  if (exists && !(await confirm(t("ui.replace-the-existing-2", { name })))) return;
   try {
     await invoke("add_emoticon", { serverId: server.id, name, text });
     hideModals();
     await refreshExpressions();
-    toast(`Added :${name}: to ${shownServerName(server)}`);
+    toast(t("ui.added-to", { name, value: shownServerName(server) }));
   } catch (e) {
     toast(String(e));
   }
@@ -25722,17 +25749,17 @@ function wireComposerFormatting(input) {
 }
 
 const TEXT_STYLE_LABELS = {
-  red: "Red", orange: "Orange", yellow: "Yellow", green: "Green", teal: "Teal", blue: "Blue", purple: "Purple", pink: "Pink", gray: "Gray",
-  serif: "Serif", mono: "Mono", hand: "Handwriting", display: "Headline",
-  rainbow: "Rainbow", shimmer: "Shimmer", wave: "Wave", glow: "Glow", shake: "Shake",
+  get red() { return t("ui.red"); }, get orange() { return t("ui.orange"); }, get yellow() { return t("ui.yellow"); }, get green() { return t("ui.green"); }, get teal() { return t("ui.teal"); }, get blue() { return t("ui.blue"); }, get purple() { return t("ui.purple"); }, get pink() { return t("ui.pink"); }, get gray() { return t("ui.gray"); },
+  get serif() { return t("ui.serif"); }, get mono() { return t("ui.mono"); }, get hand() { return t("ui.handwriting"); }, get display() { return t("ui.headline"); },
+  get rainbow() { return t("ui.rainbow"); }, get shimmer() { return t("ui.shimmer"); }, get wave() { return t("ui.wave"); }, get glow() { return t("ui.glow"); }, get shake() { return t("ui.shake"); },
 };
 const TEXT_FORMATS = [
-  { marker: "**", label: "Bold", text: "B", keys: "Ctrl+B" },
-  { marker: "*", label: "Italic", text: "I", keys: "Ctrl+I" },
-  { marker: "__", label: "Underline", text: "U", keys: "Ctrl+U" },
-  { marker: "~~", label: "Strikethrough", text: "S", keys: "Ctrl+Shift+S" },
-  { marker: "||", label: "Spoiler", text: "||" },
-  { marker: "`", label: "Code", text: "</>", keys: "Ctrl+E" },
+  { marker: "**", get label() { return t("ui.bold"); }, text: "B", keys: "Ctrl+B" },
+  { marker: "*", get label() { return t("ui.italic"); }, text: "I", keys: "Ctrl+I" },
+  { marker: "__", get label() { return t("ui.underline"); }, text: "U", keys: "Ctrl+U" },
+  { marker: "~~", get label() { return t("ui.strikethrough"); }, text: "S", keys: "Ctrl+Shift+S" },
+  { marker: "||", get label() { return t("ui.spoiler"); }, text: "||" },
+  { marker: "`", get label() { return t("ui.code"); }, text: "</>", keys: "Ctrl+E" },
 ];
 
 function editComposer(input, change) {
@@ -25773,9 +25800,9 @@ function buildTextStylePop() {
   for (const name of TEXT_EFFECTS) effects.appendChild(textStyleButton(name, "ts-effect", renderStyledText({ type: "style", effects: [name], children: [{ type: "text", text: TEXT_STYLE_LABELS[name] }] })));
   pop.replaceChildren(
     formats,
-    el("div", "ts-label", "Colour"), colors,
-    el("div", "ts-label", "Font"), fonts,
-    el("div", "ts-label", "Effect"), effects,
+    el("div", "ts-label", t("ui.colour")), colors,
+    el("div", "ts-label", t("ui.font")), fonts,
+    el("div", "ts-label", t("ui.effect")), effects,
     el("div", "ts-hint", "Or type {red:text}. Mix up to three, like {blue+wave:text}."),
   );
 }
@@ -25816,41 +25843,41 @@ function wireTextStylePop() {
 }
 
 const PERMISSION_LABELS = [
-  ["manage_server", "Manage Server"],
-  ["manage_channels", "Manage Channels"],
-  ["manage_messages", "Manage Messages"],
-  ["pin_messages", "Pin Messages"],
-  ["bypass_slow_mode", "Bypass Slow Mode"],
-  ["attach_files", "Send Files and Images"],
-  ["send_voice_messages", "Send Voice Messages"],
-  ["send_tts_messages", "Send Text-to-Speech Messages"],
-  ["embed_links", "Embed Links"],
-  ["read_message_history", "Read Message History"],
-  ["create_threads", "Create Threads"],
-  ["send_polls", "Create Polls"],
-  ["add_emojis", "Add Emojis"],
-  ["add_stickers", "Add Stickers"],
-  ["add_emoticons", "Add Emoticons"],
-  ["use_external_emojis", "Use Other Servers' Emojis and Stickers"],
-  ["post_announcements", "Post Announcements"],
-  ["mention_everyone", "Mention Everyone and Any Role"],
-  ["manage_expressions", "Manage Expressions"],
-  ["create_events", "Create Events"],
-  ["manage_events", "Manage Events"],
-  ["manage_roles", "Manage Roles"],
-  ["kick_members", "Kick Members"],
-  ["create_invites", "Create Invites"],
-  ["view_audit_log", "View Audit Log"],
-  ["manage_file_storage", "Manage File Backup"],
-  ["ban_members", "Ban Members"],
-  ["mute_members", "Mute Members"],
-  ["time_out_members", "Time Out Members"],
-  ["priority_speaker", "Priority Speaker"],
-  ["use_voice_filters", "Use Voice Filters"],
-  ["manage_nicknames", "Manage Nicknames"],
-  ["change_nickname", "Change Nickname"],
-  ["move_members", "Move Members"],
-  ["administrator", "Administrator"],
+  ["manage_server", t("ui.manage-server")],
+  ["manage_channels", t("ui.manage-channels")],
+  ["manage_messages", t("ui.manage-messages")],
+  ["pin_messages", t("ui.pin-messages")],
+  ["bypass_slow_mode", t("ui.bypass-slow-mode")],
+  ["attach_files", t("ui.send-files-and-images")],
+  ["send_voice_messages", t("ui.send-voice-messages")],
+  ["send_tts_messages", t("ui.send-text-to-speech-messages")],
+  ["embed_links", t("ui.embed-links-2")],
+  ["read_message_history", t("ui.read-message-history-2")],
+  ["create_threads", t("ui.create-threads")],
+  ["send_polls", t("ui.create-polls-2")],
+  ["add_emojis", t("ui.add-emojis")],
+  ["add_stickers", t("ui.add-stickers")],
+  ["add_emoticons", t("ui.add-emoticons")],
+  ["use_external_emojis", t("ui.use-other-servers-emojis-and-stickers")],
+  ["post_announcements", t("ui.post-announcements")],
+  ["mention_everyone", t("ui.mention-everyone-and-any-role")],
+  ["manage_expressions", t("ui.manage-expressions")],
+  ["create_events", t("ui.create-events-2")],
+  ["manage_events", t("ui.manage-events")],
+  ["manage_roles", t("ui.manage-roles")],
+  ["kick_members", t("ui.kick-members")],
+  ["create_invites", t("ui.create-invites")],
+  ["view_audit_log", t("ui.view-audit-log")],
+  ["manage_file_storage", t("ui.manage-file-backup")],
+  ["ban_members", t("ui.ban-members")],
+  ["mute_members", t("ui.mute-members")],
+  ["time_out_members", t("ui.time-out-members")],
+  ["priority_speaker", t("ui.priority-speaker-2")],
+  ["use_voice_filters", t("ui.use-voice-filters-2")],
+  ["manage_nicknames", t("ui.manage-nicknames")],
+  ["change_nickname", t("ui.change-nickname")],
+  ["move_members", t("ui.move-members")],
+  ["administrator", t("ui.administrator")],
 ];
 
 const iconState = { custom: { app: null, tray: null } };
@@ -25888,7 +25915,7 @@ async function renderIconPickers() {
       grid.appendChild(tile);
     }
     if (iconState.custom[target]) {
-      const replace = el("button", "btn-secondary btn-small icon-replace", "Choose another image");
+      const replace = el("button", "btn-secondary btn-small icon-replace", t("ui.choose-another-image"));
       replace.type = "button";
       replace.onclick = () => pickCustomIcon(target);
       grid.appendChild(replace);
@@ -25990,7 +26017,7 @@ function openServerInfo(server) {
   paintServerIcon($("si-icon"), server);
   $("si-title").textContent = shownServerName(server);
   const count = server.members.length;
-  $("si-sub").textContent = [`${count} member${count === 1 ? "" : "s"}`, online ? `${online} online` : "", server.public ? "Public server" : ""].filter(Boolean).join(" \u00b7 ");
+  $("si-sub").textContent = [t(count === 1 ? "ui.n.members.one" : "ui.n.members.many", { count: count }), online ? t("ui.n-online", { count: online }) : "", server.public ? t("ui.public-server") : ""].filter(Boolean).join(" \u00b7 ");
   const banner = $("si-banner");
   banner.style.backgroundImage = "";
   banner.classList.toggle("hidden", !server.banner);
@@ -26044,7 +26071,7 @@ async function openCreateServer(code = "") {
 function renderTemplateGrid() {
   const tiles = [
     ...templatePicker.list.map(t => ({ id: t.id, title: t.title, blurb: t.blurb })),
-    { id: "code", title: "Use a template code", blurb: "Copy another server's layout" },
+    { id: "code", title: t("ui.use-a-template-code"), blurb: t("ui.copy-another-server-s-layout") },
   ];
   $("template-grid").replaceChildren(...tiles.map(tile => {
     const button = document.createElement("button");
@@ -26133,7 +26160,7 @@ function renderTemplatePreview() {
   if (!template) return;
   $("template-preview-summary").textContent = templateSummary(template);
   const groups = templateGroups(template).map(g => templateGroupNode(g.category, g.channels.map(c => templateChip(c.name, c.kind))));
-  if (template.roles.length) groups.push(templateGroupNode("Roles", template.roles.map(templateRoleChip)));
+  if (template.roles.length) groups.push(templateGroupNode(t("ui.roles"), template.roles.map(templateRoleChip)));
   $("template-preview-body").replaceChildren(...groups);
   $("template-preview-body").scrollTop = 0;
 }
@@ -26143,12 +26170,12 @@ async function readTemplateCode() {
   const note = $("template-code-note");
   const code = input.value.trim();
   note.classList.remove("error");
-  note.textContent = "Ask a server admin to copy it from Server Settings, then Overview.";
+  note.textContent = t("ui.ask-a-server-admin-to-copy-it-from");
   templatePicker.preview = null;
   templatePicker.code = null;
   if (code && !looksLikeTemplateCode(code)) {
     note.classList.add("error");
-    note.textContent = "Template codes start with commy-template:";
+    note.textContent = t("ui.template-codes-start-with-commy-template");
   } else if (code) {
     try {
       const preview = await invoke("preview_server_template", { code });
@@ -26186,7 +26213,7 @@ function openServerSettings(tab) {
   paintDiscoverySettings(server);
   $("server-template-section").classList.toggle("hidden", !server.can_manage_server);
   const afkSelect = $("afk-channel-select");
-  fillVoiceChannelSelect(afkSelect, "No AFK channel", server, server.afk_channel || "");
+  fillVoiceChannelSelect(afkSelect, t("ui.no-afk-channel"), server, server.afk_channel || "");
   afkSelect.disabled = !server.can_manage_server;
   $("server-afk-timeout").value = String(server.afk_timeout_minutes || 0);
   $("server-afk-timeout").disabled = !server.can_manage_server;
@@ -26289,20 +26316,20 @@ const CHANNEL_STEP_RULES = {
 };
 
 function manageEditKey(channel) {
-  const edit = el("button", "btn-secondary btn-small", "Edit");
+  const edit = el("button", "btn-secondary btn-small", t("ui.edit"));
   edit.onclick = () => openChannelSettings(channel.id);
   return edit;
 }
 
 function orderKeys(spot, name, canStep, step) {
   const keys = el("span", "order-keys");
-  for (const [dir, icon, word] of [[-1, "chevronUp", "up"], [1, "chevronDown", "down"]]) {
+  for (const [dir, icon] of [[-1, "chevronUp"], [1, "chevronDown"]]) {
     const key = el("button", "btn-secondary btn-small order-key");
     key.type = "button";
     key.dataset.spot = spot;
     key.dataset.dir = String(dir);
-    key.title = `Move ${word}`;
-    key.setAttribute("aria-label", `Move ${name} ${word}`);
+    key.title = t(dir < 0 ? "ui.order.up" : "ui.order.down");
+    key.setAttribute("aria-label", t(dir < 0 ? "ui.order.name-up" : "ui.order.name-down", { name }));
     key.appendChild(svgIcon(icon, 18));
     key.disabled = !canStep(dir);
     key.onclick = () => step(dir);
@@ -26340,11 +26367,11 @@ function manageChannelRow(channel, sections, nested) {
 
 function paintChannelOrderBar() {
   const toggle = $("channel-order-toggle");
-  toggle.textContent = channelOrderMode ? "Done" : "Rearrange";
+  toggle.textContent = channelOrderMode ? t("settings.done") : t("ui.rearrange");
   toggle.setAttribute("aria-pressed", String(channelOrderMode));
   $("channel-order-hint").textContent = channelOrderMode
-    ? "Move channels and categories with the arrows. A channel at the end of a category moves into the next one."
-    : "In the order members see them.";
+    ? t("ui.move-channels-with-the-arrows")
+    : t("ui.in-the-order-members-see-them");
 }
 
 function paintManageChannels(server) {
@@ -26361,7 +26388,7 @@ function paintManageChannels(server) {
     if (!section.fixed) rows.push(manageSectionRow(section, keys));
     for (const channel of section.channels) rows.push(manageChannelRow(channel, movable, !section.fixed));
   }
-  if (!server.channels.length && !channelOrderMode) rows.push(el("div", "manage-empty", "No channels yet"));
+  if (!server.channels.length && !channelOrderMode) rows.push(el("div", "manage-empty", t("ui.no-channels-yet")));
   list.replaceChildren(...rows);
 }
 
@@ -26427,7 +26454,7 @@ function fillAuditFilters(reset) {
   group.replaceChildren(...AUDIT_FILTERS.map(([id, label]) => new Option(label, id)));
   group.value = keepGroup;
   const actors = auditActors(auditView.entries);
-  actor.replaceChildren(new Option("Everyone", ""), ...actors.map(a => new Option(a.name, a.id)));
+  actor.replaceChildren(new Option(t("ui.everyone"), ""), ...actors.map(a => new Option(a.name, a.id)));
   actor.value = actors.some(a => a.id === keepActor) ? keepActor : "";
 }
 
@@ -26461,9 +26488,9 @@ function auditMore(entry, id) {
   for (const [term, value] of auditFacts(entry)) facts.append(el("dt", null, term), el("dd", null, value));
   more.appendChild(facts);
   const keys = el("div", "audit-keys");
-  if ($("audit-actor").value !== entry.by) keys.appendChild(auditFilterKey("Only this person", () => { $("audit-actor").value = entry.by; }));
+  if ($("audit-actor").value !== entry.by) keys.appendChild(auditFilterKey(t("ui.only-this-person"), () => { $("audit-actor").value = entry.by; }));
   const group = auditGroup(entry.kind);
-  if ($("audit-group").value !== group) keys.appendChild(auditFilterKey("Only this kind", () => { $("audit-group").value = group; }));
+  if ($("audit-group").value !== group) keys.appendChild(auditFilterKey(t("ui.only-this-kind"), () => { $("audit-group").value = group; }));
   if (keys.childElementCount) more.appendChild(keys);
   return more;
 }
@@ -26499,7 +26526,7 @@ function paintAuditLog() {
   const list = $("audit-list");
   const shown = filterAudit(auditView.entries, { group: $("audit-group").value || "all", by: $("audit-actor").value });
   if (!shown.length) {
-    const empty = auditView.entries.length ? "Nothing matches these filters." : "No changes yet. Settings, channel, role and member changes show up here.";
+    const empty = auditView.entries.length ? t("ui.nothing-matches-these-filters") : t("ui.no-changes-yet-settings-channel-role-and");
     list.replaceChildren(el("div", "manage-empty", empty));
     return;
   }
@@ -26522,7 +26549,7 @@ async function renderInvitesPage(server) {
     paintInviteBackground(server);
     const never = $("invite-custom-never");
     never.disabled = !server.public;
-    never.textContent = server.public ? "Never expires" : "Never expires (public servers only)";
+    never.textContent = server.public ? t("ui.never-expires") : t("ui.never-expires-public-servers-only");
     if (!server.public && $("invite-custom-expiry").value === "never") $("invite-custom-expiry").value = "30d";
     if (invitesView.serverId !== server.id) $("invite-custom-name").value = "";
     paintInviteNameCheck();
@@ -26569,7 +26596,7 @@ async function saveInviteBackground(src) {
     if (data.length * 3 / 4 <= INVITE_BACKGROUND_MAX) break;
     data = null;
   }
-  if (!data) throw "That image is too detailed to fit. Try a simpler one.";
+  if (!data) throw t("ui.that-image-is-too-detailed-to-fit-try-a");
   await setServerImage("invite", data);
 }
 
@@ -26577,7 +26604,7 @@ function paintInviteNameCheck() {
   const { name, error } = checkInviteName($("invite-custom-name").value);
   const note = $("invite-custom-note");
   note.classList.toggle("error", Boolean(error));
-  note.textContent = error || "Pick a name people can remember. You need to be signed in. The link ends in a short key after #, so always share the whole link. That key keeps your account server from learning which server it opens.";
+  note.textContent = error || t("ui.pick-a-name-people-can-remember-you-need");
   $("invite-custom-create").disabled = !name || Boolean(error);
 }
 
@@ -26607,16 +26634,16 @@ function inviteRow(invite) {
   label.title = inviteLabel(invite);
   text.appendChild(label);
   const made = new Date(invite.created_at);
-  text.appendChild(el("div", "invite-row-meta", `${invite.custom ? "Custom link" : "Invite"} by ${invite.creator_name} on ${made.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`));
+  text.appendChild(el("div", "invite-row-meta", `${invite.custom ? "Custom link" : "Invite"} by ${invite.creator_name} on ${made.toLocaleDateString(dateLocale(), { month: "short", day: "numeric" })}`));
   row.appendChild(text);
   const left = el("span", "invite-row-left", inviteTimeLeft(invite.expires_at));
   left.dataset.expires = invite.expires_at == null ? "" : String(invite.expires_at);
-  if (invite.expires_at != null) left.title = `Expires ${new Date(invite.expires_at).toLocaleString()}`;
+  if (invite.expires_at != null) left.title = t("ui.expires", { value: new Date(invite.expires_at).toLocaleString() });
   row.appendChild(left);
   const copy = el("button", "btn-secondary btn-small invite-row-copy", inviteKeyLabels().row);
   copy.onclick = () => copyTrackedInvite(invite, copy);
   row.appendChild(copy);
-  const revoke = el("button", "btn-secondary btn-small danger-text invite-row-revoke", "Revoke");
+  const revoke = el("button", "btn-secondary btn-small danger-text invite-row-revoke", t("ui.revoke"));
   revoke.disabled = !invite.can_revoke;
   revoke.onclick = () => revokeInvite(invite, revoke);
   row.appendChild(revoke);
@@ -26626,7 +26653,7 @@ function inviteRow(invite) {
 function paintInviteList() {
   const shown = invitesView.invites.filter(i => i.expires_at == null || i.expires_at > Date.now());
   if (!shown.length) {
-    $("invite-list").replaceChildren(el("div", "manage-empty", "No active invites. Links made with Invite People show up here until they expire."));
+    $("invite-list").replaceChildren(el("div", "manage-empty", t("ui.no-active-invites-links-made-with-invite")));
     return;
   }
   $("invite-list").replaceChildren(...shown.map(inviteRow));
@@ -26681,9 +26708,9 @@ async function shareFullInviteLink(url, serverName) {
 async function copyFullInviteLink(url) {
   try {
     await navigator.clipboard.writeText(url);
-    toast("Invite link copied. Share all of it, including the part after #.");
+    toast(t("ui.invite-link-copied-share-all-of-it"));
   } catch {
-    toast(`Copy this whole link: ${url}`);
+    toast(t("ui.copy-this-whole-link", { url }));
   }
 }
 
@@ -26706,7 +26733,7 @@ async function revokeInvite(invite, button) {
   button.disabled = true;
   try {
     await invoke("revoke_invite", { serverId: server.id, origin: invite.origin, code: invite.code });
-    toast("Invite revoked");
+    toast(t("ui.invite-revoked"));
     await renderInvitesPage(server);
   } catch (e) {
     toast(String(e));
@@ -26717,23 +26744,23 @@ async function revokeInvite(invite, button) {
 const ROLE_ACCESS = {
   files: {
     box: "upload-access", permission: "attach_files", restricted: server => Boolean(server.uploads_restricted),
-    title: "Who can send files and images",
-    sub: "Applies to attachments, pasted images and dropped files in every channel. Text, links and GIFs are not affected. The owner and anyone with Administrator can always send them.",
+    get title() { return t("ui.who-can-send-files-and-images"); },
+    get sub() { return t("ui.applies-to-attachments-pasted-images-and"); },
   },
   emojis: {
     box: "emoji-access", permission: "add_emojis", restricted: server => Boolean(server.add_restricted?.emojis),
-    title: "Who can add emojis",
-    sub: "Everyone can use this server's emojis. This decides who can add new ones from emoji.gg or their computer. Replacing and deleting stays with roles that have Manage Expressions.",
+    get title() { return t("ui.who-can-add-emojis"); },
+    get sub() { return t("ui.everyone-can-use-this-server-s-emojis"); },
   },
   stickers: {
     box: "sticker-access", permission: "add_stickers", restricted: server => Boolean(server.add_restricted?.stickers),
-    title: "Who can add stickers",
-    sub: "Everyone can send this server's stickers. This decides who can add new ones. Replacing and deleting stays with roles that have Manage Expressions.",
+    get title() { return t("ui.who-can-add-stickers"); },
+    get sub() { return t("ui.everyone-can-send-this-server-s-stickers"); },
   },
   emoticons: {
     box: "emoticon-access", permission: "add_emoticons", restricted: server => Boolean(server.add_restricted?.emoticons),
-    title: "Who can add emoticons",
-    sub: "Everyone can use this server's emoticons. This decides who can save new ones. Replacing and deleting stays with roles that have Manage Expressions.",
+    get title() { return t("ui.who-can-add-emoticons"); },
+    get sub() { return t("ui.everyone-can-use-this-server-s-emoticons"); },
   },
 };
 
@@ -26756,7 +26783,7 @@ function renderRoleAccess(server, access) {
   box.appendChild(el("div", "setting-title", spec.title));
   box.appendChild(el("div", "setting-sub", spec.sub));
   const seg = el("div", "segmented upload-seg");
-  for (const [label, hint, value] of [["Anyone", "Every member", false], ["Only selected roles", "Pick the roles below", true]]) {
+  for (const [label, hint, value] of [[t("ui.anyone"), t("ui.every-member"), false], [t("ui.only-selected-roles"), t("ui.pick-the-roles-below"), true]]) {
     const b = el("button", value === restricted ? "active" : "");
     b.type = "button";
     b.disabled = !server.can_manage_roles;
@@ -26768,7 +26795,7 @@ function renderRoleAccess(server, access) {
   }
   box.appendChild(seg);
   const picks = el("div", "upload-roles" + (restricted ? "" : " off"));
-  if (!server.roles.length) picks.appendChild(el("div", "setting-sub", "Create a role first, then pick it here."));
+  if (!server.roles.length) picks.appendChild(el("div", "setting-sub", t("ui.create-a-role-first-then-pick-it-here")));
   for (const role of server.roles) {
     const row = el("label", "role-self");
     const check = el("input");
@@ -26798,13 +26825,13 @@ function canSendVoiceHere() {
 function syncAttachAccess() {
   const locked = state.view === "server" && !canAttachHere() && !canSendVoiceHere();
   $("attach-btn").classList.toggle("locked", locked);
-  $("attach-btn").title = locked ? "You can't send files or voice messages in this server" : "Attach";
+  $("attach-btn").title = locked ? t("ui.you-can-t-send-files-or-voice-messages") : t("ui.attach");
 }
 
 function renderEveryoneChatAccess(server) {
   const box = $("chat-access");
   box.replaceChildren();
-  box.appendChild(el("div", "setting-title", "Everyone can"));
+  box.appendChild(el("div", "setting-title", t("ui.everyone-can")));
   box.appendChild(el("div", "setting-sub", "What every member may do. Switching one off applies to every role; turn it back on in a role's form to let that role through. The owner and administrators are never held back."));
   const save = async (access, restricted, ids) => {
     try {
@@ -26843,12 +26870,12 @@ function renderRoleSettings(server) {
     const upload = el("button", "role-banner-btn");
     upload.type = "button";
     upload.appendChild(svgIcon("plus", 14));
-    upload.appendChild(el("span", null, role.banner ? "Change banner" : "Add banner"));
+    upload.appendChild(el("span", null, role.banner ? t("ui.change-banner") : t("ui.add-banner")));
     upload.onclick = e => uploadRoleBanner(server, role, e.currentTarget);
     if (role.banner) {
       const remove = el("button", "role-banner-btn icon", "");
       remove.type = "button";
-      remove.title = "Remove banner";
+      remove.title = t("ui.remove-banner");
       remove.appendChild(svgIcon("close", 14));
       remove.onclick = () => removeRoleBanner(server, role);
       tools.appendChild(remove);
@@ -26866,15 +26893,15 @@ function renderRoleSettings(server) {
     label.appendChild(name);
     if (role.tag) label.appendChild(roleTagChip(role.tag, role.color));
     if (role.self_assignable) label.appendChild(el("span", "kind pickable", "pickable"));
-    if (role.mentionable) label.appendChild(el("span", "kind", "anyone can mention"));
+    if (role.mentionable) label.appendChild(el("span", "kind", t("ui.anyone-can-mention")));
     if (role.hoist) label.appendChild(el("span", "kind", "own group"));
     const granted = grantedNames(role.permissions);
     const count = granted.length;
-    const perms = el("span", "kind", count ? (count === 1 ? "1 permission" : `${count} permissions`) : "no permissions");
+    const perms = el("span", "kind", count ? (t(count === 1 ? "ui.n.permissions.one" : "ui.n.permissions.many", { count: count })) : t("ui.no-permissions"));
     if (count) perms.title = granted.map(p => (PERMISSION_LABELS.find(([v]) => v === p) || [p, p])[1]).join(", ");
     label.appendChild(perms);
     row.appendChild(label);
-    const edit = el("button", "btn-secondary btn-small", "Edit");
+    const edit = el("button", "btn-secondary btn-small", t("ui.edit"));
     edit.onclick = () => {
       const open = card.querySelector(".role-form");
       if (open) open.remove();
@@ -26884,7 +26911,7 @@ function renderRoleSettings(server) {
     card.appendChild(row);
     list.appendChild(card);
   }
-  if (!server.roles.length) list.appendChild(el("div", "manage-empty", "No roles yet"));
+  if (!server.roles.length) list.appendChild(el("div", "manage-empty", t("ui.no-roles-yet")));
 }
 
 function removedRow(person, meta, buttons) {
@@ -26918,15 +26945,15 @@ function removedButton(label, primary, run, done = null) {
 async function unbanRemoved(server, ban) {
   await invoke("unban_member", { serverId: server.id, userId: ban.id });
   await refreshCurrentServer();
-  toast(`Unbanned ${ban.name}. They can rejoin with an invite.`);
+  toast(t("ui.unbanned-they-can-rejoin-with-an-invite", { name: ban.name }));
   openServerSettings("removed");
 }
 
 async function inviteBack(server, person) {
   const invite = (await invoke("create_invite_link", { serverId: server.id, expires: "7d" })).url;
   await invoke("open_dm", { userId: person.id });
-  const sent = await invoke("send_dm", { userId: person.id, content: `Come back to ${shownServerName(server)}! ${invite}` });
-  dmSentToast(sent, person.name, `Sent ${person.name} an invite back to ${shownServerName(server)}`);
+  const sent = await invoke("send_dm", { userId: person.id, content: t("ui.come-back-to", { value: shownServerName(server), invite }) });
+  dmSentToast(sent, person.name, t("ui.sent-an-invite-back-to", { name: person.name, value: shownServerName(server) }));
 }
 
 let blockedHomesDraft = [];
@@ -26942,16 +26969,16 @@ function renderBlockedHomes(server) {
   $("blocked-homes").classList.toggle("hidden", !view.can_edit);
   if (!view.can_edit) return;
   blockedHomesDraft = view.homes;
-  $("blocked-homes-head").textContent = view.homes.length ? `Blocked servers - ${view.homes.length}` : "Blocked servers";
+  $("blocked-homes-head").textContent = view.homes.length ? t("ui.blocked-servers-2", { count: view.homes.length }) : t("ui.blocked-servers");
   const list = $("blocked-homes-list");
   list.replaceChildren();
   for (const home of view.homes) {
     const row = el("div", "manage-row");
     row.append(el("span", "manage-row-label", home), el("span", "removed-actions"));
-    row.lastChild.appendChild(removedButton("Unblock", false, () => saveBlockedHomes(server, withoutBlockedHome(blockedHomesDraft, home), view.require_home)));
+    row.lastChild.appendChild(removedButton(t("ui.unblock"), false, () => saveBlockedHomes(server, withoutBlockedHome(blockedHomesDraft, home), view.require_home)));
     list.appendChild(row);
   }
-  if (!view.homes.length) list.appendChild(el("div", "manage-empty", "No servers are blocked."));
+  if (!view.homes.length) list.appendChild(el("div", "manage-empty", t("ui.no-servers-are-blocked")));
   $("blocked-home-error").textContent = "";
   $("blocked-home-add").onclick = async () => {
     const next = withBlockedHome(blockedHomesDraft, $("blocked-home-input").value);
@@ -26980,38 +27007,38 @@ function renderRemovedSettings(server) {
   renderBlockedHomes(server);
   const bans = server.can_ban ? server.banned || [] : [];
   const kicks = server.can_kick ? server.kicked || [] : [];
-  $("tab-removed").textContent = bans.length || kicks.length ? `Bans & Kicks (${bans.length + kicks.length})` : "Bans & Kicks";
+  $("tab-removed").textContent = bans.length || kicks.length ? t("ui.bans-kicks-2", { value: bans.length + kicks.length }) : t("ui.bans-kicks");
   $("removed-bans-head").classList.toggle("hidden", !server.can_ban);
   $("removed-bans").classList.toggle("hidden", !server.can_ban);
   $("removed-kicks-head").classList.toggle("hidden", !server.can_kick);
   $("removed-kicks").classList.toggle("hidden", !server.can_kick);
-  $("removed-bans-head").textContent = bans.length ? `Banned - ${bans.length}` : "Banned";
-  $("removed-kicks-head").textContent = kicks.length ? `Kicked - ${kicks.length}` : "Kicked";
+  $("removed-bans-head").textContent = bans.length ? t("ui.banned-3", { count: bans.length }) : t("ui.banned");
+  $("removed-kicks-head").textContent = kicks.length ? t("ui.kicked-4", { count: kicks.length }) : t("ui.kicked");
   const banList = $("removed-bans");
   banList.replaceChildren();
   for (const ban of bans) {
-    banList.appendChild(removedRow(ban, banLine(ban, now), [removedButton("Unban", false, () => unbanRemoved(server, ban))]));
+    banList.appendChild(removedRow(ban, banLine(ban, now), [removedButton(t("ui.unban"), false, () => unbanRemoved(server, ban))]));
   }
-  if (!bans.length) banList.appendChild(el("div", "manage-empty", "Nobody is banned."));
+  if (!bans.length) banList.appendChild(el("div", "manage-empty", t("ui.nobody-is-banned")));
   const kickList = $("removed-kicks");
   kickList.replaceChildren();
   for (const kick of kicks) {
     const buttons = [];
-    if (server.can_invite) buttons.push(removedButton("Invite Back", true, () => inviteBack(server, kick), "Sent"));
+    if (server.can_invite) buttons.push(removedButton(t("ui.invite-back"), true, () => inviteBack(server, kick), t("ui.sent")));
     if (server.can_ban) {
-      const ban = el("button", "btn-secondary btn-small", "Ban");
+      const ban = el("button", "btn-secondary btn-small", t("ui.ban"));
       ban.onclick = () => confirmBan(kick);
       buttons.push(ban);
     }
     kickList.appendChild(removedRow(kick, kickLine(kick, now), buttons));
   }
-  if (!kicks.length) kickList.appendChild(el("div", "manage-empty", "Nobody has been kicked."));
+  if (!kicks.length) kickList.appendChild(el("div", "manage-empty", t("ui.nobody-has-been-kicked")));
 }
 
 function renderFileAndSpeechSettings(server) {
   const select = $("server-upload-limit");
   select.replaceChildren(...[null, ...UPLOAD_LIMITS_MB].map(mb => {
-    const option = el("option", null, mb ? uploadLimitLabel(mb) : "Up to 4 GB (no limit)");
+    const option = el("option", null, mb ? uploadLimitLabel(mb) : t("ui.up-to-4-gb-no-limit"));
     option.value = mb ? String(mb) : "";
     return option;
   }));
@@ -27042,7 +27069,7 @@ function renderMemberSettings(server) {
     const moderable = canTimeOut(server, member, state.user && state.user.id) || (!isSelf && !isOwner && (server.can_kick || server.can_ban));
     if (moderable) {
       const more = el("button", "icon-btn row-more");
-      more.title = `Actions for ${member.name}`;
+      more.title = t("ui.actions-for", { name: member.name });
       more.setAttribute("aria-label", more.title);
       more.setAttribute("aria-haspopup", "menu");
       more.appendChild(svgIcon("more", 18));
@@ -27060,7 +27087,7 @@ function renderMemberSettings(server) {
         const held = (member.roles || []).includes(role.id);
         const chip = el("span", "role-chip" + (held ? " held" : ""), role.name);
         if (role.color) chip.style.borderColor = `#${role.color}`;
-        chip.title = held ? "Click to remove role" : "Click to grant role";
+        chip.title = held ? t("ui.click-to-remove-role") : t("ui.click-to-grant-role");
         chip.onclick = async () => {
           try {
             await invoke("set_member_role", {
@@ -27087,13 +27114,13 @@ function renderBotsPage(server) {
   const bots = serverBots(server);
   const add = $("bots-add");
   add.disabled = !server.can_invite;
-  add.title = server.can_invite ? "" : "You need permission to create invites to add a bot";
-  $("bots-count").textContent = bots.length ? `Installed - ${bots.length}` : "Installed";
+  add.title = server.can_invite ? "" : t("ui.you-need-permission-to-create-invites-to");
+  $("bots-count").textContent = bots.length ? t("ui.installed-2", { count: bots.length }) : t("ui.installed");
   const list = $("bots-list");
   if (!bots.length) {
     const empty = el("div", "bots-empty");
-    empty.appendChild(el("div", "bots-empty-title", "No bots yet"));
-    empty.appendChild(el("div", "setting-sub", "Bots can tidy up chat, run slash commands and post updates from your other tools. Add one to see it here."));
+    empty.appendChild(el("div", "bots-empty-title", t("ui.no-bots-yet")));
+    empty.appendChild(el("div", "setting-sub", t("ui.bots-can-tidy-up-chat-run-slash-commands")));
     list.replaceChildren(empty);
     return;
   }
@@ -27112,17 +27139,17 @@ function botCard(server, bot) {
   name.appendChild(el("span", "bot-card-label", member.name));
   name.appendChild(botTag());
   who.appendChild(name);
-  who.appendChild(el("div", "bot-card-status" + (bot.online ? " online" : ""), bot.online ? "Online" : "Offline"));
+  who.appendChild(el("div", "bot-card-status" + (bot.online ? " online" : ""), bot.online ? t("ui.online") : t("ui.offline-2")));
   top.appendChild(who);
   const actions = el("div", "bot-card-actions");
   const removable = member.id !== server.owner && !(state.user && member.id === state.user.id);
   if (server.can_kick && removable) {
-    const remove = el("button", "btn-secondary btn-small", "Remove");
+    const remove = el("button", "btn-secondary btn-small", t("ui.remove"));
     remove.onclick = () => removeBot(server, member, "kick_member");
     actions.appendChild(remove);
   }
   if (server.can_ban && removable) {
-    const ban = el("button", "btn-danger btn-small", "Ban");
+    const ban = el("button", "btn-danger btn-small", t("ui.ban"));
     ban.onclick = () => removeBot(server, member, "ban_member");
     actions.appendChild(ban);
   }
@@ -27131,7 +27158,7 @@ function botCard(server, bot) {
   card.appendChild(el("div", "bot-card-ability", bot.abilities));
 
   const roles = el("div", "bot-card-row");
-  roles.appendChild(el("div", "bot-card-key", "Roles"));
+  roles.appendChild(el("div", "bot-card-key", t("ui.roles")));
   roles.appendChild(botRoleChips(server, member, async () => {
     await refreshCurrentServer();
     openServerSettings();
@@ -27139,14 +27166,14 @@ function botCard(server, bot) {
   card.appendChild(roles);
 
   const commands = el("div", "bot-card-row");
-  commands.appendChild(el("div", "bot-card-key", "Commands"));
+  commands.appendChild(el("div", "bot-card-key", t("ui.commands")));
   const chips = el("div", "bot-card-commands");
   for (const command of bot.commands) {
     const chip = el("span", "bot-command", `/${command.name}`);
     if (command.description) chip.title = command.description;
     chips.appendChild(chip);
   }
-  if (!bot.commands.length) chips.appendChild(el("span", "bot-card-none", "No slash commands"));
+  if (!bot.commands.length) chips.appendChild(el("span", "bot-card-none", t("ui.no-slash-commands")));
   commands.appendChild(chips);
   card.appendChild(commands);
   return card;
@@ -27161,14 +27188,14 @@ function botRoleChips(server, member, changed) {
       if (role.color) chip.style.borderColor = `#${role.color}`;
       chips.appendChild(chip);
     }
-    if (!chips.children.length) chips.appendChild(el("span", "bot-card-none", "No roles"));
+    if (!chips.children.length) chips.appendChild(el("span", "bot-card-none", t("ui.no-roles")));
     return chips;
   }
   for (const role of server.roles) {
     const has = held.has(role.id);
     const chip = el("button", "role-chip" + (has ? " held" : ""), role.name);
     if (role.color) chip.style.borderColor = `#${role.color}`;
-    chip.title = has ? "Click to remove role" : "Click to grant role";
+    chip.title = has ? t("ui.click-to-remove-role") : t("ui.click-to-grant-role");
     chip.onclick = async () => {
       try {
         await invoke("set_member_role", { serverId: server.id, userId: member.id, roleId: role.id, grant: !has });
@@ -27179,21 +27206,21 @@ function botRoleChips(server, member, changed) {
     };
     chips.appendChild(chip);
   }
-  if (!server.roles.length) chips.appendChild(el("span", "bot-card-none", "No roles yet. Make one in Roles."));
+  if (!server.roles.length) chips.appendChild(el("span", "bot-card-none", t("ui.no-roles-yet-make-one-in-roles")));
   return chips;
 }
 
 async function removeBot(server, member, command) {
   const banning = command === "ban_member";
   const question = banning
-    ? `Ban ${member.name} from ${shownServerName(server)}? It is removed and cannot rejoin until unbanned.`
-    : `Remove ${member.name} from ${shownServerName(server)}?`;
+    ? t("ui.ban-from-it-is-removed-and-cannot-rejoin", { name: member.name, value: shownServerName(server) })
+    : t("ui.remove-from", { name: member.name, value: shownServerName(server) });
   if (!(await confirm(question))) return;
   try {
     await invoke(command, { serverId: server.id, userId: member.id });
     await refreshCurrentServer();
     openServerSettings();
-    toast(banning ? `Banned ${member.name}` : `Removed ${member.name}`);
+    toast(banning ? t("ui.banned-2", { name: member.name }) : t("ui.removed-2", { name: member.name }));
   } catch (e) {
     toast(String(e));
   }
@@ -27206,9 +27233,9 @@ function botCodeRow(text, ready = true) {
   const code = el("code", "bot-code", text);
   code.title = text;
   row.appendChild(code);
-  const copy = el("button", "btn-secondary btn-small bot-copy", "Copy");
+  const copy = el("button", "btn-secondary btn-small bot-copy", t("ui.copy"));
   copy.disabled = !ready;
-  copy.onclick = () => copyText(text, "Copied");
+  copy.onclick = () => copyText(text, t("ui.copied"));
   row.appendChild(copy);
   return row;
 }
@@ -27233,8 +27260,8 @@ function paintAddBotJoined(server) {
   $("add-bot-joined").classList.toggle("hidden", !bot);
   if (!bot) return;
   $("add-bot-joined-text").textContent = server.can_manage_roles
-    ? `${bot.member.name} joined. Pick the roles it needs:`
-    : `${bot.member.name} joined. Ask someone who manages roles to give it the roles it needs.`;
+    ? t("ui.joined-pick-the-roles-it-needs", { name: bot.member.name })
+    : t("ui.joined-ask-someone-who-manages-roles-to", { name: bot.member.name });
   $("add-bot-ability").textContent = bot.abilities;
   $("add-bot-roles").replaceWith(Object.assign(botRoleChips(server, bot.member, async () => {
     addBot.changed = true;
@@ -27275,7 +27302,7 @@ async function openAddBot() {
   $("add-bot-name").value = "";
   $("add-bot-name").placeholder = BOT_DEFAULT_NAME;
   $("add-bot-port").open = false;
-  paintAddBotInvite("Making an invite...", false);
+  paintAddBotInvite(t("ui.making-an-invite"), false);
   paintAddBotCommands();
   paintAddBotJoined(null);
   showModal("modal-add-bot");
@@ -27305,7 +27332,7 @@ function wireBots() {
   wireExternalLink($("add-bot-guide"), BOT_GUIDE_URL);
   wireExternalLink($("add-bot-download"), BOT_DOWNLOAD_URL);
   wireExternalLink($("add-bot-porting"), BOT_PORTING_URL);
-  $("add-bot-invite-copy").onclick = () => addBot.invite && copyText(addBot.invite, "Invite code copied");
+  $("add-bot-invite-copy").onclick = () => addBot.invite && copyText(addBot.invite, t("ui.invite-code-copied"));
   $("add-bot-name").addEventListener("input", paintAddBotCommands);
   $("add-bot-done").onclick = closeAddBot;
 }
@@ -27493,7 +27520,7 @@ async function boot() {
   if (IS_TAURI) {
     await invoke("ui_ready");
   } else {
-    toast("Preview mode: running on mock data, not the real backend");
+    toast(t("ui.preview-mode-running-on-mock-data-not"));
   }
   await loadAlertSounds();
   state.voice = await invoke("get_voice_settings");
@@ -27744,7 +27771,7 @@ function showSignIn() {
   }
   select.value = custom ? choice.server : "default";
   select.disabled = Boolean(account.server_from_env);
-  select.title = account.server_from_env ? "Set by COMMY_AUTH_URL" : "";
+  select.title = account.server_from_env ? t("ui.set-by-commy-auth-url") : "";
   $("signin-back").classList.toggle("hidden", !account.signed_in);
   for (const [id, key] of [["signin-title", "signin.title"], ["signin-intro", "signin.intro"]]) {
     if (id === "signin-intro" && inBrowserApp() && !account.signed_in) continue;
@@ -28133,7 +28160,7 @@ async function applyAccountChange() {
   const step = accountChangeStep(was, account, addingAccount && !$("modal-signin").classList.contains("hidden"));
   if (step) addingAccount = false;
   if (step === "open") {
-    toast(`Signed in as ${(account.user && account.user.name) || "you"}`);
+    toast(t("ui.signed-in-as", { value: (account.user && account.user.name) || "you" }));
     if (account.needs_account_folder) await openAccountFolder();
     else await continueBoot();
   } else if (step === "sign-in") {
@@ -28149,7 +28176,7 @@ function paintAccountBanner() {
   strip.dataset.banner = "";
   paintProfileBanner(strip, state.user.banner, state.user.node, null, bannerColor(state.user.id));
   paintCardEffect(strip, state.user.card_effect, state.user.id);
-  $("account-banner-upload").lastElementChild.textContent = state.user.banner ? "Change banner" : "Add banner";
+  $("account-banner-upload").lastElementChild.textContent = state.user.banner ? t("ui.change-banner") : t("ui.add-banner");
   $("account-banner-remove").classList.toggle("hidden", !state.user.banner);
   if (studioLook()) studioEditorBanner(strip);
 }
@@ -28160,7 +28187,7 @@ async function saveAccountBanner(data) {
     paintAccountBanner();
     renderProfilePopover();
     if (state.currentServer) await refreshCurrentServer();
-    toast(data ? "Banner saved" : "Banner removed");
+    toast(data ? t("ui.banner-saved") : t("ui.banner-removed"));
   } catch (err) {
     toast(String(err));
   }
@@ -28262,7 +28289,7 @@ function showDeleteAccountMode(mode) {
   $("delete-account-code-row").classList.toggle("hidden", mode !== "code");
   $("delete-account-password-row").classList.toggle("hidden", mode !== "password");
   $("delete-account-use-password").classList.toggle("hidden", mode !== "code" || !deleteAccount.canUsePassword);
-  if (mode === "password") $("delete-account-sent").textContent = "Enter your password to confirm.";
+  if (mode === "password") $("delete-account-sent").textContent = t("ui.enter-your-password-to-confirm");
   syncDeleteAccountGo();
   const field = mode === "code" ? $("delete-account-code") : mode === "password" ? $("delete-account-password") : null;
   if (field) field.focus();
@@ -28271,11 +28298,11 @@ function showDeleteAccountMode(mode) {
 function syncDeleteAccountGo() {
   const go = $("delete-account-go");
   if (deleteAccount.step === "ask") {
-    go.textContent = "Send Code";
+    go.textContent = t("ui.send-code");
     go.disabled = deleteAccount.busy;
     return;
   }
-  go.textContent = "Delete Account";
+  go.textContent = t("ui.delete-account");
   go.disabled = deleteAccount.busy || !deleteProof(deleteAccount.mode, $("delete-account-code").value, $("delete-account-password").value);
 }
 
@@ -28324,13 +28351,13 @@ async function finishDeleteAccount() {
   const proof = deleteProof(deleteAccount.mode, $("delete-account-code").value, $("delete-account-password").value);
   if (!proof) return;
   setDeleteAccountBusy(true);
-  showDeleteAccountNote("Deleting your account...");
+  showDeleteAccountNote(t("ui.deleting-your-account"));
   try {
     account = await invoke("account_delete_finish", proof);
     $("delete-account-password").value = "";
     hideModals();
     if (startOverSignedOut()) return;
-    toast("Your account was deleted.");
+    toast(t("ui.your-account-was-deleted"));
   } catch (e) {
     setDeleteAccountBusy(false);
     showDeleteAccountNote(String(e), true);
@@ -28353,22 +28380,22 @@ async function signOutOfOther(row) {
 
 function officialServerMark() {
   const mark = el("span", "acct-official");
-  mark.append(verifiedSeal("acct-seal"), document.createTextNode("Official"));
-  mark.title = "Commy checked this is the real Commy.chat";
+  mark.append(verifiedSeal("acct-seal"), document.createTextNode(t("ui.official")));
+  mark.title = t("ui.commy-checked-this-is-the-real-commy");
   return mark;
 }
 
 function paintAccountServerLine() {
   const { host, official } = accountServerParts(account);
   const line = $("acct-server-line");
-  line.replaceChildren(document.createTextNode(`Account server: ${host}${account.server_from_env && !inBrowserApp() ? " (set by COMMY_AUTH_URL)" : ""}`));
+  line.replaceChildren(document.createTextNode(t(account.server_from_env && !inBrowserApp() ? "ui.account-server-from-env" : "ui.account-server-host", { host })));
   if (official) line.append(" ", officialServerMark());
 }
 
 function paintAccountMoveNow() {
   const { host, official } = accountServerParts(account);
   const line = $("acct-move-now");
-  line.replaceChildren(document.createTextNode(`You are on ${host}`));
+  line.replaceChildren(document.createTextNode(t("ui.you-are-on", { host })));
   if (official) line.append(" ", officialServerMark());
 }
 
@@ -28387,12 +28414,12 @@ async function refreshAccountServerMark() {
 
 function renderAccountSettings() {
   const u = account.user || {};
-  $("acct-name").textContent = u.name || "Signed out";
+  $("acct-name").textContent = u.name || t("ui.signed-out");
   $("acct-email").textContent = u.email || "";
   paintAccountServerLine();
   paintAccountMoveNow();
   $("acct-device-line").textContent = account.device_linked
-    ? "This device is linked to your account."
+    ? t("ui.this-device-is-linked-to-your-account")
     : "This device is not linked yet; it links automatically on sign-in.";
   if (typeof refreshEntryStatus === "function") refreshEntryStatus();
 }
@@ -28424,7 +28451,7 @@ async function openDiscover() {
 function renderDiscoverChips() {
   const box = $("discover-chips");
   box.innerHTML = "";
-  const chips = [{ id: null, label: "All" }, ...DIRECTORY_CATEGORIES];
+  const chips = [{ id: null, label: t("ui.all") }, ...DIRECTORY_CATEGORIES];
   for (const chip of chips) {
     const button = el("button", "discover-chip", chip.label);
     button.type = "button";
@@ -28461,7 +28488,7 @@ async function loadDiscover(reset) {
     discoverState.cursor = page.next_cursor || null;
     if (page.host) {
       discoverState.host = page.host;
-      $("discover-sub").textContent = `Public servers listed by the people who run them, through ${page.host}.`;
+      $("discover-sub").textContent = t("ui.public-servers-listed-by-the-people-who-2", { host: page.host });
     }
     outcome = { unavailable: page.available === false };
   } catch (e) {
@@ -28506,7 +28533,7 @@ function discoverCard(entry) {
   card.appendChild(meta);
   card.appendChild(el("div", "discover-card-text", directoryExcerpt(entry.description, 300)));
   const foot = el("div", "discover-card-foot");
-  const join = el("button", "btn-primary btn-small", "Join");
+  const join = el("button", "btn-primary btn-small", t("ui.join"));
   join.onclick = () => openInviteLink(entry.link);
   foot.appendChild(join);
   card.appendChild(foot);
@@ -28567,14 +28594,14 @@ async function saveDiscoveryListing() {
   const server = state.currentServer;
   if (!server) return;
   const counter = directoryDescriptionCounter($("discovery-description").value);
-  if (counter.over) return toast(`Keep the description under ${DIRECTORY_DESCRIPTION_MAX} characters`);
+  if (counter.over) return toast(t("ui.keep-the-description-under-characters", { DIRECTORY_DESCRIPTION_MAX }));
   const buttons = [$("discovery-list"), $("discovery-update")];
   buttons.forEach(b => { b.disabled = true; });
   try {
     await invoke("publish_listing", { serverId: server.id, description: $("discovery-description").value, category: $("discovery-category").value });
     discoveryState.dirty = false;
     discoverState.entries = [];
-    toast(discoveryState.listing ? "Listing updated" : "Listed in Discover");
+    toast(discoveryState.listing ? t("ui.listing-updated") : t("ui.listed-in-discover"));
     await paintDiscoverySettings(server);
   } catch (e) {
     toast(String(e));
@@ -28590,7 +28617,7 @@ async function removeDiscoveryListing() {
     await invoke("unlist_server", { serverId: server.id });
     discoveryState.dirty = false;
     discoverState.entries = [];
-    toast("Removed from Discover");
+    toast(t("ui.removed-from-discover"));
     await paintDiscoverySettings(server);
   } catch (e) {
     toast(String(e));
@@ -28622,13 +28649,13 @@ function wireDiscover() {
 let voiceInviting = null;
 function showVoiceCallMenuItems(channel) {
   const voice = channel.kind === "voice" && channel.can_view !== false;
-  $("chm-voice-join").textContent = state.voiceChannelId === channel.id ? "Disconnect" : "Join Voice";
+  $("chm-voice-join").textContent = state.voiceChannelId === channel.id ? t("ui.disconnect") : t("ui.join-voice");
   $("chm-voice-join").classList.toggle("hidden", !voice);
   $("chm-voice-invite").classList.toggle("hidden", !voice);
   const run = activityUi.run;
   const here = voice && studioDesk() && state.voiceChannelId === channel.id && (Boolean(run) || voiceServerAllowsActivities());
   $("chm-activities").classList.toggle("hidden", !here);
-  $("chm-activities").textContent = run ? `Open ${activityName(run.activity)}` : "Activities";
+  $("chm-activities").textContent = run ? t("ui.open-5", { value: activityName(run.activity) }) : t("ui.activities");
 }
 
 function voiceInviteSource(serverId, channelId) {
@@ -28670,7 +28697,7 @@ function renderVoiceInviteList() {
   const list = $("voice-invite-list");
   list.replaceChildren();
   if (!voiceInviting || !voiceInviting.targets) {
-    list.appendChild(el("div", "dm-list-empty", "Loading places to send to"));
+    list.appendChild(el("div", "dm-list-empty", t("ui.loading-places-to-send-to")));
     return;
   }
   const targets = forwardTargets({ ...voiceInviting.targets, query: $("voice-invite-search").value });
@@ -28687,7 +28714,7 @@ function renderVoiceInviteList() {
     row.onclick = () => sendVoiceInvite(target);
     list.appendChild(row);
   }
-  if (!targets.length) list.appendChild(el("div", "dm-list-empty", "Nowhere matches that name."));
+  if (!targets.length) list.appendChild(el("div", "dm-list-empty", t("ui.nowhere-matches-that-name")));
 }
 
 async function sendVoiceInvite(target) {
@@ -28701,7 +28728,7 @@ async function sendVoiceInvite(target) {
     }
     hideModals();
     voiceInviting = null;
-    toast(`Invite sent to ${target.name}`);
+    toast(t("ui.invite-sent-to", { name: target.name }));
     if (target.kind !== "dm" && state.view === "server" && state.currentChannel && state.currentChannel.id === target.channel) await refreshChannelInPlace();
     else if (target.kind === "dm" && inDmView() && state.currentDm && state.currentDm.user === target.user) await selectDm(target.user, target.name);
   } catch (e) {
@@ -28737,7 +28764,7 @@ function renderVoiceInvite(message) {
     card.appendChild(mark);
   }
   const body = el("div", "voice-invite-body");
-  body.appendChild(el("div", "voice-invite-kicker", "Voice call invite"));
+  body.appendChild(el("div", "voice-invite-kicker", t("ui.voice-call-invite")));
   body.appendChild(el("div", "voice-invite-title"));
   const row = el("div", "voice-invite-row");
   row.appendChild(el("div", "voice-invite-faces"));
@@ -28745,7 +28772,7 @@ function renderVoiceInvite(message) {
   row.appendChild(el("span", "voice-invite-status"));
   body.appendChild(row);
   card.appendChild(body);
-  const join = el("button", "voice-invite-join", "Join");
+  const join = el("button", "voice-invite-join", t("ui.join"));
   join.type = "button";
   card.appendChild(join);
   card.voiceInvite = invite;
@@ -28772,14 +28799,14 @@ function paintVoiceInviteCard(card, invite, presence) {
   const more = card.querySelector(".voice-invite-more");
   more.textContent = summary.overflowLabel;
   more.classList.toggle("empty", !summary.overflow);
-  more.title = summary.overflow ? `${summary.count} people are in the call` : "";
+  more.title = summary.overflow ? t("ui.people-are-in-the-call", { count: summary.count }) : "";
   const status = card.querySelector(".voice-invite-status");
   status.textContent = presence
     ? voiceInviteStatus({ known: presence.known, gone: presence.gone, canView: presence.can_view, users, limit })
-    : "Looking up the call";
+    : t("ui.looking-up-the-call");
   const action = presence
     ? voiceInviteAction({ known: presence.known, gone: presence.gone, canView: presence.can_view, inThisCall, hasLink: Boolean(invite.invite_link), full })
-    : { label: "Join", kind: "none", enabled: false, note: "" };
+    : { label: t("ui.join"), kind: "none", enabled: false, note: "" };
   const join = card.querySelector(".voice-invite-join");
   join.textContent = action.label;
   join.disabled = !action.enabled;
@@ -28803,23 +28830,23 @@ function refreshVoiceInviteCards() {
 async function joinVoiceInvite(invite) {
   if (!state.servers.some(s => s.id === invite.server)) {
     if (invite.invite_link) return openInviteLink(invite.invite_link);
-    toast("Ask for an invite to this server");
+    toast(t("ui.ask-for-an-invite-to-this-server"));
     return;
   }
   if (!state.currentServer || state.currentServer.id !== invite.server) await selectServer(invite.server);
   const server = state.currentServer && state.currentServer.id === invite.server ? state.currentServer : null;
   const channel = server ? server.channels.find(c => c.id === invite.channel) : null;
   if (!channel) {
-    toast("That voice channel is gone");
+    toast(t("ui.that-voice-channel-is-gone"));
     return;
   }
   if (channel.can_view === false) {
-    toast(`Only ${accessWho(server, channel.view_roles)} can join this channel`);
+    toast(t("ui.only-can-join-this-channel", { value: accessWho(server, channel.view_roles) }));
     return;
   }
   if (state.voiceChannelId === channel.id) return;
   if (voiceFull(channel)) {
-    toast("That voice channel is full");
+    toast(t("ui.that-voice-channel-is-full"));
     return;
   }
   await toggleVoice(channel);
@@ -28835,7 +28862,7 @@ function wireVoiceInvites() {
     const channel = menuChannel;
     if (!channel) return;
     if (voiceFull(channel)) {
-      toast("That voice channel is full");
+      toast(t("ui.that-voice-channel-is-full"));
       return;
     }
     toggleVoice(channel);

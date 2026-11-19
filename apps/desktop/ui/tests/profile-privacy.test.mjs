@@ -1,3 +1,4 @@
+import "./i18n-global.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -17,7 +18,7 @@ test("the three policies match the backend's names and the settings control's op
   for (const { value } of PROFILE_POLICIES) assert.match(rust, new RegExp(`"${value}" => Some\\(Self::`));
   const html = read("apps", "desktop", "ui", "index.html");
   const select = /<select id="profile-policy"[\s\S]*?<\/select>/.exec(html)[0];
-  const options = [...select.matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)].map(m => ({ value: m[1], label: m[2] }));
+  const options = [...select.matchAll(/<option value="([^"]+)"[^>]*>([^<]+)<\/option>/g)].map(m => ({ value: m[1], label: m[2] }));
   assert.deepEqual(options, PROFILE_POLICIES);
   assert.equal(Number(/pub const MAX_FRIEND_NOTE_CHARS: usize = (\d+);/.exec(rust)[1]), FRIEND_NOTE_MAX);
 });

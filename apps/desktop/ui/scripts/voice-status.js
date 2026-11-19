@@ -12,7 +12,7 @@ function cleanVoiceStatus(text) {
 
 function voiceStatusProblem(text) {
   const length = [...String(text || "").trim()].length;
-  return length > VOICE_STATUS_MAX_CHARS ? `Keep the status to ${VOICE_STATUS_MAX_CHARS} characters` : null;
+  return length > VOICE_STATUS_MAX_CHARS ? t("ui.keep-the-status-to-characters", { VOICE_STATUS_MAX_CHARS }) : null;
 }
 
 function canSetVoiceStatus({ channel, server, me }) {

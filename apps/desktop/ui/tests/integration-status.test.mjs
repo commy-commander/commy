@@ -1,3 +1,4 @@
+import "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -53,7 +54,7 @@ test("a check is remembered for ten minutes and forgotten after a save", () => {
 test("each integration page has a status row, a tab and a way to check again", () => {
   for (const kind of INTEGRATION_KINDS) {
     assert.ok(html.includes(`<div class="integration-status" id="${kind}-status" data-tone="off" role="status">`), kind);
-    assert.ok(html.includes(`<button class="btn-link integration-recheck" type="button" data-kind="${kind}">Check Again</button>`), kind);
+    assert.ok(html.includes(`<button class="btn-link integration-recheck" type="button" data-kind="${kind}" data-i18n="ui.check-again">Check Again</button>`), kind);
     assert.match(html, new RegExp(`data-tab="${kind}" id="tab-${kind}"`), kind);
     assert.ok(app.includes(`checkIntegration("${kind}");`), kind);
   }

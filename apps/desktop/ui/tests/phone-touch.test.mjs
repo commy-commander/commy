@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -12,7 +13,7 @@ const {
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
   WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, MIRROR_FRAME_MS, roomTileStreams, roomCameraTiles, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
 } = require("../scripts/phone-touch.js");
-const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = (...parts) => englishSource(readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const css = read("styles", "phone-touch.css");
 const glue = read("scripts", "studio-phone.js");
 const html = read("index.html");
@@ -1072,7 +1073,7 @@ test("an audience chip is flat: no line and no shadow", () => {
 
 test("the You page asks one question about notifications, with the app's own three answers", () => {
   assert.deepEqual(NOTIFY_PICKS.map(pick => [pick.level, pick.label, pick.icon]), [["all", "All messages", "bell-ring"], ["mentions", "Mentions and DMs", "at-sign"], ["none", "Nothing", "bell-off"]]);
-  for (const pick of NOTIFY_PICKS) assert.ok(html.includes(`<option value="${pick.level}">${pick.label}</option>`));
+  for (const pick of NOTIFY_PICKS) assert.ok(new RegExp(`<option value="${pick.level}">${pick.label}</option>`).test(html));
   assert.match(glue, /<div class="sec lbl" id="pt-notify-lbl">Notify me about<\/div>\n<div class="picks" role="radiogroup" aria-labelledby="pt-notify-lbl">\$\{NOTIFY_PICKS\.map\(pick => `<button type="button" class="srow pick" role="radio" aria-checked="false" data-notify="\$\{pick\.level\}">/);
   assert.match(glue, /const level = notifyPrefs\(\)\.level;\n\s+for \(const row of document\.querySelectorAll\("#pt-you \[data-notify\]"\)\) row\.setAttribute\("aria-checked", String\(row\.dataset\.notify === level\)\);/);
   assert.match(glue, /select\.value = row\.dataset\.notify;\n\s+select\.dispatchEvent\(new Event\("change", \{ bubbles: true \}\)\);\n\s+paintYouPage\(\);/);
@@ -1194,7 +1195,7 @@ test("the Accounts sheet on the phone has its own back step and closes on the sc
 });
 
 test("joining from the invite screen says Joining, and a failure shows the app's words in red text above the keys", () => {
-  assert.match(glue, /\$\("pt-invite-join"\)\.disabled = busy;\n\s+\$\("pt-invite-later"\)\.disabled = busy;\n\s+\$\("pt-invite-join"\)\.textContent = busy \? "Joining\\u2026" : "Join";/);
+  assert.match(glue, /\$\("pt-invite-join"\)\.disabled = busy;\n\s+\$\("pt-invite-later"\)\.disabled = busy;\n\s+\$\("pt-invite-join"\)\.textContent = busy \? "Joining(?:\\u2026|\u2026)" : "Join";/);
   const calls = /const summary = await invoke\("join_server", \{ ticket: invite\.ticket, link: invite\.link \}\);\n\s+pendingInvite = null;\n\s+hideModals\(\);\n\s+await enterJoinedServer\(summary\);/;
   assert.match(glue, calls);
   assert.match(read("scripts", "invite-link.js"), calls);

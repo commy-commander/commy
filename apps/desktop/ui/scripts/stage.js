@@ -54,10 +54,10 @@ function handState(channel, userId, canManage = false) {
   return {
     role,
     raised,
-    text: role === "speaker" ? "On the stage" : "In the audience",
-    detail: role === "speaker" ? "You are a speaker here" : "You are in the audience, only speakers are heard",
-    label: raised ? "Lower hand" : "Raise hand",
-    title: role === "speaker" ? "" : raised ? "Let the hosts know you no longer want to speak" : "Ask the hosts to let you speak",
+    text: role === "speaker" ? t("ui.on-the-stage") : t("ui.in-the-audience"),
+    detail: role === "speaker" ? t("ui.you-are-a-speaker-here") : t("ui.you-are-in-the-audience-only-speakers"),
+    label: raised ? t("ui.lower-hand") : t("ui.raise-hand"),
+    title: role === "speaker" ? "" : raised ? t("ui.let-the-hosts-know-you-no-longer-want-to") : t("ui.ask-the-hosts-to-let-you-speak"),
   };
 }
 
@@ -70,13 +70,13 @@ function stageMenuAction(channel, memberId, canManage = false) {
   if (!canManage || !isStageChannel(channel) || !(channel.voice_user_ids || []).includes(memberId)) return null;
   const speaker = isStageSpeaker(channel, memberId);
   return speaker
-    ? { speaker: false, label: "Move to audience", done: "moved to the audience" }
-    : { speaker: true, label: "Invite to speak", done: "invited to speak" };
+    ? { speaker: false, label: t("ui.move-to-audience"), done: "moved to the audience" }
+    : { speaker: true, label: t("ui.invite-to-speak"), done: "invited to speak" };
 }
 
 function stageCreateHint(kind) {
   if (kind !== STAGE_KIND) return null;
-  return { placeholder: "Town Hall", icon: "stage" };
+  return { placeholder: t("ui.town-hall"), icon: "stage" };
 }
 
 if (typeof module !== "undefined" && module.exports) {

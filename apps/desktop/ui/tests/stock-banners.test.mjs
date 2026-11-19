@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -7,7 +8,7 @@ const require = createRequire(import.meta.url);
 const { STOCK_BANNERS, stockBannerSrc, stockBannerTiles } = require("../scripts/stock-banners.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
-const app = read("../scripts/app.js");
+const app = englishSource(read("../scripts/app.js"));
 const classic = read("../styles/styles.css");
 const float = read("../styles/studio-float.css");
 
@@ -57,7 +58,7 @@ test("the tiles are keys named for their banner, and a press hands over its pict
 test("every place that takes a banner opens the same menu: the stock banners, then your own picture", () => {
   const menu = html.slice(html.indexOf('<div class="pop-menu banner-menu hidden" id="banner-menu">'), html.indexOf('<input type="file" id="photo-file"'));
   assert.ok(menu.indexOf('id="banner-tiles"') > 0);
-  assert.ok(menu.indexOf('<button id="banner-own">Upload a Picture</button>') > menu.indexOf('id="banner-tiles"'));
+  assert.ok(menu.indexOf('<button id="banner-own" data-i18n="ui.upload-a-picture">Upload a Picture</button>') > menu.indexOf('id="banner-tiles"'));
   assert.ok(html.indexOf('<script src="scripts/stock-banners.js"></script>') < html.indexOf('<script src="scripts/app.js"></script>'));
   for (const title of ["Choose a profile banner", "Choose a channel banner", "Choose a role banner", "Choose a server banner", "Choose an invite background"]) {
     const asked = app.split(`"${title}"`).length - 1;

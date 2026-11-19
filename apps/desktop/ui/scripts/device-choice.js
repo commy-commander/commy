@@ -18,7 +18,7 @@ function connectedAudioDevice(names, saved) {
 
 function audioDevicePicks(names, saved) {
   const list = names || [];
-  const options = [{ value: "", label: "Default" }, ...list.map(n => ({ value: n, label: n }))];
+  const options = [{ value: "", label: t("ui.default") }, ...list.map(n => ({ value: n, label: n }))];
   const wanted = saved && saved.trim() ? saved.trim() : "";
   if (!wanted) return { options, value: "" };
   const connected = connectedAudioDevice(list, wanted);
@@ -49,12 +49,12 @@ function findCamera(cameras, choice) {
 }
 
 function cameraLabel(camera, index) {
-  return camera.label || `Camera ${index + 1}`;
+  return camera.label || t("ui.camera", { value: index + 1 });
 }
 
 function cameraPicks(cameras, choice) {
   const list = cameras || [];
-  const options = [{ value: "", label: "Default" }, ...list.map((c, i) => ({ value: c.deviceId, label: cameraLabel(c, i) }))];
+  const options = [{ value: "", label: t("ui.default") }, ...list.map((c, i) => ({ value: c.deviceId, label: cameraLabel(c, i) }))];
   if (!choice) return { options, value: "" };
   const found = findCamera(list, choice);
   if (found) return { options, value: found.deviceId };
@@ -86,8 +86,8 @@ const CAMERA_FACING_WORDS = {
 };
 
 const CAMERA_FACING_PICKS = [
-  { value: "user", label: "Front camera" },
-  { value: "environment", label: "Back camera" },
+  { value: "user", get label() { return t("ui.front-camera"); } },
+  { value: "environment", get label() { return t("ui.back-camera"); } },
 ];
 
 function readCameraFacing(raw) {

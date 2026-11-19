@@ -1,8 +1,9 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const parts = read("../styles/studio-parts.css");
 const phone = read("../styles/phone-touch.css");
 const app = read("../scripts/app.js");
@@ -30,11 +31,11 @@ test("the file card keeps the classic card and its download words outside the ne
   const body = app.slice(start, app.indexOf("\n}\n", start));
   assert.match(body, /const box = el\("div", studio \? "attachment filecard" : "attachment"\);/);
   assert.match(body, /studio \? el\("button", "key sm sq file-save"\) : el\("button", "btn-secondary btn-small", "Download"\)/);
-  assert.match(body, /btn\.setAttribute\("aria-label", `Save \$\{name\}`\);/);
+  assert.match(body, /btn\.setAttribute\("aria-label", t\("ui\.save-3", \{ name \}\)\);/);
   assert.match(body, /const words = studio \? size : btn;/);
   assert.match(body, /words\.textContent = isBigFile\(att\.size_bytes\) \? "Choose where" : "Fetching";/);
   assert.match(body, /const failed = studio && !saved;\n    words\.textContent = failed \? "Couldn't save" : rest;/);
-  assert.match(body, /btn\.title = failed \? "Retry" : `Save \$\{name\}`;/);
+  assert.match(body, /btn\.title = failed \? "Retry" : t\("ui\.save-3", \{ name \}\);/);
   assert.ok(parts.includes(`${LOOK} .filecard .file-size.file-failed { color: var(--danger); }`));
   const save = app.slice(app.indexOf("async function saveAttachment(att) {"));
   assert.match(save.slice(0, save.indexOf("\n}\n")), /return true;\n  \} catch \(e\) \{\n    toast\(String\(e\)\);\n    return false;/);

@@ -1,14 +1,14 @@
 const DIRECTORY_CATEGORIES = [
-  { id: "gaming", label: "Gaming" },
-  { id: "music", label: "Music" },
-  { id: "art", label: "Art" },
-  { id: "tech", label: "Tech" },
-  { id: "science", label: "Science" },
-  { id: "education", label: "Education" },
-  { id: "friends", label: "Friends" },
-  { id: "languages", label: "Languages" },
-  { id: "sports", label: "Sports" },
-  { id: "other", label: "Other" },
+  { id: "gaming", get label() { return t("ui.gaming"); } },
+  { id: "music", get label() { return t("ui.music"); } },
+  { id: "art", get label() { return t("ui.art"); } },
+  { id: "tech", get label() { return t("ui.tech"); } },
+  { id: "science", get label() { return t("ui.science"); } },
+  { id: "education", get label() { return t("ui.education"); } },
+  { id: "friends", get label() { return t("ui.friends-2"); } },
+  { id: "languages", get label() { return t("ui.languages"); } },
+  { id: "sports", get label() { return t("ui.sports"); } },
+  { id: "other", get label() { return t("ui.other"); } },
 ];
 const DIRECTORY_BUCKETS = [10, 25, 50, 100, 250, 500, 1000];
 const DIRECTORY_DESCRIPTION_MAX = 300;
@@ -17,7 +17,7 @@ const DIRECTORY_EXCERPT_MAX = 160;
 
 function directoryCategoryLabel(id) {
   const found = DIRECTORY_CATEGORIES.find(c => c.id === id);
-  return found ? found.label : "Other";
+  return found ? found.label : t("ui.other");
 }
 
 function memberBucket(count) {
@@ -31,7 +31,7 @@ function memberBucketLabel(bucket) {
   const b = memberBucket(bucket);
   const top = DIRECTORY_BUCKETS[DIRECTORY_BUCKETS.length - 1];
   const shown = b >= top ? top.toLocaleString("en-US") : String(b);
-  return `${shown}+ members`;
+  return t("ui.members-2", { shown });
 }
 
 function normalizeDirectorySearch(text) {
@@ -40,7 +40,7 @@ function normalizeDirectorySearch(text) {
 
 function directoryExcerpt(text, max = DIRECTORY_EXCERPT_MAX) {
   const flat = String(text || "").replace(/\s+/g, " ").trim();
-  if (!flat) return "No description yet.";
+  if (!flat) return t("ui.no-description-yet");
   if (flat.length <= max) return flat;
   const cut = flat.slice(0, max);
   const space = cut.lastIndexOf(" ");
@@ -57,23 +57,23 @@ function discoverySettingsState({ server, listing }) {
   const isPublic = Boolean(server && server.public);
   const listed = Boolean(listing);
   let hint = "";
-  if (!canManage) hint = "Only members with Manage Server can list this server.";
-  else if (!isPublic && listed) hint = "Still listed in Discover. Unlist it, or it comes down on its own once your account server is reachable.";
-  else if (!isPublic) hint = "Turn on Public server above to list it in Discover.";
-  else if (listed) hint = "Listed in Discover. Anyone browsing can join with a link that never expires.";
-  else hint = "Listing shares the server name, your description, the category and a rounded member count with your account server.";
+  if (!canManage) hint = t("ui.only-members-with-manage-server-can-list");
+  else if (!isPublic && listed) hint = t("ui.still-listed-in-discover-unlist-it-or-it");
+  else if (!isPublic) hint = t("ui.turn-on-public-server-above-to-list-it");
+  else if (listed) hint = t("ui.listed-in-discover-anyone-browsing-can");
+  else hint = t("ui.listing-shares-the-server-name-your");
   return { enabled: canManage && isPublic, listed, canUnlist: canManage && listed, hint };
 }
 
 function discoverEmptyView({ loading = false, error = "", unavailable = false, host = "", filtered = false } = {}) {
-  const where = host ? `Your account server, ${host},` : "Your account server";
-  if (loading) return { icon: "search", title: "Looking for servers", text: "Loading the public server list.", retry: false };
+  const where = host ? t("ui.your-account-server", { host }) : "Your account server";
+  if (loading) return { icon: "search", title: t("ui.looking-for-servers"), text: t("ui.loading-the-public-server-list"), retry: false };
   if (unavailable) {
-    return { icon: "clock", title: "Discover is not available yet", text: `${where} does not list public servers yet. Check back after it updates.`, retry: true };
+    return { icon: "clock", title: t("ui.discover-is-not-available-yet"), text: t("ui.does-not-list-public-servers-yet-check", { where }), retry: true };
   }
-  if (error) return { icon: "warning", title: "Could not load Discover", text: error, retry: true };
-  if (filtered) return { icon: "search", title: "No servers found", text: "Try another word or category.", retry: false };
-  return { icon: "search", title: "No public servers yet", text: "Be the first: list your own public server from Server Settings.", retry: false };
+  if (error) return { icon: "warning", title: t("ui.could-not-load-discover"), text: error, retry: true };
+  if (filtered) return { icon: "search", title: t("ui.no-servers-found"), text: t("ui.try-another-word-or-category"), retry: false };
+  return { icon: "search", title: t("ui.no-public-servers-yet"), text: t("ui.be-the-first-list-your-own-public-server"), retry: false };
 }
 
 if (typeof module !== "undefined" && module.exports) {

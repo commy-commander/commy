@@ -23,7 +23,7 @@ function threadReplyCounts(messages) {
   return counts;
 }
 
-function defaultThreadName(text, fallback = "Thread") {
+function defaultThreadName(text, fallback = t("ui.thread")) {
   const words = String(text || "").replace(/\s+/g, " ").trim();
   if (!words) return fallback;
   const picked = words.split(" ").slice(0, THREAD_NAME_WORDS).join(" ");
@@ -33,15 +33,15 @@ function defaultThreadName(text, fallback = "Thread") {
 
 function threadName(root, meta, plain = s => s) {
   if (meta && meta.name) return meta.name;
-  if (!root) return "Thread";
-  const fallback = (root.attachments || []).length ? "Attachment" : "Thread";
+  if (!root) return t("ui.thread");
+  const fallback = (root.attachments || []).length ? t("ui.attachment-2") : t("ui.thread");
   return defaultThreadName(plain(root.content || ""), fallback);
 }
 
 function cleanThreadName(name) {
   const clean = String(name || "").replace(/\s+/g, " ").trim();
   if (!clean) return { name: null };
-  if ([...clean].length > MAX_THREAD_NAME_CHARS) return { error: `Thread names can be at most ${MAX_THREAD_NAME_CHARS} characters` };
+  if ([...clean].length > MAX_THREAD_NAME_CHARS) return { error: t("ui.thread-names-can-be-at-most-characters", { MAX_THREAD_NAME_CHARS }) };
   return { name: clean };
 }
 
@@ -87,24 +87,24 @@ function canManageThread(root, { userId, canManageMessages, meta = null, canCrea
 }
 
 function threadComposerState({ meta, canManageMessages } = {}) {
-  if (!meta || !meta.locked) return { disabled: false, placeholder: "Reply in thread" };
-  if (canManageMessages) return { disabled: false, placeholder: "Reply in thread (locked for members)" };
-  return { disabled: true, placeholder: "This thread is locked" };
+  if (!meta || !meta.locked) return { disabled: false, placeholder: t("ui.reply-in-thread") };
+  if (canManageMessages) return { disabled: false, placeholder: t("ui.reply-in-thread-locked-for-members") };
+  return { disabled: true, placeholder: t("ui.this-thread-is-locked") };
 }
 
 function threadStatusLine({ meta, replies } = {}) {
   const parts = [];
-  if (meta && meta.locked) parts.push("Locked");
-  if (meta && meta.archived) parts.push("Archived");
+  if (meta && meta.locked) parts.push(t("ui.thread-locked"));
+  if (meta && meta.archived) parts.push(t("ui.thread-archived"));
   const n = Number(replies) || 0;
-  parts.push(n ? `${n} ${n === 1 ? "reply" : "replies"}` : "No replies yet");
+  parts.push(n ? t(n === 1 ? "ui.thread-replies.one" : "ui.thread-replies.many", { count: n }) : t("ui.no-replies-yet"));
   return parts.join(" · ");
 }
 
 function threadsButtonState({ view, channel, count } = {}) {
   const visible = view === "server" && Boolean(channel) && (channel.kind === "text" || channel.kind === "announcement");
   const n = Math.max(0, Number(count) || 0);
-  return { visible, count: n, title: n ? `${n} active ${n === 1 ? "thread" : "threads"}` : "Threads" };
+  return { visible, count: n, title: n ? t(n === 1 ? "ui.n.active-threads.one" : "ui.n.active-threads.many", { count: n }) : t("ui.threads") };
 }
 
 if (typeof module !== "undefined" && module.exports) {

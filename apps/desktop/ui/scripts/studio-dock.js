@@ -1,13 +1,13 @@
 const STUDIO_DOCK_BARS = 12;
 const STUDIO_DOCK_LINES = {
-  deafened: ["Deafened", "Peace and quiet. Suspicious."],
-  muted: ["Muted", "Chew freely. Nobody hears you."],
+  get deafened() { return [t("ui.dock.deafened"), t("ui.dock.deafened.sub")]; },
+  get muted() { return [t("ui.dock.muted"), t("ui.dock.muted.sub")]; },
 };
 
 const STUDIO_DOCK_QUALITY = {
-  good: ["Good connection", "Voice is clear"],
-  ok: ["Fair connection", "Voice may break up now and then"],
-  bad: ["Poor connection", "Voice is breaking up"],
+  get good() { return [t("ui.good-connection"), t("ui.voice-is-clear")]; },
+  get ok() { return [t("ui.fair-connection"), t("ui.voice-may-break-up")]; },
+  get bad() { return [t("ui.poor-connection"), t("ui.voice-is-breaking-up")]; },
 };
 
 const STUDIO_DOCK_SIGNAL_BARS = [
@@ -70,9 +70,9 @@ function mountStudioDock(doc, makeIcon) {
   if (!row) return null;
   const present = row.querySelector(".vp-invite");
   if (present) return present;
-  const hand = studioDockKey(doc, "vp-hand-key", "icon-btn vp-hand-key hidden", "Raise hand", "hand", makeIcon);
+  const hand = studioDockKey(doc, "vp-hand-key", "icon-btn vp-hand-key hidden", t("ui.raise-hand"), "hand", makeIcon);
   hand.setAttribute("aria-pressed", "false");
-  const invite = studioDockKey(doc, "vp-invite", "icon-btn vp-invite hidden", "Invite", "user-plus", makeIcon);
+  const invite = studioDockKey(doc, "vp-invite", "icon-btn vp-invite hidden", t("ui.invite"), "user-plus", makeIcon);
   const meter = doc.createElement("span");
   meter.className = "vp-meter";
   meter.setAttribute("aria-hidden", "true");

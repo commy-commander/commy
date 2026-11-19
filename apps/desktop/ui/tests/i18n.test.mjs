@@ -1,3 +1,4 @@
+import "./i18n-global.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -15,8 +16,68 @@ const locales = Object.fromEntries(localeFiles.map(f => [f.replace(/\.js$/, ""),
 for (const [code, strings] of Object.entries(locales)) registerLocale(code, strings);
 
 const html = readFileSync(join(ui, "index.html"), "utf8");
-const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"' };
-const decode = text => text.replace(/&(amp|lt|gt|quot);/g, (_, name) => ENTITIES[name]);
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', middot: "\u00b7", uarr: "\u2191", darr: "\u2193", nbsp: "\u00a0" };
+const decode = text => text
+  .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+  .replace(/&([a-z]+);/g, (whole, name) => ENTITIES[name] ?? whole);
+const flat = text => decode(text).replace(/\s+/g, " ").trim();
+const SAME_IN_EVERY_LANGUAGE = new Set(["Commy", "GIPHY", "Tenor", "KLIPY", "YouTube", "Twitch", "Google", "Apple", "Ctrl", "Alt", "Shift", "OK"]);
+const NEEDS_WORDS = /[A-Za-z]{2}/;
+const VOID_TAGS = new Set(["input", "img", "br", "hr", "meta", "link", "source", "area", "col", "embed", "wbr", "track", "param", "base"]);
+const UNTRANSLATED_TAGS = new Set(["script", "style", "svg", "template", "title", "code", "kbd"]);
+const TRANSLATED_ATTRIBUTES = ["title", "placeholder", "aria-label", "alt"];
+const wantsWords = text => {
+  const shown = flat(text);
+  return NEEDS_WORDS.test(shown) && !SAME_IN_EVERY_LANGUAGE.has(shown);
+};
+
+function attributesOf(source) {
+  const found = {};
+  for (const [, name, quoted] of source.matchAll(/([^\s=>/]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?/g)) {
+    found[name] = quoted === undefined ? "" : quoted.replace(/^["']|["']$/g, "");
+  }
+  return found;
+}
+
+function untaggedPageText(page) {
+  const stack = [];
+  const loose = [];
+  const tags = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g;
+  let at = 0;
+  const skipping = () => stack.some(open => UNTRANSLATED_TAGS.has(open.tag) || open.attrs.translate === "no");
+  const textBefore = end => {
+    const text = page.slice(at, end);
+    const parent = stack[stack.length - 1];
+    if (parent && !skipping() && wantsWords(text) && !("data-i18n" in parent.attrs)) loose.push(flat(text));
+  };
+  for (const match of page.matchAll(tags)) {
+    textBefore(match.index);
+    at = match.index + match[0].length;
+    if (match[0].startsWith("<!--")) continue;
+    const [, closing, rawTag, rawAttrs, selfClosing] = match;
+    const tag = rawTag.toLowerCase();
+    if (closing) {
+      const open = stack.map(entry => entry.tag).lastIndexOf(tag);
+      if (open >= 0) stack.length = open;
+      continue;
+    }
+    const attrs = attributesOf(rawAttrs);
+    if (!skipping() && !UNTRANSLATED_TAGS.has(tag)) {
+      for (const name of TRANSLATED_ATTRIBUTES) {
+        if (attrs[name] && wantsWords(attrs[name]) && !(`data-i18n-${name}` in attrs)) loose.push(`${name}: ${flat(attrs[name])}`);
+      }
+    }
+    if (VOID_TAGS.has(tag) || selfClosing) continue;
+    if (tag === "script" || tag === "style") {
+      const end = page.indexOf(`</${tag}`, at);
+      at = page.indexOf(">", end) + 1;
+      tags.lastIndex = at;
+      continue;
+    }
+    stack.push({ tag, attrs });
+  }
+  return loose;
+}
 
 test("English is the default and every shipped locale names itself", () => {
   assert.equal(DEFAULT_LANGUAGE, "en");
@@ -68,11 +129,33 @@ test("every data-i18n key in the page exists in English and its markup text matc
   assert.ok(used.length > 40);
   for (const [, , key, text] of used) {
     assert.ok(Object.hasOwn(locales.en, key), `missing English for ${key}`);
-    assert.equal(decode(text.trim()), locales.en[key], `markup for ${key} drifted from the dictionary`);
+    assert.equal(flat(text), locales.en[key], `markup for ${key} drifted from the dictionary`);
   }
-  const titles = [...html.matchAll(/title="([^"]*)" data-i18n-title="([^"]+)"/g)];
-  assert.ok(titles.length >= 6);
-  for (const [, title, key] of titles) assert.equal(locales.en[key], title, `title for ${key} drifted from the dictionary`);
+  for (const name of TRANSLATED_ATTRIBUTES) {
+    const tagged = [...html.matchAll(new RegExp(`\\s${name}="([^"]*)" data-i18n-${name}="([^"]+)"`, "g"))];
+    for (const [, value, key] of tagged) {
+      assert.ok(Object.hasOwn(locales.en, key), `missing English for ${key}`);
+      assert.equal(flat(value), locales.en[key], `${name} for ${key} drifted from the dictionary`);
+    }
+  }
+  assert.equal([...html.matchAll(/data-i18n-([a-z-]+)="/g)].filter(([, name]) => !TRANSLATED_ATTRIBUTES.includes(name)).length, 0);
+});
+
+test("every piece of text a person sees on the page goes through the dictionary", () => {
+  assert.deepEqual(untaggedPageText(html), []);
+});
+
+test("the untagged text finder catches loose text, loose labels and skips code and brand names", () => {
+  const page = '<div><p>Hello there</p><p data-i18n="a">Fine</p><b title="Tip">x</b><code>npm run</code><span>Commy</span><svg><text>Logo</text></svg></div>';
+  assert.deepEqual(untaggedPageText(page), ["Hello there", "title: Tip"]);
+});
+
+test("a retranslation only replaces text that still shows a dictionary string", () => {
+  registerLocale("es", {});
+  assert.equal(i18n.isShownTranslation("settings.tab.appearance", "Appearance"), true);
+  assert.equal(i18n.isShownTranslation("settings.tab.appearance", "  Apariencia "), true);
+  assert.equal(i18n.isShownTranslation("settings.tab.appearance", "Someone's own words"), false);
+  assert.equal(i18n.isShownTranslation("settings.tab.appearance", ""), false);
 });
 
 test("the page loads i18n before the locales and both before the app", () => {
@@ -82,6 +165,32 @@ test("the page loads i18n before the locales and both before the app", () => {
   for (const f of localeFiles) assert.ok(at(`locales/${f}`) > at("i18n.js"), `${f} loads before i18n.js`);
   assert.ok(at("accessibility.js") > at("i18n.js") && at("app.js") > at("accessibility.js"));
   for (const f of localeFiles) assert.ok(at(`locales/${f}`) < at("app.js"));
+});
+
+test("dates follow the app language, and English keeps the system's own format", () => {
+  i18n.setLanguage("es");
+  assert.equal(i18n.dateLocale(), "es");
+  assert.equal(new Date(Date.UTC(2026, 10, 15, 12)).toLocaleDateString(i18n.dateLocale(), { weekday: "short", timeZone: "UTC" }), "dom");
+  i18n.setLanguage("en");
+  assert.deepEqual(i18n.dateLocale(), []);
+});
+
+test("changing the language reloads the app so every screen switches, but never drops a call", () => {
+  const app = readFileSync(new URL("../scripts/app.js", import.meta.url), "utf8");
+  assert.match(app, /\$\("language-select"\)\.addEventListener\("change", e => \{\n\s+prefs\.language = e\.target\.value;\n\s+saveAccessibility\(prefs\);\n\s+if \(state\.voiceChannelId \|\| state\.call\) toast\(t\("accessibility\.language\.later"\)\);\n\s+else window\.location\.reload\(\);/);
+  for (const locale of Object.values(locales)) assert.ok(locale["accessibility.language.later"]);
+});
+
+test("the saved language is chosen before any other script builds words", () => {
+  const order = [...html.matchAll(/<script src="scripts\/([^"]+)"><\/script>/g)].map(m => m[1]);
+  const start = order.indexOf("i18n-start.js");
+  assert.deepEqual(order.slice(0, start + 1), ["i18n.js", ...localeFiles.map(f => `locales/${f}`), "i18n-start.js"]);
+  const { startingLanguage } = require("../scripts/i18n-start.js");
+  assert.equal(startingLanguage('{"language":"es","theme":"dark"}'), "es");
+  assert.equal(startingLanguage(null), "en");
+  assert.equal(startingLanguage("not json"), "en");
+  const source = readFileSync(new URL("../scripts/i18n-start.js", import.meta.url), "utf8");
+  assert.ok(source.includes(`localStorage.getItem(${JSON.stringify(require("../scripts/accessibility.js").ACCESSIBILITY_KEY)})`));
 });
 
 test("the settings language picker lists the languages that were loaded", () => {

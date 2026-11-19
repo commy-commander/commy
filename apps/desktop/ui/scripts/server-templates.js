@@ -6,8 +6,8 @@ function looksLikeTemplateCode(text) {
 
 function templateGroups(template) {
   const channels = template.channels || [];
-  const looseText = { category: "Text Channels", channels: [] };
-  const looseVoice = { category: "Voice Channels", channels: [] };
+  const looseText = { category: t("ui.text-channels"), channels: [] };
+  const looseVoice = { category: t("ui.voice-channels"), channels: [] };
   const groups = [looseText, looseVoice];
   const byIndex = new Map();
   channels.forEach((channel, index) => {

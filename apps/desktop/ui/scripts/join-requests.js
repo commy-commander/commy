@@ -5,23 +5,23 @@ function joinNoteLeft(text) {
 }
 
 function joinRequestsLabel(count) {
-  return count ? `Join Requests (${count})` : "Join Requests";
+  return count ? t("ui.join-requests-2", { count }) : t("ui.join-requests");
 }
 
 function joinWaitStatus(wait) {
   if (!wait) return { title: "", text: "" };
   if (wait.turned_away) {
-    return { title: `${wait.name} did not let you in`, text: "A moderator turned down your request. You can remove it from your list." };
+    return { title: t("ui.did-not-let-you-in", { name: wait.name }), text: t("ui.a-moderator-turned-down-your-request-you") };
   }
   return {
-    title: `Waiting to join ${wait.name}`,
-    text: "A moderator will let you in. You can close this: Commy keeps checking and brings you in as soon as they say yes.",
+    title: t("ui.waiting-to-join", { name: wait.name }),
+    text: t("ui.a-moderator-will-let-you-in-you-can"),
   };
 }
 
 function joinWaitMembers(count) {
   const n = Number(count) || 0;
-  return n === 1 ? "1 member" : `${n} members`;
+  return t(n === 1 ? "ui.n.members.one" : "ui.n.members.many", { count: n });
 }
 
 function newJoinRequests(before, after) {
@@ -31,8 +31,8 @@ function newJoinRequests(before, after) {
 
 function joinRequestToast(server, fresh) {
   if (!fresh.length) return "";
-  if (fresh.length === 1) return `${fresh[0].name} asked to join ${server}`;
-  return `${fresh.length} people asked to join ${server}`;
+  if (fresh.length === 1) return t("ui.asked-to-join", { value: fresh[0].name, server });
+  return t("ui.people-asked-to-join", { count: fresh.length, server });
 }
 
 if (typeof module !== "undefined") {

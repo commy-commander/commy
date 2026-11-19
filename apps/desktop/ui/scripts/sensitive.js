@@ -38,8 +38,8 @@ function sensitiveNotice(info, channelId, confirmed) {
 
 function sensitiveGateText(channelName) {
   return {
-    title: "This channel is age-restricted",
-    body: `#${channelName} is for people 18 or older. Continue only if that is you; you will not be asked again on this device.`,
+    title: t("ui.this-channel-is-age-restricted"),
+    body: t("ui.is-for-people-18-or-older-continue-only", { channelName }),
   };
 }
 

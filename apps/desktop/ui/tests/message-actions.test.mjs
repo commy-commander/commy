@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -6,7 +7,7 @@ import { readFileSync } from "node:fs";
 const require = createRequire(import.meta.url);
 const { QUICK_MESSAGE_ACTION_COUNT, splitMessageActions, messageMenuLabel } = require("../scripts/message-actions.js");
 const { menuSpot, menuFitHeight } = require("../scripts/menu-spot.js");
-const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8");
+const read = (...parts) => englishSource(readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8"));
 const app = read("scripts", "app.js");
 const html = read("index.html");
 

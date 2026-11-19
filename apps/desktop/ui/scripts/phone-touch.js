@@ -52,14 +52,14 @@ function badgeText(count) {
 }
 
 function roomLine(count, connected) {
-  if (connected) return "You're connected";
+  if (connected) return t("ui.you-re-connected");
   if (count <= 0) return "";
-  return count === 1 ? "1 person in the room" : `${count} in the room`;
+  return count === 1 ? t("ui.room.people.one") : t("ui.room.people.many", { count });
 }
 
 function liveSummary(streams, rooms) {
-  if (streams > 0) return streams === 1 ? "1 stream, right now" : `${streams} streams, right now`;
-  if (rooms > 0) return rooms === 1 ? "1 room has people in it" : `${rooms} rooms have people in them`;
+  if (streams > 0) return streams === 1 ? t("ui.live.streams.one") : t("ui.live.streams.many", { count: streams });
+  if (rooms > 0) return rooms === 1 ? t("ui.live.rooms.one") : t("ui.live.rooms.many", { count: rooms });
   return "";
 }
 
@@ -142,18 +142,18 @@ function waitCards(count, open, max = WAIT_CARDS) {
 }
 
 function waitMoreWords(more) {
-  return `${more} more request${more === 1 ? "" : "s"}`;
+  return more === 1 ? t("ui.requests.more.one") : t("ui.requests.more.many", { count: more });
 }
 
 function listAge(iso, now, locale) {
   const then = iso ? new Date(iso).getTime() : NaN;
   if (Number.isNaN(then)) return "";
   const minutes = Math.floor((now - then) / 60000);
-  if (minutes < 1) return "now";
+  if (minutes < 1) return t("ui.age.now");
   if (minutes < 60) return `${minutes}m`;
   if (minutes < 1440) return `${Math.floor(minutes / 60)}h`;
-  if (minutes < 10080) return new Date(then).toLocaleDateString(locale || [], { weekday: "short" });
-  return new Date(then).toLocaleDateString(locale || [], { month: "short", day: "numeric" });
+  if (minutes < 10080) return new Date(then).toLocaleDateString(locale || dateLocale(), { weekday: "short" });
+  return new Date(then).toLocaleDateString(locale || dateLocale(), { month: "short", day: "numeric" });
 }
 
 function unreadChats(counts) {
@@ -161,7 +161,8 @@ function unreadChats(counts) {
 }
 
 function listLabel(typed) {
-  if (/^Friends - \d+$/.test(typed)) return "Friends";
+  const friends = t("ui.friends-2");
+  if (/^Friends - \d+$/.test(typed) || new RegExp(`^${friends} - \\d+$`).test(typed)) return friends;
   return typed.replace(/ ([A-Z])(?=[a-z])/g, (_, letter) => " " + letter.toLowerCase());
 }
 
@@ -169,27 +170,27 @@ const SWIPE = { slop: 10, lean: 1.2, edgeLean: 0.6, scrollSlop: 4, replyAt: 56, 
 const TRAY_PULL = 40;
 const QUICK_REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F525}"];
 const SHEET_ROWS = {
-  "Reply": { label: "Reply", icon: "reply", hint: "or swipe the message right" },
-  "Copy Image": { label: "Copy image", icon: "copy" },
-  "Save Image": { label: "Save image", icon: "download" },
-  "Open Thread": { label: "Open thread", icon: "message-square-text" },
-  "Pin": { label: "Pin to channel", icon: "pin" },
-  "Unpin": { label: "Unpin", icon: "pin" },
-  "Edit": { label: "Edit", icon: "pencil" },
-  "Hide for Me": { label: "Hide for me", icon: "eye-off" },
-  "Save": { label: "Save message", icon: "bookmark" },
-  "Unsave": { label: "Remove from saved", icon: "bookmark" },
-  "Remind Me": { label: "Remind me", icon: "bell" },
-  "Copy text": { label: "Copy text", icon: "copy" },
-  "More": { label: "More", icon: "ellipsis" },
-  "Report Message": { label: "Report message", icon: "flag" },
-  "Delete": { label: "Delete", icon: "trash-2", danger: true },
-  "Delete (Moderator)": { label: "Delete as moderator", icon: "trash-2", danger: true },
-  "Rename Thread": { label: "Rename thread", icon: "pencil" },
-  "Archive Thread": { label: "Archive thread", icon: "archive" },
-  "Unarchive Thread": { label: "Unarchive thread", icon: "archive" },
-  "Lock Thread": { label: "Lock thread", icon: "lock" },
-  "Unlock Thread": { label: "Unlock thread", icon: "lock" },
+  "Reply": { get label() { return t("ui.reply"); }, icon: "reply", get hint() { return t("ui.or-swipe-the-message-right"); } },
+  "Copy Image": { get label() { return t("ui.copy-image"); }, icon: "copy" },
+  "Save Image": { get label() { return t("ui.save-image"); }, icon: "download" },
+  "Open Thread": { get label() { return t("ui.open-thread"); }, icon: "message-square-text" },
+  "Pin": { get label() { return t("ui.pin-to-channel"); }, icon: "pin" },
+  "Unpin": { get label() { return t("ui.unpin"); }, icon: "pin" },
+  "Edit": { get label() { return t("ui.edit"); }, icon: "pencil" },
+  "Hide for Me": { get label() { return t("ui.hide-for-me"); }, icon: "eye-off" },
+  "Save": { get label() { return t("ui.save-message"); }, icon: "bookmark" },
+  "Unsave": { get label() { return t("ui.remove-from-saved"); }, icon: "bookmark" },
+  "Remind Me": { get label() { return t("ui.remind-me"); }, icon: "bell" },
+  "Copy text": { get label() { return t("ui.copy-text"); }, icon: "copy" },
+  "More": { get label() { return t("ui.more"); }, icon: "ellipsis" },
+  "Report Message": { get label() { return t("ui.report-message"); }, icon: "flag" },
+  "Delete": { get label() { return t("ui.delete"); }, icon: "trash-2", danger: true },
+  "Delete (Moderator)": { get label() { return t("ui.delete-as-moderator"); }, icon: "trash-2", danger: true },
+  "Rename Thread": { get label() { return t("ui.rename-thread-2"); }, icon: "pencil" },
+  "Archive Thread": { get label() { return t("ui.archive-thread-2"); }, icon: "archive" },
+  "Unarchive Thread": { get label() { return t("ui.unarchive-thread"); }, icon: "archive" },
+  "Lock Thread": { get label() { return t("ui.lock-thread-2"); }, icon: "lock" },
+  "Unlock Thread": { get label() { return t("ui.unlock-thread"); }, icon: "lock" },
 };
 
 function swipeAxis(dx, dy, lean = SWIPE.lean) {
@@ -246,12 +247,13 @@ function sheetCloses(dy) {
 }
 
 const BAR_EXTRAS = [
-  { id: "emoji", label: "Emoji", icon: "smile", press: "emoji-btn" },
-  { id: "style", label: "Text Style", icon: "a-large-small", press: "text-style-btn" },
+  { id: "emoji", get label() { return t("ui.emoji"); }, icon: "smile", press: "emoji-btn" },
+  { id: "style", get label() { return t("ui.text-style"); }, icon: "a-large-small", press: "text-style-btn" },
 ];
 
 function sheetRow(title) {
-  if (SHEET_ROWS[title]) return SHEET_ROWS[title];
+  const known = SHEET_ROWS[title] || SHEET_ROWS[englishFor(String(title || "").trim())];
+  if (known) return known;
   const words = String(title || "").trim();
   return { label: words ? words[0].toUpperCase() + words.slice(1).toLowerCase() : "", icon: null };
 }
@@ -266,15 +268,15 @@ function quickReactions(frequent, limit = QUICK_REACTIONS.length) {
 }
 
 function chatSubtitle({ view, serverName, group, presence }) {
-  if (view === "dm") return presence || "Direct message";
-  if (group) return "Group chat";
+  if (view === "dm") return presence || t("ui.direct-message");
+  if (group) return t("ui.group-chat");
   return serverName || "";
 }
 
 const NOTIFY_PICKS = [
-  { level: "all", label: "All messages", icon: "bell-ring" },
-  { level: "mentions", label: "Mentions and DMs", icon: "at-sign" },
-  { level: "none", label: "Nothing", icon: "bell-off" },
+  { level: "all", get label() { return t("ui.all-messages"); }, icon: "bell-ring" },
+  { level: "mentions", get label() { return t("ui.mentions-and-dms"); }, icon: "at-sign" },
+  { level: "none", get label() { return t("ui.nothing"); }, icon: "bell-off" },
 ];
 
 function chatBanner({ view, channel }) {
@@ -307,15 +309,15 @@ function trayNeedsStep(entry) {
 }
 
 const ROOM_KEYS = [
-  { id: "sounds", label: "Sounds", icon: "music" },
-  { id: "camera", label: "Camera", icon: "video-off" },
-  { id: "share", label: "Share", icon: "monitor-up" },
-  { id: "mic", label: "Mic", icon: "mic" },
-  { id: "deafen", label: "Deafen", icon: "headphones" },
-  { id: "leave", label: "Leave", icon: "phone-off" },
+  { id: "sounds", get label() { return t("settings.tab.sounds"); }, icon: "music" },
+  { id: "camera", get label() { return t("settings.tab.camera"); }, icon: "video-off" },
+  { id: "share", get label() { return t("ui.share"); }, icon: "monitor-up" },
+  { id: "mic", get label() { return t("ui.mic"); }, icon: "mic" },
+  { id: "deafen", get label() { return t("ui.deafen"); }, icon: "headphones" },
+  { id: "leave", get label() { return t("ui.leave"); }, icon: "phone-off" },
 ];
 const ROOM_LAMPS = ["sounds", "camera", "share", "mic", "deafen"];
-const SIGNAL_WORDS = { good: "Good", ok: "Fair", bad: "Poor" };
+const SIGNAL_WORDS = { get good() { return t("ui.signal.good"); }, get ok() { return t("ui.signal.fair"); }, get bad() { return t("ui.signal.poor"); } };
 
 function roomTiles(channel, me = {}) {
   if (!channel) return [];
@@ -326,7 +328,7 @@ function roomTiles(channel, me = {}) {
     return {
       id: person.id,
       name: person.name,
-      label: you ? "You" : person.name,
+      label: you ? t("settings.group.you") : person.name,
       you,
       muted: you ? Boolean(me.muted) : Boolean(muted[i]),
       deafened: you ? Boolean(me.deafened) : Boolean(deafened[i]),
@@ -336,14 +338,14 @@ function roomTiles(channel, me = {}) {
 
 function duoTiles(name, me = {}) {
   return [
-    { id: me.otherId || null, name: name || "Call", label: name || "Call", you: false, muted: false, deafened: false },
-    { id: me.userId || null, name: me.name || "You", label: "You", you: true, muted: Boolean(me.muted), deafened: Boolean(me.deafened) },
+    { id: me.otherId || null, name: name || t("ui.call"), label: name || t("ui.call"), you: false, muted: false, deafened: false },
+    { id: me.userId || null, name: me.name || t("settings.group.you"), label: t("settings.group.you"), you: true, muted: Boolean(me.muted), deafened: Boolean(me.deafened) },
   ];
 }
 
 function roomHeading({ serverName, count, call }) {
-  if (call) return "Voice call";
-  const here = count === 1 ? "1 here" : `${count} here`;
+  if (call) return t("ui.voice-call");
+  const here = count === 1 ? t("ui.room.here.one") : t("ui.room.here.many", { count });
   return serverName ? `${serverName} \u00B7 ${here}` : here;
 }
 
@@ -353,7 +355,7 @@ function roomStreams(server, channelId, me = {}) {
   if (!room) return [];
   return room.streams
     .filter(stream => !stream.mine && stream.userId !== me.userId)
-    .map(stream => ({ user: stream.userId, name: stream.name, title: `${stream.name}'s screen`, watching: stream.userId === me.watching }));
+    .map(stream => ({ user: stream.userId, name: stream.name, title: t("ui.name-s-screen", { name: stream.name }), watching: stream.userId === me.watching }));
 }
 
 function signalWord(quality) {
@@ -362,16 +364,16 @@ function signalWord(quality) {
 
 function roomKeyState(id, voice = {}) {
   if (id === "mic" && voice.hand) {
-    const word = voice.hand.raised ? "Lower hand" : "Raise hand";
+    const word = voice.hand.raised ? t("ui.lower-hand") : t("ui.raise-hand");
     return { down: Boolean(voice.hand.raised), mode: "hand", icon: "hand", label: word, word };
   }
-  if (id === "mic" && voice.talk && !voice.muted) return { down: false, mode: "talk", held: Boolean(voice.talking), icon: "mic", label: "Hold to talk", word: "Hold to talk" };
-  if (id === "mic") return { down: Boolean(voice.muted), icon: voice.muted ? "mic-off" : "mic", label: voice.muted ? "Unmute" : "Mute" };
-  if (id === "deafen") return { down: Boolean(voice.deafened), icon: voice.deafened ? "headphone-off" : "headphones", label: voice.deafened ? "Undeafen" : "Deafen" };
-  if (id === "camera") return { down: false, off: !voice.camera, on: Boolean(voice.camera), icon: voice.camera ? "video" : "video-off", label: voice.camera ? "Turn off camera" : "Turn on camera" };
-  if (id === "sounds") return { down: Boolean(voice.sounds), icon: "music", label: "Soundboard" };
-  if (id === "share") return { down: false, on: Boolean(voice.sharing), icon: "monitor-up", label: voice.sharing ? "Stop sharing your screen" : "Share your screen" };
-  return { down: false, icon: "phone", label: "Hang up" };
+  if (id === "mic" && voice.talk && !voice.muted) return { down: false, mode: "talk", held: Boolean(voice.talking), icon: "mic", label: t("ui.hold-to-talk"), word: t("ui.hold-to-talk") };
+  if (id === "mic") return { down: Boolean(voice.muted), icon: voice.muted ? "mic-off" : "mic", label: voice.muted ? t("ui.unmute") : t("ui.mute") };
+  if (id === "deafen") return { down: Boolean(voice.deafened), icon: voice.deafened ? "headphone-off" : "headphones", label: voice.deafened ? t("ui.undeafen") : t("ui.deafen") };
+  if (id === "camera") return { down: false, off: !voice.camera, on: Boolean(voice.camera), icon: voice.camera ? "video" : "video-off", label: voice.camera ? t("ui.turn-off-camera") : t("ui.turn-on-camera-2") };
+  if (id === "sounds") return { down: Boolean(voice.sounds), icon: "music", label: t("ui.soundboard") };
+  if (id === "share") return { down: false, on: Boolean(voice.sharing), icon: "monitor-up", label: voice.sharing ? t("ui.stop-sharing-your-screen") : t("ui.share-your-screen-2") };
+  return { down: false, icon: "phone", label: t("ui.hang-up") };
 }
 
 function canOfferShare({ mobileApp, canShare, iPhone }) {
@@ -385,7 +387,7 @@ function roomKeyOffered(id, { mobileApp, finePointer, canShare, iPhone }) {
 
 function roomTileStreams(streams, me = {}) {
   if (!me.sharing) return streams || [];
-  return [{ user: me.userId, name: me.name || "", title: "Your screen", short: "You", own: true, watching: false, viewers: Math.max(0, Number(me.viewers) || 0) }, ...(streams || [])];
+  return [{ user: me.userId, name: me.name || "", title: t("ui.your-screen"), short: t("settings.group.you"), own: true, watching: false, viewers: Math.max(0, Number(me.viewers) || 0) }, ...(streams || [])];
 }
 
 function roomCameraTiles(cameraIds, people, me = {}) {
@@ -393,7 +395,7 @@ function roomCameraTiles(cameraIds, people, me = {}) {
   const showing = person => person.id && (person.id === me.userId ? Boolean(me.camera) : on.has(person.id));
   const tiles = (people || []).filter(showing).map(person => {
     const own = person.id === me.userId;
-    return { user: person.id, name: person.name, title: own ? "You" : person.name, own, camera: true, rear: own && me.facing === "environment", canFlip: own && Boolean(me.canFlip) };
+    return { user: person.id, name: person.name, title: own ? t("settings.group.you") : person.name, own, camera: true, rear: own && me.facing === "environment", canFlip: own && Boolean(me.canFlip) };
   });
   return [...tiles.filter(tile => tile.own), ...tiles.filter(tile => !tile.own)];
 }
@@ -414,7 +416,7 @@ function roomStage(channel, tiles) {
   return { tiles: (tiles || []).filter(tile => speakers.includes(tile.id)), audience };
 }
 
-const ROOM_MEMBER_ACTION_WORDS = { move: () => "Move to another room", disconnect: () => "Disconnect from voice", kick: name => `Kick ${name}`, ban: name => `Ban ${name}` };
+const ROOM_MEMBER_ACTION_WORDS = { move: () => t("ui.move-to-another-room"), disconnect: () => t("ui.disconnect-from-voice"), kick: name => t("ui.kick-name", { name }), ban: name => t("ui.ban-name", { name }) };
 
 function roomMemberActions(server, { targetId, myId, roomId } = {}) {
   if (!server || !targetId || targetId === myId || targetId === server.owner) return [];
@@ -435,7 +437,7 @@ function roomMemberActionWords(kind, name) {
 }
 
 function audienceLabel(count) {
-  return `Audience ${count}`;
+  return t("ui.audience-count", { count });
 }
 
 function roomSignature(tiles, streams, extra = "") {
@@ -463,7 +465,7 @@ function streamBubbles(rows, limit = BUBBLE_MAX) {
 
 function watchPlace(voiceServer, withServer = true) {
   if (!voiceServer) return "";
-  if (voiceServer.call) return `Call with ${voiceServer.name}`;
+  if (voiceServer.call) return t("ui.call-with", { name: voiceServer.name });
   return [voiceServer.channelName, withServer ? voiceServer.name : ""].filter(Boolean).join(" \u00B7 ");
 }
 

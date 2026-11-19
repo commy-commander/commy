@@ -426,8 +426,8 @@ test("controls for things only the desktop app does are hidden in the browser", 
 
 test("the browser offers push to talk, input sensitivity and the mute and deafen keys like the desktop", () => {
   const index = read("apps", "desktop", "ui", "index.html");
-  assert.ok(index.includes('<h2 class="settings-subhead" data-search="push to talk ptt voice activity open mic">Input Mode</h2>\n          <div class="settings-card">'));
-  assert.ok(index.includes('<h2 class="settings-subhead desktop-only">Voice</h2>\n          <div class="settings-card desktop-only">\n            <div class="setting-row" data-search="hotkey keybind mic">'));
+  assert.ok(index.includes('<h2 class="settings-subhead" data-search="push to talk ptt voice activity open mic" data-i18n="ui.input-mode">Input Mode</h2>\n          <div class="settings-card">'));
+  assert.ok(index.includes('<h2 class="settings-subhead desktop-only" data-i18n="settings.tab.voice">Voice</h2>\n          <div class="settings-card desktop-only">\n            <div class="setting-row" data-search="hotkey keybind mic">'));
   const bridge = read("apps", "web", "ui", "web-bridge.js");
   assert.ok(bridge.includes('backend("press_talk"'));
   assert.ok(rustCommands.has("press_talk"));
@@ -504,7 +504,7 @@ test("a shared screen is scaled to the picked quality and a refused pick says wh
 
 test("the browser shows its server list recovery code like the desktop", () => {
   const index = read("apps", "desktop", "ui", "index.html");
-  assert.ok(index.includes('<div class="entry-recovery">\n              <button class="btn-link" id="entry-show-code">'));
+  assert.ok(index.includes('<div class="entry-recovery">\n              <button class="btn-link" id="entry-show-code" data-i18n="ui.show-recovery-code">'));
   for (const cmd of ["entry_list_status", "entry_list_recovery_code"]) {
     assert.ok(rustCommands.has(cmd), cmd);
     assert.equal(webDefault(cmd).known, false, cmd);
@@ -514,7 +514,7 @@ test("the browser shows its server list recovery code like the desktop", () => {
 
 test("voice filters are offered in the browser and follow the server's switch like the desktop", () => {
   const index = read("apps", "desktop", "ui", "index.html");
-  assert.ok(index.includes('<h2 class="settings-subhead">Voice Filter</h2>\n          <div class="settings-card" id="voice-filter-card"'));
+  assert.ok(index.includes('<h2 class="settings-subhead" data-i18n="ui.voice-filter">Voice Filter</h2>\n          <div class="settings-card" id="voice-filter-card"'));
   const calls = read("apps", "web", "src", "session", "calls.rs");
   assert.ok(calls.includes('self.emit("voice-filter-held"'));
   assert.ok(calls.includes("can_use_voice_filters()"));
@@ -559,23 +559,35 @@ test("the browser keeps its own sign-in words each time the dialog shows", () =>
   assert.ok(render.indexOf("if (inBrowserApp()) return showSignInCheck(view.captchaUrl);") < render.indexOf('browser.dataset.i18n ='));
   assert.ok(app.includes('if (id === "signin-intro" && inBrowserApp() && !account.signed_in) continue;'));
   const bridge = read("apps", "web", "ui", "web-bridge.js");
-  assert.ok(bridge.includes('setWebText(document.getElementById("signin-go"), `Sign in on ${window.location.host}`);'));
-  assert.ok(bridge.includes('setWebText(document.getElementById("signin-intro"), '));
+  assert.ok(bridge.includes('setWebText(document.getElementById("signin-go"), "web.signin.go", { host: window.location.host });'));
+  assert.ok(bridge.includes('setWebText(document.getElementById("signin-intro"), "web.signin.intro");'));
+  const english = require("../../desktop/ui/scripts/locales/en.js");
+  const spanish = require("../../desktop/ui/scripts/locales/es.js");
+  assert.equal(english["web.signin.go"], "Sign in on {host}");
+  assert.equal(spanish["web.signin.go"], "Inicia sesión en {host}");
 });
 
 test("the browser promises nothing it hides or cannot do", () => {
   const bridge = read("apps", "web", "ui", "web-bridge.js");
-  const said = [...bridge.matchAll(/setWebText\([^\n]*?, "([^"]+)"\);/g)].map(m => m[1]).join(" ");
+  const words = require("../../desktop/ui/scripts/locales/en.js");
+  const keys = [...bridge.matchAll(/setWebText\([^\n]*?, "(web\.[\w.]+)"(?:, [^\n]*)?\);/g)].map(m => m[1]);
+  assert.equal(keys.length, 11);
+  for (const key of keys) assert.ok(words[key], key);
+  const said = keys.map(key => words[key]).join(" ");
   assert.match(said, /Theme, language and chat text\./);
   assert.match(said, /Check your connection when something goes wrong\./);
   assert.doesNotMatch(said, /straight|directly|relay|logs|icon/i);
   const app = read("apps", "desktop", "ui", "scripts", "app.js");
-  assert.ok(app.includes('Messages and calls ${inBrowserApp() ? "stay" : "go straight"} between the people in it.'));
-  assert.ok(app.includes('inBrowserApp() ? "Private chats stay between you and the other person." : '));
-  assert.ok(app.includes('inBrowserApp() ? "Servers are where your friends gather: text channels, voice and screen sharing. Start one, or join a friend\'s with an invite." : '));
-  assert.ok(app.includes('account.server_from_env && !inBrowserApp() ? " (set by COMMY_AUTH_URL)" : ""'));
+  const english = words;
+  assert.ok(app.includes('t(inBrowserApp() ? "ui.group-start-browser" : "ui.group-start-desktop", { who })'));
+  assert.equal(english["ui.group-start-browser"], "This is the start of your group with {who}. Messages and calls stay between the people in it.");
+  assert.ok(app.includes('inBrowserApp() ? t("ui.private-chats-stay-between-you-and-the") : '));
+  assert.equal(english["ui.private-chats-stay-between-you-and-the"], "Private chats stay between you and the other person.");
+  assert.ok(app.includes('inBrowserApp() ? t("ui.servers-are-where-your-friends-gather") : '));
+  assert.equal(english["ui.servers-are-where-your-friends-gather"], "Servers are where your friends gather: text channels, voice and screen sharing. Start one, or join a friend's with an invite.");
+  assert.ok(app.includes('t(account.server_from_env && !inBrowserApp() ? "ui.account-server-from-env" : "ui.account-server-host", { host })'));
   const index = read("apps", "desktop", "ui", "index.html");
-  assert.ok(index.includes('<span class="native-only"> To use a different account server, sign out and choose it on the sign-in screen.</span>'));
+  assert.ok(index.includes('<span class="native-only" data-i18n="ui.to-use-a-different-account-server-sign"> To use a different account server, sign out and choose it on the sign-in screen.</span>'));
 });
 
 test("Switch while sharing is hidden in the browser, like the room's Switch", () => {

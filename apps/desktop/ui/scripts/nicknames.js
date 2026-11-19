@@ -8,7 +8,7 @@ function cleanNickname(raw) {
 }
 
 function nicknameProblem(raw) {
-  return cleanNickname(raw) === undefined ? `Nicknames can be up to ${MAX_NICKNAME_CHARS} characters` : null;
+  return cleanNickname(raw) === undefined ? t("ui.nicknames-can-be-up-to-characters", { MAX_NICKNAME_CHARS }) : null;
 }
 
 function nicknameAccountLine(member) {
@@ -19,8 +19,8 @@ function nicknameAccountLine(member) {
 function nicknamePrompt(member, server, me) {
   const self = Boolean(me && member && member.id === me);
   const where = server && server.name ? ` in ${server.name}` : "";
-  const who = member && member.username ? member.username : "this member";
-  return self ? `How your name appears${where}` : `How ${who} appears${where}`;
+  const who = member && member.username ? member.username : t("ui.this-member");
+  return self ? t("ui.how-your-name-appears", { where }) : t("ui.how-appears", { who, where });
 }
 
 if (typeof module !== "undefined" && module.exports) {

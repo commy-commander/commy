@@ -69,6 +69,7 @@ html[data-look="studio"] .modal.dialog .field-label {
   text-indent: 16px;
 }
 html[data-look="studio"] .modal.dialog .field-label > * { text-indent: 0; }
+html[data-look="studio"] .modal.dialog .field-label > span[data-i18n] { text-indent: inherit; }
 html[data-look="studio"] .modal.dialog :where(input[type="text"], input[type="password"], input[type="search"], input[type="number"], select, textarea) {
   width: 100%;
   height: 46px;

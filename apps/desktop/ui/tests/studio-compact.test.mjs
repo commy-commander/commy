@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -5,9 +6,9 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { windowFit } = require("../scripts/look.js");
-const { STUDIO_COMPACT_MARK, STUDIO_COMPACT_ROWS, STUDIO_COMPACT_MIXED_LABEL, studioCompactFace, studioCompactRowStates, studioCompactDot, studioCompactEmpty, studioCompactMenuLeft } = require("../scripts/studio-compact.js");
+const { STUDIO_COMPACT_MARK, STUDIO_COMPACT_ROWS, STUDIO_COMPACT_MIXED, studioCompactFace, studioCompactRowStates, studioCompactDot, studioCompactEmpty, studioCompactMenuLeft } = require("../scripts/studio-compact.js");
 
-const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
 const css = read("../styles/studio-compact.css");
 const C = 'html[data-look="studio"][data-fit="compact"]';
@@ -120,7 +121,7 @@ test("the Threads key opens a menu of Threads, Pinned Messages and Saved Message
 test("the key wears Threads when it can, and opens the only row straight away when there is one", () => {
   const states = map => STUDIO_COMPACT_ROWS.map(row => ({ key: row.key, shown: Boolean(map[row.key]), badge: "" }));
   assert.deepEqual(studioCompactFace(STUDIO_COMPACT_ROWS, states({ threads: 1, pins: 1, saved: 1 })), { icon: "thread", label: "Threads", single: null });
-  assert.deepEqual(studioCompactFace(STUDIO_COMPACT_ROWS, states({ pins: 1, saved: 1 })), { icon: "pin", label: STUDIO_COMPACT_MIXED_LABEL, single: null });
+  assert.deepEqual(studioCompactFace(STUDIO_COMPACT_ROWS, states({ pins: 1, saved: 1 })), { icon: "pin", label: STUDIO_COMPACT_MIXED.label, single: null });
   assert.deepEqual(studioCompactFace(STUDIO_COMPACT_ROWS, states({ saved: 1 })), { icon: "bookmark", label: "Saved Messages", single: "saved" });
   assert.equal(studioCompactFace(STUDIO_COMPACT_ROWS, states({})), null);
 });

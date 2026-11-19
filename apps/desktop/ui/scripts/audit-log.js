@@ -1,13 +1,13 @@
 const AUDIT_FILTERS = [
-  ["all", "All actions"],
-  ["server", "Server settings"],
-  ["channels", "Channels"],
-  ["roles", "Roles"],
-  ["members", "Members"],
-  ["messages", "Messages"],
-  ["expressions", "Emoji, stickers and sounds"],
-  ["events", "Events"],
-  ["invites", "Invites"],
+  ["all", t("ui.all-actions")],
+  ["server", t("ui.server-settings-2")],
+  ["channels", t("ui.channels-2")],
+  ["roles", t("ui.roles")],
+  ["members", t("ui.members")],
+  ["messages", t("ui.messages")],
+  ["expressions", t("ui.emoji-stickers-and-sounds")],
+  ["events", t("ui.events")],
+  ["invites", t("ui.invites")],
 ];
 
 const AUDIT_GROUP_OF = {
@@ -93,7 +93,7 @@ const AUDIT_GROUP_OF = {
   bot_commands: "server",
 };
 
-const CHANNEL_KIND_WORDS = { text: "text channel", voice: "voice channel", stage: "stage channel", announcement: "announcement channel", category: "category", forum: "forum channel" };
+const CHANNEL_KIND_WORDS = { get text() { return t("ui.text-channel"); }, voice: "voice channel", stage: "stage channel", announcement: "announcement channel", category: "category", forum: "forum channel" };
 
 const VOICE_MODERATION_WORDS = {
   muted: "server-muted",
@@ -129,30 +129,30 @@ function describeAudit(entry) {
     case "owner_transfer": return ["handed the server to ", member];
     case "server_rename": return label ? ["renamed the server from ", auditStrong(label), " to ", auditStrong(detail || "")] : ["renamed the server to ", auditStrong(detail || "")];
     case "server_images": return [`changed the server ${detail || "images"}`];
-    case "server_public": return [detail === "on" ? "made the server public" : "made the server private"];
+    case "server_public": return [detail === "on" ? t("ui.made-the-server-public") : t("ui.made-the-server-private")];
     case "game_tags": return detail ? ["set the server's games to ", auditStrong(detail)] : ["cleared the server's games"];
-    case "rules": return [detail === "removed" ? "removed the server rules" : "updated the server rules"];
-    case "onboarding": return [detail === "removed" ? "removed the onboarding questions" : "updated the onboarding questions"];
+    case "rules": return [detail === "removed" ? t("ui.removed-the-server-rules") : t("ui.updated-the-server-rules")];
+    case "onboarding": return [detail === "removed" ? t("ui.removed-the-onboarding-questions") : t("ui.updated-the-onboarding-questions")];
     case "auto_mod": return ["changed the auto moderation rules"];
     case "afk_channel": return label ? ["set the AFK channel to ", channel] : ["turned off the AFK channel"];
     case "afk_timeout": return detail ? [`set the server AFK timer to ${auditCount(count, "minute", "minutes")}`] : ["turned off the server AFK timer"];
     case "expressions": return ["changed who can share emoji and upload sounds"];
-    case "sound_sharing": return [detail === "on" ? "let members play this server's sounds in their other servers" : "stopped sharing this server's sounds"];
-    case "join_sounds": return [detail === "on" ? "turned on join sounds in voice channels" : "turned off join sounds in voice channels"];
+    case "sound_sharing": return [detail === "on" ? t("ui.let-members-play-this-server-s-sounds-in") : t("ui.stopped-sharing-this-server-s-sounds")];
+    case "join_sounds": return [detail === "on" ? t("ui.turned-on-join-sounds-in-voice-channels") : t("ui.turned-off-join-sounds-in-voice-channels")];
     case "server_tag": return detail ? ["set the server tag to ", auditStrong(detail)] : ["removed the server tag"];
     case "server_pet": return detail ? ["named the server astronaut ", auditStrong(detail)] : ["said goodbye to the server astronaut"];
     case "upload_limit": return detail ? ["limited files to ", auditStrong(detail)] : ["removed the file size limit"];
-    case "text_to_speech": return [detail === "on" ? "turned on text-to-speech messages" : "turned off text-to-speech messages"];
+    case "text_to_speech": return [detail === "on" ? "turned on text-to-speech messages" : t("ui.turned-off-text-to-speech-messages")];
     case "tip_jar": return detail ? ["set the tip jar to ", auditStrong(tipJarText(detail))] : ["removed the tip jar"];
     case "blocked_homes": return detail ? ["blocked people from ", auditStrong(String(detail))] : ["unblocked every server"];
     case "sync_host": return detail ? ["moved syncing to ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["moved syncing back to Commy.chat"];
     case "file_store": return detail ? ["turned on file backup at ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["turned off file backup"];
     case "gif_key": return detail ? ["gave GIF search a ", auditStrong(detail === "giphy" ? "GIPHY" : "KLIPY"), " key"] : ["removed the GIF search key"];
     case "game_db": return detail === "set" ? ["connected the IGDB game database"] : ["disconnected the IGDB game database"];
-    case "join_approval": return [detail === "on" ? "asked new people to wait until a moderator lets them in" : "let new people join straight away"];
+    case "join_approval": return [detail === "on" ? t("ui.asked-new-people-to-wait-until-a") : t("ui.let-new-people-join-straight-away")];
     case "join_admit": return ["let ", member, " in"];
     case "join_turn_away": return ["turned away ", member];
-    case "activities": return [detail === "on" ? "turned on Activities in voice channels" : "turned off Activities in voice channels"];
+    case "activities": return [detail === "on" ? t("ui.turned-on-activities-in-voice-channels") : t("ui.turned-off-activities-in-voice-channels")];
     case "channel_create": return [`created the ${CHANNEL_KIND_WORDS[detail] || "channel"} `, channel];
     case "channel_delete": return label ? ["deleted the channel ", channel] : ["deleted a channel"];
     case "channel_rename": return ["renamed the channel ", channel, " to ", auditStrong(detail || "")];
@@ -160,7 +160,7 @@ function describeAudit(entry) {
     case "channel_move": return ["moved the channel ", channel];
     case "channel_limit": return count > 0 ? [`set a limit of ${auditCount(count, "person", "people")} in `, channel] : ["removed the people limit in ", channel];
     case "channel_slow_mode": return count > 0 ? [`set slow mode to ${auditCount(count, "second", "seconds")} in `, channel] : ["turned off slow mode in ", channel];
-    case "channel_banner": return [detail === "removed" ? "removed the banner of " : "changed the banner of ", channel];
+    case "channel_banner": return [detail === "removed" ? t("ui.removed-the-banner-of") : t("ui.changed-the-banner-of"), channel];
     case "channel_color": return [detail ? "changed the color of " : "removed the color of ", channel];
     case "channel_kind": return ["turned ", channel, ` into a ${CHANNEL_KIND_WORDS[detail] || "channel"}`];
     case "forum_tags": return count > 0 ? [`set ${auditCount(count, "post tag", "post tags")} in `, channel] : ["removed the post tags in ", channel];
@@ -200,11 +200,11 @@ function describeAudit(entry) {
     case "poll_close": return ["closed a poll in ", channel];
     case "message_delete": return detail ? ["deleted a message by ", member, " in ", auditStrong(detail)] : ["deleted a message by ", member];
     case "thread_rename": return detail ? ["named a thread in ", channel, " ", auditStrong(detail)] : ["cleared a thread's name in ", channel];
-    case "thread_archive": return [detail === "on" ? "archived a thread in " : "reopened a thread in ", channel];
-    case "thread_lock": return [detail === "on" ? "locked a thread in " : "unlocked a thread in ", channel];
+    case "thread_archive": return [detail === "on" ? t("ui.archived-a-thread-in") : t("ui.reopened-a-thread-in"), channel];
+    case "thread_lock": return [detail === "on" ? t("ui.locked-a-thread-in") : t("ui.unlocked-a-thread-in"), channel];
     case "invite_create": return ["created the invite ", named("a link")];
     case "invite_revoke": return detail ? ["revoked the invite ", named("a link"), " made by ", auditStrong(detail)] : ["revoked the invite ", named("a link")];
-    case "invite_background": return [detail === "removed" ? "removed the invite background" : "changed the invite background"];
+    case "invite_background": return [detail === "removed" ? t("ui.removed-the-invite-background") : t("ui.changed-the-invite-background")];
     case "bot_commands": return count > 0 ? [`registered ${auditCount(count, "slash command", "slash commands")}`] : ["removed its slash commands"];
     default: return ["made a change"];
   }
@@ -225,7 +225,7 @@ function filterAudit(entries, { group = "all", by = "" } = {}) {
 function auditGroupLabel(kind) {
   const group = auditGroup(kind);
   const found = AUDIT_FILTERS.find(([id]) => id === group);
-  return found ? found[1] : "Server settings";
+  return found ? found[1] : t("ui.server-settings-2");
 }
 
 function auditWhen(at, locale) {

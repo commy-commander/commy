@@ -1,9 +1,9 @@
 const PLUS_KEYS = [
-  { id: "file", label: "File", icon: "file", press: "cm-file", files: true },
-  { id: "image", label: "Image", icon: "image", press: "cm-photo", files: true },
-  { id: "emoji", label: "Emoji", icon: "smile", press: "emoji-btn" },
-  { id: "poll", label: "Poll", icon: "chart-bar-big", press: "cm-poll", poll: true },
-  { id: "voice", label: "Voice", icon: "mic", press: "cm-voice", voice: true, title: "Record a Voice Message" },
+  { id: "file", get label() { return t("ui.file"); }, icon: "file", press: "cm-file", files: true },
+  { id: "image", get label() { return t("ui.image"); }, icon: "image", press: "cm-photo", files: true },
+  { id: "emoji", get label() { return t("ui.emoji"); }, icon: "smile", press: "emoji-btn" },
+  { id: "poll", get label() { return t("ui.poll"); }, icon: "chart-bar-big", press: "cm-poll", poll: true },
+  { id: "voice", get label() { return t("settings.tab.voice"); }, icon: "mic", press: "cm-voice", voice: true, get title() { return t("ui.record-a-voice-message"); } },
 ];
 const FIELD_KEYS = [
   { press: "text-style-btn", icon: "a-large-small" },
@@ -19,7 +19,7 @@ function buildPlusKeys() {
   keys.id = "pt-plus";
   keys.hidden = true;
   keys.setAttribute("role", "group");
-  keys.setAttribute("aria-label", "Attach");
+  keys.setAttribute("aria-label", t("ui.attach"));
   for (const item of PLUS_KEYS) {
     const key = studioNode("button", "pt-plus-k", `<span class="ic"><i data-i="${item.icon}"></i></span><span class="lb">${item.label}</span>`);
     key.type = "button";
@@ -53,7 +53,7 @@ function foldChatBar(open) {
   }
   bar.classList.toggle("pt-plus-open", open);
   $("attach-btn").setAttribute("aria-expanded", String(open));
-  $("attach-btn").setAttribute("aria-label", open ? "Close" : "Attach");
+  $("attach-btn").setAttribute("aria-label", open ? t("settings.close") : t("ui.attach"));
   for (const key of bar.querySelectorAll(".pt-plus-k")) key.tabIndex = open ? 0 : -1;
   $("message-input").tabIndex = open ? -1 : 0;
   $("send-btn").tabIndex = open ? -1 : 0;

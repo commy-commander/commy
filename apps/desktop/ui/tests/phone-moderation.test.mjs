@@ -1,10 +1,11 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("styles", "phone-moderation.css");
-const app = read("scripts", "app.js");
+const app = englishSource(read("scripts", "app.js"));
 const html = read("index.html");
 const SLIM = 'html[data-look="studio"][data-fit="slim"]';
 const P = `${SLIM} .settings-layer .settings-content`;

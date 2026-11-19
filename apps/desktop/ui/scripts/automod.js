@@ -35,8 +35,8 @@ function termsUsage(terms) {
 }
 
 function termsUsageText(usage) {
-  if (usage.tooLong.length) return `Too long: ${usage.tooLong[0]}`;
-  return `${usage.count} / ${AUTOMOD_MAX_TERMS} words, ${usage.bytes} / ${AUTOMOD_MAX_TERMS_BYTES} characters`;
+  if (usage.tooLong.length) return t("ui.too-long", { value: usage.tooLong[0] });
+  return t("ui.words-characters", { count: usage.count, AUTOMOD_MAX_TERMS, bytes: usage.bytes, AUTOMOD_MAX_TERMS_BYTES });
 }
 
 function burstKey(burst) {
@@ -44,11 +44,11 @@ function burstKey(burst) {
 }
 
 function burstLabel(burst) {
-  return burst ? `More than ${burst.messages} messages in ${burst.seconds} seconds` : "Off";
+  return burst ? t("ui.more-than-messages-in-seconds", { messages: burst.messages, seconds: burst.seconds }) : t("ui.off");
 }
 
 function burstOptions(current) {
-  const options = [{ value: "off", label: "Off" }, ...BURST_CHOICES.map(b => ({ value: burstKey(b), label: burstLabel(b) }))];
+  const options = [{ value: "off", label: t("ui.off") }, ...BURST_CHOICES.map(b => ({ value: burstKey(b), label: burstLabel(b) }))];
   if (current && !options.some(o => o.value === burstKey(current))) {
     options.push({ value: burstKey(current), label: burstLabel(current) });
   }
@@ -62,7 +62,7 @@ function burstFromKey(key) {
 
 function mentionOptions(current) {
   const values = MENTION_LIMIT_CHOICES.includes(current || 0) ? MENTION_LIMIT_CHOICES : [...MENTION_LIMIT_CHOICES, current];
-  return values.map(n => ({ value: String(n), label: n ? `More than ${n} mentions` : "Off" }));
+  return values.map(n => ({ value: String(n), label: n ? t("ui.more-than-mentions", { n }) : t("ui.off") }));
 }
 
 function automodPayload({ termsText, blockLinks, mentionLimit, burst, exemptRoles }) {
@@ -77,18 +77,18 @@ function automodPayload({ termsText, blockLinks, mentionLimit, burst, exemptRole
 }
 
 function automodSummary(rules) {
-  if (!rules) return "Off";
+  if (!rules) return t("ui.off");
   const parts = [];
   const terms = (rules.blocked_terms || []).length;
-  if (terms) parts.push(terms === 1 ? "1 blocked word" : `${terms} blocked words`);
+  if (terms) parts.push(terms === 1 ? t("ui.1-blocked-word") : t("ui.blocked-words-2", { terms }));
   if (rules.block_links) parts.push("links blocked");
   if (rules.max_mentions) parts.push(`mention limit ${rules.max_mentions}`);
   if (rules.burst) parts.push(`flood limit ${rules.burst.messages} in ${rules.burst.seconds}s`);
-  return parts.length ? parts.join(", ") : "Off";
+  return parts.length ? parts.join(", ") : t("ui.off");
 }
 
 function heldLabel(reason) {
-  return reason ? `Held: ${reason}` : "Held";
+  return reason ? t("ui.held", { reason }) : t("ui.held-2");
 }
 
 if (typeof module !== "undefined" && module.exports) {

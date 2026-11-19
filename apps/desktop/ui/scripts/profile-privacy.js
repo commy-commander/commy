@@ -1,7 +1,7 @@
 const PROFILE_POLICIES = [
-  { value: "everyone", label: "Everyone" },
-  { value: "shared_servers", label: "Friends and servers we share" },
-  { value: "friends", label: "Friends only" },
+  { value: "everyone", get label() { return t("ui.everyone"); } },
+  { value: "shared_servers", get label() { return t("ui.friends-and-servers-we-share"); } },
+  { value: "friends", get label() { return t("ui.friends-only"); } },
 ];
 
 const PROFILE_DETAIL_FIELDS = ["about", "banner", "pronouns", "activity", "activity_cover", "activity_since"];
@@ -37,7 +37,7 @@ function friendNoteState(raw) {
 
 function friendRequestLine(request) {
   const note = request && request.note ? cleanFriendNote(request.note) : "";
-  return note || "Wants to be friends";
+  return note || t("ui.wants-to-be-friends-3");
 }
 
 if (typeof module !== "undefined" && module.exports) {

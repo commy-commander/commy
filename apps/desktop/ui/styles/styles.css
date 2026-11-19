@@ -1490,7 +1490,7 @@ body.voice-dragging, body.voice-dragging * { cursor: grabbing !important; }
 .user-meta:hover { background: var(--bg-hover); }
 
 .slider-row { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
-.slider-row .setting-title span { color: var(--text-muted); font-weight: 400; font-size: 13px; }
+.slider-row .setting-title span[id] { color: var(--text-muted); font-weight: 400; font-size: 13px; }
 input[type="range"] {
   appearance: none;
   height: 8px;

@@ -37,8 +37,8 @@ function voiceMoveLanded(server, userId, roomId) {
 
 function voiceMoveStuckText(name, roomName) {
   return roomName
-    ? `${name} has not switched to ${roomName} yet. Their Commy may need an update.`
-    : `${name} is still in voice. Their Commy may need an update.`;
+    ? t("ui.has-not-switched-to-yet-their-commy-may", { name, roomName })
+    : t("ui.is-still-in-voice-their-commy-may-need", { name });
 }
 
 if (typeof module !== "undefined" && module.exports) {

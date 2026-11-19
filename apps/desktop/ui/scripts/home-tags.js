@@ -64,9 +64,9 @@ function cleanHomeInput(raw) {
 
 function withBlockedHome(homes, raw) {
   const home = cleanHomeInput(raw);
-  if (!home) return { homes, error: "Type a server address like example.org" };
+  if (!home) return { homes, error: t("ui.type-a-server-address-like-example-org") };
   if ((homes || []).includes(home)) return { homes, error: null };
-  if ((homes || []).length >= MAX_BLOCKED_HOMES) return { homes, error: `You can block up to ${MAX_BLOCKED_HOMES} servers` };
+  if ((homes || []).length >= MAX_BLOCKED_HOMES) return { homes, error: t("ui.you-can-block-up-to-servers", { MAX_BLOCKED_HOMES }) };
   return { homes: [...(homes || []), home].sort(), error: null };
 }
 

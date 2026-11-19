@@ -15,19 +15,19 @@ function reportPicked(candidates) {
 
 function reportDestination(server, ownerReportable) {
   const host = (server && server.sync_host) || REPORT_HOME_OPERATOR;
-  const operator = `the people who run ${host}, where this server's messages are stored`;
+  const operator = t("ui.the-people-who-run-where-this-server-s", { host });
   return ownerReportable
-    ? `Your report goes privately to the server owner and to ${operator}. They will see who sent it and the messages you include.`
-    : `Your report goes privately to ${operator}. They will see who sent it and the messages you include.`;
+    ? t("ui.your-report-goes-privately-to-the-server-2", { operator })
+    : t("ui.your-report-goes-privately-to-they-will", { operator });
 }
 
 function reportSentToast(sent) {
   const host = sent && sent.host;
-  const contact = host && host.contact ? ` Contact them at ${host.contact}.` : "";
-  if (host && sent.owner) return `Report sent to the server owner and ${host.operator}.${contact}`;
-  if (host) return `Report sent to ${host.operator}.${contact}`;
-  if (sent && sent.owner) return "Report sent to the server owner. The sync server could not take it right now.";
-  return "Report sent";
+  const contact = host && host.contact ? t("ui.contact-them-at", { contact: host.contact }) : "";
+  if (host && sent.owner) return t("ui.report-sent-to-the-server-owner-and", { operator: host.operator, contact });
+  if (host) return t("ui.report-sent-to", { operator: host.operator, contact });
+  if (sent && sent.owner) return t("ui.report-sent-to-the-server-owner-the-sync");
+  return t("ui.report-sent");
 }
 
 if (typeof module !== "undefined") {

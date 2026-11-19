@@ -1,10 +1,12 @@
 const PICKER_TABS = [
-  { kind: "emojis", label: "Emoji" },
-  { kind: "stickers", label: "Stickers" },
-  { kind: "emoticons", label: "Emoticons" },
-  { kind: "gifs", label: "GIFs" },
+  { kind: "emojis", get label() { return t("ui.emoji"); } },
+  { kind: "stickers", get label() { return t("ui.stickers"); } },
+  { kind: "emoticons", get label() { return t("ui.emoticons"); } },
+  { kind: "gifs", get label() { return t("ui.gifs"); } },
 ];
-const GIF_OFF_WORDS = "Your account server does not offer GIF search.";
+function gifOffWords() {
+  return t("ui.gif.off.lead");
+}
 
 const phonePicker = { step: false, shown: false, homes: null, drag: null };
 
@@ -13,7 +15,7 @@ function pickerTabFor(gifOpen, kind) {
 }
 
 function gifSearchOff(text) {
-  return String(text || "").trim().startsWith(GIF_OFF_WORDS);
+  return String(text || "").trim().startsWith(gifOffWords());
 }
 
 function pickerEmojiOpen() {
@@ -41,7 +43,7 @@ function buildPickerSheet() {
   const sheet = el("section", "pt-picker-sheet");
   sheet.id = "pt-picker-sheet";
   sheet.setAttribute("role", "dialog");
-  sheet.setAttribute("aria-label", "Emoji");
+  sheet.setAttribute("aria-label", t("ui.emoji"));
   const grab = el("div", "pt-picker-grab");
   grab.setAttribute("aria-hidden", "true");
   const tabs = el("div", "dtabs pt-picker-tabs");
@@ -105,7 +107,7 @@ function paintPickerTabs() {
     if (tab.dataset.kind === "gifs") tab.hidden = gifKey.classList.contains("hidden") && !pickerGifOpen();
   }
   const label = PICKER_TABS.find(tab => tab.kind === current);
-  $("pt-picker-sheet").setAttribute("aria-label", label ? label.label : "Emoji");
+  $("pt-picker-sheet").setAttribute("aria-label", label ? label.label : t("ui.emoji"));
 }
 
 function markGifOff() {
@@ -175,7 +177,7 @@ function wirePhonePicker() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { PICKER_TABS, GIF_OFF_WORDS, pickerTabFor, gifSearchOff };
+  module.exports = { PICKER_TABS, gifOffWords, pickerTabFor, gifSearchOff };
 } else {
   wirePhonePicker();
 }

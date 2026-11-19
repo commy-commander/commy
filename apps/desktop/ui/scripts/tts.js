@@ -3,9 +3,9 @@
 const TTS_COMMAND = "tts";
 const TTS_MARKER_MIME = "application/vnd.commy.tts";
 const TTS_MODES = [
-  { id: "never", label: "Never" },
-  { id: "open", label: "Only when the channel is open" },
-  { id: "all", label: "All channels" },
+  { id: "never", get label() { return t("ui.never"); } },
+  { id: "open", get label() { return t("ui.only-when-the-channel-is-open"); } },
+  { id: "all", get label() { return t("ui.all-channels"); } },
 ];
 const DEFAULT_TTS_MODE = "open";
 const TTS_RATE_MIN = 0.5;
@@ -124,14 +124,14 @@ function ttsVoiceValue(choice) {
 }
 
 function megabytes(bytes) {
-  return `${Math.max(1, Math.round(Number(bytes || 0) / 1e6))} MB`;
+  return t("ui.mb", { value: Math.max(1, Math.round(Number(bytes || 0) / 1e6)) });
 }
 
 function ttsVoiceStatus(choice, voice, progress) {
-  if (choice.kind !== "builtin" || !voice) return "Uses this device's own voices.";
-  if (voice.ready) return "Built into Commy, works offline.";
-  if (progress && progress.total > 0) return `Downloading, ${Math.min(99, Math.floor((progress.loaded / progress.total) * 100))}%`;
-  return `Downloads ${megabytes(voice.download_bytes)} the first time it speaks.`;
+  if (choice.kind !== "builtin" || !voice) return t("ui.uses-this-device-s-own-voices");
+  if (voice.ready) return t("ui.built-into-commy-works-offline");
+  if (progress && progress.total > 0) return t("ui.downloading-4", { value: Math.min(99, Math.floor((progress.loaded / progress.total) * 100)) });
+  return t("ui.downloads-the-first-time-it-speaks", { value: megabytes(voice.download_bytes) });
 }
 
 function piperTiming(inference, rate, pitch) {
@@ -180,13 +180,13 @@ function shouldSpeakIncoming({ mode, tts, deafened, viewing, blocked, presence, 
 function spokenText(authorName, content, plain) {
   const text = (plain ? plain(content || "") : String(content || "")).replace(/\s+/g, " ").trim();
   if (!text) return null;
-  const clipped = text.length > TTS_MAX_SPOKEN_CHARS ? `${text.slice(0, TTS_MAX_SPOKEN_CHARS).trim()}, and more` : text;
-  return `${authorName || "Someone"} said: ${clipped}`;
+  const clipped = text.length > TTS_MAX_SPOKEN_CHARS ? t("ui.and-more", { value: text.slice(0, TTS_MAX_SPOKEN_CHARS).trim() }) : text;
+  return t("ui.said", { value: authorName || "Someone", clipped });
 }
 
 function ttsCommandHint(item) {
-  if (!item.available) return "You can't send text-to-speech messages here";
-  return item.args ? "Send and read aloud" : "Read a message aloud for everyone";
+  if (!item.available) return t("ui.you-can-t-send-text-to-speech-messages-2");
+  return item.args ? t("ui.send-and-read-aloud") : t("ui.read-a-message-aloud-for-everyone");
 }
 
 if (typeof module !== "undefined" && module.exports) {

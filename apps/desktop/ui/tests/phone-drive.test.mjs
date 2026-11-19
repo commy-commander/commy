@@ -1,8 +1,9 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const read = (...parts) => readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = (...parts) => englishSource(readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const css = read("styles", "phone-drive.css");
 const glue = read("scripts", "phone-drive.js");
 const html = read("index.html");
@@ -40,7 +41,7 @@ test("the drive pane is the quiet well with the bold line and the app's line und
   assert.match(rule("body.mobile-app #drive-view .pt-drive-well > .i"), /width: 28px; height: 28px;/);
   assert.match(rule("body.mobile-app #drive-view .drive-empty > b"), /font: 700 17px\/1\.2 var\(--font-display\); color: var\(--header-primary\);/);
   assert.match(rule("body.mobile-app #drive-view .drive-empty > span"), /max-width: 340px;.*font: 400 14\.5px\/1\.45 var\(--font\); color: var\(--text-muted\);/);
-  assert.match(glue, /const PHONE_DRIVE_LEAD = "Open this channel in the desktop app to see its files\.";/);
+  assert.match(glue, /function phoneDriveLead\(\) \{\n  return "Open this channel in the desktop app to see its files\.";\n\}/);
   assert.match(glue, /if \(!studioSlim\(\) \|\| driveWorksHere\(\)\) return;/);
   assert.match(glue, /studioIconMarkup\("folder"\)/);
 });

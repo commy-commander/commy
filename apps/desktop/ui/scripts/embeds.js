@@ -90,12 +90,12 @@ function embedMode(url, proxied = true) {
 
 function imageGateText(host) {
   return {
-    title: `Image from ${host}`,
-    load: "Load",
-    loading: "Loading...",
-    retry: "Try again",
-    hint: `Loading fetches it from ${host}, so that site sees your address.`,
-    failed: `The image from ${host} could not be loaded.`,
+    title: t("ui.image-from", { host }),
+    load: t("ui.load"),
+    loading: t("ui.loading-2"),
+    retry: t("claim.retry"),
+    hint: t("ui.loading-fetches-it-from-so-that-site", { host }),
+    failed: t("ui.the-image-from-could-not-be-loaded", { host }),
   };
 }
 
@@ -106,12 +106,12 @@ function loadsImageOnItsOwn(att) {
 
 function largeImageGateText(size) {
   return {
-    title: `Image, ${size}`,
-    load: "Load",
-    loading: "Loading...",
-    retry: "Try again",
-    hint: "Images over 5 MB load when you click them.",
-    failed: "The image could not be loaded.",
+    title: t("ui.image-2", { size }),
+    load: t("ui.load"),
+    loading: t("ui.loading-2"),
+    retry: t("claim.retry"),
+    hint: t("ui.images-over-5-mb-load-when-you-click"),
+    failed: t("ui.the-image-could-not-be-loaded"),
   };
 }
 
@@ -127,20 +127,20 @@ function sentFileGone(error) {
 
 function missingImageText(error) {
   const reason = String(error || "").toLowerCase();
-  if (sentFileGone(reason)) return { title: "Image unavailable", hint: "Your copy is no longer on this device.", retry: "Choose File", loading: "Loading...", findAgain: true };
-  let hint = "Nobody who has it is online right now.";
-  if (reason.includes("not ready")) hint = "Commy is still connecting.";
-  else if (reason.includes("too large") || reason.includes("larger than")) hint = "It is too large to show here.";
-  else if (reason.includes("not an image")) hint = "This file is not a picture Commy can show.";
-  return { title: "Image unavailable", hint, retry: "Try again", loading: "Loading..." };
+  if (sentFileGone(reason)) return { title: t("ui.image-unavailable"), hint: t("ui.your-copy-is-no-longer-on-this-device"), retry: t("ui.choose-file"), loading: t("ui.loading-2"), findAgain: true };
+  let hint = t("ui.nobody-who-has-it-is-online-right-now");
+  if (reason.includes("not ready")) hint = t("ui.commy-is-still-connecting");
+  else if (reason.includes("too large") || reason.includes("larger than")) hint = t("ui.it-is-too-large-to-show-here");
+  else if (reason.includes("not an image")) hint = t("ui.this-file-is-not-a-picture-commy-can");
+  return { title: t("ui.image-unavailable"), hint, retry: t("claim.retry"), loading: t("ui.loading-2") };
 }
 
 function missingVideoText(error, from) {
   const reason = String(error || "");
-  if (sentFileGone(reason)) return { label: "Your copy of this video is no longer on this device", title: "Choose the file again so it plays here and for everyone else.", waiting: false, findAgain: true };
-  if (!reason.toLowerCase().includes("nobody who has")) return { label: `Could not load the video: ${reason}`, title: "", waiting: false };
-  const who = from ? `${from} or someone who played it` : "someone who played it";
-  return { label: "Nobody who has this video is online", title: `Try again when ${who} is online. Commy also tries again on its own for a few minutes.`, waiting: true };
+  if (sentFileGone(reason)) return { label: t("ui.your-copy-of-this-video-is-no-longer-on"), title: t("ui.choose-the-file-again-so-it-plays-here"), waiting: false, findAgain: true };
+  if (!reason.toLowerCase().includes("nobody who has")) return { label: t("ui.could-not-load-the-video-2", { reason }), title: "", waiting: false };
+  const who = from ? t("ui.or-someone-who-played-it", { from }) : t("ui.someone-who-played-it");
+  return { label: t("ui.nobody-who-has-this-video-is-online"), title: t("ui.try-again-when-is-online-commy-also", { who }), waiting: true };
 }
 
 function playsInline(att) {
@@ -180,9 +180,9 @@ function isBigFile(size) {
 }
 
 function downloadProgressText(done, total) {
-  if (!total) return "Downloading";
+  if (!total) return t("ui.downloading-2");
   const percent = Math.min(100, Math.floor((done / total) * 100));
-  return percent >= 100 ? "Saving" : `Downloading ${percent}%`;
+  return percent >= 100 ? t("ui.saving") : t("ui.downloading-3", { percent });
 }
 
 if (typeof module !== "undefined" && module.exports) {

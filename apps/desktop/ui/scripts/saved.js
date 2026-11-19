@@ -5,11 +5,11 @@ const HOUR_MS = 60 * MINUTE_MS;
 const TOMORROW_HOUR = 9;
 
 const REMINDER_PRESETS = [
-  { id: "20m", label: "In 20 minutes" },
-  { id: "1h", label: "In 1 hour" },
-  { id: "3h", label: "In 3 hours" },
-  { id: "tomorrow", label: "Tomorrow morning" },
-  { id: "custom", label: "Pick a time" },
+  { id: "20m", get label() { return t("ui.in-20-minutes"); } },
+  { id: "1h", get label() { return t("ui.in-1-hour"); } },
+  { id: "3h", get label() { return t("ui.in-3-hours"); } },
+  { id: "tomorrow", get label() { return t("ui.tomorrow-morning"); } },
+  { id: "custom", get label() { return t("ui.pick-a-time"); } },
 ];
 
 function reminderDue(preset, nowMs) {
@@ -72,7 +72,7 @@ function messageEntry(message, context) {
 
 function savedOrigin(entry) {
   if (!entry) return "";
-  if (entry.dm) return `Direct message with ${entry.dm_name || "someone"}`;
+  if (entry.dm) return t("ui.direct-message-with", { value: entry.dm_name || "someone" });
   const server = entry.server_name || "a server";
   return entry.channel_name ? `${server} · #${entry.channel_name}` : server;
 }
@@ -81,8 +81,8 @@ function savedExcerpt(entry, plain) {
   const raw = (plain || (s => s))(entry && entry.content ? entry.content : "");
   const text = raw.replace(/(\*\*|__|~~|`)/g, "").replace(/^#{1,6}\s+/gm, "").replace(/\s+/g, " ").trim();
   if (text) return text;
-  if (entry && entry.attachment) return `Attachment: ${entry.attachment}`;
-  return "No text";
+  if (entry && entry.attachment) return t("ui.attachment", { attachment: entry.attachment });
+  return t("ui.no-text");
 }
 
 function savedTarget(entry) {
@@ -94,39 +94,39 @@ function savedTarget(entry) {
 
 function reminderLabel(dueMs, nowMs) {
   const diff = Number(dueMs) - nowMs;
-  if (diff <= 0) return "Due now";
+  if (diff <= 0) return t("ui.due-now");
   const due = new Date(dueMs);
   const now = new Date(nowMs);
-  const time = due.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (diff < HOUR_MS) return `In ${Math.max(1, Math.round(diff / MINUTE_MS))} min`;
-  if (due.toDateString() === now.toDateString()) return `Today ${time}`;
+  const time = due.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" });
+  if (diff < HOUR_MS) return t("ui.in-min", { value: Math.max(1, Math.round(diff / MINUTE_MS)) });
+  if (due.toDateString() === now.toDateString()) return t("ui.today-2", { time });
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
-  if (due.toDateString() === tomorrow.toDateString()) return `Tomorrow ${time}`;
-  return `${due.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+  if (due.toDateString() === tomorrow.toDateString()) return t("ui.tomorrow", { time });
+  return `${due.toLocaleDateString(dateLocale(), { month: "short", day: "numeric" })} ${time}`;
 }
 
 function reminderNotice(reminder) {
   const entry = reminder && reminder.entry;
-  if (!entry) return { title: "Reminder", body: "" };
-  const who = entry.author_name || "Someone";
+  if (!entry) return { title: t("ui.reminder"), body: "" };
+  const who = entry.author_name || t("ui.someone");
   const where = entry.dm ? "" : entry.channel_name ? ` in #${entry.channel_name}` : "";
-  return { title: `Reminder: ${who}${where}`, body: savedExcerpt(entry).slice(0, 200) };
+  return { title: t("ui.reminder-2", { who, where }), body: savedExcerpt(entry).slice(0, 200) };
 }
 
 function savedButtonTitle(reminders, nowMs) {
   const upcoming = (reminders || []).filter(r => Number(r.due) > nowMs).length;
-  if (!upcoming) return "Saved Messages";
-  return upcoming === 1 ? "Saved Messages · 1 reminder" : `Saved Messages · ${upcoming} reminders`;
+  if (!upcoming) return t("ui.saved-messages");
+  return upcoming === 1 ? t("ui.saved-messages-1-reminder") : t("ui.saved-messages-reminders", { upcoming });
 }
 
 function savedSummary(saved, reminders, nowMs) {
   const messages = (saved || []).length;
   const upcoming = (reminders || []).filter(r => Number(r.due) > nowMs).length;
-  if (!messages && !upcoming) return "Nothing saved yet";
+  if (!messages && !upcoming) return t("ui.nothing-saved-yet");
   const parts = [];
-  if (messages) parts.push(messages === 1 ? "1 message" : `${messages} messages`);
-  if (upcoming) parts.push(upcoming === 1 ? "1 reminder" : `${upcoming} reminders`);
+  if (messages) parts.push(t(messages === 1 ? "ui.n.messages.one" : "ui.n.messages.many", { count: messages }));
+  if (upcoming) parts.push(t(upcoming === 1 ? "ui.n.reminders.one" : "ui.n.reminders.many", { count: upcoming }));
   return parts.join(" · ");
 }
 

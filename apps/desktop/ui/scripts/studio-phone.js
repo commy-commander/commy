@@ -1,10 +1,10 @@
 const STUDIO_TABS = [
-  { id: "home", label: "Home", icon: "house" },
-  { id: "messages", label: "Messages", icon: "message-circle" },
-  { id: "live", label: "Live", icon: "radio" },
-  { id: "you", label: "You", icon: "user" },
+  { id: "home", get label() { return t("ui.home"); }, icon: "house" },
+  { id: "messages", get label() { return t("ui.messages"); }, icon: "message-circle" },
+  { id: "live", get label() { return t("ui.live-2"); }, icon: "radio" },
+  { id: "you", get label() { return t("settings.group.you"); }, icon: "user" },
 ];
-const STUDIO_TITLES = { messages: "Messages", live: "Live", you: "You" };
+const STUDIO_TITLES = { get messages() { return t("ui.messages"); }, get live() { return t("ui.live-2"); }, get you() { return t("settings.group.you"); } };
 const STUDIO_LIVE_REFRESH_MS = 15000;
 const ROOM_WANTED_MS = 60000;
 const STUDIO_HOME_WORDS = { "Server Rules": "Rules", "Text Channels": "Text channels", "Voice Channels": "Voice channels" };
@@ -82,11 +82,11 @@ function horizonMarkup() {
 <linearGradient id="hzn-g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="390" y2="0"><stop offset="0" style="stop-color:var(--tint-1)" stop-opacity="0"/><stop offset=".14" style="stop-color:var(--tint-1)"/><stop offset=".7" style="stop-color:var(--accent-lit)"/><stop offset="1" style="stop-color:var(--tint-1)" stop-opacity="0"/></linearGradient>
 <linearGradient id="hzn-hot" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="124" y2="0"><stop offset="0" style="stop-color:var(--white)" stop-opacity="0"/><stop offset=".5" style="stop-color:var(--white)" stop-opacity=".85"/><stop offset="1" style="stop-color:var(--white)" stop-opacity="0"/></linearGradient>
 </defs><path class="glow"/><path class="core" stroke="url(#hzn-g)"/><path class="hot" stroke="url(#hzn-hot)"/></svg>
-<div class="hzn-tabs" role="tablist" aria-label="Places">${tabs}</div>
+<div class="hzn-tabs" role="tablist" aria-label="Places" data-i18n-aria-label="ui.places">${tabs}</div>
 <i class="hzn-tick"></i>
 <div class="hzn-voice">
-<div class="ks"><button type="button" class="key sq tap mic" aria-label="Mute"><i data-i="mic"></i><i class="led"></i></button><button type="button" class="key sq tap danger hang" aria-label="Hang up"><i data-i="phone-off"></i></button></div>
-<button type="button" class="open" aria-label="Voice controls"><i data-i="bars"></i><span class="open-name"></span></button>
+<div class="ks"><button type="button" class="key sq tap mic" aria-label="Mute" data-i18n-aria-label="ui.mute"><i data-i="mic"></i><i class="led"></i></button><button type="button" class="key sq tap danger hang" aria-label="Hang up" data-i18n-aria-label="ui.hang-up"><i data-i="phone-off"></i></button></div>
+<button type="button" class="open" aria-label="Voice controls" data-i18n-aria-label="ui.voice-controls"><i data-i="bars"></i><span class="open-name"></span></button>
 </div>
 <div class="hzn-room">${ROOM_KEYS.map(roomKeyMarkup).join("")}</div>`;
 }
@@ -98,20 +98,20 @@ function roomKeyMarkup(key) {
 }
 
 function voiceSheetMarkup() {
-  return `<h3>Voice</h3>
+  return `<h3 data-i18n="settings.tab.voice">Voice</h3>
 <div class="arow conn" id="pt-voice-conn">${studioDockSignalMarkup()}<span class="l"><b></b><small></small></span></div>
-<button type="button" class="arow" data-caret="mute-caret"><i data-i="mic"></i><span class="l">Microphone</span><small id="pt-voice-mic"></small></button>
-<button type="button" class="arow" data-caret="deafen-caret"><i data-i="headphones"></i><span class="l">Speaker</span><small id="pt-voice-out"></small></button>
-<button type="button" class="arow" data-caret="camera-caret"><i data-i="video"></i><span class="l">Camera</span><small id="pt-voice-cam"></small></button>
+<button type="button" class="arow" data-caret="mute-caret"><i data-i="mic"></i><span class="l" data-i18n="ui.microphone">Microphone</span><small id="pt-voice-mic"></small></button>
+<button type="button" class="arow" data-caret="deafen-caret"><i data-i="headphones"></i><span class="l" data-i18n="ui.speaker">Speaker</span><small id="pt-voice-out"></small></button>
+<button type="button" class="arow" data-caret="camera-caret"><i data-i="video"></i><span class="l" data-i18n="settings.tab.camera">Camera</span><small id="pt-voice-cam"></small></button>
 <button type="button" class="arow" id="pt-voice-share" data-press="share-btn"><i data-i="monitor-up"></i><span class="l"></span></button>
-<button type="button" class="arow" id="pt-voice-ink" role="switch" aria-checked="false"><i data-i="pencil"></i><span class="l">Let viewers draw</span><i class="tog"></i></button>
+<button type="button" class="arow" id="pt-voice-ink" role="switch" aria-checked="false"><i data-i="pencil"></i><span class="l" data-i18n="ui.let-viewers-draw">Let viewers draw</span><i class="tog"></i></button>
 <button type="button" class="arow" id="pt-voice-act" data-press="vp-activities"><i data-i="gamepad-2"></i><span class="l"></span></button>`;
 }
 
 function roomMarkup() {
   return `<header class="pt-room-head">
-<button type="button" class="pt-room-down" id="pt-room-down" aria-label="Back, and stay in the room"><i data-i="chevron-down"></i></button>
-<div class="t"><b><span id="pt-room-name"></span><span class="live hidden" id="pt-room-live">Live</span></b><small id="pt-room-sub"></small></div>
+<button type="button" class="pt-room-down" id="pt-room-down" aria-label="Back, and stay in the room" data-i18n-aria-label="ui.back-and-stay-in-the-room"><i data-i="chevron-down"></i></button>
+<div class="t"><b><span id="pt-room-name"></span><span class="live hidden" id="pt-room-live" data-i18n="ui.live-2">Live</span></b><small id="pt-room-sub"></small></div>
 <button type="button" class="sig" id="pt-room-sig" aria-haspopup="dialog" aria-expanded="false">${studioDockSignalMarkup()}<span id="pt-room-sig-word"></span></button>
 </header>
 <div class="pt-room-body"><div class="pt-room-streams" id="pt-room-streams"></div><div class="pt-room-streams pt-room-cams" id="pt-room-cams"></div><div class="pt-room-people" id="pt-room-people"></div><div class="pt-aud hidden" id="pt-room-aud"><div class="pt-aud-label" id="pt-room-aud-label"></div><div class="pt-aud-chips" id="pt-room-aud-chips"></div></div></div>`;
@@ -123,51 +123,51 @@ function watchMarkup() {
     return `<button type="button" class="key sq ${id === "mic" ? "lg cream mic" : "tap"}" data-room-key="${id}" aria-label="${spec.label}"><i data-i="${spec.icon}"></i>${id === "deafen" ? '<i class="led"></i>' : ""}</button>`;
   };
   return `<div class="winfo">
-<button type="button" class="key sq tap pt-watch-down" id="pt-watch-down" aria-label="Back to the room"><i data-i="chevron-down"></i></button>
-<div class="wcard"><div class="t"><span class="live">Live</span><span id="pt-watch-title"></span></div><div class="s"><i data-i="volume-2"></i><span id="pt-watch-room"></span><span class="sg" id="pt-watch-sig">${studioDockSignalMarkup()}</span></div></div>
+<button type="button" class="key sq tap pt-watch-down" id="pt-watch-down" aria-label="Back to the room" data-i18n-aria-label="ui.back-to-the-room"><i data-i="chevron-down"></i></button>
+<div class="wcard"><div class="t"><span class="live" data-i18n="ui.live-2">Live</span><span id="pt-watch-title"></span></div><div class="s"><i data-i="volume-2"></i><span id="pt-watch-room"></span><span class="sg" id="pt-watch-sig">${studioDockSignalMarkup()}</span></div></div>
 <span class="stack" id="pt-watch-people"></span>
 </div>
 <div class="bubbles" id="pt-watch-bubbles"></div>
 <div class="ctl">${["sounds", "camera", "deafen", "mic"].map(key).join("")}</div>
-<div class="wbar"><button type="button" class="key sq tap danger hang" data-room-key="leave" aria-label="Hang up"><i data-i="phone-off"></i></button><button type="button" class="wfield" id="pt-watch-field"></button></div>`;
+<div class="wbar"><button type="button" class="key sq tap danger hang" data-room-key="leave" aria-label="Hang up" data-i18n-aria-label="ui.hang-up"><i data-i="phone-off"></i></button><button type="button" class="wfield" id="pt-watch-field"></button></div>`;
 }
 
 function youMarkup() {
   return `<div class="acct slab">
-<button type="button" class="key sq tap edit" id="pt-edit" aria-label="Edit profile"><i data-i="pencil"></i></button>
+<button type="button" class="key sq tap edit" id="pt-edit" aria-label="Edit profile" data-i18n-aria-label="ui.edit-profile-2"><i data-i="pencil"></i></button>
 <span class="avatar" id="pt-me-avatar"></span>
 <div class="t"><b id="pt-me-name"></b><button type="button" class="presence" id="pt-presence"><span class="pw" id="pt-me-status"></span><span class="pend" id="pt-me-until"></span><i data-i="chevron-down" class="pchev"></i></button></div>
 </div>
 <div class="set slab">
-<div class="sec lbl">Appearance</div>
-<div class="srow"><i data-i="sun"></i><span class="l">Theme</span>
-<div class="seg" role="group" aria-label="Theme"><button type="button" class="key tap" data-theme-choice="dark" aria-pressed="false"><i class="led"></i>Night</button><button type="button" class="key tap" data-theme-choice="light" aria-pressed="false"><i class="led"></i>Day</button></div>
+<div class="sec lbl" data-i18n="settings.tab.appearance">Appearance</div>
+<div class="srow"><i data-i="sun"></i><span class="l" data-i18n="accessibility.theme">Theme</span>
+<div class="seg" role="group" aria-label="Theme" data-i18n-aria-label="accessibility.theme"><button type="button" class="key tap" data-theme-choice="dark" aria-pressed="false"><i class="led"></i><span data-i18n="ui.night">Night</span></button><button type="button" class="key tap" data-theme-choice="light" aria-pressed="false"><i class="led"></i><span data-i18n="ui.day">Day</span></button></div>
 </div>
-<button type="button" class="srow" id="pt-glass" role="switch" aria-checked="false"><i data-i="layers"></i><span class="l">Glass<small>Off is lighter on the battery</small></span><i class="tog"></i></button>
-<div class="sec lbl" id="pt-notify-lbl">Notify me about</div>
+<button type="button" class="srow" id="pt-glass" role="switch" aria-checked="false"><i data-i="layers"></i><span class="l"><span data-i18n="ui.glass">Glass</span><small data-i18n="ui.off-is-lighter-on-the-battery">Off is lighter on the battery</small></span><i class="tog"></i></button>
+<div class="sec lbl" id="pt-notify-lbl" data-i18n="ui.notify-me-about">Notify me about</div>
 <div class="picks" role="radiogroup" aria-labelledby="pt-notify-lbl">${NOTIFY_PICKS.map(pick => `<button type="button" class="srow pick" role="radio" aria-checked="false" data-notify="${pick.level}"><i data-i="${pick.icon}"></i><span class="l">${pick.label}</span><i data-i="check" class="tick"></i></button>`).join("")}</div>
-<button type="button" class="srow go" id="pt-settings"><i data-i="settings"></i><span class="l">All settings</span><i data-i="chevron-right" class="chev"></i></button>
-<button type="button" class="srow go hidden" id="pt-switch-account"><i data-i="users"></i><span class="l">Switch Account</span><i data-i="chevron-right" class="chev"></i></button>
-<button type="button" class="srow go out" id="pt-sign-out"><i data-i="log-out"></i><span class="l">Sign out</span></button>
+<button type="button" class="srow go" id="pt-settings"><i data-i="settings"></i><span class="l" data-i18n="ui.all-settings">All settings</span><i data-i="chevron-right" class="chev"></i></button>
+<button type="button" class="srow go hidden" id="pt-switch-account"><i data-i="users"></i><span class="l" data-i18n="accounts.switch">Switch Account</span><i data-i="chevron-right" class="chev"></i></button>
+<button type="button" class="srow go out" id="pt-sign-out"><i data-i="log-out"></i><span class="l" data-i18n="accounts.signOut">Sign out</span></button>
 </div>`;
 }
 
 function profileMarkup() {
   const field = (label, id, max) => `<label class="fld"><span class="lbl">${label}</span><span class="in"><input type="text" id="${id}" maxlength="${max}" autocomplete="off" aria-label="${label}"></span></label>`;
-  return `<header class="phd"><button type="button" class="back" id="pt-prof-back" aria-label="Back"><i data-i="chevron-left"></i></button><h2>Profile</h2><button type="button" class="key primary save" id="pt-prof-save" disabled>Save</button></header>
+  return `<header class="phd"><button type="button" class="back" id="pt-prof-back" aria-label="Back" data-i18n-aria-label="signin.step.back"><i data-i="chevron-left"></i></button><h2 data-i18n="settings.tab.profile">Profile</h2><button type="button" class="key primary save" id="pt-prof-save" disabled data-i18n="ui.save">Save</button></header>
 <div class="pedit slab"><div class="escroll" id="pt-prof-scroll">
-<div class="eban"><div class="art" id="pt-prof-ban"></div><button type="button" class="key sq" id="pt-prof-ban-rm" aria-label="Remove banner"><i data-i="x"></i></button></div>
+<div class="eban"><div class="art" id="pt-prof-ban"></div><button type="button" class="key sq" id="pt-prof-ban-rm" aria-label="Remove banner" data-i18n-aria-label="ui.remove-banner"><i data-i="x"></i></button></div>
 <div class="eid"><span class="eav" id="pt-prof-av"></span><div class="t"><b id="pt-prof-name"></b><small id="pt-prof-sub"></small></div></div>
-<div class="epair"><button type="button" class="key" id="pt-prof-avatar"><i data-i="user"></i>Change avatar</button><button type="button" class="key" id="pt-prof-banner"><i data-i="image"></i><span id="pt-prof-banner-words">Change banner</span></button></div>
+<div class="epair"><button type="button" class="key" id="pt-prof-avatar"><i data-i="user"></i><span data-i18n="ui.change-avatar-2">Change avatar</span></button><button type="button" class="key" id="pt-prof-banner"><i data-i="image"></i><span id="pt-prof-banner-words" data-i18n="ui.change-banner">Change banner</span></button></div>
 ${field("Display name", "pt-prof-dn", 64)}
 ${field("Pronouns", "pt-prof-pro", 24)}
-<div class="fld"><span class="lbl" id="pt-prof-status-lbl">Status</span><span class="in"><button type="button" class="e" id="pt-prof-emoji" aria-label="Status emoji"></button><input type="text" id="pt-prof-status" maxlength="64" autocomplete="off" aria-labelledby="pt-prof-status-lbl"></span></div>
-<div class="fld" id="pt-prof-clear-fld"><span class="lbl">Clear after</span><button type="button" class="in pick" id="pt-prof-clear"><span class="v" id="pt-prof-clear-v"></span><i data-i="chevron-down"></i></button></div>
-<label class="fld"><span class="lbl">About me</span><span class="in area"><textarea id="pt-prof-about" maxlength="190" rows="3" aria-label="About me"></textarea><span class="afoot"><small id="pt-prof-count"></small><button type="button" class="key sq" id="pt-prof-about-emoji" aria-label="Emoji"><i data-i="smile"></i></button></span></span></label>
-<div class="fld"><span class="lbl">Server tag</span><button type="button" class="in pick" id="pt-prof-tag"><span class="v" id="pt-prof-tag-v"></span><i data-i="chevron-down"></i></button><small class="hint" id="pt-prof-tag-hint"></small></div>
-<span class="lbl g" id="pt-prof-borders-lbl">Avatar border</span>
+<div class="fld"><span class="lbl" id="pt-prof-status-lbl" data-i18n="ui.status">Status</span><span class="in"><button type="button" class="e" id="pt-prof-emoji" aria-label="Status emoji" data-i18n-aria-label="ui.status-emoji"></button><input type="text" id="pt-prof-status" maxlength="64" autocomplete="off" aria-labelledby="pt-prof-status-lbl"></span></div>
+<div class="fld" id="pt-prof-clear-fld"><span class="lbl" data-i18n="ui.clear-after">Clear after</span><button type="button" class="in pick" id="pt-prof-clear"><span class="v" id="pt-prof-clear-v"></span><i data-i="chevron-down"></i></button></div>
+<label class="fld"><span class="lbl" data-i18n="ui.about-me-2">About me</span><span class="in area"><textarea id="pt-prof-about" maxlength="190" rows="3" aria-label="About me" data-i18n-aria-label="ui.about-me-2"></textarea><span class="afoot"><small id="pt-prof-count"></small><button type="button" class="key sq" id="pt-prof-about-emoji" aria-label="Emoji" data-i18n-aria-label="ui.emoji"><i data-i="smile"></i></button></span></span></label>
+<div class="fld"><span class="lbl" data-i18n="ui.server-tag-2">Server tag</span><button type="button" class="in pick" id="pt-prof-tag"><span class="v" id="pt-prof-tag-v"></span><i data-i="chevron-down"></i></button><small class="hint" id="pt-prof-tag-hint"></small></div>
+<span class="lbl g" id="pt-prof-borders-lbl" data-i18n="ui.avatar-border-2">Avatar border</span>
 <div class="looks" id="pt-prof-borders" role="radiogroup" aria-labelledby="pt-prof-borders-lbl"></div>
-<span class="lbl g" id="pt-prof-effects-lbl">Profile effect</span>
+<span class="lbl g" id="pt-prof-effects-lbl" data-i18n="ui.profile-effect-2">Profile effect</span>
 <div class="looks" id="pt-prof-effects" role="radiogroup" aria-labelledby="pt-prof-effects-lbl"></div>
 </div></div>`;
 }
@@ -177,13 +177,13 @@ function inviteMarkup() {
 <section class="isheet" role="dialog" aria-labelledby="pt-invite-name">
 <div class="ibody">
 <div class="sico" id="pt-invite-tile" aria-hidden="true"></div>
-<small>You've been invited to join a server</small>
+<small data-i18n="ui.you-ve-been-invited-to-join-a-server">You've been invited to join a server</small>
 <b id="pt-invite-name"></b>
 <span class="ifrom" id="pt-invite-from"></span>
-<div class="iwarn hidden" id="pt-invite-warn" role="alert"><span class="iw"><i data-i="triangle-alert"></i></span><p><b id="pt-invite-warn-lead"></b><span id="pt-invite-warn-rest"></span></p></div><button type="button" class="ilearn hidden" id="pt-invite-learn" data-help="choosing">What does this mean?</button>
+<div class="iwarn hidden" id="pt-invite-warn" role="alert"><span class="iw"><i data-i="triangle-alert"></i></span><p><b id="pt-invite-warn-lead"></b><span id="pt-invite-warn-rest"></span></p></div><button type="button" class="ilearn hidden" id="pt-invite-learn" data-help="choosing" data-i18n="ui.what-does-this-mean">What does this mean?</button>
 <p class="ierr hidden" id="pt-invite-error" role="alert"></p>
 </div>
-<div class="ikeys"><button type="button" class="key lg primary" id="pt-invite-join">Join</button><button type="button" class="key lg" id="pt-invite-later">Not now</button></div>
+<div class="ikeys"><button type="button" class="key lg primary" id="pt-invite-join" data-i18n="ui.join">Join</button><button type="button" class="key lg" id="pt-invite-later" data-i18n="ui.not-now">Not now</button></div>
 </section>`;
 }
 
@@ -193,18 +193,18 @@ function buildStudioPhone() {
   title.id = "pt-title";
   const live = studioNode("section", "pt-page pt-live", '<div class="tiles" id="pt-live-tiles"></div><div class="pt-rooms" id="pt-live-rooms"></div><p class="endline" id="pt-live-end"></p>');
   live.id = "pt-live";
-  live.setAttribute("aria-label", "Live");
+  live.setAttribute("aria-label", t("ui.live-2"));
   const you = studioNode("section", "pt-page pt-you", youMarkup());
   you.id = "pt-you";
-  you.setAttribute("aria-label", "You");
+  you.setAttribute("aria-label", t("settings.group.you"));
   const profile = studioNode("section", "pt-profile", profileMarkup());
   profile.id = "pt-profile";
-  profile.setAttribute("aria-label", "Edit profile");
+  profile.setAttribute("aria-label", t("ui.edit-profile-2"));
   const scrim = el("div", "pt-scrim");
   scrim.id = "pt-scrim";
   const hold = studioNode("section", "pt-sheet pt-hold", '<div class="rx" id="pt-hold-rx"></div><div class="pt-sheet-rows" id="pt-hold-rows"></div>');
   hold.id = "pt-hold";
-  hold.setAttribute("aria-label", "Message actions");
+  hold.setAttribute("aria-label", t("ui.message-actions"));
   const pick = studioNode("section", "pt-sheet pt-pick", '<div class="pt-pick-step" id="pt-pick-step"></div><input type="datetime-local" class="pt-pick-time" id="pt-pick-time" tabindex="-1" aria-hidden="true">');
   pick.id = "pt-pick";
   pick.setAttribute("role", "dialog");
@@ -212,19 +212,19 @@ function buildStudioPhone() {
   cue.id = "pt-reply-cue";
   const bar = studioNode("nav", "hzn", horizonMarkup());
   bar.id = "horizon";
-  bar.setAttribute("aria-label", "Places");
+  bar.setAttribute("aria-label", t("ui.places"));
   const room = studioNode("section", "pt-room", roomMarkup());
   room.id = "pt-room";
-  room.setAttribute("aria-label", "Voice room");
+  room.setAttribute("aria-label", t("appearance.stackPanel.room"));
   const search = studioNode("section", "pt-sheet pt-search", '<div class="pt-search-top" id="pt-search-top"></div><div class="pt-search-body" id="pt-search-body"></div>');
   search.id = "pt-search";
-  search.setAttribute("aria-label", "Search");
+  search.setAttribute("aria-label", t("ui.search"));
   const voiceScrim = el("div", "pt-voice-scrim");
   voiceScrim.id = "pt-voice-scrim";
   const voiceSheet = studioNode("section", "pt-voice-sheet", voiceSheetMarkup());
   voiceSheet.id = "pt-voice-sheet";
   voiceSheet.setAttribute("role", "dialog");
-  voiceSheet.setAttribute("aria-label", "Voice");
+  voiceSheet.setAttribute("aria-label", t("settings.tab.voice"));
   app.append(title, live, you, profile, scrim, hold, pick, search, cue, room, voiceScrim, voiceSheet, bar);
   const watch = studioNode("div", "pt-watch", watchMarkup());
   watch.id = "pt-watch";
@@ -236,18 +236,18 @@ function buildStudioPhone() {
   buildChatBar();
   buildHomeHead();
   buildMessagesHead();
-  $("add-server-btn").dataset.ptLabel = "Add";
-  $("discover-btn").dataset.ptLabel = "Discover";
+  $("add-server-btn").dataset.ptLabel = t("ui.add");
+  $("discover-btn").dataset.ptLabel = t("ui.discover");
 }
 
 function buildHomeHead() {
   const find = studioNode("button", "key sq cream pt-find", '<i data-i="search"></i>');
   find.type = "button";
   find.id = "pt-find";
-  find.setAttribute("aria-label", "Search");
+  find.setAttribute("aria-label", t("ui.search"));
   document.querySelector(".sidebar").appendChild(find);
   $("server-name").after(studioNode("span", "pt-home-chev", '<i data-i="chevron-down"></i>'));
-  const add = el("button", "pt-sm-add", "Create Channel");
+  const add = el("button", "pt-sm-add", t("ui.create-channel"));
   add.type = "button";
   add.id = "pt-sm-add";
   $("sm-settings").before(add);
@@ -257,7 +257,7 @@ function buildMessagesHead() {
   const compose = studioNode("button", "key sq cream pt-compose", '<i data-i="square-pen"></i>');
   compose.type = "button";
   compose.id = "pt-compose";
-  compose.setAttribute("aria-label", "New message");
+  compose.setAttribute("aria-label", t("ui.new-message-2"));
   compose.onclick = () => openNewDm();
   document.querySelector(".sidebar").appendChild(compose);
   $("dm-search").after(studioNode("span", "pt-dm-find", '<i data-i="search"></i>'));
@@ -266,15 +266,15 @@ function buildMessagesHead() {
 
 function paintMessagesWords() {
   const field = $("dm-search");
-  field.placeholder = studioSlim() ? "Find a person or a chat" : field.dataset.ptTyped;
+  field.placeholder = studioSlim() ? t("ui.find-a-person-or-a-chat") : field.dataset.ptTyped;
 }
 
 function waitCard(row) {
   row.classList.add("pt-wait");
   const note = row.querySelector(".friend-note");
-  note.before(el("div", "pt-wait-line", "wants to be friends"));
+  note.before(el("div", "pt-wait-line", t("ui.wants-to-be-friends")));
   note.classList.toggle("hidden", !note.title);
-  row.querySelector(".friend-yes").appendChild(el("span", "pt-yes-word", "Accept"));
+  row.querySelector(".friend-yes").appendChild(el("span", "pt-yes-word", t("ui.accept")));
   row.setAttribute("role", "button");
   row.onclick = e => {
     if (e.target.closest("button")) return;
@@ -310,8 +310,8 @@ function liveFriend(id) {
 function decorateFriendRow(row) {
   const room = liveFriend(row.dataset.person);
   if (room) {
-    row.querySelector(".dm-name").appendChild(el("span", "live", "Live"));
-    row.querySelector(".dm-preview").textContent = `In ${roomChannelName(room)}, sharing a screen`;
+    row.querySelector(".dm-name").appendChild(el("span", "live", t("ui.live-2")));
+    row.querySelector(".dm-preview").textContent = t("ui.in-sharing-a-screen", { value: roomChannelName(room) });
   }
   row.classList.toggle("pt-off", Boolean(row.querySelector(".presence-dot.offline")));
   row.appendChild(studioNode("span", "pt-dm-side", '<i data-i="chevron-right"></i>'));
@@ -381,7 +381,7 @@ function buildChatHeader() {
   const title = el("button", "pt-chat-title");
   title.id = "pt-chat-title";
   title.type = "button";
-  title.setAttribute("aria-label", "Channel options");
+  title.setAttribute("aria-label", t("ui.channel-options"));
   title.setAttribute("aria-haspopup", "dialog");
   const chip = studioNode("button", "key tap pt-room-chip", '<i data-i="bars"></i><span id="pt-room-chip-name"></span>');
   chip.id = "pt-room-chip";
@@ -836,13 +836,13 @@ function syncHorizonVoice() {
     decorateRooms();
   }
   h.mic.classList.toggle("muted", muted);
-  h.mic.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+  h.mic.setAttribute("aria-label", muted ? t("ui.unmute") : t("ui.mute"));
   if (h.mic.dataset.shown !== String(muted)) {
     h.mic.dataset.shown = String(muted);
     h.mic.querySelector(".i").outerHTML = StudioIcons.markup(muted ? "mic-off" : "mic");
   }
   h.open.querySelector(".open-name").textContent = name;
-  h.open.setAttribute("aria-label", name ? `Open ${name}` : "Open the voice room");
+  h.open.setAttribute("aria-label", name ? t("ui.open-2", { name }) : t("ui.open-the-voice-room"));
   syncRoomMode();
   queueRoomPaint();
   openWantedRoom();
@@ -991,7 +991,7 @@ function decorateRooms() {
     row.classList.toggle("pt-busy", Boolean(line));
     const label = row.querySelector(".channel-label");
     label.querySelector(".live")?.remove();
-    if (sharing) label.appendChild(el("span", "live", "Live"));
+    if (sharing) label.appendChild(el("span", "live", t("ui.live-2")));
     if (line) {
       const note = el("span", "pt-room-note" + (here ? " yes" : ""), line);
       label.after(note);
@@ -1027,12 +1027,12 @@ function liveTile(stream, wide) {
   const thumb = el("span", "th theme-dark");
   thumb.style.setProperty("--tint", personTint(stream.userId));
   thumb.appendChild(makeAvatar(stream.userId, stream.name, "avatar th-avatar"));
-  thumb.appendChild(el("span", "live", "Live"));
+  thumb.appendChild(el("span", "live", t("ui.live-2")));
   if (room.here) thumb.appendChild(studioNode("span", "here", '<i data-i="volume-2"></i>You\'re in this room'));
   const foot = el("span", "ft");
   foot.appendChild(makeAvatar(stream.userId, stream.name, "avatar"));
   const text = el("span", "t");
-  text.appendChild(el("b", "", stream.mine ? "Your screen" : `${stream.name}'s screen`));
+  text.appendChild(el("b", "", stream.mine ? t("ui.your-screen") : t("ui.name-s-screen", { name: stream.name })));
   text.appendChild(el("span", "", `${roomChannelName(room)} · ${serverShownName(room.serverName)}`));
   foot.appendChild(text);
   if (wide) foot.appendChild(personStack(room.people.filter(person => person.id !== stream.userId)));
@@ -1061,10 +1061,10 @@ function paintLivePage() {
   rooms.replaceChildren();
   rooms.classList.toggle("slab", quiet.length > 0);
   if (quiet.length) {
-    rooms.appendChild(el("div", "sec lbl", "Rooms with people in them"));
+    rooms.appendChild(el("div", "sec lbl", t("ui.rooms-with-people-in-them")));
     for (const room of quiet) rooms.appendChild(liveRoomRow(room));
   }
-  $("pt-live-end").textContent = streams.length || quiet.length ? "That is everyone. For now." : "No one is in a room right now.";
+  $("pt-live-end").textContent = streams.length || quiet.length ? t("ui.that-is-everyone-for-now") : t("ui.no-one-is-in-a-room-right-now");
   const dot = horizonParts().dot;
   dot.classList.toggle("hidden", !streams.length);
   paintStudioTitle();
@@ -1141,10 +1141,10 @@ function paintPresenceLine() {
   key.dataset.presence = presence;
   $("pt-me-status").textContent = presence === "do_not_disturb" && until ? PRESENCE_LABELS.do_not_disturb : words;
   const end = $("pt-me-until");
-  end.textContent = until ? `\u00a0· until ${formatUntil(until)}` : "";
+  end.textContent = until ? t("ui.until-2", { value: formatUntil(until) }) : "";
   end.classList.remove("hidden");
   if (until && key.scrollWidth > key.parentNode.clientWidth) end.classList.add("hidden");
-  key.setAttribute("aria-label", `Presence: ${$("pt-me-status").textContent}${end.classList.contains("hidden") ? "" : end.textContent}. Change`);
+  key.setAttribute("aria-label", t("ui.presence-change", { value: $("pt-me-status").textContent, value2: end.classList.contains("hidden") ? "" : end.textContent }));
 }
 
 function presenceChoices() {
@@ -1169,7 +1169,7 @@ function presenceRow(choice, current, until) {
   row.setAttribute("aria-checked", String(choice.presence === current));
   const label = row.querySelector(".l");
   label.textContent = choice.label;
-  const hint = choice.presence === current && until ? `Until ${formatUntil(until)}` : choice.hint;
+  const hint = choice.presence === current && until ? t("ui.until-time", { time: formatUntil(until) }) : choice.hint;
   if (hint) label.appendChild(el("small", "", hint));
   row.onclick = () => choice.presence === "online" ? closeSheets(() => setOwnPresence("online", null)) : showDurationStep(choice.presence);
   return row;
@@ -1234,14 +1234,14 @@ function showPresenceRows(direction) {
 function showDurationStep(presence) {
   pickStep(() => {
     const { choices, note } = durationChoices(presence);
-    const head = studioNode("div", "phead", `<button type="button" class="key sq tap back" aria-label="Back"><i data-i="chevron-left"></i></button><span class="sec">For how long</span><span class="who">${presencePip(presence)}<span></span></span>`);
+    const head = studioNode("div", "phead", `<button type="button" class="key sq tap back" aria-label="Back" data-i18n-aria-label="signin.step.back"><i data-i="chevron-left"></i></button><span class="sec" data-i18n="ui.for-how-long">For how long</span><span class="who">${presencePip(presence)}<span></span></span>`);
     head.querySelector(".who > span:last-child").textContent = (presenceChoices().find(choice => choice.presence === presence) || {}).label || "";
     head.querySelector(".back").onclick = () => showPresenceRows("back");
     const clock = '<i data-i="clock"></i>';
     const rows = [];
     for (const choice of choices) {
       if (choice.mins === "never") {
-        rows.push(durationRow('<i data-i="calendar-days"></i>', "Pick a time", () => pickPresenceTime(presence), '<i data-i="chevron-right" class="chev"></i>'));
+        rows.push(durationRow('<i data-i="calendar-days"></i>', t("ui.pick-a-time"), () => pickPresenceTime(presence), '<i data-i="chevron-right" class="chev"></i>'));
         rows.push(durationRow(presencePip(presence), choice.label, () => closeSheets(() => setOwnPresence(presence, null))));
         continue;
       }
@@ -1263,7 +1263,7 @@ function pickTime(use) {
   input.onchange = () => {
     const when = new Date(input.value).getTime();
     if (!when || when <= Date.now()) {
-      toast("Pick a time in the future");
+      toast(t("ui.pick-a-time-in-the-future"));
       return;
     }
     use(Math.floor(when / 1000));
@@ -1283,7 +1283,7 @@ function openPickSheet(label, build) {
 }
 
 function openPresenceSheet() {
-  openPickSheet("Presence", presenceRows);
+  openPickSheet(t("ui.presence"), presenceRows);
 }
 
 function profileOpen() {
@@ -1309,7 +1309,7 @@ function paintProfileSave() {
   const hasStatus = Boolean($("pt-prof-status").value.trim() || studioPhone.profileEmoji);
   $("pt-prof-clear-fld").classList.toggle("hidden", !hasStatus);
   const until = studioPhone.profileClear !== undefined ? studioPhone.profileClear : (state.voice && state.voice.status_until) || null;
-  $("pt-prof-clear-v").textContent = until ? `Clears at ${formatUntil(until)}` : "Never";
+  $("pt-prof-clear-v").textContent = until ? t("ui.clears-at", { value: formatUntil(until) }) : t("ui.never");
 }
 
 function paintProfileEmoji() {
@@ -1333,7 +1333,7 @@ function paintProfileTop() {
   else ban.style.background = "";
   paintCardEffect(ban, user.card_effect, user.id);
   $("pt-prof-ban-rm").classList.toggle("hidden", !user.banner);
-  $("pt-prof-banner-words").textContent = user.banner ? "Change banner" : "Add banner";
+  $("pt-prof-banner-words").textContent = user.banner ? t("ui.change-banner") : t("ui.add-banner");
   const avatar = $("pt-prof-av");
   avatar.replaceChildren();
   const face = makeAvatar(user.id, profileName(), "avatar");
@@ -1378,10 +1378,10 @@ function paintProfileLooks() {
     return mini;
   };
   $("pt-prof-borders").replaceChildren(
-    lookTile("None", border(null), !user.avatar_border, () => saveProfileLook(null, user.card_effect || null)),
+    lookTile(t("ui.none"), border(null), !user.avatar_border, () => saveProfileLook(null, user.card_effect || null)),
     ...AVATAR_BORDERS.map(b => lookTile(b.label, border(b.id), user.avatar_border === b.id, () => saveProfileLook(b.id, user.card_effect || null))),
   );
-  const effects = [lookTile("None", effect(null), !user.card_effect, () => saveProfileLook(user.avatar_border || null, null)),
+  const effects = [lookTile(t("ui.none"), effect(null), !user.card_effect, () => saveProfileLook(user.avatar_border || null, null)),
     ...CARD_EFFECTS.map(e => lookTile(e.label, effect(e.id), user.card_effect === e.id, () => saveProfileLook(user.avatar_border || null, e.id)))];
   for (const tile of effects) tile.classList.add("fxl");
   $("pt-prof-effects").replaceChildren(...effects);
@@ -1398,7 +1398,7 @@ function paintProfileTag() {
   const worn = wornTag();
   const button = $("pt-prof-tag");
   button.querySelector(":scope > .server-tag")?.remove();
-  value.textContent = worn ? shownServerName(worn.server) : "None";
+  value.textContent = worn ? shownServerName(worn.server) : t("ui.none");
   if (worn) value.before(serverTagChip(worn.tag));
   const options = wearableTags(state.servers);
   button.disabled = !options.length && !worn;
@@ -1460,8 +1460,8 @@ function closeProfileEditor() {
 
 function leaveProfileEditor() {
   if (!profileDirty()) return closeProfileEditor();
-  openPickSheet("Save your changes?", () => {
-    const ask = studioNode("div", "pt-ask", '<b>Save your changes?</b><div class="ks"><button type="button" class="key lg primary">Save</button><button type="button" class="key lg">Discard</button></div>');
+  openPickSheet(t("ui.save-your-changes"), () => {
+    const ask = studioNode("div", "pt-ask", '<b data-i18n="ui.save-your-changes">Save your changes?</b><div class="ks"><button type="button" class="key lg primary" data-i18n="ui.save">Save</button><button type="button" class="key lg" data-i18n="ui.discard">Discard</button></div>');
     const [save, discard] = ask.querySelectorAll(".key");
     save.onclick = () => closeSheets(async () => {
       if (await saveProfileEditor()) closeProfileEditor();
@@ -1486,7 +1486,7 @@ async function saveProfileEditor() {
     studioPhone.profileClear = undefined;
     renderUserPanel();
     if (state.currentServer) await refreshCurrentServer();
-    toast("Profile updated");
+    toast(t("ui.profile-updated"));
     fillProfileEditor();
     paintYouPage();
     return true;
@@ -1506,11 +1506,11 @@ function clearAfterRows() {
     studioPhone.profileClear = until;
     paintProfileSave();
   });
-  const head = studioNode("div", "phead solo", '<span class="sec">Clear after</span>');
+  const head = studioNode("div", "phead solo", '<span class="sec" data-i18n="ui.clear-after">Clear after</span>');
   const rows = [head];
   for (const choice of choices) {
     if (choice.mins === "never") {
-      rows.push(durationRow('<i data-i="calendar-days"></i>', "Pick a time", () => pickTime(set), '<i data-i="chevron-right" class="chev"></i>'));
+      rows.push(durationRow('<i data-i="calendar-days"></i>', t("ui.pick-a-time"), () => pickTime(set), '<i data-i="chevron-right" class="chev"></i>'));
       const slot = el("span", "eslot");
       paintEmojiSlot(slot, studioPhone.profileEmoji);
       if (!studioPhone.profileEmoji) slot.replaceChildren(studioNode("span", "none", '<i data-i="smile"></i>'));
@@ -1539,13 +1539,13 @@ function serverTagRows() {
     return pick;
   };
   const servers = (state.servers || []).filter(s => s && s.tag && !s.group).sort((a, b) => a.name.localeCompare(b.name));
-  return [row(NO_SERVER_TAG, null, "None"), ...servers.map(s => row(s.id, serverTagChip(s.tag), s.name))];
+  return [row(NO_SERVER_TAG, null, t("ui.none")), ...servers.map(s => row(s.id, serverTagChip(s.tag), s.name))];
 }
 
 async function wearTag(value) {
   try {
     state.user = await invoke("wear_server_tag", { serverId: value || null });
-    toast(value ? "You are wearing that tag" : "Server tag hidden");
+    toast(value ? t("ui.you-are-wearing-that-tag") : t("ui.server-tag-hidden"));
     if (state.currentServer) await refreshCurrentServer();
   } catch (err) {
     toast(String(err));
@@ -1555,7 +1555,7 @@ async function wearTag(value) {
 
 async function chooseProfileBanner() {
   try {
-    const src = await chooseImage("Choose a profile banner", $("server-image-file"));
+    const src = await chooseImage(t("ui.choose-a-profile-banner"), $("server-image-file"));
     if (src) await saveBannerWith(PROFILE_BANNER_SIZE, saveAccountBanner)(src, true);
   } catch (err) {
     toast(String(err));
@@ -1577,7 +1577,7 @@ function wireProfileEditor() {
     try {
       state.voice = await invoke("set_pronouns", { pronouns: e.target.value });
       e.target.value = state.voice.pronouns || "";
-      toast(state.voice.pronouns ? "Pronouns saved" : "Pronouns removed");
+      toast(state.voice.pronouns ? t("ui.pronouns-saved") : t("ui.pronouns-removed"));
     } catch (err) {
       toast(String(err));
     }
@@ -1587,7 +1587,7 @@ function wireProfileEditor() {
   $("pt-prof-about").addEventListener("change", async e => {
     try {
       state.user = await invoke("set_about", { about: encodeCustomEmojis(e.target.value) });
-      toast("About Me saved");
+      toast(t("ui.about-me-saved"));
     } catch (err) {
       toast(String(err));
     }
@@ -1604,8 +1604,8 @@ function wireProfileEditor() {
     };
     openEmojiPop(e.currentTarget, set, { custom: true, onClear: studioPhone.profileEmoji ? () => set("") : null });
   };
-  $("pt-prof-clear").onclick = () => openPickSheet("Clear after", clearAfterRows);
-  $("pt-prof-tag").onclick = () => openPickSheet("Server tag", serverTagRows);
+  $("pt-prof-clear").onclick = () => openPickSheet(t("ui.clear-after"), clearAfterRows);
+  $("pt-prof-tag").onclick = () => openPickSheet(t("ui.server-tag-2"), serverTagRows);
   $("pt-prof-avatar").onclick = e => {
     e.stopPropagation();
     openAvatarMenu(e.currentTarget);
@@ -1853,8 +1853,8 @@ function holdImageRow(title, run) {
 }
 
 function holdMoreRows(rows, message) {
-  if (message.content && !parseStickerToken(message.content)) rows.appendChild(holdRow("Copy text", () => copyText(plainText(message.content), "Text copied")));
-  if (messageMenuExtras(message).length) rows.appendChild(holdRow("More", () => openMessageMenu(message, fakeAnchor())));
+  if (message.content && !parseStickerToken(message.content)) rows.appendChild(holdRow(t("ui.copy-text"), () => copyText(plainText(message.content), t("ui.text-copied"))));
+  if (messageMenuExtras(message).length) rows.appendChild(holdRow(t("ui.more"), () => openMessageMenu(message, fakeAnchor())));
 }
 
 function openHoldSheet(msg, image = null) {
@@ -1882,13 +1882,13 @@ function openHoldSheet(msg, image = null) {
     for (const emoji of quickReactions(frequentEmoji(frequentEmojiStore(), key => !key.startsWith("<:")))) {
       const key = el("button", "key sq lg rx-key" + (mine.has(emoji) ? " is-down" : ""), emoji);
       key.type = "button";
-      key.setAttribute("aria-label", `React with ${emoji}`);
+      key.setAttribute("aria-label", t("ui.react-with", { emoji }));
       key.onclick = () => closeSheets(() => setReaction(message, emoji, !mine.has(emoji)));
       reactions.appendChild(key);
     }
     const more = studioNode("button", "key sq lg rx-key", '<i data-i="smile-plus"></i>');
     more.type = "button";
-    more.setAttribute("aria-label", "More reactions");
+    more.setAttribute("aria-label", t("ui.more-reactions"));
     more.onclick = () => closeSheets(() => react.run(fakeAnchor()));
     reactions.appendChild(more);
   }
@@ -1962,7 +1962,7 @@ function openRowSwipe(row) {
   closeRowSwipe();
   const muted = withChannelMenu(row, menu => !menu.querySelector("#chm-unmute").classList.contains("hidden"));
   if (muted === null) return;
-  const acts = studioNode("div", "pt-acts", `<button type="button" class="key sq tap primary act read" aria-label="Mark read"><i data-i="check-check"></i></button><button type="button" class="key sq tap act mute" aria-label="${muted ? "Unmute" : "Mute"}"><i data-i="${muted ? "bell" : "bell-off"}"></i></button>`);
+  const acts = studioNode("div", "pt-acts", `<button type="button" class="key sq tap primary act read" aria-label="Mark read" data-i18n-aria-label="ui.mark-read"><i data-i="check-check"></i></button><button type="button" class="key sq tap act mute" aria-label="${muted ? "Unmute" : "Mute"}"><i data-i="${muted ? "bell" : "bell-off"}"></i></button>`);
   acts.style.top = `${row.offsetTop}px`;
   acts.style.height = `${row.offsetHeight}px`;
   acts.querySelector(".read").onclick = () => {
@@ -2346,7 +2346,7 @@ function syncRoomKeys() {
       key.classList.toggle("hand", now.mode === "hand");
       key.classList.toggle("talk", now.mode === "talk");
       const word = key.parentNode.querySelector(".lb");
-      if (word) word.textContent = now.word || "Mic";
+      if (word) word.textContent = now.word || t("ui.mic");
     }
     key.setAttribute("aria-label", now.label);
     key.setAttribute("aria-pressed", String(Boolean(now.down)));
@@ -2402,9 +2402,9 @@ function roomTile(tile) {
 
 function roomStreamTile(stream) {
   const keys = stream.own
-    ? `<span class="eye by${stream.viewers ? "" : " hidden"}"><i data-i="eye"></i><b>${stream.viewers}</b></span><span class="stopk" role="button" tabindex="0">Stop</span>`
-    : `<span class="key primary go">Watch</span><span class="max"><i data-i="maximize"></i></span>${stream.watching ? '<span class="x" role="button" tabindex="0" aria-label="Stop watching"><i data-i="x"></i></span>' : ""}`;
-  const tile = studioNode("div", "pt-stream theme-dark" + (stream.own ? " own" : stream.watching ? " w" : ""), `<span class="who"><span class="live">Live</span><span class="who-name"></span></span>${keys}`);
+    ? `<span class="eye by${stream.viewers ? "" : " hidden"}"><i data-i="eye"></i><b>${stream.viewers}</b></span><span class="stopk" role="button" tabindex="0" data-i18n="ui.stop">Stop</span>`
+    : `<span class="key primary go" data-i18n="ui.watch">Watch</span><span class="max"><i data-i="maximize"></i></span>${stream.watching ? '<span class="x" role="button" tabindex="0" aria-label="Stop watching"><i data-i="x"></i></span>' : ""}`;
+  const tile = studioNode("div", "pt-stream theme-dark" + (stream.own ? " own" : stream.watching ? " w" : ""), `<span class="who"><span class="live" data-i18n="ui.live-2">Live</span><span class="who-name"></span></span>${keys}`);
   tile.querySelector(".who-name").textContent = stream.title;
   tile.prepend(makeAvatar(stream.user, stream.name, "avatar"));
   if (stream.own) {
@@ -2417,7 +2417,7 @@ function roomStreamTile(stream) {
   }
   tile.setAttribute("role", "button");
   tile.tabIndex = 0;
-  tile.setAttribute("aria-label", `Watch ${stream.title}`);
+  tile.setAttribute("aria-label", t("ui.watch-2", { title: stream.title }));
   if (stream.watching) {
     const pic = el("canvas", "pic");
     pic.setAttribute("aria-hidden", "true");
@@ -2439,7 +2439,7 @@ function roomCameraTile(camera) {
   const tile = studioNode("div", "pt-stream cam theme-dark" + (camera.own ? " own" : "") + (camera.rear ? " rear" : ""), '<span class="who"><span class="who-name"></span></span>');
   tile.dataset.user = camera.user;
   tile.querySelector(".who-name").textContent = camera.title;
-  tile.setAttribute("aria-label", camera.own ? "Your camera" : `${camera.name}'s camera`);
+  tile.setAttribute("aria-label", camera.own ? t("ui.your-camera") : t("ui.name-s-camera", { name: camera.name }));
   tile.prepend(makeAvatar(camera.user, camera.name, "avatar"));
   const pic = el("canvas", "pic");
   pic.setAttribute("aria-hidden", "true");
@@ -2448,7 +2448,7 @@ function roomCameraTile(camera) {
     const flip = studioNode("span", "flip", '<i data-i="camera-rotate"></i>');
     flip.setAttribute("role", "button");
     flip.tabIndex = 0;
-    flip.setAttribute("aria-label", camera.rear ? "Switch to front camera" : "Switch to back camera");
+    flip.setAttribute("aria-label", camera.rear ? t("ui.switch-to-front-camera") : t("ui.switch-to-back-camera"));
     flip.onclick = async e => {
       e.stopPropagation();
       await flipCamera();
@@ -2472,7 +2472,7 @@ function roomAudienceChip(person) {
   chip.appendChild(el("b", "", person.label));
   if (person.hand) {
     const dot = el("i", "dot");
-    dot.setAttribute("aria-label", "Hand raised");
+    dot.setAttribute("aria-label", t("ui.hand-raised"));
     chip.appendChild(dot);
   }
   return chip;
@@ -2541,7 +2541,7 @@ function paintRoom() {
   $("pt-room-live").classList.toggle("hidden", !streams.length);
   $("pt-room-sub").textContent = roomHeading({ serverName: vs.name, count: everyone.length, call });
   $("pt-room-sig").dataset.quality = quality;
-  $("pt-room-sig").setAttribute("aria-label", `${studioDockQuality(quality).line}. Voice options`);
+  $("pt-room-sig").setAttribute("aria-label", t("ui.voice-options", { value: studioDockQuality(quality).line }));
   $("pt-room-sig-word").textContent = signalWord(quality);
   $("pt-room-streams").replaceChildren(...streams.map(roomStreamTile));
   $("pt-room-cams").replaceChildren(...cameras.map(roomCameraTile));
@@ -2602,8 +2602,8 @@ function syncStreamFull() {
 function paintWatchField() {
   const field = $("pt-watch-field");
   if (!field) return;
-  field.textContent = $("message-input").placeholder || "Message";
-  field.setAttribute("aria-label", "Write a message");
+  field.textContent = $("message-input").placeholder || t("ui.message");
+  field.setAttribute("aria-label", t("ui.write-a-message"));
 }
 
 function watchRows() {
@@ -2707,10 +2707,10 @@ function decorateTray() {
   if (!pop.querySelector(".pt-tray-grab")) {
     const grab = el("button", "pt-tray-grab");
     grab.type = "button";
-    grab.setAttribute("aria-label", "Show every sound");
+    grab.setAttribute("aria-label", t("ui.show-every-sound"));
     grab.onclick = () => pop.classList.toggle("pt-tray-full");
     pop.prepend(grab);
-    pop.querySelector(".sb-head > span").after(el("small", "pt-tray-line", "The whole room hears these."));
+    pop.querySelector(".sb-head > span").after(el("small", "pt-tray-line", t("ui.the-whole-room-hears-these")));
     $("sb-grid").addEventListener("click", e => {
       const pad = e.target.closest(".sb-sound");
       if (!pad || pad.disabled || Date.now() < soundboardCooldown) return;
@@ -2722,8 +2722,8 @@ function decorateTray() {
   if (grid.querySelector(".pt-tray-add")) return;
   for (const pad of grid.querySelectorAll(".sb-sound")) pad.classList.add("key");
   const empty = grid.querySelector(".sb-empty");
-  if (empty) empty.textContent = "No sounds from this server yet.";
-  const add = studioNode("span", "key pt-tray-add", '<i data-i="plus"></i><span>Add sound</span>');
+  if (empty) empty.textContent = t("ui.no-sounds-from-this-server-yet");
+  const add = studioNode("span", "key pt-tray-add", '<i data-i="plus"></i><span data-i18n="ui.add-sound">Add sound</span>');
   add.setAttribute("role", "button");
   add.tabIndex = 0;
   add.classList.toggle("hidden", $("sb-add").classList.contains("hidden"));
@@ -2733,7 +2733,7 @@ function decorateTray() {
 
 function chosenDevice(select, typed) {
   const option = select && select.selectedOptions[0];
-  return typed || (option && option.value ? option.textContent : "Default");
+  return typed || (option && option.value ? option.textContent : t("ui.default"));
 }
 
 function paintVoiceOptions() {
@@ -2749,13 +2749,13 @@ function paintVoiceOptions() {
   const body = document.body.classList;
   const share = $("pt-voice-share");
   share.classList.toggle("hidden", !canOfferShare({ mobileApp: body.contains("mobile-app"), canShare: body.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent) }));
-  share.querySelector(".l").textContent = state.sharing ? "Stop sharing" : "Share screen";
+  share.querySelector(".l").textContent = state.sharing ? t("ui.stop-sharing") : t("ui.share-screen");
   const ink = $("pt-voice-ink");
   ink.classList.toggle("hidden", $("vp-ink-row").classList.contains("hidden"));
   ink.setAttribute("aria-checked", String(Boolean(state.sharing && state.shareInk)));
   const act = $("pt-voice-act");
   act.classList.toggle("hidden", $("vp-activities").classList.contains("hidden"));
-  act.querySelector(".l").textContent = $("vp-activities").textContent.trim() || "Activities";
+  act.querySelector(".l").textContent = $("vp-activities").textContent.trim() || t("ui.activities");
 }
 
 function openVoiceOptions() {
@@ -2837,8 +2837,8 @@ function paintInviteKeys() {
   const busy = studioPhone.inviteBusy;
   $("pt-invite-join").disabled = busy;
   $("pt-invite-later").disabled = busy;
-  $("pt-invite-join").textContent = busy ? "Joining\u2026" : "Join";
-  if (!busy && inviteAsksTrust(pendingInvite)) $("pt-invite-join").textContent = "Trust and join";
+  $("pt-invite-join").textContent = busy ? t("ui.joining") : t("ui.join");
+  if (!busy && inviteAsksTrust(pendingInvite)) $("pt-invite-join").textContent = t("ui.trust-and-join");
 }
 
 function syncInvite() {
@@ -3015,18 +3015,18 @@ function wireThreadScreen() {
   const head = panel.querySelector(".thread-head");
   const back = studioNode("button", "pt-thread-back", '<i data-i="chevron-left"></i>');
   back.type = "button";
-  back.setAttribute("aria-label", "Back");
+  back.setAttribute("aria-label", t("signin.step.back"));
   back.onclick = leaveThread;
   head.prepend(back);
   const more = studioNode("button", "key sq more pt-thread-more", '<i data-i="ellipsis"></i>');
   more.type = "button";
-  more.setAttribute("aria-label", "More");
+  more.setAttribute("aria-label", t("ui.more"));
   more.onclick = openThreadMore;
   head.appendChild(more);
   const composer = panel.querySelector(".thread-composer");
   const send = el("button", "composer-send pt-thread-send");
   send.type = "button";
-  send.setAttribute("aria-label", "Send");
+  send.setAttribute("aria-label", t("ui.send"));
   send.innerHTML = $("send-btn").innerHTML;
   send.onclick = () => sendThreadReply();
   composer.appendChild(send);
@@ -3050,7 +3050,7 @@ function paintThreadWhere() {
   const status = $("thread-status");
   const channel = state.view === "server" && state.currentChannel ? `#${channelPlainName(state.currentChannel)}` : "";
   status.dataset.where = channel;
-  status.classList.toggle("pt-only-where", !status.textContent.trim() || /^No replies/.test(status.textContent.trim()));
+  status.classList.toggle("pt-only-where", !status.textContent.trim() || status.textContent.trim().startsWith(t("ui.no-replies-yet")));
 }
 
 function openThreadMore() {

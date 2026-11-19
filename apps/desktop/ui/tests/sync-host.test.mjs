@@ -1,3 +1,4 @@
+import "./i18n-global.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -81,8 +82,8 @@ test("the official sync server never tells an owner to update it themselves", ()
 
 test("the sync server page explains moving once, in steps", () => {
   const page = html.slice(html.indexOf('data-page="sync-host"'), html.indexOf('data-page="file-storage"'));
-  assert.equal((page.match(/<li>/g) || []).length, 4);
+  assert.equal((page.match(/<li[\s>]/g) || []).length, 4);
   assert.equal((page.match(/1,000/g) || []).length, 1, "the history limit is said once");
   assert.doesNotMatch(page, /sync-host-guide/);
-  assert.match(page, /id="sync-host-save">Check</);
+  assert.match(page, /id="sync-host-save" data-i18n="[^"]+">Check</);
 });

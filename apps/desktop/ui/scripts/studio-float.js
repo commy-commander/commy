@@ -2,7 +2,7 @@ const STAGE_KEYS = ["stage-ink-point", "stage-ink-pen", "stage-ink-clear", "stag
 const PICKER_KEYS = ["lightbox-open", "lightbox-save", "search-newer", "search-older"];
 
 function stageLiveWord(roomy) {
-  return roomy ? "Live" : "LIVE";
+  return roomy ? t("ui.live-2") : t("ui.live");
 }
 
 function studioStageParts() {

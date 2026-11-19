@@ -21,15 +21,15 @@ function streamVolumeGain(percent) {
 }
 
 function streamVolumeTitle(percent) {
-  return percent === 0 ? "Stream muted" : `Stream volume ${percent}%`;
+  return percent === 0 ? t("ui.stream-muted") : t("ui.stream-volume-2", { percent });
 }
 
 function liveToastText(sourceName, audioShared) {
-  return audioShared ? `You are live with audio: ${sourceName}` : `You are live: ${sourceName}`;
+  return audioShared ? t("ui.you-are-live-with-audio", { sourceName }) : t("ui.you-are-live", { sourceName });
 }
 
 function liveSourceText(sourceName, audioShared, fps) {
-  const streaming = sourceName ? `Streaming ${sourceName}${audioShared ? " with audio" : ""}` : "";
+  const streaming = sourceName ? t("ui.streaming-2", { sourceName, value: audioShared ? " with audio" : "" }) : "";
   return [streaming, `${fps} fps`].filter(Boolean).join(" - ");
 }
 

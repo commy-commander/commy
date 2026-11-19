@@ -1,16 +1,16 @@
 const STRIP_TILES = [
-  { id: "messages", label: "Messages", icon: "message-circle", first: true },
-  { id: "live", label: "Live", icon: "radio", first: true },
-  { id: "you", label: "You", icon: "", first: false },
+  { id: "messages", get label() { return t("ui.messages"); }, icon: "message-circle", first: true },
+  { id: "live", get label() { return t("ui.live-2"); }, icon: "radio", first: true },
+  { id: "you", get label() { return t("settings.group.you"); }, icon: "", first: false },
 ];
 const STRIP_CHIP_GAP = 8;
-const STRIP_ONLINE = "Online now";
+const STRIP_WORDS = { get online() { return t("ui.online-now"); } };
 const STRIP_SHEET_CLOSE_PX = 80;
 const STRIP_PANELS_KEY = "commy.tallStackPanels";
 const STRIP_PANELS = [
-  { id: "home", label: "Servers and channels", word: "appearance.stackPanel.home" },
-  { id: "chat", label: "Chat", word: "appearance.stackPanel.chat" },
-  { id: "room", label: "Voice room", word: "appearance.stackPanel.room" },
+  { id: "home", get label() { return t("appearance.stackPanel.home"); }, word: "appearance.stackPanel.home" },
+  { id: "chat", get label() { return t("appearance.stackPanel.chat"); }, word: "appearance.stackPanel.chat" },
+  { id: "room", get label() { return t("appearance.stackPanel.room"); }, word: "appearance.stackPanel.room" },
 ];
 const STRIP_PANEL_ROWS = { home: "auto", chat: "minmax(0, 1fr)", room: "auto" };
 
@@ -97,7 +97,7 @@ function paintStripPanelSettings() {
     const up = el("button", "icon-btn stack-panel-move");
     up.type = "button";
     up.dataset.move = "up";
-    up.setAttribute("aria-label", `Move ${spec.label} up`);
+    up.setAttribute("aria-label", t("ui.move-up", { label: spec.label }));
     up.innerHTML = studioIconMarkup("chevron-up");
     up.disabled = i === 0;
     up.onclick = () => {
@@ -107,7 +107,7 @@ function paintStripPanelSettings() {
     const down = el("button", "icon-btn stack-panel-move");
     down.type = "button";
     down.dataset.move = "down";
-    down.setAttribute("aria-label", `Move ${spec.label} down`);
+    down.setAttribute("aria-label", t("ui.move-down", { label: spec.label }));
     down.innerHTML = studioIconMarkup("chevron-down");
     down.disabled = i === panels.length - 1;
     down.onclick = () => {
@@ -117,7 +117,7 @@ function paintStripPanelSettings() {
     const show = el("input", "switch");
     show.type = "checkbox";
     show.checked = panel.on;
-    show.setAttribute("aria-label", `Show ${spec.label}`);
+    show.setAttribute("aria-label", t("ui.show", { label: spec.label }));
     show.onchange = () => {
       stripPanelsSave(stripPanelShow(panels, panel.id, show.checked));
       paintStripPanelSettings();
@@ -154,13 +154,13 @@ function stripIsOnline(person) {
 }
 
 function stripPersonWord({ room, sharing, status, presence }) {
-  if (sharing) return "Sharing a screen";
-  if (room) return `In ${room}`;
+  if (sharing) return t("ui.sharing-a-screen");
+  if (room) return t("ui.in-room", { room });
   return status || presence || "";
 }
 
 function stripOnlineHead(count) {
-  return `${STRIP_ONLINE} · ${count}`;
+  return `${STRIP_WORDS.online} · ${count}`;
 }
 
 function stripPeople(server, meId) {
@@ -325,7 +325,7 @@ function studioStrip() {
       const key = el("button", "key sq strip-people-key");
       key.type = "button";
       key.dataset.stripPeople = "key";
-      key.setAttribute("aria-label", "Members");
+      key.setAttribute("aria-label", t("ui.members"));
       key.setAttribute("aria-pressed", "false");
       key.innerHTML = `${studioIconMarkup("users")}<i class="led"></i>`;
       key.onclick = e => {
@@ -345,7 +345,7 @@ function studioStrip() {
       const grab = el("button", "strip-grab");
       grab.type = "button";
       grab.dataset.stripPeople = "grab";
-      grab.setAttribute("aria-label", "Close");
+      grab.setAttribute("aria-label", t("settings.close"));
       grab.appendChild(el("i"));
       let from = null;
       grab.onpointerdown = e => {
@@ -480,5 +480,5 @@ function studioStrip() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STRIP_PANELS_KEY, STRIP_PANELS, stripPanelsFrom, stripPanelMove, stripPanelShow, stripPanelGrid, STRIP_TILES, STRIP_CHIP_GAP, STRIP_ONLINE, STRIP_SHEET_CLOSE_PX, stripSheetDrag, stripSheetCloses, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead };
+  module.exports = { STRIP_PANELS_KEY, STRIP_PANELS, stripPanelsFrom, stripPanelMove, stripPanelShow, stripPanelGrid, STRIP_TILES, STRIP_CHIP_GAP, STRIP_WORDS, STRIP_SHEET_CLOSE_PX, stripSheetDrag, stripSheetCloses, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead };
 }

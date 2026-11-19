@@ -2,7 +2,7 @@
 
 const BUILTIN_EMOTICONS = [
   {
-    group: "Happy",
+    get group() { return t("ui.happy"); },
     faces: [
       ["happy", "(◕‿◕)"],
       ["yay", "\\(^o^)/"],
@@ -15,7 +15,7 @@ const BUILTIN_EMOTICONS = [
     ],
   },
   {
-    group: "Love",
+    get group() { return t("ui.love"); },
     faces: [
       ["love", "(♥ω♥*)"],
       ["hug", "(っ◕‿◕)っ"],
@@ -25,7 +25,7 @@ const BUILTIN_EMOTICONS = [
     ],
   },
   {
-    group: "Shrug and stare",
+    get group() { return t("ui.shrug-and-stare"); },
     faces: [
       ["shrug", "¯\\_(ツ)_/¯"],
       ["lenny", "( ͡° ͜ʖ ͡°)"],
@@ -38,7 +38,7 @@ const BUILTIN_EMOTICONS = [
     ],
   },
   {
-    group: "Sad and angry",
+    get group() { return t("ui.sad-and-angry"); },
     faces: [
       ["cry", "(╥﹏╥)"],
       ["sad", "(︶︹︶)"],
@@ -49,7 +49,7 @@ const BUILTIN_EMOTICONS = [
     ],
   },
   {
-    group: "Tables",
+    get group() { return t("ui.tables"); },
     faces: [
       ["table_flip", "(╯°□°)╯︵ ┻━┻"],
       ["table_back", "┬─┬ノ( º _ ºノ)"],
@@ -57,7 +57,7 @@ const BUILTIN_EMOTICONS = [
     ],
   },
   {
-    group: "Animals",
+    get group() { return t("ui.animals"); },
     faces: [
       ["cat", "(=^･ω･^=)"],
       ["bear", "ʕ•ᴥ•ʔ"],
@@ -66,7 +66,7 @@ const BUILTIN_EMOTICONS = [
     ],
   },
   {
-    group: "Actions",
+    get group() { return t("ui.actions"); },
     faces: [
       ["wave", "(・ω・)ノ"],
       ["dance", "♪┏(・o･)┛♪"],

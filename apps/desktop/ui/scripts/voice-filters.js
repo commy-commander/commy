@@ -1,13 +1,13 @@
 "use strict";
 
 const VOICE_FILTERS = [
-  { key: "off", label: "Off", sub: "Your own voice" },
-  { key: "higher", label: "Higher", sub: "Bright and squeaky" },
-  { key: "lower", label: "Lower", sub: "Deep and booming" },
-  { key: "robot", label: "Robot", sub: "One steady metal note" },
-  { key: "radio", label: "Radio", sub: "Crackly walkie-talkie" },
-  { key: "cave", label: "Cave", sub: "Echoes off stone walls" },
-  { key: "whisper", label: "Whisper", sub: "Breathy and hushed" },
+  { key: "off", get label() { return t("ui.off"); }, get sub() { return t("ui.your-own-voice"); } },
+  { key: "higher", get label() { return t("ui.higher"); }, get sub() { return t("ui.bright-and-squeaky"); } },
+  { key: "lower", get label() { return t("ui.lower"); }, get sub() { return t("ui.deep-and-booming"); } },
+  { key: "robot", get label() { return t("ui.robot"); }, get sub() { return t("ui.one-steady-metal-note"); } },
+  { key: "radio", get label() { return t("ui.radio"); }, get sub() { return t("ui.crackly-walkie-talkie"); } },
+  { key: "cave", get label() { return t("ui.cave"); }, get sub() { return t("ui.echoes-off-stone-walls"); } },
+  { key: "whisper", get label() { return t("ui.whisper"); }, get sub() { return t("ui.breathy-and-hushed"); } },
 ];
 
 function voiceFilterKey(voice) {
@@ -17,7 +17,7 @@ function voiceFilterKey(voice) {
 
 function voiceFilterLabel(key) {
   const found = VOICE_FILTERS.find(f => f.key === key);
-  return found ? found.label : "Off";
+  return found ? found.label : t("ui.off");
 }
 
 function voiceFilterHeldHere(held, voiceServer) {
@@ -25,14 +25,14 @@ function voiceFilterHeldHere(held, voiceServer) {
 }
 
 function voiceFilterNote(key, heldHere, serverName) {
-  if (key === "off") return "Everyone hears your own voice.";
-  if (heldHere) return `${serverName || "This server"} has voice filters switched off, so everyone there hears your own voice.`;
-  return `Everyone in voice hears you through the ${voiceFilterLabel(key)} filter. Start the mic test to hear it yourself.`;
+  if (key === "off") return t("ui.everyone-hears-your-own-voice");
+  if (heldHere) return t("ui.has-voice-filters-switched-off-so", { value: serverName || t("ui.this-server") });
+  return t("ui.everyone-in-voice-hears-you-through-the", { value: voiceFilterLabel(key) });
 }
 
 function voiceFilterNews(held, serverName) {
-  if (!held) return "Your voice filter is back on";
-  return `Voice filters are off in ${serverName || "this server"}, so everyone hears your own voice`;
+  if (!held) return t("ui.your-voice-filter-is-back-on");
+  return t("ui.voice-filters-are-off-in-so-everyone", { value: serverName || "this server" });
 }
 
 if (typeof module !== "undefined" && module.exports) {

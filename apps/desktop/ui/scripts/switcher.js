@@ -80,7 +80,7 @@ function buildSwitcherItems({ servers = [], views = {}, threads = [], friends = 
   const groups = servers.filter(s => s.group);
   for (const summary of servers) {
     if (summary.group) continue;
-    items.push({ key: `server:${summary.id}`, kind: "server", name: summary.name, subtitle: "Server", serverId: summary.id });
+    items.push({ key: `server:${summary.id}`, kind: "server", name: summary.name, subtitle: t("ui.server"), serverId: summary.id });
   }
   for (const summary of servers) {
     const view = views[summary.id];
@@ -97,16 +97,16 @@ function buildSwitcherItems({ servers = [], views = {}, threads = [], friends = 
   for (const thread of threads) {
     if (thread.kind === "group") {
       const group = groups.find(s => s.id === thread.user);
-      items.push({ key: `group:${thread.user}`, kind: "person", name: thread.name, subtitle: "Group", serverId: thread.user, group: true, members: group ? group.member_count : 0 });
+      items.push({ key: `group:${thread.user}`, kind: "person", name: thread.name, subtitle: t("ui.group"), serverId: thread.user, group: true, members: group ? group.member_count : 0 });
       continue;
     }
     seen.add(thread.user);
-    items.push({ key: `dm:${thread.user}`, kind: "person", name: thread.name, subtitle: presence(thread.user) || "Direct message", userId: thread.user });
+    items.push({ key: `dm:${thread.user}`, kind: "person", name: thread.name, subtitle: presence(thread.user) || t("ui.direct-message"), userId: thread.user });
   }
   for (const friend of friends) {
     if (seen.has(friend.id)) continue;
     seen.add(friend.id);
-    items.push({ key: `dm:${friend.id}`, kind: "person", name: friend.name, subtitle: presence(friend.id) || "Friend", userId: friend.id });
+    items.push({ key: `dm:${friend.id}`, kind: "person", name: friend.name, subtitle: presence(friend.id) || t("ui.friend"), userId: friend.id });
   }
   for (const action of actions) {
     items.push({ key: `action:${action.id}`, kind: "action", name: action.name, subtitle: action.subtitle || "", action: action.id });

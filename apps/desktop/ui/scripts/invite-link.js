@@ -13,15 +13,15 @@ async function openInviteLink(link) {
     hero.style.backgroundImage = invite.background ? `url("${invite.background}")` : "";
     $("modal-invite-link").classList.toggle("has-hero", Boolean(invite.background));
     const expires = invite.expires_at ? new Date(invite.expires_at) : null;
-    $("invite-link-host").textContent = `Invite from ${invite.host}` +
-      (!expires ? ", never expires" : isNaN(expires) ? "" : `, expires ${expires.toLocaleDateString(undefined, { month: "long", day: "numeric" })}`);
+    $("invite-link-host").textContent = t("ui.invite-from", { host: invite.host }) +
+      (!expires ? ", never expires" : isNaN(expires) ? "" : `, expires ${expires.toLocaleDateString(dateLocale(), { month: "long", day: "numeric" })}`);
     const warning = $("invite-link-warning");
     const warningText = inviteWarningText(invite);
     warning.classList.toggle("hidden", !warningText);
     if (warningText) warning.textContent = warningText;
     const learn = $("invite-link-learn");
     learn.classList.toggle("hidden", !warningText);
-    $("invite-link-join").textContent = inviteAsksTrust(invite) ? TRUST_AND_JOIN : "Join Server";
+    $("invite-link-join").textContent = inviteAsksTrust(invite) ? TRUST_AND_JOIN : t("ui.join-server");
     showModal("modal-invite-link");
   } catch (e) {
     toast(String(e));
@@ -63,11 +63,11 @@ function inviteLinkCard(link) {
   const card = el("div", "invite-card");
   card.appendChild(inviteCardMark());
   const text = el("div", "invite-card-text");
-  text.appendChild(el("div", "invite-card-title", "You've been invited to join a server"));
+  text.appendChild(el("div", "invite-card-title", t("ui.you-ve-been-invited-to-join-a-server")));
   const host = (/^commy:\/\/i\/([^/]+)\//i.exec(link) || [])[1] || (/^https?:\/\/([^/]+)/i.exec(link) || [])[1] || "";
-  text.appendChild(el("div", "invite-card-sub", host ? `Invite link from ${host}` : "Invite link"));
+  text.appendChild(el("div", "invite-card-sub", host ? t("ui.invite-link-from", { host }) : t("ui.invite-link")));
   card.appendChild(text);
-  const join = el("button", "btn-primary btn-small", "Join");
+  const join = el("button", "btn-primary btn-small", t("ui.join"));
   join.onclick = () => openInviteLink(link);
   card.appendChild(join);
   return card;
@@ -78,16 +78,16 @@ let inviteExpiry = "7d";
 let inviteLinkShown = false;
 
 function inviteExpiryText(expiresAt) {
-  if (!expiresAt) return "This link never expires.";
+  if (!expiresAt) return t("ui.this-link-never-expires");
   const at = new Date(expiresAt);
   if (isNaN(at)) return "";
   const soon = at - Date.now() < 36 * 3600e3;
   const when = soon
-    ? at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
-    : at.toLocaleDateString(undefined, { month: "long", day: "numeric" });
+    ? at.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" })
+    : at.toLocaleDateString(dateLocale(), { month: "long", day: "numeric" });
   return soon && at.getDate() !== new Date().getDate()
-    ? `This link expires tomorrow at ${when}.`
-    : `This link expires ${soon ? "at" : "on"} ${when}.`;
+    ? t("ui.this-link-expires-tomorrow-at", { when })
+    : t(soon ? "ui.this-link-expires-at" : "ui.this-link-expires-on", { when });
 }
 
 function renderInviteExpiry() {
@@ -103,8 +103,8 @@ function renderInviteExpiry() {
   $("invite-link-copy").textContent = key;
   if (!inviteLinkShown) {
     $("invite-expiry-note").textContent = inviteExpiry === "never"
-      ? `${key} for a link that never expires.`
-      : `${key} for a link that lasts ${INVITE_EXPIRY_NAMES[inviteExpiry]}.`;
+      ? t("ui.invite-key-never-expires", { key })
+      : t("ui.invite-key-lasts", { key, value: INVITE_EXPIRY_NAMES[inviteExpiry] });
   }
 }
 
@@ -130,7 +130,7 @@ async function copyInviteLink() {
     if (inviteShareHere()) await shareFullInviteLink(url, state.currentServer?.name);
     else {
       await navigator.clipboard.writeText(url);
-      toast("Invite link copied");
+      toast(t("ui.invite-link-copied"));
     }
   } catch (e) {
     toast(String(e));

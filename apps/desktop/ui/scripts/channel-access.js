@@ -21,20 +21,20 @@ function channelAccessLock({ view, server, channel }) {
   if (view !== "server" || !channel || channel.kind === "voice" || channel.kind === "stage" || channel.kind === "category") return null;
   if (channel.can_view === false) {
     return {
-      title: "You can't read this channel",
-      text: `Only ${accessWho(server, channel.view_roles)} can read it. You can still change who sees it in its settings.`,
+      title: t("ui.you-can-t-read-this-channel"),
+      text: t("ui.only-can-read-it-you-can-still-change", { value: accessWho(server, channel.view_roles) }),
     };
   }
   if (channel.can_send === false && channel.send_roles && channel.send_roles.length) {
     return {
-      title: `Only ${accessWho(server, channel.send_roles)} can send messages here`,
-      text: "Everyone who can see this channel can read and react.",
+      title: t("ui.only-can-send-messages-here", { value: accessWho(server, channel.send_roles) }),
+      text: t("ui.everyone-who-can-see-this-channel-can"),
     };
   }
   if (channelIsPrivate(channel) && channel.key_ready === false) {
     return {
-      title: "Getting this channel's key",
-      text: "It comes from a member who already has it. You can send once it arrives.",
+      title: t("ui.getting-this-channel-s-key"),
+      text: t("ui.it-comes-from-a-member-who-already-has"),
     };
   }
   return null;
@@ -52,7 +52,7 @@ function sameAccess(a, b) {
 }
 
 function accessSummary(server, ids) {
-  return ids && ids.length ? accessWho(server, ids) : "Everyone";
+  return ids && ids.length ? accessWho(server, ids) : t("ui.everyone");
 }
 
 if (typeof module !== "undefined" && module.exports) {

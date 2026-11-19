@@ -138,7 +138,7 @@ function studioSettingsNav(layer) {
     const head = document.createElement("div");
     head.className = "settings-nav-title";
     head.dataset.i18n = "nav.settings";
-    head.textContent = typeof t === "function" ? t("nav.settings") : "Settings";
+    head.textContent = typeof t === "function" ? t("nav.settings") : t("nav.settings");
     inner.prepend(head);
   }
 }
@@ -282,7 +282,7 @@ function studioThemeCards() {
   const group = document.createElement("div");
   group.className = "set-themes";
   group.setAttribute("role", "radiogroup");
-  group.setAttribute("aria-label", row.querySelector(".setting-title")?.textContent || "Theme");
+  group.setAttribute("aria-label", row.querySelector(".setting-title")?.textContent || t("accessibility.theme"));
   const tick = typeof studioIconMarkup === "function" ? studioIconMarkup("check", "tick") : "";
   for (const option of select.options) {
     const card = document.createElement("button");
@@ -357,7 +357,7 @@ function studioSettingsDone(close) {
   done.type = "button";
   done.className = "key sm cream set-done";
   done.dataset.i18n = "settings.done";
-  done.textContent = typeof t === "function" ? t("settings.done") : "Done";
+  done.textContent = typeof t === "function" ? t("settings.done") : t("settings.done");
   done.onclick = () => close();
   actions.appendChild(done);
 }

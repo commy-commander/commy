@@ -1,16 +1,16 @@
 const STOCK_BANNERS = [
-  { id: "night-peaks", name: "Night peaks" },
-  { id: "dusk-dunes", name: "Dusk dunes" },
-  { id: "tide", name: "Tide" },
-  { id: "aurora", name: "Aurora" },
-  { id: "orbit", name: "Orbit" },
-  { id: "city-lights", name: "City lights" },
-  { id: "deep-sea", name: "Deep sea" },
-  { id: "pines", name: "Pines" },
-  { id: "meadow", name: "Meadow" },
-  { id: "clouds", name: "Clouds" },
-  { id: "sunrise", name: "Sunrise" },
-  { id: "canyon", name: "Canyon" },
+  { id: "night-peaks", get name() { return t("ui.night-peaks"); } },
+  { id: "dusk-dunes", get name() { return t("ui.dusk-dunes"); } },
+  { id: "tide", get name() { return t("ui.tide"); } },
+  { id: "aurora", get name() { return t("ui.aurora"); } },
+  { id: "orbit", get name() { return t("ui.orbit"); } },
+  { id: "city-lights", get name() { return t("ui.city-lights"); } },
+  { id: "deep-sea", get name() { return t("ui.deep-sea"); } },
+  { id: "pines", get name() { return t("ui.pines"); } },
+  { id: "meadow", get name() { return t("ui.meadow"); } },
+  { id: "clouds", get name() { return t("ui.clouds"); } },
+  { id: "sunrise", get name() { return t("ui.sunrise"); } },
+  { id: "canyon", get name() { return t("ui.canyon"); } },
 ];
 
 function stockBannerSrc(id) {

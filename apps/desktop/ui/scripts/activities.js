@@ -1,6 +1,6 @@
 const ACTIVITY_KINDS = [
-  { key: "watch", name: "Watch together", blurb: "Play a YouTube link, a video link or an attached video together", icon: "movie", pill: "Watch" },
-  { key: "tictactoe", name: "Tic-tac-toe", blurb: "Two play, everyone else in the channel watches", icon: "gamepad", pill: "Game" },
+  { key: "watch", get name() { return t("ui.watch-together"); }, get blurb() { return t("ui.play-a-youtube-link-a-video-link-or-an"); }, icon: "movie", get pill() { return t("ui.watch"); } },
+  { key: "tictactoe", get name() { return t("ui.tic-tac-toe"); }, get blurb() { return t("ui.two-play-everyone-else-in-the-channel"); }, icon: "gamepad", get pill() { return t("ui.game"); } },
 ];
 
 const BOARD_CELLS = 9;
@@ -36,7 +36,7 @@ function activityKindInfo(activity) {
 
 function activityName(activity) {
   const info = activityKindInfo(activity);
-  return info ? info.name : "Activity";
+  return info ? info.name : t("ui.activity");
 }
 
 function activityPillLabel(activity) {
@@ -148,14 +148,14 @@ function watchSourceKind(activity) {
 }
 
 function watchTitle(activity) {
-  if (watchYouTubeId(activity)) return "YouTube video";
+  if (watchYouTubeId(activity)) return t("ui.youtube-video");
   const url = watchLinkUrl(activity);
   if (url) {
     const file = url.split(/[?#]/)[0].split("/").pop();
     return decodeURIComponent(file || url);
   }
   const att = watchAttachment(activity);
-  return att ? att.filename : "Video";
+  return att ? att.filename : t("ui.video-2");
 }
 
 function youtubeEmbedUrl(video, origin) {
@@ -230,8 +230,8 @@ function youtubeNeedsSeek(current, target) {
 }
 
 function youtubeErrorText(code) {
-  if (code === 100) return "This YouTube video was removed or made private";
-  return "YouTube won't play this video here. Open on YouTube still works.";
+  if (code === 100) return t("ui.this-youtube-video-was-removed-or-made");
+  return t("ui.youtube-won-t-play-this-video-here-open");
 }
 
 function emptyBoard() {
@@ -416,20 +416,20 @@ function avatarRow(ids, max = ACTIVITY_MAX_AVATARS) {
 
 function gameStatus(run, meId, nameOf) {
   if (!run || run.kind !== "tictactoe") return { text: "", over: false, canRematch: false };
-  const who = id => (id === meId ? "You" : nameOf(id));
+  const who = id => (id === meId ? t("settings.group.you") : nameOf(id));
   if (run.players.length < 2) {
-    return { text: isPlayer(run, meId) ? "Waiting for someone to join" : "Press Join to play", over: false, canRematch: false };
+    return { text: isPlayer(run, meId) ? t("ui.waiting-for-someone-to-join") : t("ui.press-join-to-play"), over: false, canRematch: false };
   }
   const winner = ticTacToeWinner(run.board);
   if (winner) {
     const user = playerWithMark(run, winner.mark);
-    const text = user === meId ? "You win" : `${nameOf(user)} wins`;
+    const text = user === meId ? t("ui.you-win") : `${nameOf(user)} wins`;
     return { text, over: true, canRematch: isPlayer(run, meId), line: winner.line };
   }
-  if (boardFull(run.board)) return { text: "Draw", over: true, canRematch: isPlayer(run, meId) };
+  if (boardFull(run.board)) return { text: t("ui.draw"), over: true, canRematch: isPlayer(run, meId) };
   const mark = turnMark(run.board);
   const user = playerWithMark(run, mark);
-  const text = user === meId ? `Your turn (${MARK_GLYPHS[mark]})` : `${who(user)}'s turn (${MARK_GLYPHS[mark]})`;
+  const text = user === meId ? t("ui.your-turn", { value: MARK_GLYPHS[mark] }) : t("ui.s-turn", { value: who(user), value2: MARK_GLYPHS[mark] });
   return { text, over: false, canRematch: false, turn: user };
 }
 

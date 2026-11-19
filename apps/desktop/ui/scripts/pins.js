@@ -23,7 +23,7 @@ function pinButtonState({ view, channel, count }) {
   return {
     visible,
     count: n,
-    title: n === 0 ? "Pinned Messages" : n === 1 ? "1 pinned message" : `${n} pinned messages`,
+    title: n === 0 ? t("ui.pinned-messages") : n === 1 ? t("ui.1-pinned-message") : t("ui.pinned-messages-2", { n }),
   };
 }
 
@@ -94,7 +94,7 @@ function pinBadgeText(unseen) {
 
 function pinTitleWithNew(title, unseen) {
   const n = Number(unseen) || 0;
-  return n > 0 && title !== "Pinned Messages" ? `${title} (${n} new)` : title;
+  return n > 0 && title !== t("ui.pinned-messages") ? t("ui.new-2", { title, n }) : title;
 }
 
 function canPinIn(server, channel) {
@@ -109,8 +109,8 @@ function composerLock({ view, server, channel }) {
   if (view !== "server" || !channel || channel.kind !== "announcement") return null;
   if (server && server.can_post_announcements) return null;
   return {
-    title: "Only announcers post here",
-    text: "Members allowed to post announcements write in this channel. Everyone can read and react.",
+    title: t("ui.only-announcers-post-here"),
+    text: t("ui.members-allowed-to-post-announcements"),
   };
 }
 
@@ -119,7 +119,7 @@ function pinExcerpt(message, plain) {
   const text = raw.replace(/(\*\*|__|~~|`)/g, "").replace(/^#{1,6}\s+/gm, "").trim();
   if (text) return text;
   const attachments = (message && message.attachments) || [];
-  if (attachments.length) return attachments.some(a => a.is_image) ? "Sent an image" : "Sent an attachment";
+  if (attachments.length) return attachments.some(a => a.is_image) ? t("ui.sent-an-image") : t("ui.sent-an-attachment");
   return "";
 }
 

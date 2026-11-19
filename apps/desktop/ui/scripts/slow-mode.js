@@ -2,7 +2,7 @@ const SLOW_MODE_OPTIONS = [0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600,
 
 function slowModeLabel(seconds) {
   const s = Number(seconds) || 0;
-  if (s <= 0) return "Off";
+  if (s <= 0) return t("ui.off");
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.round(s / 60)}m`;
   return `${Math.round(s / 3600)}h`;
@@ -10,7 +10,7 @@ function slowModeLabel(seconds) {
 
 function slowModeOptionText(seconds) {
   const s = Number(seconds) || 0;
-  if (s <= 0) return "Off";
+  if (s <= 0) return t("ui.off");
   if (s < 60) return `${s} seconds`;
   if (s < 3600) return s === 60 ? "1 minute" : `${Math.round(s / 60)} minutes`;
   return s === 3600 ? "1 hour" : `${Math.round(s / 3600)} hours`;

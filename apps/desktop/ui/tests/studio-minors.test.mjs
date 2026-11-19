@@ -1,3 +1,4 @@
+import { englishSource } from "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -7,7 +8,7 @@ const require = createRequire(import.meta.url);
 const { minorsPointAnchor, minorsBarDrops, minorsChatSizeLabel } = require("../scripts/studio-minors.js");
 const { folderLabel } = require("../scripts/data-folder.js");
 
-const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
 const css = read("../styles/studio-minors.css");
 const glue = read("../scripts/studio-minors.js");

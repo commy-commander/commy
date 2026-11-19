@@ -90,7 +90,7 @@ function recordingTimer(elapsedSecs) {
 }
 
 function voiceMessageText(secs) {
-  return Number.isFinite(secs) ? `Voice message, ${formatClock(secs)}` : "Voice message";
+  return Number.isFinite(secs) ? t("ui.voice-message-2", { value: formatClock(secs) }) : "Voice message";
 }
 
 if (typeof module !== "undefined" && module.exports) {

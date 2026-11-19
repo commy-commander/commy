@@ -1,3 +1,4 @@
+import "./i18n-global.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -66,7 +67,7 @@ test("a closed prompt is not shown as an error", () => {
 
 test("the lock time choices match between the page, the script and the app", () => {
   const options = [...html.matchAll(/<select id="app-lock-after"[\s\S]*?<\/select>/g)][0][0];
-  const values = [...options.matchAll(/<option value="(\d+)">([^<]+)<\/option>/g)].map(m => ({ secs: Number(m[1]), label: m[2] }));
+  const values = [...options.matchAll(/<option value="(\d+)"[^>]*>([^<]+)<\/option>/g)].map(m => ({ secs: Number(m[1]), label: m[2] }));
   assert.deepEqual(values, APP_LOCK_AFTER_CHOICES);
   const rustChoices = rust.match(/LOCK_AFTER_CHOICES: \[u64; \d+\] = \[([^\]]+)\]/)[1].split(",").map(n => Number(n.trim()));
   assert.deepEqual(rustChoices, APP_LOCK_AFTER_CHOICES.map(c => c.secs));

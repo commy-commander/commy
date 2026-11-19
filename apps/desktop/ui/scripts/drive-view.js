@@ -79,9 +79,9 @@ function driveCleanName(raw) {
 function driveSize(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes < 1024 ** 2) return t("ui.kb", { value: (bytes / 1024).toFixed(1) });
+  if (bytes < 1024 ** 3) return t("ui.mb", { value: (bytes / 1024 ** 2).toFixed(1) });
+  return t("ui.gb", { value: (bytes / 1024 ** 3).toFixed(2) });
 }
 
 function driveUnavailable(item) {
@@ -91,16 +91,16 @@ function driveUnavailable(item) {
 function driveKeptLabel(item, items) {
   if (item.folder) {
     const count = driveChildren(items, item.id).length;
-    if (!count) return "Empty";
-    return count === 1 ? "1 item" : `${count} items`;
+    if (!count) return t("ui.empty");
+    return t(count === 1 ? "ui.n.items.one" : "ui.n.items.many", { count: count });
   }
   if (item.kept_here) {
     const others = item.keepers - 1;
-    return others > 0 ? `On this device and ${others} other${others === 1 ? "" : "s"}` : "Only on this device";
+    return others > 0 ? t("ui.on-this-device-and-other", { others, value: others === 1 ? "" : "s" }) : t("ui.only-on-this-device");
   }
-  if (driveUnavailable(item)) return "Nobody who has it is online";
-  const people = item.keepers === 1 ? "1 person" : `${item.keepers} people`;
-  return `Kept by ${people}, ${item.keepers_online} online`;
+  if (driveUnavailable(item)) return t("ui.nobody-who-has-it-is-online");
+  const people = t(item.keepers === 1 ? "ui.n.people.one" : "ui.n.people.many", { count: item.keepers });
+  return t("ui.kept-by-online", { people, keepers_online: item.keepers_online });
 }
 
 function driveRoomLeft(view) {

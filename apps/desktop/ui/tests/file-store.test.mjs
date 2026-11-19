@@ -1,3 +1,4 @@
+import "./i18n-global.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -26,11 +27,11 @@ test("the app and core agree on what a file storage address is", () => {
 test("the file backup page explains itself in a short lead, three points and three steps", () => {
   const html = readFileSync(join(import.meta.dirname, "..", "index.html"), "utf8");
   const page = html.slice(html.indexOf('data-page="file-storage"'), html.indexOf("</section>", html.indexOf('data-page="file-storage"')));
-  assert.match(page, /<h1>File Backup<\/h1>/);
+  assert.match(page, /<h1 data-i18n="[^"]+">File Backup<\/h1>/);
   assert.match(page, /Powered by Cloudflare/);
-  assert.equal([...page.matchAll(/<li>/g)].length, 6);
-  const lead = page.match(/<p class="integration-lead">([^<]+)<\/p>/)[1];
+  assert.equal([...page.matchAll(/<li[\s>]/g)].length, 6);
+  const lead = page.match(/<p class="integration-lead"[^>]*>([^<]+)<\/p>/)[1];
   assert.ok(lead.split(/\s+/).length <= 50, lead);
   assert.doesNotMatch(page.replace(/placeholder="[^"]*"/g, ""), /workers\.dev|R2|peer to peer/);
-  assert.match(html, /id="tab-file-storage">File Backup</);
+  assert.match(html, /id="tab-file-storage" data-i18n="[^"]+">File Backup</);
 });

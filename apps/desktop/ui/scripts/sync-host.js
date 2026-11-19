@@ -26,7 +26,7 @@ function syncHostHomeLabel(ownerHome) {
 }
 
 function syncHostHomeButton(ownerHome) {
-  return `Move back to ${syncHostHomeLabel(ownerHome)}`;
+  return t("ui.move-back-to", { value: syncHostHomeLabel(ownerHome) });
 }
 
 function syncHostPlace(host, release) {
@@ -41,18 +41,18 @@ function syncHostIsOfficial(host) {
 function syncHostNow(server, release, ownerHome) {
   const host = (server && server.sync_host) || syncHostHomeLabel(ownerHome);
   if (syncHostIsOfficial(host)) {
-    const now = "Right now this server syncs through Commy.chat, Commy's official sync server.";
+    const now = t("ui.right-now-this-server-syncs-through");
     const notice = syncHostAppNotice(release);
     return notice ? `${now} ${notice}` : now;
   }
-  const now = `Right now this server syncs through ${syncHostPlace(host, release)}.`;
+  const now = t("ui.right-now-this-server-syncs-through-2", { value: syncHostPlace(host, release) });
   return release && release.text ? `${now} ${release.text}` : now;
 }
 
 function syncHostReady(label, release, home) {
   const runs = release && release.text ? ` ${release.text}` : "";
-  const next = home ? `Choose ${syncHostHomeButton(label)} again to move it back.` : "Choose Move Now to move this server there.";
-  return `${label} is ready.${runs} ${next}`;
+  const next = home ? t("ui.choose-again-to-move-it-back", { value: syncHostHomeButton(label) }) : t("ui.choose-move-now-to-move-this-server");
+  return t("ui.is-ready", { label, runs, next });
 }
 
 function syncHostAppNotice(release) {

@@ -60,7 +60,7 @@ function sweepFriendPresence(tracker, { friends, presenceOf, prefs, myPresence, 
 }
 
 function friendOnlineNotice(friend) {
-  return { title: `${friend.name} is now online`, body: "Click to send a message", target: `dm:${friend.id}` };
+  return { title: t("ui.is-now-online", { name: friend.name }), body: t("ui.click-to-send-a-message"), target: `dm:${friend.id}` };
 }
 
 if (typeof module !== "undefined" && module.exports) {
