@@ -15,7 +15,7 @@ const rule = selector => {
 };
 
 test("every plus rule is for the phone app in the new look, with tokens and no comments", () => {
-  const flat = css.replace(/@media \(prefers-reduced-motion: reduce\) \{/, "").replace(/@container pt-rec \(max-width: 361px\) \{/, "");
+  const flat = css.replace(/@media \(prefers-reduced-motion: reduce\) \{/, "").replace(/@container pt-rec \(max-width: 361px\) \{/, "").replace(/@container pt-plus \(max-width: 259px\) \{/, "");
   const selectors = flat.split("}").map(block => block.split("{")[0]).flatMap(head => head.split(/,(?![^(]*\))/)).map(s => s.trim()).filter(Boolean);
   assert.ok(selectors.length > 20);
   for (const selector of selectors) assert.ok(selector.startsWith(SLIM), selector);
@@ -33,7 +33,7 @@ test("the plus file sits with the other phone files and the off look stays last"
   assert.equal(read("scripts", "studio-phone.js").includes("BAR_EXTRAS"), false);
 });
 
-test("pressing plus folds the field away and five equal keys rise on the line", () => {
+test("pressing plus folds the field away and five equal glass keys rise in its place", () => {
   assert.match(glue, /\{ id: "file", label: "File", icon: "file", press: "cm-file", files: true \}/);
   assert.match(glue, /\{ id: "image", label: "Image", icon: "image", press: "cm-photo", files: true \}/);
   assert.match(glue, /\{ id: "emoji", label: "Emoji", icon: "smile", press: "emoji-btn" \}/);
@@ -43,13 +43,12 @@ test("pressing plus folds the field away and five equal keys rise on the line", 
   assert.match(rule(".main > .composer.pt-plus-open > textarea"), /scale: \.05 1; opacity: 0; pointer-events: none;/);
   assert.match(rule(".main > .composer.pt-plus-open .composer-send"), /translate: 0 22px; opacity: 0;/);
   assert.match(rule(".main > .composer.pt-plus-open .composer-attach::before"), /rotate: 45deg;/);
-  assert.match(rule(".main > .composer > .pt-plus"), /left: 56px;\n  right: -6px;\n  bottom: -51px;[\s\S]*grid-auto-columns: 1fr;\n  height: 92px;/);
-  assert.match(rule(".pt-plus .pt-plus-k"), /grid-template-rows: 48px 44px;[\s\S]*font: 600 12px\/1 var\(--font\);[\s\S]*color: var\(--tab-label\);[\s\S]*translate: 0 12px;/);
-  assert.match(rule(".pt-plus .ic"), /width: 28px;\n  height: 26px;\n  margin-bottom: 8px;\n  color: var\(--header-primary\);/);
-  assert.match(rule(".pt-plus .ic .i"), /width: 25px; height: 25px;/);
-  assert.match(rule(".main > .composer.pt-plus-open .pt-plus-k"), /transition: translate 300ms var\(--ease-spring\), opacity 140ms var\(--ease-out\)/);
-  assert.match(rule(".main > .composer.pt-plus-open .pt-plus-k:nth-child(4)"), /transition-delay: 160ms, 160ms, 0s;/);
-  assert.match(rule(".main > .composer.pt-plus-open .pt-plus-k:nth-child(5)"), /transition-delay: 200ms, 200ms, 0s;/);
+  assert.match(rule(".main > .composer > .pt-plus"), /left: 56px;\n  right: 0;\n  bottom: 0;[\s\S]*container: pt-plus \/ inline-size;[\s\S]*height: 48px;/);
+  assert.match(rule(".pt-plus .pt-plus-k"), /flex: 1 1 0;[\s\S]*height: 46px;[\s\S]*border-radius: 999px;\n  background: var\(--k-plain\);[\s\S]*box-shadow: var\(--k-plain-shadow\);[\s\S]*font: 600 11px\/1 var\(--font\);[\s\S]*color: var\(--header-primary\);[\s\S]*translate: 0 10px;/);
+  assert.match(rule(".main > .composer.pt-plus-open .pt-plus-k:active"), /scale: \.96 \.93; box-shadow: var\(--pillow-down\);/);
+  assert.match(css, /@container pt-plus \(max-width: 259px\) \{\n\s*\S+ \.pt-plus \.pt-plus-k \{ height: auto; max-height: 46px; aspect-ratio: 1; \}\n\s*\S+ \.pt-plus \.lb \{ display: none; \}\n\}/);
+  assert.match(rule(".main > .composer.pt-plus-open .pt-plus-k"), /transition: translate 280ms var\(--ease-spring\), opacity 120ms var\(--ease-out\)/);
+  assert.match(rule(".main > .composer.pt-plus-open .pt-plus-k:nth-child(5)"), /transition-delay: 200ms, 200ms, 0s, 0s, 0s, 0s;/);
 });
 
 test("the plus row is hidden until the phone layout shows it, and the keys press the app's own actions", () => {
