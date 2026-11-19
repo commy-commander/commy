@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { coalescedRuns } = require("../scripts/redraws.js");
+const { coalescedRuns, memberRowsShown, MEMBER_ROWS_STEP } = require("../scripts/redraws.js");
 
 function gate() {
   let open;
@@ -63,4 +63,13 @@ test("a redraw that fails does not stop the next one", async () => {
   } finally {
     console.warn = warn;
   }
+});
+
+test("a big member group draws a page of rows and offers the rest", () => {
+  assert.deepEqual(memberRowsShown(12, 0), { rows: 12, more: 0, next: MEMBER_ROWS_STEP * 2 });
+  assert.deepEqual(memberRowsShown(3000, 0), { rows: MEMBER_ROWS_STEP, more: 3000 - MEMBER_ROWS_STEP, next: MEMBER_ROWS_STEP * 2 });
+  const after = memberRowsShown(3000, MEMBER_ROWS_STEP * 2);
+  assert.equal(after.rows, MEMBER_ROWS_STEP * 2);
+  assert.equal(after.next, MEMBER_ROWS_STEP * 3);
+  assert.deepEqual(memberRowsShown(150, 5000), { rows: 150, more: 0, next: 5000 + MEMBER_ROWS_STEP });
 });

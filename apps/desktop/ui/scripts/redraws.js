@@ -22,6 +22,14 @@ function coalescedRuns(work) {
   };
 }
 
+const MEMBER_ROWS_STEP = 100;
+
+function memberRowsShown(count, shown) {
+  const limit = Math.max(MEMBER_ROWS_STEP, Number(shown) || 0);
+  const rows = Math.min(count, limit);
+  return { rows, more: count - rows, next: limit + MEMBER_ROWS_STEP };
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { coalescedRuns };
+  module.exports = { coalescedRuns, memberRowsShown, MEMBER_ROWS_STEP };
 }

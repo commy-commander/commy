@@ -8832,6 +8832,8 @@ function memberGroupHeading(title, count) {
   return heading;
 }
 
+const memberRowsOpen = new Map();
+
 function renderMembers() {
   const pane = $("member-list");
   const kept = pane.querySelector(":scope > .member-scroll");
@@ -8848,12 +8850,15 @@ function renderMembers() {
   const list = studioLook() ? pane.appendChild(el("div", "member-scroll")) : pane;
   renderPlayingGroup(list, playing);
 
+  const serverId = state.currentServer.id;
   const group = (title, members, dim, color) => {
     if (!members.length) return;
     const heading = memberGroupHeading(title, members.length);
     paintRole(heading, color);
     list.appendChild(heading);
-    for (const member of members) {
+    const shownKey = `${serverId}:${title}`;
+    const page = memberRowsShown(members.length, memberRowsOpen.get(shownKey));
+    for (const member of members.slice(0, page.rows)) {
       const row = el("div", "member" + (dim ? " offline" : ""));
       row.dataset.user = member.id;
       row.classList.toggle("speaking", state.speaking.has(member.id));
@@ -8914,6 +8919,16 @@ function renderMembers() {
         };
       }
       list.appendChild(row);
+    }
+    if (page.more) {
+      const more = el("button", "member-more", `Show ${Math.min(page.more, MEMBER_ROWS_STEP)} more`);
+      more.type = "button";
+      more.onclick = e => {
+        e.stopPropagation();
+        memberRowsOpen.set(shownKey, page.next);
+        renderMembers();
+      };
+      list.appendChild(more);
     }
   };
   for (const g of groupMembers(rest, state.currentServer.roles)) group(g.title, g.members, !!g.dim, g.color);
@@ -15402,6 +15417,7 @@ function openMemberCard(member, anchor) {
 }
 
 const homeStatuses = new Map();
+const homesAsked = new Set();
 let homeAskTimer = null;
 
 function myHome() {
@@ -15409,8 +15425,9 @@ function myHome() {
 }
 
 function askHomeStatus(members) {
-  const homes = homesToAsk(members, homeStatuses);
+  const homes = homesToAsk(members, homeStatuses).filter(home => !homesAsked.has(home));
   if (!homes.length || homeAskTimer) return;
+  for (const home of homes) homesAsked.add(home);
   homeAskTimer = setTimeout(async () => {
     homeAskTimer = null;
     try {
@@ -15420,6 +15437,7 @@ function askHomeStatus(members) {
         renderMembers();
       }
     } catch (e) {
+      for (const home of homes) homesAsked.delete(home);
       console.warn("home status", e);
     }
   }, 300);
@@ -25238,6 +25256,7 @@ function wireEvents() {
     });
     window.__TAURI__.event.listen("homes-changed", async () => {
       homeStatuses.clear();
+      homesAsked.clear();
       await refreshServers();
       if (state.currentServer) {
         await refreshCurrentServer();
