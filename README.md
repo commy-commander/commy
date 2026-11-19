@@ -47,17 +47,17 @@ Commy is where your people hang out: text channels for the everyday chatter,
 voice channels to drop into, and screen sharing for game night. It is free to
 use, and the whole app is open source.
 
-- 💬 **Chat that feels alive.** Replies, reactions, threads, forums, polls,
+- **Chat that feels alive.** Replies, reactions, threads, forums, polls,
   custom emoji and voice messages.
-- 🎙️ **Voice that just works.** One click noise cancellation, a volume for
+- **Voice that just works.** One click noise cancellation, a volume for
   each person, a soundboard, and stage channels for big moments.
-- 🎮 **Show your game.** Share a whole screen or a single window, with sound
+- **Show your game.** Share a whole screen or a single window, with sound
   on Windows.
-- 🛡️ **Tools for moderators.** Roles and permissions, auto moderation,
+- **Tools for moderators.** Roles and permissions, auto moderation,
   timeouts, bans and an audit log.
-- 🔒 **Private by design.** Messages sync sealed end to end, and voice, video,
+- **Private by design.** Messages sync sealed end to end, and voice, video,
   screen shares and files go straight between members.
-- 🏠 **Yours to host.** Run your own sync host and keep your community's
+- **Yours to host.** Run your own sync host and keep your community's
   history on your own server.
 
 [See everything Commy can do →](docs/features.md)
@@ -116,7 +116,7 @@ security problems, follow [SECURITY.md](SECURITY.md) instead.
 
 Commy is free, and it stays that way thanks to people like you. If Commy is
 home for your community, you can help keep the lights on with a tip on
-[Ko-fi](https://ko-fi.com/commychat). ☕
+[Ko-fi](https://ko-fi.com/commychat).
 
 [![Support Commy on Ko-fi][kofi-shield]][kofi-url]
 
