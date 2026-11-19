@@ -99,10 +99,12 @@ function renderInviteExpiry() {
     btn.classList.toggle("active", on);
     btn.setAttribute("aria-checked", String(on));
   }
+  const key = inviteKeyLabels().dialog;
+  $("invite-link-copy").textContent = key;
   if (!inviteLinkShown) {
     $("invite-expiry-note").textContent = inviteExpiry === "never"
-      ? "Copy Invite Link for a link that never expires."
-      : `Copy Invite Link for a link that lasts ${INVITE_EXPIRY_NAMES[inviteExpiry]}.`;
+      ? `${key} for a link that never expires.`
+      : `${key} for a link that lasts ${INVITE_EXPIRY_NAMES[inviteExpiry]}.`;
   }
 }
 
@@ -125,8 +127,11 @@ async function copyInviteLink() {
   button.disabled = true;
   try {
     const url = await makeInviteLink();
-    await navigator.clipboard.writeText(url);
-    toast("Invite link copied");
+    if (inviteShareHere()) await shareFullInviteLink(url, state.currentServer?.name);
+    else {
+      await navigator.clipboard.writeText(url);
+      toast("Invite link copied");
+    }
   } catch (e) {
     toast(String(e));
   } finally {

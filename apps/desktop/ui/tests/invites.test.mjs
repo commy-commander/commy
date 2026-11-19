@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { findInviteLink, looksLikeInviteLink, checkInviteName, inviteTimeLeft, inviteLabel, sortInvites } = require("../scripts/invites.js");
+const { findInviteLink, looksLikeInviteLink, checkInviteName, inviteTimeLeft, inviteLabel, sortInvites, inviteShareWay, inviteShareTitle, inviteLinkKeyLabels } = require("../scripts/invites.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const long = "q".repeat(43);
@@ -67,4 +67,42 @@ test("invites list newest first by their link", () => {
   assert.equal(inviteLabel(b), "https://commy.chat/i/pixel-pioneers");
   assert.deepEqual(sortInvites([a, b]), [b, a]);
   assert.deepEqual(sortInvites(null), []);
+});
+
+test("the phone apps always share invites through the phone's share menu", () => {
+  assert.equal(inviteShareWay({ mobileApp: true, browserApp: false, webShare: false, touch: true }), "app");
+  assert.equal(inviteShareWay({ mobileApp: true, browserApp: false, webShare: false, touch: false }), "app");
+});
+
+test("the web app shares through the browser only on a touch screen that offers it", () => {
+  assert.equal(inviteShareWay({ mobileApp: false, browserApp: true, webShare: true, touch: true }), "browser");
+  assert.equal(inviteShareWay({ mobileApp: false, browserApp: true, webShare: true, touch: false }), null);
+  assert.equal(inviteShareWay({ mobileApp: false, browserApp: true, webShare: false, touch: true }), null);
+});
+
+test("the desktop app keeps copying invite links", () => {
+  assert.equal(inviteShareWay({ mobileApp: false, browserApp: false, webShare: true, touch: true }), null);
+  assert.deepEqual(inviteLinkKeyLabels(false), { dialog: "Copy Invite Link", create: "Create and Copy", row: "Copy Link" });
+});
+
+test("where the share menu opens, every invite key says Share", () => {
+  assert.deepEqual(inviteLinkKeyLabels(true), { dialog: "Share Invite Link", create: "Create and Share", row: "Share" });
+});
+
+test("the share menu title names the server when there is one", () => {
+  assert.equal(inviteShareTitle("Pixel Pioneers"), "Join Pixel Pioneers on Commy");
+  assert.equal(inviteShareTitle("  "), "Join me on Commy");
+  assert.equal(inviteShareTitle(null), "Join me on Commy");
+});
+
+test("every invite key on the phone hands the whole link, key and all, to the share menu", () => {
+  const app = readFileSync(join(repo, "apps", "desktop", "ui", "scripts", "app.js"), "utf8");
+  const link = readFileSync(join(repo, "apps", "desktop", "ui", "scripts", "invite-link.js"), "utf8");
+  assert.match(app, /await shareFullInviteLink\(invite\.url, server\.name\);/);
+  assert.match(app, /await shareFullInviteLink\(await invoke\("invite_full_link", \{ serverId: server\.id, origin: invite\.origin, code: invite\.code \}\), server\.name\);/);
+  assert.match(link, /if \(inviteShareHere\(\)\) await shareFullInviteLink\(url, state\.currentServer\?\.name\);/);
+  assert.match(app, /if \(way === "app"\) await invoke\("share_link", \{ url, title \}\);/);
+  const rust = readFileSync(join(repo, "apps", "desktop", "src-tauri", "src", "lib.rs"), "utf8");
+  assert.ok(rust.includes("share_sheet::share_link,"));
+  assert.ok(rust.includes(".plugin(share_sheet::init())"));
 });

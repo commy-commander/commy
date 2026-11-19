@@ -26375,6 +26375,7 @@ const invitesView = { serverId: null, invites: [], clock: null, accountHost: nul
 async function renderInvitesPage(server) {
   const manage = Boolean(server.can_manage_server);
   $("invite-manage").classList.toggle("hidden", !manage);
+  $("invite-custom-create").textContent = inviteKeyLabels().create;
   if (manage) {
     paintInviteBackground(server);
     const never = $("invite-custom-never");
@@ -26446,7 +26447,7 @@ async function createCustomInvite() {
   button.disabled = true;
   try {
     const invite = await invoke("create_invite_link", { serverId: server.id, expires: $("invite-custom-expiry").value, name });
-    await copyFullInviteLink(invite.url);
+    await shareFullInviteLink(invite.url, server.name);
     $("invite-custom-name").value = "";
     await renderInvitesPage(server);
   } catch (e) {
@@ -26470,7 +26471,7 @@ function inviteRow(invite) {
   left.dataset.expires = invite.expires_at == null ? "" : String(invite.expires_at);
   if (invite.expires_at != null) left.title = `Expires ${new Date(invite.expires_at).toLocaleString()}`;
   row.appendChild(left);
-  const copy = el("button", "btn-secondary btn-small invite-row-copy", "Copy Link");
+  const copy = el("button", "btn-secondary btn-small invite-row-copy", inviteKeyLabels().row);
   copy.onclick = () => copyTrackedInvite(invite, copy);
   row.appendChild(copy);
   const revoke = el("button", "btn-secondary btn-small danger-text invite-row-revoke", "Revoke");
@@ -26507,6 +26508,34 @@ function startInviteClock() {
   }, 15e3);
 }
 
+function inviteShareHere() {
+  return inviteShareWay({
+    mobileApp: document.body.classList.contains("mobile-app"),
+    browserApp: inBrowserApp(),
+    webShare: typeof navigator.share === "function",
+    touch: window.matchMedia("(pointer: coarse)").matches,
+  });
+}
+
+function inviteKeyLabels() {
+  return inviteLinkKeyLabels(Boolean(inviteShareHere()));
+}
+
+async function openShareMenu(way, url, title) {
+  if (way === "app") await invoke("share_link", { url, title });
+  else await navigator.share({ title, url });
+}
+
+async function shareFullInviteLink(url, serverName) {
+  const way = inviteShareHere();
+  if (!way) return copyFullInviteLink(url);
+  try {
+    await openShareMenu(way, url, inviteShareTitle(serverShownName(serverName)));
+  } catch (e) {
+    if (e?.name !== "AbortError") await copyFullInviteLink(url);
+  }
+}
+
 async function copyFullInviteLink(url) {
   try {
     await navigator.clipboard.writeText(url);
@@ -26521,7 +26550,7 @@ async function copyTrackedInvite(invite, button) {
   if (!server) return;
   button.disabled = true;
   try {
-    await copyFullInviteLink(await invoke("invite_full_link", { serverId: server.id, origin: invite.origin, code: invite.code }));
+    await shareFullInviteLink(await invoke("invite_full_link", { serverId: server.id, origin: invite.origin, code: invite.code }), server.name);
   } catch (e) {
     toast(String(e));
   } finally {

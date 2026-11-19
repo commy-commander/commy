@@ -1,6 +1,6 @@
 [package]
 name = "commy-apple-sign-in"
-description = "Sign in with Apple, sign-in sheets and passkeys for the Commy iPhone app"
+description = "Sign in with Apple, sign-in sheets, passkeys and the share menu for the Commy iPhone app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

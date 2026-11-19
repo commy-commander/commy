@@ -50,10 +50,27 @@ function inviteLabel(invite) {
   return `${invite.origin}/i/${invite.code}`;
 }
 
+function inviteShareWay({ mobileApp, browserApp, webShare, touch }) {
+  if (mobileApp) return "app";
+  if (browserApp && webShare && touch) return "browser";
+  return null;
+}
+
+function inviteShareTitle(serverName) {
+  const name = String(serverName || "").trim();
+  return name ? `Join ${name} on Commy` : "Join me on Commy";
+}
+
+function inviteLinkKeyLabels(sharing) {
+  return sharing
+    ? { dialog: "Share Invite Link", create: "Create and Share", row: "Share" }
+    : { dialog: "Copy Invite Link", create: "Create and Copy", row: "Copy Link" };
+}
+
 function sortInvites(invites) {
   return [...(invites || [])].sort((a, b) => (b.created_at - a.created_at) || inviteLabel(a).localeCompare(inviteLabel(b)));
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { INVITE_LINK_RE, findInviteLink, looksLikeInviteLink, checkInviteName, inviteTimeLeft, inviteLabel, sortInvites };
+  module.exports = { INVITE_LINK_RE, findInviteLink, looksLikeInviteLink, checkInviteName, inviteTimeLeft, inviteLabel, sortInvites, inviteShareWay, inviteShareTitle, inviteLinkKeyLabels };
 }

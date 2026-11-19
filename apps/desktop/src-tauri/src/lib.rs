@@ -71,6 +71,7 @@ use commy_view::search;
 mod server_guard;
 mod server_wake;
 mod settle;
+mod share_sheet;
 mod sounds;
 mod speech;
 #[cfg(desktop)]
@@ -8766,7 +8767,7 @@ pub fn run() {
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(commy_apple_sign_in::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init()).plugin(app_sign_in::init());
+    let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init()).plugin(app_sign_in::init()).plugin(share_sheet::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(push_wake::init());
     #[cfg(desktop)]
@@ -9043,6 +9044,7 @@ pub fn run() {
             ui_ready,
             is_mobile_app,
             can_share_screen,
+            share_sheet::share_link,
             init_user,
             get_user,
             create_server,
