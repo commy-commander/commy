@@ -330,4 +330,65 @@ mod blocking {
         let later = Utc::now() + chrono::Duration::seconds(1);
         assert_eq!(state.apply_signed(&signed_event(&state, spammer.id, later, leave)), Ok(true));
     }
+
+    fn update(state: &mut ServerState, profile: &UserProfile, at: chrono::DateTime<Utc>) -> Result<bool, StoreError> {
+        let event = ServerEvent::ProfileUpdate { profile: profile.clone() };
+        state.apply_signed(&signed_event(state, profile.id, at, event))
+    }
+
+    fn rehomed(profile: &UserProfile, home: &str, issued: i64) -> UserProfile {
+        let server = Identity::from_bytes(&[7; 32]);
+        UserProfile { home: Some(card_from(&server, home, profile.id, profile.identity.unwrap(), issued)), ..profile.clone() }
+    }
+
+    #[test]
+    fn an_update_without_a_card_keeps_the_card_already_proven() {
+        let (mut state, _, _) = fixture();
+        let friend = from_home("friend", "https://staging.commy.chat");
+        arrive(&mut state, &friend).unwrap();
+        let bare = UserProfile { home: None, display_name: Some("Friend".into()), ..friend.clone() };
+        assert_eq!(update(&mut state, &bare, Utc::now() + chrono::Duration::seconds(1)), Ok(true));
+        assert_eq!(state.profiles[&friend.id].display_name.as_deref(), Some("Friend"));
+        assert_eq!(state.profiles[&friend.id].home, friend.home, "a starting device that has not loaded its card must not move the person");
+        let unkeyed = UserProfile { home: None, identity: None, display_name: Some("Friend again".into()), ..friend.clone() };
+        assert_eq!(update(&mut state, &unkeyed, Utc::now() + chrono::Duration::seconds(2)), Ok(true));
+        assert_eq!(state.profiles[&friend.id].home, friend.home);
+    }
+
+    #[test]
+    fn the_owners_card_survives_an_update_without_it() {
+        let (mut state, _, owner) = fixture();
+        let issued = Utc::now().timestamp_millis();
+        let housed = rehomed(&state.profiles[&owner], "https://staging.commy.chat", issued);
+        assert_eq!(update(&mut state, &housed, Utc::now()), Ok(true));
+        let bare = UserProfile { home: None, ..housed.clone() };
+        assert_eq!(update(&mut state, &bare, Utc::now() + chrono::Duration::seconds(1)), Ok(false));
+        assert_eq!(state.profiles[&owner].home, housed.home);
+    }
+
+    #[test]
+    fn a_newer_card_moves_a_person_and_an_older_one_never_moves_them_back() {
+        let (mut state, _, _) = fixture();
+        let friend = from_home("friend", "https://staging.commy.chat");
+        arrive(&mut state, &friend).unwrap();
+        let issued = friend.home.as_ref().unwrap().issued;
+        let moved = rehomed(&friend, "https://friends.org", issued + 1000);
+        assert_eq!(update(&mut state, &moved, Utc::now() + chrono::Duration::seconds(1)), Ok(true));
+        assert_eq!(state.profiles[&friend.id].home, moved.home);
+        let stale = UserProfile { display_name: Some("Old copy".into()), ..friend.clone() };
+        assert_eq!(update(&mut state, &stale, Utc::now() + chrono::Duration::seconds(2)), Ok(true));
+        assert_eq!(state.profiles[&friend.id].home, moved.home);
+    }
+
+    #[test]
+    fn requiring_a_home_still_hears_members_whose_card_is_held() {
+        let (mut state, _, owner) = fixture();
+        let friend = from_home("friend", "https://commy.chat");
+        arrive(&mut state, &friend).unwrap();
+        block(&mut state, owner, &[], true).unwrap();
+        let bare = UserProfile { home: None, display_name: Some("Friend".into()), ..friend.clone() };
+        assert_eq!(update(&mut state, &bare, Utc::now() + chrono::Duration::seconds(1)), Ok(true));
+        assert!(state.server.is_member(friend.id));
+        assert_eq!(state.profiles[&friend.id].home, friend.home);
+    }
 }

@@ -179,10 +179,22 @@ pub fn owners_away_home(state: &ServerState, mine: &str) -> Option<String> {
     away_home(mine, state.profiles.get(&state.server.owner)?)
 }
 
-pub fn community_place(chosen: Option<&str>, owners_home: Option<&str>, account_url: &str, known: impl Fn(&str) -> Option<String>) -> Option<Place> {
+pub fn owners_home_unproven(state: &ServerState) -> bool {
+    state.profiles.get(&state.server.owner).is_none_or(|owner| home_of(owner).is_none())
+}
+
+pub fn held_place(placed: Option<Option<String>>, recorded_host: Option<&str>, account_url: &str) -> Option<String> {
+    match placed {
+        Some(Some(socket)) => Some(socket),
+        Some(None) => Some(account_url.to_string()),
+        None => recorded_host.and_then(socket_url),
+    }
+}
+
+pub fn community_place(chosen: Option<&str>, owners_home: Option<&str>, held: Option<&str>, account_url: &str, known: impl Fn(&str) -> Option<String>) -> Option<Place> {
     match (chosen, owners_home) {
         (Some(origin), _) => socket_url(origin).map(Place::At),
-        (None, None) => Some(Place::At(account_url.to_string())),
+        (None, None) => Some(Place::At(held.unwrap_or(account_url).to_string())),
         (None, Some(home)) => Some(known(home).map_or_else(|| Place::Unknown(home.to_string()), Place::At)),
     }
 }
@@ -378,14 +390,29 @@ mod tests {
     fn a_community_without_its_own_host_lives_on_its_owners_home() {
         let mine = "wss://commy.chat/sync";
         let known = |home: &str| (home == "https://friends.org").then(|| "wss://friends.org/sync".to_string());
-        assert_eq!(community_place(None, None, mine, known), Some(Place::At(mine.into())), "an owner on our home keeps it on our sync");
-        assert_eq!(community_place(None, Some("https://friends.org"), mine, known), Some(Place::At("wss://friends.org/sync".into())));
+        assert_eq!(community_place(None, None, None, mine, known), Some(Place::At(mine.into())), "an owner on our home keeps it on our sync");
         assert_eq!(
-            community_place(None, Some("https://far.org"), mine, known),
+            community_place(None, None, Some("wss://staging.commy.chat/sync"), mine, known),
+            Some(Place::At("wss://staging.commy.chat/sync".into())),
+            "while the owner's card is missing a community stays where it already lives"
+        );
+        assert_eq!(community_place(None, Some("https://friends.org"), None, mine, known), Some(Place::At("wss://friends.org/sync".into())));
+        assert_eq!(
+            community_place(None, Some("https://far.org"), None, mine, known),
             Some(Place::Unknown("https://far.org".into())),
             "an owner's home we have not looked up yet is waited for, never guessed"
         );
-        assert_eq!(community_place(Some("https://sync.example.org"), Some("https://friends.org"), mine, known), Some(Place::At("wss://sync.example.org/sync".into())), "a chosen host always wins");
+        assert_eq!(community_place(Some("https://sync.example.org"), Some("https://friends.org"), Some(mine), mine, known), Some(Place::At("wss://sync.example.org/sync".into())), "a chosen host always wins");
+    }
+
+    #[test]
+    fn a_community_whose_owner_lost_their_card_stays_where_it_lives() {
+        let mine = "wss://dev.commy.chat/sync";
+        let theirs = "wss://staging.commy.chat/sync";
+        assert_eq!(held_place(Some(Some(theirs.into())), Some("https://elsewhere.org"), mine).as_deref(), Some(theirs), "the live place wins over an older record");
+        assert_eq!(held_place(Some(None), Some("https://staging.commy.chat"), mine).as_deref(), Some(mine));
+        assert_eq!(held_place(None, Some("https://staging.commy.chat"), mine).as_deref(), Some(theirs), "a fresh start uses where the account log last saw it");
+        assert_eq!(held_place(None, None, mine), None);
     }
 
     #[test]
@@ -399,6 +426,12 @@ mod tests {
         let mut legacy = ServerState::new(commy_core::Server::new("club", older.id));
         legacy.profiles.insert(older.id, older);
         assert_eq!(owners_away_home(&legacy, "https://commy.chat"), None);
+        assert!(!owners_home_unproven(&state));
+        assert!(owners_home_unproven(&legacy));
+        let mut unknown = ServerState::new(commy_core::Server::new("club", owner.id));
+        assert!(owners_home_unproven(&unknown));
+        unknown.profiles.insert(owner.id, UserProfile { home: None, ..owner.clone() });
+        assert!(owners_home_unproven(&unknown));
     }
 
     #[test]

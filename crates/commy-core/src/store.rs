@@ -757,10 +757,23 @@ impl ServerState {
         if profile.id == self.server.owner || self.bots.contains(&profile.id) {
             return false;
         }
-        match crate::home::proven_home(profile) {
+        match self.standing_home(profile) {
             Some(card) => self.server.blocks_home(card.domain()),
             None => self.server.require_home,
         }
+    }
+
+    fn standing_home<'a>(&'a self, profile: &'a UserProfile) -> Option<&'a crate::home::HomeCard> {
+        let held = self
+            .profiles
+            .get(&profile.id)
+            .and_then(crate::home::proven_home)
+            .filter(|card| profile.identity.is_none_or(|key| key == card.identity));
+        held.into_iter().chain(crate::home::proven_home(profile)).max_by_key(|card| card.issued)
+    }
+
+    fn keep_standing_home(&self, profile: &mut UserProfile) {
+        profile.home = self.standing_home(profile).cloned();
     }
 
     pub fn home_refused(&self, user: UserId) -> bool {
@@ -1265,6 +1278,7 @@ impl ServerState {
                 }
                 self.pin_identity(&mut profile)?;
                 profile = profile.as_seen_by_others();
+                self.keep_standing_home(&mut profile);
                 if self.refuses_home(&profile) {
                     return Ok(false);
                 }
@@ -2284,6 +2298,7 @@ impl ServerState {
                 }
                 self.pin_identity(&mut profile)?;
                 profile = profile.as_seen_by_others();
+                self.keep_standing_home(&mut profile);
                 if self.refuses_home(&profile) {
                     return Ok(false);
                 }

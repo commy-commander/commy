@@ -828,8 +828,19 @@ fn owners_homes(app: &App) -> HashMap<ServerId, String> {
     servers.iter().filter_map(|(sid, state)| Some((*sid, commy_view::away::owners_away_home(state, &mine)?))).collect()
 }
 
-fn community_place(chosen: Option<&str>, owners_home: Option<&str>, account_url: &str) -> Option<Place> {
-    let place = commy_view::away::community_place(chosen, owners_home, account_url, crate::away_homes::known_sync)?;
+fn unproven_owner_hosts(app: &App) -> HashMap<ServerId, Option<String>> {
+    let unproven: Vec<ServerId> = {
+        let servers = app.servers.lock_or_recover();
+        servers.iter().filter(|(_, state)| commy_view::away::owners_home_unproven(state)).map(|(sid, _)| *sid).collect()
+    };
+    unproven
+        .into_iter()
+        .map(|sid| (sid, crate::account_log::community_host(app, sid)))
+        .collect()
+}
+
+fn community_place(chosen: Option<&str>, owners_home: Option<&str>, held: Option<&str>, account_url: &str) -> Option<Place> {
+    let place = commy_view::away::community_place(chosen, owners_home, held, account_url, crate::away_homes::known_sync)?;
     match &place {
         Place::At(url) if crate::server_guard::blocks_origin(url) => None,
         Place::Unknown(home) if crate::server_guard::blocks_origin(home) => None,
@@ -875,6 +886,7 @@ fn refresh(handle: &AppHandle) {
     let mut wanted = wanted_now(&app, me);
     let hosts = chosen_hosts(&app);
     let owners = owners_homes(&app);
+    let unproven = unproven_owner_hosts(&app);
     let owned: HashSet<ServerId> = app.servers.lock_or_recover().iter().filter(|(_, state)| state.server.owner == me).map(|(sid, _)| *sid).collect();
     let mut unknown_homes = Vec::new();
     let mut fresh_communities = Vec::new();
@@ -891,7 +903,9 @@ fn refresh(handle: &AppHandle) {
     live.cursors.keep_hosts_of(&wanted.keys().copied().collect());
     for (sid, wants) in wanted.drain() {
         let chosen = hosts.get(&sid).cloned().flatten();
-        let place = community_place(chosen.as_deref(), owners.get(&sid).map(String::as_str), &live.url);
+        let placed = live.communities.get(&sid).map(|community| Some(community.url.clone()));
+        let held = unproven.get(&sid).and_then(|recorded| commy_view::away::held_place(placed, recorded.as_deref(), &live.url));
+        let place = community_place(chosen.as_deref(), owners.get(&sid).map(String::as_str), held.as_deref(), &live.url);
         let url = match place {
             Some(Place::At(url)) => url,
             Some(Place::Unknown(home)) => {

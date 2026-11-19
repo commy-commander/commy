@@ -527,10 +527,12 @@ impl Session {
         let mut places = Places::default();
         let Some(home) = self.sync.borrow().as_ref().map(|live| live.url.clone()) else { return places };
         let loaded = self.client.borrow().sync_hosts();
-        let owners: HashMap<ServerId, String> = {
+        let (owners, unproven): (HashMap<ServerId, String>, HashSet<ServerId>) = {
             let client = self.client.borrow();
             let servers = client.servers.lock().unwrap();
-            servers.iter().filter_map(|(sid, state)| Some((*sid, commy_view::away::owners_away_home(state, &self.origin)?))).collect()
+            let owners = servers.iter().filter_map(|(sid, state)| Some((*sid, commy_view::away::owners_away_home(state, &self.origin)?))).collect();
+            let unproven = servers.iter().filter(|(_, state)| commy_view::away::owners_home_unproven(state)).map(|(sid, _)| *sid).collect();
+            (owners, unproven)
         };
         let invited = self.invited_hosts.borrow().clone();
         let guard = self.sync.borrow();
@@ -542,7 +544,8 @@ impl Session {
                 None => invited.get(&server).cloned().or_else(|| live.book.recorded_host(server)),
             };
             let owners_home = owners.get(&server).map(String::as_str);
-            match commy_view::away::community_place(chosen.as_deref(), owners_home, &home, |h| homes.url(h).map(str::to_string)) {
+            let held = unproven.contains(&server).then(|| commy_view::away::held_place(live.book.placed(server), live.book.recorded_host(server).as_deref(), &home)).flatten();
+            match commy_view::away::community_place(chosen.as_deref(), owners_home, held.as_deref(), &home, |h| homes.url(h).map(str::to_string)) {
                 Some(commy_view::away::Place::At(socket)) if !self.blocks_sync_origin(&socket) => {
                     if socket != home {
                         places.sockets.insert(server, socket);
