@@ -33,7 +33,7 @@ No code comments, in any language or file type (Rust, JavaScript, CSS, HTML, she
 
 ### Wire Data
 
-Apps on older versions must keep reading what newer ones write. A new field on a postcard wire type (`Server`, `UserProfile`, `Message`, event payloads) goes at the end with `#[serde(default, with = "crate::wire_layout::later")]`; never reorder, retype or remove fields, and only add variants to `ServerEvent`, `WirePayload` or `CatchupFrame`. `crates/commy-net/tests/wire_shape.rs` checks this against the shape 0.2.4 reads (`tests/fixtures/wire-shape-0.2.4.json`).
+Apps on stable releases must keep reading what newer builds write, nightlies included. A new field on a postcard wire type (`Server`, `UserProfile`, `Message`, event payloads) goes at the end with `#[serde(default, with = "crate::wire_layout::later")]`; never reorder, retype or remove fields, only add variants to `ServerEvent`, `WirePayload` or `CatchupFrame`, keep `commy_net::PROTOCOL_VERSION`, and never raise the sync service's `OLDEST_CLIENT_PROTOCOL` above a stable release's `PROTOCOL` (new sync frames go behind a `*_SINCE` level). `crates/commy-net/tests/wire_shape.rs` checks this against every stable release recorded in `crates/commy-net/tests/fixtures/wire-shape-<version>.json`. After each final release, record it from a checkout of its tag: `WIRE_SHAPE_FROM=<checkout> WIRE_SHAPE_RELEASE=<version> cargo test -p commy-net --test wire_shape record_a_stable_release -- --ignored`, and commit the new file.
 
 ### Testing Approach
 

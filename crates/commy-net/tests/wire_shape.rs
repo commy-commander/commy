@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
-const OLDEST_READER: &str = "0.2.4";
-const OLDEST_SHAPE: &str = "tests/fixtures/wire-shape-0.2.4.json";
+const FIXTURES: &str = "tests/fixtures";
+const SHAPE_PREFIX: &str = "wire-shape-";
+const PEER_PROTOCOL: (&str, &str) = ("crates/commy-net/src/protocol.rs", "PROTOCOL_VERSION");
+const SYNC_PROTOCOL: (&str, &str) = ("crates/commy-sync/src/wire.rs", "PROTOCOL");
+const OLDEST_SYNC_CLIENT: (&str, &str) = ("crates/commy-sync/src/wire.rs", "OLDEST_CLIENT_PROTOCOL");
 const SOURCES: [&str; 2] = ["crates/commy-core/src", "crates/commy-net/src"];
 const ROOTS: [&str; 6] = ["Envelope", "Entry", "SignalEntry", "DmEnvelope", "CatchupFrame", "SignedBytes"];
 const ENUMS_OLD_READERS_SKIP_WHOLE: [&str; 3] = ["ServerEvent", "WirePayload", "CatchupFrame"];
@@ -32,6 +35,12 @@ enum Shape {
 }
 
 type Shapes = BTreeMap<String, Vec<Shape>>;
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct Recorded {
+    constants: BTreeMap<String, u64>,
+    types: Shapes,
+}
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -184,25 +193,21 @@ fn reachable(shapes: &Shapes) -> BTreeSet<String> {
     seen
 }
 
-fn plain(fields: &[Field]) -> Vec<&Field> {
-    fields.iter().filter(|f| !f.later).collect()
-}
-
 fn field_problem(old: &[Field], new: &[Field]) -> Option<String> {
-    let (was, now) = (plain(old), plain(new));
-    for i in 0..was.len().max(now.len()) {
-        match (was.get(i), now.get(i)) {
-            (Some(a), Some(b)) if a.ty == b.ty => continue,
-            (Some(a), Some(b)) => return Some(format!("field {i} was `{}: {}`, now `{}: {}`", a.name, a.ty, b.name, b.ty)),
-            (Some(a), None) => return Some(format!("field `{}: {}` is gone", a.name, a.ty)),
-            (None, Some(b)) => return Some(format!("new field `{}: {}` is not a later field", b.name, b.ty)),
-            (None, None) => break,
+    for (i, was) in old.iter().enumerate() {
+        match new.get(i) {
+            Some(now) if now.ty == was.ty && now.later == was.later => continue,
+            Some(now) => return Some(format!("field {i} was `{}: {}`, now `{}: {}`", was.name, was.ty, now.name, now.ty)),
+            None => return Some(format!("field `{}: {}` is gone", was.name, was.ty)),
         }
     }
-    None
+    new.iter()
+        .skip(old.len())
+        .find(|now| !now.later)
+        .map(|now| format!("new field `{}: {}` is not a later field", now.name, now.ty))
 }
 
-fn shape_problem(name: &str, old: &Shape, new: &Shape) -> Option<String> {
+fn shape_problem(name: &str, old: &Shape, new: &Shape, release: &str) -> Option<String> {
     match (old, new) {
         (Shape::Struct { fields: was, .. }, Shape::Struct { fields: now, .. }) => field_problem(was, now),
         (Shape::Enum { variants: was, .. }, Shape::Enum { variants: now, .. }) => {
@@ -216,14 +221,14 @@ fn shape_problem(name: &str, old: &Shape, new: &Shape) -> Option<String> {
             }
             let added: Vec<&str> = now.iter().skip(was.len()).map(|v| v.name.as_str()).collect();
             (!added.is_empty() && !ENUMS_OLD_READERS_SKIP_WHOLE.contains(&name)).then(|| {
-                format!("new variants {added:?}: builds back to {OLDEST_READER} fail to read any value holding one")
+                format!("new variants {added:?}: Commy {release} fails to read any value holding one")
             })
         }
         _ => Some("changed between struct and enum".into()),
     }
 }
 
-fn problems(old: &Shapes, new: &Shapes) -> Vec<String> {
+fn problems(old: &Shapes, new: &Shapes, release: &str) -> Vec<String> {
     let mut found = Vec::new();
     for name in reachable(old) {
         let Some(new_defs) = new.get(&name) else {
@@ -231,7 +236,7 @@ fn problems(old: &Shapes, new: &Shapes) -> Vec<String> {
             continue;
         };
         for old_def in &old[&name] {
-            let checks: Vec<Option<String>> = new_defs.iter().map(|new_def| shape_problem(&name, old_def, new_def)).collect();
+            let checks: Vec<Option<String>> = new_defs.iter().map(|new_def| shape_problem(&name, old_def, new_def, release)).collect();
             if checks.iter().any(Option::is_none) {
                 continue;
             }
@@ -243,29 +248,100 @@ fn problems(old: &Shapes, new: &Shapes) -> Vec<String> {
     found
 }
 
-fn oldest_shape() -> Shapes {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(OLDEST_SHAPE);
-    serde_json::from_str(&std::fs::read_to_string(path).expect("the recorded shape exists")).expect("the recorded shape reads")
+fn constant(root: &Path, (file, name): (&str, &str)) -> Option<u64> {
+    let text = std::fs::read_to_string(root.join(file)).unwrap_or_else(|e| panic!("{file} reads: {e}"));
+    let parsed = syn::parse_file(&text).unwrap_or_else(|e| panic!("{file} parses: {e}"));
+    parsed
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Const(c) if c.ident == name => match &*c.expr {
+                syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(int), .. }) => int.base10_parse().ok(),
+                _ => None,
+            },
+            _ => None,
+        })
+}
+
+fn constant_key((file, name): (&str, &str)) -> String {
+    format!("{file}::{name}")
+}
+
+fn record(root: &Path) -> Recorded {
+    let shapes = shapes_in(root);
+    let types = reachable(&shapes).into_iter().map(|name| (name.clone(), shapes[&name].clone())).collect();
+    let constants = [PEER_PROTOCOL, SYNC_PROTOCOL, OLDEST_SYNC_CLIENT].into_iter().filter_map(|c| Some((constant_key(c), constant(root, c)?))).collect();
+    Recorded { constants, types }
+}
+
+fn protocol_problems(old: &Recorded, new: &Recorded, release: &str) -> Vec<String> {
+    let get = |recorded: &Recorded, c| recorded.constants.get(&constant_key(c)).copied().unwrap_or_default();
+    let mut found = Vec::new();
+    if get(new, PEER_PROTOCOL) != get(old, PEER_PROTOCOL) {
+        found.push(format!(
+            "{} changed from {} to {}: Commy {release} drops every message and event from a different version",
+            PEER_PROTOCOL.1,
+            get(old, PEER_PROTOCOL),
+            get(new, PEER_PROTOCOL)
+        ));
+    }
+    if get(new, OLDEST_SYNC_CLIENT) > get(old, SYNC_PROTOCOL) {
+        found.push(format!(
+            "{} is {}, above the sync protocol {} that Commy {release} speaks, so sync servers on this build turn it away",
+            OLDEST_SYNC_CLIENT.1,
+            get(new, OLDEST_SYNC_CLIENT),
+            get(old, SYNC_PROTOCOL)
+        ));
+    }
+    found
+}
+
+fn fixtures_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES)
+}
+
+fn recorded_releases() -> Vec<(String, Recorded)> {
+    let mut releases: Vec<(String, Recorded)> = std::fs::read_dir(fixtures_dir())
+        .expect("the fixtures folder exists")
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let release = name.strip_prefix(SHAPE_PREFIX)?.strip_suffix(".json")?.to_string();
+            let text = std::fs::read_to_string(entry.path()).ok()?;
+            Some((release, serde_json::from_str(&text).unwrap_or_else(|e| panic!("{name} reads: {e}"))))
+        })
+        .collect();
+    releases.sort_by(|a, b| a.0.cmp(&b.0));
+    releases
 }
 
 #[test]
-#[ignore = "run once with WIRE_SHAPE_FROM=<checkout of the oldest supported release> to record its shape"]
-fn record_the_oldest_supported_shape() {
+#[ignore = "run at each final release with WIRE_SHAPE_FROM=<checkout of the tag> and WIRE_SHAPE_RELEASE=<version>"]
+fn record_a_stable_release() {
     let from = std::env::var("WIRE_SHAPE_FROM").expect("WIRE_SHAPE_FROM names a checkout");
-    let shapes = shapes_in(Path::new(&from));
-    let kept: Shapes = reachable(&shapes).into_iter().map(|name| (name.clone(), shapes[&name].clone())).collect();
-    let json = serde_json::to_string_pretty(&kept).unwrap();
-    std::fs::write(Path::new(env!("CARGO_MANIFEST_DIR")).join(OLDEST_SHAPE), json + "\n").unwrap();
+    let release = std::env::var("WIRE_SHAPE_RELEASE").expect("WIRE_SHAPE_RELEASE names the version");
+    let json = serde_json::to_string_pretty(&record(Path::new(&from))).unwrap();
+    std::fs::write(fixtures_dir().join(format!("{SHAPE_PREFIX}{release}.json")), json + "\n").unwrap();
 }
 
 #[test]
-fn builds_back_to_the_oldest_supported_version_read_what_this_build_writes() {
-    let found = problems(&oldest_shape(), &shapes_in(&repo_root()));
+fn every_recorded_stable_release_reads_what_this_build_writes() {
+    let releases = recorded_releases();
+    assert!(!releases.is_empty(), "at least one stable release is recorded");
+    let now = record(&repo_root());
+    let found: Vec<String> = releases
+        .iter()
+        .flat_map(|(release, old)| {
+            let mut found = protocol_problems(old, &now, release);
+            found.extend(problems(&old.types, &now.types, release));
+            found.into_iter().map(move |problem| format!("[{release}] {problem}"))
+        })
+        .collect();
     assert!(
         found.is_empty(),
-        "Commy {OLDEST_READER} cannot read what this build writes. Put new fields at the end with \
-         #[serde(default, with = \"crate::wire_layout::later\")], never reorder, retype or remove fields, and only add \
-         variants to {ENUMS_OLD_READERS_SKIP_WHOLE:?}:\n{}",
+        "Stable Commy releases cannot read what this build writes, so people on it would stop seeing each other. \
+         Put new fields at the end with #[serde(default, with = \"crate::wire_layout::later\")], never reorder, retype or \
+         remove fields, only add variants to {ENUMS_OLD_READERS_SKIP_WHOLE:?}, and keep the protocol versions:\n{}",
         found.join("\n")
     );
 }
@@ -299,10 +375,10 @@ fn a_new_field_must_be_a_later_field() {
     let old = sample();
     let mut later = sample();
     edit(&mut later, "Payload", |s| push_field(s, true));
-    assert!(problems(&old, &later).is_empty());
+    assert!(problems(&old, &later, "0.2.4").is_empty());
     let mut plain = sample();
     edit(&mut plain, "Payload", |s| push_field(s, false));
-    assert_eq!(problems(&old, &plain).len(), 1);
+    assert_eq!(problems(&old, &plain, "0.2.4").len(), 1);
 }
 
 #[test]
@@ -313,16 +389,16 @@ fn retyped_reordered_or_removed_fields_are_caught() {
         let Shape::Struct { fields, .. } = s else { panic!("a struct") };
         fields[0].ty = "u64".into();
     });
-    assert_eq!(problems(&old, &retyped).len(), 1);
+    assert_eq!(problems(&old, &retyped, "0.2.4").len(), 1);
     let mut swapped = sample();
     edit(&mut swapped, "Payload", |s| {
         let Shape::Struct { fields, .. } = s else { panic!("a struct") };
         fields.swap(0, 1);
     });
-    assert_eq!(problems(&old, &swapped).len(), 1);
+    assert_eq!(problems(&old, &swapped, "0.2.4").len(), 1);
     let mut gone = sample();
     gone.remove("Kind");
-    assert_eq!(problems(&old, &gone), vec!["Kind: gone".to_string()]);
+    assert_eq!(problems(&old, &gone, "0.2.4"), vec!["Kind: gone".to_string()]);
 }
 
 #[test]
@@ -333,7 +409,7 @@ fn new_variants_are_caught_unless_old_readers_skip_the_whole_value() {
         let Shape::Enum { variants, .. } = s else { panic!("an enum") };
         variants.push(Variant { name: "Forum".into(), fields: Vec::new() });
     });
-    assert_eq!(problems(&old, &added).len(), 1);
+    assert_eq!(problems(&old, &added, "0.2.4").len(), 1);
     let mut renamed_old = old.clone();
     let kind = renamed_old.remove("Kind").unwrap();
     renamed_old.insert("ServerEvent".into(), kind);
@@ -348,7 +424,7 @@ fn new_variants_are_caught_unless_old_readers_skip_the_whole_value() {
         let Shape::Struct { fields, .. } = s else { panic!("a struct") };
         fields[1].ty = "ServerEvent".into();
     });
-    assert!(problems(&renamed_old, &renamed_new).is_empty());
+    assert!(problems(&renamed_old, &renamed_new, "0.2.4").is_empty());
 }
 
 #[test]
@@ -378,4 +454,32 @@ fn types_read_from_source_with_paths_and_later_fields() {
     assert_eq!(fields.len(), 2);
     assert_eq!(fields[0].ty, "ServerId");
     assert!(fields[1].later);
+}
+
+#[test]
+fn a_later_field_keeps_its_type_once_a_stable_release_has_it() {
+    let field = |ty: &str, later: bool| Field { name: "home".into(), ty: ty.into(), later };
+    assert!(field_problem(&[field("Option<String>", true)], &[field("Option<String>", true)]).is_none());
+    assert!(field_problem(&[field("Option<String>", true)], &[field("Vec<String>", true)]).is_some());
+    assert!(field_problem(&[field("Option<String>", true)], &[field("Option<String>", false)]).is_some());
+}
+
+#[test]
+fn a_different_peer_protocol_or_a_raised_oldest_sync_client_is_caught() {
+    let recorded = |peer: u64, sync: u64, oldest: u64| Recorded {
+        constants: [(constant_key(PEER_PROTOCOL), peer), (constant_key(SYNC_PROTOCOL), sync), (constant_key(OLDEST_SYNC_CLIENT), oldest)].into(),
+        types: Shapes::new(),
+    };
+    let stable = recorded(4, 7, 1);
+    assert!(protocol_problems(&stable, &recorded(4, 9, 1), "1.0.0").is_empty());
+    assert!(protocol_problems(&stable, &recorded(4, 9, 7), "1.0.0").is_empty());
+    assert_eq!(protocol_problems(&stable, &recorded(5, 7, 1), "1.0.0").len(), 1);
+    assert_eq!(protocol_problems(&stable, &recorded(4, 9, 8), "1.0.0").len(), 1);
+}
+
+#[test]
+fn this_checkout_reads_its_own_protocol_versions() {
+    let now = record(&repo_root());
+    assert!(now.constants[&constant_key(PEER_PROTOCOL)] > 0);
+    assert!(now.constants[&constant_key(SYNC_PROTOCOL)] >= now.constants[&constant_key(OLDEST_SYNC_CLIENT)]);
 }
