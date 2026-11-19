@@ -59,3 +59,9 @@ test("menu rows: labels, 52 rows with the icon, a faint chevron, and red danger 
   assert.match(glue, /const wants = slim && !tab\.classList\.contains\("danger"\);/);
   assert.match(rule("#channel-settings .settings-nav-inner > #channel-settings-title"), /display: none;/);
 });
+
+test("the settings screen never slides under the status bar", () => {
+  assert.match(glue, /function phoneSettingsHoldStill\(frame\) \{\n\s*if \(studioSlim\(\) && \(frame\.scrollTop \|\| frame\.scrollLeft\)\) frame\.scrollTo\(0, 0\);/);
+  assert.match(glue, /for \(const frame of \[layer, \.\.\.layer\.querySelectorAll\(":scope > \.settings-nav, :scope > \.settings-content"\)\]\)/);
+  assert.match(rule(".settings-layer .settings-phone-bar:not(:has(> .settings-phone-sub:not(:empty))) > .settings-phone-title"), /grid-row: 1 \/ span 2; align-self: center;/);
+});

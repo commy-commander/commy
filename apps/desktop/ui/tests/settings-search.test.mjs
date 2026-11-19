@@ -103,3 +103,10 @@ test("the search box sits above the tabs and the page loads search before the ap
   const order = [...html.matchAll(/<script src="scripts\/([^"]+)"><\/script>/g)].map(m => m[1]);
   assert.ok(order.indexOf("settings-search.js") >= 0 && order.indexOf("settings-search.js") < order.indexOf("app.js"));
 });
+
+test("a search hit scrolls only its own list, after the page has turned", () => {
+  const app = readFileSync(new URL("../scripts/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.ok(app.includes('requestAnimationFrame(() => scrollSettingsTo(target, "center"));'));
+  assert.ok(!app.includes("hit.target.scrollIntoView"));
+  assert.ok(app.includes("if (btn.dataset.tab === tab) revealSettingsTab(btn);"));
+});

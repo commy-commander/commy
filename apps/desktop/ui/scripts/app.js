@@ -2299,7 +2299,7 @@ function selectSettingsTab(id, tab) {
   const layer = $(id);
   for (const btn of layer.querySelectorAll(".settings-tab[data-tab]")) {
     btn.classList.toggle("active", btn.dataset.tab === tab);
-    if (btn.dataset.tab === tab) btn.scrollIntoView(isPhoneWidth(window.innerWidth) ? { block: "nearest", inline: "center" } : { block: "nearest" });
+    if (btn.dataset.tab === tab) revealSettingsTab(btn);
   }
   for (const page of layer.querySelectorAll(".settings-page")) {
     page.classList.toggle("hidden", page.dataset.page !== tab);
@@ -2314,6 +2314,29 @@ function selectSettingsTab(id, tab) {
 
 const SETTINGS_HIT_MS = 1600;
 let settingsHitTimer = null;
+
+function settingsScroller(node) {
+  for (let up = node.parentElement; up; up = up.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(up).overflowY)) return up;
+  }
+  return null;
+}
+
+function scrollSettingsTo(node, place) {
+  const scroller = settingsScroller(node);
+  if (!scroller) return;
+  const top = node.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  const room = scroller.clientHeight - node.offsetHeight;
+  if (place === "center") scroller.scrollTop = top - room / 2;
+  else if (top < scroller.scrollTop) scroller.scrollTop = top;
+  else if (top > scroller.scrollTop + room) scroller.scrollTop = top - room;
+}
+
+function revealSettingsTab(btn) {
+  const slim = typeof studioSlim === "function" && studioSlim();
+  if (isPhoneWidth(window.innerWidth) && !slim) btn.scrollIntoView({ block: "nearest", inline: "center" });
+  else scrollSettingsTo(btn, "nearest");
+}
 
 function hiddenOnThisDevice(node) {
   const onPhone = document.body.classList.contains("mobile-app");
@@ -2388,8 +2411,9 @@ function openSettingsSearchHit(hit, button) {
   button.classList.add("active");
   selectSettingsTab("user-settings", hit.page);
   if (!hit.target) return;
-  hit.target.scrollIntoView({ block: "center" });
-  flashSettingsTarget(hit.target);
+  const target = hit.target;
+  flashSettingsTarget(target);
+  requestAnimationFrame(() => scrollSettingsTo(target, "center"));
 }
 
 function flashSettingsTarget(node) {

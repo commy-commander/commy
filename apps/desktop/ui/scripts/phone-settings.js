@@ -57,6 +57,10 @@ function phoneSettingsHead(layer) {
   phoneSettingsMore(layer.querySelector(page ? ".settings-content-inner" : ".settings-nav-inner"));
 }
 
+function phoneSettingsHoldStill(frame) {
+  if (studioSlim() && (frame.scrollTop || frame.scrollLeft)) frame.scrollTo(0, 0);
+}
+
 function phoneSettingsTurn(layer) {
   if (!studioSlim()) return;
   const inner = layer.querySelector(".settings-content-inner");
@@ -86,6 +90,9 @@ function wirePhoneSettings() {
       e.stopPropagation();
       layer.querySelector(".settings-phone-close").click();
     }, true);
+    for (const frame of [layer, ...layer.querySelectorAll(":scope > .settings-nav, :scope > .settings-content")]) {
+      frame.addEventListener("scroll", () => phoneSettingsHoldStill(frame), { passive: true });
+    }
     for (const scroller of layer.querySelectorAll(".settings-nav-inner, .settings-content-inner")) {
       scroller.addEventListener("scroll", () => phoneSettingsMore(scroller), { passive: true });
     }

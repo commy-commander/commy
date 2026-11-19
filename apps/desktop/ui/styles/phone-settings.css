@@ -16,6 +16,7 @@ html[data-look="studio"][data-fit="slim"] .settings-layer .settings-phone-title 
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-phone-title > em { margin-right: 5px; font-style: normal; font-weight: 300; color: var(--link); }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-phone-sub { grid-column: 2; margin-top: 5px; overflow: hidden; font: 400 12.5px/1 var(--font); color: var(--text-normal); white-space: nowrap; text-overflow: ellipsis; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-phone-sub:empty { display: none; }
+html[data-look="studio"][data-fit="slim"] .settings-layer .settings-phone-bar:not(:has(> .settings-phone-sub:not(:empty))) > .settings-phone-title { grid-row: 1 / span 2; align-self: center; }
 html[data-look="studio"][data-fit="slim"] .settings-layer > .settings-nav,
 html[data-look="studio"][data-fit="slim"] .settings-layer > .settings-content {
   position: absolute;
