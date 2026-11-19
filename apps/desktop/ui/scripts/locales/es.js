@@ -3110,6 +3110,7 @@ const LOCALE_ES = {
   "ui.no-earlier-copies-yet": "Aún no hay copias anteriores. A partir de ahora se guardan cada vez que cambia tu lista.",
   "ui.servers-taking-longer": "Tus servidores están tardando más de lo normal en cargar.",
   "ui.servers-stalled-reload": "Recarga la página. Si siguen faltando servidores, abre Ajustes, Cuenta de Commy y elige Recuperar servidores anteriores.",
+  "ui.show-n-more": "Mostrar {count} más",
 };
 
 if (typeof registerLocale === "function") registerLocale("es", LOCALE_ES);

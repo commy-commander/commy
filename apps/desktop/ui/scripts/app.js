@@ -8948,7 +8948,7 @@ function renderMembers() {
       list.appendChild(row);
     }
     if (page.more) {
-      const more = el("button", "member-more", `Show ${Math.min(page.more, MEMBER_ROWS_STEP)} more`);
+      const more = el("button", "member-more", t("ui.show-n-more", { count: Math.min(page.more, MEMBER_ROWS_STEP) }));
       more.type = "button";
       more.onclick = e => {
         e.stopPropagation();

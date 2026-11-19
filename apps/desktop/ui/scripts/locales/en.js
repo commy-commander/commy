@@ -3110,6 +3110,7 @@ const LOCALE_EN = {
   "ui.no-earlier-copies-yet": "No earlier copies yet. They are kept from now on, each time your list changes.",
   "ui.servers-taking-longer": "Your servers are taking longer than usual to load.",
   "ui.servers-stalled-reload": "Reload the page. If servers are still missing, open Settings, Commy Account and choose Bring back earlier servers.",
+  "ui.show-n-more": "Show {count} more",
 };
 
 if (typeof registerLocale === "function") registerLocale("en", LOCALE_EN);
