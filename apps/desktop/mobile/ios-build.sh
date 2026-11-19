@@ -30,6 +30,7 @@ ipa="$(find gen/apple/build/arm64 -name '*.ipa' | head -n 1)"
 [ -n "$ipa" ] || { echo "no signed IPA was built" >&2; exit 1; }
 out="$src_tauri/gen/apple/build/Commy-$version-$build_number.ipa"
 cp "$ipa" "$out"
+unzip -p "$out" | expect_built_servers "The iOS app"
 echo "Built $out"
 
 if [[ "$upload" == --testflight ]]; then

@@ -402,6 +402,10 @@ jobs:
             app="$(find "$build" -path '*sim*' -name '*.app' -prune -type d | head -n 1)"
             [ -n "$app" ] || { echo "no simulator app was built"; exit 1; }
             ditto -c -k --keepParent "$app" dist/Commy-simulator.zip
+            if [ -n "$APP_VERSION_INPUT" ]; then
+              source apps/desktop/mobile/release-env.sh "$APP_VERSION_INPUT"
+              tar -cf - -C "$app" . | expect_built_servers "The simulator app"
+            fi
             ipa="$(find "$build" -name '*.ipa' | head -n 1)"
             [ -n "$ipa" ] || { echo "no device app was built"; exit 1; }
             echo "Device build compiled: $ipa"

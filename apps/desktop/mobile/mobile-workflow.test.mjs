@@ -19,8 +19,8 @@ test("a versioned simulator build takes the same servers and version as the sign
   assert.match(step, /npx tauri ios build --ci --debug --no-sign --target aarch64-sim --target aarch64 "\$\{version_config\[@\]\}"/);
 });
 
-test("release candidates point the apps at the staging servers", () => {
-  const env = readFileSync(new URL("./release-env.sh", import.meta.url), "utf8");
-  assert.match(env, /if \[\[ "\$release_version" == \*-\* \]\]; then/);
-  assert.match(env, /COMMY_DEFAULT_ACCOUNT_SERVER=https:\/\/staging\.commy\.chat/);
+test("a versioned simulator build checks which servers it was built for", () => {
+  const step = stepRun("Collect the apps");
+  assert.match(step, /source apps\/desktop\/mobile\/release-env\.sh "\$APP_VERSION_INPUT"/);
+  assert.match(step, /tar -cf - -C "\$app" \. \| expect_built_servers "The simulator app"/);
 });
