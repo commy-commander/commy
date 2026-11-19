@@ -9,7 +9,7 @@ Report it privately in one of two ways:
 - Use GitHub's private vulnerability reporting: open the
   [Security tab](https://github.com/commy-commander/commy/security) of this
   repository and choose **Report a vulnerability**.
-- Email commy.cmd@commy.chat with the subject "Security".
+- Email security@commy.chat.
 
 Include what you found, the version or commit, steps to reproduce, and what an
 attacker could do with it. A proof of concept helps. Please do not include real
