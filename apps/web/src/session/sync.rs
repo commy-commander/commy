@@ -848,6 +848,21 @@ impl Session {
         });
     }
 
+    pub(super) fn bring_back_server(self: &Rc<Self>, server: ServerId, raw: &str) -> bool {
+        let Ok(mut ticket) = ServerTicket::decode(raw) else { return false };
+        let (key, owner) = match self.sync.borrow().as_ref() {
+            Some(live) => (live.book.shared_key(server).and_then(|key| key.open()), live.book.owner(server)),
+            None => return false,
+        };
+        let Some(key) = key else { return false };
+        ticket.owner = owner.or(ticket.owner);
+        if ticket.owner.is_none() {
+            return false;
+        }
+        self.join_group(&ticket.encode(), Some(key), true);
+        self.sync.borrow().as_ref().is_some_and(|live| live.book.listed().contains(&server))
+    }
+
     pub(super) fn join_group(self: &Rc<Self>, raw: &str, key: Option<(KeyId, ChannelSecret)>, asked: bool) {
         let Ok(ticket) = ServerTicket::decode(raw) else { return };
         let Some((id, secret)) = key else { return };

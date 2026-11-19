@@ -1,5 +1,5 @@
 use crate::lock_or_recover::LockOrRecover;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use chrono::{DateTime, Utc};
 use commy_core::identity::IDENTITY_FILE;
 use commy_core::{IdentityKey, ServerId, UserProfile};
-use commy_net::entry_list::decode_identity;
+use commy_net::entry_list::{decode_identity, is_mass_leave, EarlierCopies, EarlierView};
 use commy_net::sealed::SealKey;
 use commy_net::{EntryKeyAsk, EntryKeyReply, EntryKeyRequest, ServerTicket};
 use serde::{Deserialize, Serialize};
@@ -235,14 +235,24 @@ pub struct EntryStatus {
     pub detail: String,
     pub servers: usize,
     pub has_key: bool,
+    pub held: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HeldLeave {
+    id: ServerId,
+    name: String,
+    at: DateTime<Utc>,
 }
 
 static STATUS: Mutex<Option<EntryStatus>> = Mutex::new(None);
+static HELD: Mutex<Vec<HeldLeave>> = Mutex::new(Vec::new());
 static SYNC: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static ASKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn set_status(handle: &AppHandle, state: &str, detail: impl Into<String>, servers: usize, has_key: bool) {
-    let status = EntryStatus { state: state.into(), detail: detail.into(), servers, has_key };
+    let held = HELD.lock_or_recover().iter().map(|leave| leave.name.clone()).collect();
+    let status = EntryStatus { state: state.into(), detail: detail.into(), servers, has_key, held };
     *STATUS.lock_or_recover() = Some(status.clone());
     let _ = handle.emit("entry-list-changed", status);
 }
@@ -345,8 +355,12 @@ pub(crate) enum Put {
     Conflict,
 }
 
+pub(crate) fn writer() -> String {
+    format!("Commy {} ({})", crate::updater::current_version(), std::env::consts::OS)
+}
+
 pub(crate) async fn put(app: &App, s: &Session, name: &str, data: String, version: u64) -> Result<Put, String> {
-    let body = serde_json::json!({ "name": name, "data": data, "version": version });
+    let body = serde_json::json!({ "name": name, "data": data, "version": version, "writer": writer() });
     let res = reach(account_api(app, s, reqwest::Method::POST, "vault/put").json(&body)).await?;
     if res.status() == reqwest::StatusCode::CONFLICT {
         let item = vault_item(res).await?;
@@ -761,20 +775,34 @@ fn take_profile_edits(handle: &AppHandle, app: &App, shared: Option<&UserProfile
     true
 }
 
+fn left_here_after(local: &EntryList, id: &ServerId, entry: &Entry) -> bool {
+    local.left.get(id).is_some_and(|at| *at >= entry.since)
+}
+
+async fn join_from_list(handle: &AppHandle, app: &App, id: ServerId, entry: &Entry) -> bool {
+    let Ok(mut ticket) = ServerTicket::decode(&entry.ticket) else { return false };
+    if let Some(owner) = crate::account_log::shared_owner(app, id) {
+        ticket.owner = Some(owner);
+    }
+    match crate::join_ticket(app, handle, ticket).await {
+        Ok(_) => {
+            record_join(app, id);
+            true
+        }
+        Err(e) => {
+            tracing::warn!("could not join {} from your server list: {e}", entry.name);
+            false
+        }
+    }
+}
+
 async fn join_missing(handle: &AppHandle, app: &App, merged: &EntryList, local: &EntryList) {
     let present: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
     for (id, entry) in &merged.servers {
-        if present.contains(id) || local.left.contains_key(id) {
+        if present.contains(id) || left_here_after(local, id, entry) {
             continue;
         }
-        let Ok(mut ticket) = ServerTicket::decode(&entry.ticket) else { continue };
-        if let Some(owner) = crate::account_log::shared_owner(app, *id) {
-            ticket.owner = Some(owner);
-        }
-        match crate::join_ticket(app, handle, ticket).await {
-            Ok(_) => record_join(app, *id),
-            Err(e) => tracing::warn!("could not join {} from your server list: {e}", entry.name),
-        }
+        join_from_list(handle, app, *id, entry).await;
     }
 }
 
@@ -786,9 +814,24 @@ pub fn departed(merged: &EntryList, local: &EntryList) -> Vec<(ServerId, DateTim
         .collect()
 }
 
+fn held_leaves(gone: &[(ServerId, DateTime<Utc>)], local: &EntryList) -> Vec<HeldLeave> {
+    if !is_mass_leave(gone.len()) {
+        return Vec::new();
+    }
+    gone.iter()
+        .map(|(id, at)| HeldLeave { id: *id, name: local.servers.get(id).map(|e| e.name.clone()).unwrap_or_default(), at: *at })
+        .collect()
+}
+
 async fn leave_departed(handle: &AppHandle, app: &App, merged: &EntryList, local: &EntryList) {
     let gone = departed(merged, local);
-    if gone.is_empty() {
+    let held = held_leaves(&gone, local);
+    let holding = !held.is_empty();
+    if holding {
+        tracing::warn!("your server list asks this device to leave {} servers at once; waiting for you to confirm", held.len());
+    }
+    *HELD.lock_or_recover() = held;
+    if gone.is_empty() || holding {
         return;
     }
     for (id, at) in gone {
@@ -796,6 +839,91 @@ async fn leave_departed(handle: &AppHandle, app: &App, merged: &EntryList, local
         record_leave_at(app, id, at);
     }
     let _ = handle.emit("servers-changed", ());
+}
+
+#[tauri::command]
+pub async fn entry_list_answer_held(handle: AppHandle, leave: bool) -> Result<EntryStatus, String> {
+    let app = handle.state::<App>();
+    let held = std::mem::take(&mut *HELD.lock_or_recover());
+    for HeldLeave { id, at, .. } in held {
+        if leave {
+            crate::leave_from_another_device(&app, id).await;
+            record_leave_at(&app, id, at);
+        } else {
+            record_join(&app, id);
+        }
+    }
+    let _ = handle.emit("servers-changed", ());
+    sync(&handle).await?;
+    Ok(entry_list_status())
+}
+
+async fn earlier_copies(app: &App, s: &Session, name: &str) -> Result<EarlierCopies, String> {
+    let path = commy_net::entry_list::EARLIER_PATH;
+    let res = reach(account_api(app, s, reqwest::Method::GET, path).query(&[("name", name)])).await?;
+    if res.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err("Your account server does not keep earlier server lists yet.".into());
+    }
+    answered(&res)?;
+    res.json().await.map_err(|_| "Your account server sent an invalid reply".to_string())
+}
+
+async fn keys_that_may_open(app: &App, dir: &Path, s: &Session) -> Vec<SealKey> {
+    let mut keys: Vec<SealKey> = load_key(dir, &s.server, &s.account).into_iter().collect();
+    let Some(wrapping) = wrapping_key(app, s).await else { return keys };
+    let current = match fetch(app, s, commy_net::entry_escrow::VAULT_ITEM).await {
+        Ok(Fetched::Item(VaultItem { data: Some(sealed), .. })) => vec![sealed],
+        _ => Vec::new(),
+    };
+    let earlier = earlier_copies(app, s, commy_net::entry_escrow::VAULT_ITEM).await.unwrap_or_default();
+    for sealed in current.into_iter().chain(earlier.items.into_iter().map(|copy| copy.data)) {
+        if let Some(key) = commy_net::entry_escrow::unwrap(&wrapping, &sealed) {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+    }
+    keys
+}
+
+fn present_servers(app: &App) -> BTreeSet<ServerId> {
+    app.servers.lock_or_recover().keys().copied().collect()
+}
+
+#[tauri::command]
+pub async fn entry_list_earlier(handle: AppHandle) -> Result<Vec<EarlierView>, String> {
+    let app = handle.state::<App>();
+    let (dir, s) = signed_in(&app)?;
+    let copies = earlier_copies(&app, &s, VAULT_ITEM).await?;
+    let keys = keys_that_may_open(&app, &dir, &s).await;
+    Ok(commy_net::entry_list::earlier_views(&copies.items, &keys, &present_servers(&app)))
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct BroughtBack {
+    pub joined: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn entry_list_bring_back(handle: AppHandle, version: u64) -> Result<BroughtBack, String> {
+    let app = handle.state::<App>();
+    let (dir, s) = signed_in(&app)?;
+    let copies = earlier_copies(&app, &s, VAULT_ITEM).await?;
+    let copy = copies.items.iter().find(|copy| copy.version == version).ok_or("That earlier list is gone. Open the list again.")?;
+    let keys = keys_that_may_open(&app, &dir, &s).await;
+    let list = commy_net::entry_list::open_with_any(&keys, &copy.data).ok_or("None of your keys open that earlier list.")?;
+    let mut result = BroughtBack::default();
+    for (id, entry) in list.missing_from(&present_servers(&app)) {
+        if join_from_list(&handle, &app, id, entry).await {
+            result.joined.push(entry.name.clone());
+        } else {
+            result.failed.push(entry.name.clone());
+        }
+    }
+    let _ = handle.emit("servers-changed", ());
+    schedule(&handle);
+    Ok(result)
 }
 
 #[cfg(desktop)]
@@ -1007,6 +1135,7 @@ async fn start_new_list(handle: &AppHandle) -> Result<(), String> {
 
 pub fn forget() {
     *STATUS.lock_or_recover() = None;
+    HELD.lock_or_recover().clear();
     ASKING.store(false, Ordering::SeqCst);
     FAILED_TRIES.store(0, Ordering::SeqCst);
     FAILURE_RETRY_PENDING.store(false, Ordering::SeqCst);
@@ -1042,6 +1171,39 @@ mod tests {
         let merged = EntryList::merge(&elsewhere, &local);
         assert_eq!(departed(&merged, &local), vec![(gone, t0 + Duration::seconds(5))]);
         assert!(departed(&local, &local).is_empty());
+    }
+
+    #[test]
+    fn one_or_two_leaves_go_ahead_but_three_at_once_wait_for_the_person() {
+        let t0 = Utc::now();
+        let ids: Vec<ServerId> = (0..4).map(|_| ServerId::new()).collect();
+        let local = EntryList {
+            servers: ids.iter().enumerate().map(|(i, id)| (*id, entry(&format!("s{i}"), t0))).collect(),
+            ..Default::default()
+        };
+        let leaves = |n: usize| -> Vec<(ServerId, DateTime<Utc>)> { ids[..n].iter().map(|id| (*id, t0 + Duration::seconds(5))).collect() };
+        assert!(held_leaves(&leaves(2), &local).is_empty());
+        let held = held_leaves(&leaves(3), &local);
+        assert_eq!(held.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(), vec!["s0", "s1", "s2"]);
+        assert!(held.iter().all(|h| h.at == t0 + Duration::seconds(5)));
+    }
+
+    #[test]
+    fn a_server_left_here_rejoins_when_another_device_joined_it_later() {
+        let t0 = Utc::now();
+        let id = ServerId::new();
+        let local = EntryList { left: BTreeMap::from([(id, t0)]), ..Default::default() };
+        assert!(left_here_after(&local, &id, &entry("old", t0 - Duration::seconds(1))));
+        assert!(left_here_after(&local, &id, &entry("same", t0)));
+        assert!(!left_here_after(&local, &id, &entry("rejoined", t0 + Duration::seconds(1))));
+        assert!(!left_here_after(&EntryList::default(), &id, &entry("never left", t0)));
+    }
+
+    #[test]
+    fn writes_name_the_build_that_made_them() {
+        let label = writer();
+        assert!(label.starts_with("Commy "));
+        assert!(label.ends_with(&format!("({})", std::env::consts::OS)));
     }
 
     #[test]

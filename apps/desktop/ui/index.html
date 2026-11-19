@@ -909,6 +909,16 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-entry-earlier" role="dialog" aria-labelledby="entry-earlier-title">
+      <h2 id="entry-earlier-title">Bring back earlier servers</h2>
+      <p>Your account server keeps earlier copies of your server list for 45 days, locked like the list itself. Bringing one back rejoins the servers it has that this device is missing. It never removes a server.</p>
+      <div class="setting-sub" id="entry-earlier-status"></div>
+      <ul class="entry-earlier-list" id="entry-earlier-list"></ul>
+      <div class="modal-actions">
+        <button class="btn-primary" id="entry-earlier-close">Close</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-delete-account" role="dialog" aria-labelledby="delete-account-title">
       <h2 id="delete-account-title">Delete your account?</h2>
       <div class="delete-account-step" id="delete-account-ask">
@@ -1809,6 +1819,17 @@
             <div class="entry-recovery hidden" id="entry-enter">
               <input id="entry-code-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste your recovery code" />
               <button class="btn-secondary btn-small" id="entry-code-use">Use code</button>
+            </div>
+            <div class="entry-held hidden" id="entry-held" role="alert">
+              <div class="setting-title" id="entry-held-title"></div>
+              <div class="setting-sub" id="entry-held-names"></div>
+              <div class="entry-held-keys">
+                <button class="btn-secondary btn-small" id="entry-held-keep">Keep Them</button>
+                <button class="btn-secondary btn-small" id="entry-held-leave">Leave Them Here Too</button>
+              </div>
+            </div>
+            <div class="entry-recovery">
+              <button class="btn-link" id="entry-earlier">Bring back earlier servers</button>
             </div>
             <div class="entry-recovery hidden" id="entry-start-over-row">
               <button class="btn-link" id="entry-start-over">Start a new server list from this device</button>

@@ -140,6 +140,7 @@ pub struct Session {
 #[serde(rename_all = "camelCase")]
 struct Args {
     server_id: Option<String>,
+    version: Option<u64>,
     letters: Option<String>,
     effect: Option<String>,
     avatar_border: Option<String>,
@@ -352,6 +353,9 @@ impl Session {
             "web_try_again" => self.unlock().await,
             "entry_list_use_recovery_code" => self.use_recovery_code(args.code.as_deref().unwrap_or("")).await,
             "entry_list_status" => Ok(self.entry_status()),
+            "entry_list_answer_held" => Ok(self.entry_status()),
+            "entry_list_earlier" => to_json(&self.earlier_lists().await?),
+            "entry_list_bring_back" => to_json(&self.bring_back(args.version.ok_or("Pick an earlier list")?).await?),
             "entry_list_recovery_code" => self.status.borrow().key.as_ref().map(|key| json!(key.to_text())).ok_or_else(|| account::NO_LIST_KEY.to_string()),
             "get_user" => to_json(&self.client.borrow().profile()),
             "list_servers" => {
@@ -961,7 +965,7 @@ impl Session {
         let key = SealKey::generate();
         let list = EntryList::fresh(&account::username_for(account), &commy_core::Identity::generate());
         let sealed = list.seal(&key);
-        let body = json!({ "name": account::LIST_ITEM, "data": sealed, "version": version });
+        let body = json!({ "name": account::LIST_ITEM, "data": sealed, "version": version, "writer": account::writer() });
         let reply = self.request("POST", account::VAULT_PUT_PATH, Some(body)).await?;
         if reply.status == account::CONFLICT {
             let reply = self.request("GET", account::VAULT_PATH, None).await?;
@@ -1118,6 +1122,58 @@ impl Session {
         changed
     }
 
+    async fn earlier(&self, name: &str) -> Result<commy_net::entry_list::EarlierCopies, String> {
+        account::earlier_copies(&self.request("GET", &account::earlier_path(name), None).await?)
+    }
+
+    async fn keys_that_may_open(&self) -> Vec<SealKey> {
+        let mut keys: Vec<SealKey> = self.status.borrow().key.clone().into_iter().collect();
+        let Some(wrapping) = self.wrapping_key().await else { return keys };
+        let current = match self.request("GET", &account::escrow_path(), None).await {
+            Ok(reply) => account::vault_data(&reply).ok().flatten(),
+            Err(_) => None,
+        };
+        let earlier = self.earlier(commy_net::entry_escrow::VAULT_ITEM).await.unwrap_or_default();
+        for sealed in current.into_iter().chain(earlier.items.into_iter().map(|copy| copy.data)) {
+            if let Some(key) = commy_net::entry_escrow::unwrap(&wrapping, &sealed) {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        keys
+    }
+
+    fn servers_on_my_list(&self) -> std::collections::BTreeSet<ServerId> {
+        self.sync.borrow().as_ref().map(|live| live.book.listed()).unwrap_or_default()
+    }
+
+    async fn earlier_lists(&self) -> Result<Vec<commy_net::entry_list::EarlierView>, String> {
+        if self.status.borrow().unlock != Unlock::Unlocked {
+            return Err("Open your servers first.".into());
+        }
+        let copies = self.earlier(account::LIST_ITEM).await?;
+        let keys = self.keys_that_may_open().await;
+        Ok(commy_net::entry_list::earlier_views(&copies.items, &keys, &self.servers_on_my_list()))
+    }
+
+    async fn bring_back(self: &Rc<Self>, version: u64) -> Result<Value, String> {
+        let copies = self.earlier(account::LIST_ITEM).await?;
+        let copy = copies.items.iter().find(|copy| copy.version == version).ok_or("That earlier list is gone. Open the list again.")?;
+        let keys = self.keys_that_may_open().await;
+        let list = commy_net::entry_list::open_with_any(&keys, &copy.data).ok_or("None of your keys open that earlier list.")?;
+        let (mut joined, mut failed) = (Vec::new(), Vec::new());
+        for (server, entry) in list.missing_from(&self.servers_on_my_list()) {
+            if self.bring_back_server(server, &entry.ticket) {
+                joined.push(entry.name.clone());
+            } else {
+                failed.push(entry.name.clone());
+            }
+        }
+        self.emit("servers-changed", Value::Null);
+        Ok(json!({ "joined": joined, "failed": failed }))
+    }
+
     async fn escrowed_key(&self) -> Result<SealKey, KeyCopy> {
         let reply = self.request("GET", &account::escrow_path(), None).await.map_err(|_| KeyCopy::Unreachable)?;
         let sealed = account::key_copy(&reply)?;
@@ -1133,7 +1189,7 @@ impl Session {
         if held.as_ref() == Some(key) {
             return;
         }
-        let body = json!({ "name": commy_net::entry_escrow::VAULT_ITEM, "data": commy_net::entry_escrow::wrap(&wrapping, key), "version": version });
+        let body = json!({ "name": commy_net::entry_escrow::VAULT_ITEM, "data": commy_net::entry_escrow::wrap(&wrapping, key), "version": version, "writer": account::writer() });
         let _ = self.request("POST", account::VAULT_PUT_PATH, Some(body)).await;
     }
 

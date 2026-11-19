@@ -348,6 +348,22 @@ pub fn parse_device_secret(raw: Option<&str>) -> Option<[u8; 32]> {
     bytes.try_into().ok()
 }
 
+pub fn writer() -> String {
+    format!("Commy web {}", option_env!("COMMY_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
+}
+
+pub fn earlier_path(name: &str) -> String {
+    format!("/api/auth/commy/{}?name={name}", commy_net::entry_list::EARLIER_PATH)
+}
+
+pub fn earlier_copies(reply: &Reply) -> Result<commy_net::entry_list::EarlierCopies, String> {
+    match reply.status {
+        200..=299 => serde_json::from_str(&reply.body).map_err(|_| "Your account server sent an invalid reply".to_string()),
+        404 => Err("Your account server does not keep earlier server lists yet.".into()),
+        _ => Err("Could not fetch earlier server lists. Press Try again.".into()),
+    }
+}
+
 pub fn entry_status(signed_in: bool, unlocked: bool, has_key: bool, servers: usize) -> serde_json::Value {
     let (state, detail) = match (signed_in, unlocked) {
         (false, _) => ("off", ""),
@@ -467,6 +483,16 @@ mod tests {
         let body = r#"{"devices":[{"id":"1","nodeId":"AA11"},{"id":"2","nodeId":"bb22"}]}"#;
         assert_eq!(other_devices(&reply(200, body), "aa11"), vec!["bb22".to_string()]);
         assert!(other_devices(&reply(500, body), "aa11").is_empty());
+    }
+
+    #[test]
+    fn reads_the_earlier_copies() {
+        let copies = earlier_copies(&reply(200, r#"{"name":"servers","items":[{"version":3,"data":"sealed1.x","updatedAt":null,"writer":"Commy 1.0.0 (ios)"}]}"#)).unwrap();
+        assert_eq!(copies.items[0].version, 3);
+        assert!(earlier_copies(&reply(404, "")).unwrap_err().contains("does not keep"));
+        assert!(earlier_copies(&reply(500, "")).is_err());
+        assert_eq!(earlier_path("servers"), "/api/auth/commy/vault/earlier?name=servers");
+        assert!(writer().starts_with("Commy web "));
     }
 
     #[test]

@@ -17,7 +17,96 @@ function renderEntryStatus(status) {
   $("entry-show-code").classList.toggle("hidden", !status.has_key);
   $("entry-enter").classList.toggle("hidden", status.has_key || status.state === "off" || status.state === "unsupported");
   $("entry-start-over-row").classList.toggle("hidden", status.has_key || status.state !== "waiting");
+  renderHeldLeaves(status.held || []);
 }
+
+let heldShown = 0;
+
+function renderHeldLeaves(held) {
+  $("entry-held").classList.toggle("hidden", !held.length);
+  if (!held.length) {
+    heldShown = 0;
+    return;
+  }
+  $("entry-held-title").textContent = `Your server list asks this device to leave ${held.length} servers at once`;
+  $("entry-held-names").textContent = `${held.filter(Boolean).join(", ")}. If you did not leave them on another device, keep them.`;
+  if (heldShown !== held.length) toast("Your server list asks this device to leave several servers. See Settings, Commy Account.");
+  heldShown = held.length;
+}
+
+async function answerHeldLeaves(leave) {
+  const buttons = [$("entry-held-keep"), $("entry-held-leave")];
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    renderEntryStatus(await invoke("entry_list_answer_held", { leave }));
+    toast(leave ? "Left those servers on this device" : "Kept those servers");
+  } catch (e) {
+    toast(String(e));
+  } finally {
+    buttons.forEach(b => { b.disabled = false; });
+  }
+}
+
+$("entry-held-keep").onclick = () => answerHeldLeaves(false);
+$("entry-held-leave").onclick = () => answerHeldLeaves(true);
+
+function earlierWhen(view) {
+  const at = view.saved_at ? new Date(view.saved_at) : null;
+  return at && !isNaN(at) ? at.toLocaleString() : "Unknown time";
+}
+
+function earlierRow(view) {
+  const row = el("li", "entry-earlier-row");
+  const text = el("div");
+  const count = `${view.servers} ${view.servers === 1 ? "server" : "servers"}`;
+  text.append(el("div", "setting-title", `${earlierWhen(view)}, ${count}`));
+  if (view.writer) text.append(el("div", "setting-sub", `Saved by ${view.writer}`));
+  const back = view.brings_back.filter(Boolean);
+  text.append(el("div", "setting-sub", back.length ? `Brings back: ${back.join(", ")}` : "Nothing to bring back, this device has all of these"));
+  row.append(text);
+  if (back.length) {
+    const button = el("button", "btn-secondary btn-small", "Bring Back");
+    button.onclick = () => bringBack(view, button);
+    row.append(button);
+  }
+  return row;
+}
+
+async function bringBack(view, button) {
+  button.disabled = true;
+  $("entry-earlier-status").textContent = "Rejoining…";
+  try {
+    const result = await invoke("entry_list_bring_back", { version: view.version });
+    const joined = result.joined.length;
+    $("entry-earlier-status").textContent = result.failed.length
+      ? `Rejoined ${joined}. Could not rejoin: ${result.failed.join(", ")}. Ask for a new invite to those.`
+      : `Rejoined ${joined} ${joined === 1 ? "server" : "servers"}.`;
+    await openEarlierLists(false);
+  } catch (e) {
+    $("entry-earlier-status").textContent = String(e);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function openEarlierLists(fresh = true) {
+  const list = $("entry-earlier-list");
+  if (fresh) {
+    list.replaceChildren();
+    $("entry-earlier-status").textContent = "Opening earlier copies…";
+    showModal("modal-entry-earlier");
+  }
+  try {
+    const views = await invoke("entry_list_earlier");
+    list.replaceChildren(...views.map(earlierRow));
+    if (fresh) $("entry-earlier-status").textContent = views.length ? "" : "No earlier copies yet. They are kept from now on, each time your list changes.";
+  } catch (e) {
+    $("entry-earlier-status").textContent = String(e);
+  }
+}
+
+$("entry-earlier").onclick = () => openEarlierLists();
+$("entry-earlier-close").onclick = hideModals;
 
 async function refreshEntryStatus() {
   if (!IS_TAURI) return;

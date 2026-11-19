@@ -5702,6 +5702,13 @@ html[data-look="studio"] .signin-server-official { --official-inset: 44px; }
 .entry-recovery { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .entry-recovery input { flex: 1; min-width: 240px; font-family: var(--font-code, monospace); font-size: 13px; }
 .entry-recovery .setting-sub { flex-basis: 100%; }
+.entry-held { display: grid; gap: 6px; padding: 10px 12px; border-left: 4px solid var(--yellow); border-radius: 8px; background: var(--bg-raised); }
+.entry-held.hidden { display: none; }
+.entry-held-keys { display: flex; gap: 8px; flex-wrap: wrap; }
+.entry-earlier-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; max-height: min(50vh, 420px); overflow-y: auto; }
+.entry-earlier-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 8px; background: var(--bg-raised); }
+.entry-earlier-row > div { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.entry-earlier-row > .btn-small { flex: none; }
 
 .si-banner { height: 120px; margin: -4px -4px 14px; border-radius: 12px; background-size: cover; background-position: center; }
 .si-games { padding: 10px 0 0; }

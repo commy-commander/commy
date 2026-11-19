@@ -289,6 +289,10 @@ impl Book {
             .collect()
     }
 
+    pub fn listed(&self) -> std::collections::BTreeSet<ServerId> {
+        self.list.servers.keys().copied().collect()
+    }
+
     pub fn owner(&self, server: ServerId) -> Option<(UserId, IdentityKey)> {
         self.owners.get(&server).copied()
     }
