@@ -58,7 +58,7 @@ const STUDIO_APP_ICONS = {
   reply: "reply", smilePlus: "smile-plus", play: "play", pause: "pause", send: "arrow-up", folder: "folder", camera: "video", cameraOff: "video-off",
   gear: "settings", pencil: "pencil", pointer: "mouse-pointer-2", eraser: "eraser", person: "user", friendAdd: "user-plus", serverAdd: "circle-plus",
   smile: "smile", fullscreen: "maximize", expand: "maximize-2", collapse: "minimize-2", calendar: "calendar-days", coffee: "heart-handshake",
-  book: "scroll-text", chevronLeft: "chevron-left", chevronRight: "chevron-right", chevronDown: "chevron-down", roles: "tag", check: "check",
+  book: "scroll-text", chevronLeft: "chevron-left", chevronRight: "chevron-right", chevronDown: "chevron-down", chevronUp: "chevron-up", roles: "tag", check: "check",
   poll: "chart-bar-big", close: "x", eye: "eye", pin: "pin", pinOutline: "pin", pinOff: "pin-off", megaphone: "megaphone", uploadFile: "file",
   photo: "image", movie: "film", gifBox: "gif", bellOff: "bell-off", people: "users", gamepad: "gamepad-2", paste: "clipboard", search: "search",
   clock: "clock", link: "link", download: "download", warning: "triangle-alert", openExternal: "external-link", bookmark: "bookmark",

@@ -2189,6 +2189,7 @@ const ICONS = {
   chevronLeft: "M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z",
   chevronRight: "M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z",
   chevronDown: "M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z",
+  chevronUp: "M7.4 15.4 12 10.8l4.6 4.6L18 14l-6-6-6 6z",
   roles: "M21.41 11.41l-8.83-8.83A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.83 8.83a2 2 0 0 0 2.82 0l7.17-7.17a2 2 0 0 0 0-2.84zM12.83 20 4 11.17V4h7.17L20 12.83zM6.5 5A1.5 1.5 0 1 0 8 6.5 1.5 1.5 0 0 0 6.5 5z",
   check: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z",
   poll: "M5 9.2h3V19H5zm5.6-4.2h2.8v14h-2.8zm5.6 8H19v6h-2.8z",
@@ -8763,10 +8764,19 @@ function setCreateChannelKind(kind) {
   for (const opt of $("create-channel-kinds").querySelectorAll(".kind-option")) {
     opt.classList.toggle("active", opt.dataset.kind === kind);
   }
-  const stageHint = stageCreateHint(kind);
   $("create-channel-prefix").replaceChildren(channelKindMark(kind, 16));
-  $("create-channel-name").placeholder = stageHint ? stageHint.placeholder : kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : kind === "drive" ? "shared-files" : "new-channel";
+  $("create-channel-name").placeholder = channelNamePlaceholder(kind);
   syncCreateChannelName();
+}
+
+function channelNamePlaceholder(kind) {
+  const stageHint = stageCreateHint(kind);
+  return stageHint ? stageHint.placeholder : kind === "voice" ? "Hangout" : kind === "category" ? "Games" : kind === "announcement" ? "news" : kind === "forum" ? "ideas" : kind === "drive" ? "shared-files" : "new-channel";
+}
+
+async function createServerChannel(serverId, name, kind, parentId = null) {
+  if (kind === "category") await invoke("create_category", { serverId, name });
+  else await invoke("create_channel", { serverId, name, kind, parentId });
 }
 
 function syncCreateChannelName() {
@@ -8786,11 +8796,7 @@ async function saveCreateChannel() {
   const name = composeChannelName(channelNameDrafts.create, $("create-channel-name").value, kindHoldsMessages(createChannelKind));
   if (!name || !state.currentServer) return;
   try {
-    if (createChannelKind === "category") {
-      await invoke("create_category", { serverId: state.currentServer.id, name });
-    } else {
-      await invoke("create_channel", { serverId: state.currentServer.id, name, kind: createChannelKind, parentId: createChannelParent });
-    }
+    await createServerChannel(state.currentServer.id, name, createChannelKind, createChannelParent);
     hideModals();
     toast(`Created ${createChannelKind === "text" ? "#" : ""}${name}`);
     await refreshCurrentServer();
@@ -23845,16 +23851,20 @@ function wireEvents() {
       toast(String(e));
     }
   };
+  $("new-channel-kind").onchange = () => {
+    $("new-channel-input").placeholder = channelNamePlaceholder($("new-channel-kind").value);
+  };
+  $("channel-order-toggle").onclick = () => {
+    channelOrderMode = !channelOrderMode;
+    if (state.currentServer) paintManageChannels(state.currentServer);
+  };
   $("new-channel-save").onclick = async () => {
     if (!state.currentServer) return;
-    const name = $("new-channel-input").value.trim();
+    const kind = $("new-channel-kind").value;
+    const name = composeChannelName({ lead: "", separator: null }, $("new-channel-input").value, kindHoldsMessages(kind));
     if (!name) return;
     try {
-      await invoke("create_channel", {
-        serverId: state.currentServer.id,
-        name,
-        kind: $("new-channel-kind").value,
-      });
+      await createServerChannel(state.currentServer.id, name, kind);
       $("new-channel-input").value = "";
       await refreshCurrentServer();
       openServerSettings();
@@ -26243,30 +26253,134 @@ function openServerSettings(tab) {
   hideEmptyNavGroups(layer);
   let current = tab || (layer.classList.contains("hidden") ? "overview" : layer.dataset.tab);
   if (!allowed[current]) current = "overview";
-
-  const list = $("manage-channel-list");
-  list.innerHTML = "";
-  for (const channel of server.channels) {
-    const row = el("div", "manage-row");
-    const label = el("span", "manage-row-label");
-    const icon = el("span", "channel-icon");
-    if (isVoiceKind(channel.kind)) icon.appendChild(voiceKindIcon(channel.kind, 18));
-    else icon.textContent = "#";
-    label.appendChild(icon);
-    label.appendChild(channelNameNode(channel));
-    label.appendChild(el("span", "kind", channel.kind));
-    row.appendChild(label);
-    const edit = el("button", "btn-secondary btn-small", "Edit");
-    edit.onclick = () => openChannelSettings(channel.id);
-    row.appendChild(edit);
-    list.appendChild(row);
-  }
-
-  if (!server.channels.length) list.appendChild(el("div", "manage-empty", "No channels yet"));
+  if (layer.classList.contains("hidden")) channelOrderMode = false;
+  paintManageChannels(server);
 
   renderRoleSettings(server);
   renderMemberSettings(server);
   openSettingsLayer("server-settings", current);
+}
+
+let channelOrderMode = false;
+let channelOrderBusy = false;
+
+const CHANNEL_STEP_RULES = {
+  takes: (section, channel) => Boolean(section.category) || (section.kind === "voice") === isVoiceKind(channel.kind),
+  voice: kind => isVoiceKind(kind),
+};
+
+function manageEditKey(channel) {
+  const edit = el("button", "btn-secondary btn-small", "Edit");
+  edit.onclick = () => openChannelSettings(channel.id);
+  return edit;
+}
+
+function orderKeys(spot, name, canStep, step) {
+  const keys = el("span", "order-keys");
+  for (const [dir, icon, word] of [[-1, "chevronUp", "up"], [1, "chevronDown", "down"]]) {
+    const key = el("button", "btn-secondary btn-small order-key");
+    key.type = "button";
+    key.dataset.spot = spot;
+    key.dataset.dir = String(dir);
+    key.title = `Move ${word}`;
+    key.setAttribute("aria-label", `Move ${name} ${word}`);
+    key.appendChild(svgIcon(icon, 18));
+    key.disabled = !canStep(dir);
+    key.onclick = () => step(dir);
+    keys.appendChild(key);
+  }
+  return keys;
+}
+
+function manageSectionRow(section, keys) {
+  const row = el("div", "manage-row manage-section");
+  const label = el("span", "manage-row-label");
+  const icon = el("span", "channel-icon");
+  icon.appendChild(channelKindMark("category", 18));
+  label.append(icon, section.category ? channelNameNode(section.category) : el("span", null, section.title));
+  if (section.category) label.appendChild(el("span", "kind", "category"));
+  row.appendChild(label);
+  const name = section.category ? channelShownName(section.category) : section.title;
+  if (channelOrderMode) row.appendChild(orderKeys(`s:${section.key}`, name, dir => Boolean(sectionStep(keys, section.key, dir)), dir => stepSectionOrder(section.key, dir)));
+  else if (section.category) row.appendChild(manageEditKey(section.category));
+  return row;
+}
+
+function manageChannelRow(channel, sections, nested) {
+  const row = el("div", nested ? "manage-row manage-child" : "manage-row");
+  const label = el("span", "manage-row-label");
+  const icon = el("span", "channel-icon");
+  icon.appendChild(channelKindMark(channel.kind, 18));
+  label.append(icon, channelNameNode(channel), el("span", "kind", channel.kind));
+  row.appendChild(label);
+  const movable = nested && channelOrderMode;
+  if (movable) row.appendChild(orderKeys(`c:${channel.id}`, channelShownName(channel), dir => Boolean(channelStep(sections, channel.id, dir, CHANNEL_STEP_RULES)), dir => stepChannelOrder(channel.id, dir)));
+  else row.appendChild(manageEditKey(channel));
+  return row;
+}
+
+function paintChannelOrderBar() {
+  const toggle = $("channel-order-toggle");
+  toggle.textContent = channelOrderMode ? "Done" : "Rearrange";
+  toggle.setAttribute("aria-pressed", String(channelOrderMode));
+  $("channel-order-hint").textContent = channelOrderMode
+    ? "Move channels and categories with the arrows. A channel at the end of a category moves into the next one."
+    : "In the order members see them.";
+}
+
+function paintManageChannels(server) {
+  paintChannelOrderBar();
+  const list = $("manage-channel-list");
+  list.classList.toggle("arranging", channelOrderMode);
+  const sections = channelSections(server, true);
+  const movable = sections.filter(s => !s.fixed);
+  const keys = movable.map(s => s.key);
+  const rows = [];
+  for (const section of sections) {
+    const shown = section.fixed || section.channels.length || section.category || channelOrderMode;
+    if (!shown) continue;
+    if (!section.fixed) rows.push(manageSectionRow(section, keys));
+    for (const channel of section.channels) rows.push(manageChannelRow(channel, movable, !section.fixed));
+  }
+  if (!server.channels.length && !channelOrderMode) rows.push(el("div", "manage-empty", "No channels yet"));
+  list.replaceChildren(...rows);
+}
+
+function focusOrderKey(spot, dir) {
+  const keys = [...$("manage-channel-list").querySelectorAll(".order-key")];
+  const same = keys.find(k => k.dataset.spot === spot && k.dataset.dir === String(dir));
+  const target = same && !same.disabled ? same : keys.find(k => k.dataset.spot === spot && !k.disabled);
+  if (target) target.focus({ preventScroll: true });
+}
+
+async function saveChannelOrder(server, moves, spot, dir) {
+  if (channelOrderBusy) return;
+  channelOrderBusy = true;
+  try {
+    await invoke("move_channels", { serverId: server.id, moves: await moves() });
+    await refreshCurrentServer();
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    channelOrderBusy = false;
+  }
+  if (!state.currentServer) return;
+  paintManageChannels(state.currentServer);
+  focusOrderKey(spot, dir);
+}
+
+async function stepChannelOrder(channelId, dir) {
+  const server = state.currentServer;
+  const step = server && channelStep(movableSections(server), channelId, dir, CHANNEL_STEP_RULES);
+  if (step) await saveChannelOrder(server, async () => stepMoves(step), `c:${channelId}`, dir);
+}
+
+async function stepSectionOrder(key, dir) {
+  const server = state.currentServer;
+  if (!server) return;
+  const sections = movableSections(server);
+  const order = sectionStep(sections.map(s => s.key), key, dir);
+  if (order) await saveChannelOrder(server, () => sectionMoves(server, sections, order), `s:${key}`, dir);
 }
 
 const auditView = { serverId: null, entries: [], open: null };

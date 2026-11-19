@@ -813,6 +813,7 @@ html[data-look="studio"] .settings-layer .btn-small {
   padding: 0 14px;
   font-size: 13px;
 }
+html[data-look="studio"] .settings-layer .btn-small.order-key { width: 32px; padding: 0; border-radius: 50%; }
 
 html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-search,
 html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer :where(input[type="text"], input[type="password"], input[type="search"]:not(.settings-search), input[type="number"], input[type="email"], input[type="url"], select, textarea):not(:hover, :focus, :disabled) { box-shadow: inset 0 1px 2px rgb(var(--dark) / .5), inset 0 0 0 1px rgb(var(--dark) / .12); }

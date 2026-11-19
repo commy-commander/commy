@@ -350,6 +350,8 @@ html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .btn
   box-shadow: var(--k-plain-shadow);
 }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content :is(.btn-primary, .btn-secondary, .btn-danger) { height: 44px; padding: 0 18px; font: 600 14.5px/1 var(--font); }
+html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .btn-small.order-key { width: 44px; padding: 0; border-radius: 50%; }
+html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .manage-row.manage-child { margin-left: 12px; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .inline-row { flex-wrap: wrap; gap: 0 8px; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .inline-row > input[type="text"] { flex: 1 0 100%; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .form-actions { flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 2px; }
