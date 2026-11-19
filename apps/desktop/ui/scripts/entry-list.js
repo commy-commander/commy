@@ -172,6 +172,11 @@ $("entry-start-over-go").onclick = async () => {
 
 if (IS_TAURI) {
   window.__TAURI__.event.listen("entry-list-changed", e => renderEntryStatus(e.payload));
+  window.__TAURI__.event.listen("web-sync-stalled", e => {
+    const reason = (e.payload && e.payload.reason) || "Your servers are taking longer than usual to load.";
+    console.warn(`Commy: ${reason}`);
+    toast(`${reason} Reload the page. If servers are still missing, open Settings, Commy Account and choose Bring back earlier servers.`);
+  });
   refreshEntryStatus();
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState !== "visible") return;

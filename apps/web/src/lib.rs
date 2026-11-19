@@ -10,6 +10,7 @@ pub mod recording;
 pub mod sharing;
 pub mod store;
 pub mod sync_book;
+pub mod sync_stall;
 pub mod voice_prefs;
 pub mod watching;
 

@@ -1152,6 +1152,9 @@ impl Session {
         if self.status.borrow().unlock != Unlock::Unlocked {
             return Err("Open your servers first.".into());
         }
+        if self.sync.borrow().is_none() {
+            return Err(crate::sync_stall::NOT_STARTED.into());
+        }
         let copies = self.earlier(account::LIST_ITEM).await?;
         let keys = self.keys_that_may_open().await;
         Ok(commy_net::entry_list::earlier_views(&copies.items, &keys, &self.servers_on_my_list()))
@@ -1211,6 +1214,7 @@ impl Session {
         self.load_dms();
         self.status.borrow_mut().key = Some(key.clone());
         self.set_unlock(Unlock::Unlocked, "");
+        self.watch_for_stall();
         let this = self.clone();
         spawn_local(async move {
             let resume = this.resume_from_copy(&key).await;

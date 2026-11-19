@@ -149,6 +149,21 @@ impl Session {
         self.refresh_sync();
     }
 
+    pub(super) fn watch_for_stall(self: &Rc<Self>) {
+        let this = self.clone();
+        spawn_local(async move {
+            n0_future::time::sleep(crate::sync_stall::STALL_AFTER).await;
+            let state = match this.sync.borrow().as_ref() {
+                None => crate::sync_stall::SyncState::NotStarted,
+                Some(live) if !live.account_live => crate::sync_stall::SyncState::AccountWaiting,
+                Some(_) => crate::sync_stall::SyncState::Live,
+            };
+            if let Some(reason) = crate::sync_stall::reason(state) {
+                this.emit("web-sync-stalled", json!({ "reason": reason }));
+            }
+        });
+    }
+
     pub(super) fn stop_sync(&self) {
         self.sync.borrow_mut().take();
         self.dms.borrow_mut().forget_streams();
