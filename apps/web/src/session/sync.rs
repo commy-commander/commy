@@ -639,6 +639,18 @@ impl Session {
             .into_iter()
             .filter_map(|(server, chosen)| Some((server, commy_view::away::remembered_host(chosen.as_deref(), self.place_of(server).as_deref(), &home)?)))
             .collect();
+        self.write_host_records(loaded);
+    }
+
+    fn record_invited_host(&self, server: ServerId) {
+        let Some(home) = self.sync.borrow().as_ref().map(|live| live.url.clone()) else { return };
+        let invited = self.invited_hosts.borrow().get(&server).cloned();
+        if let Some(host) = commy_view::away::remembered_host(invited.as_deref(), None, &home) {
+            self.write_host_records(vec![(server, host)]);
+        }
+    }
+
+    fn write_host_records(&self, loaded: Vec<(ServerId, Option<String>)>) {
         let due: Vec<(ServerId, Option<String>)> = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return };
@@ -960,6 +972,7 @@ impl Session {
             spawn_local(self.clone().load_servers(vec![ticket.clone()]));
         }
         self.append_account(community_key_record(server, &shared, now.timestamp_millis(), ticket.owner));
+        self.record_invited_host(server);
         self.refresh_sync();
         let details = self.dms.borrow().safety.profile_policy.shows_details_to_servers();
         let state = streams::bootstrap(server, id, &secret).keys.id;
