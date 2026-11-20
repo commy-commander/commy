@@ -177,6 +177,10 @@ if (IS_TAURI) {
     console.warn(`Commy: ${reason}`);
     toast(`${reason} ${t("ui.servers-stalled-reload")}`);
   });
+  window.__TAURI__.event.listen("web-join-unsent", e => {
+    const { server } = e.payload || {};
+    console.warn(`Commy: could not tell the sync service about joining ${server} within two minutes`);
+  });
   window.__TAURI__.event.listen("web-server-look-back", e => {
     const { server, seq } = e.payload || {};
     console.info(`Commy: no recent copy of ${server} in the last entries, reading all ${seq}`);

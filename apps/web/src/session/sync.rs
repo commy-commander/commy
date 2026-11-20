@@ -43,6 +43,8 @@ const STORE_WAIT: Duration = Duration::from_secs(5);
 const SNAPSHOT_EVERY_MS: i64 = 6 * 60 * 60 * 1000;
 const MAX_MARKS_PER_RECORD: usize = 300;
 const DEEPEN_POLL: Duration = Duration::from_millis(250);
+const JOIN_SEND_WAIT: Duration = Duration::from_secs(120);
+const JOIN_SEND_POLL: Duration = Duration::from_millis(500);
 
 fn chunks(marks: BTreeMap<String, ReadMark>, size: usize) -> Vec<BTreeMap<String, ReadMark>> {
     let mut out = Vec::new();
@@ -962,13 +964,26 @@ impl Session {
         let details = self.dms.borrow().safety.profile_policy.shows_details_to_servers();
         let state = streams::bootstrap(server, id, &secret).keys.id;
         let payload = self.client.borrow().join_payload(server, details);
-        let plain = payload.as_ref().and_then(streams::encode_entry);
-        let client = self.sync.borrow().as_ref().and_then(|live| live.pool.client_for(state));
-        if let (Some(plain), Some(client)) = (plain, client) {
-            spawn_local(async move {
-                let _ = client.append(state, plain).await;
-            });
+        if let Some(plain) = payload.as_ref().and_then(streams::encode_entry) {
+            spawn_local(self.clone().send_join(server, state, plain));
         }
+    }
+
+    async fn send_join(self: Rc<Self>, server: ServerId, state: StreamId, plain: Vec<u8>) {
+        let deadline = web_time::Instant::now() + JOIN_SEND_WAIT;
+        while web_time::Instant::now() < deadline {
+            let client = self.sync.borrow().as_ref().and_then(|live| live.pool.client_for(state));
+            if let Some(client) = client {
+                if client.append(state, plain.clone()).await.is_ok() {
+                    return;
+                }
+            }
+            if self.sync.borrow().is_none() {
+                return;
+            }
+            n0_future::time::sleep(JOIN_SEND_POLL).await;
+        }
+        self.emit("web-join-unsent", json!({ "server": server.to_string() }));
     }
 
     fn adopt_owners(&self) {
