@@ -461,9 +461,16 @@ async fn test_sync_host(host: String) -> CmdResult<serde_json::Value> {
 }
 
 #[tauri::command]
-fn sync_host_release(server_id: String) -> CmdResult<Option<view::sync_host::HostRelease>> {
+async fn sync_host_release(app: tauri::State<'_, App>, server_id: String) -> CmdResult<Option<view::sync_host::HostRelease>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
-    Ok(community_sync::greeting_of(sid).as_ref().map(view::sync_host::host_release))
+    let chosen = app.servers.lock_or_recover().get(&sid).map(|state| state.server.sync_host.clone()).ok_or("unknown server")?;
+    let Some(shown) = sync_link::url().and_then(|account| community_sync::community_url(chosen.as_deref(), &account)) else { return Ok(None) };
+    let live = view::sync_host::greeting_if_at(community_sync::place_of(sid).as_deref(), &shown, community_sync::greeting_of(sid));
+    let greeting = match live {
+        Some(greeting) => Some(greeting),
+        None => sync_host::greet(&shown).await,
+    };
+    Ok(greeting.as_ref().map(view::sync_host::host_release))
 }
 
 fn storage_roster(app: &App, sid: ServerId) -> Option<commy_core::file_store::Roster> {

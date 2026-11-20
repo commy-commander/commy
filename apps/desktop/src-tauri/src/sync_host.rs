@@ -23,6 +23,10 @@ pub async fn check(origin: &str) -> Result<commy_sync::wire::Greeting, String> {
     errands::greet(&url).await.map_err(refusal)
 }
 
+pub async fn greet(socket: &str) -> Option<commy_sync::wire::Greeting> {
+    errands::greet(socket).await.ok()
+}
+
 pub async fn claim_everything(app: &App, sid: ServerId, url: &str) -> Result<(), String> {
     let work = crate::sync_eraser::plan(app, sid).ok_or(KEYS_NOT_READY)?.claims();
     let outcomes = errands::run(url, work).await.map_err(refusal)?;

@@ -157,12 +157,25 @@ pub fn set_sync_host(state: &ServerState, me: UserId, address: Option<&str>) -> 
     Ok(ServerEvent::SyncHostSet { server: state.server.id, url })
 }
 
+pub fn greeting_if_at(connected: Option<&str>, shown: &str, greeting: Option<Greeting>) -> Option<Greeting> {
+    greeting.filter(|_| connected == Some(shown))
+}
+
 pub fn shown_host(state: &ServerState) -> Option<String> {
     state.server.sync_host.as_deref().and_then(commy_core::sync_host::display_host).map(str::to_string)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_just_moved_server_never_shows_the_old_hosts_operator() {
+        let old = Greeting { operator: Some("Commy (staging)".into()), ..Greeting::of(PROTOCOL) };
+        let new_host = "wss://dev.example.org/sync";
+        assert_eq!(greeting_if_at(Some("wss://staging.example.org/sync"), new_host, Some(old.clone())), None, "still connected to the old host");
+        assert_eq!(greeting_if_at(None, new_host, Some(old.clone())), None);
+        assert_eq!(greeting_if_at(Some(new_host), new_host, Some(old.clone())).and_then(|g| g.operator), old.operator);
+    }
+
     #[test]
     fn a_relay_that_just_went_down_refuses_voice_with_its_reason() {
         let theirs = RoomRelay::Theirs { url: "https://sync.example.org".into(), public_fallback: false };

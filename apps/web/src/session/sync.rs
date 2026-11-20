@@ -251,10 +251,12 @@ impl Session {
         Some(commy_view::sync_host::room_relay(&socket, &live.url, live.pool.greeting_at(&socket).as_ref()))
     }
 
-    pub(super) fn sync_greeting(&self, server: ServerId) -> Option<commy_sync::wire::Greeting> {
+    pub(super) fn shown_greeting(&self, chosen: Option<&str>) -> (Option<String>, Option<commy_sync::wire::Greeting>) {
         let guard = self.sync.borrow();
-        let live = guard.as_ref()?;
-        live.pool.greeting_at(&live.socket_of(server))
+        let Some(live) = guard.as_ref() else { return (None, None) };
+        let Some(shown) = commy_core::sync_host::chosen_socket(chosen, Some(&live.url)) else { return (None, None) };
+        let greeting = live.pool.greeting_at(&shown);
+        (Some(shown), greeting)
     }
 
     async fn tend_sync(self: Rc<Self>) {

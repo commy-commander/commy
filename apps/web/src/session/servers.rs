@@ -100,7 +100,13 @@ impl Session {
             }
             "sync_host_release" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
-                to_json(&self.sync_greeting(server).as_ref().map(commy_view::sync_host::host_release))
+                let chosen = self.read_state(server, |state, _| Ok(state.server.sync_host.clone()))?;
+                let greeting = match self.shown_greeting(chosen.as_deref()) {
+                    (_, Some(greeting)) => Some(greeting),
+                    (Some(shown), None) => errands::greet(&shown).await.ok(),
+                    (None, None) => None,
+                };
+                to_json(&greeting.as_ref().map(commy_view::sync_host::host_release))
             }
             "export_server_template" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
