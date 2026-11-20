@@ -6,6 +6,7 @@ async function openInviteLink(link) {
   inviteLinkBusy = true;
   try {
     const invite = await invoke("resolve_invite_link", { link });
+    if (await openJoinedInvite(invite)) return;
     pendingInvite = invite;
     $("invite-link-name").textContent = serverShownName(invite.server_name);
     $("invite-link-icon").textContent = initials(serverShownName(invite.server_name));
@@ -28,6 +29,15 @@ async function openInviteLink(link) {
   } finally {
     inviteLinkBusy = false;
   }
+}
+
+async function openJoinedInvite(invite) {
+  const joined = (state.servers || []).find(server => server.id === invite.server_id && !server.host_removed);
+  if (!joined) return false;
+  pendingInvite = null;
+  if (!$("modal-invite-link").classList.contains("hidden")) hideModals();
+  await selectServer(joined.id);
+  return true;
 }
 
 async function trustInviteHost(invite) {

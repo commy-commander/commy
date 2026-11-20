@@ -298,6 +298,9 @@ async fn join_server(
     }
     let (ticket, carried) = ServerTicket::decode_with_key(&ticket).map_err(err_to_string)?;
     let id = ticket.server_id;
+    if let Some(summary) = already_in(&app, id) {
+        return Ok(knock::Joined::Server(summary));
+    }
     if let Some((key, secret)) = carried {
         community_sync::remember_invite_key(id, key, secret);
     }
@@ -308,6 +311,16 @@ async fn join_server(
         community_sync::refresh_soon(&handle);
     }
     Ok(joined)
+}
+
+fn already_in(app: &App, server: ServerId) -> Option<ServerSummary> {
+    let me = app.profile.lock_or_recover().as_ref()?.id;
+    if app.awaits_snapshot(server) {
+        return None;
+    }
+    let servers = app.servers.lock_or_recover();
+    let state = servers.get(&server).filter(|s| s.server.is_current_member(me) && !s.is_deleted())?;
+    Some(ServerSummary::from_state(state, Some(me)))
 }
 
 #[tauri::command]
@@ -7908,6 +7921,13 @@ async fn run_net_loop(
                     _ => None,
                 };
                 let device_news = matches!(event, ServerEvent::DeviceAnnounce { .. }).then(|| event.clone());
+                let joiner = match &event {
+                    ServerEvent::MemberJoin { profile, .. } => Some(profile.id),
+                    _ => None,
+                };
+                let before_join = action.as_ref().is_some_and(|action| {
+                    app.servers.lock_or_recover().get(&server).is_some_and(|state| catchup::waits_for_membership(state, action.by, &event))
+                });
                 let seat_news = liveness::seat_news(&event);
                 let lanes_changed = commy_net::community_streams::changes_lanes(&event);
                 let speaker = liveness::speaker(&event, action.as_ref()).filter(|_| !replayed);
@@ -7953,7 +7973,7 @@ async fn run_net_loop(
                         liveness::heard(&app, server, user, now);
                         liveness::heard_device(&app, server, user, &view::liveness::node_hex(&sender), now);
                     }
-                    if let Some(user) = pinned {
+                    if let Some(user) = pinned.or(joiner) {
                         catchup::release_held(&handle, server, &[user]);
                     }
                     if let (Some((user, now)), Some(false)) = (presence, was_online) {
@@ -8029,7 +8049,9 @@ async fn run_net_loop(
                         (StoreError::UnknownAuthorKey(signer), Some(event), _) if holdable => {
                             catchup::hold(&app, server, signer, event)
                         }
-                        (StoreError::UnknownAuthorKey(_), Some(event), Some(action)) => {
+                        (refused @ (StoreError::UnknownAuthorKey(_) | StoreError::NotAllowed), Some(event), Some(action))
+                            if before_join || !matches!(refused, StoreError::NotAllowed) =>
+                        {
                             let signed = SignedEvent { action, event };
                             app.catchup.lock_or_recover().hold_action(server, signed, std::time::Instant::now())
                         }

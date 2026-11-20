@@ -2914,6 +2914,8 @@ function wireInvite() {
   const watch = node => new MutationObserver(syncInvite).observe(node, { attributes: true, attributeFilter: ["class"] });
   watch($("modal-backdrop"));
   watch($("modal-invite-link"));
+  new MutationObserver(syncInvite).observe(document.documentElement, { attributes: true, attributeFilter: ["data-fit", "data-look"] });
+  syncInvite();
   window.addEventListener("popstate", () => {
     if ((history.state && history.state.ptInvite) || !inviteShown()) return;
     if (studioPhone.inviteBusy) {

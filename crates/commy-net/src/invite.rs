@@ -209,6 +209,7 @@ pub fn looks_like_link(input: &str) -> bool {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedInvite {
+    pub server_id: String,
     pub link: String,
     pub host: String,
     pub server_name: String,
@@ -502,6 +503,7 @@ pub fn open_reply(link: &InviteLink, reply: &ResolveResponse, now: DateTime<Utc>
 
 pub fn resolved(link: &InviteLink, opened: &Opened, account_origin: &str, background: Option<String>) -> ResolvedInvite {
     ResolvedInvite {
+        server_id: opened.ticket.server_id.to_string(),
         link: link.url(),
         host: link.host(),
         server_name: clip(&opened.ticket.server_name, 100),

@@ -367,6 +367,14 @@ pub fn start_delay(ours: [u8; 32], peer: [u8; 32], pending: bool) -> Option<Dura
     (!pending && ours > peer).then_some(HIGHER_NODE_START_DELAY)
 }
 
+pub fn waits_for_membership(state: &ServerState, by: UserId, event: &ServerEvent) -> bool {
+    let live = matches!(
+        event,
+        ServerEvent::DeviceAnnounce { .. } | ServerEvent::PresenceUpdate { .. } | ServerEvent::VoiceState { .. }
+    );
+    live && commy_core::action::actor(event) == Some(by) && !state.server.is_member(by) && !state.server.banned.contains(&by)
+}
+
 pub fn holdable(event: &ServerEvent) -> bool {
     matches!(
         event,
@@ -906,6 +914,9 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserI
                         Ok(true) => changed = true,
                         Ok(false) => {}
                         Err(StoreError::UnknownAuthorKey(_)) => still.push((at, signed)),
+                        Err(StoreError::NotAllowed) if waits_for_membership(state, signed.action.by, &signed.event) => {
+                            still.push((at, signed))
+                        }
                         Err(e) => tracing::debug!("held action rejected: {e}"),
                     }
                 }
@@ -1788,6 +1799,36 @@ mod tests {
         let asked = [absent.id(), unkeyed.id, owner.id(), owner.id()];
         let absent_here = app.servers.lock().unwrap()[&sid].profiles[&absent.id()].clone();
         assert_eq!(store.profiles(sid, &asked), vec![absent_here, owner.profile.clone()]);
+    }
+
+    #[test]
+    fn a_device_note_that_beats_its_rejoin_is_kept_until_the_rejoin_lands() {
+        let owner = Member::new("owner");
+        let eve = Member::new("eve");
+        let (mut state, _) = server(&owner);
+        join(&mut state, &eve);
+        let sid = state.server.id;
+        state.apply(ServerEvent::MemberLeave { server: sid, user: eve.id() }).unwrap();
+        let app = app_with(&owner, state);
+        let handle = TestHandle::new(app.clone());
+        let node = "ab".repeat(32);
+        let device = ServerEvent::DeviceAnnounce { server: sid, user: eve.id(), node: node.clone(), voice: None, since: None };
+        let signed = SignedEvent::sign(sid, eve.id(), Utc::now().timestamp_millis(), device, &eve.identity);
+        {
+            let servers = app.servers.lock().unwrap();
+            let state = &servers[&sid];
+            assert_eq!(state.admits_signed(&signed), Err(StoreError::NotAllowed));
+            assert!(waits_for_membership(state, eve.id(), &signed.event));
+            assert!(!waits_for_membership(state, owner.id(), &signed.event));
+        }
+        app.catchup.lock().unwrap().hold_action(sid, signed, Instant::now());
+        release_held(&handle, sid, &[eve.id()]);
+        assert!(app.servers.lock().unwrap()[&sid].devices_of(eve.id()).is_empty());
+
+        let rejoin = ServerEvent::MemberJoin { server: sid, profile: eve.profile.clone() };
+        app.servers.lock().unwrap().get_mut(&sid).unwrap().apply(rejoin).unwrap();
+        release_held(&handle, sid, &[eve.id()]);
+        assert!(app.servers.lock().unwrap()[&sid].devices_of(eve.id()).iter().any(|d| d.node.eq_ignore_ascii_case(&node)));
     }
 
     #[test]
