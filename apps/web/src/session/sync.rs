@@ -77,6 +77,7 @@ pub(super) struct Live {
     pub(super) wake: Option<String>,
     pub(super) all_rings: AllRings,
     deepened: HashSet<(ServerId, Option<ChannelId>)>,
+    looked_back: HashSet<StreamId>,
     pub(super) checkpoints: Checkpoints,
     unplaced: HashSet<ServerId>,
 }
@@ -136,6 +137,7 @@ impl Session {
             wake,
             all_rings: AllRings::default(),
             deepened: HashSet::new(),
+            looked_back: HashSet::new(),
             keeping: Keeping { log, saved: opened, ..Default::default() },
             checkpoints: Checkpoints::default(),
             unplaced: HashSet::new(),
@@ -794,10 +796,31 @@ impl Session {
             self.retire_if_gone(server);
         } else {
             self.adopt(server);
+            if state_lane && !self.client.borrow().has(server) {
+                self.look_back_for_copy(server, stream, seq);
+            }
         }
         if state_lane {
             self.announce_if_loaded();
         }
+    }
+
+    fn look_back_for_copy(&self, server: ServerId, stream: StreamId, seq: u64) {
+        if !crate::sync_book::tail_may_hide_copy(seq, streams::STATE_TAIL) {
+            return;
+        }
+        {
+            let mut guard = self.sync.borrow_mut();
+            let Some(live) = guard.as_mut() else { return };
+            if !live.looked_back.insert(stream) {
+                return;
+            }
+            let Some(keys) = live.book.rewind(stream) else { return };
+            let url = live.socket_of(server);
+            live.pool.unfollow(stream);
+            live.pool.follow_together_tail_at(&url, vec![(keys, 0)], None);
+        }
+        self.emit("web-server-look-back", json!({ "server": server.to_string(), "seq": seq }));
     }
 
     fn on_account_change(self: &Rc<Self>, change: Change) {

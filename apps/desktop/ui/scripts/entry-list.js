@@ -177,6 +177,10 @@ if (IS_TAURI) {
     console.warn(`Commy: ${reason}`);
     toast(`${reason} ${t("ui.servers-stalled-reload")}`);
   });
+  window.__TAURI__.event.listen("web-server-look-back", e => {
+    const { server, seq } = e.payload || {};
+    console.info(`Commy: no recent copy of ${server} in the last entries, reading all ${seq}`);
+  });
   window.__TAURI__.event.listen("web-home-lookup", e => {
     const { home, status, sync } = e.payload || {};
     const line = `Commy: looked up ${home}: ${status ?? "no answer"}, sync ${sync ?? "unknown"}`;

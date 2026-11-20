@@ -90,6 +90,10 @@ pub fn sync_host_record(server: ServerId, host: Option<&str>, at: i64) -> Vec<u8
     serde_json::to_vec(&serde_json::json!({ "k": "sync_host", "server": server, "host": host, "at": at })).expect("sync host encode")
 }
 
+pub fn tail_may_hide_copy(last_seq: u64, tail: u32) -> bool {
+    last_seq > u64::from(tail)
+}
+
 pub fn host_to_record(recorded: Option<&(Option<String>, i64)>, mine: Option<&str>, last_written: Option<&Option<String>>) -> bool {
     let recorded_host = recorded.and_then(|(host, _)| host.as_deref());
     recorded_host != mine && last_written.is_none_or(|written| written.as_deref() != mine)
@@ -443,6 +447,14 @@ impl Book {
         self.after.get(&stream).copied().unwrap_or(0)
     }
 
+    pub fn rewind(&mut self, stream: StreamId) -> Option<StreamKeys> {
+        let (_, want) = self.routes.get(&stream)?;
+        let keys = want.keys.clone();
+        self.after.insert(stream, 0);
+        self.live.remove(&stream);
+        Some(keys)
+    }
+
     pub fn start_at(&mut self, stream: StreamId, seq: u64) {
         let start = self.after.get(&stream).map_or(seq, |held| (*held).min(seq));
         self.after.insert(stream, start);
@@ -629,6 +641,29 @@ mod tests {
         assert_eq!(book.after(stream), 60);
         book.start_at(stream, 75);
         assert_eq!(book.after(stream), 60);
+    }
+
+    #[test]
+    fn rewinding_a_state_stream_reads_it_again_from_the_start() {
+        let server = ServerId::new();
+        let mut book = Book::new(EntryList::default());
+        let state = want(server, Lane::State, true);
+        let id = state.keys.id;
+        book.replan([(server, vec![state])].into());
+        book.advance(id, 1_400);
+        book.caught_up(id, 1_400);
+        assert!(book.is_live(id));
+        assert_eq!(book.rewind(id).map(|keys| keys.id), Some(id));
+        assert_eq!(book.after(id), 0);
+        assert!(!book.is_live(id));
+        assert_eq!(book.rewind(want(server, Lane::Channel(commy_core::ChannelId::new()), true).keys.id), None);
+    }
+
+    #[test]
+    fn only_a_stream_longer_than_its_tail_can_hide_an_older_copy() {
+        assert!(!tail_may_hide_copy(0, 1_000));
+        assert!(!tail_may_hide_copy(1_000, 1_000));
+        assert!(tail_may_hide_copy(1_001, 1_000));
     }
 
     #[test]
