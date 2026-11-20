@@ -932,7 +932,7 @@ where
 }
 
 fn encoded_len<T: Serialize>(value: &T) -> usize {
-    postcard::serialize_with_flavor(value, postcard::ser_flavors::Size::default()).unwrap_or(usize::MAX)
+    commy_core::wire_layout::encode(value).map_or(usize::MAX, |bytes| bytes.len())
 }
 
 fn signers_of<'a>(

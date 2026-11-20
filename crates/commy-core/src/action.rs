@@ -31,7 +31,7 @@ struct SignedBytes<'a> {
 }
 
 pub fn signing_bytes(server: ServerId, by: UserId, at: i64, event: &ServerEvent) -> Vec<u8> {
-    crate::wire_layout::encode(&SignedBytes { domain: ACTION_DOMAIN, server, by, at, event })
+    crate::wire_layout::first_layout(&SignedBytes { domain: ACTION_DOMAIN, server, by, at, event })
         .expect("action serialization cannot fail")
 }
 

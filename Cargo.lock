@@ -1109,7 +1109,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "commy-core",
+ "commy-core 0.1.0",
  "commy-net",
  "data-encoding",
  "http-body-util",
@@ -1147,6 +1147,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "commy-core"
+version = "0.1.0"
+source = "git+https://git.commy.chat/commy/commy?tag=v0.2.4#f7deb37cbf51310213a1a08ec14cb8fe5ba9280c"
+dependencies = [
+ "aes-gcm 0.11.1",
+ "base64 0.23.1",
+ "chrono",
+ "curve25519-dalek",
+ "data-encoding",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "hmac 0.13.0",
+ "postcard",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "commy-desktop"
 version = "0.1.0"
 dependencies = [
@@ -1156,7 +1178,7 @@ dependencies = [
  "commy-app-lock",
  "commy-apple-sign-in",
  "commy-audio",
- "commy-core",
+ "commy-core 0.1.0",
  "commy-ios-push",
  "commy-media",
  "commy-net",
@@ -1210,7 +1232,7 @@ dependencies = [
  "anyhow",
  "block2",
  "commy-audio",
- "commy-core",
+ "commy-core 0.1.0",
  "cpal",
  "image 0.25.10",
  "objc2",
@@ -1237,7 +1259,8 @@ dependencies = [
  "base64 0.23.1",
  "cfg_aliases",
  "chrono",
- "commy-core",
+ "commy-core 0.1.0",
+ "commy-core 0.1.0 (git+https://git.commy.chat/commy/commy?tag=v0.2.4)",
  "commy-sync",
  "data-encoding",
  "futures-lite",
@@ -1292,7 +1315,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "commy-core",
+ "commy-core 0.1.0",
  "commy-sync",
  "data-encoding",
  "futures-util",
@@ -1324,7 +1347,7 @@ name = "commy-view"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "commy-core",
+ "commy-core 0.1.0",
  "commy-sync",
  "data-encoding",
  "idna",
@@ -1341,7 +1364,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "commy-audio",
- "commy-core",
+ "commy-core 0.1.0",
  "commy-net",
  "commy-sync",
  "commy-view",

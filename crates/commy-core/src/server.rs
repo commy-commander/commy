@@ -482,11 +482,11 @@ pub struct Server {
     pub gif_key: Option<crate::search_keys::GifKey>,
     #[serde(default)]
     pub game_db: Option<crate::search_keys::GameDbKey>,
-    #[serde(default, with = "crate::wire_layout::later")]
+    #[serde(default, with = "crate::wire_layout::later::server_sync_host")]
     pub sync_host: Option<String>,
-    #[serde(default, with = "crate::wire_layout::later")]
+    #[serde(default, with = "crate::wire_layout::later::server_blocked_homes")]
     pub blocked_homes: Vec<String>,
-    #[serde(default, with = "crate::wire_layout::later")]
+    #[serde(default, with = "crate::wire_layout::later::server_require_home")]
     pub require_home: bool,
 }
 

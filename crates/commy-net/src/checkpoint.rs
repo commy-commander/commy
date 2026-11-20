@@ -64,7 +64,7 @@ pub fn snapshot_of(state: &ServerState, by: UserId, at: i64, identity: &Identity
 
 pub fn records(snapshot: &WirePayload, covers: u64, identity: &Identity) -> Option<Vec<Vec<u8>>> {
     let WirePayload::SyncResponse { server, at, .. } = snapshot else { return None };
-    let bytes = postcard::to_stdvec(snapshot).ok()?;
+    let bytes = commy_core::wire_layout::encode(snapshot).ok()?;
     if bytes.is_empty() || bytes.len() > MAX_CHECKPOINT_BYTES {
         return None;
     }
@@ -138,7 +138,7 @@ impl Assembler {
         if digest != seal.digest || !owner.verify(&seal_message(server, at, seal.count, seal.covers, &digest), &seal.sig) {
             return None;
         }
-        let snapshot: WirePayload = postcard::from_bytes(&bytes).ok()?;
+        let snapshot: WirePayload = commy_core::wire_layout::decode(&bytes).ok()?;
         let matches = matches!(&snapshot, WirePayload::SyncResponse { server: copy, at: signed_at, .. } if copy.id == server && *signed_at == at);
         if !matches {
             return None;

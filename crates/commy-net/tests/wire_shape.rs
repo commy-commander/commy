@@ -13,6 +13,8 @@ const SOURCES: [&str; 2] = ["crates/commy-core/src", "crates/commy-net/src"];
 const ROOTS: [&str; 6] = ["Envelope", "Entry", "SignalEntry", "DmEnvelope", "CatchupFrame", "SignedBytes"];
 const ENUMS_OLD_READERS_SKIP_WHOLE: [&str; 3] = ["ServerEvent", "WirePayload", "CatchupFrame"];
 const LATER: &str = "wire_layout::later";
+const SIGNED_ROOT: &str = "SignedBytes";
+const SIGNED_LATER_FIELDS_PROVEN_ON_THEIR_OWN: [(&str, &str); 1] = [("UserProfile", "home")];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Field {
@@ -179,8 +181,12 @@ fn fields_of_shape(shape: &Shape) -> Vec<&Field> {
 }
 
 fn reachable(shapes: &Shapes) -> BTreeSet<String> {
+    reachable_from(shapes, &ROOTS)
+}
+
+fn reachable_from(shapes: &Shapes, roots: &[&str]) -> BTreeSet<String> {
     let mut seen = BTreeSet::new();
-    let mut next: Vec<String> = ROOTS.iter().map(|root| root.to_string()).collect();
+    let mut next: Vec<String> = roots.iter().map(|root| root.to_string()).collect();
     while let Some(name) = next.pop() {
         let Some(defs) = shapes.get(&name) else { continue };
         if !seen.insert(name) {
@@ -340,10 +346,41 @@ fn every_recorded_stable_release_reads_what_this_build_writes() {
     assert!(
         found.is_empty(),
         "Stable Commy releases cannot read what this build writes, so people on it would stop seeing each other. \
-         Put new fields at the end with #[serde(default, with = \"crate::wire_layout::later\")], never reorder, retype or \
+         Put new fields at the end with #[serde(default, with = \"crate::wire_layout::later::<name>\")], never reorder, retype or \
          remove fields, only add variants to {ENUMS_OLD_READERS_SKIP_WHOLE:?}, and keep the protocol versions:\n{}",
         found.join("\n")
     );
+}
+
+fn unsigned_later_fields(shapes: &Shapes) -> Vec<String> {
+    let mut found = Vec::new();
+    for name in reachable_from(shapes, &[SIGNED_ROOT]) {
+        for field in shapes[&name].iter().flat_map(fields_of_shape).filter(|field| field.later) {
+            if !SIGNED_LATER_FIELDS_PROVEN_ON_THEIR_OWN.contains(&(name.as_str(), field.name.as_str())) {
+                found.push(format!("{name}.{}", field.name));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn later_fields_in_signed_events_prove_themselves() {
+    let found = unsigned_later_fields(&record(&repo_root()).types);
+    assert!(
+        found.is_empty(),
+        "Event signatures cover only what stable releases can read, so a later field inside a signed event is not \
+         signed. Only add one whose value carries its own signature, and list it in \
+         SIGNED_LATER_FIELDS_PROVEN_ON_THEIR_OWN: {found:?}"
+    );
+}
+
+#[test]
+fn an_unsigned_later_field_in_a_signed_event_is_caught() {
+    let mut shapes = sample();
+    edit(&mut shapes, "Payload", |s| push_field(s, true));
+    shapes.insert(SIGNED_ROOT.into(), vec![Shape::Struct { file: "a.rs".into(), fields: vec![Field { name: "event".into(), ty: "Payload".into(), later: false }] }]);
+    assert_eq!(unsigned_later_fields(&shapes), vec!["Payload.home".to_string()]);
 }
 
 fn sample() -> Shapes {

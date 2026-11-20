@@ -33,6 +33,8 @@ pub enum WirePayload {
         by: UserId,
         at: i64,
         sig: Signature,
+        #[serde(default, with = "commy_core::wire_layout::later::sync_response_full_sig")]
+        full_sig: Option<Signature>,
     },
     VoiceDial {
         channel: commy_core::ChannelId,
@@ -108,6 +110,10 @@ fn snapshot_fields(payload: &WirePayload) -> Option<SnapshotBytes<'_>> {
 }
 
 fn snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
+    commy_core::wire_layout::first_layout(&snapshot_fields(payload)?).ok()
+}
+
+fn whole_snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
     commy_core::wire_layout::encode(&snapshot_fields(payload)?).ok()
 }
 
@@ -119,18 +125,26 @@ pub fn sign_sync_response(payload: &mut WirePayload, at: i64, identity: &Identit
     if let WirePayload::SyncResponse { at: slot, .. } = payload {
         *slot = at;
     }
-    let Some(bytes) = snapshot_bytes(payload) else { return };
-    if let WirePayload::SyncResponse { sig, .. } = payload {
-        *sig = identity.sign(&bytes);
+    let (Some(first), Some(whole)) = (snapshot_bytes(payload), whole_snapshot_bytes(payload)) else { return };
+    if let WirePayload::SyncResponse { sig, full_sig, .. } = payload {
+        *sig = identity.sign(&first);
+        *full_sig = (whole != first).then(|| identity.sign(&whole));
     }
 }
 
 pub fn verify_sync_response(payload: &WirePayload, key: &IdentityKey) -> bool {
-    let WirePayload::SyncResponse { sig, .. } = payload else {
+    let WirePayload::SyncResponse { sig, full_sig, .. } = payload else {
         return false;
     };
-    let signed = |bytes: Option<Vec<u8>>| bytes.is_some_and(|bytes| key.verify(&bytes, sig));
-    signed(snapshot_bytes(payload)) || signed(full_layout_snapshot_bytes(payload))
+    let (Some(first), Some(whole)) = (snapshot_bytes(payload), whole_snapshot_bytes(payload)) else {
+        return false;
+    };
+    let signed_by_this_build = if whole == first {
+        key.verify(&first, sig)
+    } else {
+        key.verify(&first, sig) && full_sig.is_some_and(|full| key.verify(&whole, &full))
+    };
+    signed_by_this_build || full_layout_snapshot_bytes(payload).is_some_and(|bytes| key.verify(&bytes, sig))
 }
 
 pub fn signed_size(server: ServerId, event: &ServerEvent) -> usize {
@@ -190,17 +204,18 @@ impl Envelope {
 
 const IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES: usize = 4096;
 
+const FULL_SIG_BYTES: usize = 72;
+
 pub const MAX_GOSSIP_BYTES: usize = commy_core::message::GOSSIP_FRAME_BYTES;
 
 const _: () = assert!(MAX_GOSSIP_BYTES < IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES);
 
 pub fn gossip_size(payload: &WirePayload) -> usize {
-    let envelope = Envelope::new([0u8; 32], payload.clone());
-    postcard::serialize_with_flavor(&envelope, postcard::ser_flavors::Size::default()).unwrap_or(usize::MAX)
+    commy_core::wire_layout::encode(&Envelope::new([0u8; 32], payload.clone())).map_or(usize::MAX, |bytes| bytes.len())
 }
 
 fn encoded<T: Serialize>(item: &T) -> usize {
-    postcard::serialize_with_flavor(item, postcard::ser_flavors::Size::default()).unwrap_or(0)
+    commy_core::wire_layout::first_layout(item).map_or(0, |bytes| bytes.len())
 }
 
 pub fn build_sync_response(state: &ServerState, per_channel: usize, by: UserId) -> WirePayload {
@@ -252,9 +267,11 @@ pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: U
         by,
         at: i64::MAX,
         sig: Signature([0xff; 64]),
+        full_sig: None,
     };
     let first = build(&server, &members, &profiles, &messages);
-    let mut size = gossip_size(&first).min(encoded(&first) + 64);
+    let has_later_fields = commy_core::wire_layout::encode(&first).ok() != commy_core::wire_layout::first_layout(&first).ok();
+    let mut size = gossip_size(&first) + if has_later_fields { FULL_SIG_BYTES } else { 0 };
     let fits = |size: usize| size <= budget;
     let mut authored: std::collections::HashMap<UserId, usize> = std::collections::HashMap::new();
     for m in &messages {
@@ -597,6 +614,32 @@ mod tests {
     }
 
     #[test]
+    fn a_signed_snapshot_with_home_cards_still_fits_a_gossip_frame() {
+        let home = Identity::generate();
+        for members in [15, 100, 200] {
+            let mut state = realistic(members);
+            state.server.sync_host = Some("https://sync.home.example".into());
+            state.server.blocked_homes = vec!["spam.example".into()];
+            for profile in state.profiles.values_mut() {
+                profile.home = Some(commy_core::home::HomeCard {
+                    home: "https://commy.chat".into(),
+                    user: profile.id,
+                    identity: home.public(),
+                    key: home.public(),
+                    issued: 1,
+                    expires: 2,
+                    sig: Signature([7; 64]),
+                });
+            }
+            let mut payload = build_sync_response(&state, 50, state.server.owner);
+            sign_sync_response(&mut payload, 1_800_000_000_000, &home);
+            assert!(gossip_size(&payload) <= MAX_GOSSIP_BYTES, "{members}");
+            assert!(matches!(&payload, WirePayload::SyncResponse { full_sig: Some(_), .. }));
+            assert!(verify_sync_response(&payload, &home.public()));
+        }
+    }
+
+    #[test]
     fn large_servers_get_a_snapshot_that_fits() {
         for members in [15, 50, 94, 100, 200] {
             let state = realistic(members);
@@ -645,6 +688,7 @@ mod tests {
             by: state.server.owner,
             at: 0,
             sig: Signature([0; 64]),
+            full_sig: None,
         });
         assert!(all > MAX_GOSSIP_BYTES, "its profiles alone are too many");
         let (server, members, profiles, recent) = parts(build_sync_response(&state, 50, state.server.owner));
