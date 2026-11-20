@@ -1,7 +1,7 @@
 use crate::lock_or_recover::{LockOrRecover, ReadOrRecover};
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use commy_core::home::{fresh_card_fits, request_proof, wants_card, HomeCard};
 use commy_core::server_blocklist::Envelope;
@@ -25,11 +25,15 @@ const FIRST_CARD_DELAY: Duration = Duration::from_secs(30);
 const CARD_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_HOMES_PER_ASK: usize = 100;
+const SIGN_IN_WAIT: Duration = Duration::from_secs(8);
+const SIGN_IN_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 static GUARD: RwLock<Option<HomeGuard>> = RwLock::new(None);
 static LISTED: RwLock<Option<ListedServers>> = RwLock::new(None);
 static TRUSTED: RwLock<Vec<String>> = RwLock::new(Vec::new());
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+static HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static LAST_SIGN_IN_FETCH: tokio::sync::Mutex<Option<Instant>> = tokio::sync::Mutex::const_new(None);
 
 fn listed<T>(look: impl FnOnce(&ListedServers) -> T) -> T {
     let held = LISTED.read().unwrap();
@@ -141,14 +145,43 @@ fn save(path: &Path, origin: &str, key: PublishedKey, envelope: Envelope) {
     }
 }
 
+fn holds_blocklist() -> bool {
+    read(|guard| guard.list().is_some())
+}
+
+fn fetch_before_sign_in(server: &str, holds_list: bool, last_try: Option<Instant>, now: Instant) -> bool {
+    server != DEFAULT_ACCOUNT_SERVER && !holds_list && last_try.is_none_or(|at| now.duration_since(at) >= SIGN_IN_RETRY_AFTER)
+}
+
+pub async fn load_blocklist_before_sign_in(server: &str) {
+    if !fetch_before_sign_in(server, holds_blocklist(), None, Instant::now()) {
+        return;
+    }
+    let (Some(handle), Some(dir)) = (HANDLE.get(), DATA_DIR.get()) else { return };
+    let mut last_try = LAST_SIGN_IN_FETCH.lock().await;
+    let now = Instant::now();
+    if !fetch_before_sign_in(server, holds_blocklist(), *last_try, now) {
+        return;
+    }
+    *last_try = Some(now);
+    match tokio::time::timeout(SIGN_IN_WAIT, refresh(handle, dir)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(why)) => tracing::warn!("server blocklist not loaded before signing in to {server}: {why}"),
+        Err(_) => tracing::warn!("server blocklist took too long to load before signing in to {server}"),
+    }
+}
+
 pub fn start(handle: &AppHandle, dir: &Path) {
     let _ = DATA_DIR.set(dir.to_path_buf());
+    let _ = HANDLE.set(handle.clone());
     load_saved(dir);
     load_trusted(dir);
     let handle = handle.clone();
     let dir = dir.to_path_buf();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(FIRST_REFRESH_DELAY).await;
+        if holds_blocklist() {
+            tokio::time::sleep(FIRST_REFRESH_DELAY).await;
+        }
         loop {
             let wait = match refresh(&handle, &dir).await {
                 Ok(()) => REFRESH_EVERY,
@@ -335,6 +368,36 @@ pub fn keep_home_card(handle: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fresh_app_fetches_the_blocklist_before_signing_in_elsewhere() {
+        let now = Instant::now();
+        assert!(fetch_before_sign_in("https://dev.commy.chat", false, None, now));
+        assert!(!fetch_before_sign_in("https://dev.commy.chat", true, None, now), "a held list is enough");
+        assert!(!fetch_before_sign_in(DEFAULT_ACCOUNT_SERVER, false, None, now), "Commy's own server is never blocked");
+        assert!(!fetch_before_sign_in("https://dev.commy.chat", false, Some(now), now + Duration::from_secs(5)), "offline sign-ins do not wait every time");
+        assert!(fetch_before_sign_in("https://dev.commy.chat", false, Some(now), now + SIGN_IN_RETRY_AFTER));
+    }
+
+    #[test]
+    fn a_server_on_the_held_blocklist_is_refused() {
+        let signer = commy_core::Identity::from_bytes(&[9; 32]);
+        let list = commy_core::server_blocklist::ServerBlocklist {
+            v: commy_core::server_blocklist::LIST_VERSION,
+            issued: 1,
+            expires: i64::MAX,
+            domains: vec![commy_core::server_blocklist::BlockedServer { domain: "blocked.example".into(), since: 0 }],
+            homes: Vec::new(),
+        };
+        let text = serde_json::to_string(&list).unwrap();
+        let sig = commy_core::server_key::sign(&signer, commy_core::server_blocklist::LIST_PURPOSE, DEFAULT_ACCOUNT_SERVER, text.as_bytes());
+        let envelope = Envelope { list: text, key: commy_core::server_key::key_id(&signer.public()), sig };
+        write(|guard| guard.take_list(DEFAULT_ACCOUNT_SERVER, &PublishedKey::of(signer.public()), &envelope)).unwrap();
+        assert!(holds_blocklist());
+        let refusal = sign_in_refusal("https://blocked.example", true).unwrap();
+        assert!(refusal.contains("list of blocked servers"), "{refusal}");
+        assert_eq!(sign_in_refusal("https://friends.example", true), None);
+    }
 
     #[test]
     fn sign_in_is_refused_where_the_adult_check_is_off() {

@@ -598,6 +598,7 @@ pub(crate) async fn discover(http: &reqwest::Client, server: &str) -> Result<Dis
         return Err(format!("{host} points sign-in at a different address; refusing for safety"));
     }
     let adults_only = doc.features.is_some_and(|f| f.adults_only);
+    crate::server_guard::load_blocklist_before_sign_in(server).await;
     if let Some(refusal) = crate::server_guard::sign_in_refusal(server, adults_only) {
         return Err(refusal);
     }
