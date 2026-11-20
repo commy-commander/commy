@@ -196,19 +196,21 @@ pub fn listen_whos(state: &ServerState, me: UserId, choice: &Choice) -> Vec<Stri
     let bucket = bucket_of(me, buckets(state.server.members.len()));
     match choice.level.as_str() {
         "none" => Vec::new(),
-        "mentions" => {
-            let mut whos = vec![me.to_string()];
-            if !choice.suppress_everyone {
-                whos.push(shared(EVERYONE, bucket));
-            }
-            if !choice.suppress_roles {
-                let roles = state.server.member(me).map(|m| m.roles.clone()).unwrap_or_default();
-                whos.extend(roles.into_iter().map(|role| shared(&role_who(role), bucket)));
-            }
-            whos
-        }
-        _ => vec![shared(ALL, bucket)],
+        "mentions" => mention_whos(state, me, choice, bucket),
+        _ => std::iter::once(shared(ALL, bucket)).chain(mention_whos(state, me, choice, bucket)).collect(),
     }
+}
+
+fn mention_whos(state: &ServerState, me: UserId, choice: &Choice, bucket: usize) -> Vec<String> {
+    let mut whos = vec![me.to_string()];
+    if !choice.suppress_everyone {
+        whos.push(shared(EVERYONE, bucket));
+    }
+    if !choice.suppress_roles {
+        let roles = state.server.member(me).map(|m| m.roles.clone()).unwrap_or_default();
+        whos.extend(roles.into_iter().map(|role| shared(&role_who(role), bucket)));
+    }
+    whos
 }
 
 pub fn point_whos(state: &ServerState, me: UserId, choice: &Choice, own: &BTreeMap<ChannelId, u8>, channels: &[ChannelId]) -> Vec<String> {
@@ -371,14 +373,14 @@ mod tests {
         let server = state.server.id;
         let mut prefs = BTreeMap::new();
         let listen = |prefs: &BTreeMap<String, Value>| listen_whos(&state, kit, &choice(prefs, server));
-        assert_eq!(listen(&prefs), vec![shared(ALL, 0)], "everything by default");
+        assert_eq!(listen(&prefs), vec![shared(ALL, 0), kit.to_string(), shared(EVERYONE, 0), shared(&role_who(role), 0)], "everything by default");
         prefs.insert("notify.level".into(), Value::from("mentions"));
         assert_eq!(listen(&prefs), vec![kit.to_string(), shared(EVERYONE, 0), shared(&role_who(role), 0)]);
         prefs.insert(format!("notify.suppressEveryone.{server}"), Value::from(true));
         prefs.insert(format!("notify.suppressRoles.{server}"), Value::from(true));
         assert_eq!(listen(&prefs), vec![kit.to_string()]);
         prefs.insert(format!("notify.servers.{server}"), Value::from("all"));
-        assert_eq!(listen(&prefs), vec![shared(ALL, 0)], "the server's own level wins");
+        assert_eq!(listen(&prefs), vec![shared(ALL, 0), kit.to_string()], "the server's own level wins");
         prefs.insert(format!("notify.servers.{server}"), Value::from("default"));
         assert_eq!(listen(&prefs), vec![kit.to_string()]);
         prefs.insert(format!("notify.muted.{server}"), Value::from(true));
@@ -396,13 +398,28 @@ mod tests {
         let server = state.server.id;
         let mut prefs = BTreeMap::new();
         let unwanted = |prefs: &BTreeMap<String, Value>| unwanted_whos(&state, kit, &choice(prefs, server));
-        assert_eq!(unwanted(&prefs), vec![kit.to_string(), shared(EVERYONE, 0), shared(&role_who(role), 0)]);
+        assert!(unwanted(&prefs).is_empty(), "a phone hearing everything also keeps its mention tags");
+        prefs.insert(format!("notify.suppressEveryone.{server}"), Value::from(true));
+        assert_eq!(unwanted(&prefs), vec![shared(EVERYONE, 0)]);
+        prefs.insert(format!("notify.suppressEveryone.{server}"), Value::Null);
         prefs.insert("notify.level".into(), Value::from("mentions"));
         assert_eq!(unwanted(&prefs), vec![shared(ALL, 0)]);
         prefs.insert(format!("notify.suppressEveryone.{server}"), Value::from(true));
         assert_eq!(unwanted(&prefs), vec![shared(ALL, 0), shared(EVERYONE, 0)]);
         prefs.insert(format!("notify.muted.{server}"), Value::from(true));
         assert_eq!(unwanted(&prefs), vec![shared(ALL, 0), kit.to_string(), shared(EVERYONE, 0), shared(&role_who(role), 0)]);
+    }
+
+    #[test]
+    fn a_mention_wakes_a_phone_hearing_everything_even_inside_the_all_ring_minute() {
+        let (state, ids) = server_with(&["sam"]);
+        let (owner, sam) = (ids[0], ids[1]);
+        let channel = ChannelId::new();
+        let busy = ring_plan(&state, owner, channel, "hey @sam", RingDue { server: false, channel: false });
+        assert!(busy.broad.is_empty(), "the all ring was already spent this minute");
+        let everything = Choice { level: ALL.into(), muted: false, suppress_everyone: false, suppress_roles: false };
+        let heard = point_whos(&state, sam, &everything, &BTreeMap::new(), &[channel]);
+        assert!(busy.direct.iter().any(|who| heard.contains(who)), "the mention still reaches sam's phone");
     }
 
     #[test]
@@ -418,8 +435,7 @@ mod tests {
         assert_eq!(rung.len(), 4);
         for member in &ids[1..] {
             let heard = listen_whos(&state, *member, &Choice { level: ALL.into(), muted: false, suppress_everyone: false, suppress_roles: false });
-            assert_eq!(heard.len(), 1);
-            assert!(rung.contains(&heard[0]), "every member listens on a tag the sender rings");
+            assert_eq!(heard.iter().filter(|who| rung.contains(who)).count(), 1, "every member listens on one shared tag the sender rings");
         }
     }
 
@@ -472,7 +488,7 @@ mod tests {
         let all = Choice { level: ALL.into(), muted: false, suppress_everyone: true, suppress_roles: true };
         let own = BTreeMap::from([(a, RANK_NONE), (b, RANK_MENTIONS)]);
         assert_eq!(point_whos(&state, kit, &all, &own, &channels), vec![shared(ALL, 0), kit.to_string(), hush_who(a), quiet_who(b)]);
-        assert_eq!(point_whos(&state, kit, &all, &BTreeMap::new(), &channels), vec![shared(ALL, 0)], "no channel choices, nothing new");
+        assert_eq!(point_whos(&state, kit, &all, &BTreeMap::new(), &channels), vec![shared(ALL, 0), kit.to_string()], "no channel choices, nothing new");
         let mentions = Choice { level: "mentions".into(), ..all.clone() };
         let own = BTreeMap::from([(a, RANK_ALL), (b, RANK_MENTIONS), (c, RANK_NONE)]);
         assert_eq!(point_whos(&state, kit, &mentions, &own, &channels), vec![kit.to_string(), shared(&channel_all_who(a), 0), hush_who(c)]);
@@ -482,7 +498,7 @@ mod tests {
         let muted = Choice { muted: true, ..all.clone() };
         assert!(point_whos(&state, kit, &muted, &BTreeMap::from([(a, RANK_ALL)]), &channels).is_empty(), "a muted server stays silent");
         let elsewhere = BTreeMap::from([(ChannelId::new(), RANK_NONE)]);
-        assert_eq!(point_whos(&state, kit, &all, &elsewhere, &channels), vec![shared(ALL, 0)], "choices for channels in another stream are left to that stream");
+        assert_eq!(point_whos(&state, kit, &all, &elsewhere, &channels), vec![shared(ALL, 0), kit.to_string()], "choices for channels in another stream are left to that stream");
     }
 
     #[test]
