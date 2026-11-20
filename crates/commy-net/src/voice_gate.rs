@@ -174,6 +174,13 @@ mod tests {
     }
 
     #[test]
+    fn a_server_still_finding_its_sync_service_waits_before_any_stream_is_followed() {
+        let unplaced = Signals { loading: true, state: StateLink::NotUsed, relay: relay_for(false, RelayLink::Unreachable), peers: 3, ..ready() };
+        assert_eq!(wait_for(&unplaced), Some(Wait::Loading));
+        assert_eq!(wait_for(&Signals { loading: false, ..unplaced }), None, "once placed, the same server lets you join");
+    }
+
+    #[test]
     fn the_sync_service_being_current_is_enough_without_peers() {
         assert_eq!(wait_for(&Signals { peers: 0, online_for: Duration::ZERO, ..ready() }), None);
     }

@@ -271,6 +271,7 @@ struct Live {
     events: mpsc::UnboundedSender<SyncEvent>,
     net: mpsc::UnboundedSender<NetEvent>,
     communities: HashMap<ServerId, Community>,
+    unplaced: HashSet<ServerId>,
     caught_up: HashSet<StreamId>,
     current: HashSet<StreamId>,
     lost: HashSet<StreamId>,
@@ -347,13 +348,20 @@ pub fn greeting_of(sid: ServerId) -> Option<commy_sync::wire::Greeting> {
     LIVE.lock_or_recover().as_ref()?.communities.get(&sid)?.pool.greeting()
 }
 
-pub fn room_relay_of(sid: ServerId) -> commy_view::sync_host::RoomRelay {
+pub fn awaits_place(sid: ServerId) -> bool {
+    LIVE.lock_or_recover().as_ref().is_some_and(|live| live.unplaced.contains(&sid))
+}
+
+pub fn room_relay_of(sid: ServerId) -> Option<commy_view::sync_host::RoomRelay> {
     let live = LIVE.lock_or_recover();
+    if live.as_ref().is_some_and(|live| live.unplaced.contains(&sid)) {
+        return None;
+    }
     let Some(community) = live.as_ref().and_then(|live| live.communities.get(&sid).map(|community| (live, community))) else {
-        return commy_view::sync_host::RoomRelay::Ours;
+        return Some(commy_view::sync_host::RoomRelay::Ours);
     };
     let (live, community) = community;
-    commy_view::sync_host::room_relay(&community.url, &live.url, community.pool.greeting().as_ref())
+    Some(commy_view::sync_host::room_relay(&community.url, &live.url, community.pool.greeting().as_ref()))
 }
 static INVITED: Mutex<Vec<(ServerId, KeyId, ChannelSecret)>> = Mutex::new(Vec::new());
 static INVITED_HOSTS: Mutex<Vec<(ServerId, String)>> = Mutex::new(Vec::new());
@@ -548,6 +556,7 @@ async fn tend(handle: &AppHandle) {
             events,
             net,
             communities: HashMap::new(),
+            unplaced: HashSet::new(),
             caught_up: HashSet::new(),
             current: HashSet::new(),
             lost: HashSet::new(),
@@ -901,6 +910,7 @@ fn refresh(handle: &AppHandle) {
     let everything: HashSet<String> = wanted.values().flatten().map(|w| w.keys.id.to_hex()).collect();
     live.cursors.keep_only(&everything);
     live.cursors.keep_hosts_of(&wanted.keys().copied().collect());
+    live.unplaced.clear();
     for (sid, wants) in wanted.drain() {
         let chosen = hosts.get(&sid).cloned().flatten();
         let placed = live.communities.get(&sid).map(|community| Some(community.url.clone()));
@@ -911,6 +921,7 @@ fn refresh(handle: &AppHandle) {
             Some(Place::Unknown(home)) => {
                 unknown_homes.push(home);
                 drop_community(live, sid);
+                live.unplaced.insert(sid);
                 continue;
             }
             None => {

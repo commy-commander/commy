@@ -343,7 +343,7 @@ impl Session {
                         if joining_this_server {
                             let switch = self.node.lock().await.as_ref().map(commy_net::CommyNode::relay_switch);
                             let wanted = self.room_relay_of(server);
-                            if let Some(text) = wanted.refusal_before_joining(|url| switch.as_ref().is_some_and(|s| s.failed_recently(url))) {
+                            if let Some(text) = wanted.and_then(|wanted| wanted.refusal_before_joining(|url| switch.as_ref().is_some_and(|s| s.failed_recently(url)))) {
                                 return Err(text.to_string());
                             }
                             if let Some(wait) = self.voice_wait(server).await {
@@ -436,7 +436,7 @@ impl Session {
         spawn_local(async move {
             let Some(switch) = this.node.lock().await.as_ref().map(commy_net::CommyNode::relay_switch) else { return };
             let server = this.voice.borrow().link.as_ref().and_then(|link| link.server);
-            let wanted = server.map_or(RoomRelay::Ours, |server| this.room_relay_of(server));
+            let Some(wanted) = server.map_or(Some(RoomRelay::Ours), |server| this.room_relay_of(server)) else { return };
             let refusal = match wanted {
                 RoomRelay::Ours => {
                     let _ = switch.use_room(None).await;

@@ -63,8 +63,8 @@ impl Session {
 
     fn relay_of(&self, net: &NetSignals, server: ServerId) -> RelayLink {
         let Some(switch) = net.switch.as_ref() else { return net.relay };
-        let in_place = self.room_relay_of(server).in_place(|room| switch.on_room(room), || switch.on_public());
-        relay_for(in_place, net.relay)
+        let Some(wanted) = self.room_relay_of(server) else { return RelayLink::NotUsed };
+        relay_for(wanted.in_place(|room| switch.on_room(room), || switch.on_public()), net.relay)
     }
 
     fn gate_servers(&self) -> Vec<ServerId> {
@@ -113,7 +113,7 @@ impl Session {
                 let signals = Signals {
                     network_up: net.up,
                     relay: self.relay_of(&net, *sid),
-                    loading: state.is_none(),
+                    loading: state.is_none() || sync.as_ref().is_some_and(|live| live.awaits_place(*sid)),
                     state: sync.as_ref().map_or(StateLink::NotUsed, |live| live.book.state_link(*sid)),
                     peers: net.peers.get(sid).copied().unwrap_or(0),
                     others,

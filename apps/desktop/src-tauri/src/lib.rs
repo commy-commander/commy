@@ -1703,7 +1703,7 @@ async fn set_voice_channel(
             if joining_this_server {
                 let switch = app.net.lock().await.as_ref().map(|net| net.relay_switch());
                 let wanted = community_sync::room_relay_of(sid);
-                if let Some(text) = wanted.refusal_before_joining(|url| switch.as_ref().is_some_and(|s| s.failed_recently(url))) {
+                if let Some(text) = wanted.and_then(|wanted| wanted.refusal_before_joining(|url| switch.as_ref().is_some_and(|s| s.failed_recently(url)))) {
                     return Err(text.to_string());
                 }
                 if let Some(wait) = voice_gate::check(&app, sid).await {
@@ -2086,7 +2086,7 @@ fn follow_room_relay(handle: &tauri::AppHandle) {
             None => return,
         };
         let server = app.voice_session.lock_or_recover().as_ref().map(|s| s.server);
-        let wanted = server.map_or(RoomRelay::Ours, community_sync::room_relay_of);
+        let Some(wanted) = server.map_or(Some(RoomRelay::Ours), community_sync::room_relay_of) else { return };
         let refusal = match wanted {
             RoomRelay::Ours => {
                 if let Err(e) = switch.use_room(None).await {

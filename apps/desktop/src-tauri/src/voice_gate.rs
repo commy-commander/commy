@@ -23,8 +23,8 @@ struct NetSignals {
 impl NetSignals {
     fn relay_of(&self, server: ServerId) -> RelayLink {
         let Some(switch) = self.switch.as_ref() else { return self.relay };
-        let in_place = crate::community_sync::room_relay_of(server).in_place(|room| switch.on_room(room), || switch.on_public());
-        relay_for(in_place, self.relay)
+        let Some(wanted) = crate::community_sync::room_relay_of(server) else { return RelayLink::NotUsed };
+        relay_for(wanted.in_place(|room| switch.on_room(room), || switch.on_public()), self.relay)
     }
 }
 
@@ -76,7 +76,7 @@ async fn waits(app: &App, servers: &[ServerId]) -> BTreeMap<ServerId, Wait> {
             let signals = Signals {
                 network_up: net.up,
                 relay: net.relay_of(*sid),
-                loading: app.awaits_snapshot(*sid),
+                loading: app.awaits_snapshot(*sid) || crate::community_sync::awaits_place(*sid),
                 state: state_link(app, *sid),
                 peers: net.peers.get(sid).copied().unwrap_or(0),
                 others: others.get(sid).copied().unwrap_or(false),

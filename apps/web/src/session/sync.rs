@@ -78,6 +78,7 @@ pub(super) struct Live {
     pub(super) all_rings: AllRings,
     deepened: HashSet<(ServerId, Option<ChannelId>)>,
     pub(super) checkpoints: Checkpoints,
+    unplaced: HashSet<ServerId>,
 }
 
 impl Live {
@@ -87,6 +88,10 @@ impl Live {
 
     pub(super) fn socket_of(&self, server: ServerId) -> String {
         self.book.host_of(server).unwrap_or_else(|| self.url.clone())
+    }
+
+    pub(super) fn awaits_place(&self, server: ServerId) -> bool {
+        self.unplaced.contains(&server)
     }
 }
 
@@ -133,6 +138,7 @@ impl Session {
             deepened: HashSet::new(),
             keeping: Keeping { log, saved: opened, ..Default::default() },
             checkpoints: Checkpoints::default(),
+            unplaced: HashSet::new(),
         });
         if same_home {
             self.restore_cursors(cursors);
@@ -231,11 +237,14 @@ impl Session {
         self.sync.borrow().as_ref().is_some_and(|live| live.book.host_removed(server))
     }
 
-    pub(super) fn room_relay_of(&self, server: ServerId) -> RoomRelay {
+    pub(super) fn room_relay_of(&self, server: ServerId) -> Option<RoomRelay> {
         let guard = self.sync.borrow();
-        let Some(live) = guard.as_ref() else { return RoomRelay::Ours };
+        let Some(live) = guard.as_ref() else { return Some(RoomRelay::Ours) };
+        if live.awaits_place(server) {
+            return None;
+        }
         let socket = live.socket_of(server);
-        commy_view::sync_host::room_relay(&socket, &live.url, live.pool.greeting_at(&socket).as_ref())
+        Some(commy_view::sync_host::room_relay(&socket, &live.url, live.pool.greeting_at(&socket).as_ref()))
     }
 
     pub(super) fn sync_greeting(&self, server: ServerId) -> Option<commy_sync::wire::Greeting> {
@@ -590,6 +599,7 @@ impl Session {
         let sockets = places.sockets;
         let mut guard = self.sync.borrow_mut();
         let Some(live) = guard.as_mut() else { return };
+        live.unplaced = places.unplaced;
         let plan = live.book.replan_at(wanted, &sockets);
         for stream in plan.unfollow {
             live.pool.unfollow(stream);
