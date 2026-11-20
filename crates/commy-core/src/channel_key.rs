@@ -244,7 +244,8 @@ impl ChannelKeys {
 
     pub fn newest(&self) -> Option<&KeyRecord> {
         let heads = self.heads();
-        let current = self.keys.iter().filter(|k| heads.contains(&k.id)).max_by_key(|k| (k.at, k.id));
+        let (rotated, first): (Vec<&KeyRecord>, Vec<&KeyRecord>) = self.keys.iter().filter(|k| heads.contains(&k.id)).partition(|k| !k.links.is_empty());
+        let current = rotated.into_iter().max_by_key(|k| (k.at, k.id)).or_else(|| first.into_iter().max_by_key(|k| (k.at, k.id)));
         current.or_else(|| self.keys.iter().max_by_key(|k| (k.at, k.id)))
     }
 
@@ -512,7 +513,7 @@ pub fn community_key_task(state: &ServerState, me: UserId, ring: &Keyring) -> Op
     let keys = state.community_keys();
     let heads = keys.heads();
     if heads.is_empty() {
-        return rotates.then_some(KeyTask::Rotate { links: Vec::new() });
+        return (rotates && !server.channels.is_empty()).then_some(KeyTask::Rotate { links: Vec::new() });
     }
     let held: Vec<KeyId> = heads.iter().copied().filter(|k| ring.holds(*k)).collect();
     let exposed = keys.exposed_to(state, KeyScope::Community, |user| server.banned.contains(&user));
@@ -873,6 +874,30 @@ mod tests {
     fn self_grant(state: &ServerState, channel: ChannelId, user: UserId, key: KeyId, at: chrono::DateTime<chrono::Utc>) -> crate::action::SignedEvent {
         let grant = SealedKey { key, ..SealedKey::released() };
         crate::test_support::signed_event(state, user, at, ServerEvent::ChannelKeyGrant { server: state.server.id, channel, user, grant })
+    }
+
+    #[test]
+    fn a_key_added_without_links_never_outranks_the_rotated_chain() {
+        let server = ServerId::new();
+        let mut ring = Keyring::default();
+        let mut keys = ChannelKeys::default();
+        let first = ring.rotate(server, KeyScope::Community, &[], 1);
+        keys.add_key(first.clone());
+        let second = ring.rotate(server, KeyScope::Community, &[first.id], 2);
+        keys.add_key(second.clone());
+        let stray = Keyring::default().rotate(server, KeyScope::Community, &[], 3);
+        keys.add_key(stray.clone());
+        assert_eq!(keys.heads().len(), 2);
+        assert_eq!(keys.newest().map(|k| k.id), Some(second.id), "a device that saw no keys made the stray one, and no other member can open it");
+        let mut placeholder = crate::ServerState::new(crate::Server::awaiting_copy("", UserId::new()));
+        let me = placeholder.server.owner;
+        placeholder.server.id = server;
+        assert_eq!(community_key_task(&placeholder, me, &Keyring::default()), None, "an empty copy waiting for its owner's never starts a key chain of its own");
+        let made = crate::ServerState::new(crate::Server::new("made here", me));
+        assert!(matches!(community_key_task(&made, me, &Keyring::default()), Some(KeyTask::Rotate { .. })));
+        let mut alone = ChannelKeys::default();
+        alone.add_key(first.clone());
+        assert_eq!(alone.newest().map(|k| k.id), Some(first.id));
     }
 
     #[test]

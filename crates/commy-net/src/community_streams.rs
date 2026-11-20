@@ -319,7 +319,7 @@ pub fn backfill_messages(state: &ServerState, channel: ChannelId, seen: &HashSet
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commy_core::channel_key::community_key_task;
+    use commy_core::channel_key::{community_key_task, KeyTask};
     use commy_core::test_support::{fixture, identity_for, join, post, post_at};
     use commy_core::{Permissions, Role, RoleId};
 
@@ -335,6 +335,37 @@ mod tests {
 
     fn now() -> i64 {
         chrono::Utc::now().timestamp_millis()
+    }
+
+    #[test]
+    fn a_member_who_moves_finds_the_owners_copy_despite_a_stray_key_they_made() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let member = join(&mut state, "ben");
+        settle(&mut state, owner);
+        let first = state.community_keys().newest().unwrap().id;
+        let mut ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        for event in ring.task_events(&state, KeyScope::Community, KeyTask::Rotate { links: vec![first] }, now()) {
+            state.apply(event).unwrap();
+        }
+        let owner_ring = settle(&mut state, owner);
+        let mut empty_copy = Keyring::default();
+        let stray = empty_copy.rotate(server, KeyScope::Community, &[], now() + 60_000);
+        state.apply(ServerEvent::CommunityKeyAdd { server, key: stray.clone() }).unwrap();
+        let mut member_ring = Keyring::unlock_community(&state, member, &identity_for(member));
+        member_ring.admit(&state, KeyScope::Community, stray.id, empty_copy.secret(stray.id).unwrap().clone());
+
+        let writes = |ring: &Keyring| epochs(&state, KeyScope::Community, ring, now())[0].0;
+        let rotated = writes(&owner_ring);
+        assert_ne!(rotated, stray.id);
+        assert_eq!(writes(&member_ring), rotated, "the member reads and writes where the owner does");
+
+        let (saved, secret) = member_ring.newest_in(&state, KeyScope::Community).expect("the key the member saves to their account");
+        assert_eq!(saved, rotated);
+        let after_move = bootstrap(server, saved, secret);
+        let owners = wanted(&state, owner, &owner_ring, |_| Keyring::default(), now());
+        let owners_state = owners.iter().find(|w| w.lane == Lane::State && w.writes).unwrap();
+        assert_eq!(after_move.keys.id, owners_state.keys.id, "a fresh folder after a move opens the stream the owner's copy is on");
     }
 
     #[test]

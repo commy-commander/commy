@@ -66,6 +66,13 @@ fn landing(vault: Option<&str>, opens: impl Fn(&str) -> bool) -> Landing {
     }
 }
 
+fn brought_back(key: &SealKey, held: &str, moved: &str) -> Option<String> {
+    let earlier = EntryList::open(key, held).ok()?;
+    let moved = EntryList::open(key, moved).ok()?;
+    let merged = EntryList::merge(&moved, &earlier);
+    (merged != earlier).then(|| merged.seal(key))
+}
+
 fn to_copy(already: &[Vec<u8>], mut entries: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     if entries.starts_with(already) {
         return entries.split_off(already.len());
@@ -313,7 +320,15 @@ pub(crate) async fn move_in_if_due(app: &App, dir: &Path, s: &Session) {
             Ok(Put::Conflict) => return,
             Err(e) => return tracing::info!("moving in waits for the account server: {e}"),
         },
-        Landing::Ours => {}
+        Landing::Ours => {
+            if let Some(merged) = item.data.as_deref().and_then(|held| brought_back(&key, held, &ticket.list)) {
+                match entry_list::put(app, s, VAULT_ITEM, merged, item.version).await {
+                    Ok(Put::Done) => {}
+                    Ok(Put::Conflict) => return,
+                    Err(e) => return tracing::info!("moving in waits for the account server: {e}"),
+                }
+            }
+        }
         Landing::Taken => {
             tracing::warn!("this account already keeps another server list, so the moved one was not brought in");
             return remove_quietly(&path);
@@ -385,6 +400,24 @@ mod tests {
         assert_eq!(landing(None, |_| false), Landing::Empty);
         assert_eq!(landing(Some("mine"), |data| data == "mine"), Landing::Ours);
         assert_eq!(landing(Some("theirs"), |data| data == "mine"), Landing::Taken);
+    }
+
+    #[test]
+    fn moving_back_to_an_earlier_home_keeps_what_changed_while_away() {
+        use chrono::{TimeZone, Utc};
+        use commy_net::entry_list::Entry;
+        let key = SealKey::generate();
+        let group = commy_core::ServerId::new();
+        let at = |minute| Utc.with_ymd_and_hms(2026, 11, 20, 19, minute, 0).unwrap();
+        let entry = |since| Entry { name: String::new(), ticket: "commy".into(), since };
+        let mut earlier = EntryList::default();
+        earlier.servers.insert(group, entry(at(0)));
+        let mut moved = EntryList::default();
+        moved.servers.insert(group, entry(at(7)));
+        moved.left.insert(group, at(6));
+        let merged = EntryList::open(&key, &brought_back(&key, &earlier.seal(&key), &moved.seal(&key)).unwrap()).unwrap();
+        assert_eq!(merged.servers.get(&group).map(|e| e.since), Some(at(7)), "the rejoin made while away wins over the old home's copy");
+        assert_eq!(brought_back(&key, &merged.seal(&key), &moved.seal(&key)), None, "nothing to write when the old home already has it all");
     }
 
     #[test]

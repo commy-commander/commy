@@ -138,6 +138,14 @@ pub fn record_leave(app: &App, id: ServerId) {
     record_leave_at(app, id, Utc::now());
 }
 
+pub fn record_removal(app: &App, id: ServerId, at_ms: Option<i64>) {
+    record_leave_at(app, id, removed_at(at_ms, Utc::now()));
+}
+
+fn removed_at(at_ms: Option<i64>, now: DateTime<Utc>) -> DateTime<Utc> {
+    at_ms.and_then(DateTime::from_timestamp_millis).filter(|at| *at <= now).unwrap_or(now)
+}
+
 fn record_leave_at(app: &App, id: ServerId, at: DateTime<Utc>) {
     update_record(app, |record| {
         record.joined.remove(&id);
@@ -1145,6 +1153,16 @@ pub fn forget() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_removal_counts_from_when_it_happened_not_when_a_late_device_heard_it() {
+        let now = Utc::now();
+        let kicked = now - chrono::Duration::minutes(2);
+        assert_eq!(removed_at(Some(kicked.timestamp_millis()), now).timestamp_millis(), kicked.timestamp_millis());
+        assert_eq!(removed_at(None, now), now);
+        let future = now + chrono::Duration::minutes(5);
+        assert_eq!(removed_at(Some(future.timestamp_millis()), now), now, "a clock ahead of ours never wins");
+    }
     use chrono::Duration;
     use commy_core::Identity;
 

@@ -6080,12 +6080,12 @@ fn removal_of_me(event: &ServerEvent, action: Option<&commy_core::Action>, me: O
     }
 }
 
-async fn on_removed(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: &str) {
+async fn on_removed(app: &App, handle: &tauri::AppHandle, sid: ServerId, notice: &str, at: Option<i64>) {
     let name = forget_server_locally(app, sid).map(|s| s.server.name);
     end_voice_in(app, sid);
     refresh_worn_tag(app, handle).await;
     leave_server_topic(app, sid).await;
-    entry_list::record_leave(app, sid);
+    entry_list::record_removal(app, sid, at);
     entry_list::schedule(handle);
     community_sync::refresh_soon(handle);
     let _ = handle.emit(notice, serde_json::json!({ "server": sid.to_string(), "name": name }));
@@ -7992,7 +7992,7 @@ async fn run_net_loop(
                 match applied {
                     Ok(true) => {
                         if let Some(notice) = removal.or(home_put_me_out.then_some(HOME_BLOCKED)) {
-                            on_removed(&app, &handle, server, notice).await;
+                            on_removed(&app, &handle, server, notice, removal.and(action.as_ref()).map(|a| a.at)).await;
                             continue;
                         }
                         if let Some(notice) = deletion {
