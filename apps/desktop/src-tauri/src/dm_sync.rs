@@ -380,9 +380,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
         tracing::info!("no key to seal a first message for {to} with");
         return false;
     };
-    let keys = inbox_to(app, me, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
-    let Some(plain) = inbox::seal(&key, envelope) else { return false };
-    let stream = keys.id;
+    let targets = inbox::first_message_inboxes(inbox_to(app, me, to), to, &key, Utc::now());
     let away = match partner_profile(app, to).and_then(|profile| away_homes::away_home(app, &profile)) {
         Some(home) => match away_homes::sync_now(app, &home).await {
             Some(url) => Some(url),
@@ -393,14 +391,35 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
         },
         None => None,
     };
-    let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(app, &keys, &envelope.message)));
+    let mut rung = false;
+    let mut left = 0;
+    for keys in targets {
+        let Some(plain) = inbox::seal(&key, envelope) else { continue };
+        let wake = wakes(&envelope.message).then(|| (keys.wake_tag(&to.to_string(), push_wake::today()), wake_preview(app, &keys, &envelope.message)));
+        if !leave_first_message(me, away.as_deref(), keys, plain).await {
+            continue;
+        }
+        left += 1;
+        if let Some((tag, preview)) = wake.filter(|_| !rung) {
+            ring_phones(app, &envelope.message, tag, preview, partner_sync(app, to));
+            rung = true;
+        }
+    }
+    if left > 0 {
+        tracing::info!("left a first message for {to} in {left} inboxes on the sync service");
+    }
+    left > 0
+}
+
+async fn leave_first_message(me: UserId, away: Option<&str>, keys: StreamKeys, plain: Vec<u8>) -> bool {
+    let stream = keys.id;
     let (client, borrowed) = {
         let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut().filter(|l| l.me == me) else { return false };
         let pool = if away.is_some() { &mut live.away } else { &mut live.pool };
         let borrowed = !pool.follows(stream);
         if borrowed {
-            match &away {
+            match away {
                 Some(url) => pool.follow_together_tail_at(url, vec![(keys, 0)], Some(0)),
                 None => pool.follow_together_tail(vec![(keys, 0)], Some(0)),
             }
@@ -417,13 +436,7 @@ pub async fn post_inbox(app: &App, to: UserId, envelope: &DmEnvelope) -> bool {
         }
     }
     match sent {
-        Ok(Ok(_)) => {
-            tracing::info!("left a first message for {to} on the sync service");
-            if let Some((tag, preview)) = wake {
-                ring_phones(app, &envelope.message, tag, preview, partner_sync(app, to));
-            }
-            true
-        }
+        Ok(Ok(_)) => true,
         Ok(Err(e)) => {
             tracing::info!("could not leave a first message on the sync service: {e}");
             false

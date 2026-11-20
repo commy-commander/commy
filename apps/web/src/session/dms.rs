@@ -9,7 +9,7 @@ use commy_net::inbox;
 use commy_net::node::IncomingDm;
 use commy_net::sync_streams::{self, DmEntry};
 use commy_net::DmEnvelope;
-use commy_sync::StreamId;
+use commy_sync::{StreamId, StreamKeys};
 use commy_view::dms;
 use commy_view::safety::{self, DmPolicy, FriendSignal, RelationPiece};
 use commy_view::{dm_message_view, DmMessageView, DmThreadView};
@@ -343,19 +343,32 @@ impl Session {
             self.dms.borrow().partner_key(&servers, to)
         };
         let Some(key) = key else { return false };
-        let keys = self.client.borrow().inbox_to(&given, to).unwrap_or_else(|| inbox::personal_inbox_now(to, &key, Utc::now()));
-        let Some(sealed) = inbox::seal(&key, envelope) else { return false };
-        let stream = keys.id;
+        let targets = inbox::first_message_inboxes(self.client.borrow().inbox_to(&given, to), to, &key, Utc::now());
         let identity = self.me_and_key().map(|(_, identity)| identity);
-        let wake = dms::rings(&envelope.message).then(|| (dm_wake_tag(&keys, to), identity.and_then(|identity| dm_wake_preview(&identity, &keys, &envelope.message))));
         let Ok(away) = self.partner_sync_now(to).await else { return false };
-        if let Some(url) = away {
-            let sent = self.append_away(&url, keys, sealed).await;
-            if let Some((tag, preview)) = wake.filter(|_| sent) {
-                self.ring_wake(vec![tag], preview, Some(url));
+        let mut rung = false;
+        let mut left = false;
+        for keys in targets {
+            let Some(sealed) = inbox::seal(&key, envelope) else { continue };
+            let wake = dms::rings(&envelope.message)
+                .then(|| (dm_wake_tag(&keys, to), identity.as_ref().and_then(|identity| dm_wake_preview(identity, &keys, &envelope.message))));
+            if !self.leave_first_message(away.as_deref(), keys, sealed).await {
+                continue;
             }
-            return sent;
+            left = true;
+            if let Some((tag, preview)) = wake.filter(|_| !rung) {
+                self.ring_wake(vec![tag], preview, away.clone());
+                rung = true;
+            }
         }
+        left
+    }
+
+    async fn leave_first_message(&self, away: Option<&str>, keys: StreamKeys, sealed: Vec<u8>) -> bool {
+        if let Some(url) = away {
+            return self.append_away(url, keys, sealed).await;
+        }
+        let stream = keys.id;
         let (client, borrowed) = {
             let mut guard = self.sync.borrow_mut();
             let Some(live) = guard.as_mut() else { return false };
@@ -373,9 +386,6 @@ impl Session {
             if let Some(live) = self.sync.borrow_mut().as_mut() {
                 live.pool.unfollow(stream);
             }
-        }
-        if let Some((tag, preview)) = wake.filter(|_| sent) {
-            self.ring_wake(vec![tag], preview, None);
         }
         sent
     }

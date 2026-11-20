@@ -55,6 +55,12 @@ pub fn personal_inbox_now(user: UserId, key: &IdentityKey, now: chrono::DateTime
     personal_inbox(user, key, &dm_epoch(now))
 }
 
+pub fn first_message_inboxes(shared: Option<StreamKeys>, to: UserId, key: &IdentityKey, now: chrono::DateTime<chrono::Utc>) -> Vec<StreamKeys> {
+    let personal = personal_inbox_now(to, key, now);
+    let personal_id = personal.id;
+    shared.into_iter().filter(|keys| keys.id != personal_id).chain(std::iter::once(personal)).collect()
+}
+
 fn cipher(secret: [u8; 32]) -> Aes256Gcm {
     Aes256Gcm::new_from_slice(&secret).expect("32 byte key")
 }
@@ -94,6 +100,21 @@ mod tests {
         let mut message = DmMessage::new(from.0.id, to.id, text);
         message.sign(&"ab".repeat(32), &from.1);
         DmEnvelope::new(message, from.0.clone())
+    }
+
+    #[test]
+    fn a_first_message_also_goes_to_the_inbox_every_device_reads() {
+        let (bob, _) = person("bob");
+        let key = bob.identity.unwrap();
+        let now = chrono::Utc::now();
+        let ids = |keys: Vec<StreamKeys>| keys.into_iter().map(|k| k.id).collect::<Vec<_>>();
+        let personal = personal_inbox_now(bob.id, &key, now).id;
+        assert_eq!(ids(first_message_inboxes(None, bob.id, &key, now)), vec![personal]);
+        let shared = StreamSecret::random().keys();
+        let both = ids(first_message_inboxes(Some(shared.clone()), bob.id, &key, now));
+        assert_eq!(both, vec![shared.id, personal], "a shared server's inbox first, then the personal one that does not depend on how the reader sees that server");
+        let read = ids(personal_inboxes(bob.id, &key, &crate::sync_streams::recent_dm_epochs(now, 3)));
+        assert!(read.contains(&personal));
     }
 
     #[test]
