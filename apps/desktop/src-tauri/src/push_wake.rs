@@ -24,6 +24,7 @@ use crate::{dm_sync, server_wake, sync_link};
 
 const RING_DELAY_MS: std::ops::Range<u64> = 1_000..4_000;
 const REGISTER_GAP_MS: std::ops::Range<u64> = 300..1_500;
+const FRESH_GAP_MS: std::ops::Range<u64> = 50..250;
 pub const KEPT_FILE: &str = "wake-tags.json";
 const SEND_RETRIES: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(10)];
 const RETRY_LATER: Duration = Duration::from_secs(60);
@@ -425,22 +426,27 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
     });
     let http = app.http.clone();
     let (fresh, kept) = fresh_first(&push, still_needed(&push, today, wanted.clone()));
-    if let Err(done) = register_tags(app, &http, &push, base, today, fresh).await {
+    if let Err(done) = register_tags(app, &http, &push, base, today, soonest_first(fresh), FRESH_GAP_MS).await {
         return done;
     }
     let forgotten = forget(app, &http, &push, base, today, stale).await;
     let sweep = to_sweep(&push, today, &wanted, servers.unwanted.into_iter().map(|(_, tag)| tag).collect());
     let swept = forget(app, &http, &push, base, today, sweep).await;
-    if let Err(done) = register_tags(app, &http, &push, base, today, kept).await {
+    if let Err(done) = register_tags(app, &http, &push, base, today, kept, REGISTER_GAP_MS).await {
         return done;
     }
     forgotten && swept
 }
 
-async fn register_tags(app: &App, http: &reqwest::Client, push: &str, base: &str, today: i64, tags: Vec<(Tag, Source)>) -> Result<(), bool> {
+fn soonest_first(mut tags: Tagged) -> Tagged {
+    tags.sort_by_key(|((_, day), _)| *day);
+    tags
+}
+
+async fn register_tags(app: &App, http: &reqwest::Client, push: &str, base: &str, today: i64, tags: Tagged, gap: std::ops::Range<u64>) -> Result<(), bool> {
     let mut registered = 0;
     for ((tag, day), source) in tags {
-        let gap = rand::thread_rng().gen_range(REGISTER_GAP_MS);
+        let gap = rand::thread_rng().gen_range(gap.clone());
         tokio::time::sleep(Duration::from_millis(gap)).await;
         let body = WakeRegister { tag: Bytes(tag), push: push.to_string(), until: day };
         match post(http, &format!("{base}/register"), &body).await {
@@ -834,5 +840,13 @@ mod tests {
             r.swept.insert(([8; 32], 20_000));
         });
         assert!(to_sweep("fcm:d", 20_000, &wanted, unwanted).is_empty(), "and only once");
+    }
+
+    #[test]
+    fn a_new_token_covers_today_before_tomorrow() {
+        let s = Source::Server(ServerId::new());
+        let tags = vec![(([1; 32], 20_001), Source::Dm), (([1; 32], 20_000), Source::Dm), (([2; 32], 20_001), s), (([2; 32], 20_000), s)];
+        let order: Vec<(Tag, Source)> = soonest_first(tags);
+        assert_eq!(order, vec![(([1; 32], 20_000), Source::Dm), (([2; 32], 20_000), s), (([1; 32], 20_001), Source::Dm), (([2; 32], 20_001), s)]);
     }
 }
