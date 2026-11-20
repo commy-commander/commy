@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::account_move::MoveIn;
 use commy_core::home::{fresh_card_fits, request_proof, wants_card, HomeCard};
 use commy_core::server_blocklist::Envelope;
 use commy_core::server_key::PublishedKey;
@@ -322,13 +323,13 @@ enum CardFetch {
     Failed(String),
 }
 
-async fn fetch_card(app: &App) -> CardFetch {
+async fn fetch_card(app: &App, fresh: bool) -> CardFetch {
     let Some((server, token)) = app.account.lock_or_recover().credentials("home_card") else { return CardFetch::NotReady };
     let Some(identity) = app.identity() else { return CardFetch::NotReady };
     let Some((user, current)) = app.profile.lock_or_recover().as_ref().map(|p| (p.id, p.home.clone())) else { return CardFetch::NotReady };
     let now = chrono::Utc::now().timestamp_millis();
     let current = current.filter(|card| card.user == user && card.identity == identity.public());
-    if !wants_card(current.as_ref(), &server, now) {
+    if !fresh && !wants_card(current.as_ref(), &server, now) {
         return CardFetch::Fine;
     }
     let body = serde_json::json!({
@@ -356,15 +357,17 @@ async fn fetch_card(app: &App) -> CardFetch {
 
 pub async fn renew_home_card(handle: &AppHandle) -> bool {
     let app = handle.state::<App>();
-    let clearing = crate::account_move::clear_earlier_move_away(&app).await;
-    match fetch_card(&app).await {
-        CardFetch::Fine => true,
+    let move_in = crate::account_move::prepare_move_in_card(&app).await;
+    let settled_move = move_in == MoveIn::Settled;
+    match fetch_card(&app, move_in == MoveIn::NeedsFreshCard).await {
+        CardFetch::Fine => move_in != MoveIn::Clearing,
         CardFetch::Fresh(card) => {
             crate::set_home_card(&app, handle, card).await;
+            crate::account_move::finish_move_in_card(&app);
             true
         }
         CardFetch::NotReady => false,
-        CardFetch::Moved => !clearing,
+        CardFetch::Moved => settled_move,
         CardFetch::Failed(why) => {
             tracing::info!("home card not renewed: {why}");
             false

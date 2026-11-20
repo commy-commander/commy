@@ -119,46 +119,69 @@ fn remember_moved_in(dir: &Path, ticket: &Ticket) {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ClearPointer {
+struct MoveInCard {
     home: String,
+    #[serde(default)]
+    cleared: bool,
+}
+
+fn write_move_in_card(path: &Path, marker: &MoveInCard) {
+    if let Err(e) = crate::persist::write_secret_json(path, marker) {
+        tracing::warn!("could not keep the note to finish moving in: {e}");
+    }
 }
 
 fn remember_to_clear_pointer(dir: &Path, home: &str) {
-    if let Err(e) = crate::persist::write_secret_json(&dir.join(CLEAR_POINTER_FILE), &ClearPointer { home: home.to_string() }) {
-        tracing::warn!("could not keep the note to clear an earlier move: {e}");
-    }
+    write_move_in_card(&dir.join(CLEAR_POINTER_FILE), &MoveInCard { home: home.to_string(), cleared: false });
 }
 
 fn pointer_cleared(status: reqwest::StatusCode) -> bool {
     status.is_success() || status == reqwest::StatusCode::NOT_FOUND
 }
 
-pub async fn clear_earlier_move_away(app: &App) -> bool {
-    let Some(path) = app.data_dir().map(|dir| dir.join(CLEAR_POINTER_FILE)) else { return false };
-    let Some(marker) = entry_list::read::<ClearPointer>(&path) else { return false };
-    let Some(s) = entry_list::session(app) else { return true };
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveIn {
+    Settled,
+    Clearing,
+    NeedsFreshCard,
+}
+
+pub async fn prepare_move_in_card(app: &App) -> MoveIn {
+    let Some(path) = app.data_dir().map(|dir| dir.join(CLEAR_POINTER_FILE)) else { return MoveIn::Settled };
+    let Some(mut marker) = entry_list::read::<MoveInCard>(&path) else { return MoveIn::Settled };
+    let Some(s) = entry_list::session(app) else { return MoveIn::Clearing };
     if marker.home != s.server {
         remove_quietly(&path);
-        return false;
+        return MoveIn::Settled;
     }
-    let Some(identity) = app.identity() else { return true };
-    let Some(user) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return true };
+    if marker.cleared {
+        return MoveIn::NeedsFreshCard;
+    }
+    let Some(identity) = app.identity() else { return MoveIn::Clearing };
+    let Some(user) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return MoveIn::Clearing };
     let pointer = MovePointer::sign(&identity, &s.server, &s.server, user, now_ms());
     let request = entry_list::account_api(app, &s, reqwest::Method::POST, "moved/set").json(&pointer).timeout(ASK_WAIT);
     match request.send().await {
         Ok(res) if pointer_cleared(res.status()) => {
             tracing::info!("this home no longer points away from itself");
-            remove_quietly(&path);
-            false
+            marker.cleared = true;
+            write_move_in_card(&path, &marker);
+            MoveIn::NeedsFreshCard
         }
         Ok(res) => {
             tracing::info!("could not clear an earlier move away from here yet ({})", res.status());
-            true
+            MoveIn::Clearing
         }
         Err(_) => {
             tracing::info!("could not clear an earlier move away from here yet: the account server did not answer");
-            true
+            MoveIn::Clearing
         }
+    }
+}
+
+pub fn finish_move_in_card(app: &App) {
+    if let Some(dir) = app.data_dir() {
+        remove_quietly(&dir.join(CLEAR_POINTER_FILE));
     }
 }
 
@@ -409,6 +432,12 @@ mod tests {
         assert!(pointer_cleared(reqwest::StatusCode::NOT_FOUND), "an older account server without pointers has nothing to clear");
         assert!(!pointer_cleared(reqwest::StatusCode::UNAUTHORIZED));
         assert!(!pointer_cleared(reqwest::StatusCode::BAD_GATEWAY));
+    }
+
+    #[test]
+    fn a_move_in_note_from_an_older_build_still_asks_for_a_fresh_card() {
+        let old: MoveInCard = serde_json::from_str(r#"{"home":"https://staging.example.org"}"#).unwrap();
+        assert!(!old.cleared, "the earlier note is cleared first, then a fresh card follows");
     }
 
     #[test]
