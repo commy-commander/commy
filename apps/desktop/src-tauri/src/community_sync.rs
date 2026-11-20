@@ -292,6 +292,7 @@ struct Live {
     checkpoint_tried: HashSet<StreamId>,
     greeted: HashMap<ServerId, Instant>,
     say_again: HashSet<ServerId>,
+    looked_back: HashSet<StreamId>,
     cursors: Cursors,
     task: tauri::async_runtime::JoinHandle<()>,
 }
@@ -577,6 +578,7 @@ async fn tend(handle: &AppHandle) {
             checkpoint_tried: HashSet::new(),
             greeted: HashMap::new(),
             say_again: HashSet::new(),
+            looked_back: HashSet::new(),
             cursors,
             task,
         });
@@ -1675,6 +1677,22 @@ fn adopt_snapshot(handle: &AppHandle, server: ServerId) {
     }
 }
 
+fn look_back_for_copy(server: ServerId, stream: StreamId, want: &Want) {
+    let mut guard = LIVE.lock_or_recover();
+    let Some(live) = guard.as_mut() else { return };
+    if !looks_back(&mut live.looked_back, live.snapshots.contains_key(&server), stream) {
+        return;
+    }
+    let Some(community) = live.communities.get_mut(&server) else { return };
+    community.pool.unfollow(stream);
+    community.pool.follow_together_tail(vec![(want.keys.clone(), 0)], None);
+    tracing::info!("no recent copy of {server} from its owner, so Commy reads its whole sync history once");
+}
+
+fn looks_back(looked_back: &mut HashSet<StreamId>, holds_copy: bool, stream: StreamId) -> bool {
+    !holds_copy && looked_back.insert(stream)
+}
+
 fn release_parked(handle: &AppHandle) {
     let app = handle.state::<App>();
     let (released, net) = {
@@ -1827,6 +1845,9 @@ fn on_caught_up(handle: &AppHandle, stream: StreamId, seq: u64) {
             tracing::info!("{server} waits for its owner's copy on the sync service");
         }
         adopt_snapshot(handle, server);
+        if want.lane == Lane::State && seq > 0 && app.awaits_snapshot(server) {
+            look_back_for_copy(server, stream, &want);
+        }
         return;
     }
     if want.lane == Lane::State && want.writes {
@@ -1927,6 +1948,15 @@ mod tests {
     use commy_core::{Identity, Message, Server, ServerState};
 
     const UNREACHABLE_SYNC_URL: &str = "wss://sync.invalid";
+
+    #[test]
+    fn a_server_waiting_for_its_owners_copy_reads_its_history_once() {
+        let (stream, _) = one_state_stream();
+        let mut looked_back = HashSet::new();
+        assert!(!looks_back(&mut looked_back, true, stream), "a copy already in hand needs no second read");
+        assert!(looks_back(&mut looked_back, false, stream));
+        assert!(!looks_back(&mut looked_back, false, stream), "only once, so a server whose owner never wrote a copy is not read forever");
+    }
 
     fn one_state_stream() -> (commy_sync::StreamId, OpenGroup) {
         let keys = commy_sync::StreamSecret::random().keys();

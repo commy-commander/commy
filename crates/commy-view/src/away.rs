@@ -215,10 +215,11 @@ pub fn remembered_host(chosen: Option<&str>, place: Option<&str>, account_url: &
         return Some(Some(host.to_string()));
     }
     let socket = place?;
-    if socket == account_url {
-        return Some(None);
+    match clean_sync_host(socket) {
+        Some(origin) => Some(Some(origin)),
+        None if socket == account_url => Some(None),
+        None => None,
     }
-    clean_sync_host(socket).map(Some)
 }
 
 pub fn invite_host(chosen: Option<&str>, place: Option<&str>) -> Option<String> {
@@ -254,7 +255,8 @@ mod tests {
     fn a_community_living_away_from_our_home_is_remembered_by_its_place() {
         let home = "wss://dev.commy.chat/sync";
         assert_eq!(remembered_host(None, Some("wss://commy.chat/sync"), home), Some(Some("https://commy.chat".into())), "a fresh device must not look for it on our own home");
-        assert_eq!(remembered_host(None, Some(home), home), Some(None));
+        assert_eq!(remembered_host(None, Some(home), home), Some(Some("https://dev.commy.chat".into())), "named outright, so it still points here after the account moves home");
+        assert_eq!(remembered_host(None, Some("wss://10.0.0.5/sync"), "wss://10.0.0.5/sync"), Some(None), "a home without a public name stays relative");
         assert_eq!(remembered_host(Some("https://sync.example.org"), Some("wss://other.example.org/sync"), home), Some(Some("https://sync.example.org".into())), "a chosen host is kept as chosen");
         assert_eq!(remembered_host(None, None, home), None, "an unplaced community keeps whatever was remembered");
         assert_eq!(remembered_host(None, Some("wss://10.0.0.5/sync"), home), None);
