@@ -561,11 +561,11 @@ impl Session {
                     }
                 }
                 Some(commy_view::away::Place::Unknown(owner_home)) if !self.blocks_sync_origin(&owner_home) => {
-                    match live.book.placed(server) {
-                        Some(Some(socket)) if !self.blocks_sync_origin(&socket) => {
+                    match commy_view::away::held_place(live.book.placed(server), live.book.recorded_host(server).as_deref(), &home) {
+                        Some(socket) if socket == home => {}
+                        Some(socket) if !self.blocks_sync_origin(&socket) => {
                             places.sockets.insert(server, socket);
                         }
-                        Some(None) => {}
                         _ => {
                             places.unplaced.insert(server);
                         }

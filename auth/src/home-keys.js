@@ -8,7 +8,7 @@ import { keyId } from "./server-key.js";
 export const HOME_KEY_PATH = "/commy/home-key";
 export const DISCOVERY_PATH = "/.well-known/commy-auth.json";
 const FOUND_FOR_MS = 60 * 60 * 1000;
-const MISSING_FOR_MS = 10 * 60 * 1000;
+export const MISSING_FOR_MS = 30 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_DOCUMENT_BYTES = 64 * 1024;
 const MAX_REMEMBERED = 5000;

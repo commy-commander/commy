@@ -10,6 +10,7 @@ use serde::Deserialize;
 pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 pub const LOOK_AGAIN_MS: i64 = 6 * 60 * 60 * 1000;
 pub const RETRY_MS: i64 = 10 * 60 * 1000;
+pub const FIRST_RETRY_MS: i64 = 15 * 1000;
 pub const MAX_AWAY_HOMES: usize = 64;
 
 pub fn home_of(profile: &UserProfile) -> Option<&str> {
@@ -81,6 +82,11 @@ pub fn sync_url_of(home: &str, doc: &str) -> Option<String> {
 struct Known {
     url: Option<String>,
     at: i64,
+    misses: u32,
+}
+
+fn retry_after(misses: u32) -> i64 {
+    FIRST_RETRY_MS.saturating_mul(1 << misses.saturating_sub(1).min(10)).min(RETRY_MS)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -96,7 +102,7 @@ impl HomeBook {
 
     fn fresh(&self, home: &str, now_ms: i64) -> bool {
         self.known.get(home).is_some_and(|known| {
-            let wait = if known.url.is_some() { LOOK_AGAIN_MS } else { RETRY_MS };
+            let wait = if known.url.is_some() { LOOK_AGAIN_MS } else { retry_after(known.misses) };
             now_ms - known.at < wait
         })
     }
@@ -123,11 +129,16 @@ impl HomeBook {
     pub fn learn(&mut self, home: &str, url: Option<String>, now_ms: i64) -> bool {
         let home = origin_form(home);
         self.asking.remove(&home);
+        let url = url.or_else(|| self.url(&home).map(str::to_string));
         let changed = self.url(&home) != url.as_deref();
         if self.known.len() >= MAX_AWAY_HOMES * 4 && !self.known.contains_key(&home) {
             self.known.retain(|_, known| now_ms - known.at < LOOK_AGAIN_MS);
         }
-        self.known.insert(home, Known { url, at: now_ms });
+        let misses = match url {
+            Some(_) => 0,
+            None => self.known.get(&home).map_or(0, |known| known.misses).saturating_add(1),
+        };
+        self.known.insert(home, Known { url, at: now_ms, misses });
         changed
     }
 }
@@ -336,6 +347,28 @@ mod tests {
         assert_eq!(book.url("https://gone.org"), None);
         assert!(book.to_ask(["https://gone.org"], NOW + 1000).is_empty());
         assert_eq!(book.to_ask(["https://gone.org"], NOW + RETRY_MS), vec!["https://gone.org"], "an unreachable home is tried again sooner");
+    }
+
+    #[test]
+    fn a_failed_lookup_is_tried_again_within_seconds_and_backs_off() {
+        let mut book = HomeBook::default();
+        let home = "https://staging.commy.chat";
+        let mut at = NOW;
+        for wait in [FIRST_RETRY_MS, 2 * FIRST_RETRY_MS, 4 * FIRST_RETRY_MS] {
+            assert_eq!(book.to_ask([home], at), vec![home]);
+            book.learn(home, None, at);
+            assert!(book.to_ask([home], at + wait - 1).is_empty());
+            at += wait;
+        }
+        for _ in 0..20 {
+            assert_eq!(book.to_ask([home], at), vec![home]);
+            book.learn(home, None, at);
+            at += RETRY_MS;
+        }
+        assert!(book.to_ask([home], at - 1).is_empty(), "the wait never grows past the usual retry");
+        assert!(book.learn(home, Some("wss://staging.commy.chat/sync".into()), at));
+        assert!(!book.learn(home, None, at + LOOK_AGAIN_MS), "a failed look again keeps the address that worked");
+        assert_eq!(book.url(home), Some("wss://staging.commy.chat/sync"));
     }
 
     #[test]

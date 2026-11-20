@@ -177,6 +177,12 @@ if (IS_TAURI) {
     console.warn(`Commy: ${reason}`);
     toast(`${reason} ${t("ui.servers-stalled-reload")}`);
   });
+  window.__TAURI__.event.listen("web-home-lookup", e => {
+    const { home, status, sync } = e.payload || {};
+    const line = `Commy: looked up ${home}: ${status ?? "no answer"}, sync ${sync ?? "unknown"}`;
+    if (sync) console.info(line);
+    else console.warn(line);
+  });
   refreshEntryStatus();
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState !== "visible") return;

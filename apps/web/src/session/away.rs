@@ -10,6 +10,7 @@ use commy_sync::{Pool, StreamId, StreamKeys, SyncEvent};
 use commy_view::away;
 use commy_view::dms::{self, EPOCHS};
 use serde::Deserialize;
+use serde_json::json;
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
@@ -86,9 +87,11 @@ impl Session {
 
     async fn learn_home(&self, home: &str) -> bool {
         let path = format!("{HOME_KEY_PATH}?home={}", account::encode_component(home));
-        let reply = self.request("GET", &path, None).await.ok().filter(|reply| reply.ok());
-        let offered = reply.and_then(|reply| serde_json::from_str::<HomeReply>(&reply.body).ok()).and_then(|reply| reply.sync);
+        let reply = self.request("GET", &path, None).await.ok();
+        let status = reply.as_ref().map(|reply| reply.status);
+        let offered = reply.filter(|reply| reply.ok()).and_then(|reply| serde_json::from_str::<HomeReply>(&reply.body).ok()).and_then(|reply| reply.sync);
         let url = accepted_url(home, offered.as_deref());
+        self.emit("web-home-lookup", json!({ "home": home, "status": status, "sync": url }));
         self.away.borrow_mut().book.homes.learn(home, url, now_ms())
     }
 

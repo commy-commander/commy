@@ -7,7 +7,7 @@ import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
 import { cardPayload, checkCardRequest, issueCard, requestMessage } from "../src/home-card.js";
-import { createHomeKeys, isHomeOrigin, isPublicAddress, publishedKeyOf, syncUrlOf } from "../src/home-keys.js";
+import { createHomeKeys, isHomeOrigin, MISSING_FOR_MS, isPublicAddress, publishedKeyOf, syncUrlOf } from "../src/home-keys.js";
 import { blockedServerLine, blockedServers, createServerBlocklist, LIST_PURPOSE } from "../src/server-blocklist.js";
 import { keyFromSeed, keyId, loadListKey, loadServerKey, signedBytes } from "../src/server-key.js";
 
@@ -209,6 +209,33 @@ test("a home's sync address is learned only from its own discovery document", as
   assert.deepEqual(await homeKeys.homeOf(home), { key: published, sync: "wss://friend.org/sync" });
   assert.deepEqual(await homeKeys.keyOf(home), published, "the key and the sync address share one look-up");
   assert.equal(fetched, 1);
+});
+
+test("a home that could not be reached is asked again within a minute", async () => {
+  const home = "https://friend.org";
+  const published = keyFromSeed(Buffer.alloc(32, 4)).published;
+  let clock = 1_000_000;
+  let reachable = false;
+  let fetched = 0;
+  const homeKeys = createHomeKeys({
+    ownHome: "https://commy.chat",
+    ownKey: { id: "own" },
+    now: () => clock,
+    fetchDocument: async (asked) => {
+      fetched += 1;
+      if (!reachable) throw new Error("timed out");
+      return { issuer: asked, serverKey: published, endpoints: { sync: "wss://friend.org/sync" } };
+    },
+  });
+  assert.deepEqual(await homeKeys.homeOf(home), { key: null, sync: null });
+  reachable = true;
+  clock += MISSING_FOR_MS - 1;
+  assert.deepEqual(await homeKeys.homeOf(home), { key: null, sync: null }, "a miss is remembered briefly so a crowd cannot hammer the home");
+  assert.equal(fetched, 1);
+  assert.ok(MISSING_FOR_MS <= 60 * 1000);
+  clock += 1;
+  assert.deepEqual(await homeKeys.homeOf(home), { key: published, sync: "wss://friend.org/sync" });
+  assert.equal(fetched, 2);
 });
 
 test("the list and server keys load from their own env names", () => {
