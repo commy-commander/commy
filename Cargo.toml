@@ -35,7 +35,7 @@ tracing = "0.1"
 
 iroh = "1.4"
 iroh-relay = { version = "1.4", default-features = false }
-iroh-gossip = "0.101"
+iroh-gossip = "0.102"
 iroh-blobs = "0.103"
 
 commy-core = { path = "crates/commy-core" }

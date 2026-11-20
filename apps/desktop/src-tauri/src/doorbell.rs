@@ -330,11 +330,9 @@ pub fn announce<A: AppAccess + Clone>(access: &A, server: ServerId) {
     spawn(async move {
         let app = access.app();
         if let Some(event) = announcement(app, server).await {
-            let net = app.net.lock().await;
-            if let Some(node) = net.as_ref() {
-                if let Err(e) = node.broadcast(server, commy_net::WirePayload::Event(event)).await {
-                    tracing::debug!("doorbell announcement failed: {e}");
-                }
+            let Some(sending) = app.net.lock().await.as_ref().map(|node| node.broadcast(server, commy_net::WirePayload::Event(event))) else { return };
+            if let Err(e) = sending.await {
+                tracing::debug!("doorbell announcement failed: {e}");
             }
         }
     });
@@ -684,13 +682,17 @@ async fn nudge<A: AppAccess + Clone>(access: &A, server: ServerId) {
     if crate::wake::unrest(app).await > 0 {
         tracing::info!("a doorbell ring woke us from resting");
     }
-    let neighbors = {
+    let joining = {
         let net = app.net.lock().await;
         let Some(node) = net.as_ref() else { return };
-        if !members.is_empty() {
-            let _ = tokio::time::timeout(Duration::from_secs(2), node.join_peers(server, &members)).await;
-        }
-        node.neighbors(server)
+        (!members.is_empty()).then(|| node.join_peers(server, &members))
+    };
+    if let Some(joining) = joining {
+        let _ = tokio::time::timeout(Duration::from_secs(2), joining).await;
+    }
+    let neighbors = match app.net.lock().await.as_ref() {
+        Some(node) => node.neighbors(server),
+        None => return,
     };
     for peer in neighbors {
         access.catch_up(server, peer);

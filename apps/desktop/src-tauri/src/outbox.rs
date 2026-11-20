@@ -566,15 +566,17 @@ async fn send_now(
     event: &ServerEvent,
     payload: Option<WirePayload>,
 ) -> Result<anyhow::Result<()>, &'static str> {
-    let net = app.net.lock().await;
-    match net.as_ref() {
-        Some(node) if may_send(app, node.neighbor_count(server), event) => {
-            let payload = payload.unwrap_or_else(|| app.wire_for(server, event.clone()));
-            Ok(node.broadcast(server, payload).await)
+    let sending = {
+        let net = app.net.lock().await;
+        match net.as_ref() {
+            Some(node) if may_send(app, node.neighbor_count(server), event) => {
+                node.broadcast(server, payload.unwrap_or_else(|| app.wire_for(server, event.clone())))
+            }
+            Some(_) => return Err("no neighbor is connected"),
+            None => return Err("network is not ready"),
         }
-        Some(_) => Err("no neighbor is connected"),
-        None => Err("network is not ready"),
-    }
+    };
+    Ok(sending.await)
 }
 
 pub async fn flush_queued(app: &App, server: ServerId) {

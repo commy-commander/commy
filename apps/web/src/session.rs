@@ -1501,15 +1501,15 @@ impl Session {
     }
 
     async fn deliver(self: &Rc<Self>, server: ServerId, message: commy_core::Message, view: commy_view::MessageView) -> Result<Value, String> {
-        let delivered = {
-            let node = self.node.lock().await;
-            match node.as_ref() {
-                Some(node) if node.neighbor_count(server) > 0 => node
-                    .broadcast(server, WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() }))
-                    .await
-                    .is_ok(),
-                _ => false,
+        let sending = match self.node.lock().await.as_ref() {
+            Some(node) if node.neighbor_count(server) > 0 => {
+                Some(node.broadcast(server, WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() })))
             }
+            _ => None,
+        };
+        let delivered = match sending {
+            Some(sending) => sending.await.is_ok(),
+            None => false,
         };
         if !delivered {
             self.client.borrow_mut().pending.insert(message.id);

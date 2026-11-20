@@ -4048,21 +4048,20 @@ async fn run_mesh_healer(handle: tauri::AppHandle) {
                 })
                 .collect()
         };
-        {
-            let net = app.net.lock().await;
-            if let Some(node) = net.as_ref() {
-                for (sid, peers) in targets {
-                    if peers.is_empty() || node.neighbor_count(sid) > 0 {
-                        continue;
-                    }
-                    let dial = node.join_peers(sid, &peers);
-                    match tokio::time::timeout(std::time::Duration::from_secs(2), dial).await {
-                        Ok(Ok(n)) if n > 0 => tracing::info!("server {sid} has no neighbors, re-dialing {n} members"),
-                        Ok(Ok(_)) => {}
-                        Ok(Err(e)) => tracing::debug!("re-dial for {sid} failed: {e}"),
-                        Err(_) => tracing::debug!("re-dial for {sid} is still in progress"),
-                    }
-                }
+        let dials: Vec<_> = match app.net.lock().await.as_ref() {
+            Some(node) => targets
+                .into_iter()
+                .filter(|(sid, peers)| !peers.is_empty() && node.neighbor_count(*sid) == 0)
+                .map(|(sid, peers)| (sid, node.join_peers(sid, &peers)))
+                .collect(),
+            None => Vec::new(),
+        };
+        for (sid, dial) in dials {
+            match tokio::time::timeout(std::time::Duration::from_secs(2), dial).await {
+                Ok(Ok(n)) if n > 0 => tracing::info!("server {sid} has no neighbors, re-dialing {n} members"),
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => tracing::debug!("re-dial for {sid} failed: {e}"),
+                Err(_) => tracing::debug!("re-dial for {sid} is still in progress"),
             }
         }
         tokio::time::sleep(MESH_HEAL_EVERY).await;
@@ -7783,11 +7782,9 @@ fn remote_action_ok(app: &App, server: ServerId, event: &ServerEvent, action: Op
 }
 
 pub(crate) async fn broadcast(app: &App, server: ServerId, payload: WirePayload) {
-    let net = app.net.lock().await;
-    if let Some(node) = net.as_ref() {
-        if let Err(e) = node.broadcast(server, payload).await {
-            tracing::warn!("broadcast failed: {e}");
-        }
+    let Some(sending) = app.net.lock().await.as_ref().map(|node| node.broadcast(server, payload)) else { return };
+    if let Err(e) = sending.await {
+        tracing::warn!("broadcast failed: {e}");
     }
 }
 

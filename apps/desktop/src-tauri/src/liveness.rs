@@ -135,13 +135,17 @@ async fn send_all(app: &App, user: UserId, presence: Presence, through_service: 
             crate::community_sync::leave_word(app, *sid);
         }
     }
-    let net = app.net.lock().await;
-    let Some(node) = net.as_ref() else { return };
-    for (sid, payload) in payloads {
-        if node.neighbor_count(sid) == 0 {
-            continue;
-        }
-        if let Err(e) = node.broadcast(sid, payload).await {
+    let beats: Vec<_> = {
+        let net = app.net.lock().await;
+        let Some(node) = net.as_ref() else { return };
+        payloads
+            .into_iter()
+            .filter(|(sid, _)| node.neighbor_count(*sid) > 0)
+            .map(|(sid, payload)| node.broadcast(sid, payload))
+            .collect()
+    };
+    for beat in beats {
+        if let Err(e) = beat.await {
             tracing::debug!("presence beat did not go out: {e}");
         }
     }

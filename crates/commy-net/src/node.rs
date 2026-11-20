@@ -632,6 +632,23 @@ const REJOIN_AFTER: Duration = Duration::from_secs(1);
 
 const GREET_AFTER: Duration = Duration::from_secs(2);
 
+const GOSSIP_HANDOFF_WAIT: Duration = Duration::from_secs(3);
+
+#[derive(Debug, thiserror::Error)]
+enum GossipHandoff {
+    #[error("the peer mesh took no frame within {}s", GOSSIP_HANDOFF_WAIT.as_secs())]
+    Busy,
+    #[error("the peer mesh is closed: {0}")]
+    Closed(#[from] iroh_gossip::api::ApiError),
+}
+
+async fn hand_to_gossip(handoff: impl Future<Output = Result<(), iroh_gossip::api::ApiError>>) -> Result<(), GossipHandoff> {
+    match n0_future::time::timeout(GOSSIP_HANDOFF_WAIT, handoff).await {
+        Ok(handed) => Ok(handed?),
+        Err(_) => Err(GossipHandoff::Busy),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct GossipDoor {
     gossip: Gossip,
@@ -674,8 +691,13 @@ async fn greet_returning(
         let Ok(id) = EndpointId::from_bytes(&peer) else { continue };
         n0_future::time::sleep(REJOIN_AFTER).await;
         tracing::info!("neighbor {} connected again, renewing it", id.fmt_short());
-        if sender.join_peers(vec![id]).await.is_err() {
-            return;
+        match hand_to_gossip(sender.join_peers(vec![id])).await {
+            Ok(()) => {}
+            Err(GossipHandoff::Closed(_)) => return,
+            Err(GossipHandoff::Busy) => {
+                tracing::warn!("the peer mesh took no renewal of {} in time", id.fmt_short());
+                continue;
+            }
         }
         n0_future::time::sleep(GREET_AFTER).await;
         if came_back(&neighbors.borrow(), &peer) && events.send(NetEvent::NeighborUp { server, peer }).is_err() {
@@ -694,7 +716,7 @@ fn track_neighbors(neighbors: &mut BTreeSet<[u8; 32]>, event: &GossipEvent) -> V
             neighbors.remove(peer.as_bytes());
             vec![]
         }
-        GossipEvent::Received(_) | GossipEvent::Lagged => vec![],
+        _ => vec![],
     }
 }
 
@@ -1747,10 +1769,9 @@ impl CommyNode {
         bootstrap: Vec<EndpointId>,
     ) -> Result<()> {
         let topic = TopicId::from_bytes(topic_bytes);
-        let (sender, mut stream) = self
-            .gossip
-            .subscribe(topic, bootstrap)
+        let (sender, mut stream) = n0_future::time::timeout(GOSSIP_HANDOFF_WAIT, self.gossip.subscribe(topic, bootstrap))
             .await
+            .map_err(|_| GossipHandoff::Busy)?
             .context("gossip is not running")?
             .split();
 
@@ -1835,29 +1856,38 @@ impl CommyNode {
         Ok(())
     }
 
-    pub async fn join_peers(&self, server_id: ServerId, peers_hex: &[String]) -> Result<usize> {
-        let handle = self
-            .topics
-            .get(&server_id)
-            .context("not joined to that server")?;
-        let ids = self.add_peers(peers_hex);
-        if ids.is_empty() {
-            return Ok(0);
+    pub fn join_peers(&self, server_id: ServerId, peers_hex: &[String]) -> impl Future<Output = Result<usize>> + Send + 'static {
+        let joining = self.topic_sender(server_id).map(|sender| (sender, self.add_peers(peers_hex)));
+        async move {
+            let (sender, ids) = joining?;
+            if ids.is_empty() {
+                return Ok(0);
+            }
+            let count = ids.len();
+            hand_to_gossip(sender.join_peers(ids)).await?;
+            Ok(count)
         }
-        let count = ids.len();
-        handle.sender.join_peers(ids).await?;
-        Ok(count)
+    }
+
+    fn topic_sender(&self, server_id: ServerId) -> Result<GossipSender> {
+        let handle = self.topics.get(&server_id).context("not joined to that server")?;
+        Ok(handle.sender.clone())
     }
 
     pub fn local_events(&self) -> mpsc::UnboundedSender<NetEvent> {
         self.events_tx.clone()
     }
 
-    pub async fn broadcast(&self, server_id: ServerId, payload: WirePayload) -> Result<()> {
-        let handle = self
-            .topics
-            .get(&server_id)
-            .context("not joined to that server")?;
+    pub fn broadcast(&self, server_id: ServerId, payload: WirePayload) -> impl Future<Output = Result<()>> + Send + 'static {
+        let framed = self.topic_sender(server_id).and_then(|sender| Ok((sender, self.gossip_frame(payload)?)));
+        async move {
+            let (sender, bytes) = framed?;
+            hand_to_gossip(sender.broadcast(bytes.into())).await?;
+            Ok(())
+        }
+    }
+
+    fn gossip_frame(&self, payload: WirePayload) -> Result<Vec<u8>> {
         let bytes = Envelope::new(self.node_id_bytes(), payload).encode()?;
         anyhow::ensure!(
             bytes.len() <= crate::protocol::MAX_GOSSIP_BYTES,
@@ -1865,8 +1895,7 @@ impl CommyNode {
             bytes.len(),
             crate::protocol::MAX_GOSSIP_BYTES
         );
-        handle.sender.broadcast(bytes.into()).await?;
-        Ok(())
+        Ok(bytes)
     }
 
     pub fn media_dialer(&self) -> MediaDialer {
@@ -2689,6 +2718,25 @@ mod tests {
         assert_eq!(newcomer.neighbors(server), vec![member.node_id_bytes()]);
         member.shutdown().await.ok();
         newcomer.shutdown().await.ok();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_mesh_that_takes_no_frame_lets_the_sender_go_after_the_handoff_wait() {
+        let started = n0_future::time::Instant::now();
+        let handed = hand_to_gossip(std::future::pending()).await;
+        assert!(matches!(handed, Err(GossipHandoff::Busy)));
+        assert_eq!(started.elapsed(), GOSSIP_HANDOFF_WAIT);
+    }
+
+    #[tokio::test]
+    async fn the_largest_commy_frame_fits_one_gossip_broadcast() {
+        let mut node = local_node().await;
+        let server = ServerId::new();
+        node.host_server(server, "s", None).await.unwrap();
+        let sender = node.topic_sender(server).unwrap();
+        assert!(sender.max_content_size() >= crate::protocol::MAX_GOSSIP_BYTES, "{}", sender.max_content_size());
+        sender.broadcast(vec![7u8; crate::protocol::MAX_GOSSIP_BYTES].into()).await.unwrap();
+        node.shutdown().await.ok();
     }
 
     fn picture() -> Vec<u8> {
