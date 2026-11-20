@@ -30,6 +30,7 @@ const SEND_RETRIES: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs
 const RETRY_LATER: Duration = Duration::from_secs(60);
 const FORGET_EVERYTHING_WAIT: Duration = Duration::from_secs(15);
 const QUIET_CHECK_EVERY: Duration = Duration::from_secs(15);
+const QUIET_RETRY_MAX: Duration = Duration::from_secs(5 * 60);
 
 type Tag = ([u8; 32], i64);
 type Tagged = Vec<(Tag, Source)>;
@@ -161,15 +162,42 @@ async fn tell_quiet(app: &App, quiet: Quiet) -> bool {
     told
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QuietMiss {
+    quiet: Quiet,
+    misses: u32,
+    at_ms: i64,
+}
+
+fn quiet_retry_ms(misses: u32) -> i64 {
+    (QUIET_CHECK_EVERY.as_millis() as i64).saturating_mul(1 << misses.min(5)).min(QUIET_RETRY_MAX.as_millis() as i64)
+}
+
+fn quiet_held_back(missed: Option<QuietMiss>, wanted: Quiet, now_ms: i64) -> bool {
+    missed.is_some_and(|miss| miss.quiet == wanted && now_ms - miss.at_ms < quiet_retry_ms(miss.misses))
+}
+
+fn quiet_missed(missed: Option<QuietMiss>, wanted: Quiet, now_ms: i64) -> QuietMiss {
+    let misses = missed.filter(|miss| miss.quiet == wanted).map_or(0, |miss| miss.misses + 1);
+    QuietMiss { quiet: wanted, misses, at_ms: now_ms }
+}
+
 pub async fn run_quiet_hours(handle: AppHandle) {
     let mut sent: Option<(Quiet, i64)> = None;
+    let mut missed: Option<QuietMiss> = None;
     loop {
         tokio::time::sleep(QUIET_CHECK_EVERY).await;
         let app = handle.state::<App>();
         let Some(wanted) = quiet_wanted(&app) else { continue };
         let now_ms = Utc::now().timestamp_millis();
-        if quiet_due(wanted, sent, now_ms) && tell_quiet(&app, wanted).await {
+        if !quiet_due(wanted, sent, now_ms) || quiet_held_back(missed, wanted, now_ms) {
+            continue;
+        }
+        if tell_quiet(&app, wanted).await {
             sent = Some((wanted, now_ms));
+            missed = None;
+        } else {
+            missed = Some(quiet_missed(missed, wanted, now_ms));
         }
     }
 }
@@ -870,6 +898,24 @@ mod tests {
         assert!(Pass::Fresh.gap_ms().end <= Pass::Kept.gap_ms().start);
         assert!(!Pass::Fresh.yields_to_newer_settings(), "a phone that locks soon after starting still gets every new tag signed up");
         assert!(Pass::Kept.yields_to_newer_settings());
+    }
+
+    #[test]
+    fn do_not_disturb_waits_longer_after_each_miss_and_goes_at_once_when_it_changes() {
+        let start = 1_000_000;
+        let first = quiet_missed(None, Quiet::Off, start);
+        assert_eq!(first.misses, 0);
+        assert!(quiet_held_back(Some(first), Quiet::Off, start + 10_000));
+        assert!(!quiet_held_back(Some(first), Quiet::Off, start + 15_000));
+        let later = quiet_missed(Some(first), Quiet::Off, start + 15_000);
+        assert!(quiet_held_back(Some(later), Quiet::Off, start + 15_000 + 20_000), "the second miss waits 30 s");
+        let mut miss = later;
+        for _ in 0..10 {
+            miss = quiet_missed(Some(miss), Quiet::Off, miss.at_ms);
+        }
+        assert!(!quiet_held_back(Some(miss), Quiet::Off, miss.at_ms + QUIET_RETRY_MAX.as_millis() as i64), "never more than five minutes");
+        assert!(!quiet_held_back(Some(miss), Quiet::UntilTurnedOff, miss.at_ms), "a new choice is told at once");
+        assert_eq!(quiet_missed(Some(miss), Quiet::UntilTurnedOff, miss.at_ms).misses, 0);
     }
 
     #[test]
