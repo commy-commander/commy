@@ -67,11 +67,11 @@ fn landing(vault: Option<&str>, opens: impl Fn(&str) -> bool) -> Landing {
 
 fn to_copy(already: &[Vec<u8>], mut entries: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     if entries.starts_with(already) {
-        entries.split_off(already.len())
-    } else {
-        tracing::warn!("the new home already keeps a different account log, so this one was not copied");
-        Vec::new()
+        return entries.split_off(already.len());
     }
+    tracing::info!("the new home keeps this account's log from an earlier stay, so only the entries it lacks are added");
+    let held: std::collections::HashSet<&[u8]> = already.iter().map(Vec::as_slice).collect();
+    entries.into_iter().filter(|entry| !held.contains(entry.as_slice())).collect()
 }
 
 fn now_ms() -> i64 {
@@ -327,10 +327,31 @@ mod tests {
     }
 
     #[test]
-    fn a_different_log_at_the_new_home_is_never_mixed_with_this_one() {
-        let entries = vec![b"a".to_vec(), b"b".to_vec()];
-        assert!(to_copy(&[b"x".to_vec()], entries.clone()).is_empty());
-        assert!(to_copy(&[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()], entries).is_empty());
+    fn moving_back_to_an_earlier_home_adds_what_its_old_log_lacks() {
+        let entries = vec![b"a".to_vec(), b"b".to_vec(), b"d".to_vec(), b"e".to_vec()];
+        let earlier_stay = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
+        assert_eq!(to_copy(&earlier_stay, entries.clone()), vec![b"d".to_vec(), b"e".to_vec()]);
+        assert_eq!(to_copy(&[b"x".to_vec()], entries.clone()), entries);
+        let mut after_retry = earlier_stay.clone();
+        after_retry.extend(to_copy(&earlier_stay, entries.clone()));
+        assert!(to_copy(&after_retry, entries).is_empty(), "a retry writes nothing twice");
+    }
+
+    #[test]
+    fn every_account_log_record_folds_the_same_in_any_order() {
+        use crate::account_log::{Record, SyncState};
+        use commy_core::ServerId;
+        let server = ServerId::new();
+        let old = Record::SyncHost { server, host: Some("https://old.example.org".into()), at: 1 };
+        let new = Record::SyncHost { server, host: Some("https://new.example.org".into()), at: 2 };
+        let fold = |records: Vec<Record>| {
+            let mut state = SyncState::default();
+            for record in records {
+                state.fold(record);
+            }
+            state.sync_hosts
+        };
+        assert_eq!(fold(vec![new.clone(), old.clone()]), fold(vec![old, new]), "an earlier stay's entries replayed first never undo newer ones");
     }
 
     #[test]

@@ -415,8 +415,8 @@ pub(crate) async fn choose_sync_host(app: &App, handle: &tauri::AppHandle, sid: 
         let state = servers.get(&sid).ok_or("unknown server")?;
         view::sync_host::set_sync_host(state, me.id, host.as_deref())?
     };
-    let account_url = sync_link::url().ok_or("Commy is not connected to its sync service yet")?;
-    let target = sync_host::target(&event, &account_url).ok_or(view::sync_host::SYNC_HOST_INVALID)?;
+    let account_url = sync_link::url().ok_or(sync_host::NOT_CONNECTED)?;
+    let target = sync_host::target(&event, &account_url, server_guard::blocks_origin)?;
     sync_host::claim_everything(app, sid, &target).await?;
     let forwarding_note = app.wire_for(sid, event.clone());
     if community_sync::publish_now(sid, &forwarding_note).await.is_empty() {
@@ -434,7 +434,10 @@ pub(crate) async fn pin_in_place(app: &App, handle: &tauri::AppHandle, sid: Serv
     if !due {
         return Ok(());
     }
-    let here = sync_link::url().and_then(|url| commy_core::sync_host::clean_sync_host(&url)).ok_or("Commy is not connected to its sync service yet")?;
+    let Some(here) = sync_host::pin_origin(sync_link::url().as_deref(), server_guard::blocks_origin)? else {
+        tracing::info!("{sid} follows its owner, because its sync server is on Commy's list of blocked servers");
+        return Ok(());
+    };
     choose_sync_host(app, handle, sid, Some(here)).await
 }
 

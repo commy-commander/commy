@@ -12,6 +12,7 @@ pub const SYNC_HOST_UNCHANGED: &str = "This server already syncs there";
 pub const HOST_UNREACHABLE: &str = "Commy could not reach a sync server there. Check the address and that the server is running.";
 pub const HOST_TOO_OLD: &str = "That sync server needs updating before it can sync this server.";
 pub const HOST_TAKEN: &str = "Someone else already holds this server's erase keys on that sync server, so Commy won't move it there.";
+pub const HOST_ON_BLOCKLIST: &str = "That sync server is on Commy's list of blocked servers, so Commy won't move this server there.";
 pub const HOST_SLOW: &str = "That sync server did not answer in time. Try again in a moment.";
 pub const KEYS_NOT_READY: &str = "This server's keys are not ready yet. Try again in a moment.";
 
