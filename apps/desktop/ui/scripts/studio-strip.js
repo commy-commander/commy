@@ -178,6 +178,14 @@ function stripPeople(server, meId) {
   });
 }
 
+const STRIP_PANEL_VARS = ["--st-rows", "--st-home-row", "--st-chat-row", "--st-room-row"];
+const STRIP_PANEL_CLASSES = [...STRIP_PANELS.map(panel => `strip-hide-${panel.id}`), "strip-no-chat"];
+
+function stripClearPanels(app) {
+  for (const name of STRIP_PANEL_VARS) if (app.style.getPropertyValue(name)) app.style.removeProperty(name);
+  for (const name of STRIP_PANEL_CLASSES) if (app.classList.contains(name)) app.classList.remove(name);
+}
+
 function studioStrip() {
   const root = document.documentElement;
   const app = $("app");
@@ -392,14 +400,8 @@ function studioStrip() {
     if (app.classList.contains("strip-no-chat") === grid.chat) app.classList.toggle("strip-no-chat", !grid.chat);
   };
 
-  const undoPanels = () => {
-    for (const name of ["--st-rows", "--st-home-row", "--st-chat-row", "--st-room-row"]) app.style.removeProperty(name);
-    for (const panel of STRIP_PANELS) app.classList.remove(`strip-hide-${panel.id}`);
-    app.classList.remove("strip-no-chat");
-  };
-
   const undo = () => {
-    undoPanels();
+    stripClearPanels(app);
     if (peopleOpen()) closePeople("leave");
     for (const node of document.querySelectorAll("[data-strip-people]")) node.remove();
     for (const tile of app.querySelectorAll(".strip-tile")) tile.remove();
@@ -480,5 +482,5 @@ function studioStrip() {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STRIP_PANELS_KEY, STRIP_PANELS, stripPanelsFrom, stripPanelMove, stripPanelShow, stripPanelGrid, STRIP_TILES, STRIP_CHIP_GAP, STRIP_WORDS, STRIP_SHEET_CLOSE_PX, stripSheetDrag, stripSheetCloses, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead };
+  module.exports = { STRIP_PANELS_KEY, STRIP_PANELS, stripPanelsFrom, stripPanelMove, stripPanelShow, stripPanelGrid, STRIP_TILES, STRIP_CHIP_GAP, STRIP_WORDS, STRIP_SHEET_CLOSE_PX, stripSheetDrag, stripSheetCloses, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead, STRIP_PANEL_CLASSES, stripClearPanels };
 }

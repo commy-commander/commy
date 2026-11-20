@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { STRIP_PANELS_KEY, STRIP_PANELS, stripPanelsFrom, stripPanelMove, stripPanelShow, stripPanelGrid, STRIP_TILES, STRIP_CHIP_GAP, STRIP_SHEET_CLOSE_PX, stripSheetDrag, stripSheetCloses, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead } = require("../scripts/studio-strip.js");
+const { STRIP_PANELS_KEY, STRIP_PANELS, stripPanelsFrom, stripPanelMove, stripPanelShow, stripPanelGrid, STRIP_TILES, STRIP_CHIP_GAP, STRIP_SHEET_CLOSE_PX, stripSheetDrag, stripSheetCloses, stripStacked, stripChipOffsets, stripIsOnline, stripPersonWord, stripOnlineHead, STRIP_PANEL_CLASSES, stripClearPanels } = require("../scripts/studio-strip.js");
 const { phoneAppViewport, SLIM_VIEWPORT, SLIM_LAYOUT_WIDTH_PX, PHONE_APP_VIEWPORT, TWO_PANE_VIEWPORT } = require("../scripts/phone.js");
 const { LOOK_FIT } = require("../scripts/look.js");
 
@@ -200,4 +200,36 @@ test("the grid follows the chosen order, chat takes the spare height, and withou
   assert.match(rule(`${STACK} .app[data-pane].strip-hide-room > .pt-room`), /display: none !important;/);
   assert.match(rule(`${STACK} .app[data-pane].strip-no-chat > :is(.sidebar, .pt-live, .pt-you)`), /max-height: none;/);
   assert.ok(html.includes('<div class="settings-card stack-panels desktop-only hidden" id="stack-panels"'));
+});
+
+function fakeApp(classes, vars = {}) {
+  const writes = [];
+  const list = new Set(classes);
+  const props = new Map(Object.entries(vars));
+  return {
+    writes,
+    classList: {
+      contains: name => list.has(name),
+      remove: name => { writes.push(`class -${name}`); list.delete(name); },
+    },
+    style: {
+      getPropertyValue: name => props.get(name) || "",
+      removeProperty: name => { writes.push(`style -${name}`); props.delete(name); },
+    },
+  };
+}
+
+test("outside the stack, clearing the panels touches nothing that is already clear, so the app's own watchers stay quiet", () => {
+  const clean = fakeApp(["app", "dm-mode"]);
+  stripClearPanels(clean);
+  stripClearPanels(clean);
+  assert.deepEqual(clean.writes, []);
+  const stacked = fakeApp(["app", "strip-hide-room", "strip-no-chat"], { "--st-rows": "96px auto" });
+  stripClearPanels(stacked);
+  assert.deepEqual(stacked.writes, ["style ---st-rows", "class -strip-hide-room", "class -strip-no-chat"]);
+  stripClearPanels(stacked);
+  assert.equal(stacked.writes.length, 3);
+  assert.deepEqual(STRIP_PANEL_CLASSES, ["strip-hide-home", "strip-hide-chat", "strip-hide-room", "strip-no-chat"]);
+  assert.ok(glue.includes('if (!stripStacked(root.dataset)) {\n        undo();'));
+  assert.ok(glue.includes("const undo = () => {\n    stripClearPanels(app);"));
 });
