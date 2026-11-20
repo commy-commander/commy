@@ -1639,17 +1639,24 @@ fn early_check_allowed(since_last: Duration) -> bool {
     since_last >= SESSION_WATCH_SOONEST
 }
 
-pub async fn watch_session(handle: AppHandle) {
-    let mut last = tokio::time::Instant::now();
+async fn wait_for_session_turn(last: tokio::time::Instant, every: Duration, nudged: &tokio::sync::Notify) {
+    let due = last + every;
     loop {
         tokio::select! {
-            _ = tokio::time::sleep(SESSION_WATCH_EVERY) => {}
-            _ = SESSION_WATCH.notified() => {
-                if !early_check_allowed(last.elapsed()) {
-                    continue;
+            _ = tokio::time::sleep_until(due) => return,
+            _ = nudged.notified() => {
+                if early_check_allowed(last.elapsed()) {
+                    return;
                 }
             }
         }
+    }
+}
+
+pub async fn watch_session(handle: AppHandle) {
+    let mut last = tokio::time::Instant::now();
+    loop {
+        wait_for_session_turn(last, SESSION_WATCH_EVERY, &SESSION_WATCH).await;
         last = tokio::time::Instant::now();
         recheck_saved_session(&handle).await;
     }
@@ -1769,6 +1776,23 @@ mod tests {
         assert_eq!(session_recheck_delay(2), Duration::from_secs(20));
         assert_eq!(session_recheck_delay(3), Duration::from_secs(30));
         assert_eq!(session_recheck_delay(400), Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn an_early_nudge_does_not_push_back_the_next_session_check() {
+        let nudged = tokio::sync::Notify::new();
+        let started = tokio::time::Instant::now();
+        let waiting = wait_for_session_turn(started, Duration::from_millis(600), &nudged);
+        let nudging = async {
+            for _ in 0..5 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                nudged.notify_one();
+            }
+        };
+        tokio::join!(waiting, nudging);
+        let took = started.elapsed();
+        assert!(took >= Duration::from_millis(600), "{took:?}");
+        assert!(took < Duration::from_millis(1000), "nudges too soon after a check kept moving it: {took:?}");
     }
 
     #[test]

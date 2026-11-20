@@ -251,6 +251,14 @@ async fn relay(app: &App) -> Option<RelayLink> {
     app.net.lock().await.as_ref().map(|node| node.connection_checker().relay())
 }
 
+fn account_current(live: bool, starting: bool, caught_up: bool) -> bool {
+    if live || starting {
+        caught_up
+    } else {
+        true
+    }
+}
+
 fn sync_signals(app: &App, offline: bool) -> SyncSignals {
     let signed_in = crate::account::is_signed_in(&app.account.lock_or_recover());
     let servers: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
@@ -258,7 +266,7 @@ fn sync_signals(app: &App, offline: bool) -> SyncSignals {
         signed_in,
         offline,
         service: *SESSION.lock_or_recover(),
-        account_current: !crate::account_log::is_live(app) || crate::account_log::caught_up(),
+        account_current: account_current(crate::account_log::is_live(app), crate::account_log::is_starting(), crate::account_log::caught_up()),
         servers: servers
             .into_iter()
             .map(|sid| ServerLink { link: crate::voice_gate::state_link(app, sid), saved: !app.awaits_snapshot(sid) })
@@ -472,6 +480,14 @@ mod tests {
     #[test]
     fn sync_is_done_when_every_server_is_current() {
         assert_eq!(sync_step(&synced()).state, StepState::Done);
+    }
+
+    #[test]
+    fn an_account_log_still_starting_is_not_current_yet() {
+        assert!(!account_current(false, true, false), "starting the log is not the same as having none");
+        assert!(!account_current(true, false, false));
+        assert!(account_current(true, false, true));
+        assert!(account_current(false, false, false), "no account log to wait for");
     }
 
     #[test]

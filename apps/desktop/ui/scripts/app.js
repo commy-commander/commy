@@ -27485,7 +27485,7 @@ function runStartupLoader() {
     if (IS_TAURI) window.__TAURI__.event.listen("startup-status", event => apply(event.payload));
     const poll = () => invoke("startup_status").then(raw => {
       apply(raw);
-      if (open && !IS_TAURI) setTimeout(poll, STARTUP_POLL_MS);
+      if (open) setTimeout(poll, STARTUP_POLL_MS);
     }, finish);
     poll();
   });

@@ -208,3 +208,27 @@ test("the loader closes from the paced view, keeps skip and the offline linger, 
   assert.match(loader, /\$\("startup-skip"\)\.addEventListener\("click", finish\)/);
   assert.doesNotMatch(loader, /if \(view\.ready\)/);
 });
+
+test("the desktop loader keeps asking while it is open, so a missed or stale status cannot hold it", () => {
+  const loader = app.slice(app.indexOf("function runStartupLoader"), app.indexOf("async function startApp"));
+  assert.match(loader, /if \(open\) setTimeout\(poll, STARTUP_POLL_MS\)/);
+  assert.doesNotMatch(loader, /open && !IS_TAURI/);
+});
+
+test("a loader stuck on loading the account closes once a later answer settles sync", () => {
+  const shownAt = 0;
+  const step = (state, detail) => ({ state, detail, progress: null });
+  const stale = readStartup({
+    connection: step("done", "You are online"),
+    update: step("done", "You have the latest version"),
+    sync: step("working", "Loading your account"),
+    ready: false,
+  });
+  let paced = pacedStartup(stale, emptyStartupPace(), shownAt, 10_000);
+  assert.equal(paced.canClose, false);
+  const later = readStartup({ ...stale, sync: step("skipped", "Still catching up. Commy finishes in the background."), ready: true });
+  for (const now of [10_300, 10_600, 10_900, 11_200]) {
+    paced = pacedStartup(later, paced.pace, shownAt, now);
+  }
+  assert.equal(paced.canClose, true);
+});

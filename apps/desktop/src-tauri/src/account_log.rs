@@ -1,7 +1,7 @@
 use crate::lock_or_recover::LockOrRecover;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -375,6 +375,7 @@ static IN_FLIGHT: Mutex<Option<u64>> = Mutex::new(None);
 static FLUSH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static FLUSH_PENDING: AtomicBool = AtomicBool::new(false);
 static SERVERS_PENDING: AtomicBool = AtomicBool::new(false);
+static STARTING: AtomicUsize = AtomicUsize::new(0);
 
 fn load(dir: &Path) -> SyncState {
     entry_list::read(&dir.join(FILE)).unwrap_or_default()
@@ -402,10 +403,33 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+struct Starting;
+
+impl Starting {
+    fn begin() -> Self {
+        STARTING.fetch_add(1, Ordering::SeqCst);
+        Starting
+    }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        STARTING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub fn is_starting() -> bool {
+    STARTING.load(Ordering::SeqCst) > 0
+}
+
 pub fn ensure(handle: &AppHandle) {
     let _ = HANDLE.set(handle.clone());
     let handle = handle.clone();
-    crate::account_session::spawn(async move { start(&handle) });
+    let starting = Starting::begin();
+    crate::account_session::spawn(async move {
+        start(&handle);
+        drop(starting);
+    });
 }
 
 pub fn stop() {
