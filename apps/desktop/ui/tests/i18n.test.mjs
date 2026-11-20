@@ -197,3 +197,37 @@ test("the settings language picker lists the languages that were loaded", () => 
   const app = readFileSync(join(ui, "scripts", "app.js"), "utf8");
   assert.match(app, /availableLanguages\(\)\.map\(l => new Option\(l\.label, l\.code\)\)/);
 });
+
+test("on a Mac the tray settings say menu bar, in every language, and other systems keep the tray", () => {
+  const trayKeys = Object.keys(locales.en).filter(key => /tray|bandeja/i.test(locales.en[key]) || /tray/i.test(key));
+  assert.ok(trayKeys.length >= 9);
+  for (const code of Object.keys(locales)) {
+    i18n.setLanguage(code);
+    i18n.setPlatform("mac");
+    for (const key of trayKeys.filter(key => !key.endsWith(".mac"))) {
+      assert.doesNotMatch(t(key), /tray|bandeja/i, `${code} ${key} still names the tray on a Mac`);
+      assert.match(t(key), /menu bar|barra de menús/i, `${code} ${key} should name the menu bar on a Mac`);
+    }
+    i18n.setPlatform(null);
+    assert.doesNotMatch(t("ui.keep-running-in-the-tray"), /menu bar|barra de menús/i);
+  }
+  i18n.setLanguage("en");
+});
+
+test("a Mac wording still counts as the shown translation so a later pass keeps it", () => {
+  i18n.setPlatform("mac");
+  assert.equal(i18n.isShownTranslation("ui.keep-running-in-the-tray", "Keep running in the menu bar"), true);
+  assert.equal(i18n.isShownTranslation("ui.keep-running-in-the-tray", "Keep running in the tray"), true);
+  i18n.setPlatform(null);
+  assert.equal(i18n.isShownTranslation("ui.keep-running-in-the-tray", "Keep running in the menu bar"), false);
+});
+
+test("only a Mac computer gets the Mac wording, not an iPad or other systems", () => {
+  const { wordingPlatform } = require("../scripts/i18n-start.js");
+  assert.equal(wordingPlatform({ platform: "MacIntel", maxTouchPoints: 0 }), "mac");
+  assert.equal(wordingPlatform({ platform: "MacIntel", maxTouchPoints: 5 }), null);
+  assert.equal(wordingPlatform({ platform: "Win32" }), null);
+  assert.equal(wordingPlatform({ platform: "Linux x86_64" }), null);
+  assert.equal(wordingPlatform({ platform: "iPhone", maxTouchPoints: 5 }), null);
+  assert.equal(wordingPlatform(undefined), null);
+});

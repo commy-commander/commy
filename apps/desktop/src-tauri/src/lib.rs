@@ -8819,7 +8819,7 @@ pub fn run() {
                         let _ = toast::show(
                             window.app_handle(),
                             "Commy is still running",
-                            "It lives in the system tray so messages and calls keep arriving. Quit from the tray icon.",
+                            tray::still_running_note(),
                             None,
                         );
                     }
@@ -9276,6 +9276,10 @@ pub fn run() {
             }
             if let tauri::RunEvent::Resumed = event {
                 on_resumed(handle);
+            }
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                tray::show_main_window(handle);
             }
             #[cfg(mobile)]
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = &event {

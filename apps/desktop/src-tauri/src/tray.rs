@@ -101,6 +101,14 @@ pub fn show_main_window(app: &AppHandle) {
     }
 }
 
+pub fn still_running_note() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "It lives in the menu bar so messages and calls keep arriving. Quit from the menu bar icon."
+    } else {
+        "It lives in the system tray so messages and calls keep arriving. Quit from the tray icon."
+    }
+}
+
 #[cfg(mobile)]
 pub fn build(_app: &AppHandle) -> tauri::Result<()> {
     Ok(())
@@ -190,6 +198,16 @@ mod tests {
     fn px(rgba: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * w + x) * 4) as usize;
         [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+    }
+
+    #[test]
+    fn still_running_note_names_where_the_icon_lives_on_this_system() {
+        let note = still_running_note();
+        if cfg!(target_os = "macos") {
+            assert!(note.contains("menu bar") && !note.contains("tray"), "{note}");
+        } else {
+            assert!(note.contains("system tray") && !note.contains("menu bar"), "{note}");
+        }
     }
 
     #[test]

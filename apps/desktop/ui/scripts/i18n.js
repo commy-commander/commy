@@ -2,6 +2,7 @@ const DEFAULT_LANGUAGE = "en";
 
 const locales = {};
 let currentLanguage = DEFAULT_LANGUAGE;
+let currentPlatform = null;
 
 function registerLocale(code, strings) {
   locales[code] = { ...(locales[code] || {}), ...strings };
@@ -24,6 +25,15 @@ function currentLanguageCode() {
   return currentLanguage;
 }
 
+function setPlatform(name) {
+  currentPlatform = name || null;
+  return currentPlatform;
+}
+
+function keysFor(key) {
+  return currentPlatform ? [`${key}.${currentPlatform}`, key] : [key];
+}
+
 function dateLocale() {
   return currentLanguage === DEFAULT_LANGUAGE ? [] : currentLanguage;
 }
@@ -41,8 +51,17 @@ function lookup(key, language) {
   return undefined;
 }
 
+function lookupFirst(keys, language) {
+  for (const key of keys) {
+    const found = lookup(key, language);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function t(key, vars, language = currentLanguage) {
-  const found = lookup(key, language) ?? lookup(key, DEFAULT_LANGUAGE);
+  const keys = keysFor(key);
+  const found = lookupFirst(keys, language) ?? lookupFirst(keys, DEFAULT_LANGUAGE);
   return interpolate(found === undefined ? key : found, vars);
 }
 
@@ -66,7 +85,7 @@ function sameText(a, b) {
 }
 
 function isShownTranslation(key, text) {
-  return Object.values(locales).some(strings => Object.prototype.hasOwnProperty.call(strings, key) && sameText(strings[key], text));
+  return keysFor(key).some(each => Object.values(locales).some(strings => Object.prototype.hasOwnProperty.call(strings, each) && sameText(strings[each], text)));
 }
 
 function missingKeys(code, reference = DEFAULT_LANGUAGE) {
@@ -76,5 +95,5 @@ function missingKeys(code, reference = DEFAULT_LANGUAGE) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { DEFAULT_LANGUAGE, registerLocale, availableLanguages, hasLanguage, setLanguage, currentLanguageCode, dateLocale, interpolate, t, englishFor, isShownTranslation, missingKeys };
+  module.exports = { DEFAULT_LANGUAGE, registerLocale, availableLanguages, hasLanguage, setLanguage, currentLanguageCode, setPlatform, dateLocale, interpolate, t, englishFor, isShownTranslation, missingKeys };
 }
