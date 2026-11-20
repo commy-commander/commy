@@ -426,13 +426,17 @@ async fn sync_tags(app: &App, push: &str, base: &str, today: i64) -> bool {
     });
     let http = app.http.clone();
     let (fresh, kept) = fresh_first(&push, still_needed(&push, today, wanted.clone()));
-    if let Err(done) = register_tags(app, &http, &push, base, today, soonest_first(fresh), FRESH_GAP_MS).await {
+    if let Err(done) = register_tags(app, &http, &push, base, today, soonest_first(fresh), Pass::Fresh).await {
         return done;
+    }
+    if AGAIN.load(Ordering::SeqCst) {
+        tracing::info!("registered the new wake-up tags, then started over for newer settings");
+        return true;
     }
     let forgotten = forget(app, &http, &push, base, today, stale).await;
     let sweep = to_sweep(&push, today, &wanted, servers.unwanted.into_iter().map(|(_, tag)| tag).collect());
     let swept = forget(app, &http, &push, base, today, sweep).await;
-    if let Err(done) = register_tags(app, &http, &push, base, today, kept, REGISTER_GAP_MS).await {
+    if let Err(done) = register_tags(app, &http, &push, base, today, kept, Pass::Kept).await {
         return done;
     }
     forgotten && swept
@@ -443,10 +447,29 @@ fn soonest_first(mut tags: Tagged) -> Tagged {
     tags
 }
 
-async fn register_tags(app: &App, http: &reqwest::Client, push: &str, base: &str, today: i64, tags: Tagged, gap: std::ops::Range<u64>) -> Result<(), bool> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    Fresh,
+    Kept,
+}
+
+impl Pass {
+    fn gap_ms(self) -> std::ops::Range<u64> {
+        match self {
+            Pass::Fresh => FRESH_GAP_MS,
+            Pass::Kept => REGISTER_GAP_MS,
+        }
+    }
+
+    fn yields_to_newer_settings(self) -> bool {
+        self == Pass::Kept
+    }
+}
+
+async fn register_tags(app: &App, http: &reqwest::Client, push: &str, base: &str, today: i64, tags: Tagged, pass: Pass) -> Result<(), bool> {
     let mut registered = 0;
     for ((tag, day), source) in tags {
-        let gap = rand::thread_rng().gen_range(gap.clone());
+        let gap = rand::thread_rng().gen_range(pass.gap_ms());
         tokio::time::sleep(Duration::from_millis(gap)).await;
         let body = WakeRegister { tag: Bytes(tag), push: push.to_string(), until: day };
         match post(http, &format!("{base}/register"), &body).await {
@@ -457,7 +480,7 @@ async fn register_tags(app: &App, http: &reqwest::Client, push: &str, base: &str
                     r.swept.remove(&(tag, day));
                 });
                 save_kept(app, push, today);
-                if AGAIN.load(Ordering::SeqCst) {
+                if pass.yields_to_newer_settings() && AGAIN.load(Ordering::SeqCst) {
                     tracing::info!("registered {registered} wake-up tags, then started over for newer settings");
                     return Err(true);
                 }
@@ -840,6 +863,13 @@ mod tests {
             r.swept.insert(([8; 32], 20_000));
         });
         assert!(to_sweep("fcm:d", 20_000, &wanted, unwanted).is_empty(), "and only once");
+    }
+
+    #[test]
+    fn new_tags_go_out_quickly_and_finish_before_newer_settings_restart_the_pass() {
+        assert!(Pass::Fresh.gap_ms().end <= Pass::Kept.gap_ms().start);
+        assert!(!Pass::Fresh.yields_to_newer_settings(), "a phone that locks soon after starting still gets every new tag signed up");
+        assert!(Pass::Kept.yields_to_newer_settings());
     }
 
     #[test]
