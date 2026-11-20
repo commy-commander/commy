@@ -23,6 +23,7 @@ const REFRESH_EVERY: Duration = Duration::from_secs(15 * 60);
 const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
 const FIRST_CARD_DELAY: Duration = Duration::from_secs(30);
 const CARD_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+const CARD_RETRY_AFTER: Duration = Duration::from_secs(2 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_HOMES_PER_ASK: usize = 100;
 const SIGN_IN_WAIT: Duration = Duration::from_secs(8);
@@ -313,14 +314,22 @@ struct CardReply {
     card: HomeCard,
 }
 
-async fn fetch_card(app: &App) -> Result<Option<HomeCard>, String> {
-    let Some((server, token)) = app.account.lock_or_recover().credentials("home_card") else { return Ok(None) };
-    let Some(identity) = app.identity() else { return Ok(None) };
-    let Some((user, current)) = app.profile.lock_or_recover().as_ref().map(|p| (p.id, p.home.clone())) else { return Ok(None) };
+enum CardFetch {
+    Fine,
+    Fresh(HomeCard),
+    NotReady,
+    Moved,
+    Failed(String),
+}
+
+async fn fetch_card(app: &App) -> CardFetch {
+    let Some((server, token)) = app.account.lock_or_recover().credentials("home_card") else { return CardFetch::NotReady };
+    let Some(identity) = app.identity() else { return CardFetch::NotReady };
+    let Some((user, current)) = app.profile.lock_or_recover().as_ref().map(|p| (p.id, p.home.clone())) else { return CardFetch::NotReady };
     let now = chrono::Utc::now().timestamp_millis();
     let current = current.filter(|card| card.user == user && card.identity == identity.public());
     if !wants_card(current.as_ref(), &server, now) {
-        return Ok(None);
+        return CardFetch::Fine;
     }
     let body = serde_json::json!({
         "user": user.to_string(),
@@ -328,29 +337,43 @@ async fn fetch_card(app: &App) -> Result<Option<HomeCard>, String> {
         "at": now,
         "proof": request_proof(&identity, &server, user, now),
     });
-    let res = app
-        .http
-        .post(format!("{server}/api/auth/commy/home-card"))
-        .bearer_auth(token)
-        .json(&body)
-        .timeout(REQUEST_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("answered {}", res.status()));
+    let res = match app.http.post(format!("{server}/api/auth/commy/home-card")).bearer_auth(token).json(&body).timeout(REQUEST_TIMEOUT).send().await {
+        Ok(res) => res,
+        Err(e) => return CardFetch::Failed(e.to_string()),
+    };
+    if res.status() == reqwest::StatusCode::CONFLICT {
+        return CardFetch::Moved;
     }
-    let card = res.json::<CardReply>().await.map_err(|e| e.to_string())?.card;
-    Ok(fresh_card_fits(&card, &server, user, &identity.public(), now).then_some(card))
+    if !res.status().is_success() {
+        return CardFetch::Failed(format!("answered {}", res.status()));
+    }
+    match res.json::<CardReply>().await {
+        Ok(reply) if fresh_card_fits(&reply.card, &server, user, &identity.public(), now) => CardFetch::Fresh(reply.card),
+        Ok(_) => CardFetch::Failed("the card does not fit this account".into()),
+        Err(e) => CardFetch::Failed(e.to_string()),
+    }
 }
 
-pub async fn renew_home_card(handle: &AppHandle) {
+pub async fn renew_home_card(handle: &AppHandle) -> bool {
     let app = handle.state::<App>();
+    let clearing = crate::account_move::clear_earlier_move_away(&app).await;
     match fetch_card(&app).await {
-        Ok(Some(card)) => crate::set_home_card(&app, handle, card).await,
-        Ok(None) => {}
-        Err(why) => tracing::debug!("home card not renewed: {why}"),
+        CardFetch::Fine => true,
+        CardFetch::Fresh(card) => {
+            crate::set_home_card(&app, handle, card).await;
+            true
+        }
+        CardFetch::NotReady => false,
+        CardFetch::Moved => !clearing,
+        CardFetch::Failed(why) => {
+            tracing::info!("home card not renewed: {why}");
+            false
+        }
     }
+}
+
+fn next_card_check(settled: bool) -> Duration {
+    if settled { CARD_CHECK_EVERY } else { CARD_RETRY_AFTER }
 }
 
 pub fn keep_home_card(handle: &AppHandle) {
@@ -358,9 +381,9 @@ pub fn keep_home_card(handle: &AppHandle) {
     crate::account_session::spawn(async move {
         tokio::time::sleep(FIRST_CARD_DELAY).await;
         loop {
-            renew_home_card(&handle).await;
+            let settled = renew_home_card(&handle).await;
             crate::account_move::check_moved(&handle).await;
-            tokio::time::sleep(CARD_CHECK_EVERY).await;
+            tokio::time::sleep(next_card_check(settled)).await;
         }
     });
 }
@@ -397,6 +420,13 @@ mod tests {
         let refusal = sign_in_refusal("https://blocked.example", true).unwrap();
         assert!(refusal.contains("list of blocked servers"), "{refusal}");
         assert_eq!(sign_in_refusal("https://friends.example", true), None);
+    }
+
+    #[test]
+    fn a_home_card_that_could_not_be_settled_is_tried_again_soon() {
+        assert_eq!(next_card_check(true), CARD_CHECK_EVERY);
+        assert_eq!(next_card_check(false), CARD_RETRY_AFTER);
+        assert!(CARD_RETRY_AFTER < Duration::from_secs(5 * 60), "members see a moved account's new home within minutes");
     }
 
     #[test]

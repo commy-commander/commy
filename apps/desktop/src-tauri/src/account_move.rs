@@ -18,6 +18,7 @@ use crate::state::App;
 
 const TICKET_FILE: &str = "account-move.json";
 const MOVED_IN_FILE: &str = "moved-in.json";
+const CLEAR_POINTER_FILE: &str = "clear-move-pointer.json";
 const TICKET_KEPT_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const LOG_WAIT: Duration = Duration::from_secs(60);
 const ASK_WAIT: Duration = Duration::from_secs(15);
@@ -114,6 +115,50 @@ fn remember_moved_in(dir: &Path, ticket: &Ticket) {
     let moved = MovedIn { from: ticket.from.clone(), to: ticket.to.clone() };
     if let Err(e) = crate::persist::write_secret_json(&dir.join(MOVED_IN_FILE), &moved) {
         tracing::warn!("could not keep the moved in notice: {e}");
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct ClearPointer {
+    home: String,
+}
+
+fn remember_to_clear_pointer(dir: &Path, home: &str) {
+    if let Err(e) = crate::persist::write_secret_json(&dir.join(CLEAR_POINTER_FILE), &ClearPointer { home: home.to_string() }) {
+        tracing::warn!("could not keep the note to clear an earlier move: {e}");
+    }
+}
+
+fn pointer_cleared(status: reqwest::StatusCode) -> bool {
+    status.is_success() || status == reqwest::StatusCode::NOT_FOUND
+}
+
+pub async fn clear_earlier_move_away(app: &App) -> bool {
+    let Some(path) = app.data_dir().map(|dir| dir.join(CLEAR_POINTER_FILE)) else { return false };
+    let Some(marker) = entry_list::read::<ClearPointer>(&path) else { return false };
+    let Some(s) = entry_list::session(app) else { return true };
+    if marker.home != s.server {
+        remove_quietly(&path);
+        return false;
+    }
+    let Some(identity) = app.identity() else { return true };
+    let Some(user) = app.profile.lock_or_recover().as_ref().map(|p| p.id) else { return true };
+    let pointer = MovePointer::sign(&identity, &s.server, &s.server, user, now_ms());
+    let request = entry_list::account_api(app, &s, reqwest::Method::POST, "moved/set").json(&pointer).timeout(ASK_WAIT);
+    match request.send().await {
+        Ok(res) if pointer_cleared(res.status()) => {
+            tracing::info!("this home no longer points away from itself");
+            remove_quietly(&path);
+            false
+        }
+        Ok(res) => {
+            tracing::info!("could not clear an earlier move away from here yet ({})", res.status());
+            true
+        }
+        Err(_) => {
+            tracing::info!("could not clear an earlier move away from here yet: the account server did not answer");
+            true
+        }
     }
 }
 
@@ -253,6 +298,7 @@ pub(crate) async fn move_in_if_due(app: &App, dir: &Path, s: &Session) {
     }
     entry_list::save_key(dir, &s.server, &s.account, &key);
     remember_moved_in(dir, &ticket);
+    remember_to_clear_pointer(dir, &s.server);
     tracing::info!("moved in from {}", ticket.from);
     remove_quietly(&path);
 }
@@ -352,6 +398,17 @@ mod tests {
             state.sync_hosts
         };
         assert_eq!(fold(vec![new.clone(), old.clone()]), fold(vec![old, new]), "an earlier stay's entries replayed first never undo newer ones");
+    }
+
+    #[test]
+    fn moving_back_in_clears_the_note_that_pointed_away() {
+        let me = commy_core::Identity::from_bytes(&[9; 32]);
+        let clear = MovePointer::sign(&me, "https://staging.example.org", "https://staging.example.org", UserId::new(), 5);
+        assert_eq!(clear.from, clear.to, "the account server deletes its pointer when it is told to point at itself");
+        assert!(pointer_cleared(reqwest::StatusCode::OK));
+        assert!(pointer_cleared(reqwest::StatusCode::NOT_FOUND), "an older account server without pointers has nothing to clear");
+        assert!(!pointer_cleared(reqwest::StatusCode::UNAUTHORIZED));
+        assert!(!pointer_cleared(reqwest::StatusCode::BAD_GATEWAY));
     }
 
     #[test]

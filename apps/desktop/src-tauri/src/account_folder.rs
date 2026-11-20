@@ -11,6 +11,7 @@ pub const REMOVE_ON_START_FILE: &str = "remove-on-start.json";
 pub const SEALED_FILES: &[&str] = &[
     "avatar.img",
     "awaiting-snapshot.json",
+    "clear-move-pointer.json",
     "community-sync.json",
     "deleted-servers.json",
     "directory.json",
