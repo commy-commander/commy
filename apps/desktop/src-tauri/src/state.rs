@@ -49,6 +49,8 @@ pub struct VoiceSettings {
     pub afk_timeout_minutes: u32,
     #[serde(default = "default_true")]
     pub share_activity: bool,
+    #[serde(default = "default_true")]
+    pub activity_games_only: bool,
     #[serde(default)]
     pub input_device: Option<String>,
     #[serde(default)]
@@ -162,6 +164,7 @@ impl Default for VoiceSettings {
             stream_volume: 1.0,
             afk_timeout_minutes: default_afk_minutes(),
             share_activity: true,
+            activity_games_only: true,
             input_device: None,
             output_device: None,
             close_to_tray: true,

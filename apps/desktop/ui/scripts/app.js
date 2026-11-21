@@ -1372,6 +1372,7 @@ async function mockInvoke(cmd, args = {}) {
     case "stop_mic_test": mock.micTesting = false; return null;
     case "set_afk_timeout": mock.voice.afk_timeout_minutes = args.minutes; return mock.voice;
     case "set_share_activity": mock.voice.share_activity = args.enabled; return mock.voice;
+    case "set_activity_games_only": mock.voice.activity_games_only = args.enabled; return mock.voice;
     case "set_wait_for_connection": mock.voice.wait_for_connection = args.enabled; return mock.voice;
     case "voice_gate": return { enabled: mock.voice.wait_for_connection !== false, waits: mockVoiceGateWaits() };
     case "list_audio_devices": return { inputs: ["Microphone (Realtek Audio)", "Headset Mic (HyperX Cloud)"], outputs: ["Speakers (Realtek Audio)", "Headphones (HyperX Cloud)"] };
@@ -24129,6 +24130,17 @@ function wireEvents() {
     } catch (err) {
       toast(String(err));
     }
+    showActivitySettings();
+  });
+
+  $("activity-games-only-toggle").addEventListener("change", async e => {
+    try {
+      state.voice = await invoke("set_activity_games_only", { enabled: e.target.checked });
+      toast(e.target.checked ? t("ui.sharing-only-games") : t("ui.sharing-games-and-apps"));
+    } catch (err) {
+      toast(String(err));
+    }
+    showActivitySettings();
   });
 
   setIcon($("pp-avatar-edit"), "pencil", 16);
@@ -25951,6 +25963,13 @@ function refreshOwnPronouns(input) {
   }).catch(() => {});
 }
 
+function showActivitySettings() {
+  const sharing = state.voice.share_activity !== false;
+  $("share-activity-toggle").checked = sharing;
+  $("activity-games-only-toggle").checked = sharesOnlyGames(state.voice);
+  $("activity-games-only-toggle").disabled = !sharing;
+}
+
 function openUserSettings(tab) {
   if (!state.user) return;
   clearSettingsSearch();
@@ -25961,7 +25980,7 @@ function openUserSettings(tab) {
   $("stream-ink-toggle").checked = streamInkSetting();
   $("stream-ink-screen-toggle").checked = streamInkScreen();
   $("afk-timeout").value = String(state.voice.afk_timeout_minutes ?? 10);
-  $("share-activity-toggle").checked = state.voice.share_activity !== false;
+  showActivitySettings();
   $("wait-connection-toggle").checked = state.voice.wait_for_connection !== false;
   loadAudioDevices();
   loadCameraDevices();

@@ -213,6 +213,10 @@ pub fn game_name(activity: &str) -> Option<&str> {
     activity.strip_prefix("Playing ")
 }
 
+pub fn shared_activity(shown: Option<String>, games_only: bool) -> Option<String> {
+    shown.filter(|text| !games_only || game_name(text).is_some())
+}
+
 pub fn shown_activity(front: Option<String>, held_game: Option<&str>) -> Option<String> {
     if front.as_deref().is_some_and(|text| game_name(text).is_some()) {
         return front;
@@ -449,6 +453,28 @@ mod tests {
             Some("Using Firefox".to_string())
         );
         assert_eq!(shown_activity(None, None), None);
+    }
+
+    #[test]
+    fn games_only_hides_other_apps() {
+        assert_eq!(shared_activity(Some("Using Firefox".to_string()), true), None);
+        assert_eq!(
+            shared_activity(Some("Playing Wardogs".to_string()), true),
+            Some("Playing Wardogs".to_string())
+        );
+        assert_eq!(shared_activity(None, true), None);
+    }
+
+    #[test]
+    fn apps_are_shared_when_games_only_is_off() {
+        assert_eq!(
+            shared_activity(Some("Using Firefox".to_string()), false),
+            Some("Using Firefox".to_string())
+        );
+        assert_eq!(
+            shared_activity(Some("Playing Wardogs".to_string()), false),
+            Some("Playing Wardogs".to_string())
+        );
     }
 
     #[test]

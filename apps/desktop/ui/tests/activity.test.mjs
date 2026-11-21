@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { tidyGameName, gameFromActivity, shownActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt } = require("../scripts/activity.js");
+const { tidyGameName, gameFromActivity, shownActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt, sharesOnlyGames } = require("../scripts/activity.js");
 
 const player = (id, game, since, extra = {}) => ({ id, name: id, presence: "online", activity: `Playing ${game}`, activity_since: since, ...extra });
 
@@ -70,4 +70,28 @@ test("the game cards and the Activities picker cards each own their class names,
     const heads = css.match(new RegExp(`^\\.${name} \\{`, "gm")) || [];
     assert.equal(heads.length, 1, `.${name} is declared ${heads.length} times`);
   }
+});
+
+test("activity sharing shows only games unless the person turns that off", () => {
+  assert.equal(sharesOnlyGames({}), true);
+  assert.equal(sharesOnlyGames(null), true);
+  assert.equal(sharesOnlyGames({ activity_games_only: true }), true);
+  assert.equal(sharesOnlyGames({ activity_games_only: false }), false);
+});
+
+test("the games only switch sits under activity sharing and follows it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../scripts/app.js", import.meta.url), "utf8");
+  assert.ok(html.indexOf('id="activity-games-only-toggle"') > html.indexOf('id="share-activity-toggle"'));
+  assert.match(app, /\$\("activity-games-only-toggle"\)\.disabled = !sharing;/);
+  assert.match(app, /invoke\("set_activity_games_only", \{ enabled: e\.target\.checked \}\)/);
+});
+
+test("a long name in the Playing list gives way so the time played stays in view", async () => {
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync(new URL("../styles/studio.css", import.meta.url), "utf8");
+  const rule = css.match(/\.now-card \.acc-text \{([^}]*)\}/);
+  assert.ok(rule, "the Playing card text grid is styled");
+  assert.match(rule[1], /grid-template-columns: minmax\(0, max-content\) max-content;/);
 });

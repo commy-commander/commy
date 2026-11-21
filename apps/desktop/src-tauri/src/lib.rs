@@ -7115,7 +7115,10 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
     loop {
         tokio::time::sleep(ACTIVITY_POLL).await;
         let app = handle.state::<App>();
-        let enabled = app.voice.lock_or_recover().share_activity;
+        let (enabled, games_only) = {
+            let voice = app.voice.lock_or_recover();
+            (voice.share_activity, voice.activity_games_only)
+        };
         let held = app.last_game.lock_or_recover().clone();
         let (seen, pid, held_running) = tokio::task::spawn_blocking(move || {
             let pid = activity::foreground_pid();
@@ -7135,7 +7138,11 @@ async fn run_activity_watcher(handle: tauri::AppHandle) {
         } else {
             overlay::hold_corner(&handle);
         }
-        let seen = if enabled { activity::shown_activity(seen, held_game.as_deref()) } else { None };
+        let seen = if enabled {
+            activity::shared_activity(activity::shown_activity(seen, held_game.as_deref()), games_only)
+        } else {
+            None
+        };
         let stable = if !enabled || seen_last_poll == seen {
             seen.clone()
         } else {
@@ -7289,21 +7296,38 @@ async fn set_share_activity(
 ) -> CmdResult<VoiceSettings> {
     let settings = app.update_voice(|voice| voice.share_activity = enabled);
     if !enabled {
-        let profile = {
-            let mut guard = app.profile.lock_or_recover();
-            guard.as_mut().filter(|p| p.activity.is_some()).map(|p| {
-                p.activity = None;
-                p.activity_cover = None;
-                p.activity_since = None;
-                p.clone()
-            })
-        };
-        if let Some(profile) = profile {
-            announce_profile(&app, &handle, &profile).await;
-            let _ = handle.emit("profile-changed", &profile);
-        }
+        clear_activity_unless(&app, &handle, |_| false).await;
     }
     Ok(settings)
+}
+
+#[tauri::command]
+async fn set_activity_games_only(
+    app: tauri::State<'_, App>,
+    handle: tauri::AppHandle,
+    enabled: bool,
+) -> CmdResult<VoiceSettings> {
+    let settings = app.update_voice(|voice| voice.activity_games_only = enabled);
+    if enabled {
+        clear_activity_unless(&app, &handle, |text| activity::game_name(text).is_some()).await;
+    }
+    Ok(settings)
+}
+
+async fn clear_activity_unless(app: &App, handle: &tauri::AppHandle, keep: impl Fn(&str) -> bool) {
+    let profile = {
+        let mut guard = app.profile.lock_or_recover();
+        guard.as_mut().filter(|p| p.activity.as_deref().is_some_and(|text| !keep(text))).map(|p| {
+            p.activity = None;
+            p.activity_cover = None;
+            p.activity_since = None;
+            p.clone()
+        })
+    };
+    if let Some(profile) = profile {
+        announce_profile(app, handle, &profile).await;
+        let _ = handle.emit("profile-changed", &profile);
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -9162,6 +9186,7 @@ pub fn run() {
             set_avatar,
             set_profile_banner,
             set_share_activity,
+            set_activity_games_only,
             update_channel,
             set_channel_banner,
             set_channel_color,

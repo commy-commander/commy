@@ -803,7 +803,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .now-card .acc-cover {
 }
 html[data-look="studio"]:not([data-fit="slim"]) .now-card .acc-text {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, max-content) max-content;
+  justify-content: start;
   align-items: center;
   gap: 4px 6px;
 }

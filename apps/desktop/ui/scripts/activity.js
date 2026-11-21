@@ -55,11 +55,15 @@ function splitPlaying(members) {
   return { playing, rest };
 }
 
+function sharesOnlyGames(voice) {
+  return !voice || voice.activity_games_only !== false;
+}
+
 function activityArt(person, details) {
   const own = person && person.activity_cover;
   return own || (details && details.cover) || null;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { tidyGameName, gameFromActivity, shownActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt };
+  module.exports = { tidyGameName, gameFromActivity, shownActivity, steamStoreUrl, isShowingActivity, splitPlaying, activityArt, sharesOnlyGames };
 }
