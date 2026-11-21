@@ -199,6 +199,7 @@ const LOCALE_ES = {
   "ui.offline": "desconectado",
   "ui.drag-to-resize-double-click-to-reset": "Arrastra para cambiar el tamaño, doble clic para restablecerlo",
   "ui.resize-channel-list": "Cambiar el tamaño de la lista de canales",
+  "ui.resize-chat": "Cambiar el tamaño del chat",
   "ui.find-or-start-a-conversation": "Busca o empieza una conversación",
   "ui.invite-people": "Invitar a gente",
   "ui.server-settings": "Ajustes del servidor",

@@ -1097,7 +1097,9 @@ html[data-look="studio"]:not([data-fit="slim"]) .vp-actions {
   position: relative;
   z-index: 1;
   order: 2;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: none;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
   gap: 8px;
   margin: calc(4px - 2px * var(--st-hang)) 0 0;
 }
@@ -1287,7 +1289,6 @@ html[data-look="studio"][data-fit="compact"] .vp-voice > .vp-invite,
 html[data-look="studio"][data-fit="compact"] .vp-meter { display: none; }
 html[data-look="studio"][data-fit="compact"] .vp-conn-meta { padding-left: 0; }
 html[data-look="studio"][data-fit="compact"] .vp-signal { display: none; }
-html[data-look="studio"][data-fit="compact"] .vp-actions { grid-template-columns: 1fr 1fr; }
 html[data-look="studio"][data-fit="compact"] .header-actions { flex: 0 1 auto; }
 html[data-look="studio"][data-fit="compact"] .chat-header .search-box { flex: 0 1 184px; }
 html[data-look="studio"]:not([data-fit="slim"]) .voice-channel .channel-label { flex-shrink: 1; }
@@ -1572,8 +1573,15 @@ html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .vp-pill:hover { ba
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .vp-pill.danger,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .vp-pill.danger:hover { background: rgb(var(--lamp) / .07); box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .06); color: var(--danger-text); }
 html[data-look="studio"]:not([data-fit="slim"]) .voice-room { display: none; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open { --vr-dock: clamp(12px, calc(11.4vw - 122px), 96px); --vr-right: calc(var(--st-mr) + var(--st-wing) + var(--st-gap)); grid-template-columns: var(--sidebar-w) minmax(0, 1fr) calc(var(--st-wing) + var(--st-gap)); }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open.vr-folded { grid-template-columns: 0 minmax(0, 1fr) calc(var(--st-wing) + var(--st-gap)); }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open {
+  --vr-dock: clamp(12px, calc(11.4vw - 122px), 96px);
+  --vr-side: var(--sidebar-w);
+  --vr-pill: 880px;
+  --vr-wing: clamp(var(--st-wing), var(--vr-chat, var(--st-wing)), 100vw - var(--st-ml) - var(--st-mr) - var(--vr-side) - var(--st-gap) - var(--vr-pill) - 2 * var(--vr-dock));
+  --vr-right: calc(var(--st-mr) + var(--vr-wing) + var(--st-gap));
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) calc(var(--vr-wing) + var(--st-gap));
+}
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open.vr-folded { grid-template-columns: 0 minmax(0, 1fr) calc(var(--vr-wing) + var(--st-gap)); --vr-side: 0px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open.vr-nochat { --vr-right: var(--st-mr); grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open.vr-folded.vr-nochat { grid-template-columns: 0 minmax(0, 1fr); }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .members,
@@ -1975,13 +1983,14 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel {
   gap: 0;
   height: 66px;
   margin: 0;
-  padding: 0 34px 0 14px;
+  padding: 0 64px 0 14px;
   border-radius: var(--radius-pill);
 }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel.hidden,
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-live,
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-watch,
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-invite { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-invite,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-room-key { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn { display: contents; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn-meta { flex: none; order: 1; box-sizing: border-box; width: 204px; padding-right: 10px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-voice { flex: none; order: 2; gap: 8px; height: 40px; padding: 0 16px; box-shadow: inset 1px 0 0 var(--line), inset -1px 0 0 var(--line); }
@@ -2006,9 +2015,9 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-s
   background: var(--text-faint);
   box-shadow: 0 0 0 2px rgb(var(--dark) / .5);
 }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-meter { position: absolute; top: 20px; right: 48px; height: 24px; margin: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-meter { position: absolute; top: 20px; right: 76px; height: 24px; margin: 0; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn .vp-hangup,
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn .vp-hangup:hover { top: 10px; right: -18px; width: 46px; height: 46px; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn .vp-hangup:hover { top: 10px; right: 10px; width: 46px; height: 46px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main {
   grid-column: 3;
   margin: 0 0 0 var(--st-gap);
@@ -2026,6 +2035,7 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .chat-header {
   font: 700 16.5px/1 var(--font-display);
   letter-spacing: -.01em;
 }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main.has-chat-banner > .chat-header { border-radius: 28px 28px 0 0; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .chat-header .hash { min-width: 15px; margin-right: 0; color: var(--text-muted); font-size: 15px; text-align: center; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .chat-header .hash svg { width: 15px !important; height: 15px !important; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .chat-header #channel-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2053,12 +2063,12 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .msg-time { f
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main .msg-content { font-size: 14px; line-height: 19px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .typing-strip,
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer { margin-left: 14px; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer { min-height: 44px; margin: 0 13px 20px 14px; padding: 0 29px 0 55px; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer::before { inset: 1px 29px 1px 55px; border-radius: 22px; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer { min-height: 44px; margin: 0 12px 20px; padding: 0 50px; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer::before { inset: 1px 50px; border-radius: 22px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer textarea { min-height: 44px; padding: 12px 2px 12px 16px; font-size: 14px; line-height: 20px; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer .composer-attach { left: 7px; width: 42px; height: 42px; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer .composer-attach { left: 0; width: 42px; height: 42px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer .composer-attach::before { width: 12px; height: 12px; background-size: 12px 1.5px, 1.5px 12px; }
-html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer .composer-send { right: -19px; bottom: 1px; width: 42px; height: 42px; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer .composer-send { right: 0; bottom: 1px; width: 42px; height: 42px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer .composer-send > svg { width: 19px !important; height: 19px !important; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer .icon-btn:not(.composer-attach) { width: 30px; height: 30px; margin-bottom: 7px; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .composer #emoji-btn { margin-right: 4px; }
@@ -2070,9 +2080,9 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .awaited-ba
   html[data-look="studio"]:not([data-fit="slim"]) .vr-sub { display: none; }
 }
 @media (max-width: 1240px) {
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open { --st-gap: 22px; }
+  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open { --st-gap: 22px; --vr-pill: 680px; }
   html[data-look="studio"]:not([data-fit="slim"]) .vr-grid { --vr-gap: 12; --vr-row: 36; --vr-seat: 8; padding: 14px 16px 36px; }
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-meter { right: 44px; }
+  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-meter { right: 72px; }
   html[data-look="studio"]:not([data-fit="slim"]) .vr-clock,
   html[data-look="studio"]:not([data-fit="slim"]) .vr-tools #vr-activities,
   html[data-look="studio"]:not([data-fit="slim"]) .vr-tools #vr-full { display: none; }
@@ -2082,7 +2092,7 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .awaited-ba
   html[data-look="studio"]:not([data-fit="slim"]) .vr-card[data-form="seat"] .vr-st { margin-top: 4px; font-size: 12px; }
   html[data-look="studio"]:not([data-fit="slim"]) .vr-card[data-form="seat"] .vr-you { display: none; }
   html[data-look="studio"]:not([data-fit="slim"]) .vr-card[data-form="seat"].speaking .vr-face::after { inset: -3.5px; }
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel { padding: 0 30px 0 12px; }
+  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel { padding: 0 60px 0 12px; }
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn-meta { width: auto; padding: 0 12px 0 0; }
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn-meta .vp-status #vp-status-text,
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-conn-meta .vp-where { display: none; }
@@ -2092,6 +2102,7 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .awaited-ba
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-meter i:nth-child(n+9) { display: none; }
 }
 @media (max-width: 1040px) {
+  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open { --vr-pill: 480px; }
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities > span { display: none; }
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities,
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share { width: 46px; padding: 0; }
@@ -2287,7 +2298,7 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel[data-d
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel .vp-rejoin {
   position: absolute;
   top: 11px;
-  right: -24px;
+  right: 11px;
   z-index: 4;
   gap: 8px;
   height: 44px;
@@ -2457,4 +2468,41 @@ html[data-look="studio"]:not([data-fit="slim"]) .voice-user { transition: backgr
   html[data-look="studio"]:not([data-fit="slim"]) .channel,
   html[data-look="studio"]:not([data-fit="slim"]) .member,
   html[data-look="studio"]:not([data-fit="slim"]) .voice-user { transition: none; }
+}
+html[data-look="studio"]:not([data-fit="slim"]) .main > .vr-chat-grip { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open:not(.vr-nochat) .main > .vr-chat-grip {
+  position: absolute;
+  top: 28px;
+  bottom: 28px;
+  left: calc(-2px - var(--st-gap));
+  z-index: 4;
+  display: block;
+  width: calc(var(--st-gap) + 4px);
+  cursor: col-resize;
+  touch-action: none;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .vr-chat-grip::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 44px;
+  border-radius: 2px;
+  background: var(--text-faint);
+  opacity: .45;
+  translate: -50% -50%;
+  transition: opacity var(--t-hover) ease, background-color var(--t-hover) ease, height var(--t-hover) ease;
+}
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .vr-chat-grip:hover::after,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .vr-chat-grip.dragging::after { height: 72px; background: var(--accent); opacity: .9; }
+html[data-look="studio"]:not([data-fit="slim"]) #settings-btn > svg[data-icon="settings"],
+html[data-look="studio"]:not([data-fit="slim"]) #server-settings-btn > svg[data-icon="settings"] { transition: rotate 420ms cubic-bezier(.34, 1.56, .64, 1); }
+html[data-look="studio"]:not([data-fit="slim"]) #settings-btn:hover > svg[data-icon="settings"],
+html[data-look="studio"]:not([data-fit="slim"]) #settings-btn:focus-visible > svg[data-icon="settings"],
+html[data-look="studio"]:not([data-fit="slim"]) #server-settings-btn:hover > svg[data-icon="settings"],
+html[data-look="studio"]:not([data-fit="slim"]) #server-settings-btn:focus-visible > svg[data-icon="settings"] { rotate: 90deg; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="studio"]:not([data-fit="slim"]) #settings-btn > svg[data-icon="settings"],
+  html[data-look="studio"]:not([data-fit="slim"]) #server-settings-btn > svg[data-icon="settings"] { transition: none; rotate: none; }
 }

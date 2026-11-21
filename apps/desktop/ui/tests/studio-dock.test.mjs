@@ -31,12 +31,14 @@ function fakeNode(tag) {
 
 function fakeDock(look, fit, withRow = true) {
   const row = fakeNode("div");
+  const actions = fakeNode("div");
   const panel = fakeNode("section");
   const toggled = new Set();
   panel.classList = { toggle(name, on) { if (on) toggled.add(name); else toggled.delete(name); }, contains: name => toggled.has(name) };
-  panel.querySelector = selector => (selector === ".vp-voice" && withRow ? row : null);
+  panel.querySelector = selector => (withRow ? { ".vp-voice": row, ".vp-actions": actions }[selector] || null : null);
   return {
     row,
+    actions,
     panel,
     documentElement: { dataset: { ...(look ? { look } : {}), ...(fit ? { fit } : {}) } },
     createElement: fakeNode,
@@ -80,7 +82,7 @@ test("the invite key, the hand key and the level meter are built once and only i
   });
   assert.equal(invite.id, "vp-invite");
   assert.equal(invite.attrs["aria-label"], "Invite");
-  assert.deepEqual(icons, [["hand", 18], ["user-plus", 18]]);
+  assert.deepEqual(icons, [["hand", 18], ["user-plus", 18], ["maximize-2", 18]]);
   assert.deepEqual(doc.row.children.map(child => child.className), ["icon-btn vp-hand-key hidden", "icon-btn vp-invite hidden", "vp-meter"]);
   const meter = doc.row.children[2];
   assert.equal(meter.children.length, STUDIO_DOCK_BARS);
@@ -88,6 +90,20 @@ test("the invite key, the hand key and the level meter are built once and only i
   assert.equal(doc.panel.children.some(child => child.className === "vp-fuse"), false);
   assert.equal(mountStudioDock(doc, null), invite);
   assert.equal(doc.row.children.length, 3);
+  assert.equal(doc.actions.children.length, 1);
+});
+
+test("an Open the room key sits beside Share Screen and Soundboard and hides inside the room", () => {
+  const doc = fakeDock("studio", "roomy");
+  mountStudioDock(doc, () => fakeNode("svg"));
+  const [room] = doc.actions.children;
+  assert.equal(room.id, "vp-room-key");
+  assert.equal(room.className, "vp-activities vp-room-key hidden");
+  assert.equal(room.attrs["aria-label"], "Open the room");
+  assert.match(app, /if \(\$\("vp-room-key"\)\) \$\("vp-room-key"\)\.onclick = showCallGrid;/);
+  assert.match(app, /room\.classList\.toggle\("hidden", Boolean\(call\) \|\| !document\.getElementById\("voice-room"\)\);/);
+  assert.match(css, /#app\.vr-open \.voice-panel \.vp-room-key \{ display: none; \}/);
+  assert.match(css, /\.vp-actions \{\n[^}]*grid-auto-flow: column;/);
 });
 
 test("the meter only moves while somebody in the room is heard", () => {
@@ -150,4 +166,10 @@ test("a key that is on is lit glass with a green lamp, never the switched-off gr
   assert.ok(!block.includes("--mute-k"));
   assert.ok(css.includes(`${desk} .vp-activities.vp-share.active::after {`));
   assert.ok(css.includes("background: var(--glass-hi), var(--glass-key-on);"));
+});
+
+test("the settings cogs turn a quarter on hover, and stay still for reduced motion", () => {
+  assert.match(css, /#settings-btn:hover > svg\[data-icon="settings"\],[\s\S]*?\{ rotate: 90deg; \}/);
+  assert.match(css, /#server-settings-btn:focus-visible > svg\[data-icon="settings"\] \{ rotate: 90deg; \}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\n[^}]*#server-settings-btn > svg\[data-icon="settings"\] \{ transition: none; rotate: none; \}/);
 });

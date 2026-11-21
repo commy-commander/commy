@@ -7450,6 +7450,65 @@ function toggleVoiceRoomFull() {
   else document.documentElement.requestFullscreen().catch(e => toast(String(e)));
 }
 
+function readVoiceRoomChatWidth() {
+  try {
+    return voiceRoomChatWidth(localStorage.getItem(VOICE_ROOM_CHAT.key));
+  } catch {
+    return null;
+  }
+}
+
+function saveVoiceRoomChatWidth(width) {
+  try {
+    if (width == null) localStorage.removeItem(VOICE_ROOM_CHAT.key);
+    else localStorage.setItem(VOICE_ROOM_CHAT.key, String(width));
+  } catch {}
+}
+
+function paintVoiceRoomChatWidth(width) {
+  if (width == null) $("app").style.removeProperty("--vr-chat");
+  else $("app").style.setProperty("--vr-chat", `${width}px`);
+}
+
+function wireVoiceRoomChatResize() {
+  const grip = document.getElementById("vr-chat-grip");
+  if (!grip) return;
+  paintVoiceRoomChatWidth(readVoiceRoomChatWidth());
+  grip.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("dragging");
+    document.body.classList.add("sidebar-resizing");
+    const right = document.querySelector(".main").getBoundingClientRect().right;
+    let width = null;
+    const move = ev => {
+      width = voiceRoomChatWidth(right - ev.clientX);
+      paintVoiceRoomChatWidth(width);
+    };
+    const done = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", done);
+      grip.removeEventListener("pointercancel", done);
+      grip.classList.remove("dragging");
+      document.body.classList.remove("sidebar-resizing");
+      if (width == null) return;
+      const shown = voiceRoomChatWidth(document.querySelector(".main").getBoundingClientRect().width);
+      paintVoiceRoomChatWidth(shown);
+      saveVoiceRoomChatWidth(shown);
+      fitVoiceRoomHint();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", done);
+    grip.addEventListener("pointercancel", done);
+  });
+  grip.addEventListener("dblclick", () => {
+    saveVoiceRoomChatWidth(null);
+    paintVoiceRoomChatWidth(null);
+    fitVoiceRoomHint();
+  });
+}
+
 function wireVoiceRoom() {
   if (!document.getElementById("voice-room")) return;
   $("vr-fold").onclick = () => {
@@ -7470,6 +7529,7 @@ function wireVoiceRoom() {
     voiceRoom.chat = !voiceRoom.chat;
     renderCamGrid();
   };
+  wireVoiceRoomChatResize();
   document.addEventListener("fullscreenchange", () => {
     if (voiceRoom.open) renderCamGrid();
   });
@@ -19485,6 +19545,8 @@ function paintStudioDock() {
   const here = !call && state.view === "server" && state.currentServer && state.currentServer.id === vs.id ? state.currentServer : null;
   const invite = $("vp-invite");
   if (invite) invite.classList.toggle("hidden", !(here && here.can_invite));
+  const room = $("vp-room-key");
+  if (room) room.classList.toggle("hidden", Boolean(call) || !document.getElementById("voice-room"));
 }
 
 function renderVoicePanel() {
@@ -24874,6 +24936,7 @@ function wireEvents() {
   $("vp-watch-label").onclick = showWatchedStream;
   $("vp-disconnect").onclick = disconnectVoice;
   if ($("vp-invite")) $("vp-invite").onclick = () => $("invite-btn").click();
+  if ($("vp-room-key")) $("vp-room-key").onclick = showCallGrid;
   for (const [id, open] of [["mute-btn", key => toggleAudioPop("input", key)], ["deafen-btn", key => toggleAudioPop("output", key)], ["vp-camera", key => toggleVideoPop(key)]]) {
     $(id).addEventListener("contextmenu", e => {
       if (!studioDesk()) return;

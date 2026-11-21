@@ -270,7 +270,27 @@ function mountStudioVoiceRoom(doc, makeIcon) {
     shut.className = "icon-btn vr-wing-x hidden";
     chatHead.appendChild(shut);
   }
+  main.appendChild(voiceRoomChatGrip(doc));
   return room;
+}
+
+const VOICE_ROOM_CHAT = { min: 240, max: 640, key: "commy.voice-room.chat-width" };
+
+function voiceRoomChatWidth(want, size = VOICE_ROOM_CHAT) {
+  const width = Number(want);
+  if (!Number.isFinite(width) || width <= 0) return null;
+  return Math.round(Math.min(size.max, Math.max(size.min, width)));
+}
+
+function voiceRoomChatGrip(doc) {
+  const grip = doc.createElement("div");
+  grip.id = "vr-chat-grip";
+  grip.className = "vr-chat-grip";
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-orientation", "vertical");
+  grip.setAttribute("aria-label", t("ui.resize-chat"));
+  grip.title = t("ui.drag-to-resize-double-click-to-reset");
+  return grip;
 }
 
 const VOICE_ROOM_SOUNDS = { left: 262, tightLeft: 27, lift: 12, tight: 1240, edge: 8 };
@@ -292,5 +312,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, VOICE_ROOM_QUALITY, voiceRoomCols, voiceRoomPlaceRows, voiceRoomTiles, voiceRoomCards, voiceRoomQuarters, voiceRoomExpanded, voiceRoomLayout, voiceRoomQuality, voiceRoomPeople, voiceRoomItems, voiceRoomSub, VOICE_ROOM_SOUNDS, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, mountStudioVoiceRoom };
+  module.exports = { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, VOICE_ROOM_QUALITY, voiceRoomCols, voiceRoomPlaceRows, voiceRoomTiles, voiceRoomCards, voiceRoomQuarters, voiceRoomExpanded, voiceRoomLayout, voiceRoomQuality, voiceRoomPeople, voiceRoomItems, voiceRoomSub, VOICE_ROOM_SOUNDS, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, VOICE_ROOM_CHAT, voiceRoomChatWidth, voiceRoomChatGrip, mountStudioVoiceRoom };
 }

@@ -199,6 +199,7 @@ const LOCALE_EN = {
   "ui.offline": "offline",
   "ui.drag-to-resize-double-click-to-reset": "Drag to resize, double-click to reset",
   "ui.resize-channel-list": "Resize channel list",
+  "ui.resize-chat": "Resize chat",
   "ui.find-or-start-a-conversation": "Find or start a conversation",
   "ui.invite-people": "Invite People",
   "ui.server-settings": "Server Settings",

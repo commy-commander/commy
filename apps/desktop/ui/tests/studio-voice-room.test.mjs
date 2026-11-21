@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
+const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, VOICE_ROOM_CHAT, voiceRoomChatWidth, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
 const { callTiles } = require("../scripts/stream-view.js");
 const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
@@ -382,4 +382,29 @@ test("the stream's size and frame rate show on the Live chip, a double click or 
   assert.equal(laid.mode, "expanded");
   assert.deepEqual(laid.placed.map(spot => spot.key), ["screen:1", "screen:0", "camera:0", "person:0", "person:1", "person:2"]);
   assert.deepEqual(laid.placed.map(spot => spot.form), ["big", "mini", "mini", "mini", "mini", "mini"]);
+});
+
+test("hang up and Rejoin sit inside the room's control pill", () => {
+  assert.ok(css.includes(`${DESK} #app.vr-open .vp-conn .vp-hangup:hover { top: 10px; right: 10px; width: 46px; height: 46px; }`));
+  assert.match(css, /#app\.vr-open \.voice-panel \.vp-rejoin \{\n  position: absolute;\n  top: 11px;\n  right: 11px;/);
+  assert.doesNotMatch(css, /#app\.vr-open[^{]*\.vp-hangup[^{]*\{[^}]*right: -/);
+});
+
+test("the room's chat keeps its banner, plus and send inside its rounded frame", () => {
+  assert.ok(css.includes(`${DESK} #app.vr-open .main.has-chat-banner > .chat-header { border-radius: 28px 28px 0 0; }`));
+  assert.ok(css.includes(`${DESK} #app.vr-open .main > .composer .composer-attach { left: 0;`));
+  assert.ok(css.includes(`${DESK} #app.vr-open .main > .composer .composer-send { right: 0;`));
+});
+
+test("the room's chat width follows a drag, stays in bounds and is remembered", () => {
+  assert.equal(voiceRoomChatWidth(100), VOICE_ROOM_CHAT.min);
+  assert.equal(voiceRoomChatWidth(5000), VOICE_ROOM_CHAT.max);
+  assert.equal(voiceRoomChatWidth(400.6), 401);
+  assert.equal(voiceRoomChatWidth("380"), 380);
+  for (const bad of [null, "", "wide", 0, -20, NaN]) assert.equal(voiceRoomChatWidth(bad), null);
+  assert.match(css, /--vr-wing: clamp\(var\(--st-wing\), var\(--vr-chat, var\(--st-wing\)\), 100vw - [^;]*var\(--vr-pill\)[^;]*\);/);
+  assert.match(css, /--vr-right: calc\(var\(--st-mr\) \+ var\(--vr-wing\) \+ var\(--st-gap\)\);/);
+  assert.match(app, /saveVoiceRoomChatWidth\(shown\);/);
+  assert.match(app, /grip\.addEventListener\("dblclick", \(\) => \{\n    saveVoiceRoomChatWidth\(null\);/);
+  assert.match(app, /localStorage\.getItem\(VOICE_ROOM_CHAT\.key\)/);
 });

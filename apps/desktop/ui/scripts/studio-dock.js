@@ -79,6 +79,8 @@ function mountStudioDock(doc, makeIcon) {
   for (let i = 0; i < STUDIO_DOCK_BARS; i += 1) meter.appendChild(doc.createElement("i"));
   row.prepend(hand);
   row.append(invite, meter);
+  const actions = panel.querySelector(".vp-actions");
+  if (actions) actions.appendChild(studioDockKey(doc, "vp-room-key", "vp-activities vp-room-key hidden", t("ui.open-the-room"), "maximize-2", makeIcon));
   return invite;
 }
 
