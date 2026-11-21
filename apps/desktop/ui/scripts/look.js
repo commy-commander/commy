@@ -133,6 +133,11 @@ function fitWindowZoom() {
   setWindowZoom(view, want);
 }
 
+function setRootData(root, name, value) {
+  if (value && root.dataset[name] !== value) root.dataset[name] = value;
+  else if (!value && name in root.dataset) delete root.dataset[name];
+}
+
 function applyLook() {
   const root = document.documentElement;
   fitWindowZoom();
@@ -144,11 +149,9 @@ function applyLook() {
     phoneApp: root.classList.contains("mobile-app"),
     zoom: lookWindow.zoom,
   });
-  for (const [name, value] of Object.entries(attrs)) {
-    if (value) root.dataset[name] = value;
-    else delete root.dataset[name];
-  }
-  for (const sheet of document.querySelectorAll('link[id^="studio-"]')) sheet.media = attrs.look ? "all" : "not all";
+  for (const [name, value] of Object.entries(attrs)) setRootData(root, name, value);
+  const media = attrs.look ? "all" : "not all";
+  for (const sheet of document.querySelectorAll('link[id^="studio-"]')) if (sheet.media !== media) sheet.media = media;
   return attrs;
 }
 

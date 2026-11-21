@@ -409,14 +409,18 @@ function paintChatBanner() {
 
 const STUDIO_TYPER_FACES = 3;
 
+function setStyleVar(node, name, value) {
+  if (node.style.getPropertyValue(name) !== value) node.style.setProperty(name, value);
+}
+
 function layChatPane() {
   const main = document.querySelector(".main");
   const box = $("messages");
   const shown = box.offsetHeight > 0;
   main.classList.toggle("pt-pane", shown);
   if (!shown) return;
-  main.style.setProperty("--pt-pane-y", `${box.offsetTop}px`);
-  main.style.setProperty("--pt-pane-h", `${box.offsetHeight}px`);
+  setStyleVar(main, "--pt-pane-y", `${box.offsetTop}px`);
+  setStyleVar(main, "--pt-pane-h", `${box.offsetHeight}px`);
 }
 
 function paintReplyNames() {
