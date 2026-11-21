@@ -1033,10 +1033,13 @@ html[data-look="studio"]:not([data-fit="slim"]) .vp-voice > .vp-invite:hover { b
 html[data-look="studio"]:not([data-fit="slim"]) .vp-meter {
   display: flex;
   align-items: flex-end;
+  flex: 0 1 auto;
   gap: 2px;
+  min-width: 0;
   height: 22px;
   margin-left: auto;
   padding: 0 2px;
+  overflow: hidden;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .vp-meter i {
   width: 2.5px;
@@ -2505,4 +2508,11 @@ html[data-look="studio"]:not([data-fit="slim"]) #server-settings-btn:focus-visib
 @media (prefers-reduced-motion: reduce) {
   html[data-look="studio"]:not([data-fit="slim"]) #settings-btn > svg[data-icon="settings"],
   html[data-look="studio"]:not([data-fit="slim"]) #server-settings-btn > svg[data-icon="settings"] { transition: none; rotate: none; }
+}
+html[data-look="studio"]:not([data-fit="slim"]) #app:not(.vr-open) .voice-panel .vp-voice { container: vp-row / inline-size; }
+@container vp-row (max-width: 215px) {
+  html[data-look="studio"]:not([data-fit="slim"]) .vp-voice > .vp-meter { display: none; }
+}
+@container vp-row (max-width: 176px) {
+  html[data-look="studio"]:not([data-fit="slim"]) .vp-voice > .vp-invite { display: none; }
 }

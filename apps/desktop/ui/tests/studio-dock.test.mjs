@@ -173,3 +173,10 @@ test("the settings cogs turn a quarter on hover, and stay still for reduced moti
   assert.match(css, /#server-settings-btn:focus-visible > svg\[data-icon="settings"\] \{ rotate: 90deg; \}/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\n[^}]*#server-settings-btn > svg\[data-icon="settings"\] \{ transition: none; rotate: none; \}/);
 });
+
+test("the level meter and invite key stay inside the voice bar when the channel list is narrow", () => {
+  assert.match(css, /\.vp-meter \{\n  display: flex;\n  align-items: flex-end;\n  flex: 0 1 auto;\n  gap: 2px;\n  min-width: 0;[^}]*overflow: hidden;\n\}/);
+  assert.ok(css.includes('#app:not(.vr-open) .voice-panel .vp-voice { container: vp-row / inline-size; }'));
+  assert.match(css, /@container vp-row \(max-width: 215px\) \{\n[^}]*\.vp-voice > \.vp-meter \{ display: none; \}/);
+  assert.match(css, /@container vp-row \(max-width: 176px\) \{\n[^}]*\.vp-voice > \.vp-invite \{ display: none; \}/);
+});
