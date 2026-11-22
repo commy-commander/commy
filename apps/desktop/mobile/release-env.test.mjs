@@ -46,7 +46,7 @@ test("a release candidate builds as the Commy Beta iPhone app with its own icon,
   assert.equal(parsed.version, "1.0.1");
   assert.equal(parsed.bundle.iOS.bundleVersion, "261122.2300");
   assert.match(parsed.bundle.iOS.infoPlist, /\/mobile\/ios\/beta\/Info\.plist$/);
-  const plist = readFileSync(parsed.bundle.iOS.infoPlist, "utf8");
+  const plist = readFileSync(new URL("./ios/beta/Info.plist", import.meta.url), "utf8");
   assert.match(plist, /<key>CFBundleDisplayName<\/key>\s*<string>Commy Beta<\/string>/);
   assert.match(plist, /<string>commy-beta<\/string>/);
   assert.doesNotMatch(plist, /<string>commy<\/string>/);
