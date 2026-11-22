@@ -415,6 +415,7 @@ html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel .chann
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel :is(.channel-icon, .pt-hash) svg { width: 22px !important; height: 22px !important; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel .hash { display: grid; place-items: center; height: 22px; font-size: 0; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel .pt-hash { display: grid; }
+html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel .hash > svg { display: none; }
 html[data-look="studio"][data-fit="slim"] .pt-hash { display: none; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel > .pt-count { flex: none; min-width: 24px; height: 24px; margin-left: auto; font-size: 13px; }
 html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel .channel-bell:empty { display: none; }

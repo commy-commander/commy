@@ -4354,7 +4354,7 @@ function channelMark(channel, size = 18) {
     return icon;
   }
   const mark = el("span", "hash", "#");
-  const drawn = studioDesk() ? studioIconNode("hash", size, false) : null;
+  const drawn = studioLook() ? studioIconNode("hash", size, false) : null;
   if (drawn) mark.replaceChildren(drawn);
   return mark;
 }

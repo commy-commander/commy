@@ -1415,3 +1415,11 @@ test("a camera tile in the phone voice room plays that camera and your own carri
   assert.match(glue, /watch\(\$\("cam-grid"\), \{ childList: true, subtree: true \}, queueRoomPaint\);/);
   assert.match(css, /\[data-cam-mirror="on"\] \.pt-stream\.cam\.own:not\(\.rear\) \.pic \{ transform: scaleX\(-1\); \}/);
 });
+
+test("a text channel shows one # after the window narrows with the list already drawn", () => {
+  const app = read("scripts", "app.js");
+  assert.match(app, /const drawn = studioLook\(\) \? studioIconNode\("hash", size, false\) : null;/);
+  assert.match(glue, /if \(hash && !hash\.querySelector\("\.pt-hash"\)\) hash\.appendChild\(studioNode\("span", "pt-hash", '<i data-i="hash"><\/i>'\)\);/);
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel .hash > svg { display: none; }\n'));
+  assert.ok(css.includes('html[data-look="studio"][data-fit="slim"] .app[data-pane="list"] .channel .pt-hash { display: grid; }\n'));
+});
