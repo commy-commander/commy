@@ -17,6 +17,51 @@ function mountStudioRoom(doc) {
   return room;
 }
 
+const STUDIO_ROOM_SETTLE_MS = 200;
+
+function roomCoverScale(from, to) {
+  return Math.max(to.width / from.width, to.height / from.height);
+}
+
+function roomHoldHelps(nav) {
+  return Boolean(nav && nav.userAgentData);
+}
+
+const ROOM_CENTRED = "translate(-50%, -50%)";
+
+function holdStudioRoom(room, win) {
+  const art = room.querySelector("svg");
+  if (!art) return null;
+  const hold = { art, drawn: null, settle: 0 };
+  const windowSize = () => ({ width: win.innerWidth, height: win.innerHeight });
+  const release = () => {
+    hold.settle = 0;
+    art.style.width = "100%";
+    art.style.height = "100%";
+    art.style.transform = ROOM_CENTRED;
+    hold.drawn = windowSize();
+  };
+  const follow = () => {
+    const now = windowSize();
+    if (!hold.drawn || !hold.drawn.width || !hold.drawn.height || !now.width || !now.height) {
+      hold.drawn = now;
+      return;
+    }
+    art.style.width = `${hold.drawn.width}px`;
+    art.style.height = `${hold.drawn.height}px`;
+    art.style.transform = `${ROOM_CENTRED} scale(${roomCoverScale(hold.drawn, now)})`;
+    win.clearTimeout(hold.settle);
+    hold.settle = win.setTimeout(release, STUDIO_ROOM_SETTLE_MS);
+  };
+  art.style.position = "absolute";
+  art.style.left = "50%";
+  art.style.top = "50%";
+  art.style.willChange = "transform";
+  release();
+  win.addEventListener("resize", follow);
+  return hold;
+}
+
 function mountStudioStar(doc, star) {
   if (doc.documentElement.dataset.look !== "studio" || !star) return null;
   const present = doc.querySelector(".studio-star");
@@ -46,10 +91,11 @@ function studioStarState(doc, star, state) {
 }
 
 if (typeof document !== "undefined") {
-  mountStudioRoom(document);
+  const studioRoom = mountStudioRoom(document);
+  if (studioRoom && roomHoldHelps(navigator)) holdStudioRoom(studioRoom, window);
   mountStudioStar(document, typeof Star === "undefined" ? null : Star);
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { STUDIO_ROOM_SVG, studioRoomMarkup, mountStudioRoom, mountStudioStar, studioStarState };
+  module.exports = { STUDIO_ROOM_SVG, STUDIO_ROOM_SETTLE_MS, studioRoomMarkup, mountStudioRoom, holdStudioRoom, roomHoldHelps, roomCoverScale, mountStudioStar, studioStarState };
 }
