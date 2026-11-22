@@ -6,7 +6,23 @@ export const EXTENSION = "CommyNotifications";
 export const SPEC = "notifications.yml";
 export const SOURCES = "../../../mobile/ios/notifications";
 export const SOUNDS = "../../../mobile/sounds";
-export const KEYCHAIN_GROUP = "$(AppIdentifierPrefix)chat.commy.mobile.shared";
+export const STORE_BUNDLE_ID = "chat.commy.mobile";
+
+export function keychainGroup(bundleId) {
+  return `$(AppIdentifierPrefix)${bundleId}.shared`;
+}
+
+export function appEntitlements(plist, bundleId) {
+  const storeGroup = `<string>${keychainGroup(STORE_BUNDLE_ID)}</string>`;
+  if (!plist.includes(storeGroup)) throw new Error(`Entitlements.ios.plist has no ${keychainGroup(STORE_BUNDLE_ID)} keychain group`);
+  return plist.replace(storeGroup, `<string>${keychainGroup(bundleId)}</string>`);
+}
+
+export function appBundleId(config, env = process.env) {
+  const bundleId = (env.COMMY_IOS_BUNDLE_ID ?? "").trim() || config.identifier;
+  if (!bundleId) throw new Error("tauri.ios.conf.json has no identifier");
+  return bundleId;
+}
 
 export function appTarget(project) {
   const match = project.match(/^\s*path:\s*["']?([^\s"'/]+)\/([^\s"'/]+)\.entitlements["']?\s*$/m);
@@ -61,7 +77,7 @@ export function notificationSpec({ app, bundleId, team }) {
         },
         entitlements: {
           path: `${EXTENSION}/${EXTENSION}.entitlements`,
-          properties: { "keychain-access-groups": [KEYCHAIN_GROUP] },
+          properties: { "keychain-access-groups": [keychainGroup(bundleId)] },
         },
         settings: { base: settings },
         postBuildScripts: [{ name: "Match the app version", basedOnDependencyAnalysis: false, script: versionScript(app.dir) }],
@@ -88,14 +104,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const apple = here("../src-tauri/gen/apple/");
   const projectPath = `${apple}project.yml`;
   const project = readFileSync(projectPath, "utf8");
-  const bundleId = JSON.parse(readFileSync(here("../src-tauri/tauri.ios.conf.json"), "utf8")).identifier;
-  if (!bundleId) throw new Error("tauri.ios.conf.json has no identifier");
-  const spec = notificationSpec({ app: appTarget(project), bundleId, team: developmentTeam(project) });
+  const bundleId = appBundleId(JSON.parse(readFileSync(here("../src-tauri/tauri.ios.conf.json"), "utf8")));
+  const app = appTarget(project);
+  const spec = notificationSpec({ app, bundleId, team: developmentTeam(project) });
   writeFileSync(`${apple}${SPEC}`, `${JSON.stringify(spec, null, 2)}\n`);
   writeFileSync(projectPath, withInclude(project));
   if (!process.argv.includes("--no-generate")) {
     const made = spawnSync("xcodegen", ["generate", "--spec", "project.yml"], { cwd: apple, stdio: "inherit" });
     if (made.status !== 0) throw new Error("xcodegen could not regenerate the Xcode project");
   }
+  const entitlements = appEntitlements(readFileSync(here("../src-tauri/Entitlements.ios.plist"), "utf8"), bundleId);
+  writeFileSync(`${apple}${app.dir}/${app.name}.entitlements`, entitlements);
+  console.log(`App: ${bundleId}, entitlements ${app.dir}/${app.name}.entitlements`);
   console.log(`Notification extension: ${EXTENSION} (${bundleId}.notifications)`);
 }

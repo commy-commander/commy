@@ -19,10 +19,10 @@ src_tauri="$(cd "$mobile/../src-tauri" && pwd)"
 cd "$src_tauri"
 
 [ -d gen/apple ] || npx tauri ios init --ci
-npx tauri icon ../mobile/app-icon.png
+npx tauri icon "$release_app_icon"
 "$mobile/ios-entitlements.sh"
 
-config="$(printf '{"version":"%s","bundle":{"iOS":{"bundleVersion":"%s"}}}' "$release_app_version" "$build_number")"
+config="$(ios_build_config "$build_number")"
 rm -rf gen/apple/build/arm64
 npx tauri ios build --ci --target aarch64 --export-method app-store-connect --config "$config"
 
@@ -31,6 +31,7 @@ ipa="$(find gen/apple/build/arm64 -name '*.ipa' | head -n 1)"
 out="$src_tauri/gen/apple/build/Commy-$version-$build_number.ipa"
 cp "$ipa" "$out"
 unzip -p "$out" | expect_built_servers "The iOS app"
+unzip -p "$out" 'Payload/*.app/Info.plist' | expect_ios_bundle_id "The iOS app"
 echo "Built $out"
 
 if [[ "$upload" == --testflight ]]; then

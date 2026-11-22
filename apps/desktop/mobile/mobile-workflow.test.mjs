@@ -11,11 +11,13 @@ function stepRun(name) {
   return workflow.slice(start, next < 0 ? undefined : next);
 }
 
-test("a versioned simulator build takes the same servers and version as the signed build of that version", () => {
+test("a versioned simulator build takes the same servers, version and app id as the signed build of that version", () => {
   const step = stepRun("Build the simulator app and an unsigned device app");
   assert.match(step, /if \[ -n "\$APP_VERSION_INPUT" \]; then/);
   assert.match(step, /source \.\.\/mobile\/release-env\.sh "\$APP_VERSION_INPUT"/);
-  assert.match(step, /--config "\$\(printf '\{"version":"%s"\}' "\$release_app_version"\)"/);
+  assert.match(step, /npx tauri icon "\$release_app_icon"/);
+  assert.match(step, /\.\.\/mobile\/ios-entitlements\.sh/);
+  assert.match(step, /--config "\$\(ios_build_config\)"/);
   assert.match(step, /npx tauri ios build --ci --debug --no-sign --target aarch64-sim --target aarch64 "\$\{version_config\[@\]\}"/);
 });
 
@@ -23,4 +25,5 @@ test("a versioned simulator build checks which servers it was built for", () => 
   const step = stepRun("Collect the apps");
   assert.match(step, /source apps\/desktop\/mobile\/release-env\.sh "\$APP_VERSION_INPUT"/);
   assert.match(step, /tar -cf - -C "\$app" \. \| expect_built_servers "The simulator app"/);
+  assert.match(step, /expect_ios_bundle_id "The simulator app" < "\$app\/Info\.plist"/);
 });

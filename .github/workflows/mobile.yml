@@ -362,7 +362,9 @@ jobs:
           version_config=()
           if [ -n "$APP_VERSION_INPUT" ]; then
             source ../mobile/release-env.sh "$APP_VERSION_INPUT"
-            version_config=(--config "$(printf '{"version":"%s"}' "$release_app_version")")
+            npx tauri icon "$release_app_icon"
+            ../mobile/ios-entitlements.sh
+            version_config=(--config "$(ios_build_config)")
           fi
           npx tauri ios build --ci --debug --no-sign --target aarch64-sim --target aarch64 "${version_config[@]}"
 
@@ -405,6 +407,7 @@ jobs:
             if [ -n "$APP_VERSION_INPUT" ]; then
               source apps/desktop/mobile/release-env.sh "$APP_VERSION_INPUT"
               tar -cf - -C "$app" . | expect_built_servers "The simulator app"
+              expect_ios_bundle_id "The simulator app" < "$app/Info.plist"
             fi
             ipa="$(find "$build" -name '*.ipa' | head -n 1)"
             [ -n "$ipa" ] || { echo "no device app was built"; exit 1; }

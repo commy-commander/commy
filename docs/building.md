@@ -92,7 +92,12 @@ Xcode under Signing & Capabilities after `npx tauri ios dev --open`).
 the Apple account signed in to Xcode, and `--testflight` also uploads it, using
 the App Store Connect API key named by `ASC_KEY_ID` and `ASC_ISSUER_ID` with its
 `.p8` in `~/.appstoreconnect/private_keys`. An `-rc` version builds against the
-staging servers.
+staging servers as a separate app, Commy Beta (`chat.commy.mobile.beta`, its
+own icon, its own TestFlight app record and the `commy-beta://` link scheme), so
+testers keep the store app next to it. A final version builds Commy
+(`chat.commy.mobile`). A staging server that wakes the beta app sets
+`APNS_TOPIC=chat.commy.mobile.beta` and lists `chat.commy.mobile.beta` in
+`APPLE_APP_BUNDLE_IDS`.
 
 The "Mobile builds" workflow builds a debug APK on every change to native or
 phone files; iOS builds only when the workflow is run by hand. Its `ios` input

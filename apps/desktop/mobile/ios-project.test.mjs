@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appTarget, developmentTeam, notificationSpec, withInclude, versionScript, EXTENSION, SPEC, SOUNDS, KEYCHAIN_GROUP } from "./ios-project.mjs";
+import { appTarget, appBundleId, appEntitlements, developmentTeam, keychainGroup, notificationSpec, withInclude, versionScript, EXTENSION, SPEC, SOUNDS, STORE_BUNDLE_ID } from "./ios-project.mjs";
 
 const generated = `name: Commy
 options:
@@ -34,7 +34,7 @@ test("the extension is embedded in the app and shares one keychain group with it
   assert.equal(extension.settings.base.PRODUCT_BUNDLE_IDENTIFIER, "chat.commy.mobile.notifications");
   assert.equal(extension.settings.base.DEVELOPMENT_TEAM, "ABCDE12345");
   assert.equal(extension.info.properties.NSExtension.NSExtensionPointIdentifier, "com.apple.usernotifications.service");
-  assert.deepEqual(extension.entitlements.properties["keychain-access-groups"], [KEYCHAIN_GROUP]);
+  assert.deepEqual(extension.entitlements.properties["keychain-access-groups"], ["$(AppIdentifierPrefix)chat.commy.mobile.shared"]);
   assert.deepEqual(spec.targets.Commy_iOS.dependencies, [{ target: EXTENSION, embed: true }]);
   assert.deepEqual(spec.targets.Commy_iOS.sources, [{ path: SOUNDS, buildPhase: "resources" }]);
   const unsigned = notificationSpec({ app: appTarget(generated), bundleId: "chat.commy.mobile", team: null });
@@ -50,7 +50,27 @@ test("the extension takes the app's version from the app's Info.plist", () => {
 test("the app entitlements share the same keychain group", async () => {
   const { readFileSync } = await import("node:fs");
   const plist = readFileSync(new URL("../src-tauri/Entitlements.ios.plist", import.meta.url), "utf8");
-  assert.ok(plist.includes(`<string>${KEYCHAIN_GROUP}</string>`));
+  assert.ok(plist.includes(`<string>${keychainGroup(STORE_BUNDLE_ID)}</string>`));
+  assert.equal(appEntitlements(plist, STORE_BUNDLE_ID), plist);
+});
+
+test("the beta app and its extension keep their own keychain group apart from the store app", async () => {
+  const { readFileSync } = await import("node:fs");
+  const plist = readFileSync(new URL("../src-tauri/Entitlements.ios.plist", import.meta.url), "utf8");
+  const beta = appEntitlements(plist, "chat.commy.mobile.beta");
+  assert.ok(beta.includes("<string>$(AppIdentifierPrefix)chat.commy.mobile.beta.shared</string>"));
+  assert.ok(!beta.includes("<string>$(AppIdentifierPrefix)chat.commy.mobile.shared</string>"));
+  const spec = notificationSpec({ app: appTarget(generated), bundleId: "chat.commy.mobile.beta", team: null });
+  assert.equal(spec.targets[EXTENSION].settings.base.PRODUCT_BUNDLE_IDENTIFIER, "chat.commy.mobile.beta.notifications");
+  assert.deepEqual(spec.targets[EXTENSION].entitlements.properties["keychain-access-groups"], ["$(AppIdentifierPrefix)chat.commy.mobile.beta.shared"]);
+  assert.throws(() => appEntitlements("<plist></plist>", "chat.commy.mobile.beta"), /keychain group/);
+});
+
+test("the build picks the app id from the release, then the Tauri config", () => {
+  assert.equal(appBundleId({ identifier: "chat.commy.mobile" }, { COMMY_IOS_BUNDLE_ID: "chat.commy.mobile.beta" }), "chat.commy.mobile.beta");
+  assert.equal(appBundleId({ identifier: "chat.commy.mobile" }, { COMMY_IOS_BUNDLE_ID: " " }), "chat.commy.mobile");
+  assert.equal(appBundleId({ identifier: "chat.commy.mobile" }, {}), "chat.commy.mobile");
+  assert.throws(() => appBundleId({}, {}), /identifier/);
 });
 
 test("the spec is included once, whatever was there before", () => {

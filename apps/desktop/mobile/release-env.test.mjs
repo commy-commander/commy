@@ -35,6 +35,33 @@ test("a final release keeps the production defaults", () => {
   assert.equal(out, "||1.0.0");
 });
 
+test("a release candidate builds as the Commy Beta iPhone app with its own icon, name and link scheme", () => {
+  const out = sourced("1.0.1-rc.1", 'printf "%s|%s|%s|%s" "$COMMY_IOS_BUNDLE_ID" "$release_app_name" "$(basename "$release_app_icon")" "$(ios_build_config 261122.2300)"');
+  const [bundleId, name, icon, config] = out.split("|");
+  assert.equal(bundleId, "chat.commy.mobile.beta");
+  assert.equal(name, "Commy Beta");
+  assert.equal(icon, "app-icon-beta.png");
+  const parsed = JSON.parse(config);
+  assert.equal(parsed.identifier, "chat.commy.mobile.beta");
+  assert.equal(parsed.version, "1.0.1");
+  assert.equal(parsed.bundle.iOS.bundleVersion, "261122.2300");
+  assert.match(parsed.bundle.iOS.infoPlist, /\/mobile\/ios\/beta\/Info\.plist$/);
+  const plist = readFileSync(parsed.bundle.iOS.infoPlist, "utf8");
+  assert.match(plist, /<key>CFBundleDisplayName<\/key>\s*<string>Commy Beta<\/string>/);
+  assert.match(plist, /<string>commy-beta<\/string>/);
+  assert.doesNotMatch(plist, /<string>commy<\/string>/);
+  assert.ok(readFileSync(new URL("./app-icon-beta.png", import.meta.url)).length > 0);
+});
+
+test("a final release builds the store iPhone app", () => {
+  const out = sourced("1.0.1", 'printf "%s|%s|%s|%s" "$COMMY_IOS_BUNDLE_ID" "$release_app_name" "$(basename "$release_app_icon")" "$(ios_build_config)"');
+  const [bundleId, name, icon, config] = out.split("|");
+  assert.equal(bundleId, "chat.commy.mobile");
+  assert.equal(name, "Commy");
+  assert.equal(icon, "app-icon.png");
+  assert.deepEqual(JSON.parse(config), { identifier: "chat.commy.mobile", version: "1.0.1", bundle: { iOS: {} } });
+});
+
 test("a release candidate that was built without the staging server fails the check", () => {
   assert.notEqual(checkBuilt("1.0.0-rc.8", "https://commy.chat").status, 0);
   assert.equal(checkBuilt("1.0.0-rc.8", "xx https://staging.commy.chat xx").status, 0);
