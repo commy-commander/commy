@@ -11,6 +11,7 @@ pub mod jitter;
 mod loopback;
 pub mod mixer;
 pub mod screen;
+pub mod sound_route;
 #[cfg(windows)]
 pub mod wgc;
 
@@ -22,7 +23,7 @@ pub use devices::{
     InputHandle, OutputHandle,
 };
 #[cfg(target_os = "ios")]
-pub use ios_audio::ask_for_microphone;
+pub use ios_audio::{ask_for_microphone, choose_sound, on_sound_route_change, sound_route, want_speaker};
 pub use jitter::JitterBuffer;
 pub use mixer::Mixer;
 

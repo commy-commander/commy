@@ -99,6 +99,8 @@ pub struct VoiceSettings {
     pub voice_filter: String,
     #[serde(default = "default_true")]
     pub wait_for_connection: bool,
+    #[serde(default)]
+    pub phone_sound: crate::sound_route::PhoneSound,
 }
 
 impl VoiceSettings {
@@ -189,6 +191,7 @@ impl Default for VoiceSettings {
             sensitivity_db: crate::voice_keys::default_sensitivity_db(),
             voice_filter: default_voice_filter(),
             wait_for_connection: true,
+            phone_sound: crate::sound_route::PhoneSound::default(),
         }
     }
 }

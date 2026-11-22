@@ -312,11 +312,13 @@ const ROOM_KEYS = [
   { id: "sounds", get label() { return t("settings.tab.sounds"); }, icon: "music" },
   { id: "camera", get label() { return t("settings.tab.camera"); }, icon: "video-off" },
   { id: "share", get label() { return t("ui.share"); }, icon: "monitor-up" },
+  { id: "speaker", get label() { return t("ui.speaker"); }, icon: "volume-2" },
   { id: "mic", get label() { return t("ui.mic"); }, icon: "mic" },
   { id: "deafen", get label() { return t("ui.deafen"); }, icon: "headphones" },
   { id: "leave", get label() { return t("ui.leave"); }, icon: "phone-off" },
 ];
-const ROOM_LAMPS = ["sounds", "camera", "share", "mic", "deafen"];
+const ROOM_LAMPS = ["sounds", "camera", "share", "speaker", "mic", "deafen"];
+const SOUND_ICONS = { speaker: "volume-2", phone: "smartphone", bluetooth: "bluetooth", wired: "headphones" };
 const SIGNAL_WORDS = { get good() { return t("ui.signal.good"); }, get ok() { return t("ui.signal.fair"); }, get bad() { return t("ui.signal.poor"); } };
 
 function roomTiles(channel, me = {}) {
@@ -373,14 +375,40 @@ function roomKeyState(id, voice = {}) {
   if (id === "camera") return { down: false, off: !voice.camera, on: Boolean(voice.camera), icon: voice.camera ? "video" : "video-off", label: voice.camera ? t("ui.turn-off-camera") : t("ui.turn-on-camera-2") };
   if (id === "sounds") return { down: Boolean(voice.sounds), icon: "music", label: t("ui.soundboard") };
   if (id === "share") return { down: false, on: Boolean(voice.sharing), icon: "monitor-up", label: voice.sharing ? t("ui.stop-sharing-your-screen") : t("ui.share-your-screen-2") };
+  if (id === "speaker") return speakerKeyState(voice.sound);
   return { down: false, icon: "phone", label: t("ui.hang-up") };
+}
+
+function soundIcon(place) {
+  return SOUND_ICONS[place] || "volume-2";
+}
+
+function soundWord(place, name) {
+  if (place === "speaker") return t("ui.speaker");
+  if (place === "phone") return t("ui.sound-phone");
+  return name || t("ui.sound-headphones");
+}
+
+function speakerKeyState(route) {
+  const now = route ? route.now : "speaker";
+  const word = soundWord(now, route && route.name);
+  return { down: false, lit: now !== "phone", icon: soundIcon(now), label: t("ui.sound-output-is", { place: word }), word };
+}
+
+function soundNeedsList(route) {
+  return Boolean(route) && route.choices.length > 2;
+}
+
+function soundTapGoesTo(route) {
+  return route && route.now === "phone" ? "speaker" : "phone";
 }
 
 function canOfferShare({ mobileApp, canShare, iPhone }) {
   return !iPhone && (!mobileApp || Boolean(canShare));
 }
 
-function roomKeyOffered(id, { mobileApp, finePointer, canShare, iPhone }) {
+function roomKeyOffered(id, { mobileApp, finePointer, canShare, iPhone, canPickSound }) {
+  if (id === "speaker") return Boolean(mobileApp && canPickSound);
   if (id !== "share") return true;
   return mobileApp ? canOfferShare({ mobileApp, canShare, iPhone }) : Boolean(finePointer);
 }
@@ -488,6 +516,10 @@ if (typeof module !== "undefined" && module.exports) {
     trayOpens,
     canOfferShare,
     roomKeyOffered,
+    soundIcon,
+    soundWord,
+    soundNeedsList,
+    soundTapGoesTo,
     roomFaces,
     horizonY,
     horizonPath,

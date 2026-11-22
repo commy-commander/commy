@@ -1529,11 +1529,11 @@ html[data-look="studio"][data-fit="slim"] .hzn-room .k.big .key { bottom: 56px; 
 html[data-look="studio"][data-fit="slim"] .hzn-room .key .i { width: 22px; height: 22px; }
 html[data-look="studio"][data-fit="slim"] .hzn-room .k.big .key .i { width: 27px; height: 27px; }
 @media (max-width: 383px) {
-  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden)) { left: 10px; right: 10px; }
-  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden)) .k { width: 48px; }
-  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden)) .k.big { width: 58px; }
-  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden)) .k .key { bottom: 51px; width: 48px; height: 48px; }
-  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden)) .k.big .key { bottom: 58px; width: 58px; height: 58px; }
+  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden ~ .k.hidden)) { left: 10px; right: 10px; }
+  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden ~ .k.hidden)) .k { width: 48px; }
+  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden ~ .k.hidden)) .k.big { width: 58px; }
+  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden ~ .k.hidden)) .k .key { bottom: 51px; width: 48px; height: 48px; }
+  html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden ~ .k.hidden)) .k.big .key { bottom: 58px; width: 58px; height: 58px; }
 }
 html[data-look="studio"][data-fit="slim"] .hzn-room .key.is-on,
 html[data-look="studio"][data-fit="slim"] .hzn-room .key.is-down { background: var(--k-latched); box-shadow: var(--k-latched-shadow); }
@@ -1555,6 +1555,7 @@ html[data-look="studio"][data-fit="slim"] .hzn-room .key .led { background: var(
 html[data-look="studio"][data-fit="slim"] .hzn-room .key[data-room-key="sounds"]:not(.is-down) .led { background: var(--text-faint); }
 html[data-look="studio"][data-fit="slim"] .hzn-room .key[data-room-key="camera"]:not(.is-on) .led { display: none; }
 html[data-look="studio"][data-fit="slim"] .hzn-room .key[data-room-key="share"]:not(.is-on) .led { display: none; }
+html[data-look="studio"][data-fit="slim"] .hzn-room .key[data-room-key="speaker"]:not(.lit) .led { display: none; }
 html[data-look="studio"][data-fit="slim"] .hzn-room .key[data-room-key="mic"]:not(.hand.is-on) .led { display: none; }
 html[data-look="studio"][data-fit="slim"] .hzn-room .lb {
   position: absolute;
@@ -1568,6 +1569,7 @@ html[data-look="studio"][data-fit="slim"] .hzn-room .lb {
   transition: opacity var(--t-hover);
 }
 html[data-look="studio"][data-fit="slim"] .hzn-room .k.big .lb { color: var(--header-primary); font-weight: 700; }
+html[data-look="studio"][data-fit="slim"] .hzn-room .k:has(> [data-room-key="speaker"]) .lb { overflow: hidden; text-overflow: ellipsis; }
 
 html[data-look="studio"][data-fit="slim"] :is(.audio-pop, .soundboard-pop):not(.hidden) {
   left: 8px !important;

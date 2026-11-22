@@ -74,6 +74,7 @@ mod server_wake;
 mod settle;
 mod share_sheet;
 mod sounds;
+mod sound_route;
 mod speech;
 #[cfg(desktop)]
 mod single_instance;
@@ -1872,6 +1873,7 @@ fn start_voice_session(
             serde_json::json!({ "user": user.to_string(), "speaking": speaking }),
         );
     });
+    sound_route::prepare(handle, voice);
     let (mic_tx, mic_rx) = tokio::sync::mpsc::unbounded_channel();
     let mic = match commy_media::start_microphone(app.processor.clone(), mic_tx.clone(), voice.input_device.clone()) {
         Ok(handle) => Some(handle),
@@ -9220,6 +9222,8 @@ pub fn run() {
             speech::speech_stop,
             speech::speech_problem,
             sounds::sound_output,
+            sound_route::sound_route,
+            sound_route::choose_sound,
             sounds::sound_play,
             image_save::save_image,
             sounds::sound_stop,

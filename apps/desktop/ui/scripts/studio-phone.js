@@ -2318,6 +2318,7 @@ function roomVoice() {
     talk: !$("vp-talk").classList.contains("hidden"),
     talking: Boolean(state.talking),
     sharing: Boolean(state.sharing),
+    sound: state.soundRoute || null,
   };
 }
 
@@ -2335,7 +2336,7 @@ function roomOpen() {
 function syncRoomKeys() {
   const voice = roomVoice();
   const call = Boolean(state.voiceServer && state.voiceServer.call);
-  const where = { mobileApp: document.body.classList.contains("mobile-app"), finePointer: window.matchMedia("(any-pointer: fine)").matches, canShare: document.body.classList.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent) };
+  const where = { mobileApp: document.body.classList.contains("mobile-app"), finePointer: window.matchMedia("(any-pointer: fine)").matches, canShare: document.body.classList.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent), canPickSound: Boolean(state.soundRoute) };
   for (const key of document.querySelectorAll("[data-room-key]")) {
     const id = key.dataset.roomKey;
     if (id === "leave") continue;
@@ -2345,12 +2346,17 @@ function syncRoomKeys() {
     key.classList.toggle("is-down", id === "sounds" && now.down);
     key.classList.toggle("is-off", Boolean(now.off));
     key.classList.toggle("is-on", Boolean(now.on) || (now.mode === "hand" && now.down));
+    key.classList.toggle("lit", Boolean(now.lit));
     if (id === "mic") {
       key.classList.toggle("cream", now.mode !== "hand");
       key.classList.toggle("hand", now.mode === "hand");
       key.classList.toggle("talk", now.mode === "talk");
       const word = key.parentNode.querySelector(".lb");
       if (word) word.textContent = now.word || t("ui.mic");
+    }
+    if (id === "speaker") {
+      const word = key.parentNode.querySelector(".lb");
+      if (word) word.textContent = now.word;
     }
     key.setAttribute("aria-label", now.label);
     key.setAttribute("aria-pressed", String(Boolean(now.down)));
@@ -2359,7 +2365,7 @@ function syncRoomKeys() {
       key.querySelector(".i").outerHTML = StudioIcons.markup(now.icon);
     }
     if (id === "camera") (key.closest(".k") || key).classList.toggle("gone", call);
-    if (id === "share") (key.closest(".k") || key).classList.toggle("hidden", !roomKeyOffered(id, where));
+    if (id === "share" || id === "speaker") (key.closest(".k") || key).classList.toggle("hidden", !roomKeyOffered(id, where));
   }
 }
 
@@ -2388,10 +2394,53 @@ function pressRoomKey(id) {
   else if (id === "deafen") $("deafen-btn").click();
   else if (id === "camera") $("vp-camera").click();
   else if (id === "share") $("share-btn").click();
+  else if (id === "speaker") pickSound();
   else if (id === "sounds") {
     if (studioPhone.soundsWereOpen) closeFloating();
     else $("vp-soundboard").click();
   } else if (id === "leave") disconnectVoice();
+}
+
+function applySoundRoute(route) {
+  state.soundRoute = route || null;
+  syncRoomKeys();
+}
+
+async function loadSoundRoute() {
+  const route = await invoke("sound_route").catch(() => null);
+  applySoundRoute(route);
+  return state.soundRoute;
+}
+
+function chooseSound(id) {
+  invoke("choose_sound", { choice: id }).then(applySoundRoute, e => toast(String(e)));
+}
+
+function soundChoiceRow(choice) {
+  const row = studioNode("button", "srow pick", `<i data-i="${soundIcon(choice.place)}"></i><span class="l"></span><i data-i="check" class="tick"></i>`);
+  row.type = "button";
+  row.setAttribute("role", "radio");
+  row.setAttribute("aria-checked", String(choice.on));
+  row.querySelector(".l").textContent = soundWord(choice.place, choice.name);
+  row.onclick = () => closeSheets(() => chooseSound(choice.id));
+  return row;
+}
+
+function soundRows() {
+  return (state.soundRoute ? state.soundRoute.choices : []).map(soundChoiceRow);
+}
+
+async function pickSound() {
+  const route = await loadSoundRoute();
+  if (!route) return;
+  if (soundNeedsList(route)) openPickSheet(t("ui.play-sound-through"), soundRows);
+  else chooseSound(soundTapGoesTo(route));
+}
+
+function wireSoundRoute() {
+  const events = window.__TAURI__ && window.__TAURI__.event;
+  if (events) events.listen("sound-route", event => applySoundRoute(event.payload));
+  loadSoundRoute();
 }
 
 function roomTile(tile) {
@@ -2781,6 +2830,7 @@ function wireRoom() {
   };
   $("pt-voice-scrim").onclick = closeVoiceOptions;
   wireTalkKeys();
+  wireSoundRoute();
   $("pt-voice-sheet").onclick = e => {
     if (e.target.closest("#pt-voice-ink")) {
       setStreamInk(!state.shareInk).then(paintVoiceOptions);

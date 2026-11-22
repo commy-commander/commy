@@ -1237,6 +1237,7 @@ dependencies = [
  "image 0.25.10",
  "objc2",
  "objc2-avf-audio",
+ "objc2-foundation",
  "rayon",
  "thiserror 2.0.21",
  "tokio",
