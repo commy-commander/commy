@@ -11,7 +11,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, messageSwipePull, messageSwipeAction, edgeBackStarts,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, soundIcon, soundWord, soundNeedsList, soundTapGoesTo, MIRROR_FRAME_MS, roomTileStreams, roomCameraTiles, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, roomMenuOffered, roomControl, roomMenuBusy, ROOM_MENU, ROOM_SWITCHES, soundIcon, soundWord, soundNeedsList, soundTapGoesTo, MIRROR_FRAME_MS, roomTileStreams, roomCameraTiles, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => englishSource(readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const css = read("styles", "phone-touch.css");
@@ -72,7 +72,7 @@ test("there are four places, and opening a conversation remembers which one it b
 
 test("one tap on hang up or Leave leaves the call", () => {
   assert.match(glue, /e\.target\.closest\("\.hang"\)\) \{\s+disconnectVoice\(\);\s+return;/);
-  assert.match(glue, /id === "leave"\) disconnectVoice\(\);/);
+  assert.match(glue, /id === "leave"\) \{\n    closeRoomMore\(\);\n    disconnectVoice\(\);/);
   assert.doesNotMatch(glue, /Tap again|armHangUp|disarmHangUp/);
   assert.doesNotMatch(css, /\.armed|hzn-fuse/);
 });
@@ -421,44 +421,55 @@ const lounge = {
 };
 const pioneers = { id: "s1", name: "Pixel Pioneers", channels: [lounge], screen_shares: [{ user: "m1", name: "ferris", channel: "v1" }, { user: "me", name: "commander", channel: "v1" }] };
 
-test("the room has five keys on an iPhone with the microphone in the middle and leaving at the end", () => {
-  const phoneKeys = ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: true, finePointer: false, canShare: false, iPhone: true }));
-  assert.deepEqual(phoneKeys.map(key => key.id), ["sounds", "camera", "mic", "deafen", "leave"]);
-  assert.equal(phoneKeys[Math.floor(phoneKeys.length / 2)].id, "mic");
-  const withSpeaker = ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: true, finePointer: false, canShare: false, iPhone: true, canPickSound: true }));
-  assert.deepEqual(withSpeaker.map(key => key.id), ["sounds", "camera", "speaker", "mic", "deafen", "leave"]);
+test("the room has at most four keys, with More first, the microphone next to last and leaving at the end", () => {
+  const phone = { mobileApp: true, finePointer: false, canShare: false, iPhone: true };
+  assert.deepEqual(ROOM_KEYS.filter(key => roomKeyOffered(key.id, phone)).map(key => key.id), ["more", "mic", "leave"]);
+  const withSpeaker = ROOM_KEYS.filter(key => roomKeyOffered(key.id, { ...phone, canPickSound: true }));
+  assert.deepEqual(withSpeaker.map(key => key.id), ["more", "speaker", "mic", "leave"]);
+  assert.ok(ROOM_KEYS.length <= 4);
   assert.match(glue, /key\.id === "leave" \? "tap danger hang"/);
+  assert.doesNotMatch(css, /\.k\.hidden ~ \.k\.hidden/);
 });
 
-test("a phone that can share its screen gets a Share key in the room, an iPhone does not", () => {
+test("the More menu holds sounds, the camera and deafen switches, and Share where a screen can be shared", () => {
+  assert.deepEqual(ROOM_MENU.map(item => item.id), ["sounds", "camera", "deafen", "share"]);
+  assert.deepEqual(ROOM_SWITCHES, ["camera", "deafen"]);
   const android = { mobileApp: true, finePointer: false, canShare: true, iPhone: false };
-  assert.deepEqual(ROOM_KEYS.filter(key => roomKeyOffered(key.id, android)).map(key => key.id), ["sounds", "camera", "share", "mic", "deafen", "leave"]);
-  assert.equal(roomKeyOffered("share", { ...android, canShare: false }), false);
-  assert.equal(roomKeyOffered("share", { ...android, iPhone: true }), false);
-  assert.equal(roomKeyOffered("share", { mobileApp: true, finePointer: true }), false);
+  assert.deepEqual(ROOM_MENU.filter(item => roomMenuOffered(item.id, android)).map(item => item.id), ["sounds", "camera", "deafen", "share"]);
+  assert.equal(roomMenuOffered("share", { ...android, canShare: false }), false);
+  assert.equal(roomMenuOffered("share", { ...android, iPhone: true }), false);
+  assert.equal(roomMenuOffered("share", { mobileApp: true, finePointer: true }), false);
+  assert.equal(roomMenuOffered("share", { mobileApp: false, finePointer: true }), true);
+  assert.equal(roomMenuOffered("share", { mobileApp: false, finePointer: false, canShare: true }), false);
+  assert.equal(roomMenuOffered("sounds", { mobileApp: true, iPhone: true }), true);
+  assert.equal(roomControl("deafen").label, "Deafen");
+  assert.equal(roomControl("more").label, "More");
   assert.ok(glue.includes('canShare: document.body.classList.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent), canPickSound: Boolean(state.soundRoute) };'));
+  assert.ok(glue.includes('row.classList.toggle("hidden", !roomMenuOffered(id, where) || (id === "camera" && call));'));
+  assert.ok(glue.includes('role="menuitemcheckbox" aria-checked="false" data-room-menu="${item.id}">${label}<i class="tog"></i>'));
+  assert.ok(glue.includes('else if (id === "share") $("share-btn").click();'));
 });
 
-test("six room keys fit a narrow phone: smaller keys and a slimmer edge under 384 wide, only when six keys are shown", () => {
-  const narrow = css.slice(css.indexOf("@media (max-width: 383px) {"));
-  const six = 'html[data-look="studio"][data-fit="slim"] .hzn-room:not(:has(> .k.hidden ~ .k.hidden))';
-  assert.equal(ROOM_KEYS.length, 7);
-  assert.ok(narrow.startsWith(`@media (max-width: 383px) {\n  ${six} { left: 10px; right: 10px; }`));
-  assert.ok(narrow.includes(`${six} .k .key { bottom: 51px; width: 48px; height: 48px; }`));
-  assert.ok(narrow.includes(`${six} .k.big .key { bottom: 58px; width: 58px; height: 58px; }`));
-  const room = edge => 10 * 2 + 48 * 5 + 58 <= edge;
-  assert.ok(room(320));
-  assert.ok(16 * 2 + 52 * 5 + 62 + 6 * 5 <= 384);
+test("More opens its menu as a latched key, lights when anything inside is on, and closes on a tap elsewhere", () => {
+  assert.deepEqual(roomKeyState("more", {}), { down: false, lit: false, icon: "ellipsis", label: "More voice controls" });
+  assert.deepEqual(roomKeyState("more", { more: true }), { down: true, lit: false, icon: "x", label: "More voice controls" });
+  for (const on of [{ deafened: true }, { camera: true }, { sharing: true }]) assert.equal(roomMenuBusy(on), true);
+  assert.equal(roomMenuBusy({ muted: true, sounds: true }), false);
+  assert.equal(roomKeyState("more", { camera: true }).lit, true);
+  assert.ok(glue.includes('else if (id === "more") toggleRoomMore();'));
+  assert.ok(glue.includes(`if (roomMoreOpen() && !e.target.closest('#hzn-more, [data-room-key="more"]')) closeRoomMore();`));
+  assert.ok(glue.includes('key.setAttribute(id === "more" ? "aria-expanded" : "aria-pressed", String(Boolean(now.down)));'));
+  assert.ok(glue.includes('if (!ROOM_SWITCHES.includes(id)) closeRoomMore();'));
+  assert.match(css, rule(' \\.hzn\\.rm \\.hzn-more:not\\(\\.hidden\\)', 'display: flex;'));
+  assert.match(css, rule(' \\.hzn-room \\.key\\[data-room-key="more"\\]:not\\(\\.lit\\) \\.led', 'display: none;'));
 });
 
-test("a desktop or web window with a mouse gets a Share key in the room, touch screens there do not", () => {
-  assert.deepEqual(ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: false, finePointer: true })).map(key => key.id), ["sounds", "camera", "share", "mic", "deafen", "leave"]);
-  assert.equal(roomKeyOffered("share", { mobileApp: false, finePointer: false }), false);
-  assert.equal(roomKeyOffered("share", { mobileApp: false, finePointer: false, canShare: true }), false);
+test("a desktop or web window shows the same keys, and the Share row's words follow the share", () => {
+  assert.deepEqual(ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: false, finePointer: true })).map(key => key.id), ["more", "mic", "leave"]);
   assert.deepEqual(roomKeyState("share", {}), { down: false, on: false, icon: "monitor-up", label: "Share your screen" });
   assert.deepEqual(roomKeyState("share", { sharing: true }), { down: false, on: true, icon: "monitor-up", label: "Stop sharing your screen" });
-  assert.ok(glue.includes('else if (id === "share") $("share-btn").click();'));
-  assert.ok(glue.includes('if (id === "share" || id === "speaker") (key.closest(".k") || key).classList.toggle("hidden", !roomKeyOffered(id, where));'));
+  assert.ok(glue.includes('if (id === "share") row.querySelector(".l").textContent = voice.sharing ? "Stop sharing" : roomControl(id).label;'));
+  assert.ok(glue.includes('if (id === "speaker") (key.closest(".k") || key).classList.toggle("hidden", !roomKeyOffered(id, where));'));
 });
 
 test("a phone that can steer its sound gets a Speaker key, nothing else does", () => {
@@ -466,8 +477,6 @@ test("a phone that can steer its sound gets a Speaker key, nothing else does", (
   assert.equal(roomKeyOffered("speaker", iPhone), false);
   assert.equal(roomKeyOffered("speaker", { ...iPhone, canPickSound: true }), true);
   assert.equal(roomKeyOffered("speaker", { mobileApp: false, finePointer: true, canPickSound: true }), false);
-  const android = ROOM_KEYS.filter(key => roomKeyOffered(key.id, { mobileApp: true, finePointer: false, canShare: true, iPhone: false }));
-  assert.deepEqual(android.map(key => key.id), ["sounds", "camera", "share", "mic", "deafen", "leave"]);
   assert.ok(glue.includes('else if (id === "speaker") pickSound();'));
 });
 
@@ -658,7 +667,7 @@ test("the soundboard tray stays open for the room's own keys, and any other tap 
   assert.equal(trayTap(true, "tray"), "pass");
   assert.equal(trayTap(true, "outside"), "pass");
   for (const place of ["key", "room", "tray", "outside"]) assert.equal(trayTap(false, place), "pass");
-  assert.match(glue, /function trayPlace\(target\) \{\n  if \(!target\.closest\) return "outside";\n  if \(target\.closest\("\[data-room-key\]"\)\) return "key";\n  if \(target\.closest\("\.soundboard-pop"\)\) return "tray";\n  return target\.closest\("#pt-room, \.hzn"\) \? "room" : "outside";/);
+  assert.match(glue, /function trayPlace\(target\) \{\n  if \(!target\.closest\) return "outside";\n  if \(target\.closest\("\[data-room-key\], #hzn-more"\)\) return "key";\n  if \(target\.closest\("\.soundboard-pop"\)\) return "tray";\n  return target\.closest\("#pt-room, \.hzn"\) \? "room" : "outside";/);
   assert.match(glue, /window\.addEventListener\("mousedown", e => \{\n    if \(studioSlim\(\) && trayShown\(\) && trayTap\(true, trayPlace\(e\.target\)\) === "stay"\) e\.stopPropagation\(\);\n  \}, true\);/);
   assert.match(glue, /if \(!studioSlim\(\) \|\| trayTap\(wasOpen, trayPlace\(e\.target\)\) !== "close"\) return;\n    e\.preventDefault\(\);\n    e\.stopPropagation\(\);\n    \$\("soundboard-pop"\)\.classList\.toggle\("hidden", true\);\n  \}, true\);/);
   assert.match(glue, /function trayShown\(\) \{\n  const pop = \$\("soundboard-pop"\);\n  return pop\.classList\.contains\("pt-tray"\) && !pop\.classList\.contains\("hidden"\);/);
@@ -833,9 +842,8 @@ const slim = 'html\\[data-look="studio"\\]\\[data-fit="slim"\\]';
 const rule = (selector, body) => new RegExp(`${slim}${selector} \\{[^}]*${body}`);
 
 test("the room keys carry lamps, deafen shows a slashed headphone, and the camera key knows when it is on", () => {
-  assert.deepEqual(ROOM_LAMPS, ["sounds", "camera", "share", "speaker", "mic", "deafen"]);
+  assert.deepEqual(ROOM_LAMPS, ["more", "speaker", "mic"]);
   assert.match(css, rule(' \\.hzn-room \\.key\\[data-room-key="speaker"\\]:not\\(\\.lit\\) \\.led', 'display: none;'));
-  assert.match(css, rule(' \\.hzn-room \\.key\\[data-room-key="share"\\]:not\\(\\.is-on\\) \\.led', 'display: none;'));
   assert.match(css, rule(' \\.hzn-room \\.key\\[data-room-key="mic"\\]:not\\(\\.hand\\.is-on\\) \\.led', 'display: none;'));
   assert.equal(roomKeyState("deafen", { deafened: true }).icon, "headphone-off");
   assert.equal(roomKeyState("deafen", {}).icon, "headphones");
@@ -937,7 +945,7 @@ test("the tray is the app's own soundboard, moved into the room and put back whe
   assert.match(glue, /studioPhone\.trayHome\.parent\.insertBefore\(pop, studioPhone\.trayHome\.next\);/);
   assert.match(glue, /el\("small", "pt-tray-line", "The whole room hears these\."\)/);
   assert.match(glue, /add\.classList\.toggle\("hidden", \$\("sb-add"\)\.classList\.contains\("hidden"\)\);\n\s+add\.onclick = \(\) => \$\("sb-add"\)\.click\(\);/);
-  assert.match(glue, /if \(!open\) \$\("soundboard-pop"\)\.classList\.toggle\("hidden", true\);/);
+  assert.match(glue, /if \(!open\) \{\n    \$\("soundboard-pop"\)\.classList\.toggle\("hidden", true\);\n    closeRoomMore\(\);/);
   assert.match(glue, /full \? sheetSettles\(dx, speed, SWIPE\.sheetAt\) : swipe\.up && trayOpens\(dx\)/);
 });
 

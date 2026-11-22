@@ -88,7 +88,15 @@ function horizonMarkup() {
 <div class="ks"><button type="button" class="key sq tap mic" aria-label="Mute" data-i18n-aria-label="ui.mute"><i data-i="mic"></i><i class="led"></i></button><button type="button" class="key sq tap danger hang" aria-label="Hang up" data-i18n-aria-label="ui.hang-up"><i data-i="phone-off"></i></button></div>
 <button type="button" class="open" aria-label="Voice controls" data-i18n-aria-label="ui.voice-controls"><i data-i="bars"></i><span class="open-name"></span></button>
 </div>
-<div class="hzn-room">${ROOM_KEYS.map(roomKeyMarkup).join("")}</div>`;
+<div class="hzn-room">${ROOM_KEYS.map(roomKeyMarkup).join("")}</div>
+<div class="hzn-more hidden" id="hzn-more" role="menu" aria-label="More voice controls" data-i18n-aria-label="ui.more-voice-controls">${ROOM_MENU.map(roomMenuMarkup).join("")}</div>`;
+}
+
+function roomMenuMarkup(item) {
+  const label = `<i data-i="${item.icon}"></i><span class="l">${item.label}</span>`;
+  if (ROOM_SWITCHES.includes(item.id)) return `<button type="button" class="arow" role="menuitemcheckbox" aria-checked="false" data-room-menu="${item.id}">${label}<i class="tog"></i></button>`;
+  const end = item.id === "sounds" ? '<i data-i="chevron-right" class="go"></i>' : "";
+  return `<button type="button" class="arow" role="menuitem" data-room-menu="${item.id}">${label}${end}</button>`;
 }
 
 function roomKeyMarkup(key) {
@@ -119,7 +127,7 @@ function roomMarkup() {
 
 function watchMarkup() {
   const key = id => {
-    const spec = ROOM_KEYS.find(found => found.id === id);
+    const spec = roomControl(id);
     return `<button type="button" class="key sq ${id === "mic" ? "lg cream mic" : "tap"}" data-room-key="${id}" aria-label="${spec.label}"><i data-i="${spec.icon}"></i>${id === "deafen" ? '<i class="led"></i>' : ""}</button>`;
   };
   return `<div class="winfo">
@@ -1673,6 +1681,13 @@ function wireHorizon() {
       disconnectVoice();
       return;
     }
+    const menuRow = e.target.closest("[data-room-menu]");
+    if (menuRow) {
+      const id = menuRow.dataset.roomMenu;
+      if (!ROOM_SWITCHES.includes(id)) closeRoomMore();
+      pressRoomKey(id);
+      return;
+    }
     const roomKey = e.target.closest("[data-room-key]");
     if (roomKey) {
       pressRoomKey(roomKey.dataset.roomKey);
@@ -1690,6 +1705,7 @@ function wireHorizon() {
   document.addEventListener("pointerdown", e => {
     studioPhone.soundsWereOpen = !$("soundboard-pop").classList.contains("hidden");
     studioPhone.trayWasOpen = trayShown();
+    if (roomMoreOpen() && !e.target.closest('#hzn-more, [data-room-key="more"]')) closeRoomMore();
   });
   window.addEventListener("mousedown", e => {
     if (studioSlim() && trayShown() && trayTap(true, trayPlace(e.target)) === "stay") e.stopPropagation();
@@ -1704,7 +1720,9 @@ function wireHorizon() {
     $("soundboard-pop").classList.toggle("hidden", true);
   }, true);
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") closeSheets();
+    if (e.key !== "Escape") return;
+    closeRoomMore();
+    closeSheets();
   });
   $("pt-scrim").onclick = () => closeSheets();
   window.addEventListener("popstate", () => {
@@ -2319,6 +2337,7 @@ function roomVoice() {
     talking: Boolean(state.talking),
     sharing: Boolean(state.sharing),
     sound: state.soundRoute || null,
+    more: roomMoreOpen(),
   };
 }
 
@@ -2343,7 +2362,7 @@ function syncRoomKeys() {
     const now = roomKeyState(id, voice);
     const resting = now.mode === "talk" && !now.held;
     key.classList.toggle("muted", resting || ((id === "mic" || id === "deafen") && !now.mode && now.down));
-    key.classList.toggle("is-down", id === "sounds" && now.down);
+    key.classList.toggle("is-down", (id === "sounds" || id === "more") && now.down);
     key.classList.toggle("is-off", Boolean(now.off));
     key.classList.toggle("is-on", Boolean(now.on) || (now.mode === "hand" && now.down));
     key.classList.toggle("lit", Boolean(now.lit));
@@ -2359,14 +2378,37 @@ function syncRoomKeys() {
       if (word) word.textContent = now.word;
     }
     key.setAttribute("aria-label", now.label);
-    key.setAttribute("aria-pressed", String(Boolean(now.down)));
+    key.setAttribute(id === "more" ? "aria-expanded" : "aria-pressed", String(Boolean(now.down)));
     if (key.dataset.shown !== now.icon) {
       key.dataset.shown = now.icon;
       key.querySelector(".i").outerHTML = StudioIcons.markup(now.icon);
     }
     if (id === "camera") (key.closest(".k") || key).classList.toggle("gone", call);
-    if (id === "share" || id === "speaker") (key.closest(".k") || key).classList.toggle("hidden", !roomKeyOffered(id, where));
+    if (id === "speaker") (key.closest(".k") || key).classList.toggle("hidden", !roomKeyOffered(id, where));
   }
+  for (const row of document.querySelectorAll("[data-room-menu]")) {
+    const id = row.dataset.roomMenu;
+    const now = roomKeyState(id, voice);
+    row.classList.toggle("hidden", !roomMenuOffered(id, where) || (id === "camera" && call));
+    if (ROOM_SWITCHES.includes(id)) row.setAttribute("aria-checked", String(Boolean(now.on || now.down)));
+    if (id === "share") row.querySelector(".l").textContent = voice.sharing ? t("ui.stop-sharing") : roomControl(id).label;
+  }
+}
+
+function roomMoreOpen() {
+  const menu = $("hzn-more");
+  return Boolean(menu && !menu.classList.contains("hidden"));
+}
+
+function toggleRoomMore(open = !roomMoreOpen()) {
+  const menu = $("hzn-more");
+  if (!menu) return;
+  menu.classList.toggle("hidden", !open);
+  syncRoomKeys();
+}
+
+function closeRoomMore() {
+  if (roomMoreOpen()) toggleRoomMore(false);
 }
 
 function holdTalk(down) {
@@ -2395,10 +2437,14 @@ function pressRoomKey(id) {
   else if (id === "camera") $("vp-camera").click();
   else if (id === "share") $("share-btn").click();
   else if (id === "speaker") pickSound();
+  else if (id === "more") toggleRoomMore();
   else if (id === "sounds") {
     if (studioPhone.soundsWereOpen) closeFloating();
     else $("vp-soundboard").click();
-  } else if (id === "leave") disconnectVoice();
+  } else if (id === "leave") {
+    closeRoomMore();
+    disconnectVoice();
+  }
 }
 
 function applySoundRoute(route) {
@@ -2616,7 +2662,10 @@ function syncRoomMode() {
   if (h.bar.classList.contains("rm") === open) return;
   h.bar.classList.toggle("rm", open);
   closeVoiceOptions();
-  if (!open) $("soundboard-pop").classList.toggle("hidden", true);
+  if (!open) {
+    $("soundboard-pop").classList.toggle("hidden", true);
+    closeRoomMore();
+  }
   if (open) {
     studioPhone.roomSeen = "";
     paintRoom();
@@ -2725,7 +2774,7 @@ function trayShown() {
 
 function trayPlace(target) {
   if (!target.closest) return "outside";
-  if (target.closest("[data-room-key]")) return "key";
+  if (target.closest("[data-room-key], #hzn-more")) return "key";
   if (target.closest(".soundboard-pop")) return "tray";
   return target.closest("#pt-room, .hzn") ? "room" : "outside";
 }

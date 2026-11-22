@@ -309,15 +309,19 @@ function trayNeedsStep(entry) {
 }
 
 const ROOM_KEYS = [
-  { id: "sounds", get label() { return t("settings.tab.sounds"); }, icon: "music" },
-  { id: "camera", get label() { return t("settings.tab.camera"); }, icon: "video-off" },
-  { id: "share", get label() { return t("ui.share"); }, icon: "monitor-up" },
+  { id: "more", get label() { return t("ui.more"); }, icon: "ellipsis" },
   { id: "speaker", get label() { return t("ui.speaker"); }, icon: "volume-2" },
   { id: "mic", get label() { return t("ui.mic"); }, icon: "mic" },
-  { id: "deafen", get label() { return t("ui.deafen"); }, icon: "headphones" },
   { id: "leave", get label() { return t("ui.leave"); }, icon: "phone-off" },
 ];
-const ROOM_LAMPS = ["sounds", "camera", "share", "speaker", "mic", "deafen"];
+const ROOM_MENU = [
+  { id: "sounds", get label() { return t("settings.tab.sounds"); }, icon: "music" },
+  { id: "camera", get label() { return t("settings.tab.camera"); }, icon: "video" },
+  { id: "deafen", get label() { return t("ui.deafen"); }, icon: "headphones" },
+  { id: "share", get label() { return t("ui.share-screen"); }, icon: "monitor-up" },
+];
+const ROOM_SWITCHES = ["camera", "deafen"];
+const ROOM_LAMPS = ["more", "speaker", "mic"];
 const SOUND_ICONS = { speaker: "volume-2", phone: "smartphone", bluetooth: "bluetooth", wired: "headphones" };
 const SIGNAL_WORDS = { get good() { return t("ui.signal.good"); }, get ok() { return t("ui.signal.fair"); }, get bad() { return t("ui.signal.poor"); } };
 
@@ -376,7 +380,16 @@ function roomKeyState(id, voice = {}) {
   if (id === "sounds") return { down: Boolean(voice.sounds), icon: "music", label: t("ui.soundboard") };
   if (id === "share") return { down: false, on: Boolean(voice.sharing), icon: "monitor-up", label: voice.sharing ? t("ui.stop-sharing-your-screen") : t("ui.share-your-screen-2") };
   if (id === "speaker") return speakerKeyState(voice.sound);
+  if (id === "more") return { down: Boolean(voice.more), lit: roomMenuBusy(voice), icon: voice.more ? "x" : "ellipsis", label: t("ui.more-voice-controls") };
   return { down: false, icon: "phone", label: t("ui.hang-up") };
+}
+
+function roomControl(id) {
+  return ROOM_KEYS.find(key => key.id === id) || ROOM_MENU.find(item => item.id === id);
+}
+
+function roomMenuBusy(voice = {}) {
+  return Boolean(voice.deafened || voice.camera || voice.sharing);
 }
 
 function soundIcon(place) {
@@ -407,8 +420,12 @@ function canOfferShare({ mobileApp, canShare, iPhone }) {
   return !iPhone && (!mobileApp || Boolean(canShare));
 }
 
-function roomKeyOffered(id, { mobileApp, finePointer, canShare, iPhone, canPickSound }) {
+function roomKeyOffered(id, { mobileApp, canPickSound }) {
   if (id === "speaker") return Boolean(mobileApp && canPickSound);
+  return true;
+}
+
+function roomMenuOffered(id, { mobileApp, finePointer, canShare, iPhone }) {
   if (id !== "share") return true;
   return mobileApp ? canOfferShare({ mobileApp, canShare, iPhone }) : Boolean(finePointer);
 }
@@ -516,6 +533,9 @@ if (typeof module !== "undefined" && module.exports) {
     trayOpens,
     canOfferShare,
     roomKeyOffered,
+    roomMenuOffered,
+    roomControl,
+    roomMenuBusy,
     soundIcon,
     soundWord,
     soundNeedsList,
@@ -552,6 +572,8 @@ if (typeof module !== "undefined" && module.exports) {
     quickReactions,
     chatSubtitle,
     ROOM_KEYS,
+    ROOM_MENU,
+    ROOM_SWITCHES,
     trayTap,
     NOTIFY_PICKS,
     chatBanner,

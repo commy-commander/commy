@@ -1850,6 +1850,7 @@ const LOCALE_EN = {
   "ui.more-reactions": "More reactions",
   "ui.more-than-mentions": "More than {n} mentions",
   "ui.more-than-messages-in-seconds": "More than {messages} messages in {seconds} seconds",
+  "ui.more-voice-controls": "More voice controls",
   "ui.move-back-to": "Move back to {value}",
   "ui.move-back-to-the-standard-folder": "Move back to the standard folder?",
   "ui.move-down": "Move {label} down",
