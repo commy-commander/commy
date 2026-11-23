@@ -2631,6 +2631,16 @@
             </div>
             <input type="checkbox" id="auto-update-toggle" class="switch" />
           </label>
+          <div class="settings-card setting-row hidden" id="update-channel-card" data-search="preview nightly channel stable">
+            <div>
+              <div class="setting-title" id="update-channel-label" data-i18n="ui.update-channel">Update channel</div>
+              <div class="setting-sub" id="update-channel-note"></div>
+            </div>
+            <select id="update-channel-select" class="compact-select" aria-labelledby="update-channel-label">
+              <option value="stable" data-i18n="ui.update-channel-stable">Stable</option>
+              <option value="preview" data-i18n="ui.update-channel-preview">Preview</option>
+            </select>
+          </div>
           <h2 class="settings-subhead desktop-only" data-i18n="settings.tab.startup">Startup</h2>
           <label class="settings-card setting-row desktop-only" data-search="minimize close background">
             <div>

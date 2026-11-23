@@ -1,5 +1,10 @@
 name: Release config
 description: Resolve the release version and write the release Tauri config
+inputs:
+  nightly:
+    description: Nightly version to build instead of the tag or app version, e.g. 1.0.1-nightly.20261118.42
+    required: false
+    default: ""
 outputs:
   full:
     description: Full version, e.g. 0.2.0-rc.1
@@ -31,8 +36,12 @@ runs:
     - name: Resolve version
       id: version
       shell: bash
+      env:
+        NIGHTLY: ${{ inputs.nightly }}
       run: |
-        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+        if [[ -n "$NIGHTLY" ]]; then
+          full="$NIGHTLY"
+        elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
           full="${GITHUB_REF_NAME#v}"
         else
           full="$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"

@@ -8414,6 +8414,13 @@ fn set_auto_update(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bo
 }
 
 #[tauri::command]
+fn set_update_channel(app: tauri::State<App>, handle: tauri::AppHandle, channel: updater::UpdateChannel) -> VoiceSettings {
+    let settings = app.update_voice(|voice| voice.update_channel = channel);
+    updater::channel_changed(&handle);
+    settings
+}
+
+#[tauri::command]
 async fn startup_status(handle: tauri::AppHandle) -> CmdResult<startup::StartupView> {
     Ok(startup::current(&handle).await)
 }
@@ -9254,6 +9261,7 @@ pub fn run() {
             get_autostart,
             set_autostart,
             set_auto_update,
+            set_update_channel,
             startup_status,
             startup_continue,
             get_update_status,

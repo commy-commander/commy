@@ -617,6 +617,16 @@ To pause automatic updates, `docker compose stop agent`.
   files, such as the voice pack, under `<folder>/`. It needs `R2_ACCOUNT_ID`,
   `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` (an R2 token with Object Read and
   Write on that bucket only) as repository secrets.
+- **Preview nightlies.** With the repository variable `NIGHTLY_BUILDS` set to `true`,
+  "Desktop release" runs every night at 04:17 UTC from `main` and, when `main` changed
+  since the last one, builds a Preview nightly such as `1.0.1-nightly.20261118.42` (the
+  version after the newest stable). `publish.mjs --nightly <version> <dist-dir>` puts
+  its files under `nightly/<version>/`, moves `nightly/latest.json` last, and keeps the
+  seven newest nightlies. Nightlies use the production servers, skip the forge and
+  GitHub releases and the download page, and reach only desktop apps whose Update
+  channel is Preview. "Run workflow" with "nightly" ticked builds one by hand. With the
+  variable unset, the nightly schedule only rebuilds on Mondays and Thursdays to keep
+  the build caches warm.
 - **GitHub copy.** GitHub keeps a light copy of each final release: after a release
   publishes, `deploy/releases/github-copy.mjs` pushes `main` and the new tag to
   github.com/commy-commander/commy and creates the GitHub release with the forge notes,
@@ -627,7 +637,7 @@ To pause automatic updates, `docker compose stop agent`.
   Contents and Workflows set to Read and write. Actions stay disabled on the GitHub copy.
 - **Desktop update signing.** Installed desktop apps update themselves from
   `https://releases.commy.chat/<channel>/latest.json` (`rc` for test builds, `stable`
-  for the rest),
+  for the rest, and both `nightly` and `stable` for the Preview channel),
   and install only files signed with the key whose public half is
   `plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`. Make the key
   once with `npx @tauri-apps/cli@2 signer generate -w commy-updater.key`, put the

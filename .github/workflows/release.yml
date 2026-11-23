@@ -4,8 +4,13 @@ on:
   push:
     tags: ["v*"]
   schedule:
-    - cron: "17 4 * * 1,4"
+    - cron: "17 4 * * *"
   workflow_dispatch:
+    inputs:
+      nightly:
+        description: Build and publish a Preview nightly from main
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,8 +24,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  plan:
+    name: Plan the build
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      nightly: ${{ steps.plan.outputs.nightly }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            deploy/releases
+            apps/desktop/src-tauri/tauri.conf.json
+          sparse-checkout-cone-mode: false
+
+      - name: Decide what this run builds
+        id: plan
+        env:
+          NIGHTLY_BUILDS: ${{ vars.NIGHTLY_BUILDS }}
+          NIGHTLY_INPUT: ${{ github.event.inputs.nightly }}
+        run: node deploy/releases/nightly.mjs
+
   build:
     name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -105,6 +133,8 @@ jobs:
       - name: Release config
         id: version
         uses: ./.github/actions/release-config
+        with:
+          nightly: ${{ needs.plan.outputs.nightly }}
 
       - name: Windows signing
         id: signing
@@ -124,11 +154,12 @@ jobs:
         env:
           TEST_BUILD: ${{ steps.version.outputs.test_build }}
           FULL_VERSION: ${{ steps.version.outputs.full }}
+          NIGHTLY: ${{ needs.plan.outputs.nightly }}
           AZURE_TENANT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_TENANT_ID || '' }}
           AZURE_CLIENT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_ID || '' }}
           AZURE_CLIENT_SECRET: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          if [ "$GITHUB_REF_TYPE" = tag ] || [ -n "$NIGHTLY" ]; then
             export COMMY_VERSION="$FULL_VERSION"
           fi
           echo "Self-updating version: ${COMMY_VERSION:-none}"
@@ -210,7 +241,8 @@ jobs:
 
   build-macos:
     name: ${{ matrix.name }}
-    if: github.server_url == 'https://github.com' || vars.MAC_BUILDS == 'true'
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && (github.server_url == 'https://github.com' || vars.MAC_BUILDS == 'true')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -266,14 +298,17 @@ jobs:
       - name: Release config
         id: version
         uses: ./.github/actions/release-config
+        with:
+          nightly: ${{ needs.plan.outputs.nightly }}
 
       - name: Build and bundle
         working-directory: apps/desktop/src-tauri
         env:
           TEST_BUILD: ${{ steps.version.outputs.test_build }}
           FULL_VERSION: ${{ steps.version.outputs.full }}
+          NIGHTLY: ${{ needs.plan.outputs.nightly }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          if [ "$GITHUB_REF_TYPE" = tag ] || [ -n "$NIGHTLY" ]; then
             export COMMY_VERSION="$FULL_VERSION"
           fi
           echo "Self-updating version: ${COMMY_VERSION:-none}"
@@ -343,8 +378,8 @@ jobs:
 
   macos-universal:
     name: macOS universal
-    needs: build-macos
-    if: github.server_url == 'https://github.com' || vars.MAC_BUILDS == 'true'
+    needs: [plan, build-macos]
+    if: needs.plan.outputs.build == 'true' && (github.server_url == 'https://github.com' || vars.MAC_BUILDS == 'true')
     runs-on: macos-15-intel
     outputs:
       signed: ${{ steps.signing.outputs.signed }}
@@ -366,6 +401,8 @@ jobs:
       - name: Release config
         id: version
         uses: ./.github/actions/release-config
+        with:
+          nightly: ${{ needs.plan.outputs.nightly }}
 
       - uses: https://data.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4
         with:
@@ -455,10 +492,14 @@ jobs:
 
   streamdeck:
     name: Stream Deck plugin
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.nightly == ''
     uses: ./.github/workflows/streamdeck.yml
 
   bot:
     name: Bot builds
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.nightly == ''
     uses: ./.github/workflows/bot.yml
 
   tagged-from-main:
@@ -478,8 +519,8 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [tagged-from-main, build, build-macos, macos-universal, streamdeck, bot]
-    if: github.ref_type == 'tag' && !cancelled() && !failure()
+    needs: [plan, tagged-from-main, build, build-macos, macos-universal, streamdeck, bot]
+    if: (github.ref_type == 'tag' || needs.plan.outputs.nightly != '') && !cancelled() && !failure()
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -505,6 +546,20 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Name the release
+        id: release
+        env:
+          TAG: ${{ github.ref_name }}
+          NIGHTLY: ${{ needs.plan.outputs.nightly }}
+        run: |
+          if [ -n "$NIGHTLY" ]; then
+            echo "version=$NIGHTLY" >> "$GITHUB_OUTPUT"
+            echo "base=https://releases.commy.chat/nightly/$NIGHTLY" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "base=https://releases.commy.chat/$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Write checksums
         working-directory: dist
         run: sha256sum * | tee SHA256SUMS.txt
@@ -514,19 +569,20 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.release.outputs.version }}
+          BASE: ${{ steps.release.outputs.base }}
         run: |
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "::warning::The TAURI_SIGNING_PRIVATE_KEY secret is not set: no latest.json, so installed apps will not update to $TAG"
             exit 0
           fi
-          version="${TAG#v}"
+          version="$TAG"
           sign() {
             npx --yes "@tauri-apps/cli@${TAURI_CLI_VERSION}" signer sign --app-version "$version" "$1" >/dev/null
             cat "$1.sig"
             rm "$1.sig"
           }
-          base="https://releases.commy.chat/$TAG"
+          base="$BASE"
           platforms='{}'
           add() {
             [ -f "$2" ] || { echo "::warning::$2 is missing, so $1 apps will not update to $TAG"; return 0; }
@@ -537,8 +593,8 @@ jobs:
           add darwin-aarch64 "Commy_${version}_universal.app.tar.gz"
           add darwin-x86_64 "Commy_${version}_universal.app.tar.gz"
           add linux-x86_64-appimage "Commy_${version}_amd64.AppImage"
-          jq -n --arg version "$version" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson platforms "$platforms" \
-            '{version: $version, notes: "Commy \($version)", pub_date: $date, platforms: $platforms}' > latest.json
+          jq -n --arg version "$version" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg commit "$GITHUB_SHA" --argjson platforms "$platforms" \
+            '{version: $version, notes: "Commy \($version)", pub_date: $date, commit: $commit, platforms: $platforms}' > latest.json
           jq . latest.json
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -575,7 +631,7 @@ jobs:
           fi
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: github.server_url == 'https://github.com'
+        if: github.ref_type == 'tag' && github.server_url == 'https://github.com'
         with:
           subject-path: |
             dist/Commy_*
@@ -586,12 +642,19 @@ jobs:
       - name: Publish to releases.commy.chat
         env:
           TAG: ${{ github.ref_name }}
+          NIGHTLY: ${{ needs.plan.outputs.nightly }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        run: node source/deploy/releases/publish.mjs "$TAG" dist
+        run: |
+          if [ -n "$NIGHTLY" ]; then
+            node source/deploy/releases/publish.mjs --nightly "$NIGHTLY" dist
+          else
+            node source/deploy/releases/publish.mjs "$TAG" dist
+          fi
 
       - name: Write the release notes
+        if: github.ref_type == 'tag'
         env:
           TAG: ${{ github.ref_name }}
           ON_GITHUB: ${{ github.server_url == 'https://github.com' }}
@@ -673,7 +736,7 @@ jobs:
           cat notes.md
 
       - name: Create the GitHub release
-        if: github.server_url == 'https://github.com'
+        if: github.ref_type == 'tag' && github.server_url == 'https://github.com'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -684,7 +747,7 @@ jobs:
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --notes-file notes.md "${flags[@]}"
 
       - name: Create the forge release
-        if: github.server_url != 'https://github.com'
+        if: github.ref_type == 'tag' && github.server_url != 'https://github.com'
         env:
           TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}

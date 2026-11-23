@@ -11,9 +11,13 @@ import {
   encodeKey,
   filesPlan,
   manifestProblems,
+  nightlyFolder,
+  nightlyUploadPlan,
+  nightlyVersionsIn,
   parseTag,
   publish,
   publishFiles,
+  publishNightly,
   releaseIndex,
   signRequest,
   uploadPlan,
@@ -142,7 +146,7 @@ test("other files go under their own immutable folder", () => {
 });
 
 test("a file folder can never overwrite a channel or climb out of the bucket", () => {
-  for (const folder of ["stable", "rc", "../x", "a/b", "", undefined, ".hidden"]) assert.throws(() => filesPlan(folder, []));
+  for (const folder of ["stable", "rc", "nightly", "../x", "a/b", "", undefined, ".hidden"]) assert.throws(() => filesPlan(folder, []));
 });
 
 test("a file folder dry run lists every file", async () => {
@@ -170,4 +174,53 @@ test("a real run needs the R2 credentials", async () => {
   const dir = await mkdtemp(join(tmpdir(), "commy-release-"));
   await writeFile(join(dir, "SHA256SUMS.txt"), "x");
   await assert.rejects(publish({ tag: "v0.2.1", dir, env: {}, log: () => {} }), /missing R2_ACCOUNT_ID/);
+});
+
+const nightly = "1.0.1-nightly.20261118.42";
+const nightlyManifest = (version = nightly) => ({
+  version,
+  commit: "abc",
+  platforms: {
+    "windows-x86_64": { url: `https://releases.commy.chat/nightly/${nightly}/Commy_${nightly}_x64-setup.exe`, signature: "sig" },
+  },
+});
+
+test("a nightly keeps its files in its own folder and moves only the nightly pointer", () => {
+  const plan = nightlyUploadPlan({ version: nightly, files: [{ name: `Commy_${nightly}_x64-setup.exe` }, { name: "latest.json" }] });
+  assert.deepEqual(plan.map((step) => step.key), [
+    `nightly/${nightly}/Commy_${nightly}_x64-setup.exe`,
+    `nightly/${nightly}/latest.json`,
+    "nightly/latest.json",
+  ]);
+  assert.equal(plan.at(-1).cacheControl, POINTER);
+  assert.ok(plan.slice(0, -1).every((step) => step.cacheControl === IMMUTABLE));
+});
+
+test("only a nightly version names a nightly folder", () => {
+  assert.equal(nightlyFolder(nightly), `nightly/${nightly}`);
+  for (const version of ["1.0.1", "1.0.1-rc.1", "../stable", "", undefined]) assert.throws(() => nightlyFolder(version));
+});
+
+test("a nightly dry run checks its manifest against the nightly folder", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "commy-nightly-"));
+  await writeFile(join(dir, `Commy_${nightly}_x64-setup.exe`), "exe");
+  await writeFile(join(dir, "latest.json"), JSON.stringify(nightlyManifest()));
+  const plan = await publishNightly({ version: nightly, dir, dryRun: true, log: () => {} });
+  assert.equal(plan.at(-1).key, "nightly/latest.json");
+  await writeFile(join(dir, "latest.json"), JSON.stringify(nightlyManifest("1.0.1-nightly.20261117.41")));
+  await assert.rejects(publishNightly({ version: nightly, dir, dryRun: true, log: () => {} }), /refusing to publish/);
+});
+
+test("a nightly without a signed manifest is refused", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "commy-nightly-"));
+  await writeFile(join(dir, `Commy_${nightly}_x64-setup.exe`), "exe");
+  await assert.rejects(publishNightly({ version: nightly, dir, dryRun: true, log: () => {} }), /no latest.json/);
+});
+
+test("the bucket listing yields only nightly folders", () => {
+  const listing = `<?xml version="1.0"?><ListBucketResult><Prefix>nightly/</Prefix>
+    <CommonPrefixes><Prefix>nightly/1.0.1-nightly.20261117.41/</Prefix></CommonPrefixes>
+    <CommonPrefixes><Prefix>nightly/1.0.1-nightly.20261118.42/</Prefix></CommonPrefixes>
+    <CommonPrefixes><Prefix>nightly/notes/</Prefix></CommonPrefixes></ListBucketResult>`;
+  assert.deepEqual(nightlyVersionsIn(listing), ["1.0.1-nightly.20261117.41", "1.0.1-nightly.20261118.42"]);
 });

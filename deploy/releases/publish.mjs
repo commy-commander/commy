@@ -2,6 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { NIGHTLY, isNightlyVersion, nightliesToPrune } from "./nightly.mjs";
 
 export const PUBLIC_BASE = "https://releases.commy.chat";
 export const DOWNLOAD_PAGE = "https://commy.chat/download";
@@ -58,12 +59,15 @@ export function releaseIndex({ tag, publishedAt, files }) {
 }
 
 export function manifestProblems(manifest, tag, names) {
-  const { version } = parseTag(tag);
+  return manifestProblemsAt(manifest, { version: parseTag(tag).version, folder: tag, names });
+}
+
+export function manifestProblemsAt(manifest, { version, folder, names }) {
   const problems = [];
-  if (manifest?.version !== version) problems.push(`${MANIFEST} says version ${manifest?.version}, the tag says ${version}`);
+  if (manifest?.version !== version) problems.push(`${MANIFEST} says version ${manifest?.version}, the release is ${version}`);
   const platforms = Object.entries(manifest?.platforms ?? {});
   if (platforms.length === 0) problems.push(`${MANIFEST} lists no platforms`);
-  const prefix = publicUrl(`${tag}/`);
+  const prefix = publicUrl(`${folder}/`);
   for (const [platform, entry] of platforms) {
     const url = entry?.url ?? "";
     if (!url.startsWith(prefix)) {
@@ -74,6 +78,17 @@ export function manifestProblems(manifest, tag, names) {
     if (!entry?.signature) problems.push(`${platform} has no signature`);
   }
   return problems;
+}
+
+export function nightlyFolder(version) {
+  if (!isNightlyVersion(version)) throw new Error(`not a nightly version: ${version}`);
+  return `${NIGHTLY}/${version}`;
+}
+
+export function nightlyUploadPlan({ version, files }) {
+  const folder = nightlyFolder(version);
+  const versioned = files.map((file) => ({ key: `${folder}/${file.name}`, file: file.name, cacheControl: IMMUTABLE, contentType: contentType(file.name) }));
+  return [...versioned, { key: `${NIGHTLY}/${MANIFEST}`, file: MANIFEST, cacheControl: POINTER, contentType: contentType(MANIFEST) }];
 }
 
 export function uploadPlan({ tag, files, publishedAt }) {
@@ -99,7 +114,7 @@ export function uploadPlan({ tag, files, publishedAt }) {
   return [...versioned, ...copies, index, ...manifest];
 }
 
-const CHANNELS = ["stable", "rc"];
+const CHANNELS = ["stable", "rc", NIGHTLY];
 
 export function filesPlan(folder, files) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(folder ?? "") || CHANNELS.includes(folder)) throw new Error(`not a file folder: ${folder}`);
@@ -180,20 +195,56 @@ function credentialsFrom(env) {
   };
 }
 
+async function sendToR2(credentials, { method, path, query = "", headers = {}, body = "", what }) {
+  const url = `${credentials.endpoint}/${credentials.bucket}${path}${query}`;
+  const signed = signRequest({ method, url, body, headers, accessKeyId: credentials.accessKeyId, secretAccessKey: credentials.secretAccessKey });
+  const response = await fetch(url, { method, headers: signed, body: method === "PUT" ? body : undefined }).catch((error) => {
+    throw new Error(`${what}: could not reach R2 (${error.cause?.code ?? error.cause?.message ?? error.message})`);
+  });
+  if (!response.ok) throw new Error(`${what}: R2 answered ${response.status} ${await response.text()}`);
+  return response;
+}
+
 async function upload(credentials, step, body) {
-  const url = `${credentials.endpoint}/${credentials.bucket}/${encodeKey(step.key)}`;
-  const headers = signRequest({
+  await sendToR2(credentials, {
     method: "PUT",
-    url,
-    body,
+    path: `/${encodeKey(step.key)}`,
     headers: { "content-type": step.contentType, "cache-control": step.cacheControl },
-    accessKeyId: credentials.accessKeyId,
-    secretAccessKey: credentials.secretAccessKey,
+    body,
+    what: step.key,
   });
-  const response = await fetch(url, { method: "PUT", headers, body }).catch((error) => {
-    throw new Error(`${step.key}: could not reach R2 (${error.cause?.code ?? error.cause?.message ?? error.message})`);
-  });
-  if (!response.ok) throw new Error(`${step.key}: R2 answered ${response.status} ${await response.text()}`);
+}
+
+const XML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+export function xmlValues(xml, tag) {
+  return [...xml.matchAll(new RegExp(`<${tag}>([^<]*)</${tag}>`, "g"))].map((match) => match[1].replace(/&(amp|lt|gt|quot|apos);/g, (_, name) => XML_ENTITIES[name]));
+}
+
+async function listBucket(credentials, { prefix, delimiter }) {
+  const params = [["delimiter", delimiter], ["list-type", "2"], ["prefix", prefix]].filter(([, value]) => value);
+  const query = `?${params.map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`).join("&")}`;
+  const response = await sendToR2(credentials, { method: "GET", path: "", query, what: `listing ${prefix}` });
+  return response.text();
+}
+
+export function nightlyVersionsIn(listing) {
+  const folder = `${NIGHTLY}/`;
+  return xmlValues(listing, "Prefix")
+    .filter((prefix) => prefix.startsWith(folder) && prefix.endsWith("/"))
+    .map((prefix) => prefix.slice(folder.length, -1))
+    .filter(isNightlyVersion);
+}
+
+async function pruneNightlies(credentials, { keep, log }) {
+  const versions = nightlyVersionsIn(await listBucket(credentials, { prefix: `${NIGHTLY}/`, delimiter: "/" }));
+  for (const version of nightliesToPrune(versions, keep)) {
+    const keys = xmlValues(await listBucket(credentials, { prefix: `${nightlyFolder(version)}/` }), "Key");
+    for (const key of keys) {
+      await sendToR2(credentials, { method: "DELETE", path: `/${encodeKey(key)}`, what: `removing ${key}` });
+    }
+    log(`removed the old nightly ${version} (${keys.length} files)`);
+  }
 }
 
 const UPLOAD_ATTEMPTS = 3;
@@ -228,6 +279,21 @@ export async function publishFiles({ folder, dir, env = process.env, dryRun = fa
   return plan;
 }
 
+export async function publishNightly({ version, dir, env = process.env, dryRun = false, keep, log = console.log }) {
+  const files = await readDist(dir);
+  const names = files.map((file) => file.name);
+  if (!names.includes(MANIFEST)) throw new Error(`refusing to publish ${version}: no ${MANIFEST}, so no installed app could update to it`);
+  const problems = manifestProblemsAt(JSON.parse(await readFile(join(dir, MANIFEST), "utf8")), { version, folder: nightlyFolder(version), names });
+  if (problems.length) throw new Error(`refusing to publish:\n${problems.join("\n")}`);
+  const plan = nightlyUploadPlan({ version, files });
+  await uploadAll(plan, dir, { env, dryRun, log });
+  log(`${version} is live at ${publicUrl(`${NIGHTLY}/${MANIFEST}`)}`);
+  if (!dryRun) {
+    await pruneNightlies(credentialsFrom(env), { keep, log }).catch((error) => log(`warning: old nightlies were not removed: ${error.message}`));
+  }
+  return plan;
+}
+
 export async function publish({ tag, dir, env = process.env, dryRun = false, log = console.log }) {
   const files = await readDist(dir);
   if (files.length === 0) throw new Error(`${dir} has no files`);
@@ -250,12 +316,17 @@ if (isMain) {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const filesMode = args.includes("--files");
-  const [name, dir] = args.filter((arg) => arg !== "--dry-run" && arg !== "--files");
+  const nightlyMode = args.includes("--nightly");
+  const [name, dir] = args.filter((arg) => !["--dry-run", "--files", "--nightly"].includes(arg));
   if (!name || !dir) {
-    console.error("usage: node deploy/releases/publish.mjs [--files] <tag-or-folder> <dir> [--dry-run]");
+    console.error("usage: node deploy/releases/publish.mjs [--files | --nightly] <tag-folder-or-version> <dir> [--dry-run]");
     process.exit(2);
   }
-  const run = filesMode ? publishFiles({ folder: name, dir, dryRun }) : publish({ tag: name, dir, dryRun });
+  const run = filesMode
+    ? publishFiles({ folder: name, dir, dryRun })
+    : nightlyMode
+      ? publishNightly({ version: name, dir, dryRun })
+      : publish({ tag: name, dir, dryRun });
   run.catch((error) => {
     console.error(error.message);
     process.exit(1);

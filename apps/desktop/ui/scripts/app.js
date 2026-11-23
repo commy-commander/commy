@@ -1063,10 +1063,11 @@ async function mockInvoke(cmd, args = {}) {
     }
     case "get_voice_settings": return mock.voice;
     case "set_auto_update": mock.voice.auto_update = args.enabled; return mock.voice;
+    case "set_update_channel": mock.voice.update_channel = args.channel; return mock.voice;
     case "startup_status":
     case "startup_continue":
       return startupPreview(new URLSearchParams(location.search).get("startup"), Date.now() - (mock.startupAt || (mock.startupAt = Date.now())));
-    case "get_update_status": return mock.update || (mock.update = { current: "0.1.0", can_install: true, reason: null, phase: "idle", version: null, progress: null, checked_at: null, error: null, page: null });
+    case "get_update_status": return mock.update || (mock.update = { current: "0.1.0", can_install: true, can_choose_channel: true, reason: null, phase: "idle", version: null, progress: null, checked_at: null, error: null, page: null });
     case "check_for_updates": mock.update = { ...mock.update, phase: "up_to_date", checked_at: Math.floor(Date.now() / 1000) }; return mock.update;
     case "restart_to_update": return null;
     case "set_noise_cancellation": mock.voice.noise_cancellation = args.enabled; return mock.voice;
@@ -11865,6 +11866,23 @@ function renderUpdateStatus() {
   toggle.checked = state.voice ? state.voice.auto_update !== false : true;
   toggle.disabled = !s.can_install;
   toggle.closest(".settings-card").classList.toggle("readonly", !s.can_install);
+  renderUpdateChannel(s);
+}
+
+function renderUpdateChannel(s) {
+  const channel = (state.voice && state.voice.update_channel) || "stable";
+  $("update-channel-card").classList.toggle("hidden", !s.can_choose_channel);
+  $("update-channel-select").value = channel;
+  $("update-channel-note").textContent = channelNote(s, channel);
+}
+
+async function chooseUpdateChannel(channel) {
+  try {
+    state.voice = await invoke("set_update_channel", { channel });
+  } catch (err) {
+    toast(String(err));
+  }
+  renderUpdateStatus();
 }
 
 async function runUpdateAction() {
@@ -24754,6 +24772,7 @@ function wireEvents() {
     }
     renderUpdateStatus();
   });
+  $("update-channel-select").addEventListener("change", e => chooseUpdateChannel(e.target.value));
   $("update-action").onclick = runUpdateAction;
   $("update-chip-open").onclick = runUpdateChip;
   $("update-chip-close").onclick = dismissUpdateChip;

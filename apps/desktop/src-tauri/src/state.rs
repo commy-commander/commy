@@ -82,6 +82,8 @@ pub struct VoiceSettings {
     #[serde(default = "default_true")]
     pub auto_update: bool,
     #[serde(default)]
+    pub update_channel: crate::updater::UpdateChannel,
+    #[serde(default)]
     pub input_mode: crate::voice_keys::InputMode,
     #[serde(default = "crate::voice_keys::default_talk_key")]
     pub talk_key: String,
@@ -182,6 +184,7 @@ impl Default for VoiceSettings {
             user_volumes: std::collections::HashMap::new(),
             muted_users: Vec::new(),
             auto_update: true,
+            update_channel: crate::updater::UpdateChannel::default(),
             input_mode: crate::voice_keys::InputMode::default(),
             talk_key: crate::voice_keys::default_talk_key(),
             talk_release_ms: crate::voice_keys::default_talk_release_ms(),

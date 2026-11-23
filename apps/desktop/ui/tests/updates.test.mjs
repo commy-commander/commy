@@ -74,3 +74,10 @@ test("a downloaded update offers a quiet restart instead of a warning", () => {
   assert.equal(readyNotice({ phase: "available", version: "0.3.0" }), null);
   assert.equal(readyNotice(null), null);
 });
+
+test("the channel note explains each choice and the way back from preview", () => {
+  const { channelNote } = createRequire(import.meta.url)("../scripts/updates.js");
+  assert.match(channelNote({ current: "1.0.0" }, "preview"), /most nights/);
+  assert.match(channelNote({ current: "1.0.1-nightly.20261118.42" }, "stable"), /next stable version/);
+  assert.match(channelNote({ current: "1.0.0" }, "stable"), /^Stable gets tested releases/);
+});

@@ -56,4 +56,13 @@ function readyNotice(status) {
   return t("ui.commy-is-ready-restart-to-update", { version: s.version });
 }
 
-if (typeof module !== "undefined") module.exports = { agoWords, updateStatusText, updateAction, outdatedNotice, readyNotice };
+const PREVIEW_BUILD = /-nightly\./;
+
+function channelNote(status, channel) {
+  const s = status || {};
+  if (channel === "preview") return t("ui.update-channel-preview-note");
+  if (PREVIEW_BUILD.test(s.current || "")) return t("ui.update-channel-on-preview-build");
+  return t("ui.update-channel-stable-note");
+}
+
+if (typeof module !== "undefined") module.exports = { agoWords, updateStatusText, updateAction, outdatedNotice, readyNotice, channelNote };
