@@ -758,7 +758,7 @@ async function mockInvoke(cmd, args = {}) {
     case "adopt_account_profile": return mock.user || null;
     case "init_user":
       mock.user = { id: "me", username: args.username, display_name: null, presence: "online", custom_status: null };
-      if (Object.keys(mock.servers).length === 0) mockSeed();
+      if (Object.keys(mock.servers).length === 0 && !/[?&]noservers\b/.test(location.search)) mockSeed();
       return mock.user;
     case "list_servers":
       return Object.values(mock.servers).map(s => ({ id: s.id, name: s.name, member_count: s.members.length, icon: s.icon || null, can_invite: !mock.plainMember, group: Boolean(s.group), tag: mockServerTagView(s) }));

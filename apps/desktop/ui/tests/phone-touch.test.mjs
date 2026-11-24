@@ -70,6 +70,12 @@ test("there are four places, and opening a conversation remembers which one it b
   assert.equal(phoneTabAfter("nonsense", { pane: "list", view: "server" }), "home");
 });
 
+test("Home stays put for someone who has not joined a server yet", () => {
+  assert.equal(phoneTabAfter("home", { pane: "list", view: "dm", hasServers: false }), "home");
+  assert.equal(phoneTabAfter("messages", { pane: "list", view: "dm", hasServers: false }), "messages");
+  assert.equal(phoneTabAfter("home", { pane: "chat", view: "dm", hasServers: false }), "messages");
+});
+
 test("one tap on hang up or Leave leaves the call", () => {
   assert.match(glue, /e\.target\.closest\("\.hang"\)\) \{\s+disconnectVoice\(\);\s+return;/);
   assert.match(glue, /id === "leave"\) \{\n    closeRoomMore\(\);\n    disconnectVoice\(\);/);

@@ -672,7 +672,7 @@ function syncPhoneTab() {
   const app = $("app");
   const view = app.classList.contains("dm-mode") ? "dm" : "server";
   if (view === "server" && state.currentServer && !state.currentServer.group) studioPhone.lastServer = state.currentServer.id;
-  const next = phoneTabAfter(studioPhone.tab, { pane: phonePane(), view });
+  const next = phoneTabAfter(studioPhone.tab, { pane: phonePane(), view, hasServers: Boolean(studioRailServer()) });
   if (next !== studioPhone.tab || app.dataset.tab !== next) {
     studioPhone.tab = next;
     app.dataset.tab = next;

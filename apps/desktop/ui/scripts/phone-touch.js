@@ -38,10 +38,11 @@ function tabForConversation(view) {
   return view === "dm" ? "messages" : "home";
 }
 
-function phoneTabAfter(tab, { pane, view }) {
+function phoneTabAfter(tab, { pane, view, hasServers = true }) {
   const known = PHONE_TABS.includes(tab) ? tab : "home";
   if (pane !== "list") return tabForConversation(view);
   if (known === "live" || known === "you") return known;
+  if (known === "home" && !hasServers) return known;
   return tabForConversation(view);
 }
 
