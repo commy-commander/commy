@@ -11,7 +11,7 @@ const {
   SWIPE, QUICK_REACTIONS, SHEET_ROWS, swipeAxis, replyPull, replyCommits, messageSwipePull, messageSwipeAction, edgeBackStarts,
   rowPull, rowStaysOpen, sheetPull, sheetCloses, BAR_EXTRAS, sheetRow, quickReactions, chatSubtitle,
   ROOM_KEYS, roomTiles, duoTiles, roomHeading, roomStreams, signalWord, roomKeyState, roomSignature, streamBubbles, watchPlace, roomFaces, TILE_NAME, tileNameWidth,
-  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, roomMenuOffered, roomControl, roomMenuBusy, ROOM_MENU, ROOM_SWITCHES, soundIcon, soundWord, soundNeedsList, soundTapGoesTo, MIRROR_FRAME_MS, roomTileStreams, roomCameraTiles, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
+  WAIT_CARDS, waitCards, waitMoreWords, listAge, listLabel, unreadChats, ROOM_LAMPS, TRAY_PULL, trayOpens, canOfferShare, roomKeyOffered, roomMenuOffered, roomControl, roomMenuBusy, ROOM_MENU, ROOM_SWITCHES, soundIcon, soundWord, soundNeedsList, soundTapGoesTo, soundCanMove, MIRROR_FRAME_MS, roomTileStreams, roomCameraTiles, shareViewers, roomStage, audienceLabel, WATCH_STEPS, watchStack, STREAM_TOOLS_MS, streamToolsStay, trayTap, trayNeedsStep, NOTIFY_PICKS, chatBanner, layerStep, inviteWarningParts, faceTapAuthor,
 } = require("../scripts/phone-touch.js");
 const read = (...parts) => englishSource(readFileSync(new URL(`../${parts.join("/")}`, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const css = read("styles", "phone-touch.css");
@@ -444,7 +444,7 @@ test("the More menu holds sounds, the camera and deafen switches, and Share wher
   assert.equal(roomMenuOffered("sounds", { mobileApp: true, iPhone: true }), true);
   assert.equal(roomControl("deafen").label, "Deafen");
   assert.equal(roomControl("more").label, "More");
-  assert.ok(glue.includes('canShare: document.body.classList.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent), canPickSound: Boolean(state.soundRoute) };'));
+  assert.ok(glue.includes('canShare: document.body.classList.contains("can-share-screen"), iPhone: /iPhone|iPod/.test(navigator.userAgent), canPickSound: soundCanMove(state.soundRoute) };'));
   assert.ok(glue.includes('row.classList.toggle("hidden", !roomMenuOffered(id, where) || (id === "camera" && call));'));
   assert.ok(glue.includes('role="menuitemcheckbox" aria-checked="false" data-room-menu="${item.id}">${label}<i class="tog"></i>'));
   assert.ok(glue.includes('else if (id === "share") $("share-btn").click();'));
@@ -498,12 +498,24 @@ test("a tap on the Speaker key flips speaker and earpiece, and lists the choices
   const builtIn = { now: "speaker", name: "Speaker", choices: [speaker, phone] };
   assert.equal(soundNeedsList(builtIn), false);
   assert.equal(soundTapGoesTo(builtIn), "phone");
-  assert.equal(soundTapGoesTo({ ...builtIn, now: "phone" }), "speaker");
+  assert.equal(soundTapGoesTo({ ...builtIn, now: "phone", choices: [{ ...speaker, on: false }, { ...phone, on: true }] }), "speaker");
   const pods = { id: "air", place: "bluetooth", name: "AirPods Pro", on: true };
   assert.equal(soundNeedsList({ now: "bluetooth", name: "AirPods Pro", choices: [pods, speaker, phone] }), true);
   assert.equal(soundNeedsList(null), false);
   assert.ok(glue.includes('if (soundNeedsList(route)) openPickSheet("Play sound through", soundRows);'));
   assert.ok(glue.includes('events.listen("sound-route", event => applySoundRoute(event.payload));'));
+});
+
+test("an Android phone flips between its one headset and the speaker, and shows no Speaker key with nowhere else to go", () => {
+  const speaker = { id: "speaker", place: "speaker", name: "", on: false };
+  const wired = { id: "40", place: "wired", name: "", on: true };
+  const plugged = { now: "wired", name: "", choices: [wired, speaker] };
+  assert.equal(soundNeedsList(plugged), false);
+  assert.equal(soundTapGoesTo(plugged), "speaker");
+  assert.equal(soundTapGoesTo({ now: "speaker", name: "", choices: [{ ...wired, on: false }, { ...speaker, on: true }] }), "40");
+  assert.equal(soundCanMove(plugged), true);
+  assert.equal(soundCanMove({ now: "speaker", name: "", choices: [{ ...speaker, on: true }] }), false);
+  assert.equal(soundCanMove(null), false);
 });
 
 test("the room shows everyone in it, you by the word You, and who is muted", () => {

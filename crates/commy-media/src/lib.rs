@@ -1,3 +1,5 @@
+#[cfg(target_os = "android")]
+mod android_audio;
 pub mod clip;
 pub mod devices;
 #[cfg(windows)]
@@ -22,6 +24,8 @@ pub use devices::{
     list_device_names, start_microphone, start_playback, start_system_audio, system_audio_supported, FrameSource,
     InputHandle, OutputHandle,
 };
+#[cfg(target_os = "android")]
+pub use android_audio::{choose_sound, on_sound_route_change, sound_route};
 #[cfg(target_os = "ios")]
 pub use ios_audio::{ask_for_microphone, choose_sound, on_sound_route_change, sound_route, want_speaker};
 pub use jitter::JitterBuffer;

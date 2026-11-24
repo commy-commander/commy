@@ -429,6 +429,27 @@ fn device_moved(input: bool, wanted: Option<&str>, opened: &OpenedDevice) -> boo
     .is_some()
 }
 
+#[cfg(target_os = "android")]
+fn open_device(host: &cpal::Host, input: bool, wanted: Option<&str>, fault: &StreamFault) -> Option<cpal::Device> {
+    crate::android_audio::opening(input, fault);
+    crate::android_audio::routed_device(host, input).or_else(|| find_device(host, input, wanted))
+}
+
+#[cfg(not(target_os = "android"))]
+fn open_device(host: &cpal::Host, input: bool, wanted: Option<&str>, _fault: &StreamFault) -> Option<cpal::Device> {
+    find_device(host, input, wanted)
+}
+
+#[cfg(target_os = "android")]
+fn route_moved(input: bool) -> Option<bool> {
+    crate::android_audio::route_moved(input)
+}
+
+#[cfg(not(target_os = "android"))]
+fn route_moved(_input: bool) -> Option<bool> {
+    None
+}
+
 fn find_device(host: &cpal::Host, input: bool, wanted: Option<&str>) -> Option<cpal::Device> {
     let chosen = wanted.and_then(|wanted| {
         let devices: Vec<cpal::Device> = if input {
@@ -460,7 +481,7 @@ pub fn start_microphone(
         let processor = processor.clone();
         let tx = tx.clone();
         let host = cpal::default_host();
-        let device = find_device(&host, true, device_name.as_deref())
+        let device = open_device(&host, true, device_name.as_deref(), &fault)
             .ok_or_else(|| anyhow!("no microphone found"))?;
         *opened.lock().unwrap() = device.name().ok();
         let config = device
@@ -489,7 +510,9 @@ pub fn start_microphone(
         };
         open_input_stream(&device, config, data_cb, err_cb)
     };
-    run_stream_thread("microphone thread died", build, move || device_moved(true, wanted.as_deref(), &watched))
+    run_stream_thread("microphone thread died", build, move || {
+        route_moved(true).unwrap_or_else(|| device_moved(true, wanted.as_deref(), &watched))
+    })
 }
 
 pub fn pcm16(samples: &[f32]) -> Vec<i16> {
@@ -601,7 +624,7 @@ pub fn start_playback<S: FrameSource>(
         let mixer = mixer.clone();
         let far_end = far_end.clone();
         let host = cpal::default_host();
-        let device = find_device(&host, false, device_name.as_deref())
+        let device = open_device(&host, false, device_name.as_deref(), &fault)
             .ok_or_else(|| anyhow!("no output device found"))?;
         *opened.lock().unwrap() = device.name().ok();
         let config = device
@@ -632,7 +655,9 @@ pub fn start_playback<S: FrameSource>(
         )?;
         Ok(stream)
     };
-    run_stream_thread("playback thread died", build, move || device_moved(false, wanted.as_deref(), &watched))
+    run_stream_thread("playback thread died", build, move || {
+        route_moved(false).unwrap_or_else(|| device_moved(false, wanted.as_deref(), &watched))
+    })
 }
 
 #[cfg(test)]

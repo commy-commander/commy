@@ -413,7 +413,12 @@ function soundNeedsList(route) {
 }
 
 function soundTapGoesTo(route) {
-  return route && route.now === "phone" ? "speaker" : "phone";
+  const next = route && route.choices.find(choice => !choice.on);
+  return next ? next.id : "speaker";
+}
+
+function soundCanMove(route) {
+  return Boolean(route) && route.choices.length > 1;
 }
 
 function canOfferShare({ mobileApp, canShare, iPhone }) {
@@ -540,6 +545,7 @@ if (typeof module !== "undefined" && module.exports) {
     soundWord,
     soundNeedsList,
     soundTapGoesTo,
+    soundCanMove,
     roomFaces,
     horizonY,
     horizonPath,
