@@ -359,6 +359,10 @@ jobs:
             sleep 3
           done
           echo "ok   - the relay switched to the uploaded certificate"
+          if docker run --rm --network commy-sync_edge alpine:3.22 wget -q -T 3 -O /dev/null http://caddy:2019/config/ 2>/dev/null; then
+            echo "FAIL - Caddy's admin listens on the edge network"; exit 1
+          fi
+          echo "ok   - Caddy's admin listens on the control network only"
           curl -fs -o /dev/null -b "$jar" -H "Origin: $admin" -X POST "$admin/certificate/automatic"
           served | grep -q 'Caddy Local Authority' && echo "ok   - back to automatic certificates" || { echo "FAIL - still serving $(served)"; exit 1; }
           COMMY_BUNDLE=/srv/checkout/deploy COMMY_IMAGES=localhost:5000 COMMY_VERIFY=off COMMY_VERSION=0.0.0-ci sh /srv/commy-sync/setup.sh --yes --no-admin >/dev/null

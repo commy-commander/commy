@@ -36,7 +36,10 @@ services:
         condition: service_healthy
       relay:
         condition: service_healthy
-    networks: [edge]
+    networks:
+      edge:
+      control:
+        aliases: [caddy-admin]
     logging: *logging
 
   relay:
@@ -75,6 +78,7 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-}
       SYNC_DOMAIN: ${SYNC_DOMAIN}
       SYNC_ADMIN_PASSWORD: ${SYNC_ADMIN_PASSWORD:-}
+      SYNC_CADDY_ADMIN: http://caddy-admin:2019
       RUST_LOG: ${SYNC_LOG:-info}
     ports:
       - "127.0.0.1:${ADMIN_PORT:-8790}:3003"
@@ -84,7 +88,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [edge, db]
+    networks: [edge, db, control]
     logging: *logging
 
   postgres:
@@ -107,6 +111,8 @@ services:
 networks:
   edge:
   db:
+    internal: true
+  control:
     internal: true
 
 volumes:

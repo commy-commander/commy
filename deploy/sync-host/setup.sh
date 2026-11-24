@@ -248,7 +248,7 @@ write_settings() {
 	set_setting RELAY_IMAGE "$relay_image"
 	if [ "$admin" = on ]; then
 		[ -n "$(saved SYNC_ADMIN_PASSWORD)" ] || set_setting SYNC_ADMIN_PASSWORD "$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')"
-		set_setting CADDY_ADMIN ":2019"
+		set_setting CADDY_ADMIN "caddy-admin:2019"
 	else
 		set_setting SYNC_ADMIN_PASSWORD ""
 		set_setting CADDY_ADMIN ""
