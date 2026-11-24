@@ -1169,6 +1169,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "commy-core"
+version = "0.1.0"
+source = "git+https://git.commy.chat/commy/commy?tag=v1.0.0#1b46854b2db641a280bc6956755878d3bcfbcaf6"
+dependencies = [
+ "aes-gcm 0.11.1",
+ "base64 0.23.1",
+ "chrono",
+ "curve25519-dalek",
+ "data-encoding",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "hmac 0.13.0",
+ "postcard",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "commy-desktop"
 version = "0.1.0"
 dependencies = [
@@ -1263,6 +1285,7 @@ dependencies = [
  "chrono",
  "commy-core 0.1.0",
  "commy-core 0.1.0 (git+https://git.commy.chat/commy/commy?tag=v0.2.4)",
+ "commy-core 0.1.0 (git+https://git.commy.chat/commy/commy?tag=v1.0.0)",
  "commy-sync",
  "data-encoding",
  "futures-lite",

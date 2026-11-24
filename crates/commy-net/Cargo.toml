@@ -48,4 +48,5 @@ quote = "1"
 iroh = { workspace = true, features = ["unstable-net-report", "test-utils"] }
 commy-core = { workspace = true, features = ["test-support"] }
 commy-core-0-2-4 = { package = "commy-core", git = "https://git.commy.chat/commy/commy", tag = "v0.2.4" }
+commy-core-1-0-0 = { package = "commy-core", git = "https://git.commy.chat/commy/commy", tag = "v1.0.0" }
 tokio = { workspace = true }

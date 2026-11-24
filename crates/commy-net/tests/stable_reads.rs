@@ -2,10 +2,18 @@ use commy_core::home::{card_payload, HomeCard, CARD_PURPOSE};
 use commy_core::identity::Identity;
 use commy_core::{wire_layout, Message, Server, ServerEvent, SignedEvent, UserProfile};
 use commy_core_0_2_4 as stable;
+use commy_core_1_0_0 as stable_1_0_0;
 use commy_net::protocol::{sign_sync_response, verify_sync_response, Envelope, WirePayload};
 
 type Sample = (Server, Vec<UserProfile>, Vec<Message>, Vec<ServerEvent>, u64);
 type StableSample = (stable::Server, Vec<stable::UserProfile>, Vec<stable::Message>, Vec<stable::ServerEvent>, u64);
+type Stable100Sample = (
+    stable_1_0_0::Server,
+    Vec<stable_1_0_0::UserProfile>,
+    Vec<stable_1_0_0::Message>,
+    Vec<stable_1_0_0::ServerEvent>,
+    u64,
+);
 
 const HOME: &str = "https://commy.chat";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -72,6 +80,42 @@ fn stable_0_2_4_accepts_events_signed_by_this_build() {
         let back: SignedEvent = wire_layout::decode(&bytes).unwrap();
         assert_eq!(back, signed);
         assert!(back.verify(server.id, &signer.public()));
+    }
+}
+
+#[test]
+fn stable_1_0_0_reads_values_written_with_every_new_field_set() {
+    let sample = with_every_new_field_set();
+    let bytes = wire_layout::encode(&sample).unwrap();
+    let (server, profiles, messages, events, after): Stable100Sample =
+        stable_1_0_0::wire_layout::decode(&bytes).expect("Commy 1.0.0 reads what this build writes");
+    assert_eq!(server.name, sample.0.name);
+    assert_eq!(server.sync_host, sample.0.sync_host);
+    assert_eq!(server.blocked_homes, sample.0.blocked_homes);
+    assert_eq!(server.require_home, sample.0.require_home);
+    assert_eq!(profiles.len(), sample.1.len());
+    assert!(profiles.iter().all(|p| p.home.is_some()), "1.0.0 keeps the home cards");
+    assert_eq!(messages.len(), sample.2.len());
+    assert_eq!(events.len(), sample.3.len());
+    assert_eq!(after, sample.4);
+}
+
+#[test]
+fn stable_1_0_0_accepts_events_signed_by_this_build() {
+    let (server, profiles, ..) = with_every_new_field_set();
+    let signer = person(10);
+    let by = profiles[0].id;
+    let events = [
+        ServerEvent::ProfileUpdate { profile: profiles[0].clone() },
+        ServerEvent::ServerRename { server: server.id, name: "Review".into() },
+    ];
+    for event in events {
+        let signed = SignedEvent::sign(server.id, by, 1_800_000_000_000, event, &signer);
+        let bytes = wire_layout::encode(&signed).unwrap();
+        let read: stable_1_0_0::SignedEvent = stable_1_0_0::wire_layout::decode(&bytes).expect("Commy 1.0.0 reads the event");
+        let stable_server: stable_1_0_0::ServerId = stable_1_0_0::wire_layout::decode(&wire_layout::encode(&server.id).unwrap()).unwrap();
+        let stable_key = stable_1_0_0::identity::Identity::from_bytes(&[10; 32]).public();
+        assert!(read.verify(stable_server, &stable_key), "Commy 1.0.0 accepts the signature");
     }
 }
 
