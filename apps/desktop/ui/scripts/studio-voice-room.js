@@ -303,6 +303,15 @@ function voiceRoomSoundsPlace(dock, pane, view, place = VOICE_ROOM_SOUNDS) {
   };
 }
 
+const VOICE_ROOM_DOCK = { meterGap: 12 };
+
+function voiceRoomDockRoom(edges, gaps = VOICE_ROOM_DOCK) {
+  return {
+    keys: edges.keys <= edges.end,
+    meter: edges.keys + gaps.meterGap <= edges.meter,
+  };
+}
+
 function voiceRoomHint(full, textWidth, room) {
   return textWidth <= room ? full : t("ui.message");
 }
@@ -312,5 +321,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, VOICE_ROOM_QUALITY, voiceRoomCols, voiceRoomPlaceRows, voiceRoomTiles, voiceRoomCards, voiceRoomQuarters, voiceRoomExpanded, voiceRoomLayout, voiceRoomQuality, voiceRoomPeople, voiceRoomItems, voiceRoomSub, VOICE_ROOM_SOUNDS, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, VOICE_ROOM_CHAT, voiceRoomChatWidth, voiceRoomChatGrip, mountStudioVoiceRoom };
+  module.exports = { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, VOICE_ROOM_QUALITY, voiceRoomCols, voiceRoomPlaceRows, voiceRoomTiles, voiceRoomCards, voiceRoomQuarters, voiceRoomExpanded, voiceRoomLayout, voiceRoomQuality, voiceRoomPeople, voiceRoomItems, voiceRoomSub, VOICE_ROOM_SOUNDS, voiceRoomSoundsPlace, VOICE_ROOM_DOCK, voiceRoomDockRoom, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, VOICE_ROOM_CHAT, voiceRoomChatWidth, voiceRoomChatGrip, mountStudioVoiceRoom };
 }

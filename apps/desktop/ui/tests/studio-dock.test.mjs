@@ -180,3 +180,19 @@ test("the level meter and invite key stay inside the voice bar when the channel 
   assert.match(css, /@container vp-row \(max-width: 215px\) \{\n[^}]*\.vp-voice > \.vp-meter \{ display: none; \}/);
   assert.match(css, /@container vp-row \(max-width: 176px\) \{\n[^}]*\.vp-voice > \.vp-invite \{ display: none; \}/);
 });
+
+test("a More key waits beside the camera key for a room bar too narrow for every key", () => {
+  const doc = fakeDock("studio", "roomy");
+  const placed = [];
+  const camera = { after: node => placed.push(node) };
+  const find = doc.row.querySelector.bind(doc.row);
+  doc.row.querySelector = selector => (selector === "#vp-camera-split" ? camera : find(selector));
+  mountStudioDock(doc, name => Object.assign(fakeNode("svg"), { icon: name }));
+  assert.equal(placed.length, 1);
+  const [more] = placed;
+  assert.equal(more.id, "vp-more");
+  assert.equal(more.className, "icon-btn vp-more");
+  assert.equal(more.attrs["aria-label"], "More");
+  assert.equal(more.children[0].icon, "ellipsis");
+  assert.match(css, /\.voice-panel \.vp-more,\n[^{]*\{ display: none; \}/);
+});

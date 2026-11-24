@@ -46,6 +46,24 @@ jobs:
       - name: Release publisher tests
         run: node --test "deploy/releases/*.test.mjs"
 
+  layout:
+    name: Call bar layout
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop/ui/layout-tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ">=24.22.1 <25"
+      - name: Install Playwright
+        run: |
+          npm ci
+          npx playwright install --with-deps --only-shell chromium
+      - name: node --test
+        run: node --test
+
   installer:
     name: Installer data folder page
     runs-on: ubuntu-latest

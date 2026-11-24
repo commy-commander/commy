@@ -6838,6 +6838,7 @@ function closeVoiceRoom() {
   room.classList.add("hidden");
   $("app").classList.remove("vr-open", "vr-folded", "vr-nochat");
   fitVoiceRoomHint();
+  fitVoiceRoomDock();
   $("video-pane").removeAttribute("style");
   for (const tile of $("cam-grid").querySelectorAll(".cam-tile")) {
     tile.removeAttribute("style");
@@ -7407,8 +7408,69 @@ async function watchVoiceRoomTile(t) {
   }
 }
 
+function voiceRoomDockEdges(panel) {
+  const shown = node => Boolean(node) && node.getClientRects().length > 0;
+  const box = panel.getBoundingClientRect();
+  const keys = [...panel.querySelectorAll(".vp-conn-meta, .vp-voice > :not(.vp-meter), .vp-actions > *")].filter(shown);
+  const meter = panel.querySelector(".vp-meter");
+  return {
+    keys: Math.max(box.left, ...keys.map(node => node.getBoundingClientRect().right)),
+    end: box.right - (parseFloat(getComputedStyle(panel).paddingRight) || 0),
+    meter: shown(meter) ? meter.getBoundingClientRect().left : Infinity,
+  };
+}
+
+function fitVoiceRoomDock() {
+  const panel = $("voice-panel");
+  panel.classList.remove("vr-dock-quiet", "vr-dock-more");
+  paintVoiceRoomMoreLamp();
+  if (!voiceRoom.open || !shownVoiceRoomDock(panel)) return $("vp-more-menu").classList.add("hidden");
+  let room = voiceRoomDockRoom(voiceRoomDockEdges(panel));
+  if (!room.keys || !room.meter) {
+    panel.classList.add("vr-dock-more");
+    room = voiceRoomDockRoom(voiceRoomDockEdges(panel));
+  } else {
+    $("vp-more-menu").classList.add("hidden");
+  }
+  panel.classList.toggle("vr-dock-quiet", !room.meter);
+}
+
+function paintVoiceRoomMoreLamp() {
+  const more = document.getElementById("vp-more");
+  if (more) more.classList.toggle("active", Boolean(state.cameraOn || state.sharing));
+}
+
+function voiceRoomMoreRow(menu, icon, words, key) {
+  const row = el("button", "vp-more-row");
+  row.type = "button";
+  row.setAttribute("role", "menuitem");
+  row.append(svgIcon(icon, 18), el("span", null, words));
+  row.onclick = () => {
+    menu.classList.add("hidden");
+    $(key).click();
+  };
+  menu.appendChild(row);
+}
+
+function toggleVoiceRoomMore() {
+  const menu = $("vp-more-menu");
+  if (!menu.classList.contains("hidden")) return menu.classList.add("hidden");
+  closeFloating("vp-more-menu");
+  menu.replaceChildren();
+  if (!$("vp-camera-split").classList.contains("hidden")) voiceRoomMoreRow(menu, state.cameraOn ? "camera" : "cameraOff", $("vp-camera").title, "vp-camera");
+  const share = $("share-btn");
+  if (!share.classList.contains("hidden")) voiceRoomMoreRow(menu, "screen", share.textContent, "share-btn");
+  voiceRoomMoreRow(menu, "soundboard", t("ui.soundboard"), "vp-soundboard");
+  placePopup(menu, $("vp-more"), "above");
+}
+
+function shownVoiceRoomDock(panel) {
+  return panel.getClientRects().length > 0 && $("app").classList.contains("vr-open");
+}
+
 function placeVoiceRoom() {
   if (!voiceRoom.open) return;
+  fitVoiceRoomDock();
   const pane = $("vr-grid");
   const channel = voiceRoomChannel();
   if (!channel || !pane.clientWidth) return;
@@ -7739,7 +7801,7 @@ function closeContextMenus() {
 function closeFloating(except) {
   if (except !== "profile-pop") closeDurations();
   if (except !== "conn-pop" && connTimer) closeConnPop();
-  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "channel-notify-menu", "soundboard-pop", "member-menu", "room-member-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop", "game-pop"]) {
+  for (const id of ["profile-pop", "avatar-menu", "banner-menu", "emoji-pop", "server-menu", "folder-menu", "channel-menu", "channel-notify-menu", "soundboard-pop", "member-menu", "room-member-menu", "vp-more-menu", "msg-menu", "remind-pop", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "fp-menu", "composer-menu", "text-style-pop", "game-pop"]) {
     if (id !== except) $(id).classList.add("hidden");
   }
   if (except !== "channel-notify-menu") closeChannelNotifyMenu();
@@ -24134,6 +24196,8 @@ function wireEvents() {
     if (last) last.querySelector("input").focus();
   };
   $("share-btn").onclick = toggleShare;
+  const roomMore = document.getElementById("vp-more");
+  if (roomMore) roomMore.onclick = toggleVoiceRoomMore;
   $("video-close").onclick = closeStageButton;
   setIcon($("video-close"), "close", 20);
   setIcon($("stage-focus"), "expand", 20);
@@ -24413,6 +24477,7 @@ function wireEvents() {
   document.addEventListener("mousedown", e => {
     const open = ["emoji-pop", "avatar-menu", "banner-menu", "profile-pop", "server-menu", "folder-menu", "channel-menu", "channel-notify-menu", "msg-menu", "remind-pop", "member-menu", "room-member-menu", "pp-durations", "member-card", "invite-menu", "audio-pop", "video-pop", "voice-pop", "conn-pop", "fp-menu", "pins-pop", "threads-pop", "composer-menu", "search-pop"].map($).filter(n => !n.classList.contains("hidden"));
     closeMenuOutside("game-pop", e.target, ".game-link");
+    closeMenuOutside("vp-more-menu", e.target, "#vp-more");
     if (!open.length) return;
     closeMenuOutside("fp-menu", e.target, ".mc-more, .fp-more");
     if (open.some(n => n.contains(e.target)) || e.target.closest("#user-chip, .caret-btn, .vp-status, #vp-conn-meta, #pins-btn, #threads-btn, #notify-btn, #attach-btn, #search-box")) return;

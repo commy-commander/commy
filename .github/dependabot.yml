@@ -13,6 +13,7 @@ updates:
       - /deploy/relay-tools
       - /apps/streamdeck
       - /apps/desktop/src-tauri
+      - /apps/desktop/ui/layout-tests
     schedule:
       interval: weekly
     groups:

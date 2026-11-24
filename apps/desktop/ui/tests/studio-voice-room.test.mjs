@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, voiceRoomSoundsPlace, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, VOICE_ROOM_CHAT, voiceRoomChatWidth, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
+const { VOICE_ROOM, VOICE_ROOM_TILE, VOICE_ROOM_TOOLS, voiceRoomCols, voiceRoomLayout, voiceRoomPeople, voiceRoomItems, voiceRoomQuality, voiceRoomSub, voiceRoomSoundsPlace, VOICE_ROOM_DOCK, voiceRoomDockRoom, voiceRoomHint, VOICE_ROOM_REST, VOICE_ROOM_ENDED, voiceRoomLeftWords, voiceRoomAway, voiceRoomGhostTiles, VOICE_ROOM_CHAT, voiceRoomChatWidth, mountStudioVoiceRoom } = require("../scripts/studio-voice-room.js");
 const { callTiles } = require("../scripts/stream-view.js");
 const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
@@ -407,4 +407,29 @@ test("the room's chat width follows a drag, stays in bounds and is remembered", 
   assert.match(app, /saveVoiceRoomChatWidth\(shown\);/);
   assert.match(app, /grip\.addEventListener\("dblclick", \(\) => \{\n    saveVoiceRoomChatWidth\(null\);/);
   assert.match(app, /localStorage\.getItem\(VOICE_ROOM_CHAT\.key\)/);
+});
+
+test("the room bar keeps every labelled key and the meter while they fit, then folds into More", () => {
+  assert.deepEqual(voiceRoomDockRoom({ keys: 700, end: 900, meter: 760 }), { keys: true, meter: true });
+  assert.deepEqual(voiceRoomDockRoom({ keys: 700, end: 900, meter: 700 + VOICE_ROOM_DOCK.meterGap - 1 }), { keys: true, meter: false });
+  assert.deepEqual(voiceRoomDockRoom({ keys: 901, end: 900, meter: 905 }), { keys: false, meter: false });
+  assert.deepEqual(voiceRoomDockRoom({ keys: 400, end: 900, meter: Infinity }), { keys: true, meter: true });
+  assert.match(app, /let room = voiceRoomDockRoom\(voiceRoomDockEdges\(panel\)\);\n  if \(!room\.keys \|\| !room\.meter\) \{\n    panel\.classList\.add\("vr-dock-more"\);/);
+  assert.match(app, /panel\.classList\.toggle\("vr-dock-quiet", !room\.meter\);/);
+  assert.match(app, /function placeVoiceRoom\(\) \{\n  if \(!voiceRoom\.open\) return;\n  fitVoiceRoomDock\(\);/);
+  assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel.vr-dock-quiet .vp-meter { display: none; }`));
+  assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel.vr-dock-more .vp-actions { display: none; }`));
+  assert.ok(css.includes(`${DESK} #app.vr-open .voice-panel.vr-dock-more .vp-voice > .vp-more { display: grid; place-items: center; }`));
+  assert.doesNotMatch(css, /@media \(max-width: 1040px\) \{\n[^}]*\.vp-activities > span \{ display: none; \}/);
+});
+
+test("More holds the camera, screen and soundboard keys and lights while camera or sharing is on", () => {
+  assert.ok(html.includes('<div class="pop-menu ctx-menu vp-more-menu hidden" id="vp-more-menu" role="menu"></div>'));
+  assert.match(app, /voiceRoomMoreRow\(menu, state\.cameraOn \? "camera" : "cameraOff", \$\("vp-camera"\)\.title, "vp-camera"\);/);
+  assert.match(app, /voiceRoomMoreRow\(menu, "screen", share\.textContent, "share-btn"\);/);
+  assert.match(app, /voiceRoomMoreRow\(menu, "soundboard", "Soundboard", "vp-soundboard"\);/);
+  assert.match(app, /placePopup\(menu, \$\("vp-more"\), "above"\);/);
+  assert.match(app, /more\.classList\.toggle\("active", Boolean\(state\.cameraOn \|\| state\.sharing\)\);/);
+  assert.match(app, /closeMenuOutside\("vp-more-menu", e\.target, "#vp-more"\);/);
+  assert.ok(css.includes(`${DESK} .vp-voice #vp-more.active::after {`));
 });

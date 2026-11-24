@@ -951,6 +951,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .vp-stage,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .vp-talk,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .vp-game-share,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel #vp-activities,
+html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .vp-more,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel .caret-btn,
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel.in-audience .split-btn:has(#mute-btn) { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) .voice-panel[data-dock="muted"] .vp-status,
@@ -1005,7 +1006,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .vp-voice .icon-btn { position: 
 html[data-look="studio"]:not([data-fit="slim"]) .vp-voice #mute-btn:not(.danger)::after,
 html[data-look="studio"]:not([data-fit="slim"]) .vp-voice #deafen-btn:not(.danger)::after,
 html[data-look="studio"]:not([data-fit="slim"]) .vp-voice #vp-camera.active::after,
-html[data-look="studio"]:not([data-fit="slim"]) .vp-voice .vp-hand-key.on::after {
+html[data-look="studio"]:not([data-fit="slim"]) .vp-voice .vp-hand-key.on::after,
+html[data-look="studio"]:not([data-fit="slim"]) .vp-voice #vp-more.active::after {
   content: "";
   position: absolute;
   top: 12%;
@@ -2106,13 +2108,15 @@ html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .main > .awaited-ba
 }
 @media (max-width: 1040px) {
   html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open { --vr-pill: 480px; }
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities > span { display: none; }
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities,
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share { width: 46px; padding: 0; }
-  html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .vp-activities.vp-share::after { top: 6px; right: 6px; margin-top: 0; }
 }
 html[data-look="studio"][data-fit="compact"] #app.vr-open .vp-signal { display: grid; }
 html[data-look="studio"][data-fit="compact"] #app.vr-open .vp-meter { display: flex; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel.vr-dock-quiet .vp-meter { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel.vr-dock-more #vp-camera-split,
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel.vr-dock-more .vp-actions { display: none; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel.vr-dock-more .vp-voice > .vp-more { display: grid; place-items: center; }
+html[data-look="studio"]:not([data-fit="slim"]) .vp-more-menu > .vp-more-row { display: flex; align-items: center; gap: 12px; }
+html[data-look="studio"]:not([data-fit="slim"]) .vp-more-menu > .vp-more-row > svg { flex: none; width: 18px !important; height: 18px !important; color: var(--text-muted); }
 html[data-look="studio"][data-fit="compact"] #app.vr-open .voice-panel { bottom: calc(var(--st-mb) + 8px); }
 @media (max-height: 720px) {
   html[data-look="studio"]:not([data-fit="slim"]) .vr-grid { --vr-row: 30; padding-top: 10px; }
