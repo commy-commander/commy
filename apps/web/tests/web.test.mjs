@@ -182,6 +182,14 @@ test("the bridge keeps its helpers private, so it cannot replace a function the 
   assert.doesNotMatch(source, /^(?:async\s+)?function\s/m);
 });
 
+test("search engines are asked to leave the web app out, while the desktop page stays as it is", () => {
+  const desktop = read("apps", "desktop", "ui", "index.html");
+  const html = injectWebShell(desktop, { relays: ["https://relay.commy.chat:8443"], base: "/web/" });
+  const robots = html.indexOf('<meta name="robots" content="noindex" />');
+  assert.ok(robots > html.indexOf("<head>") && robots < html.indexOf("</head>"));
+  assert.doesNotMatch(desktop, /name="robots"/);
+});
+
 test("a local test relay is reached over plain http and ws", () => {
   assert.deepEqual(relayOrigins("http://localhost:3340"), ["http://localhost:3340", "ws://localhost:3340"]);
 });

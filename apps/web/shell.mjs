@@ -39,6 +39,7 @@ export function webRelayList(raw, fallback) {
 export function injectWebShell(html, { relays, base }) {
   const origins = relays.flatMap(relayOrigins);
   const head = [
+    '<meta name="robots" content="noindex" />',
     `<meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy(origins)}" />`,
     `<meta name="commy-relays" content="${relays[0]}" />`,
   ].join("\n  ");
