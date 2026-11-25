@@ -7,7 +7,7 @@ import { readFileSync, statSync } from "node:fs";
 const require = createRequire(import.meta.url);
 const {
   MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND,
-  isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
+  isAlertSound, alertSoundId, builtInSoundLabel, voiceToggleCue, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
   voiceRosterChange, cuesAfterHold, monoSamples, soundLevel, playAlone,
 } = require("../scripts/alert-sounds.js");
 
@@ -132,4 +132,27 @@ test("an alert that comes again while it plays starts over instead of stacking o
   assert.equal(playing.size, 0);
   assert.equal(playAlone(playing, "ding", () => null), null);
   assert.equal(playing.size, 0);
+});
+
+test("muting, deafening and their undo each pick their own sound, and deafen wins when both change", () => {
+  assert.equal(voiceToggleCue({ muted: false, deafened: false }, { muted: true, deafened: false }), "mute");
+  assert.equal(voiceToggleCue({ muted: true, deafened: false }, { muted: false, deafened: false }), "unmute");
+  assert.equal(voiceToggleCue({ muted: false, deafened: false }, { muted: true, deafened: true }), "deafen");
+  assert.equal(voiceToggleCue({ muted: true, deafened: true }, { muted: false, deafened: false }), "undeafen");
+  assert.equal(voiceToggleCue({ muted: true, deafened: false }, { muted: true, deafened: false }), null);
+  assert.equal(voiceToggleCue(null, { muted: true }), null);
+});
+
+test("mute, deafen and screen share have their own sounds you can change in Settings", () => {
+  const app = readFileSync(new URL("../scripts/app.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const cues = { mute: "mute", unmute: "unmute", deafen: "deafen", undeafen: "undeafen", share_start: "share-start", share_stop: "share-stop" };
+  for (const [event, file] of Object.entries(cues)) {
+    assert.match(app, new RegExp(`\\{ id: "${event}", get label\\(\\) \\{ return t\\("ui\\.[a-z-]+"\\); \\}, fallback: "${file}" \\}`), event);
+    assert.ok(app.includes(`"${file}": "sounds/${file}.mp3"`) || app.includes(`${file}: "sounds/${file}.mp3"`), file);
+    assert.ok(statSync(new URL(`../sounds/${file}.mp3`, import.meta.url)).size > 5000, file);
+  }
+  assert.equal(builtInSoundLabel("share-start"), "Share start");
+  assert.equal((app.match(/playVoiceCue\(before\);/g) || []).length, 5, "the mute and deafen keys, the user menu and global hotkeys all play the cue");
+  assert.match(app, /if \(!wasSharing\) playSound\("share_start"\);/);
+  assert.match(app, /state\.shareSource = null;\n    playSound\("share_stop"\);/);
 });

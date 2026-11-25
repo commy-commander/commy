@@ -17,7 +17,15 @@ function alertSoundId(name, taken) {
 }
 
 function builtInSoundLabel(name) {
-  return name[0].toUpperCase() + name.slice(1);
+  const words = name.replace(/[-_]+/g, " ");
+  return words[0].toUpperCase() + words.slice(1);
+}
+
+function voiceToggleCue(before, after) {
+  if (!before || !after) return null;
+  if (Boolean(before.deafened) !== Boolean(after.deafened)) return after.deafened ? "deafen" : "undeafen";
+  if (Boolean(before.muted) !== Boolean(after.muted)) return after.muted ? "mute" : "unmute";
+  return null;
 }
 
 function alertSoundChoices(builtIns, custom, canAdd) {
@@ -92,7 +100,7 @@ function playAlone(playing, key, start) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     ALERT_SOUND_PREFIX, MAX_ALERT_SOUNDS, ADD_ALERT_SOUND, NO_SOUND, RING_GAP_MS,
-    isAlertSound, alertSoundId, builtInSoundLabel, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
+    isAlertSound, alertSoundId, builtInSoundLabel, voiceToggleCue, alertSoundChoices, resolveAlertSound, builtInSoundFile, joinSoundToPlay,
     LEAVE_CUE_HOLD_MS, voiceRosterChange, cuesAfterHold, monoSamples, soundLevel, playAlone,
   };
 }

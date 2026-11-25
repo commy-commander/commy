@@ -4914,7 +4914,7 @@ async function setServerImage(which, data) {
   }
 }
 
-const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", ring: "sounds/ring.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3" };
+const SOUND_FILES = { notification: "sounds/notification.mp3", ding: "sounds/ding.mp3", pop: "sounds/pop.wav", ring: "sounds/ring.wav", join: "sounds/join.mp3", leave: "sounds/leave.mp3", mute: "sounds/mute.mp3", unmute: "sounds/unmute.mp3", deafen: "sounds/deafen.mp3", undeafen: "sounds/undeafen.mp3", "share-start": "sounds/share-start.mp3", "share-stop": "sounds/share-stop.mp3" };
 const STUDIO_SOUND_FILES = { notification: "sounds/studio/notification.mp3", ding: "sounds/studio/ding.mp3" };
 const SOUND_EVENTS = [
   { id: "message", get label() { return t("ui.new-message-or-mention"); }, fallback: "notification" },
@@ -4922,6 +4922,12 @@ const SOUND_EVENTS = [
   { id: "ring", get label() { return t("ui.incoming-call"); }, fallback: "ring" },
   { id: "join", get label() { return t("ui.someone-joins-your-voice-channel"); }, fallback: "join" },
   { id: "leave", get label() { return t("ui.someone-leaves-your-voice-channel"); }, fallback: "leave" },
+  { id: "mute", get label() { return t("ui.you-mute-your-microphone"); }, fallback: "mute" },
+  { id: "unmute", get label() { return t("ui.you-unmute-your-microphone"); }, fallback: "unmute" },
+  { id: "deafen", get label() { return t("ui.you-deafen"); }, fallback: "deafen" },
+  { id: "undeafen", get label() { return t("ui.you-undeafen"); }, fallback: "undeafen" },
+  { id: "share_start", get label() { return t("ui.you-start-sharing-your-screen"); }, fallback: "share-start" },
+  { id: "share_stop", get label() { return t("ui.you-stop-sharing-your-screen"); }, fallback: "share-stop" },
 ];
 const SOUND_KEY = "commy.sounds";
 
@@ -5018,6 +5024,11 @@ function playAppSound(url, volume) {
     sound.halt();
   };
   return sound;
+}
+
+function playVoiceCue(before) {
+  const cue = voiceToggleCue(before, state.voice);
+  if (cue) playSound(cue);
 }
 
 function playSound(eventId, force) {
@@ -16555,12 +16566,16 @@ function openSelfVoiceMenu(x, y) {
   if (canChangeOwnNickname()) item(t("ui.change-nickname"), () => openNicknameModal(currentServerMember(state.user.id)));
   sep();
   item(state.voice.muted ? t("ui.unmute") : t("ui.mute"), async () => {
+    const before = { ...state.voice };
     state.voice = await invoke("set_muted", { muted: !state.voice.muted });
+    playVoiceCue(before);
     renderUserPanel();
     renderChannels();
   }, "ctx-check" + (state.voice.muted ? " checked" : ""));
   item(state.voice.deafened ? t("ui.undeafen") : t("ui.deafen"), async () => {
+    const before = { ...state.voice };
     state.voice = await invoke("set_deafened", { deafened: !state.voice.deafened });
+    playVoiceCue(before);
     renderUserPanel();
     renderChannels();
   }, "ctx-check" + (state.voice.deafened ? " checked" : ""));
@@ -22805,6 +22820,7 @@ async function stopSharing() {
     await invoke("stop_screen_share", { serverId: state.voiceServer.id });
     state.sharing = false;
     state.shareSource = null;
+    playSound("share_stop");
     if (state.stageMode === "self") closeStage();
     if (!voiceRoom.open || !studioDesk()) toast(t("ui.stopped-sharing"));
     renderShareButton();
@@ -22984,6 +23000,7 @@ async function startShareWith(source, quality, audio = shareAudioWanted()) {
   hideModals();
   sharePicker.token++;
   try {
+    const wasSharing = state.sharing;
     if (state.sharing) await invoke("stop_screen_share", { serverId: state.voiceServer.id });
     const allowInk = streamInkWanted();
     await invoke("start_screen_share", {
@@ -22999,6 +23016,7 @@ async function startShareWith(source, quality, audio = shareAudioWanted()) {
     state.sharing = true;
     state.shareSource = source.name;
     state.shareQuality = quality;
+    if (!wasSharing) playSound("share_start");
     toast(liveToastText(source.name, audio));
     renderShareButton();
     startOwnPreview();
@@ -24129,13 +24147,17 @@ function wireEvents() {
   };
 
   $("mute-btn").onclick = async () => {
+    const before = { ...state.voice };
     state.voice = await invoke("set_muted", { muted: !state.voice.muted });
+    playVoiceCue(before);
     renderUserPanel();
     animateToggle($("mute-btn"), state.voice.muted);
   };
 
   $("deafen-btn").onclick = async () => {
+    const before = { ...state.voice };
     state.voice = await invoke("set_deafened", { deafened: !state.voice.deafened });
+    playVoiceCue(before);
     renderUserPanel();
     animateToggle($("deafen-btn"), state.voice.deafened);
   };
@@ -25494,7 +25516,9 @@ function wireEvents() {
     window.__TAURI__.event.listen("notification-clicked", event => openNotificationTarget(event.payload));
     window.__TAURI__.event.listen("tray-toggle-mute", () => $("mute-btn").click());
     window.__TAURI__.event.listen("voice-settings-changed", event => {
+      const before = { ...state.voice };
       state.voice = event.payload;
+      playVoiceCue(before);
       renderUserPanel();
       toast(state.voice.deafened ? t("ui.dock.deafened") : state.voice.muted ? t("ui.dock.muted") : t("ui.unmuted-4"));
     });
