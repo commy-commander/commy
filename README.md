@@ -16,6 +16,7 @@
 [![Download][download-shield]][download-url]
 [![Support Commy on Ko-fi][kofi-shield]][kofi-url]
 [![License: AGPL-3.0][license-shield]][license-url]
+[![As seen on Open Source Alternatives][osa-shield]][osa-url]
 
 <p>
   <a href="https://commy.chat"><strong>commy.chat</strong></a>
@@ -147,6 +148,8 @@ Commy stands on the shoulders of [Tauri](https://tauri.app),
 [kofi-url]: https://ko-fi.com/commychat
 [license-shield]: https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=for-the-badge
 [license-url]: LICENSE
+[osa-shield]: https://www.opensourcealternatives.to/badge-osa.svg
+[osa-url]: https://www.opensourcealternatives.to
 [rust-shield]: https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white
 [rust-url]: https://www.rust-lang.org
 [tauri-shield]: https://img.shields.io/badge/Tauri_2-24C8D8?style=for-the-badge&logo=tauri&logoColor=white
