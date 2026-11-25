@@ -1,5 +1,6 @@
 use crate::ids::{RoleId, UserId};
 use crate::server::Server;
+use crate::user::UserProfile;
 
 pub const EVERYONE: &str = "everyone";
 pub const HERE: &str = "here";
@@ -96,6 +97,14 @@ impl Server {
 
     pub fn can_mention_role(&self, user: UserId, role: RoleId) -> bool {
         self.roles.iter().any(|r| r.id == role && r.mentionable) || self.can_mention_everyone(user)
+    }
+
+    pub fn names_that_mention(&self, profile: &UserProfile) -> Vec<String> {
+        let nickname = self.member(profile.id).and_then(|member| member.nickname.clone());
+        [Some(profile.username.clone()), profile.display_name.clone(), nickname]
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     pub fn mentions_of(
@@ -269,5 +278,24 @@ mod tests {
                 .mentioned_by(owner, &ping_open, UserId::new(), &[]),
             "strangers hold nothing"
         );
+    }
+
+    #[test]
+    fn names_that_mention_include_the_server_nickname() {
+        let (mut state, _, _) = fixture();
+        let viewer = join(&mut state, "viewer");
+        let profile = state.profiles[&viewer].clone();
+        assert_eq!(state.server.names_that_mention(&profile), vec!["viewer".to_string()]);
+        state
+            .apply(ServerEvent::MemberNickname {
+                server: state.server.id,
+                user: viewer,
+                nickname: Some("captain".into()),
+            })
+            .unwrap();
+        let names = state.server.names_that_mention(&profile);
+        assert!(names.contains(&"captain".to_string()));
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        assert!(state.server.mentioned_by(UserId::new(), "hey @captain", viewer, &names));
     }
 }

@@ -97,10 +97,6 @@ pub fn mentions(content: &str, names: &[&str]) -> bool {
 
 pub use commy_core::mention::{names_mentioned, Mentions};
 
-pub fn mention_names(profile: &commy_core::UserProfile) -> Vec<String> {
-    [Some(profile.username.clone()), profile.display_name.clone()].into_iter().flatten().collect()
-}
-
 impl Catchup {
     pub fn begin(&mut self, key: SessionKey) -> bool {
         self.running.insert(key)
@@ -385,7 +381,7 @@ pub fn holdable(event: &ServerEvent) -> bool {
 #[derive(Debug, Default)]
 pub struct Unread {
     me: Option<UserId>,
-    names: Vec<String>,
+    profile: Option<commy_core::UserProfile>,
     blocked: HashSet<UserId>,
     silent: bool,
     keys: crate::channel_lock::KeyHolder,
@@ -396,15 +392,20 @@ impl Unread {
         let profile = app.profile.lock_or_recover().clone();
         Self {
             me: profile.as_ref().map(|p| p.id),
-            names: profile.as_ref().map(mention_names).unwrap_or_default(),
+            profile,
             blocked: app.safety.lock_or_recover().blocked.iter().copied().collect(),
             silent: app.awaits_snapshot(server),
             keys: crate::channel_lock::holder_of(app),
         }
     }
 
+    fn names(&self, state: &ServerState) -> Vec<String> {
+        self.profile.as_ref().map(|profile| state.server.names_that_mention(profile)).unwrap_or_default()
+    }
+
     fn fresh(&self, state: &ServerState, message: &Message) -> Fresh {
-        let names: Vec<&str> = self.names.iter().map(String::as_str).collect();
+        let names = self.names(state);
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
         let Some(opened) = self.keys.open(state, message) else {
             return Fresh::of(&Message { content: String::new(), ..message.clone() }, &names);
         };
@@ -1970,6 +1971,21 @@ mod tests {
         let (report, _, fresh) = apply_page(&mut state, &unread_for(&newcomer), vec![older.clone(), new.clone()], vec![]);
         assert_eq!(report.applied.len(), 2);
         assert_eq!(fresh, vec![Fresh::of(&new, &[])], "only the message after our join");
+    }
+
+    #[test]
+    fn caught_up_messages_that_name_our_server_nickname_count_as_mentions() {
+        let owner = Member::new("owner");
+        let friend = Member::new("friend");
+        let (mut state, channel) = server(&owner);
+        join(&mut state, &friend);
+        let server = state.server.id;
+        state.apply(ServerEvent::MemberNickname { server, user: owner.id(), nickname: Some("captain".into()) }).unwrap();
+        let ping = friend.post(&state, channel, "hey @captain, look");
+        let unread = Unread { me: Some(owner.id()), profile: Some(owner.profile.clone()), ..Default::default() };
+        let (_, _, fresh) = apply_page(&mut state, &unread, vec![ping], vec![]);
+        assert_eq!(fresh.len(), 1);
+        assert!(fresh[0].mentions.name, "named by the server nickname");
     }
 
     #[test]

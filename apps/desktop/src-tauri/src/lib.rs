@@ -8207,8 +8207,7 @@ fn notify_new_message(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, si
             return;
         }
         let Some(message) = keys.open(state, message) else { return };
-        let mut names = app.profile.lock_or_recover().as_ref().map(catchup::mention_names).unwrap_or_default();
-        names.extend(view::nickname_of(state, me));
+        let names = app.profile.lock_or_recover().as_ref().map(|profile| state.server.names_that_mention(profile)).unwrap_or_default();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         let mentions = state.server.mentions_of(message.author, &message.content, me, &names);
         serde_json::json!({

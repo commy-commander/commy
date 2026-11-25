@@ -891,8 +891,7 @@ impl Client {
 }
 
 fn mentions_of_me(state: &ServerState, me: &UserProfile, message: &Message) -> commy_core::mention::Mentions {
-    let nickname = state.server.member(me.id).and_then(|m| m.nickname.clone());
-    let names: Vec<String> = [Some(me.username.clone()), me.display_name.clone(), nickname].into_iter().flatten().collect();
+    let names = state.server.names_that_mention(me);
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
     state.server.mentions_of(message.author, &message.content, me.id, &names)
 }
