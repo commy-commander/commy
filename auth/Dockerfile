@@ -12,19 +12,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     find /src -path /src/target -prune -o -type f -exec touch {} + \
     && COMMY_WEB_OUT=/out COMMY_WEB_BASE=/web/ COMMY_WEB_RELAYS="$COMMY_WEB_RELAYS" node apps/web/build.mjs
 
-FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS deps
+FROM node:24.22.3-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS deps
 WORKDIR /app
 COPY auth/package.json auth/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS pages
+FROM node:24.22.3-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS pages
 WORKDIR /app
 COPY auth/package.json auth/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY auth/pages ./pages
 RUN node pages/build.mjs
 
-FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+FROM node:24.22.3-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5
 WORKDIR /app
 ENV NODE_ENV=production PORT=3001
 COPY --from=deps /app/node_modules ./node_modules
