@@ -33,3 +33,45 @@ html[data-look="studio"][data-touch="tablet"] .member { min-height: 44px; font-s
 @media (max-width: 799px) {
   html[data-look="studio"][data-touch="tablet"] .app { --sidebar-w: 264px; }
 }
+
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vp-voice .split-btn,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vp-voice > .icon-btn { height: 44px; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vp-voice .split-btn .icon-btn,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vp-voice > .icon-btn { width: 44px; height: 44px; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vp-activities { height: 44px; }
+
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .voice-panel {
+  justify-content: center;
+  gap: 0 40px;
+  height: 100px;
+  padding: 0 0 20px;
+  border-radius: 36px;
+}
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-conn-meta,
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-meter { display: none; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice { display: contents; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .vp-more { order: 1; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .split-btn:has(#deafen-btn) { order: 2; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .split-btn:has(#mute-btn) { order: 3; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice .split-btn,
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .icon-btn { position: relative; height: 54px; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice .split-btn .icon-btn,
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .icon-btn { width: 54px; height: 54px; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice .split-btn .icon-btn > svg,
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .icon-btn > svg { width: 22px; height: 22px; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-conn .vp-hangup,
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-conn .vp-hangup:hover { position: relative; inset: auto; order: 4; width: 54px; height: 54px; }
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .split-btn::after,
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .vp-more::before,
+html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-conn .vp-hangup::before {
+  content: attr(data-word);
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  translate: -50% 0;
+  color: var(--text-muted);
+  font: 600 12px/14px var(--font);
+  white-space: nowrap;
+  pointer-events: none;
+}
+html[data-look="studio"][data-touch="tablet"] .vp-more-menu > .vp-more-row { min-height: 44px; font-size: 16px; }

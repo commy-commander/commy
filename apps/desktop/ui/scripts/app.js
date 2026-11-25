@@ -7425,6 +7425,7 @@ function fitVoiceRoomDock() {
   panel.classList.remove("vr-dock-quiet", "vr-dock-more");
   paintVoiceRoomMoreLamp();
   if (!voiceRoom.open || !shownVoiceRoomDock(panel)) return $("vp-more-menu").classList.add("hidden");
+  if (document.documentElement.dataset.panes === "2") return wordTabletVoiceKeys(panel);
   let room = voiceRoomDockRoom(voiceRoomDockEdges(panel));
   if (!room.keys || !room.meter) {
     panel.classList.add("vr-dock-more");
@@ -7433,6 +7434,17 @@ function fitVoiceRoomDock() {
     $("vp-more-menu").classList.add("hidden");
   }
   panel.classList.toggle("vr-dock-quiet", !room.meter);
+}
+
+function wordTabletVoiceKeys(panel) {
+  panel.classList.add("vr-dock-more");
+  const words = { "vp-more": t("ui.more"), "deafen-btn": t("ui.deafen"), "mute-btn": t("ui.mic"), "vp-disconnect": t("ui.leave") };
+  for (const [id, word] of Object.entries(words)) {
+    const key = document.getElementById(id);
+    if (!key) continue;
+    const holder = key.closest(".split-btn") || key;
+    if (holder.dataset.word !== word) holder.dataset.word = word;
+  }
 }
 
 function paintVoiceRoomMoreLamp() {
@@ -7459,7 +7471,8 @@ function toggleVoiceRoomMore() {
   menu.replaceChildren();
   if (!$("vp-camera-split").classList.contains("hidden")) voiceRoomMoreRow(menu, state.cameraOn ? "camera" : "cameraOff", $("vp-camera").title, "vp-camera");
   const share = $("share-btn");
-  if (!share.classList.contains("hidden")) voiceRoomMoreRow(menu, "screen", share.textContent, "share-btn");
+  const canShare = !document.body.classList.contains("mobile-app") || document.body.classList.contains("can-share-screen");
+  if (canShare && !share.classList.contains("hidden")) voiceRoomMoreRow(menu, "screen", share.textContent, "share-btn");
   voiceRoomMoreRow(menu, "soundboard", t("ui.soundboard"), "vp-soundboard");
   placePopup(menu, $("vp-more"), "above");
 }
