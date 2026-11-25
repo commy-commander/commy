@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { LOOK_FIT, LOOK_STACK_KEY, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes } = require("../scripts/look.js");
+const { LOOK_FIT, LOOK_STACK_KEY, tabletScreen, tabletFit, tabletPanes, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes } = require("../scripts/look.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 test("the new look is the only look: nothing saved and nothing in the address turns it off", () => {
@@ -149,4 +149,42 @@ test("every new-look stylesheet is linked switched off, after the main one, and 
   const first = html.indexOf('<script src="scripts/');
   assert.ok(first >= 0 && first < html.indexOf('<script src="scripts/look.js"'));
   assert.ok(html.indexOf('<script src="scripts/look.js"') < html.indexOf('<script src="scripts/app.js"'));
+});
+
+test("a screen whose short side is 600 or more is a tablet", () => {
+  assert.equal(tabletScreen(834, 1194), true);
+  assert.equal(tabletScreen(1194, 834), true);
+  assert.equal(tabletScreen(600, 960), true);
+  assert.equal(tabletScreen(599, 960), false);
+  assert.equal(tabletScreen(390, 844), false);
+  assert.equal(tabletScreen(844, 390), false);
+  assert.equal(tabletScreen(undefined, undefined), false);
+});
+
+test("a tablet in the phone app gets two panes under 1024 wide and three from 1024, upright or on its side", () => {
+  assert.equal(tabletFit(834, 1194), "compact");
+  assert.equal(tabletFit(704, 1001), "compact");
+  assert.equal(tabletFit(700, 1000), "slim");
+  assert.equal(tabletFit(1194, 834), "roomy");
+  assert.equal(tabletFit(1024, 700), "compact");
+  assert.equal(tabletPanes(704), "2");
+  assert.equal(tabletPanes(1023), "2");
+  assert.equal(tabletPanes(1024), "3");
+  assert.equal(windowFit(800, 1280, true, true), "compact");
+  assert.equal(windowFit(1024, 1366, true, true), "compact");
+  assert.equal(windowFit(1280, 800, true, true), "roomy");
+  const base = { storedFx: null, phoneApp: true, tablet: true };
+  assert.deepEqual(lookAttributes({ ...base, width: 834, height: 1194 }), { look: "studio", fit: "compact", fx: "lite", stack: null, touch: "tablet", panes: "2" });
+  assert.deepEqual(lookAttributes({ ...base, width: 1194, height: 834 }), { look: "studio", fit: "roomy", fx: "lite", stack: null, touch: "tablet", panes: "3" });
+  assert.deepEqual(lookAttributes({ ...base, width: 1024, height: 1366 }), { look: "studio", fit: "compact", fx: "lite", stack: null, touch: "tablet", panes: "3" });
+  assert.deepEqual(lookAttributes({ ...base, width: 550, height: 900 }), { look: "studio", fit: "slim", fx: "lite", stack: null });
+  assert.deepEqual(lookAttributes({ ...base, phoneApp: false, width: 834, height: 1194 }), { look: "studio", fit: "compact", fx: null, stack: null });
+});
+
+test("tablet touch sizes load after the desktop sheets and only apply to a tablet", () => {
+  const css = readFileSync(new URL("../styles/tablet.css", import.meta.url), "utf8");
+  assert.ok(html.indexOf('id="studio-tablet"') > html.indexOf('href="styles/studio.css"'));
+  for (const selector of css.match(/^[^@\s}][^{]*(?=\{)/gm)) for (const part of selector.split(",")) assert.match(part.trim(), /^html\[data-look="studio"\]\[data-touch="tablet"\]/, part);
+  assert.match(css, /\.channel \{ min-height: 44px;/);
+  assert.match(css, /\.composer textarea \{ font-size: 16px; \}/);
 });

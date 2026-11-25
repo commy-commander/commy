@@ -36,7 +36,8 @@ function rowOpensConversation(rowClasses, tappedButton) {
   return classes.has("channel") && !classes.has("sidebar-link") && !classes.has("friend-request");
 }
 
-function phoneAppViewport(screenWidth, portrait, studio = false) {
+function phoneAppViewport(screenWidth, portrait, studio = false, tablet = false) {
+  if (tablet) return screenWidth < TWO_PANE_LAYOUT_WIDTH_PX ? TWO_PANE_VIEWPORT : PHONE_APP_VIEWPORT;
   if (studio && portrait && screenWidth > SLIM_LAYOUT_WIDTH_PX) return SLIM_VIEWPORT;
   const twoPane = portrait && screenWidth >= TWO_PANE_MIN_WIDTH_PX && screenWidth <= PHONE_MAX_WIDTH_PX;
   return twoPane ? TWO_PANE_VIEWPORT : PHONE_APP_VIEWPORT;

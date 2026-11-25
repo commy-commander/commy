@@ -1,0 +1,35 @@
+html[data-look="studio"][data-touch="tablet"] .app {
+  grid-template-rows: 58px minmax(0, 1fr);
+  --sidebar-w: 300px;
+}
+html[data-look="studio"][data-touch="tablet"][data-panes="3"] .app { --sidebar-w: 288px; }
+html[data-look="studio"][data-touch="tablet"] .sidebar-resize { display: none; }
+
+html[data-look="studio"][data-touch="tablet"] .rail-tray,
+html[data-look="studio"][data-touch="tablet"] .user-panel { height: 56px; }
+html[data-look="studio"][data-touch="tablet"] .rail-home { height: 44px; padding: 0 16px; }
+html[data-look="studio"][data-touch="tablet"] .rail-home > svg { width: 20px; height: 20px; }
+html[data-look="studio"][data-touch="tablet"] .server-icon { width: 44px; height: 44px; font-size: 14px; }
+html[data-look="studio"][data-touch="tablet"] .user-chip { height: 46px; }
+html[data-look="studio"][data-touch="tablet"] .user-actions { top: 7px; }
+html[data-look="studio"][data-touch="tablet"] .user-actions .icon-btn { flex-basis: 40px; width: 40px; height: 42px; }
+html[data-look="studio"][data-touch="tablet"] .user-actions .icon-btn > svg { width: 20px; height: 20px; }
+
+html[data-look="studio"][data-touch="tablet"] .header-btns .icon-btn { width: 40px; height: 40px; }
+html[data-look="studio"][data-touch="tablet"] .section-head { min-height: 36px; }
+html[data-look="studio"][data-touch="tablet"] .channel { min-height: 44px; gap: 12px; padding: 0 12px; font-size: 16px; }
+html[data-look="studio"][data-touch="tablet"] .channel.active,
+html[data-look="studio"][data-touch="tablet"] .channel.active:hover { min-height: 46px; margin: -1px -10px -1px -2px; padding: 0 20px 0 14px; }
+html[data-look="studio"][data-touch="tablet"] .channel:hover:not(.active) { background: none; }
+
+html[data-look="studio"][data-touch="tablet"] .chat-header { height: 64px; }
+html[data-look="studio"][data-touch="tablet"] .header-actions { gap: 4px; }
+html[data-look="studio"][data-touch="tablet"] .header-actions .icon-btn { width: 44px; height: 44px; }
+html[data-look="studio"][data-touch="tablet"] .header-actions .icon-btn > svg { width: 22px; height: 22px; }
+
+html[data-look="studio"][data-touch="tablet"] .composer textarea { font-size: 16px; }
+
+html[data-look="studio"][data-touch="tablet"] .member { min-height: 44px; font-size: 15px; }
+@media (max-width: 799px) {
+  html[data-look="studio"][data-touch="tablet"] .app { --sidebar-w: 264px; }
+}

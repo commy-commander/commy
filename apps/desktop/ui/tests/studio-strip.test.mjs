@@ -160,7 +160,15 @@ test("an upright phone app screen wider than 550 is laid out 550 wide in the new
   assert.equal(phoneAppViewport(1280, false, true), PHONE_APP_VIEWPORT);
   assert.equal(phoneAppViewport(800, true, false), PHONE_APP_VIEWPORT);
   assert.equal(phoneAppViewport(669, true, false), TWO_PANE_VIEWPORT);
-  assert.ok(once(app, "phoneAppViewport(portrait.matches ? shortSide : longSide, portrait.matches, studioLook())"));
+  assert.ok(once(app, "phoneAppViewport(portrait.matches ? shortSide : longSide, portrait.matches, studioLook(), tabletScreen(shortSide, longSide))"));
+});
+
+test("a tablet screen keeps its own width, and one under 704 wide is laid out 704 wide for two panes", () => {
+  assert.equal(phoneAppViewport(834, true, true, true), PHONE_APP_VIEWPORT);
+  assert.equal(phoneAppViewport(1194, false, true, true), PHONE_APP_VIEWPORT);
+  assert.equal(phoneAppViewport(800, true, true, true), PHONE_APP_VIEWPORT);
+  assert.equal(phoneAppViewport(669, true, true, true), TWO_PANE_VIEWPORT);
+  assert.equal(phoneAppViewport(600, true, true, true), TWO_PANE_VIEWPORT);
 });
 
 test("in the stack a notice sits above the five-key bar while in voice, never over its labels", () => {

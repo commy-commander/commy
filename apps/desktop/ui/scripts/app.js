@@ -2063,7 +2063,7 @@ async function mockInvoke(cmd, args = {}) {
         { kind: "window", id: 12, name: "Spotify", is_primary: false },
       ];
     case "share_source_preview": return mockFrame(`Source ${args.sourceId}`, 360, 203, args.sourceId * 47);
-    case "can_share_screen": return true;
+    case "can_share_screen": return !new URLSearchParams(location.search).has("ios");
     case "start_screen_share": mock.share = { name: `Source ${args.sourceId}`, hue: args.sourceId * 47, audio: args.audio, ink: Boolean(args.ink), drawers: [] }; return null;
     case "set_stream_ink":
       if (!mock.share) throw "not sharing";
@@ -6796,7 +6796,7 @@ function openVoiceRoom() {
   if (voiceRoom.open) return true;
   voiceRoom.open = true;
   voiceRoom.folded = true;
-  voiceRoom.chat = true;
+  voiceRoom.chat = document.documentElement.dataset.panes !== "2";
   document.querySelector(".main").classList.remove("stage-focus");
   $("vr-grid").prepend($("video-pane"), $("cam-grid"));
   room.appendChild($("activity-panel"));
@@ -20879,7 +20879,7 @@ function fitPhoneViewport() {
   const portrait = window.matchMedia("(orientation: portrait)");
   const shortSide = Math.min(screen.width, screen.height);
   const longSide = Math.max(screen.width, screen.height);
-  const content = phoneAppViewport(portrait.matches ? shortSide : longSide, portrait.matches, studioLook());
+  const content = phoneAppViewport(portrait.matches ? shortSide : longSide, portrait.matches, studioLook(), tabletScreen(shortSide, longSide));
   const meta = document.querySelector('meta[name="viewport"]');
   if (meta.getAttribute("content") !== content) meta.setAttribute("content", content);
 }

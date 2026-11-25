@@ -1,10 +1,25 @@
 const LOOK_FX_KEY = "commy.fx";
 const LOOK_ZOOM_KEY = "commy.zoom";
 const LOOK_STACK_KEY = "commy.tallStack";
-const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760, phoneWidth: 550, stackHeight: 1800, tallRatio: 2, zoomMax: 8 };
+const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760, phoneWidth: 550, stackHeight: 1800, tallRatio: 2, zoomMax: 8, tabletSide: 600, threePaneWidth: 1024 };
+const LOOK_ROOT_DATA = ["look", "fit", "fx", "stack", "touch", "panes"];
 const LOOK_ZOOM_SETTLE = { everyMs: 50, steadyPolls: 3, maxPolls: 40, hops: 3 };
 
-function windowFit(width, height, phoneApp = false) {
+function tabletScreen(width, height) {
+  return Math.min(width, height) >= LOOK_FIT.tabletSide;
+}
+
+function tabletFit(width, height) {
+  if (width <= LOOK_FIT.slimWidth) return "slim";
+  return width >= LOOK_FIT.roomyWidth && height >= LOOK_FIT.roomyHeight ? "roomy" : "compact";
+}
+
+function tabletPanes(width) {
+  return width >= LOOK_FIT.threePaneWidth ? "3" : "2";
+}
+
+function windowFit(width, height, phoneApp = false, tablet = false) {
+  if (phoneApp && tablet) return tabletFit(width, height);
   if (width <= LOOK_FIT.slimWidth || height >= width * LOOK_FIT.tallRatio) return "slim";
   if (phoneApp && height > width) return "slim";
   if (width >= LOOK_FIT.roomyWidth && height >= LOOK_FIT.roomyHeight) return "roomy";
@@ -45,11 +60,18 @@ function resolveFx(stored, { fit, phoneApp }) {
   return fit === "slim" || phoneApp ? "lite" : "glass";
 }
 
-function lookAttributes({ storedFx, storedStack = null, width, height, phoneApp, zoom = 1 }) {
+function lookAttributes({ storedFx, storedStack = null, width, height, phoneApp, tablet = false, zoom = 1 }) {
   const real = { width: width * zoom, height: height * zoom };
-  const fit = windowFit(real.width, real.height, phoneApp);
+  const fit = windowFit(real.width, real.height, phoneApp, tablet);
   const stack = !phoneApp && stackChosen(storedStack) && windowStack(real.width, real.height);
-  return { look: "studio", fit, fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null, stack: stack ? "on" : null };
+  const attrs = {
+    look: "studio",
+    fit,
+    fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null,
+    stack: stack ? "on" : null,
+  };
+  if (phoneApp && tablet && fit !== "slim") Object.assign(attrs, { touch: "tablet", panes: tabletPanes(real.width) });
+  return attrs;
 }
 
 function studioLook() {
@@ -147,9 +169,10 @@ function applyLook() {
     width: window.innerWidth,
     height: window.innerHeight,
     phoneApp: root.classList.contains("mobile-app"),
+    tablet: Boolean(window.screen) && tabletScreen(window.screen.width, window.screen.height),
     zoom: lookWindow.zoom,
   });
-  for (const [name, value] of Object.entries(attrs)) setRootData(root, name, value);
+  for (const name of LOOK_ROOT_DATA) setRootData(root, name, attrs[name]);
   const media = attrs.look ? "all" : "not all";
   for (const sheet of document.querySelectorAll('link[id^="studio-"]')) if (sheet.media !== media) sheet.media = media;
   return attrs;
@@ -201,5 +224,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_STACK_KEY, LOOK_FIT, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes };
+  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_STACK_KEY, LOOK_FIT, tabletScreen, tabletFit, tabletPanes, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes };
 }
