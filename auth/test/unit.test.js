@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { socialProviders } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
@@ -28,6 +29,13 @@ test("loadConfig reports every invalid value at once", () => {
     () => loadConfig({ BETTER_AUTH_SECRET: "short", DATABASE_URL: "mysql://x", BETTER_AUTH_URL: "nope", PORT: "99999" }),
     (err) => ["BETTER_AUTH_SECRET", "DATABASE_URL", "BETTER_AUTH_URL", "PORT"].every((k) => err.message.includes(k)),
   );
+});
+
+test("loadConfig refuses the published local test secret on a public site", () => {
+  const compose = readFileSync(new URL("../docker-compose.dev.yml", import.meta.url), "utf8");
+  const devSecret = compose.match(/BETTER_AUTH_SECRET:\s*(\S+)/)[1];
+  assert.throws(() => loadConfig({ ...base, BETTER_AUTH_SECRET: devSecret }), /BETTER_AUTH_SECRET is the local test value/);
+  assert.equal(loadConfig({ ...base, BETTER_AUTH_SECRET: devSecret, BETTER_AUTH_URL: "http://localhost:3001" }).baseURL, "http://localhost:3001");
 });
 
 test("loadConfig enables providers only when fully configured", () => {

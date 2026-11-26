@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { normalizeAccessCode } from "./access.js";
 import { PRIVATE_NETWORKS, trustedProxyList } from "./client-ip.js";
 import { LINK_BLOCKLIST_PATH, linkBlocklistSources } from "./link-blocklist.js";
@@ -169,6 +170,12 @@ function serverKeys(env, secret, errors) {
   }
 }
 
+const PUBLISHED_SECRET_DIGESTS = new Set(["f7079317b0fba15149a25a621480988a16f5b18ad21ead9d8fc486583e86acdf"]); // gitleaks:allow
+
+function isPublishedSecret(secret) {
+  return PUBLISHED_SECRET_DIGESTS.has(createHash("sha256").update(secret).digest("hex"));
+}
+
 export function loadConfig(env = process.env) {
   const errors = [];
 
@@ -187,6 +194,9 @@ export function loadConfig(env = process.env) {
     baseURL = stripSlash(new URL(baseURL).toString());
   } catch {
     errors.push("BETTER_AUTH_URL must be the public URL of the site, for example https://commy.chat");
+  }
+  if (baseURL.startsWith("https:") && isPublishedSecret(secret)) {
+    errors.push("BETTER_AUTH_SECRET is the local test value from docker-compose.dev.yml; make a new one (openssl rand -base64 32)");
   }
 
   const port = Number(env.PORT ?? DEFAULT_PORT);
