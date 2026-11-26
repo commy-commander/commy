@@ -111,10 +111,10 @@ free to use, open source from top to bottom, and yours to host if you want.
 
 | Platform | Get it |
 | --- | --- |
-| Windows, macOS, Linux | [commy.chat/download](https://commy.chat/download) |
+| Windows, macOS, Linux | [Download](https://commy.chat/download) |
 | iPhone and iPad | [App Store](https://apps.apple.com/app/commy-chat/id6831824908) |
 | Android | [Google Play](https://play.google.com/store/apps/details?id=chat.commy.mobile) |
-| Browser | [commy.chat/web](https://commy.chat/web) |
+| Browser | [Web app](https://commy.chat/web) |
 
 Make an account, then start a server or join one with an invite link.
 
