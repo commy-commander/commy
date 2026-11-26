@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -31,11 +32,11 @@ impl ViaGateway {
     }
 
     fn paused(&self, now: Instant) -> bool {
-        self.paused_until.lock().unwrap().is_some_and(|until| now < until)
+        self.paused_until.lock_or_recover().is_some_and(|until| now < until)
     }
 
     fn pause(&self, now: Instant) {
-        *self.paused_until.lock().unwrap() = Some(now + REFUSED_PAUSE);
+        *self.paused_until.lock_or_recover() = Some(now + REFUSED_PAUSE);
     }
 
     pub async fn wake(&self, push: &str, previews: &[String]) -> Delivery {

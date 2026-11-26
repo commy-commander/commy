@@ -17,6 +17,7 @@ pub mod invites;
 pub mod join_request;
 pub mod ids;
 pub mod link_preview;
+pub mod lock_or_recover;
 pub mod mention;
 pub mod message;
 pub mod moved;

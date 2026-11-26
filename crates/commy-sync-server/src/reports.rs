@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::{LockOrRecover, ReadOrRecover};
 use std::collections::HashSet;
 use std::sync::RwLock;
 
@@ -84,12 +85,12 @@ impl Desk {
     }
 
     pub fn is_dropped(&self, stream: &StreamId) -> bool {
-        self.dropped.read().unwrap().contains(stream)
+        self.dropped.read_or_recover().contains(stream)
     }
 
     pub fn learn_dropped(&self, streams: impl IntoIterator<Item = StreamId>) -> Vec<StreamId> {
         let fresh: HashSet<StreamId> = streams.into_iter().collect();
-        let mut held = self.dropped.write().unwrap();
+        let mut held = self.dropped.write_or_recover();
         let newly: Vec<StreamId> = fresh.difference(&held).copied().collect();
         *held = fresh;
         newly
@@ -191,7 +192,7 @@ impl Store {
     pub async fn add_report(&self, stored: &StoredReport) -> Result<bool, StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut books = m.reports.lock().unwrap();
+                let mut books = m.reports.lock_or_recover();
                 if books.reports.iter().filter(|r| r.state == ReportState::Open).count() >= MAX_OPEN_REPORTS {
                     return Ok(false);
                 }
@@ -219,7 +220,7 @@ impl Store {
     pub async fn reports(&self, only_open: bool) -> Result<Vec<StoredReport>, StoreError> {
         match self {
             Store::Memory(m) => {
-                let books = m.reports.lock().unwrap();
+                let books = m.reports.lock_or_recover();
                 Ok(books.reports.iter().filter(|r| !only_open || r.state == ReportState::Open).cloned().collect())
             }
             Store::Postgres(p) => {
@@ -234,7 +235,7 @@ impl Store {
 
     pub async fn report(&self, id: &str) -> Result<Option<StoredReport>, StoreError> {
         match self {
-            Store::Memory(m) => Ok(m.reports.lock().unwrap().reports.iter().find(|r| r.id == id).cloned()),
+            Store::Memory(m) => Ok(m.reports.lock_or_recover().reports.iter().find(|r| r.id == id).cloned()),
             Store::Postgres(p) => {
                 let row = sqlx::query("SELECT id, received, state, body FROM sync_reports WHERE id = $1").bind(id).fetch_optional(&p.pool).await?;
                 Ok(row.as_ref().and_then(stored_from_row))
@@ -245,7 +246,7 @@ impl Store {
     pub async fn settle_report(&self, id: &str, state: ReportState) -> Result<bool, StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut books = m.reports.lock().unwrap();
+                let mut books = m.reports.lock_or_recover();
                 let Some(found) = books.reports.iter_mut().find(|r| r.id == id) else { return Ok(false) };
                 found.state = state;
                 Ok(true)
@@ -260,7 +261,7 @@ impl Store {
     pub async fn drop_streams(&self, streams: &[StreamId], report: &str, at: i64) -> Result<u64, StoreError> {
         match self {
             Store::Memory(m) => {
-                m.reports.lock().unwrap().dropped.extend(streams.iter().copied());
+                m.reports.lock_or_recover().dropped.extend(streams.iter().copied());
                 let mut removed = 0;
                 for stream in streams {
                     removed += m.forget_stream(stream);
@@ -287,7 +288,7 @@ impl Store {
 
     pub async fn dropped_streams(&self) -> Result<Vec<StreamId>, StoreError> {
         match self {
-            Store::Memory(m) => Ok(m.reports.lock().unwrap().dropped.iter().copied().collect()),
+            Store::Memory(m) => Ok(m.reports.lock_or_recover().dropped.iter().copied().collect()),
             Store::Postgres(p) => {
                 let rows = sqlx::query("SELECT stream FROM sync_dropped").fetch_all(&p.pool).await?;
                 Ok(rows.iter().filter_map(|row| row.get::<Vec<u8>, _>(0).try_into().ok().map(StreamId)).collect())
@@ -298,7 +299,7 @@ impl Store {
     pub async fn prune_reports(&self, before: i64) -> Result<u64, StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut books = m.reports.lock().unwrap();
+                let mut books = m.reports.lock_or_recover();
                 let had = books.reports.len();
                 books.reports.retain(|r| r.state == ReportState::Open || r.received >= before);
                 Ok((had - books.reports.len()) as u64)

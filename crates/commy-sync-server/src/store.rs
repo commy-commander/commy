@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -210,7 +211,7 @@ impl Store {
     pub async fn put_picture(&self, id: &[u8; 32], body: &[u8], at: i64) -> Result<(), StoreError> {
         match self {
             Store::Memory(m) => {
-                m.pictures.lock().unwrap().insert(*id, (body.to_vec(), at));
+                m.pictures.lock_or_recover().insert(*id, (body.to_vec(), at));
                 Ok(())
             }
             Store::Postgres(p) => p.put_picture(id, body, at).await,
@@ -219,7 +220,7 @@ impl Store {
 
     pub async fn get_picture(&self, id: &[u8; 32], at: i64) -> Result<Option<Vec<u8>>, StoreError> {
         match self {
-            Store::Memory(m) => Ok(m.pictures.lock().unwrap().get_mut(id).map(|(body, touched)| {
+            Store::Memory(m) => Ok(m.pictures.lock_or_recover().get_mut(id).map(|(body, touched)| {
                 *touched = (*touched).max(at);
                 body.clone()
             })),
@@ -230,7 +231,7 @@ impl Store {
     pub async fn prune_pictures(&self, before: i64) -> Result<u64, StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut pictures = m.pictures.lock().unwrap();
+                let mut pictures = m.pictures.lock_or_recover();
                 let had = pictures.len();
                 pictures.retain(|_, (_, touched)| *touched >= before);
                 Ok((had - pictures.len()) as u64)
@@ -248,7 +249,7 @@ impl Store {
 
     pub async fn eraser(&self, stream: &StreamId) -> Result<Option<[u8; 32]>, StoreError> {
         match self {
-            Store::Memory(m) => Ok(m.erasers.lock().unwrap().get(stream).map(|(eraser, _)| *eraser)),
+            Store::Memory(m) => Ok(m.erasers.lock_or_recover().get(stream).map(|(eraser, _)| *eraser)),
             Store::Postgres(p) => p.eraser(stream).await,
         }
     }
@@ -256,7 +257,7 @@ impl Store {
     pub async fn release(&self, stream: &StreamId, eraser: &[u8; 32]) -> Result<(), StoreError> {
         match self {
             Store::Memory(m) => {
-                m.erasers.lock().unwrap().retain(|held, (key, _)| held != stream || key != eraser);
+                m.erasers.lock_or_recover().retain(|held, (key, _)| held != stream || key != eraser);
                 Ok(())
             }
             Store::Postgres(p) => p.release(stream, eraser).await,
@@ -309,19 +310,19 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     fn totals(&self) -> Totals {
-        let streams = self.streams.lock().unwrap();
+        let streams = self.streams.lock_or_recover();
         let entries = streams.values().map(|s| s.entries.len() as u64).sum();
         let bytes = streams.values().flat_map(|s| s.entries.iter()).map(|e| e.3.len() as u64).sum();
         Totals { streams: streams.len() as u64, entries, bytes }
     }
 
     pub(crate) fn forget_stream(&self, stream: &StreamId) -> u64 {
-        self.erasers.lock().unwrap().remove(stream);
-        self.streams.lock().unwrap().remove(stream).map_or(0, |gone| gone.entries.len() as u64)
+        self.erasers.lock_or_recover().remove(stream);
+        self.streams.lock_or_recover().remove(stream).map_or(0, |gone| gone.entries.len() as u64)
     }
 
     fn claim(&self, stream: &StreamId, eraser: &[u8; 32], at: i64) -> bool {
-        let mut erasers = self.erasers.lock().unwrap();
+        let mut erasers = self.erasers.lock_or_recover();
         let held = erasers.entry(*stream).or_insert((*eraser, at));
         if held.0 != *eraser {
             return false;
@@ -331,7 +332,7 @@ impl MemoryStore {
     }
 
     fn erase(&self, stream: &StreamId, through: u64) -> u64 {
-        let mut streams = self.streams.lock().unwrap();
+        let mut streams = self.streams.lock_or_recover();
         let Some(s) = streams.get_mut(stream) else { return 0 };
         let had = s.entries.len();
         s.entries.retain(|(seq, ..)| *seq > through);
@@ -339,8 +340,8 @@ impl MemoryStore {
     }
 
     fn register_wake(&self, tag: &[u8; 32], push: &str, until: i64, today: i64, holder: i64) -> bool {
-        let mut wakes = self.wakes.lock().unwrap();
-        let mut holders = self.wake_holders.lock().unwrap();
+        let mut wakes = self.wakes.lock_or_recover();
+        let mut holders = self.wake_holders.lock_or_recover();
         let pushes = wakes.entry(*tag).or_default();
         pushes.retain(|_, kept| *kept >= today);
         if !pushes.contains_key(push) {
@@ -364,7 +365,7 @@ impl MemoryStore {
     }
 
     fn wake_targets(&self, tags: &[[u8; 32]], today: i64) -> Vec<String> {
-        let wakes = self.wakes.lock().unwrap();
+        let wakes = self.wakes.lock_or_recover();
         let mut out: Vec<String> = tags
             .iter()
             .filter_map(|tag| wakes.get(tag))
@@ -376,7 +377,7 @@ impl MemoryStore {
     }
 
     fn forget_wake(&self, tag: &[u8; 32], push: &str) {
-        let mut wakes = self.wakes.lock().unwrap();
+        let mut wakes = self.wakes.lock_or_recover();
         if let Some(pushes) = wakes.get_mut(tag) {
             pushes.remove(push);
             if pushes.is_empty() {
@@ -386,7 +387,7 @@ impl MemoryStore {
     }
 
     fn set_quiet(&self, pushes: &[String], until_ms: Option<i64>) {
-        let mut quiet = self.quiet.lock().unwrap();
+        let mut quiet = self.quiet.lock_or_recover();
         for push in pushes {
             match until_ms {
                 Some(until) => quiet.insert(push.clone(), until),
@@ -396,20 +397,20 @@ impl MemoryStore {
     }
 
     fn quiet_pushes(&self, pushes: &[String], now_ms: i64) -> Vec<String> {
-        let quiet = self.quiet.lock().unwrap();
+        let quiet = self.quiet.lock_or_recover();
         pushes.iter().filter(|push| quiet.get(*push).is_some_and(|until| *until > now_ms)).cloned().collect()
     }
 
     fn prune_quiet(&self, now_ms: i64) -> u64 {
-        let mut quiet = self.quiet.lock().unwrap();
+        let mut quiet = self.quiet.lock_or_recover();
         let had = quiet.len();
         quiet.retain(|_, until| *until > now_ms);
         (had - quiet.len()) as u64
     }
 
     fn forget_push(&self, push: &str) {
-        self.quiet.lock().unwrap().remove(push);
-        let mut wakes = self.wakes.lock().unwrap();
+        self.quiet.lock_or_recover().remove(push);
+        let mut wakes = self.wakes.lock_or_recover();
         for pushes in wakes.values_mut() {
             pushes.remove(push);
         }
@@ -417,7 +418,7 @@ impl MemoryStore {
     }
 
     fn prune_wakes(&self, today: i64) -> u64 {
-        let mut wakes = self.wakes.lock().unwrap();
+        let mut wakes = self.wakes.lock_or_recover();
         let mut removed = 0u64;
         for pushes in wakes.values_mut() {
             let had = pushes.len();
@@ -429,7 +430,7 @@ impl MemoryStore {
     }
 
     fn append(&self, stream: &StreamId, nonce: &[u8; APPEND_NONCE_BYTES], body: &[u8], at: i64) -> Appended {
-        let mut streams = self.streams.lock().unwrap();
+        let mut streams = self.streams.lock_or_recover();
         let s = streams.entry(*stream).or_default();
         if let Some((seq, _, at, _)) = s.entries.iter().find(|(_, n, _, _)| n == nonce) {
             return Appended { seq: *seq, at: *at, fresh: false };
@@ -441,7 +442,7 @@ impl MemoryStore {
     }
 
     fn page(&self, stream: &StreamId, after: u64, limit: usize) -> Vec<WireEntry> {
-        let streams = self.streams.lock().unwrap();
+        let streams = self.streams.lock_or_recover();
         let Some(s) = streams.get(stream) else { return Vec::new() };
         s.entries
             .iter()
@@ -452,16 +453,16 @@ impl MemoryStore {
     }
 
     fn heads(&self, streams: &[StreamId]) -> HashMap<StreamId, u64> {
-        let held = self.streams.lock().unwrap();
+        let held = self.streams.lock_or_recover();
         streams.iter().filter_map(|stream| held.get(stream).map(|s| (*stream, s.head))).collect()
     }
 
     fn head(&self, stream: &StreamId) -> u64 {
-        self.streams.lock().unwrap().get(stream).map_or(0, |s| s.head)
+        self.streams.lock_or_recover().get(stream).map_or(0, |s| s.head)
     }
 
     fn prune(&self, before: i64) -> u64 {
-        let mut streams = self.streams.lock().unwrap();
+        let mut streams = self.streams.lock_or_recover();
         let mut removed = 0u64;
         for s in streams.values_mut() {
             let had = s.entries.len();
@@ -469,7 +470,7 @@ impl MemoryStore {
             removed += (had - s.entries.len()) as u64;
         }
         streams.retain(|_, s| !s.entries.is_empty() || s.last_at >= before);
-        self.erasers.lock().unwrap().retain(|stream, (_, claimed)| *claimed >= before || streams.contains_key(stream));
+        self.erasers.lock_or_recover().retain(|stream, (_, claimed)| *claimed >= before || streams.contains_key(stream));
         removed
     }
 }

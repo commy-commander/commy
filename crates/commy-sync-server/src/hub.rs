@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -21,7 +22,7 @@ pub struct Hub {
 
 impl Hub {
     pub fn subscribe(&self, stream: StreamId) -> broadcast::Receiver<Arc<Live>> {
-        let mut streams = self.streams.lock().unwrap();
+        let mut streams = self.streams.lock_or_recover();
         streams.entry(stream).or_insert_with(|| broadcast::channel(LIVE_BUFFER).0).subscribe()
     }
 
@@ -38,19 +39,19 @@ impl Hub {
     }
 
     fn send(&self, stream: &StreamId, live: Live) -> usize {
-        let streams = self.streams.lock().unwrap();
+        let streams = self.streams.lock_or_recover();
         streams.get(stream).map_or(0, |sender| sender.send(Arc::new(live)).unwrap_or(0))
     }
 
     pub fn release(&self, stream: &StreamId) {
-        let mut streams = self.streams.lock().unwrap();
+        let mut streams = self.streams.lock_or_recover();
         if streams.get(stream).is_some_and(|sender| sender.receiver_count() == 0) {
             streams.remove(stream);
         }
     }
 
     pub fn live_streams(&self) -> usize {
-        self.streams.lock().unwrap().len()
+        self.streams.lock_or_recover().len()
     }
 }
 

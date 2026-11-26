@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -86,7 +87,7 @@ impl Wakes {
     }
 
     fn take_urgent(&self, push: &str, now: Instant) -> bool {
-        let mut urgent = self.urgent.lock().unwrap();
+        let mut urgent = self.urgent.lock_or_recover();
         let sent = urgent.entry(push.to_string()).or_default();
         sent.retain(|at| now.saturating_duration_since(*at) < URGENT_WINDOW);
         let too_soon = sent.back().is_some_and(|at| now.saturating_duration_since(*at) < URGENT_GAP);
@@ -98,14 +99,14 @@ impl Wakes {
     }
 
     fn seat(&self, pushes: impl IntoIterator<Item = String>, now: Instant) {
-        let mut seated = self.seated.lock().unwrap();
+        let mut seated = self.seated.lock_or_recover();
         for push in pushes {
             seated.insert(push, now + SEAT_HOLD);
         }
     }
 
     fn seated_elsewhere(&self, push: &str, now: Instant) -> bool {
-        self.seated.lock().unwrap().get(push).is_some_and(|until| now < *until)
+        self.seated.lock_or_recover().get(push).is_some_and(|until| now < *until)
     }
 
     pub fn enabled(&self) -> bool {
@@ -118,12 +119,12 @@ impl Wakes {
 
     fn already_sent(&self, push: &str, preview: Option<&str>) -> bool {
         let Some(preview) = preview else { return false };
-        let sent = self.sent.lock().unwrap().get(push).is_some_and(|last| last == preview);
-        sent || self.queued.lock().unwrap().get(push).is_some_and(|held| held.iter().any(|p| p == preview))
+        let sent = self.sent.lock_or_recover().get(push).is_some_and(|last| last == preview);
+        sent || self.queued.lock_or_recover().get(push).is_some_and(|held| held.iter().any(|p| p == preview))
     }
 
     fn note_sent(&self, push: &str, preview: Option<&str>) {
-        let mut sent = self.sent.lock().unwrap();
+        let mut sent = self.sent.lock_or_recover();
         match preview {
             Some(preview) => sent.insert(push.to_string(), preview.to_string()),
             None => sent.remove(push),
@@ -138,13 +139,13 @@ impl Wakes {
 
     fn plan_with(&self, push: &str, now: Instant, previews: &[String]) -> Plan {
         let preview = previews.last().map(String::as_str);
-        let mut last = self.last.lock().unwrap();
+        let mut last = self.last.lock_or_recover();
         match last.get(push).map(|at| now.saturating_duration_since(*at)) {
             Some(since) if since < PUSH_GAP => {
                 if self.already_sent(push, preview) {
                     return Plan::AlreadyQueued;
                 }
-                let mut queued = self.queued.lock().unwrap();
+                let mut queued = self.queued.lock_or_recover();
                 let fresh = !queued.contains_key(push);
                 let held = queued.entry(push.to_string()).or_default();
                 held.extend(previews.iter().cloned());
@@ -165,20 +166,20 @@ impl Wakes {
     }
 
     fn release_queued(&self, push: &str, now: Instant) -> Vec<String> {
-        let previews = self.queued.lock().unwrap().remove(push).unwrap_or_default();
-        self.last.lock().unwrap().insert(push.to_string(), now);
+        let previews = self.queued.lock_or_recover().remove(push).unwrap_or_default();
+        self.last.lock_or_recover().insert(push.to_string(), now);
         self.note_sent(push, previews.last().map(String::as_str));
         previews
     }
 
     pub fn forget_idle(&self) {
         let now = Instant::now();
-        let mut last = self.last.lock().unwrap();
+        let mut last = self.last.lock_or_recover();
         last.retain(|_, at| now.saturating_duration_since(*at) < PUSH_GAP);
-        self.sent.lock().unwrap().retain(|push, _| last.contains_key(push));
+        self.sent.lock_or_recover().retain(|push, _| last.contains_key(push));
         drop(last);
-        self.seated.lock().unwrap().retain(|_, until| now < *until);
-        let mut urgent = self.urgent.lock().unwrap();
+        self.seated.lock_or_recover().retain(|_, until| now < *until);
+        let mut urgent = self.urgent.lock_or_recover();
         urgent.values_mut().for_each(|sent| sent.retain(|at| now.saturating_duration_since(*at) < URGENT_WINDOW));
         urgent.retain(|_, sent| !sent.is_empty());
     }

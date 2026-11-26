@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::{LockOrRecover, ReadOrRecover};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -65,7 +66,7 @@ impl Passes {
             keys.insert(key.epoch, parsed);
         }
         let count = keys.len();
-        *self.keys.write().unwrap() = keys;
+        *self.keys.write_or_recover() = keys;
         Ok(count)
     }
 
@@ -74,7 +75,7 @@ impl Passes {
         if pass.epoch != now && pass.epoch.checked_add(1) != Some(now) {
             return false;
         }
-        self.keys.read().unwrap().get(&pass.epoch).is_some_and(|key| key.verify(pass))
+        self.keys.read_or_recover().get(&pass.epoch).is_some_and(|key| key.verify(pass))
     }
 
     pub async fn spend(&self, store: &Store, pass: &Pass) -> Result<Spent, StoreError> {
@@ -122,7 +123,7 @@ pub fn spawn_refresh(service: Arc<Service>) {
 impl Store {
     pub async fn spend_pass(&self, epoch: u32, token: &[u8; PASS_TOKEN_BYTES]) -> Result<bool, StoreError> {
         match self {
-            Store::Memory(m) => Ok(m.spent_passes.lock().unwrap().insert(*token, epoch).is_none()),
+            Store::Memory(m) => Ok(m.spent_passes.lock_or_recover().insert(*token, epoch).is_none()),
             Store::Postgres(p) => {
                 let done = sqlx::query("INSERT INTO sync_spent_passes (token, epoch) VALUES ($1, $2) ON CONFLICT (token) DO NOTHING")
                     .bind(&token[..])
@@ -137,7 +138,7 @@ impl Store {
     pub async fn prune_passes(&self, before_epoch: u32) -> Result<u64, StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut spent = m.spent_passes.lock().unwrap();
+                let mut spent = m.spent_passes.lock_or_recover();
                 let had = spent.len();
                 spent.retain(|_, epoch| *epoch >= before_epoch);
                 Ok((had - spent.len()) as u64)

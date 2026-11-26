@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Mutex;
@@ -191,7 +192,7 @@ impl Limiter {
 
     pub fn connect(&self, key: AddressKey) -> Result<Caller, Refusal> {
         let now = Instant::now();
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         if books.connections.len() >= self.limits.connections_total {
             return Err(Refusal::Full);
         }
@@ -221,7 +222,7 @@ impl Limiter {
     }
 
     pub fn disconnect(&self, caller: Caller) {
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         books.connections.remove(&caller.connection);
         if let Some(address) = books.addresses.get_mut(&caller.address) {
             address.connections = address.connections.saturating_sub(1);
@@ -234,7 +235,7 @@ impl Limiter {
     }
 
     fn open_at(&self, caller: Caller, now: Instant) -> Result<(), Refusal> {
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let limits = self.limits.clone();
         let connection = books.connections.get_mut(&caller.connection).ok_or(Refusal::Full)?;
         connection.opens.take(limits.opens, now).map_err(Refusal::Wait)?;
@@ -243,7 +244,7 @@ impl Limiter {
 
     pub fn picture(&self, key: AddressKey) -> Result<(), Refusal> {
         let now = Instant::now();
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let rate = self.limits.pictures;
         self.address(&mut books, key, now).pictures.take(rate, now).map_err(Refusal::Wait)
     }
@@ -253,7 +254,7 @@ impl Limiter {
     }
 
     fn new_stream_at(&self, key: AddressKey, now: Instant) -> Result<(), Refusal> {
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let rate = self.limits.new_streams;
         self.address(&mut books, key, now).new_streams.take(rate, now).map_err(Refusal::Wait)
     }
@@ -263,21 +264,21 @@ impl Limiter {
     }
 
     fn passed_new_stream_at(&self, key: AddressKey, now: Instant) -> Result<(), Refusal> {
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let rate = self.limits.passed_new_streams;
         self.address(&mut books, key, now).passed_new_streams.take(rate, now).map_err(Refusal::Wait)
     }
 
     pub fn wake(&self, key: AddressKey) -> Result<(), Refusal> {
         let now = Instant::now();
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let rate = self.limits.wakes;
         self.address(&mut books, key, now).wakes.take(rate, now).map_err(Refusal::Wait)
     }
 
     pub fn report(&self, key: AddressKey) -> Result<(), Refusal> {
         let now = Instant::now();
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let rate = self.limits.reports;
         self.address(&mut books, key, now).reports.take(rate, now).map_err(Refusal::Wait)
     }
@@ -288,7 +289,7 @@ impl Limiter {
 
     fn append_from_at(&self, caller: Caller, stream: &[u8; 32], bytes: usize, now: Instant) -> Result<(), Refusal> {
         {
-            let mut books = self.books.lock().unwrap();
+            let mut books = self.books.lock_or_recover();
             let rate = self.limits.connection_appends;
             let connection = books.connections.get_mut(&caller.connection).ok_or(Refusal::Full)?;
             connection.appends.take(rate, now).map_err(Refusal::Wait)?;
@@ -301,7 +302,7 @@ impl Limiter {
     }
 
     fn append_at(&self, key: AddressKey, stream: &[u8; 32], bytes: usize, now: Instant) -> Result<(), Refusal> {
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let limits = self.limits.clone();
         let address = self.address(&mut books, key, now);
         if now.saturating_duration_since(address.day_started) >= DAY {
@@ -332,7 +333,7 @@ impl Limiter {
     }
 
     fn signal_at(&self, caller: Caller, bytes: usize, now: Instant) -> Result<(), Refusal> {
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let limits = self.limits.clone();
         let connection = books.connections.get_mut(&caller.connection).ok_or(Refusal::Full)?;
         connection.signals.take(limits.signals, now).map_err(Refusal::Wait)?;
@@ -354,7 +355,7 @@ impl Limiter {
     }
 
     fn will_at(&self, caller: Caller, now: Instant) -> Result<(), Refusal> {
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let rate = self.limits.wills;
         let connection = books.connections.get_mut(&caller.connection).ok_or(Refusal::Full)?;
         connection.wills.take(rate, now).map_err(Refusal::Wait)
@@ -362,7 +363,7 @@ impl Limiter {
 
     pub fn forget_idle(&self) -> usize {
         let now = Instant::now();
-        let mut books = self.books.lock().unwrap();
+        let mut books = self.books.lock_or_recover();
         let before = books.addresses.len() + books.streams.len();
         books.addresses.retain(|_, a| {
             a.connections > 0 || now.saturating_duration_since(a.seen) < FORGET_AFTER || now.saturating_duration_since(a.day_started) < DAY && a.day_bytes > 0
@@ -372,7 +373,7 @@ impl Limiter {
     }
 
     pub fn tracked(&self) -> usize {
-        self.books.lock().unwrap().addresses.len()
+        self.books.lock_or_recover().addresses.len()
     }
 }
 

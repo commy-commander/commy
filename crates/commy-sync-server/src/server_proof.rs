@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
@@ -140,12 +141,12 @@ impl KeyBook {
 
     async fn fresh(&self, origin: &str, now_ms: i64) -> Result<PublishedKey, String> {
         let key = self.source.fetch(origin).await?;
-        self.kept.lock().unwrap().insert(origin.to_string(), (key.clone(), now_ms));
+        self.kept.lock_or_recover().insert(origin.to_string(), (key.clone(), now_ms));
         Ok(key)
     }
 
     fn kept(&self, origin: &str, now_ms: i64) -> Option<PublishedKey> {
-        let kept = self.kept.lock().unwrap();
+        let kept = self.kept.lock_or_recover();
         kept.get(origin).filter(|(_, at)| now_ms.saturating_sub(*at) < KEY_KEPT_MS).map(|(key, _)| key.clone())
     }
 
@@ -164,7 +165,7 @@ impl KeyBook {
     }
 
     pub fn forget_old(&self, now_ms: i64) {
-        self.kept.lock().unwrap().retain(|_, (_, at)| now_ms.saturating_sub(*at) < KEY_KEPT_MS);
+        self.kept.lock_or_recover().retain(|_, (_, at)| now_ms.saturating_sub(*at) < KEY_KEPT_MS);
     }
 }
 

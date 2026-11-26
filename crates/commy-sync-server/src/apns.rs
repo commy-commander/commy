@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -82,7 +83,7 @@ impl Apns {
     }
 
     fn sign_in(&self) -> Result<String, String> {
-        let mut held = self.sign_in.lock().unwrap();
+        let mut held = self.sign_in.lock_or_recover();
         if let Some((token, made)) = held.as_ref() {
             if made.elapsed() < SIGN_IN_LIFETIME {
                 return Ok(token.clone());
@@ -128,7 +129,7 @@ impl Apns {
         match (status, reason) {
             (410, _) | (400, "BadDeviceToken" | "DeviceTokenNotForTopic") => Delivery::Gone,
             (403, "ExpiredProviderToken" | "InvalidProviderToken") => {
-                *self.sign_in.lock().unwrap() = None;
+                *self.sign_in.lock_or_recover() = None;
                 Delivery::Failed(format!("APNs refused the sign-in: {reason}"))
             }
             (code, "") => Delivery::Failed(format!("APNs answered {code}")),

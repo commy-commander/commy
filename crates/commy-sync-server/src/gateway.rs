@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -141,14 +142,14 @@ impl Gateway {
     }
 
     fn first_use_of(&self, signature: &str, now_ms: i64) -> bool {
-        let mut seen = self.seen.lock().unwrap();
+        let mut seen = self.seen.lock_or_recover();
         seen.retain(|_, at| now_ms.saturating_sub(*at) < 2 * CLOCK_SKEW_MS);
         seen.insert(signature.to_ascii_lowercase(), now_ms).is_none()
     }
 
     pub fn forget_old(&self, now_ms: i64) {
         self.keys.forget_old(now_ms);
-        self.seen.lock().unwrap().retain(|_, at| now_ms.saturating_sub(*at) < 2 * CLOCK_SKEW_MS);
+        self.seen.lock_or_recover().retain(|_, at| now_ms.saturating_sub(*at) < 2 * CLOCK_SKEW_MS);
     }
 
     fn budget_level(budget: u64, alert_percent: u64, used: u64) -> BudgetLevel {
@@ -164,7 +165,7 @@ impl Gateway {
     fn watch_budget(&self, day: i64, used: u64) {
         let Some(settings) = &self.settings else { return };
         let level = Self::budget_level(settings.daily_budget, settings.alert_percent, used);
-        let mut alerted = self.alerted.lock().unwrap();
+        let mut alerted = self.alerted.lock_or_recover();
         if alerted.0 != day {
             *alerted = (day, BudgetLevel::Fine);
         }

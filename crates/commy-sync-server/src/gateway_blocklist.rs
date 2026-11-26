@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::ReadOrRecover;
 use std::sync::RwLock;
 use std::time::Duration;
 
@@ -29,15 +30,15 @@ impl Blocklist {
     }
 
     pub fn blocks(&self, origin: &str) -> bool {
-        self.list.read().unwrap().as_ref().is_some_and(|list| list.blocks_origin(origin))
+        self.list.read_or_recover().as_ref().is_some_and(|list| list.blocks_origin(origin))
     }
 
     pub fn blocked_count(&self) -> Option<usize> {
-        self.list.read().unwrap().as_ref().map(|list| list.domains.len())
+        self.list.read_or_recover().as_ref().map(|list| list.domains.len())
     }
 
     pub fn keep(&self, list: ServerBlocklist) -> bool {
-        let mut kept = self.list.write().unwrap();
+        let mut kept = self.list.write_or_recover();
         if kept.as_ref().is_some_and(|old| !list.newer_than(old) && list != *old) {
             return false;
         }

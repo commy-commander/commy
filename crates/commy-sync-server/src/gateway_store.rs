@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::collections::HashMap;
 
 use sqlx::Row;
@@ -41,7 +42,7 @@ const SERVER_COLUMNS: &str = "origin, first_seen, clean_since, cut_at, cut_reaso
 impl Store {
     pub async fn gateway_server(&self, origin: &str) -> Result<Option<ServerRecord>, StoreError> {
         match self {
-            Store::Memory(m) => Ok(m.gateway.lock().unwrap().servers.get(origin).cloned()),
+            Store::Memory(m) => Ok(m.gateway.lock_or_recover().servers.get(origin).cloned()),
             Store::Postgres(p) => {
                 let row = sqlx::query(&format!("SELECT {SERVER_COLUMNS} FROM sync_gateway_servers WHERE origin = $1")).bind(origin).fetch_optional(&p.pool).await?;
                 Ok(row.as_ref().map(record_from_row))
@@ -52,7 +53,7 @@ impl Store {
     pub async fn gateway_servers(&self) -> Result<Vec<ServerRecord>, StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut all: Vec<ServerRecord> = m.gateway.lock().unwrap().servers.values().cloned().collect();
+                let mut all: Vec<ServerRecord> = m.gateway.lock_or_recover().servers.values().cloned().collect();
                 all.sort_by(|a, b| a.origin.cmp(&b.origin));
                 Ok(all)
             }
@@ -66,7 +67,7 @@ impl Store {
     pub async fn put_gateway_server(&self, record: &ServerRecord) -> Result<(), StoreError> {
         match self {
             Store::Memory(m) => {
-                m.gateway.lock().unwrap().servers.insert(record.origin.clone(), record.clone());
+                m.gateway.lock_or_recover().servers.insert(record.origin.clone(), record.clone());
                 Ok(())
             }
             Store::Postgres(p) => {
@@ -91,7 +92,7 @@ impl Store {
 
     pub async fn gateway_day(&self, origin: &str, day: i64) -> Result<Day, StoreError> {
         match self {
-            Store::Memory(m) => Ok(m.gateway.lock().unwrap().days.get(&(origin.to_string(), day)).copied().unwrap_or_default()),
+            Store::Memory(m) => Ok(m.gateway.lock_or_recover().days.get(&(origin.to_string(), day)).copied().unwrap_or_default()),
             Store::Postgres(p) => {
                 let row = sqlx::query("SELECT pushes, refused, new_phones FROM sync_gateway_days WHERE origin = $1 AND day = $2")
                     .bind(origin)
@@ -106,7 +107,7 @@ impl Store {
     pub async fn gateway_days(&self, day: i64) -> Result<Vec<(String, Day)>, StoreError> {
         match self {
             Store::Memory(m) => {
-                let gateway = m.gateway.lock().unwrap();
+                let gateway = m.gateway.lock_or_recover();
                 let mut all: Vec<(String, Day)> = gateway.days.iter().filter(|((_, d), _)| *d == day).map(|((origin, _), day)| (origin.clone(), *day)).collect();
                 all.sort_by(|a, b| b.1.pushes.cmp(&a.1.pushes).then_with(|| a.0.cmp(&b.0)));
                 Ok(all)
@@ -124,7 +125,7 @@ impl Store {
     pub async fn count_gateway(&self, origin: &str, day: i64, add: Day) -> Result<(), StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut gateway = m.gateway.lock().unwrap();
+                let mut gateway = m.gateway.lock_or_recover();
                 let kept = gateway.days.entry((origin.to_string(), day)).or_default();
                 kept.pushes += add.pushes;
                 kept.refused += add.refused;
@@ -151,7 +152,7 @@ impl Store {
     pub async fn known_phone(&self, origin: &str, phone: &[u8; 32], day: i64) -> Result<bool, StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut gateway = m.gateway.lock().unwrap();
+                let mut gateway = m.gateway.lock_or_recover();
                 Ok(gateway.phones.get_mut(&(origin.to_string(), *phone)).map(|last| *last = day).is_some())
             }
             Store::Postgres(p) => {
@@ -169,7 +170,7 @@ impl Store {
     pub async fn remember_phone(&self, origin: &str, phone: &[u8; 32], day: i64) -> Result<(), StoreError> {
         match self {
             Store::Memory(m) => {
-                m.gateway.lock().unwrap().phones.insert((origin.to_string(), *phone), day);
+                m.gateway.lock_or_recover().phones.insert((origin.to_string(), *phone), day);
                 Ok(())
             }
             Store::Postgres(p) => {
@@ -187,7 +188,7 @@ impl Store {
     pub async fn prune_gateway(&self, before_day: i64) -> Result<(), StoreError> {
         match self {
             Store::Memory(m) => {
-                let mut gateway = m.gateway.lock().unwrap();
+                let mut gateway = m.gateway.lock_or_recover();
                 gateway.days.retain(|(_, day), _| *day >= before_day);
                 gateway.phones.retain(|_, last| *last >= before_day);
                 Ok(())

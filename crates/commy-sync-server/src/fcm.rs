@@ -1,3 +1,4 @@
+use commy_core::lock_or_recover::LockOrRecover;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -89,7 +90,7 @@ impl Fcm {
     }
 
     async fn access_token(&self) -> Result<String, String> {
-        if let Some((token, until)) = self.access.lock().unwrap().as_ref() {
+        if let Some((token, until)) = self.access.lock_or_recover().as_ref() {
             if Instant::now() + RENEW_BEFORE < *until {
                 return Ok(token.clone());
             }
@@ -108,7 +109,7 @@ impl Fcm {
         }
         let grant: Grant = res.json().await.map_err(|e| format!("FCM sign-in sent an unreadable answer: {e}"))?;
         let until = Instant::now() + Duration::from_secs(grant.expires_in);
-        *self.access.lock().unwrap() = Some((grant.access_token.clone(), until));
+        *self.access.lock_or_recover() = Some((grant.access_token.clone(), until));
         Ok(grant.access_token)
     }
 
@@ -123,7 +124,7 @@ impl Fcm {
             Ok(res) => match res.status().as_u16() {
                 400 | 404 => Delivery::Gone,
                 401 => {
-                    *self.access.lock().unwrap() = None;
+                    *self.access.lock_or_recover() = None;
                     Delivery::Failed("FCM refused the sign-in".into())
                 }
                 code => Delivery::Failed(format!("FCM answered {code}")),
