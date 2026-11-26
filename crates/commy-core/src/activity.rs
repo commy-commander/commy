@@ -12,6 +12,8 @@ pub const MAX_PLAYERS: usize = 2;
 pub const MAX_PARTICIPANTS: usize = 99;
 pub const VIDEO_LINK_EXTENSIONS: [&str; 3] = ["mp4", "webm", "ogg"];
 pub const YOUTUBE_VIDEO_ID_CHARS: usize = 11;
+pub const MAX_QUEUE_LENGTH: usize = 50;
+pub const MAX_QUEUE_TITLE_CHARS: usize = 120;
 const CELL_EMPTY: u8 = 0;
 const CELL_O: u8 = 2;
 
@@ -55,6 +57,24 @@ pub enum ActivityInput {
         position: f64,
         at: i64,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueuedWatch {
+    pub slot: u32,
+    pub source: WatchSource,
+    pub title: String,
+    pub by: UserId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueChange {
+    Add { source: WatchSource, title: String },
+    Remove { slot: u32 },
+    Skip { run: String },
+    Finished { run: String },
+    Lineup { items: Vec<QueuedWatch> },
 }
 
 pub fn is_video_link(url: &str) -> bool {
@@ -140,6 +160,40 @@ impl ActivityInput {
     }
 }
 
+fn plain_title(title: &str) -> bool {
+    title.chars().count() <= MAX_QUEUE_TITLE_CHARS && !title.chars().any(char::is_control)
+}
+
+fn plain_run_id(run: &str) -> bool {
+    !run.is_empty() && run.len() <= MAX_ACTIVITY_ID_CHARS && run.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+impl QueuedWatch {
+    pub fn valid(&self) -> bool {
+        self.source.valid() && plain_title(&self.title)
+    }
+}
+
+impl QueueChange {
+    pub fn valid(&self) -> bool {
+        match self {
+            QueueChange::Add { source, title } => source.valid() && plain_title(title),
+            QueueChange::Remove { .. } => true,
+            QueueChange::Skip { run } | QueueChange::Finished { run } => plain_run_id(run),
+            QueueChange::Lineup { items } => {
+                let mut slots: Vec<u32> = items.iter().map(|item| item.slot).collect();
+                slots.sort_unstable();
+                slots.dedup();
+                items.len() <= MAX_QUEUE_LENGTH && slots.len() == items.len() && items.iter().all(QueuedWatch::valid)
+            }
+        }
+    }
+
+    pub fn starter_only(&self) -> bool {
+        matches!(self, QueueChange::Lineup { .. })
+    }
+}
+
 pub fn moderates_voice(perms: Permissions) -> bool {
     perms.allows(Permissions::MOVE_MEMBERS) || perms.allows(Permissions::MUTE_MEMBERS) || perms.allows(Permissions::DEAFEN_MEMBERS)
 }
@@ -168,6 +222,14 @@ pub fn admits_set(state: &ServerState, by: UserId, channel: ChannelId, activity:
 pub fn admits_input(state: &ServerState, by: UserId, channel: ChannelId, input: &ActivityInput) -> bool {
     let Some(running) = state.activities.get(&channel) else { return false };
     present(state, by, channel) && input.valid_for(&running.kind) && (!input.starter_only() || running.starter == by)
+}
+
+pub fn admits_queue(state: &ServerState, by: UserId, channel: ChannelId, change: &QueueChange) -> bool {
+    let Some(running) = state.activities.get(&channel) else { return false };
+    matches!(running.kind, ActivityKind::Watch { .. })
+        && present(state, by, channel)
+        && change.valid()
+        && (!change.starter_only() || running.starter == by)
 }
 
 #[cfg(test)]
@@ -343,5 +405,66 @@ mod tests {
         enter_voice(&mut state, user, voice);
         let forged = ServerEvent::ActivitySet { server: sid, channel: voice, activity: Some(game(UserId::new())), by: user };
         assert_eq!(state.apply(forged), Ok(false));
+    }
+
+    fn tune(video: &str) -> WatchSource {
+        WatchSource::YouTube { video: video.into() }
+    }
+
+    fn slot(slot: u32, video: &str, by: UserId) -> QueuedWatch {
+        QueuedWatch { slot, source: tune(video), title: String::new(), by }
+    }
+
+    #[test]
+    fn queue_changes_carry_only_real_videos_and_plain_titles() {
+        let user = UserId::new();
+        assert!(QueueChange::Add { source: tune("dQw4w9WgXcQ"), title: "Song".into() }.valid());
+        assert!(!QueueChange::Add { source: tune("nope"), title: String::new() }.valid());
+        assert!(!QueueChange::Add { source: tune("dQw4w9WgXcQ"), title: "x".repeat(MAX_QUEUE_TITLE_CHARS + 1) }.valid());
+        assert!(!QueueChange::Add { source: tune("dQw4w9WgXcQ"), title: "two\nlines".into() }.valid());
+        assert!(QueueChange::Add { source: WatchSource::Link { url: "https://example.org/a.mp4".into() }, title: String::new() }.valid());
+        assert!(QueueChange::Skip { run: "run-1".into() }.valid());
+        assert!(!QueueChange::Finished { run: "run 1".into() }.valid());
+        assert!(!QueueChange::Skip { run: String::new() }.valid());
+        assert!(QueueChange::Lineup { items: vec![slot(1, "dQw4w9WgXcQ", user), slot(2, "a-b_c-d_e-f", user)] }.valid());
+        assert!(!QueueChange::Lineup { items: vec![slot(1, "dQw4w9WgXcQ", user), slot(1, "a-b_c-d_e-f", user)] }.valid(), "slots are unique");
+        let long = (0..=MAX_QUEUE_LENGTH as u32).map(|n| slot(n, "dQw4w9WgXcQ", user)).collect();
+        assert!(!QueueChange::Lineup { items: long }.valid());
+        assert!(QueueChange::Lineup { items: vec![] }.starter_only() && !QueueChange::Remove { slot: 1 }.starter_only());
+    }
+
+    #[test]
+    fn the_queue_belongs_to_a_running_watch_in_your_voice_channel() {
+        let (mut state, _, _) = fixture();
+        state.server.activities_enabled = true;
+        let sid = state.server.id;
+        let voice = state.server.channels.iter().find(|c| c.kind == crate::server::ChannelKind::Voice).map(|c| c.id).unwrap();
+        let user = join(&mut state, "user");
+        let other = join(&mut state, "other");
+        let add = QueueChange::Add { source: tune("dQw4w9WgXcQ"), title: String::new() };
+        let lineup = QueueChange::Lineup { items: vec![slot(1, "dQw4w9WgXcQ", other)] };
+        enter_voice(&mut state, user, voice);
+        assert!(!admits_queue(&state, user, voice, &add), "nothing is running");
+        let start = ServerEvent::ActivitySet { server: sid, channel: voice, activity: Some(game(user)), by: user };
+        assert_eq!(state.apply(start), Ok(true));
+        assert!(!admits_queue(&state, user, voice, &add), "a game has no queue");
+        let film = Activity { kind: ActivityKind::Watch { source: tune("dQw4w9WgXcQ") }, ..game(user) };
+        let start = ServerEvent::ActivitySet { server: sid, channel: voice, activity: Some(film), by: user };
+        assert_eq!(state.apply(start), Ok(true));
+        assert!(!admits_queue(&state, other, voice, &add), "not in the voice channel");
+        enter_voice(&mut state, other, voice);
+        assert!(admits_queue(&state, other, voice, &add));
+        assert!(!admits_queue(&state, other, voice, &lineup), "only the starter sends the lineup");
+        assert!(admits_queue(&state, user, voice, &lineup));
+        let event = ServerEvent::ActivityQueue { server: sid, channel: voice, seq: 1, change: add, by: other };
+        assert_eq!(state.apply(event), Ok(false), "queue changes never touch the store");
+    }
+
+    #[test]
+    fn queue_changes_have_plain_json_names() {
+        let json = serde_json::to_string(&QueueChange::Skip { run: "run-1".into() }).unwrap();
+        assert_eq!(json, r#"{"skip":{"run":"run-1"}}"#);
+        let add = QueueChange::Add { source: tune("dQw4w9WgXcQ"), title: "Song".into() };
+        assert_eq!(serde_json::to_string(&add).unwrap(), r#"{"add":{"source":{"youtube":{"video":"dQw4w9WgXcQ"}},"title":"Song"}}"#);
     }
 }

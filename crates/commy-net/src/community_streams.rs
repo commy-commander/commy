@@ -156,6 +156,7 @@ pub fn lane_of(event: &ServerEvent) -> Option<Lane> {
         | E::HandRaise { .. }
         | E::ActivitySet { .. }
         | E::ActivityInput { .. }
+        | E::ActivityQueue { .. }
         | E::DoorbellSet { .. }
         | E::DeviceAnnounce { .. }
         | E::ReactionToggle { .. } => None,

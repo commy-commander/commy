@@ -54,6 +54,7 @@ pub fn is_transient(event: &ServerEvent) -> bool {
             | ServerEvent::HandRaise { .. }
             | ServerEvent::ActivitySet { .. }
             | ServerEvent::ActivityInput { .. }
+            | ServerEvent::ActivityQueue { .. }
     )
 }
 

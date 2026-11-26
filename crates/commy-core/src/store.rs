@@ -1522,7 +1522,10 @@ impl ServerState {
                 }
                 Ok(replace(&mut self.invite_background, background))
             }
-            ServerEvent::SoundboardPlay { .. } | ServerEvent::SharedSoundPlay { .. } | ServerEvent::ActivityInput { .. } => Ok(false),
+            ServerEvent::SoundboardPlay { .. }
+            | ServerEvent::SharedSoundPlay { .. }
+            | ServerEvent::ActivityInput { .. }
+            | ServerEvent::ActivityQueue { .. } => Ok(false),
             ServerEvent::ActivitySet { server, channel, activity, by } => {
                 self.same_server(server)?;
                 if !crate::activity::admits_set(self, by, channel, activity.as_ref()) {

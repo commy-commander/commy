@@ -6874,6 +6874,36 @@ async fn send_activity_input(
     Ok(())
 }
 
+#[tauri::command]
+async fn send_activity_queue(
+    app: tauri::State<'_, App>,
+    server_id: String,
+    seq: u64,
+    change: commy_core::QueueChange,
+) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let channel = my_voice_channel(&app, sid)?;
+    let event = {
+        let servers = app.servers.lock_or_recover();
+        let state = servers.get(&sid).ok_or("unknown server")?;
+        view::activities::queue(state, me.id, channel, seq, change, chrono::Utc::now())?
+    };
+    broadcast_event(&app, sid, event).await;
+    Ok(())
+}
+
+fn on_remote_activity_queue(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, event: &ServerEvent) {
+    let Some(mine) = app.voice_session.lock_or_recover().as_ref().filter(|s| s.server == sid).map(|s| s.channel) else { return };
+    let heard = {
+        let servers = app.servers.lock_or_recover();
+        servers.get(&sid).and_then(|state| view::activities::heard_input(state, mine, event))
+    };
+    if let Some(view) = heard {
+        let _ = handle.emit("activity-input", view);
+    }
+}
+
 fn on_remote_activity_input(app: &tauri::State<'_, App>, handle: &tauri::AppHandle, sid: ServerId, channel: ChannelId, seq: u64, input: &ActivityInput, by: UserId) {
     let mine = app.voice_session.lock_or_recover().as_ref().map(|s| (s.server, s.channel));
     if mine != Some((sid, channel)) {
@@ -7873,6 +7903,12 @@ async fn run_net_loop(
                 if let ServerEvent::ActivityInput { channel, seq, input, by, .. } = &event {
                     if remote_action_ok(&app, server, &event, action) {
                         on_remote_activity_input(&app, &handle, server, *channel, *seq, input, *by);
+                    }
+                    continue;
+                }
+                if matches!(event, ServerEvent::ActivityQueue { .. }) {
+                    if remote_action_ok(&app, server, &event, action) {
+                        on_remote_activity_queue(&app, &handle, server, &event);
                     }
                     continue;
                 }
@@ -9104,6 +9140,7 @@ pub fn run() {
             play_soundboard,
             set_activity,
             send_activity_input,
+            send_activity_queue,
             stream_deck::get_stream_deck,
             stream_deck::set_stream_deck_enabled,
             stream_deck::forget_stream_deck,

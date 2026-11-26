@@ -47,7 +47,7 @@ pub mod wire_layout;
 pub mod test_support;
 
 pub use action::{Action, SignedEvent};
-pub use activity::{Activity, ActivityInput, ActivityKind, WatchSource};
+pub use activity::{Activity, ActivityInput, ActivityKind, QueueChange, QueuedWatch, WatchSource};
 pub use audit::{AuditEntry, AuditKind};
 pub use automod::{AutoMod, Hold};
 pub use catchup::{BucketDigest, BucketKey};

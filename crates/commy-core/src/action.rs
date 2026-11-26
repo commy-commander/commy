@@ -98,7 +98,8 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::StageSet { by, .. }
         | E::BotCommandsSet { by, .. }
         | E::ActivitySet { by, .. }
-        | E::ActivityInput { by, .. } => Some(*by),
+        | E::ActivityInput { by, .. }
+        | E::ActivityQueue { by, .. } => Some(*by),
         _ => None,
     }
 }
@@ -225,7 +226,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         | E::SoundboardPlay { .. }
         | E::SharedSoundPlay { .. }
         | E::ActivitySet { .. }
-        | E::ActivityInput { .. } => return None,
+        | E::ActivityInput { .. }
+        | E::ActivityQueue { .. } => return None,
     };
     Some(s)
 }
@@ -275,7 +277,8 @@ fn channel_of(event: &ServerEvent) -> Option<crate::ids::ChannelId> {
         | E::StageSet { channel, .. }
         | E::HandRaise { channel, .. }
         | E::ActivitySet { channel, .. }
-        | E::ActivityInput { channel, .. } => Some(*channel),
+        | E::ActivityInput { channel, .. }
+        | E::ActivityQueue { channel, .. } => Some(*channel),
         _ => None,
     }
 }
@@ -316,7 +319,7 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::ActivitySet { activity, .. } => {
             member && speaks && actor(event) == Some(by) && sees(event) && activity.as_ref().is_none_or(|a| a.starter == by && a.valid())
         }
-        E::ActivityInput { .. } => member && speaks && actor(event) == Some(by) && sees(event),
+        E::ActivityInput { .. } | E::ActivityQueue { .. } => member && speaks && actor(event) == Some(by) && sees(event),
         E::MessagePin { .. } => actor(event) == Some(by) && perms.can_pin() && sees(event),
         E::PollVote { .. } => member && speaks && actor(event) == Some(by) && sees(event),
         E::PollClose { .. } => member && actor(event) == Some(by) && sees(event),

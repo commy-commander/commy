@@ -27,12 +27,19 @@ impl Session {
                 self.tell_neighbors(server, &payload).await;
                 Ok(Value::Null)
             }
+            "send_activity_queue" => {
+                let seq = args.seq.ok_or("missing input number")?;
+                let change = args.change.ok_or("missing queue change")?;
+                let payload = self.client.borrow().act(server, |state, me, _, _| activities::queue(state, me.user, channel, seq, change, Utc::now()))?;
+                self.tell_neighbors(server, &payload).await;
+                Ok(Value::Null)
+            }
             _ => Err(format!("{cmd} is not available in the web app yet")),
         }
     }
 
     pub(super) fn hear_activity(&self, server: ServerId, event: &ServerEvent, action: Option<Action>) -> bool {
-        if !matches!(event, ServerEvent::ActivityInput { .. }) {
+        if !matches!(event, ServerEvent::ActivityInput { .. } | ServerEvent::ActivityQueue { .. }) {
             return false;
         }
         let Some((channel, _)) = self.voice_here(server) else { return true };

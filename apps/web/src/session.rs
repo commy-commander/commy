@@ -286,6 +286,7 @@ struct Args {
     activity: Option<commy_core::Activity>,
     seq: Option<u64>,
     input: Option<commy_core::ActivityInput>,
+    change: Option<commy_core::QueueChange>,
 }
 
 fn parse<T: std::str::FromStr>(raw: Option<&String>, what: &str) -> Result<T, String> {
@@ -521,7 +522,7 @@ impl Session {
             "answer_dm_call" => self.call_command(cmd, args).await,
             "end_dm_call" => self.call_command(cmd, args).await,
             "set_voice_channel" => self.call_command(cmd, args).await,
-            "set_activity" | "send_activity_input" => self.activity_command(cmd, args).await,
+            "set_activity" | "send_activity_input" | "send_activity_queue" => self.activity_command(cmd, args).await,
             "get_voice_settings" => self.call_command(cmd, args).await,
             "press_talk" => self.call_command(cmd, args).await,
             "list_join_waits" => self.join_wait_command(cmd, args).await,

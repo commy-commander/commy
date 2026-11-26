@@ -470,6 +470,13 @@ pub enum ServerEvent {
         homes: Vec<String>,
         require_home: bool,
     },
+    ActivityQueue {
+        server: ServerId,
+        channel: ChannelId,
+        seq: u64,
+        change: crate::activity::QueueChange,
+        by: UserId,
+    },
 }
 
 #[cfg(test)]
@@ -573,6 +580,8 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::GameDbSet { server, games: None }), 105);
         assert_eq!(wire_tag(ServerEvent::SyncHostSet { server, url: None }), 106);
         assert_eq!(wire_tag(ServerEvent::HomesBlocked { server, homes: vec![], require_home: false }), 107);
+        let change = crate::activity::QueueChange::Remove { slot: 1 };
+        assert_eq!(wire_tag(ServerEvent::ActivityQueue { server, channel, seq: 1, change, by: user }), 108);
     }
 
     #[test]
