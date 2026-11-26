@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::{DefaultBodyLimit, Path as Segment, Request, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path as Segment, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::middleware::{from_fn, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -25,6 +27,8 @@ const COOKIE: &str = "commy_admin";
 const SESSION_SECONDS: i64 = 12 * 60 * 60;
 const MAX_FAILED_SIGN_INS: u32 = 10;
 const SIGN_IN_WINDOW: Duration = Duration::from_secs(15 * 60);
+const MAX_TRACKED_SIGN_IN_ADDRESSES: usize = 4096;
+const OVERFLOW_SIGN_IN_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 const FAILED_SIGN_IN_PAUSE: Duration = Duration::from_millis(400);
 const RELEASE_FRESH: Duration = Duration::from_secs(60 * 60);
 const RELEASE_RETRY: Duration = Duration::from_secs(5 * 60);
@@ -37,7 +41,7 @@ pub struct Admin {
     service: Arc<Service>,
     settings: AdminSettings,
     secret: [u8; 32],
-    tries: Mutex<Tries>,
+    tries: Mutex<SignInTries>,
     newest: tokio::sync::Mutex<Option<(Instant, Option<String>)>>,
     http: reqwest::Client,
 }
@@ -47,6 +51,37 @@ struct Tries {
     since: Instant,
 }
 
+#[derive(Default)]
+struct SignInTries {
+    by_address: HashMap<IpAddr, Tries>,
+}
+
+impl SignInTries {
+    fn locked_out(&mut self, from: IpAddr, now: Instant) -> bool {
+        self.forget_stale(now);
+        self.by_address.get(&self.bucket(from)).is_some_and(|tries| tries.failed >= MAX_FAILED_SIGN_INS)
+    }
+
+    fn failed(&mut self, from: IpAddr, now: Instant) {
+        self.forget_stale(now);
+        let bucket = self.bucket(from);
+        self.by_address.entry(bucket).or_insert(Tries { failed: 0, since: now }).failed += 1;
+    }
+
+    fn bucket(&self, from: IpAddr) -> IpAddr {
+        let from = from.to_canonical();
+        if self.by_address.contains_key(&from) || self.by_address.len() < MAX_TRACKED_SIGN_IN_ADDRESSES {
+            from
+        } else {
+            OVERFLOW_SIGN_IN_ADDRESS
+        }
+    }
+
+    fn forget_stale(&mut self, now: Instant) {
+        self.by_address.retain(|_, tries| now.saturating_duration_since(tries.since) < SIGN_IN_WINDOW);
+    }
+}
+
 impl Admin {
     pub fn new(service: Arc<Service>, settings: AdminSettings) -> Arc<Self> {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).build().unwrap_or_default();
@@ -54,7 +89,7 @@ impl Admin {
             service,
             settings,
             secret: rand::random(),
-            tries: Mutex::new(Tries { failed: 0, since: Instant::now() }),
+            tries: Mutex::new(SignInTries::default()),
             newest: tokio::sync::Mutex::new(None),
             http,
         })
@@ -86,17 +121,12 @@ impl Admin {
         expires > now_s() && self.mac(&[b"session", expires.to_string().as_bytes()]).verify_slice(&tag).is_ok()
     }
 
-    fn locked_out(&self) -> bool {
-        let mut tries = self.tries.lock().unwrap_or_else(|e| e.into_inner());
-        if tries.since.elapsed() >= SIGN_IN_WINDOW {
-            *tries = Tries { failed: 0, since: Instant::now() };
-        }
-        tries.failed >= MAX_FAILED_SIGN_INS
+    fn locked_out(&self, from: IpAddr) -> bool {
+        self.tries.lock().unwrap_or_else(|e| e.into_inner()).locked_out(from, Instant::now())
     }
 
-    fn failed_sign_in(&self) {
-        let mut tries = self.tries.lock().unwrap_or_else(|e| e.into_inner());
-        tries.failed += 1;
+    fn failed_sign_in(&self, from: IpAddr) {
+        self.tries.lock().unwrap_or_else(|e| e.into_inner()).failed(from, Instant::now());
     }
 
     fn allowed(&self, headers: &HeaderMap) -> Result<(), Response> {
@@ -244,7 +274,7 @@ pub fn router(admin: Arc<Admin>) -> Router {
 }
 
 pub async fn serve(listener: tokio::net::TcpListener, service: Arc<Service>, settings: AdminSettings) -> std::io::Result<()> {
-    axum::serve(listener, router(Admin::new(service, settings))).await
+    axum::serve(listener, router(Admin::new(service, settings)).into_make_service_with_connect_info::<SocketAddr>()).await
 }
 
 async fn guard(request: Request, next: Next) -> Response {
@@ -286,15 +316,20 @@ async fn home(State(admin): State<Arc<Admin>>, headers: HeaderMap, uri: Uri) -> 
     Html(admin.page(note, None).await).into_response()
 }
 
-async fn sign_in(State(admin): State<Arc<Admin>>, headers: HeaderMap, Form(form): Form<SignIn>) -> Response {
+async fn sign_in(
+    State(admin): State<Arc<Admin>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(form): Form<SignIn>,
+) -> Response {
     if !same_origin(&headers) {
         return (StatusCode::FORBIDDEN, "This form must be sent from the admin page itself.").into_response();
     }
-    if admin.locked_out() {
+    if admin.locked_out(peer.ip()) {
         return (StatusCode::TOO_MANY_REQUESTS, Html(sign_in_page(Some("Too many wrong passwords. Wait 15 minutes and try again.")))).into_response();
     }
     if !admin.password_matches(&form.password) {
-        admin.failed_sign_in();
+        admin.failed_sign_in(peer.ip());
         tokio::time::sleep(FAILED_SIGN_IN_PAUSE).await;
         return (StatusCode::UNAUTHORIZED, Html(sign_in_page(Some("That password is not right.")))).into_response();
     }
@@ -870,6 +905,33 @@ mod tests {
         assert!(same_origin(&headers(&[("host", "localhost:8790"), ("origin", "null"), ("sec-fetch-site", "same-origin")])));
         assert!(!same_origin(&headers(&[("host", "localhost:8790"), ("origin", "null")])));
         assert!(same_origin(&headers(&[("host", "localhost:8790")])));
+    }
+
+    #[test]
+    fn wrong_passwords_lock_out_only_the_address_that_sent_them() {
+        let mut tries = SignInTries::default();
+        let start = Instant::now();
+        let guesser: IpAddr = "172.18.0.5".parse().unwrap();
+        let operator: IpAddr = "172.18.0.1".parse().unwrap();
+        for _ in 0..MAX_FAILED_SIGN_INS {
+            assert!(!tries.locked_out(guesser, start));
+            tries.failed(guesser, start);
+        }
+        assert!(tries.locked_out(guesser, start));
+        assert!(!tries.locked_out(operator, start), "the operator can still sign in");
+        assert!(tries.locked_out("::ffff:172.18.0.5".parse().unwrap(), start), "a mapped address is the same caller");
+        assert!(!tries.locked_out(guesser, start + SIGN_IN_WINDOW), "the lockout ends after the window");
+    }
+
+    #[test]
+    fn sign_in_tries_stay_bounded() {
+        let mut tries = SignInTries::default();
+        let now = Instant::now();
+        for n in 0..(MAX_TRACKED_SIGN_IN_ADDRESSES as u32 + 50) {
+            tries.failed(IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + n)), now);
+        }
+        assert!(tries.by_address.len() <= MAX_TRACKED_SIGN_IN_ADDRESSES + 1);
+        assert_eq!(tries.by_address[&OVERFLOW_SIGN_IN_ADDRESS].failed, 50);
     }
 
     #[test]

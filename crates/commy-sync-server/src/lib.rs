@@ -166,7 +166,7 @@ impl Service {
     }
 
     fn address(&self, peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
-        if self.trust_proxy {
+        if self.trust_proxy && sent_by_a_local_proxy(peer.ip()) {
             let forwarded = headers
                 .get("x-forwarded-for")
                 .and_then(|v| v.to_str().ok())
@@ -177,6 +177,13 @@ impl Service {
             }
         }
         peer.ip()
+    }
+}
+
+fn sent_by_a_local_proxy(peer: IpAddr) -> bool {
+    match peer.to_canonical() {
+        IpAddr::V4(address) => address.is_loopback() || address.is_private(),
+        IpAddr::V6(address) => address.is_loopback() || address.is_unique_local(),
     }
 }
 
@@ -334,4 +341,19 @@ pub(crate) fn now_ms() -> i64 {
 
 pub async fn serve(listener: tokio::net::TcpListener, service: Arc<Service>) -> std::io::Result<()> {
     axum::serve(listener, router(service).into_make_service_with_connect_info::<SocketAddr>()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forwarded_addresses_count_only_from_a_proxy_on_a_local_network() {
+        for proxy in ["127.0.0.1", "172.18.0.4", "10.1.2.3", "192.168.1.9", "::1", "fd00::4", "::ffff:172.18.0.4"] {
+            assert!(sent_by_a_local_proxy(proxy.parse().unwrap()), "{proxy}");
+        }
+        for caller in ["203.0.113.7", "8.8.8.8", "2001:db8::1", "::ffff:203.0.113.7"] {
+            assert!(!sent_by_a_local_proxy(caller.parse().unwrap()), "{caller}");
+        }
+    }
 }
