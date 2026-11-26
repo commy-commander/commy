@@ -130,7 +130,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks: [edge, db]
+    networks: [edge, db, cache]
     logging: *logging
 
   sync:
@@ -281,12 +281,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    networks: [db]
+    networks: [cache]
     logging: *logging
 
 networks:
   edge:
   db:
+    internal: true
+  cache:
     internal: true
 
 volumes:
