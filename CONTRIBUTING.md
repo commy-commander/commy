@@ -5,6 +5,20 @@ checks a change needs before it lands. Everyone taking part is expected to
 follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security problem,
 see [SECURITY.md](SECURITY.md).
 
+## Finding something to work on
+
+- Issues labelled
+  [good first issue](https://github.com/commy-commander/commy/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+  are small, well scoped and a good way to learn the codebase.
+- Issues labelled
+  [help wanted](https://github.com/commy-commander/commy/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+  are bigger pieces we would love a hand with.
+- Want to poke around first? The interface runs in a browser with demo data:
+  `cd apps/desktop/ui && python3 -m http.server 5174`, then open
+  `http://localhost:5174`.
+- Leave a comment on an issue before starting, so nobody does the same work
+  twice.
+
 ## Branch flow
 
 - `main` is protected and always releasable. Nobody pushes to it directly.
