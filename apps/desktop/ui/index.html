@@ -388,6 +388,18 @@
               <span class="activity-watch-title" id="activity-watch-title"></span>
               <button class="btn-link activity-watch-open hidden" id="activity-watch-open" data-i18n="ui.open-on-youtube">Open on YouTube</button>
               <span class="activity-sync" id="activity-sync"></span>
+              <button class="icon-btn activity-duck" id="activity-duck" type="button" aria-pressed="true" title="Turn the video down while people talk" data-i18n-title="ui.turn-the-video-down-while-people-talk" aria-label="Turn the video down while people talk" data-i18n-aria-label="ui.turn-the-video-down-while-people-talk"></button>
+              <button class="icon-btn activity-expand hidden" id="activity-expand" type="button" title="Show the full player" data-i18n-title="ui.show-the-full-player" aria-label="Show the full player" data-i18n-aria-label="ui.show-the-full-player"></button>
+            </div>
+            <div class="activity-queue" id="activity-queue">
+              <div class="activity-queue-head">
+                <span class="activity-queue-title" data-i18n="ui.up-next">Up next</span>
+                <input id="activity-queue-input" type="text" placeholder="Add a YouTube link to the queue" data-i18n-placeholder="ui.add-a-youtube-link-to-the-queue" spellcheck="false" autocomplete="off" />
+                <button class="btn-primary btn-small" id="activity-queue-add" type="button" data-i18n="ui.add">Add</button>
+                <button class="vp-pill" id="activity-queue-skip" type="button" data-i18n="ui.skip">Skip</button>
+              </div>
+              <ol class="activity-queue-list" id="activity-queue-list"></ol>
+              <div class="activity-queue-empty" id="activity-queue-empty" data-i18n="ui.queue-empty-hint">Add a link and it plays when this one ends.</div>
             </div>
           </div>
         </div>
@@ -3889,6 +3901,7 @@
   <script src="scripts/polls.js"></script>
   <script src="scripts/voice-invite.js"></script>
   <script src="scripts/activities.js"></script>
+  <script src="scripts/activity-queue.js"></script>
   <script src="scripts/read-state.js"></script>
   <script src="scripts/channel-access.js"></script>
   <script src="scripts/sensitive.js"></script>

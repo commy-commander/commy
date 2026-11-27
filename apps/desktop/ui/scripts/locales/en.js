@@ -3142,6 +3142,19 @@ const LOCALE_EN = {
   "ui.servers-taking-longer": "Your servers are taking longer than usual to load.",
   "ui.servers-stalled-reload": "Reload the page. If servers are still missing, open Settings, Commy Account and choose Bring back earlier servers.",
   "ui.show-n-more": "Show {count} more",
+  "ui.join-to-add-to-the-queue": "Join to add to the queue",
+  "ui.the-queue-is-full": "The queue is full",
+  "ui.only-whoever-added-it-or-the-starter": "Only whoever added it or the person who started can remove it",
+  "ui.only-the-starter-or-whoever-added-this": "Only the person who started or whoever added this one can skip it",
+  "ui.nothing-is-queued": "Nothing is queued",
+  "ui.up-next": "Up next",
+  "ui.queue-empty-hint": "Add a link and it plays when this one ends.",
+  "ui.add-a-youtube-link-to-the-queue": "Add a YouTube link to the queue",
+  "ui.skip": "Skip",
+  "ui.added-by": "Added by {value}",
+  "ui.remove-from-queue": "Remove from the queue",
+  "ui.turn-the-video-down-while-people-talk": "Turn the video down while people talk",
+  "ui.show-the-full-player": "Show the full player",
 };
 
 if (typeof registerLocale === "function") registerLocale("en", LOCALE_EN);

@@ -1163,6 +1163,12 @@ async function mockInvoke(cmd, args = {}) {
       else delete channel.activity;
       return null;
     }
+    case "send_activity_queue": {
+      const s = mock.servers[args.serverId];
+      const channel = s && s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
+      if (!channel || !channel.activity) throw "nothing is running in this channel";
+      return null;
+    }
     case "send_activity_input": {
       const s = mock.servers[args.serverId];
       const channel = s && s.channels.find(c => c.kind === "voice" && (c.voice_user_ids || []).includes("me"));
@@ -8987,6 +8993,7 @@ async function saveCreateChannel() {
 function setSpeaking(userId, speaking) {
   if (speaking) state.speaking.add(userId);
   else state.speaking.delete(userId);
+  applyActivityDuck();
   for (const node of document.querySelectorAll(`[data-user="${CSS.escape(userId)}"]`)) {
     node.classList.toggle("speaking", speaking);
   }
@@ -19756,6 +19763,8 @@ const YOUTUBE_GREET_TRIES = 40;
 const YOUTUBE_NOTICE = "This video plays from YouTube. Loading it connects you to YouTube, which can see your IP address and may store data under Google's privacy policy.";
 const WEB_DIRECT_LINK_NOTE = "Direct video links play in the Commy desktop app. YouTube links and attached videos work here.";
 
+const ACTIVITY_DUCK_KEY = "commy.activity-duck";
+
 const activityUi = {
   run: null,
   open: false,
@@ -19766,14 +19775,30 @@ const activityUi = {
   settling: 0,
   yt: freshYouTubeView(),
   youtubeAllowedRun: null,
+  queue: freshQueue(),
+  duck: { on: loadActivityDuck(), ducked: false, timer: null, base: FULL_VOLUME },
 };
+
+function loadActivityDuck() {
+  try {
+    return localStorage.getItem(ACTIVITY_DUCK_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function saveActivityDuck(on) {
+  try {
+    localStorage.setItem(ACTIVITY_DUCK_KEY, on ? "on" : "off");
+  } catch {}
+}
 
 function inBrowserApp() {
   return document.documentElement.classList.contains("web-app");
 }
 
 function freshYouTubeView() {
-  return { frame: null, video: null, ready: false, seen: null, settling: 0, title: null, error: null, greeter: null };
+  return { frame: null, video: null, ready: false, seen: null, settling: 0, title: null, error: null, greeter: null, volume: null };
 }
 
 function activityMe() {
@@ -19811,17 +19836,27 @@ function reconcileActivity() {
 }
 
 function adoptActivity(activity, by) {
+  const previous = activityUi.run;
+  const carried = continuesQueue(previous, activityUi.queue, activity);
   releaseActivityVideo();
   activityUi.run = newActivityRun(activity);
   const me = activityMe();
-  activityUi.open = activity.starter === me;
-  if (by && by !== me) toast(`${activityMemberName(by)} started ${activityName(activity)}`);
+  if (carried) {
+    activityUi.run.participants = carriedParticipants(previous, activity);
+    activityUi.queue = queueAfterHead(activityUi.queue);
+    if (activityUi.youtubeAllowedRun === previous.id) activityUi.youtubeAllowedRun = activity.id;
+  } else {
+    activityUi.queue = freshQueue();
+    activityUi.open = activity.starter === me;
+    if (by && by !== me) toast(`${activityMemberName(by)} started ${activityName(activity)}`);
+  }
   renderActivityUi();
 }
 
 function endActivityLocally(by) {
   const was = activityUi.run;
   activityUi.run = null;
+  activityUi.queue = freshQueue();
   activityUi.open = false;
   releaseActivityVideo();
   if (was && by && by !== activityMe()) toast(t("ui.ended-activity", { name: activityMemberName(by), activity: activityName(was.activity) }));
@@ -19842,9 +19877,16 @@ function onActivitySet(payload) {
 function onActivityInput(payload) {
   const run = activityUi.run;
   if (!run || !state.voiceServer || payload.server !== state.voiceServer.id || payload.channel !== state.voiceChannelId) return;
+  if (inputKind(payload.input) === "queue") {
+    if (!stale(run, payload.by, payload.seq)) onQueueChange(payload.input.queue, payload.by);
+    return;
+  }
   const result = applyActivityInput(run, payload.input, payload.by, payload.seq);
   if (!result.ok) return;
-  if (payload.input === "join" && run.starter === activityMe()) sendActivityInput(syncInput(run, Date.now()), false);
+  if (payload.input === "join" && run.starter === activityMe()) {
+    sendActivityInput(syncInput(run, Date.now()), false);
+    if (activityUi.queue.items.length) sendQueueLineup();
+  }
   if (payload.input && payload.input.playback) syncActivityVideo();
   if (payload.input && payload.input.sync && run.kind === "watch") syncActivityVideo();
   renderActivityUi();
@@ -19853,6 +19895,7 @@ function onActivityInput(payload) {
 async function sendActivityInput(input, applyLocally = true) {
   const run = activityUi.run;
   if (!run || !state.voiceServer) return;
+  if (inputKind(input) === "queue") return sendQueueWire(input);
   if (applyLocally) {
     const result = applyActivityInput(run, input, activityMe(), null);
     if (!result.ok) {
@@ -19867,6 +19910,116 @@ async function sendActivityInput(input, applyLocally = true) {
   } catch (e) {
     toast(String(e));
   }
+}
+
+async function sendQueueWire(input) {
+  const seq = ++activityUi.seq;
+  try {
+    await invoke("send_activity_queue", { serverId: state.voiceServer.id, seq, change: input.queue });
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function keepsQueue(run) {
+  return Boolean(run) && run.starter === activityMe();
+}
+
+function sendQueueLineup() {
+  if (keepsQueue(activityUi.run)) sendActivityInput(queueLineupChange(activityUi.queue), false);
+}
+
+function onQueueChange(change, by) {
+  const run = activityUi.run;
+  if (!run) return;
+  const result = applyQueueChange(run, activityUi.queue, change, by, keepsQueue(run));
+  if (!result.ok) {
+    if (by === activityMe() && result.reason) toast(result.reason);
+    return;
+  }
+  if (result.advance) advanceActivityQueue();
+  else if (result.broadcast) sendQueueLineup();
+  renderActivityUi();
+}
+
+function changeQueue(input) {
+  const run = activityUi.run;
+  if (!run) return;
+  if (keepsQueue(run)) onQueueChange(input.queue, activityMe());
+  else sendActivityInput(input, false);
+}
+
+function addToActivityQueue() {
+  const field = $("activity-queue-input");
+  const source = queueSourceFrom(field.value, !inBrowserApp());
+  if (!source) {
+    toast(inBrowserApp() && isVideoLink(field.value.trim()) ? WEB_DIRECT_LINK_NOTE : t("ui.paste-a-youtube-link-or-a-direct-https"));
+    return;
+  }
+  field.value = "";
+  changeQueue(queueAddChange(source));
+}
+
+async function advanceActivityQueue() {
+  const run = activityUi.run;
+  if (!keepsQueue(run) || !state.voiceServer) return;
+  const now = Date.now();
+  const next = nextQueuedActivity(activityUi.queue, run, now, crypto.randomUUID());
+  if (!next) return;
+  try {
+    await invoke("set_activity", { serverId: state.voiceServer.id, activity: next });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (!activityUi.run || activityUi.run.id !== next.id) adoptActivity(next, activityMe());
+  const started = Date.now();
+  activityUi.run.playback = { playing: true, position: 0, at: started };
+  sendActivityInput(syncInput(activityUi.run, started), false);
+  sendQueueLineup();
+  syncActivityVideo();
+  renderActivityUi();
+}
+
+function onActivityWatchEnded() {
+  const run = activityUi.run;
+  if (!run || run.kind !== "watch" || !isParticipant(run, activityMe())) return;
+  if (keepsQueue(run)) {
+    if (activityUi.queue.items.length) advanceActivityQueue();
+  } else {
+    sendActivityInput(queueFinishedChange(run.id), false);
+  }
+}
+
+function setActivityVolume(level) {
+  postYouTube("setVolume", [level]);
+  const video = $("activity-video");
+  if (video) video.volume = Math.max(0, Math.min(1, level / FULL_VOLUME));
+}
+
+function applyActivityDuck() {
+  const duck = activityUi.duck;
+  const run = activityUi.run;
+  clearTimeout(duck.timer);
+  if (!run || run.kind !== "watch") return;
+  const level = duckedVolume(duck.base, state.speaking, activityMe(), duck.on);
+  if (level < duck.base) {
+    duck.ducked = true;
+    setActivityVolume(level);
+  } else if (duck.ducked) {
+    duck.timer = setTimeout(() => {
+      duck.ducked = false;
+      setActivityVolume(duck.base);
+    }, DUCK_RELEASE_MS);
+  }
+}
+
+function toggleActivityDuck() {
+  const duck = activityUi.duck;
+  duck.on = !duck.on;
+  saveActivityDuck(duck.on);
+  applyActivityDuck();
+  renderActivityUi();
 }
 
 async function startActivity(activity) {
@@ -19924,12 +20077,20 @@ function renderVoicePanelActivity() {
   btn.onclick = () => (run ? toggleActivityPanel() : openActivityPicker());
 }
 
+function activityPlaysHere(run, me) {
+  if (!run || run.kind !== "watch" || !isParticipant(run, me)) return false;
+  return Boolean(activityUi.yt.frame) || Boolean($("activity-video").getAttribute("src"));
+}
+
 function renderActivityPanel() {
   const panel = $("activity-panel");
   const run = activityUi.run;
   const shown = Boolean(run && activityUi.open);
-  panel.classList.toggle("hidden", !shown);
-  if (!shown) return;
+  const mini = !shown && activityPlaysHere(run, activityMe());
+  panel.classList.toggle("hidden", !shown && !mini);
+  panel.classList.toggle("mini", mini);
+  $("activity-expand").classList.toggle("hidden", !mini);
+  if (!shown && !mini) return;
   const me = activityMe();
   const info = activityKindInfo(run.activity);
   $("activity-icon").replaceChildren(svgIcon(info ? info.icon : "gamepad", 20));
@@ -20009,6 +20170,7 @@ function renderActivityWatch(run, me) {
   $("activity-video").classList.toggle("hidden", youtube);
   $("activity-youtube").classList.toggle("hidden", !youtube);
   $("activity-watch-open").classList.toggle("hidden", !youtube);
+  renderActivityQueue(run, me);
   if (youtube) renderActivityYouTube(run, me);
   else {
     const blocked = kind === "link" && inBrowserApp();
@@ -20029,6 +20191,60 @@ function renderActivityYouTube(run, me) {
   if (!joined) showActivityScreenNote(t("ui.join-to-watch-this-video-plays-from"), false);
   else if (!allowed) showActivityScreenNote(YOUTUBE_NOTICE, true);
   else showActivityScreenNote(yt.error || "", false);
+}
+
+function queueThumbnail(item) {
+  const video = item.source && item.source.youtube ? item.source.youtube.video : null;
+  if (!video) return null;
+  const url = youtubeThumbnail(video);
+  if (embedMode(url, mediaProxyOn()) === "auto") return viaAccountServer(url);
+  return activityUi.run && activityUi.youtubeAllowedRun === activityUi.run.id ? url : null;
+}
+
+function queueRow(run, item, me) {
+  const row = el("li", "activity-queue-item");
+  const src = queueThumbnail(item);
+  const thumb = el("span", "activity-queue-thumb");
+  if (src) {
+    const img = el("img");
+    img.alt = "";
+    img.loading = "lazy";
+    img.src = src;
+    img.onerror = () => img.replaceWith(svgIcon("movie", 16));
+    thumb.appendChild(img);
+  } else {
+    thumb.appendChild(svgIcon("movie", 16));
+  }
+  const text = el("span", "activity-queue-text");
+  text.append(el("span", "activity-queue-name", queueItemLabel(item)), el("span", "activity-queue-by", t("ui.added-by", { value: activityMemberName(item.by) })));
+  row.append(thumb, text);
+  if (mayRemoveQueued(run, item, me)) {
+    const remove = el("button", "icon-btn activity-queue-remove");
+    remove.type = "button";
+    remove.title = t("ui.remove-from-queue");
+    remove.setAttribute("aria-label", t("ui.remove-from-queue"));
+    remove.appendChild(svgIcon("close", 14));
+    remove.onclick = () => changeQueue(queueRemoveChange(item.slot));
+    row.appendChild(remove);
+  }
+  return row;
+}
+
+function renderActivityQueue(run, me) {
+  const joined = isParticipant(run, me);
+  const items = activityUi.queue.items;
+  $("activity-queue-input").disabled = !joined;
+  $("activity-queue-add").disabled = !joined;
+  const skip = $("activity-queue-skip");
+  skip.disabled = !items.length || !maySkipQueued(run, activityUi.queue, me);
+  skip.classList.toggle("hidden", !items.length);
+  $("activity-queue-list").replaceChildren(...items.map(item => queueRow(run, item, me)));
+  $("activity-queue-empty").classList.toggle("hidden", items.length > 0);
+  const duck = $("activity-duck");
+  duck.replaceChildren(svgIcon("speaker", 16));
+  duck.classList.toggle("on", activityUi.duck.on);
+  duck.setAttribute("aria-pressed", String(activityUi.duck.on));
+  setIcon($("activity-expand"), "expand", 16);
 }
 
 function showActivityScreenNote(text, asking) {
@@ -20106,6 +20322,7 @@ function onYouTubeReady() {
   postYouTube("addEventListener", ["onStateChange"]);
   postYouTube("addEventListener", ["onError"]);
   syncActivityYouTube();
+  applyActivityDuck();
 }
 
 function onYouTubeInfo(message) {
@@ -20116,6 +20333,7 @@ function onYouTubeInfo(message) {
     yt.title = message.title;
     $("activity-watch-title").textContent = message.title;
   }
+  if (Number.isFinite(message.volume) && !activityUi.duck.ducked) activityUi.duck.base = message.volume;
   const before = yt.seen;
   const state = message.state ?? (before ? before.state : null);
   const time = message.time ?? youtubeExpectedTime(before, now);
@@ -20123,6 +20341,7 @@ function onYouTubeInfo(message) {
   const seeked = message.time !== undefined && youtubeUserSeeked(before, message.time, now);
   yt.seen = { state, time, at: now };
   if (!run || watchSourceKind(run.activity) !== "youtube") return;
+  if (turned && state === YOUTUBE_STATE.ENDED) onActivityWatchEnded();
   if (now >= yt.settling && isParticipant(run, activityMe()) && Number.isFinite(time)) {
     const pressed = turned && (state === YOUTUBE_STATE.PLAYING || state === YOUTUBE_STATE.PAUSED);
     const playing = youtubePlaying(state);
@@ -20338,10 +20557,24 @@ function initActivityUi() {
   };
   $("activity-end").onclick = endActivity;
   $("activity-close").onclick = () => toggleActivityPanel(false);
+  $("activity-expand").onclick = () => toggleActivityPanel(true);
+  $("activity-duck").onclick = toggleActivityDuck;
+  $("activity-queue-add").onclick = addToActivityQueue;
+  $("activity-queue-input").addEventListener("keydown", event => {
+    if (event.key === "Enter") addToActivityQueue();
+  });
+  $("activity-queue-skip").onclick = () => {
+    const run = activityUi.run;
+    if (run) changeQueue(queueSkipChange(run.id));
+  };
   $("ttt-rematch").onclick = () => sendActivityInput("rematch");
   const video = $("activity-video");
   for (const name of ["play", "pause", "seeked"]) video.addEventListener(name, onActivityVideoChange);
   video.addEventListener("loadedmetadata", syncActivityVideo);
+  video.addEventListener("ended", onActivityWatchEnded);
+  video.addEventListener("volumechange", () => {
+    if (!activityUi.duck.ducked) activityUi.duck.base = Math.round(video.volume * FULL_VOLUME);
+  });
   setInterval(() => {
     const run = activityUi.run;
     if (run && run.kind === "watch" && run.playback.playing) syncActivityVideo();

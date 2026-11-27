@@ -3142,6 +3142,19 @@ const LOCALE_ES = {
   "ui.servers-taking-longer": "Tus servidores están tardando más de lo normal en cargar.",
   "ui.servers-stalled-reload": "Recarga la página. Si siguen faltando servidores, abre Ajustes, Cuenta de Commy y elige Recuperar servidores anteriores.",
   "ui.show-n-more": "Mostrar {count} más",
+  "ui.join-to-add-to-the-queue": "Únete para añadir a la cola",
+  "ui.the-queue-is-full": "La cola está llena",
+  "ui.only-whoever-added-it-or-the-starter": "Solo quien lo añadió o quien empezó puede quitarlo",
+  "ui.only-the-starter-or-whoever-added-this": "Solo quien empezó o quien añadió este puede saltarlo",
+  "ui.nothing-is-queued": "No hay nada en la cola",
+  "ui.up-next": "A continuación",
+  "ui.queue-empty-hint": "Añade un enlace y se reproducirá cuando termine este.",
+  "ui.add-a-youtube-link-to-the-queue": "Añade un enlace de YouTube a la cola",
+  "ui.skip": "Saltar",
+  "ui.added-by": "Añadido por {value}",
+  "ui.remove-from-queue": "Quitar de la cola",
+  "ui.turn-the-video-down-while-people-talk": "Bajar el vídeo mientras la gente habla",
+  "ui.show-the-full-player": "Mostrar el reproductor completo",
 };
 
 if (typeof registerLocale === "function") registerLocale("es", LOCALE_ES);

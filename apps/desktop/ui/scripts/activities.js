@@ -204,7 +204,8 @@ function readYouTubeMessage(data) {
       if (Number.isInteger(info.playerState)) out.state = info.playerState;
       if (Number.isFinite(info.currentTime) && info.currentTime >= 0) out.time = info.currentTime;
       if (info.videoData && typeof info.videoData.title === "string" && info.videoData.title.trim()) out.title = info.videoData.title.trim();
-      return out.state === undefined && out.time === undefined && out.title === undefined ? null : out;
+      if (Number.isFinite(info.volume) && info.volume >= 0 && info.volume <= 100) out.volume = info.volume;
+      return out.state === undefined && out.time === undefined && out.title === undefined && out.volume === undefined ? null : out;
     }
     default:
       return null;

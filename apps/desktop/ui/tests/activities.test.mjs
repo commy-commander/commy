@@ -342,7 +342,7 @@ test("the YouTube player loads from the privacy-enhanced site and only hears fro
   assert.deepEqual(JSON.parse(youtubeListening()), { event: "listening", id: 1, channel: "widget" });
 });
 
-test("player messages turn into ready, errors, states, times and titles", () => {
+test("player messages turn into ready, errors, states, times, titles and volume", () => {
   assert.deepEqual(readYouTubeMessage('{"event":"onReady"}'), { kind: "ready" });
   assert.deepEqual(readYouTubeMessage('{"event":"onError","info":150}'), { kind: "error", code: 150 });
   assert.deepEqual(readYouTubeMessage('{"event":"onStateChange","info":1}'), { kind: "info", state: YOUTUBE_STATE.PLAYING });
@@ -351,7 +351,8 @@ test("player messages turn into ready, errors, states, times and titles", () => 
     { kind: "info", state: YOUTUBE_STATE.PAUSED, time: 31.5, title: "Big Film" },
   );
   assert.deepEqual(readYouTubeMessage({ event: "infoDelivery", info: { currentTime: 4 } }), { kind: "info", time: 4 });
-  assert.equal(readYouTubeMessage({ event: "infoDelivery", info: { volume: 50 } }), null);
+  assert.deepEqual(readYouTubeMessage({ event: "infoDelivery", info: { volume: 50 } }), { kind: "info", volume: 50 });
+  assert.equal(readYouTubeMessage({ event: "infoDelivery", info: { volume: 140 } }), null);
   assert.equal(readYouTubeMessage({ event: "infoDelivery", info: { currentTime: -1 } }), null);
   assert.equal(readYouTubeMessage("not json"), null);
   assert.equal(readYouTubeMessage({ event: "somethingNew" }), null);

@@ -1977,6 +1977,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .stage {
 html[data-look="studio"]:not([data-fit="slim"]) .vr-grid .stage-view { border: 0; border-radius: 24px; box-shadow: 0 0 0 1px var(--rim-soft), 0 2px 3px rgb(var(--dark) / .45), 0 18px 24px -10px rgb(var(--dark) / .65); }
 html[data-look="studio"]:not([data-fit="slim"]) .vr-grid #stage-focus { display: none; }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-room > .activity-panel { top: 60px; bottom: 36px; border-radius: 0; }
+html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-room > .activity-panel.mini { top: 72px; bottom: auto; border-radius: var(--radius); }
 html[data-look="studio"]:not([data-fit="slim"]) #app.vr-open .voice-panel {
   position: fixed;
   right: calc(var(--vr-right) + var(--vr-dock));
