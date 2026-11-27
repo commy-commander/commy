@@ -86,6 +86,7 @@ for path in /i/K7QX2M9P "/api/auth/commy/invites/resolve?code=K7QX2M9P" /api/aut
 	/api/auth/commy/doorbell/take /api/auth/commy/doorbell/ring /docs \
 	"/api/auth/verify-email?token=t1" "/api/auth/magic-link/verify?token=t2" "/api/auth/reset-password/t3" \
 	"/api/auth/callback/google?code=c1&state=s1" "/account/reset-password?token=t4" "/device?user_code=ABCD1234" \
+	"/api/auth/device?user_code=ABCD1234" "/api/auth/commy/device-request?user_code=ABCD1234" \
 	/sync /sync/healthz; do
 	curl -fs -o /dev/null "$url$path"
 done
@@ -99,6 +100,7 @@ check "doorbell calls are not logged" "$(logged /api/auth/commy/doorbell/)" 0
 check "sign-in and reset links are not logged" "$(grep -c 'token=\|/reset-password/t3' "$work/access.log" || true)" 0
 check "provider callbacks are not logged" "$(logged /api/auth/callback/)" 0
 check "device codes are not logged" "$(logged /device)" 0
+check "device codes sent to the account server are not logged" "$(grep -c 'user_code' "$work/access.log" || true)" 0
 check "sync service calls are not logged" "$(logged /sync)" 0
 check "other requests are logged" "$(logged /docs)" 1
 
