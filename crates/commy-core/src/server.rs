@@ -488,6 +488,10 @@ pub struct Server {
     pub blocked_homes: Vec<String>,
     #[serde(default, with = "crate::wire_layout::later::server_require_home")]
     pub require_home: bool,
+    #[serde(default, with = "crate::wire_layout::later::server_day_keys")]
+    pub day_keys: Option<crate::day_chain::DayKeys>,
+    #[serde(default, with = "crate::wire_layout::later::server_day_keys_ready")]
+    pub day_keys_ready: std::collections::BTreeMap<UserId, u32>,
 }
 
 pub const MEMBER_DEFAULTS_VERSION: u32 = 1;
@@ -589,6 +593,8 @@ impl Server {
             game_db: None,
             blocked_homes: Vec::new(),
             require_home: false,
+            day_keys: None,
+            day_keys_ready: std::collections::BTreeMap::new(),
         }
     }
 

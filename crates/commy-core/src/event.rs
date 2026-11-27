@@ -477,6 +477,17 @@ pub enum ServerEvent {
         change: crate::activity::QueueChange,
         by: UserId,
     },
+    DayKeysReady {
+        server: ServerId,
+        user: UserId,
+        level: u32,
+    },
+    DayKeysSet {
+        server: ServerId,
+        on: bool,
+        since: i64,
+        history_days: u32,
+    },
 }
 
 #[cfg(test)]
@@ -582,6 +593,8 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::HomesBlocked { server, homes: vec![], require_home: false }), 107);
         let change = crate::activity::QueueChange::Remove { slot: 1 };
         assert_eq!(wire_tag(ServerEvent::ActivityQueue { server, channel, seq: 1, change, by: user }), 108);
+        assert_eq!(wire_tag(ServerEvent::DayKeysReady { server, user, level: 1 }), 109);
+        assert_eq!(wire_tag(ServerEvent::DayKeysSet { server, on: true, since: 1, history_days: 30 }), 110);
     }
 
     #[test]

@@ -86,7 +86,8 @@ pub fn actor(event: &ServerEvent) -> Option<UserId> {
         | E::PronounsSet { user, .. }
         | E::JoinSoundSet { user, .. }
         | E::PetCare { user, .. }
-        | E::DriveHold { user, .. } => Some(*user),
+        | E::DriveHold { user, .. }
+        | E::DayKeysReady { user, .. } => Some(*user),
         E::DriveAdd { item, .. } => Some(item.by),
         E::MessagePin { by, .. }
         | E::MemberTimeout { by, .. }
@@ -171,6 +172,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::GameDbSet { .. } => "game_db".into(),
         E::SyncHostSet { .. } => "sync_host".into(),
         E::HomesBlocked { .. } => "blocked_homes".into(),
+        E::DayKeysReady { user, .. } => format!("day_keys_ready:{user}"),
+        E::DayKeysSet { .. } => "day_keys".into(),
         E::PetSet { .. } => "pet".into(),
         E::PetCare { user, care, .. } => format!("pet_care:{user}:{}", crate::pet::care_name(*care)),
         E::DriveAdd { item, .. } => format!("drive:{}", item.id),
@@ -305,6 +308,9 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
         E::MemberLeave { user, .. } => *user == by || (allows(Permissions::KICK_MEMBERS) && *user != server.owner),
         E::ProfileUpdate { .. } => actor(event) == Some(by),
         E::BotSet { .. } | E::PronounsSet { .. } | E::JoinSoundSet { .. } => member && actor(event) == Some(by),
+        E::DayKeysReady { .. } => server.is_current_member(by) && actor(event) == Some(by),
+        E::DayKeysSet { on: true, .. } => allows(Permissions::MANAGE_SERVER),
+        E::DayKeysSet { on: false, .. } => by == server.owner,
         E::BotCommandsSet { bot, .. } => member && *bot == by && actor(event) == Some(by),
         E::PresenceUpdate { .. } | E::RulesAccept { .. } | E::EventRsvp { .. } => member && actor(event) == Some(by),
         E::VoiceState { .. } | E::ScreenShare { .. } | E::CameraState { .. } | E::DeviceAnnounce { .. } => {

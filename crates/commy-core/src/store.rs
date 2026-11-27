@@ -1723,6 +1723,21 @@ impl ServerState {
                 self.drop_refused_homes();
                 Ok(true)
             }
+            ServerEvent::DayKeysReady { server, user, level } => {
+                self.same_server(server)?;
+                if !self.server.is_current_member(user) {
+                    return Ok(false);
+                }
+                let gone: Vec<UserId> = self.server.day_keys_ready.keys().copied().filter(|u| !self.server.is_current_member(*u)).collect();
+                for user in &gone {
+                    self.server.day_keys_ready.remove(user);
+                }
+                Ok(self.server.day_keys_ready.insert(user, level) != Some(level) || !gone.is_empty())
+            }
+            ServerEvent::DayKeysSet { server, on, since, history_days } => {
+                self.same_server(server)?;
+                Ok(replace(&mut self.server.day_keys, Some(crate::day_chain::DayKeys::new(on, since, history_days))))
+            }
             ServerEvent::SyncHostSet { server, url } => {
                 self.same_server(server)?;
                 if url.as_deref().is_some_and(|u| !crate::sync_host::is_sync_host(u)) {

@@ -90,6 +90,7 @@ pub enum AuditKind {
     GameDb,
     SyncHost,
     BlockedHomes,
+    DayKeys,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +217,10 @@ fn describe(state: &ServerState, by: UserId, event: &ServerEvent) -> Option<Desc
         E::TtsAllowed { allowed, .. } => (K::TextToSpeech, None, None, on_off(*allowed)),
         E::FileStoreSet { url, .. } => (K::FileStore, None, None, url.clone()),
         E::SyncHostSet { url, .. } => (K::SyncHost, None, None, url.clone()),
+        E::DayKeysSet { on, history_days, .. } => {
+            let detail = if *on { crate::day_chain::clean_history_days(*history_days).to_string() } else { "off".into() };
+            (K::DayKeys, None, None, Some(detail))
+        }
         E::HomesBlocked { homes, .. } => (K::BlockedHomes, None, None, (!homes.is_empty()).then(|| clip(&homes.join(", ")))),
         E::GifKeySet { gifs, .. } => (K::GifKey, None, None, gifs.as_ref().map(|g| g.provider.clone())),
         E::GameDbSet { games, .. } => (K::GameDb, None, None, set_or_removed(games.is_some())),

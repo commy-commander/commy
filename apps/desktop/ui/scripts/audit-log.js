@@ -29,6 +29,7 @@ const AUDIT_GROUP_OF = {
   tip_jar: "server",
   file_store: "server",
   sync_host: "server",
+  day_keys: "server",
   blocked_homes: "members",
   gif_key: "server",
   game_db: "server",
@@ -145,6 +146,7 @@ function describeAudit(entry) {
     case "text_to_speech": return [detail === "on" ? "turned on text-to-speech messages" : t("ui.turned-off-text-to-speech-messages")];
     case "tip_jar": return detail ? ["set the tip jar to ", auditStrong(tipJarText(detail))] : ["removed the tip jar"];
     case "blocked_homes": return detail ? ["blocked people from ", auditStrong(String(detail))] : ["unblocked every server"];
+    case "day_keys": return detail === "off" ? ["turned off daily keys"] : ["turned on daily keys, with new members reading back ", auditStrong(auditCount(Number(detail), "day", "days"))];
     case "sync_host": return detail ? ["moved syncing to ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["moved syncing back to Commy.chat"];
     case "file_store": return detail ? ["turned on file backup at ", auditStrong(String(detail).replace(/^https:\/\//, ""))] : ["turned off file backup"];
     case "gif_key": return detail ? ["gave GIF search a ", auditStrong(detail === "giphy" ? "GIPHY" : "KLIPY"), " key"] : ["removed the GIF search key"];

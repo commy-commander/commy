@@ -184,6 +184,8 @@ later_fields! {
     server_blocked_homes = 3,
     server_require_home = 4,
     sync_response_full_sig = 5,
+    server_day_keys = 6,
+    server_day_keys_ready = 7,
 }
 
 #[cfg(test)]
