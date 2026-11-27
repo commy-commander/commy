@@ -741,6 +741,10 @@ impl ServerState {
         self.action_times.get(subject).copied()
     }
 
+    pub fn signing_time(&self, event: &ServerEvent, now_ms: i64) -> i64 {
+        action::subject(event).and_then(|subject| self.action_time(&subject)).map_or(now_ms, |previous| now_ms.max(previous.saturating_add(1)))
+    }
+
     pub fn signed_recently(&self, event: &ServerEvent, action: Option<&Action>, now_ms: i64) -> bool {
         action.is_some_and(|action| {
             (now_ms - action.at).abs() <= MAX_DEVICE_SIGNAL_AGE_MS && self.admits_signed(&SignedEvent { action: action.clone(), event: event.clone() }).is_ok()

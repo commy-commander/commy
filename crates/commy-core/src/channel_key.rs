@@ -1187,6 +1187,54 @@ mod tests {
         assert!(community_secret(&state, newcomer).is_some());
     }
 
+    fn sign_and_apply(state: &mut ServerState, me: UserId, events: Vec<ServerEvent>, at_of: impl Fn(&ServerState, &ServerEvent) -> i64) -> Vec<bool> {
+        let server = state.server.id;
+        events
+            .into_iter()
+            .map(|event| {
+                let at = at_of(state, &event);
+                let signed = crate::action::SignedEvent::sign(server, me, at, event, &identity_for(me));
+                state.apply_signed(&signed).unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_new_grant_lands_even_when_the_previous_one_was_signed_with_a_clock_ahead() {
+        let (mut state, _, owner) = fixture();
+        let now = chrono::Utc::now().timestamp_millis();
+        let ahead = now + 60_000;
+        let mut ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        let first = community_key_task(&state, owner, &ring).unwrap();
+        let events = ring.task_events(&state, KeyScope::Community, first, ahead);
+        sign_and_apply(&mut state, owner, events, |_, _| ahead);
+        let held = Keyring::unlock_community(&state, owner, &identity_for(owner)).newest_in(&state, KeyScope::Community).unwrap().0;
+
+        let mut ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
+        let rotate = ring.task_events(&state, KeyScope::Community, KeyTask::Rotate { links: vec![held] }, now);
+        let mut naive = state.clone();
+        let landed = sign_and_apply(&mut naive, owner, rotate.clone(), |_, _| now);
+        assert_eq!(landed, vec![true, false], "signed at the wall clock, the new grant loses to the one signed ahead");
+
+        let landed = sign_and_apply(&mut state, owner, rotate, |state, event| state.signing_time(event, now));
+        assert_eq!(landed, vec![true, true]);
+        let newest = state.community_keys().newest().unwrap().id;
+        assert_ne!(newest, held);
+        assert_eq!(community_secret(&state, owner), Some(newest), "the owner holds the newest key");
+    }
+
+    #[test]
+    fn signing_time_is_the_wall_clock_unless_the_same_subject_was_signed_later() {
+        let (mut state, _, owner) = fixture();
+        let server = state.server.id;
+        let grant = ServerEvent::CommunityKeyGrant { server, user: owner, grant: SealedKey::released() };
+        assert_eq!(state.signing_time(&grant, 1_000), 1_000);
+        let event = ServerEvent::CommunityKeyGrant { server, user: owner, grant: SealedKey::released() };
+        sign_and_apply(&mut state, owner, vec![event], |_, _| 5_000);
+        assert_eq!(state.signing_time(&grant, 1_000), 5_001);
+        assert_eq!(state.signing_time(&grant, 9_000), 9_000);
+    }
+
     #[test]
     fn a_ban_rotates_the_community_key_and_keeps_history_for_the_rest() {
         let (mut state, _, owner) = fixture();

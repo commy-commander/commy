@@ -37,7 +37,8 @@ pub async fn tend_scope(app: &App, handle: &tauri::AppHandle, sid: ServerId, sco
         }
         let mut applied = Vec::new();
         for event in events {
-            let Some(signed) = app.sign_event(sid, event.clone()) else { break };
+            let at = state.signing_time(&event, chrono::Utc::now().timestamp_millis());
+            let Some(signed) = app.sign_event_at(sid, event.clone(), at) else { break };
             match state.apply_own(&signed) {
                 Ok(_) => applied.push(event),
                 Err(e) => tracing::warn!("channel key event refused locally: {e}"),

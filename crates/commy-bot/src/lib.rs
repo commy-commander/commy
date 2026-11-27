@@ -168,7 +168,7 @@ impl Bot {
         let at = wall.timestamp_millis();
         let mut out = Vec::new();
         for event in ring.task_events(state, KeyScope::Community, task, at) {
-            let signed = SignedEvent::sign(server, me, at, event, &self.identity);
+            let signed = SignedEvent::sign(server, me, state.signing_time(&event, at), event, &self.identity);
             if !action::authorized(&state.server, me, &signed.event) || state.apply_signed(&signed).is_err() {
                 break;
             }

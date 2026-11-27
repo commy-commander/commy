@@ -479,8 +479,11 @@ impl App {
     }
 
     pub fn sign_event(&self, server: ServerId, event: ServerEvent) -> Option<SignedEvent> {
+        self.sign_event_at(server, event, chrono::Utc::now().timestamp_millis())
+    }
+
+    pub fn sign_event_at(&self, server: ServerId, event: ServerEvent, at: i64) -> Option<SignedEvent> {
         let (me, identity) = self.signer()?;
-        let at = chrono::Utc::now().timestamp_millis();
         Some(SignedEvent::sign(server, me, at, event, &identity))
     }
 

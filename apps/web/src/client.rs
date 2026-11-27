@@ -483,7 +483,8 @@ impl Client {
         let Some(state) = servers.get_mut(&server) else { return Vec::new() };
         let mut out = Vec::new();
         for event in holder.scope_events(state, scope) {
-            let signed = SignedEvent::sign(server, profile.id, Utc::now().timestamp_millis(), event, &identity);
+            let at = state.signing_time(&event, Utc::now().timestamp_millis());
+            let signed = SignedEvent::sign(server, profile.id, at, event, &identity);
             if state.apply_own(&signed).is_err() {
                 break;
             }
