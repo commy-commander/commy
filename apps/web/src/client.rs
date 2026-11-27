@@ -23,6 +23,16 @@ use commy_view::{forum, MessageView, PinView, ServerSummary, ServerView};
 pub type Servers = Arc<Mutex<HashMap<ServerId, ServerState>>>;
 pub type Me = Arc<Mutex<Option<(UserProfile, Identity)>>>;
 
+pub fn gossip_keys(servers: Servers, me: Me) -> commy_net::gossip_seal::GossipKeys {
+    Arc::new(move |server| {
+        let holder = KeyHolder::new(me.lock().unwrap().as_ref().map(|(profile, identity)| (profile.id, identity.clone())));
+        let servers = servers.lock().unwrap();
+        let state = servers.get(&server)?;
+        let community = holder.community_ring(state, None)?;
+        Some(commy_net::gossip_seal::server_keys(state, &community))
+    })
+}
+
 pub const MAX_MESSAGE_LEN: usize = 4000;
 pub const SNAPSHOT_MAX_AGE_MS: i64 = 900_000;
 const PAGE: usize = 100;

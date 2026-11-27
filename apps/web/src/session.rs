@@ -1036,6 +1036,7 @@ impl Session {
         });
         node.set_catchup_store(store.clone());
         node.set_media_gate(calls::media_gate(self.admit.clone(), self.share_gate.clone()));
+        node.set_gossip_keys(crate::client::gossip_keys(self.client.borrow().servers.clone(), self.client.borrow().me.clone()));
         let _ = node.take_entry_key_requests();
         let _ = node.take_mirror_requests();
         let _ = node.take_knock_requests();

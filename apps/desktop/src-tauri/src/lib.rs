@@ -2431,6 +2431,20 @@ fn blob_gate(handle: &tauri::AppHandle) -> commy_net::node::BlobGate {
     })
 }
 
+fn gossip_keys(handle: &tauri::AppHandle) -> commy_net::gossip_seal::GossipKeys {
+    let handle = handle.clone();
+    std::sync::Arc::new(move |server| {
+        let app = handle.state::<App>();
+        let given = community_sync::given_key(&app, server);
+        let holder = channel_lock::holder_of(&app);
+        let servers = app.servers.lock_or_recover();
+        match servers.get(&server) {
+            Some(state) => Some(commy_net::gossip_seal::server_keys(state, &holder.community_ring(state, given)?)),
+            None => given.map(|key| commy_net::gossip_seal::ServerKeys { sealing: None, held: vec![key] }),
+        }
+    })
+}
+
 fn media_gate(handle: &tauri::AppHandle) -> commy_net::node::MediaGate {
     let handle = handle.clone();
     std::sync::Arc::new(move |peer, hello| {
@@ -8759,6 +8773,7 @@ pub(crate) fn open_account(handle: &tauri::AppHandle, dir: std::path::PathBuf) {
                 node.set_catchup_store(catchup::store(&handle));
                 node.set_media_gate(media_gate(&handle));
                 node.set_blob_gate(blob_gate(&handle));
+                node.set_gossip_keys(gossip_keys(&handle));
                 open_shelf(&app, &node).await;
                 *app.net.lock().await = Some(node);
                 host_unhosted(&app).await;

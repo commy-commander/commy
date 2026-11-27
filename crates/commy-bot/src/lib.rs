@@ -154,6 +154,12 @@ impl Bot {
         out
     }
 
+    pub fn gossip_keys(&self, server: ServerId) -> Option<commy_net::gossip_seal::ServerKeys> {
+        let state = self.replicas.get(&server)?.state.as_ref()?;
+        let ring = Keyring::unlock_community(state, self.profile.id, &self.identity);
+        Some(commy_net::gossip_seal::server_keys(state, &ring))
+    }
+
     pub fn tend_community_key(&mut self, server: ServerId, wall: DateTime<Utc>) -> Vec<WirePayload> {
         let me = self.profile.id;
         let Some(state) = self.replicas.get_mut(&server).and_then(|r| r.state.as_mut()) else { return Vec::new() };

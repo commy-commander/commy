@@ -79,6 +79,8 @@ pub async fn run(data: &DataDir, setup: Setup, relays: Option<iroh::RelayMap>, s
     let (out, mut outgoing) = tokio::sync::mpsc::unbounded_channel();
     let store = Arc::new(BotStore::new(Arc::new(Mutex::new(bot)), out));
     node.set_catchup_store(store.clone());
+    let keys_from = store.clone();
+    node.set_gossip_keys(Arc::new(move |server| keys_from.bot().gossip_keys(server)));
     if let Some(port) = setup.bridge {
         let token = data.bridge_token(false)?;
         let listener = tokio::net::TcpListener::bind(bridge::loopback(port))

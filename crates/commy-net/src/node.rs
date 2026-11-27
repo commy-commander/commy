@@ -1297,6 +1297,32 @@ pub struct CommyNode {
     media_gate: GateSlot,
     #[cfg(not(wasm_browser))]
     blob_gate: BlobGateSlot,
+    gossip_keys: GossipKeySlot,
+}
+
+type GossipKeySlot = Arc<RwLock<Option<crate::gossip_seal::GossipKeys>>>;
+
+fn keys_for(slot: &GossipKeySlot, server: ServerId) -> Option<crate::gossip_seal::ServerKeys> {
+    let provider = slot.read().unwrap_or_else(|e| e.into_inner()).clone()?;
+    provider(server)
+}
+
+fn net_event(server: ServerId, sender: [u8; 32], payload: WirePayload) -> Option<NetEvent> {
+    Some(match payload {
+        WirePayload::Event(event) => NetEvent::Event { server, sender, event, action: None },
+        WirePayload::Signed(signed) => NetEvent::Event { server, sender, event: signed.event, action: Some(signed.action) },
+        WirePayload::SyncRequest => NetEvent::SyncRequested { server, sender },
+        payload @ WirePayload::SyncResponse { .. } => NetEvent::SyncReceived { server, payload },
+        payload @ WirePayload::VoiceDial { .. } => NetEvent::VoiceDial { server, payload },
+        WirePayload::Sealed(_) => return None,
+    })
+}
+
+fn opened(slot: &GossipKeySlot, server: ServerId, payload: WirePayload) -> Option<WirePayload> {
+    match payload {
+        WirePayload::Sealed(sealed) => crate::gossip_seal::open_with(keys_for(slot, server).as_ref(), server, &sealed),
+        plain => Some(plain),
+    }
 }
 
 const ADDRESS_WAIT: Duration = Duration::from_secs(5);
@@ -1467,6 +1493,7 @@ impl CommyNode {
                 media_gate,
                 #[cfg(not(wasm_browser))]
                 blob_gate,
+                gossip_keys: GossipKeySlot::default(),
             },
             events_rx,
             media_rx,
@@ -1777,6 +1804,7 @@ impl CommyNode {
 
         let events_tx = self.events_tx.clone();
         let our_id = self.node_id_bytes();
+        let gossip_keys = self.gossip_keys.clone();
         let (neighbors_tx, neighbors_rx) = tokio::sync::watch::channel(BTreeSet::new());
         let reader = n0_future::task::spawn(async move {
             while let Some(item) = stream.next().await {
@@ -1804,31 +1832,12 @@ impl CommyNode {
                 if envelope.sender == our_id {
                     continue;
                 }
-                let net_event = match envelope.payload {
-                    WirePayload::Event(event) => NetEvent::Event {
-                        server: server_id,
-                        sender: envelope.sender,
-                        event,
-                        action: None,
-                    },
-                    WirePayload::Signed(signed) => NetEvent::Event {
-                        server: server_id,
-                        sender: envelope.sender,
-                        event: signed.event,
-                        action: Some(signed.action),
-                    },
-                    WirePayload::SyncRequest => NetEvent::SyncRequested {
-                        server: server_id,
-                        sender: envelope.sender,
-                    },
-                    payload @ WirePayload::SyncResponse { .. } => NetEvent::SyncReceived {
-                        server: server_id,
-                        payload,
-                    },
-                    payload @ WirePayload::VoiceDial { .. } => NetEvent::VoiceDial {
-                        server: server_id,
-                        payload,
-                    },
+                let Some(payload) = opened(&gossip_keys, server_id, envelope.payload) else {
+                    tracing::debug!("a sealed frame this device cannot open yet, it arrives through sync instead");
+                    continue;
+                };
+                let Some(net_event) = net_event(server_id, envelope.sender, payload) else {
+                    continue;
                 };
                 if events_tx.send(net_event).is_err() {
                     break;
@@ -1879,7 +1888,7 @@ impl CommyNode {
     }
 
     pub fn broadcast(&self, server_id: ServerId, payload: WirePayload) -> impl Future<Output = Result<()>> + Send + 'static {
-        let framed = self.topic_sender(server_id).and_then(|sender| Ok((sender, self.gossip_frame(payload)?)));
+        let framed = self.topic_sender(server_id).and_then(|sender| Ok((sender, self.gossip_frame(server_id, payload)?)));
         async move {
             let (sender, bytes) = framed?;
             hand_to_gossip(sender.broadcast(bytes.into())).await?;
@@ -1887,15 +1896,25 @@ impl CommyNode {
         }
     }
 
-    fn gossip_frame(&self, payload: WirePayload) -> Result<Vec<u8>> {
-        let bytes = Envelope::new(self.node_id_bytes(), payload).encode()?;
+    fn gossip_frame(&self, server_id: ServerId, payload: WirePayload) -> Result<Vec<u8>> {
+        let plain_bytes = Envelope::new(self.node_id_bytes(), payload.clone()).encode()?;
         anyhow::ensure!(
-            bytes.len() <= crate::protocol::MAX_GOSSIP_BYTES,
+            plain_bytes.len() <= crate::protocol::MAX_GOSSIP_BYTES,
             "message is too large to send ({} bytes, limit {})",
-            bytes.len(),
+            plain_bytes.len(),
             crate::protocol::MAX_GOSSIP_BYTES
         );
+        let sealed = crate::gossip_seal::seal_with(keys_for(&self.gossip_keys, server_id).as_ref(), server_id, payload);
+        if !matches!(sealed, WirePayload::Sealed(_)) {
+            return Ok(plain_bytes);
+        }
+        let bytes = Envelope::new(self.node_id_bytes(), sealed).encode()?;
+        anyhow::ensure!(bytes.len() <= crate::protocol::MAX_SEALED_GOSSIP_BYTES, "sealed message is too large to send ({} bytes)", bytes.len());
         Ok(bytes)
+    }
+
+    pub fn set_gossip_keys(&self, keys: crate::gossip_seal::GossipKeys) {
+        *self.gossip_keys.write().unwrap_or_else(|e| e.into_inner()) = Some(keys);
     }
 
     pub fn media_dialer(&self) -> MediaDialer {
@@ -2726,6 +2745,52 @@ mod tests {
         let handed = hand_to_gossip(std::future::pending()).await;
         assert!(matches!(handed, Err(GossipHandoff::Busy)));
         assert_eq!(started.elapsed(), GOSSIP_HANDOFF_WAIT);
+    }
+
+    fn sealing_with(key: commy_core::channel_key::KeyId, secret: commy_core::channel_key::ChannelSecret) -> crate::gossip_seal::GossipKeys {
+        Arc::new(move |_| Some(crate::gossip_seal::ServerKeys { sealing: Some((key, secret.clone())), held: Vec::new() }))
+    }
+
+    async fn heard_words(events: &mut mpsc::UnboundedReceiver<NetEvent>, words: &str, within: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + within;
+        while let Ok(Some(event)) = tokio::time::timeout_at(deadline, events.recv()).await {
+            if let NetEvent::Event { event: ServerEvent::MessageCreate { message }, .. } = event {
+                if message.content == words {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn members_hear_sealed_gossip_and_an_outsider_on_the_topic_hears_nothing() {
+        let key = commy_core::channel_key::KeyId::random();
+        let secret = commy_core::channel_key::ChannelSecret::random();
+        let (mut host, _, _, _) = CommyNode::spawn_with(None, Some(iroh::RelayMap::empty())).await.unwrap();
+        let (mut member, mut member_events, _, _) = CommyNode::spawn_with(None, Some(iroh::RelayMap::empty())).await.unwrap();
+        let (mut outsider, mut outsider_events, _, _) = CommyNode::spawn_with(None, Some(iroh::RelayMap::empty())).await.unwrap();
+        host.set_gossip_keys(sealing_with(key, secret.clone()));
+        member.set_gossip_keys(sealing_with(key, secret));
+        let server = ServerId::new();
+        let ticket = host.host_server(server, "s", None).await.unwrap();
+        member.rejoin_server(&ticket).await.unwrap();
+        outsider.rejoin_server(&ticket).await.unwrap();
+        assert!(member.wait_for_peers(server, MEET_WITHIN).await);
+        assert!(outsider.wait_for_peers(server, MEET_WITHIN).await);
+        let say = |words: &str| WirePayload::Event(ServerEvent::MessageCreate { message: commy_core::Message::new(commy_core::ChannelId::new(), UserId::new(), words) });
+        let deadline = n0_future::time::Instant::now() + MEET_WITHIN;
+        let mut heard = false;
+        while !heard && n0_future::time::Instant::now() < deadline {
+            host.broadcast(server, say("the plan")).await.unwrap();
+            heard = heard_words(&mut member_events, "the plan", Duration::from_millis(500)).await;
+        }
+        assert!(heard, "a member with the key hears the host");
+        host.broadcast(server, say("the plan")).await.unwrap();
+        assert!(!heard_words(&mut outsider_events, "the plan", Duration::from_secs(2)).await, "an outsider without the key hears nothing");
+        host.shutdown().await.ok();
+        member.shutdown().await.ok();
+        outsider.shutdown().await.ok();
     }
 
     #[tokio::test]

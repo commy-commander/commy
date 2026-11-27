@@ -41,6 +41,7 @@ pub enum WirePayload {
         from_user: commy_core::UserId,
     },
     Signed(SignedEvent),
+    Sealed(crate::gossip_seal::SealedPayload),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -209,6 +210,10 @@ const FULL_SIG_BYTES: usize = 72;
 pub const MAX_GOSSIP_BYTES: usize = commy_core::message::GOSSIP_FRAME_BYTES;
 
 const _: () = assert!(MAX_GOSSIP_BYTES < IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES);
+
+pub const MAX_SEALED_GOSSIP_BYTES: usize = MAX_GOSSIP_BYTES + crate::gossip_seal::SEAL_OVERHEAD_BYTES;
+
+const _: () = assert!(MAX_SEALED_GOSSIP_BYTES < IROH_GOSSIP_CLOSES_CONNECTION_ABOVE_BYTES);
 
 pub fn gossip_size(payload: &WirePayload) -> usize {
     commy_core::wire_layout::encode(&Envelope::new([0u8; 32], payload.clone())).map_or(usize::MAX, |bytes| bytes.len())
