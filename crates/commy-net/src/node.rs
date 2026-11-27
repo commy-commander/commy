@@ -1905,7 +1905,9 @@ impl CommyNode {
             plain_bytes.len(),
             crate::protocol::MAX_GOSSIP_BYTES
         );
-        let sealed = crate::gossip_seal::seal_with(keys_for(&self.gossip_keys, server_id).as_ref(), server_id, payload);
+        let keys = keys_for(&self.gossip_keys, server_id);
+        let sealed = crate::gossip_seal::seal_with(keys.as_ref(), server_id, payload);
+        anyhow::ensure!(keys.as_ref().is_none_or(|k| k.may_send(&sealed)), "this device has no key for the server yet, so this goes through sync");
         if !matches!(sealed, WirePayload::Sealed(_) | WirePayload::DaySealed(_)) {
             return Ok(plain_bytes);
         }
@@ -2749,7 +2751,7 @@ mod tests {
     }
 
     fn sealing_with(key: commy_core::channel_key::KeyId, secret: commy_core::channel_key::ChannelSecret) -> crate::gossip_seal::GossipKeys {
-        Arc::new(move |_| Some(crate::gossip_seal::ServerKeys { sealing: Some((key, secret.clone())), held: Vec::new(), days: None }))
+        Arc::new(move |_| Some(crate::gossip_seal::ServerKeys { sealing: Some((key, secret.clone())), held: Vec::new(), days: None, keyed: true }))
     }
 
     async fn heard_words(events: &mut mpsc::UnboundedReceiver<NetEvent>, words: &str, within: Duration) -> bool {

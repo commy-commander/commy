@@ -26,6 +26,7 @@ pub struct ServerKeys {
     pub sealing: Option<(KeyId, ChannelSecret)>,
     pub held: Vec<(KeyId, ChannelSecret)>,
     pub days: Option<DayKeys>,
+    pub keyed: bool,
 }
 
 #[derive(Clone)]
@@ -38,12 +39,18 @@ impl ServerKeys {
     pub fn secret(&self, key: KeyId) -> Option<&ChannelSecret> {
         self.sealing.iter().chain(self.held.iter()).find(|(id, _)| *id == key).map(|(_, secret)| secret)
     }
+
+    pub fn may_send(&self, payload: &WirePayload) -> bool {
+        !self.keyed || matches!(payload, WirePayload::Sealed(_) | WirePayload::DaySealed(_))
+    }
 }
 
 pub fn server_keys(state: &ServerState, community: &Keyring) -> ServerKeys {
-    let sealing = community.newest_in(state, KeyScope::Community).map(|(key, secret)| (key, secret.clone()));
-    let held = community.held_records(state, KeyScope::Community).into_iter().map(|(record, secret)| (record.id, secret.clone())).collect();
-    ServerKeys { sealing, held, days: None }
+    let held: Vec<(KeyId, ChannelSecret)> = community.held_records(state, KeyScope::Community).into_iter().map(|(record, secret)| (record.id, secret.clone())).collect();
+    let newest = community.newest_in(state, KeyScope::Community).map(|(key, secret)| (key, secret.clone()));
+    let sealing = newest.or_else(|| held.first().cloned());
+    let keyed = state.community_keys().newest().is_some();
+    ServerKeys { sealing, held, days: None, keyed }
 }
 
 pub fn server_keys_with_days(state: &ServerState, community: &Keyring, days: &DayKeyring) -> ServerKeys {
@@ -139,6 +146,21 @@ mod tests {
     }
 
     #[test]
+    fn a_keyed_server_never_lets_a_plain_frame_out() {
+        let server = ServerId::new();
+        let plain = message("hi");
+        let unkeyed = ServerKeys::default();
+        assert!(unkeyed.may_send(&plain));
+        let keyed_without_key = ServerKeys { keyed: true, ..ServerKeys::default() };
+        let out = seal_with(Some(&keyed_without_key), server, plain.clone());
+        assert_eq!(out, plain);
+        assert!(!keyed_without_key.may_send(&out));
+        let (key, secret) = keys();
+        let keyed = ServerKeys { sealing: Some((key, secret)), keyed: true, ..ServerKeys::default() };
+        assert!(keyed.may_send(&seal_with(Some(&keyed), server, plain)));
+    }
+
+    #[test]
     fn a_sealed_frame_hides_the_words_and_opens_with_the_same_key() {
         let server = ServerId::new();
         let (key, secret) = keys();
@@ -183,7 +205,7 @@ mod tests {
         let WirePayload::Sealed(inner) = seal(server, &plain, key, &secret).unwrap() else { panic!("not sealed") };
         assert_eq!(open_with(None, server, &inner), None);
         assert_eq!(open_with(Some(&ServerKeys::default()), server, &inner), None);
-        let older = ServerKeys { sealing: Some(keys()), held: vec![(key, secret)], days: None };
+        let older = ServerKeys { sealing: Some(keys()), held: vec![(key, secret)], days: None, keyed: true };
         assert_eq!(open_with(Some(&older), server, &inner), Some(plain));
     }
 
@@ -197,6 +219,35 @@ mod tests {
         }
         let sealed = seal(server, &message(&text), key, &secret).unwrap();
         assert!(gossip_size(&sealed) <= MAX_GOSSIP_BYTES + SEAL_OVERHEAD_BYTES, "{}", gossip_size(&sealed));
+    }
+
+    fn community_ring(state: &mut ServerState, me: commy_core::UserId) -> Keyring {
+        use commy_core::test_support::identity_for;
+        let now = chrono::Utc::now().timestamp_millis();
+        for _ in 0..4 {
+            let mut ring = Keyring::unlock_community(state, me, &identity_for(me));
+            let Some(task) = commy_core::channel_key::community_key_task(state, me, &ring) else { break };
+            for event in ring.task_events(state, KeyScope::Community, task, now) {
+                state.apply(event).unwrap();
+            }
+        }
+        Keyring::unlock_community(state, me, &identity_for(me))
+    }
+
+    #[test]
+    fn a_newer_key_that_has_not_reached_this_device_leaves_it_sealing_with_the_newest_it_holds() {
+        let (mut state, _, owner) = commy_core::test_support::fixture();
+        let server = state.server.id;
+        let ring = community_ring(&mut state, owner);
+        let held = ring.newest_in(&state, KeyScope::Community).unwrap().0;
+        let newer = Keyring::default().rotate(server, KeyScope::Community, &[], chrono::Utc::now().timestamp_millis() + 1000);
+        let newer_id = newer.id;
+        state.apply(ServerEvent::CommunityKeyAdd { server, key: newer }).unwrap();
+        assert_eq!(state.community_keys().newest().map(|k| k.id), Some(newer_id));
+        let keys = server_keys(&state, &Keyring::unlock_community(&state, owner, &commy_core::test_support::identity_for(owner)));
+        assert!(keys.keyed);
+        assert_eq!(keys.sealing.as_ref().map(|(id, _)| *id), Some(held));
+        assert!(keys.may_send(&seal_with(Some(&keys), server, message("hi"))));
     }
 
     fn day_keys_for(state: &mut ServerState) -> (DayKeyring, DayKeyring, commy_core::UserId) {
@@ -215,7 +266,7 @@ mod tests {
     }
 
     fn with_days(root: Option<(KeyId, ChannelSecret)>, state: &ServerState, ring: &DayKeyring) -> ServerKeys {
-        ServerKeys { sealing: root.clone(), held: root.into_iter().collect(), days: Some(DayKeys { sealer: ring.sealer(state), ring: ring.clone() }) }
+        ServerKeys { sealing: root.clone(), held: root.into_iter().collect(), days: Some(DayKeys { sealer: ring.sealer(state), ring: ring.clone() }), keyed: true }
     }
 
     #[test]
@@ -229,7 +280,7 @@ mod tests {
         let WirePayload::Sealed(outer) = sealed else { panic!("not sealed") };
         assert!(matches!(open(server, &outer, &root.1), Some(WirePayload::DaySealed(_))), "the community key alone shows only the day seal");
         assert_eq!(open_with(Some(&with_days(Some(root.clone()), &state, &members)), server, &outer), Some(plain.clone()));
-        let root_only = ServerKeys { sealing: Some(root.clone()), held: vec![root.clone()], days: None };
+        let root_only = ServerKeys { sealing: Some(root.clone()), held: vec![root.clone()], days: None, keyed: true };
         assert_eq!(open_with(Some(&root_only), server, &outer), None);
         let rename = WirePayload::Event(ServerEvent::ServerRename { server, name: "x".into() });
         let WirePayload::Sealed(outer) = seal_with(Some(&with_days(Some(root.clone()), &state, &owners)), server, rename.clone()) else { panic!("not sealed") };
