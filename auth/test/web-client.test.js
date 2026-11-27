@@ -4,7 +4,7 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { configuredRelays, createWebClient, isPhone, pageWithRelays, withQuery } from "../src/web-client.js";
+import { configuredRelays, createWebClient, isPhone, pageWithRelays, WEB_CLIENT_CONTENT_SECURITY_POLICY, withQuery } from "../src/web-client.js";
 
 const PAGE = `<!doctype html><html><head>
   <base href="/web/" />
@@ -63,6 +63,26 @@ test("the web app page carries the server's relay and the site's safety headers"
     const body = await res.text();
     assert.match(body, /<meta name="commy-relays" content="https:\/\/relay\.example\.test:8443" \/>/);
     assert.doesNotMatch(body, /relay\.commy\.chat/);
+  }
+});
+
+function directives(policy) {
+  return new Map(policy.split(";").map((part) => part.trim().split(/\s+/)).filter(([name]) => name).map(([name, ...values]) => [name, values]));
+}
+
+test("the web app page and its files only run the app's own scripts", async () => {
+  for (const path of ["/web/", "/web/scripts/app.js", "/web/scripts/pkg/client_bg.wasm"]) {
+    const res = await get(path);
+    assert.equal(res.headers.get("content-security-policy"), WEB_CLIENT_CONTENT_SECURITY_POLICY, path);
+  }
+  const policy = directives(WEB_CLIENT_CONTENT_SECURITY_POLICY);
+  assert.deepEqual(policy.get("script-src"), ["'self'", "'wasm-unsafe-eval'"]);
+  assert.deepEqual(policy.get("object-src"), ["'none'"]);
+  assert.deepEqual(policy.get("frame-ancestors"), ["'none'"]);
+  assert.deepEqual(policy.get("base-uri"), ["'self'"]);
+  for (const values of policy.values()) {
+    assert.ok(!values.includes("'unsafe-inline'") || policy.get("style-src") === values, "only styles may be inline");
+    assert.ok(!values.includes("'unsafe-eval'"));
   }
 });
 

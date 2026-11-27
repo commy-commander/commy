@@ -8,9 +8,25 @@ export const WEB_CLIENT_DIR = join(dirname(fileURLToPath(import.meta.url)), ".."
 export const WEB_PATH = "/web";
 const RELAYS_TAG = /<meta name="commy-relays" content="[^"]*" \/>/;
 
+export const WEB_CLIENT_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: mediastream: https:",
+  "connect-src 'self' https: wss: data: blob:",
+  "font-src 'self' data:",
+  "frame-src https:",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
 const SECURITY_HEADERS = {
   "x-frame-options": "DENY",
-  "content-security-policy": "frame-ancestors 'none'",
+  "content-security-policy": WEB_CLIENT_CONTENT_SECURITY_POLICY,
   "x-content-type-options": "nosniff",
   "referrer-policy": "strict-origin-when-cross-origin",
 };
