@@ -504,6 +504,15 @@ pub fn may_rotate_community(server: &Server, user: UserId) -> bool {
             || perms.allows(Permissions::KICK_MEMBERS))
 }
 
+fn community_closed_to(server: &Server, user: UserId) -> bool {
+    if server.banned.contains(&user) {
+        return true;
+    }
+    let gone = !server.is_member(user);
+    let kicked = server.kicked.iter().any(|kick| kick.user == user);
+    gone && (kicked || server.join_approval || !server.public)
+}
+
 pub fn community_key_task(state: &ServerState, me: UserId, ring: &Keyring) -> Option<KeyTask> {
     let server = &state.server;
     if !server.is_current_member(me) {
@@ -516,7 +525,7 @@ pub fn community_key_task(state: &ServerState, me: UserId, ring: &Keyring) -> Op
         return (rotates && !server.channels.is_empty()).then_some(KeyTask::Rotate { links: Vec::new() });
     }
     let held: Vec<KeyId> = heads.iter().copied().filter(|k| ring.holds(*k)).collect();
-    let exposed = keys.exposed_to(state, KeyScope::Community, |user| server.banned.contains(&user));
+    let exposed = keys.exposed_to(state, KeyScope::Community, |user| community_closed_to(server, user));
     let forked = heads.len() > 1 && held.len() == heads.len();
     let shared_before_approval = server.join_approval && keys.newest().is_some_and(|k| k.at < server.join_approval_since);
     if rotates && (exposed || forked || shared_before_approval) && !held.is_empty() {
@@ -1202,15 +1211,65 @@ mod tests {
         assert_eq!(state.apply(regrant), Ok(false));
     }
 
-    #[test]
-    fn leaving_does_not_rotate_the_community_key() {
-        let (mut state, _, owner) = fixture();
+    fn rotates_after(state: &mut ServerState, owner: UserId, removal: impl FnOnce(&mut ServerState)) -> bool {
+        settle_community(state, owner);
+        let before = state.community_keys().newest().unwrap().id;
+        removal(state);
+        let ring = Keyring::unlock_community(state, owner, &identity_for(owner));
+        community_key_task(state, owner, &ring) == Some(KeyTask::Rotate { links: vec![before] })
+    }
+
+    fn leave(state: &mut ServerState, user: UserId) {
         let server = state.server.id;
+        state.apply(ServerEvent::MemberLeave { server, user }).unwrap();
+    }
+
+    #[test]
+    fn leaving_an_open_public_server_keeps_its_community_key() {
+        let (mut state, _, owner) = fixture();
+        state.server.public = true;
         let leaver = join(&mut state, "leaver");
+        assert!(!rotates_after(&mut state, owner, |state| leave(state, leaver)), "anyone may walk back in with the public link");
+    }
+
+    #[test]
+    fn leaving_a_private_server_moves_it_to_a_fresh_community_key() {
+        let (mut state, _, owner) = fixture();
+        state.server.public = false;
+        let leaver = join(&mut state, "leaver");
+        let stays = join(&mut state, "stays");
+        assert!(rotates_after(&mut state, owner, |state| leave(state, leaver)));
         settle_community(&mut state, owner);
-        state.apply(ServerEvent::MemberLeave { server, user: leaver }).unwrap();
-        let ring = Keyring::unlock_community(&state, owner, &identity_for(owner));
-        assert_eq!(community_key_task(&state, owner, &ring), None);
+        assert!(community_secret(&state, stays).is_some());
+        assert_eq!(community_secret(&state, leaver), None, "the one who left cannot open the new key");
+        assert_eq!(community_key_task(&state, owner, &Keyring::unlock_community(&state, owner, &identity_for(owner))), None, "one rotation settles it");
+    }
+
+    #[test]
+    fn leaving_a_public_server_that_asks_newcomers_to_wait_moves_it_to_a_fresh_key() {
+        let (mut state, _, owner) = fixture();
+        state.server.public = true;
+        let leaver = join(&mut state, "leaver");
+        state.server.join_approval = true;
+        state.server.join_approval_since = 1;
+        assert!(rotates_after(&mut state, owner, |state| leave(state, leaver)));
+    }
+
+    #[test]
+    fn a_kick_moves_even_a_public_server_to_a_fresh_community_key() {
+        let (mut state, _, owner) = fixture();
+        state.server.public = true;
+        let kicked = join(&mut state, "kicked");
+        let stays = join(&mut state, "stays");
+        assert!(rotates_after(&mut state, owner, |state| {
+            let server = state.server.id;
+            let at = chrono::Utc::now().timestamp_millis();
+            let kick = crate::action::SignedEvent::sign(server, owner, at, ServerEvent::MemberLeave { server, user: kicked }, &identity_for(owner));
+            assert_eq!(state.apply_signed(&kick), Ok(true));
+        }));
+        settle_community(&mut state, owner);
+        assert!(community_secret(&state, stays).is_some());
+        assert_eq!(community_secret(&state, kicked), None, "the kicked member cannot open the new key");
     }
 
     #[test]
