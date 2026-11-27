@@ -1,7 +1,7 @@
 use crate::lock_or_recover::LockOrRecover;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
@@ -257,6 +257,8 @@ static STATUS: Mutex<Option<EntryStatus>> = Mutex::new(None);
 static HELD: Mutex<Vec<HeldLeave>> = Mutex::new(Vec::new());
 static SYNC: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static ASKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ASK_ROUND: AtomicU64 = AtomicU64::new(0);
+static ASK_AGAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn set_status(handle: &AppHandle, state: &str, detail: impl Into<String>, servers: usize, has_key: bool) {
     let held = HELD.lock_or_recover().iter().map(|leave| leave.name.clone()).collect();
@@ -407,7 +409,9 @@ pub fn schedule(handle: &AppHandle) {
 
 #[tauri::command]
 pub async fn entry_list_sync(handle: AppHandle) -> Result<EntryStatus, String> {
+    ASK_AGAIN.store(true, Ordering::SeqCst);
     sync(&handle).await?;
+    ASK_AGAIN.store(false, Ordering::SeqCst);
     Ok(entry_list_status())
 }
 
@@ -461,7 +465,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                 return Ok(());
             }
             (None, Some(_)) => {
-                set_status(handle, "waiting", OPEN_ANOTHER_DEVICE, 0, false);
+                set_status(handle, "waiting", approve_hint(&app), 0, false);
                 ask_other_devices(handle);
                 return Ok(());
             }
@@ -469,7 +473,7 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
             (Some(key), Some(data)) => match EntryList::open(&key, data) {
                 Ok(list) => (key, list),
                 Err(_) => {
-                    set_status(handle, "waiting", OPEN_ANOTHER_DEVICE, 0, true);
+                    set_status(handle, "waiting", approve_hint(&app), 0, true);
                     ask_other_devices(handle);
                     return Ok(());
                 }
@@ -881,20 +885,47 @@ fn device_name() -> String {
 const REBUILD_AFTER: std::time::Duration = std::time::Duration::from_secs(20);
 const REBUILDING: &str = "Opening your servers from your account.";
 const OPEN_ANOTHER_DEVICE: &str =
-    "Open Commy on one of your other devices signed in to this account and this one opens by itself, or enter your recovery code.";
+    "Open Commy on one of your other devices signed in to this account and choose Allow there, or enter your recovery code.";
+
+fn approve_hint(app: &App) -> String {
+    match crate::key_handoff::own_node(app) {
+        Some(node) => format!(
+            "Open Commy on one of your other devices and choose Allow when it shows the code {}, or enter your recovery code.",
+            commy_net::key_handoff::code(&node.public())
+        ),
+        None => OPEN_ANOTHER_DEVICE.into(),
+    }
+}
+
+fn ask_round() -> Option<u64> {
+    let busy = ASKING.swap(true, Ordering::SeqCst);
+    let fresh = ASK_AGAIN.swap(false, Ordering::SeqCst);
+    (!busy || fresh).then(|| ASK_ROUND.fetch_add(1, Ordering::SeqCst) + 1)
+}
+
+fn still_current(round: u64) -> bool {
+    ASK_ROUND.load(Ordering::SeqCst) == round
+}
 
 fn ask_other_devices(handle: &AppHandle) {
-    if ASKING.swap(true, Ordering::SeqCst) {
-        return;
-    }
+    let Some(round) = ask_round() else { return };
     let handle = handle.clone();
     crate::account_session::spawn(async move {
         let result = ask(&handle).await;
+        if !still_current(round) {
+            if matches!(result, Ok(Asked::Got)) {
+                schedule(&handle);
+            }
+            return;
+        }
         ASKING.store(false, Ordering::SeqCst);
         let detail = match result {
             Ok(Asked::Got) => return schedule(&handle),
             Ok(Asked::NobodyHasKey) => "None of your devices has the key to your server list. Enter your recovery code, or start a new list from this device.".to_string(),
-            Ok(Asked::NoAnswer) => format!("None of your other devices answered yet. {OPEN_ANOTHER_DEVICE}"),
+            Ok(Asked::NoAnswer) => {
+                let app = handle.state::<App>();
+                format!("None of your other devices allowed this one yet. {}", approve_hint(&app))
+            }
             Err(e) => e,
         };
         set_status(&handle, "waiting", detail, 0, false);
@@ -905,19 +936,24 @@ fn ask_other_devices(handle: &AppHandle) {
 }
 
 fn rebuild_unless_a_device_answers(handle: &AppHandle) {
-    if ASKING.swap(true, Ordering::SeqCst) {
-        return;
-    }
+    let Some(round) = ask_round() else { return };
     let handle = handle.clone();
     crate::account_session::spawn(async move {
         let answered = tokio::time::timeout(REBUILD_AFTER, ask(&handle)).await;
+        if !still_current(round) {
+            if matches!(answered, Ok(Ok(Asked::Got))) {
+                schedule(&handle);
+            }
+            return;
+        }
         ASKING.store(false, Ordering::SeqCst);
         if matches!(answered, Ok(Ok(Asked::Got))) {
             return schedule(&handle);
         }
         if let Err(e) = start_new_list(&handle).await {
             tracing::warn!("could not rebuild the server list from this device: {e}");
-            set_status(&handle, "waiting", OPEN_ANOTHER_DEVICE, 0, false);
+            let app = handle.state::<App>();
+            set_status(&handle, "waiting", approve_hint(&app), 0, false);
         }
     });
 }
@@ -989,34 +1025,92 @@ async fn ask(handle: &AppHandle) -> Result<Asked, String> {
     Ok(if keyless { Asked::NobodyHasKey } else { Asked::NoAnswer })
 }
 
+static NEXT_ASK: AtomicU64 = AtomicU64::new(1);
+
+struct OpenPrompt {
+    device: IdentityKey,
+    reply: tokio::sync::oneshot::Sender<EntryKeyReply>,
+}
+
+static PENDING: Mutex<BTreeMap<u64, OpenPrompt>> = Mutex::new(BTreeMap::new());
+
+#[derive(Debug, Clone, Serialize)]
+struct KeyAskView {
+    id: u64,
+    device_name: String,
+    code: String,
+}
+
 pub async fn run_entry_key_requests(handle: AppHandle, mut asks: tokio::sync::mpsc::UnboundedReceiver<EntryKeyAsk>) {
     while let Some(ask) = asks.recv().await {
         let handle = handle.clone();
         crate::account_session::spawn(async move {
-            let _ = ask.reply.send(answer(&handle, ask.peer, &ask.request).await);
+            let reply = match answer(&handle, ask.peer, &ask.request).await {
+                Some((id, asked)) => {
+                    let answered = tokio::time::timeout(commy_net::entry_key::ANSWER_TIMEOUT, asked).await;
+                    close_prompt(&handle, id);
+                    answered.ok().and_then(Result::ok).unwrap_or(EntryKeyReply::Denied)
+                }
+                None => EntryKeyReply::Unknown,
+            };
+            let _ = ask.reply.send(reply);
         });
     }
 }
 
-async fn answer(handle: &AppHandle, peer: [u8; 32], request: &EntryKeyRequest) -> EntryKeyReply {
+async fn answer(handle: &AppHandle, peer: [u8; 32], request: &EntryKeyRequest) -> Option<(u64, tokio::sync::oneshot::Receiver<EntryKeyReply>)> {
     let same_account = session(&handle.state::<App>()).is_some_and(|s| request.server == s.server && request.account == s.account);
     if !same_account {
-        return EntryKeyReply::Unknown;
+        return None;
     }
-    match key_for_own_device(handle, &IdentityKey(peer)).await {
-        Some(key) => EntryKeyReply::Key(key.to_text()),
-        None => EntryKeyReply::Unknown,
-    }
+    prompt_own_device(handle, &request.device_name, IdentityKey(peer)).await
 }
 
-pub(crate) async fn key_for_own_device(handle: &AppHandle, device: &IdentityKey) -> Option<SealKey> {
+pub(crate) async fn prompt_own_device(handle: &AppHandle, device_name: &str, device: IdentityKey) -> Option<(u64, tokio::sync::oneshot::Receiver<EntryKeyReply>)> {
     let app = handle.state::<App>();
     let (dir, s) = signed_in(&app).ok()?;
     if !account_devices(&app, &s).await.ok()?.contains(&device.to_hex()) {
         tracing::warn!("a device outside this account asked for the server list key");
         return None;
     }
-    load_key(&dir, &s.server, &s.account)
+    load_key(&dir, &s.server, &s.account)?;
+    let id = NEXT_ASK.fetch_add(1, Ordering::SeqCst);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    PENDING.lock_or_recover().insert(id, OpenPrompt { device, reply: tx });
+    let view = KeyAskView { id, device_name: commy_net::key_handoff::clean_name(device_name), code: commy_net::key_handoff::code(&device) };
+    crate::tray::show_main_window(handle);
+    let _ = handle.emit("entry-key-request", view);
+    Some((id, rx))
+}
+
+pub(crate) fn prompt_is_open(id: u64) -> bool {
+    PENDING.lock_or_recover().contains_key(&id)
+}
+
+pub(crate) fn close_prompt(handle: &AppHandle, id: u64) {
+    if PENDING.lock_or_recover().remove(&id).is_some() {
+        let _ = handle.emit("entry-key-request-closed", id);
+    }
+}
+
+pub(crate) fn close_prompts_for(handle: &AppHandle, device: &IdentityKey) {
+    let ids: Vec<u64> = PENDING.lock_or_recover().iter().filter(|(_, open)| open.device == *device).map(|(id, _)| *id).collect();
+    for id in ids {
+        close_prompt(handle, id);
+    }
+}
+
+#[tauri::command]
+pub fn answer_entry_key_request(app: tauri::State<'_, App>, id: u64, allow: bool) -> Result<(), String> {
+    let sender = PENDING.lock_or_recover().remove(&id).ok_or("That request has expired")?.reply;
+    let reply = if allow {
+        let (dir, s) = signed_in(&app)?;
+        EntryKeyReply::Key(load_key(&dir, &s.server, &s.account).ok_or("This device has no server list key")?.to_text())
+    } else {
+        EntryKeyReply::Denied
+    };
+    let _ = sender.send(reply);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1077,6 +1171,19 @@ pub fn forget() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_now_starts_a_fresh_ask_even_while_one_is_waiting() {
+        ASKING.store(false, Ordering::SeqCst);
+        let first = ask_round().expect("the first ask starts");
+        assert!(ask_round().is_none(), "a second ask waits for the first");
+        ASK_AGAIN.store(true, Ordering::SeqCst);
+        let fresh = ask_round().expect("Sync now starts a fresh ask");
+        assert!(fresh > first);
+        assert!(!still_current(first), "the earlier ask no longer speaks for this device");
+        assert!(still_current(fresh));
+        ASKING.store(false, Ordering::SeqCst);
+    }
 
     #[test]
     fn a_removal_counts_from_when_it_happened_not_when_a_late_device_heard_it() {

@@ -7,6 +7,8 @@ const ENTRY_STATES = {
   get error() { return t("ui.could-not-sync"); },
 };
 
+let entryAsks = [];
+
 function renderEntryStatus(status) {
   if (!status || !$("entry-state")) return;
   const title = ENTRY_STATES[status.state] || ENTRY_STATES.error;
@@ -170,6 +172,31 @@ $("entry-start-over-go").onclick = async () => {
   }
 };
 
+function showEntryAsk() {
+  const ask = entryAsks[0];
+  if (!ask) {
+    hideModals();
+    return;
+  }
+  $("entry-key-title").textContent = t("ui.allow-device", { value: ask.device_name || t("ui.your-other-device") });
+  $("entry-key-code-row").textContent = t("ui.it-should-show-the-code", { value: ask.code });
+  showModal("modal-entry-key");
+}
+
+async function answerEntryAsk(allow) {
+  const ask = entryAsks[0];
+  if (!ask) return hideModals();
+  const answered = entryAsksFromSameDevice(entryAsks, ask);
+  entryAsks = withoutEntryAsks(entryAsks, answered);
+  showEntryAsk();
+  const replies = await Promise.allSettled(answered.map(a => invoke("answer_entry_key_request", { id: a.id, allow })));
+  if (replies.every(r => r.status === "rejected")) toast(String(replies[0].reason));
+  else if (allow) toast(t("ui.device-can-now-use-your-servers", { value: ask.device_name || t("ui.your-other-device") }));
+}
+
+$("entry-key-allow").onclick = () => answerEntryAsk(true);
+$("entry-key-deny").onclick = () => answerEntryAsk(false);
+
 if (IS_TAURI) {
   window.__TAURI__.event.listen("entry-list-changed", e => renderEntryStatus(e.payload));
   window.__TAURI__.event.listen("web-sync-stalled", e => {
@@ -190,6 +217,15 @@ if (IS_TAURI) {
     const line = `Commy: looked up ${home}: ${status ?? "no answer"}, sync ${sync ?? "unknown"}`;
     if (sync) console.info(line);
     else console.warn(line);
+  });
+  window.__TAURI__.event.listen("entry-key-request", e => {
+    entryAsks = queueEntryAsk(entryAsks, e.payload);
+    showEntryAsk();
+  });
+  window.__TAURI__.event.listen("entry-key-request-closed", e => {
+    const showing = entryAsks[0];
+    entryAsks = withoutEntryAskId(entryAsks, e.payload);
+    if (showing && showing.id === e.payload) showEntryAsk();
   });
   refreshEntryStatus();
   document.addEventListener("visibilitychange", async () => {

@@ -9212,6 +9212,7 @@ pub fn run() {
             entry_list::entry_list_answer_held,
             entry_list::entry_list_earlier,
             entry_list::entry_list_bring_back,
+            entry_list::answer_entry_key_request,
             read_state::read_state_load,
             read_state::read_state_set,
             read_state::read_state_mark_read,

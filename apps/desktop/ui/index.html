@@ -913,6 +913,16 @@
       </div>
     </div>
 
+    <div class="modal hidden" id="modal-entry-key">
+      <h2 id="entry-key-title"></h2>
+      <p data-i18n="ui.a-device-wants-your-server-list">One of your devices wants your server list and identity, so it can join your servers as you. Only allow it if you just signed in there yourself.</p>
+      <p class="entry-key-code" id="entry-key-code-row"></p>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="entry-key-deny" data-i18n="ui.deny">Deny</button>
+        <button class="btn-primary" id="entry-key-allow" data-i18n="ui.allow">Allow</button>
+      </div>
+    </div>
+
     <div class="modal hidden" id="modal-entry-start-over">
       <h2 data-i18n="ui.start-a-new-server-list">Start a new server list?</h2>
       <p data-i18n="ui.your-account-s-current-server-list-is">Your account's current server list is replaced by the servers on this device. Only do this if none of your devices has the old list and you have no recovery code. Your other devices then get the new list from your account.</p>
@@ -3949,6 +3959,7 @@
   <script src="scripts/avatar-crop.js"></script>
   <script src="scripts/app.js"></script>
   <script src="scripts/invite-link.js"></script>
+  <script src="scripts/entry-asks.js"></script>
   <script src="scripts/entry-list.js"></script>
   <script src="scripts/studio-phone.js"></script>
   <script src="scripts/phone-viewer.js"></script>

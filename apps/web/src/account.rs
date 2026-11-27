@@ -111,7 +111,13 @@ pub fn other_devices(reply: &Reply, own_node: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub const KEY_NOT_HERE: &str = "This browser does not have the key to your servers yet. Open Commy on one of your other devices signed in to this account and press Try again, or paste the recovery code from Settings, Commy Account on that device.";
+pub fn asking_note(code: &str) -> String {
+    format!("Open Commy on one of your other devices and choose Allow when it shows the code {code}, or paste your recovery code.")
+}
+
+pub fn key_not_here(code: &str) -> String {
+    format!("This browser does not have the key to your servers yet. Open Commy on one of your other devices, choose Allow when it shows the code {code} and press Try again, or paste the recovery code from Settings, Commy Account on that device.")
+}
 
 pub const MAX_USERNAME_BYTES: usize = 32;
 const FALLBACK_USERNAME: &str = "Commy user";
@@ -493,6 +499,17 @@ mod tests {
     }
 
     #[test]
+    fn a_browser_without_the_key_is_pointed_at_a_device_with_its_code_or_the_recovery_code() {
+        for note in [key_not_here("AB12-CD34"), asking_note("AB12-CD34")] {
+            assert!(note.contains("AB12-CD34"));
+            assert!(note.contains("Allow"));
+            assert!(note.contains("recovery code"));
+            assert!(!note.to_lowercase().contains("saved with your account"));
+        }
+        assert!(key_not_here("x").contains("Try again"));
+    }
+
+    #[test]
     fn a_browser_keeps_its_key_locked_with_the_account_and_opens_it_only_with_that_lock() {
         let key = SealKey::generate();
         let lock = folder_key(&reply(200, &format!(r#"{{"key":"{}"}}"#, "ab".repeat(32)))).unwrap();
@@ -510,13 +527,6 @@ mod tests {
         assert!(kept_for_account("u1").contains(&locked_key_name("u1")));
         assert_ne!(locked_key_name("u1"), locked_key_name("u2"));
         assert_ne!(locked_key_name("u1"), ENTRY_KEY_KEY);
-    }
-
-    #[test]
-    fn a_browser_without_the_key_is_pointed_at_a_device_or_the_recovery_code() {
-        assert!(KEY_NOT_HERE.contains("Try again"));
-        assert!(KEY_NOT_HERE.contains("recovery code"));
-        assert!(!KEY_NOT_HERE.to_lowercase().contains("saved with your account"));
     }
 
     #[test]

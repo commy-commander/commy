@@ -62,7 +62,6 @@ const MAX_PREF_KEY: usize = 200;
 const MAX_PREFS_PER_CALL: usize = 500;
 const FAREWELL_LINGER: std::time::Duration = std::time::Duration::from_millis(300);
 const LOOK_FOR_KEY: std::time::Duration = std::time::Duration::from_secs(90);
-const OPENING: &str = "Opening your servers";
 const FIND_OLDER_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
 const SEARCH_OLDER_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
 
@@ -883,7 +882,8 @@ impl Session {
         if std::mem::replace(&mut self.status.borrow_mut().looking, true) {
             return;
         }
-        self.set_unlock(Unlock::Asking, OPENING);
+        let code = commy_net::key_handoff::code(&commy_core::Identity::from_bytes(&self.device_secret(&account)).public());
+        self.set_unlock(Unlock::Asking, account::asking_note(&code));
         let this = self.clone();
         spawn_local(async move {
             let found = n0_future::time::timeout(LOOK_FOR_KEY, this.find_key(&account)).await.ok().flatten();
@@ -893,7 +893,7 @@ impl Session {
             }
             let result = match found {
                 Some(key) => this.accept_key(&account, key),
-                None => Err(account::KEY_NOT_HERE.to_string()),
+                None => Err(account::key_not_here(&code)),
             };
             this.status.borrow_mut().looking = false;
             if let Err(e) = result {
