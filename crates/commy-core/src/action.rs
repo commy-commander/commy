@@ -174,6 +174,8 @@ pub fn subject(event: &ServerEvent) -> Option<String> {
         E::HomesBlocked { .. } => "blocked_homes".into(),
         E::DayKeysReady { user, .. } => format!("day_keys_ready:{user}"),
         E::DayKeysSet { .. } => "day_keys".into(),
+        E::DayEpochAdd { epoch, .. } => format!("day.epoch:{}", epoch.id.to_hex()),
+        E::DayKeyGrant { user, .. } => crate::day_keys::grant_subject(*user),
         E::PetSet { .. } => "pet".into(),
         E::PetCare { user, care, .. } => format!("pet_care:{user}:{}", crate::pet::care_name(*care)),
         E::DriveAdd { item, .. } => format!("drive:{}", item.id),
@@ -244,8 +246,8 @@ pub fn settles_authority(subject: &str) -> bool {
 }
 
 pub fn snapshot_omits(subject: &str) -> bool {
-    const OMITTED: [&str; 19] = [
-        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "community.key:", "community.grant:", "timeout:", "vote:", "poll:", "drive:", "drive.edit:", "drive.hold:",
+    const OMITTED: [&str; 21] = [
+        "emoji:", "sticker:", "emoticon:", "sound:", "event:", "pin:", "bot:", "bot_commands:", "invite:", "channel.key:", "channel.grant:", "community.key:", "community.grant:", "day.epoch:", "day.grant:", "timeout:", "vote:", "poll:", "drive:", "drive.edit:", "drive.hold:",
     ];
     const SINGLE: [&str; 4] = ["rules", "automod", "deleted", "invite_background"];
     SINGLE.contains(&subject) || OMITTED.iter().any(|p| subject.starts_with(p))
@@ -354,7 +356,8 @@ pub fn authorized(server: &Server, by: UserId, event: &ServerEvent) -> bool {
             member && server.channel(*channel).is_some_and(|c| c.is_private()) && server.can_view(*channel, by)
         }
         E::CommunityKeyAdd { .. } => crate::channel_key::may_rotate_community(server, by),
-        E::CommunityKeyGrant { user, .. } => server.is_current_member(by) && !server.is_banned(*user),
+        E::CommunityKeyGrant { user, .. } | E::DayKeyGrant { user, .. } => server.is_current_member(by) && !server.is_banned(*user),
+        E::DayEpochAdd { .. } => crate::channel_key::may_rotate_community(server, by),
         E::ChannelCreate { .. }
         | E::ChannelDelete { .. }
         | E::ChannelUpdate { .. }

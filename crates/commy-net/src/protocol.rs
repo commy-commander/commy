@@ -42,6 +42,7 @@ pub enum WirePayload {
     },
     Signed(SignedEvent),
     Sealed(crate::gossip_seal::SealedPayload),
+    DaySealed(commy_core::day_keys::DaySealed),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

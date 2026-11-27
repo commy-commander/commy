@@ -19,7 +19,7 @@ const CHAIN_INFO: &[u8] = b"chain";
 const NEXT_DAY_INFO: &[u8] = b"next-day";
 const ENTRY_INFO: &[u8] = b"entry";
 
-fn derive(key: &[u8; 32], info: &[&[u8]]) -> [u8; 32] {
+pub(crate) fn derive(key: &[u8; 32], info: &[&[u8]]) -> [u8; 32] {
     let mut extract = <Hmac<Sha256> as KeyInit>::new_from_slice(SALT).expect("HMAC takes any key length");
     extract.update(key);
     let prk = extract.finalize().into_bytes();

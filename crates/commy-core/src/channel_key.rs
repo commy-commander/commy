@@ -504,7 +504,7 @@ pub fn may_rotate_community(server: &Server, user: UserId) -> bool {
             || perms.allows(Permissions::KICK_MEMBERS))
 }
 
-fn community_closed_to(server: &Server, user: UserId) -> bool {
+pub(crate) fn community_closed_to(server: &Server, user: UserId) -> bool {
     if server.banned.contains(&user) {
         return true;
     }

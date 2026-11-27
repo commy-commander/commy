@@ -186,6 +186,7 @@ later_fields! {
     sync_response_full_sig = 5,
     server_day_keys = 6,
     server_day_keys_ready = 7,
+    snapshot_day_chain = 8,
 }
 
 #[cfg(test)]

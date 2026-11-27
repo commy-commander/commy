@@ -488,6 +488,15 @@ pub enum ServerEvent {
         since: i64,
         history_days: u32,
     },
+    DayEpochAdd {
+        server: ServerId,
+        epoch: crate::day_keys::DayEpoch,
+    },
+    DayKeyGrant {
+        server: ServerId,
+        user: UserId,
+        grant: crate::day_keys::SealedDays,
+    },
 }
 
 #[cfg(test)]
@@ -595,6 +604,10 @@ mod tests {
         assert_eq!(wire_tag(ServerEvent::ActivityQueue { server, channel, seq: 1, change, by: user }), 108);
         assert_eq!(wire_tag(ServerEvent::DayKeysReady { server, user, level: 1 }), 109);
         assert_eq!(wire_tag(ServerEvent::DayKeysSet { server, on: true, since: 1, history_days: 30 }), 110);
+        let epoch = crate::day_keys::DayEpoch { id: crate::channel_key::KeyId::random(), at: 1, links: vec![] };
+        assert_eq!(wire_tag(ServerEvent::DayEpochAdd { server, epoch }), 111);
+        let grant = crate::day_keys::SealedDays { key: crate::channel_key::KeyId::random(), ephemeral: [0; 32], nonce: [0; 12], sealed: vec![] };
+        assert_eq!(wire_tag(ServerEvent::DayKeyGrant { server, user, grant }), 112);
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use commy_core::action::Action;
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
+use commy_core::day_keys::{DayKeyring, DaySealed, DaySealer};
 use commy_core::{ChannelId, MessageId, ServerEvent, ServerId, ServerState, UserId};
 use commy_sync::wire::ERASE_EVERYTHING;
 use commy_sync::{StreamId, StreamKeys, StreamSecret};
@@ -12,6 +13,8 @@ use crate::protocol::{WirePayload, PROTOCOL_VERSION};
 const COMMUNITY_STATE: &str = "commy-community-state/v1";
 const COMMUNITY_CHANNEL: &str = "commy-community-channel/v1";
 const LOCKED_CHANNEL: &str = "commy-locked-channel/v1";
+const DAY_CHANNEL: &str = "commy-community-day-channel/v1";
+pub const MAX_DAY_EPOCHS_READ: usize = 5;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 pub const SERVICE_SENDER: [u8; 32] = [0; 32];
@@ -36,6 +39,7 @@ pub struct Want {
     pub key: KeyId,
     pub keys: StreamKeys,
     pub writes: bool,
+    pub days: bool,
 }
 
 fn place(server: ServerId, channel: Option<ChannelId>) -> Vec<u8> {
@@ -71,21 +75,60 @@ fn wants_of(state: &ServerState, scope: KeyScope, lanes: &[Lane], ring: &Keyring
     let mut out = Vec::new();
     for (at, (key, secret)) in epochs(state, scope, ring, now_ms).into_iter().enumerate() {
         for lane in lanes {
-            out.push(Want { lane: *lane, scope, key, keys: stream_for(&secret, server, scope, *lane), writes: at == 0 });
+            out.push(Want { lane: *lane, scope, key, keys: stream_for(&secret, server, scope, *lane), writes: at == 0, days: false });
         }
     }
     out
 }
 
+pub fn day_stream_for(addressing: &ChannelSecret, server: ServerId, channel: ChannelId) -> StreamKeys {
+    StreamSecret::derive(addressing.bytes(), DAY_CHANNEL, &place(server, Some(channel))).keys()
+}
+
+pub fn day_epochs(state: &ServerState, days: &DayKeyring, now_ms: i64) -> Vec<(KeyId, ChannelSecret)> {
+    if !commy_core::day_chain::is_on(&state.server) {
+        return Vec::new();
+    }
+    let chain = state.day_chain();
+    let window_opens = now_ms - i64::from(commy_core::day_chain::history_days(&state.server)) * DAY_MS;
+    days.held(state)
+        .into_iter()
+        .enumerate()
+        .filter(|(at, (epoch, _))| *at == 0 || chain.epochs.iter().filter(|e| (e.at, e.id) > (epoch.at, epoch.id)).map(|e| e.at).min().is_none_or(|ended| ended > window_opens))
+        .take(MAX_DAY_EPOCHS_READ)
+        .map(|(_, (epoch, share))| (epoch.id, share.addressing().clone()))
+        .collect()
+}
+
+fn writes_newest(state: &ServerState, days: &DayKeyring, key: KeyId) -> bool {
+    state.day_chain().newest().is_some_and(|newest| newest.id == key && days.holds(key))
+}
+
 pub fn wanted(state: &ServerState, me: UserId, community: &Keyring, locked: impl Fn(ChannelId) -> Keyring, now_ms: i64) -> Vec<Want> {
+    wanted_with_days(state, me, community, &DayKeyring::default(), locked, now_ms)
+}
+
+pub fn wanted_with_days(state: &ServerState, me: UserId, community: &Keyring, days: &DayKeyring, locked: impl Fn(ChannelId) -> Keyring, now_ms: i64) -> Vec<Want> {
     let server = &state.server;
     if !server.is_current_member(me) || state.is_deleted() {
         return Vec::new();
     }
     let texts = server.channels.iter().filter(|c| c.kind.holds_messages());
-    let lanes: Vec<Lane> =
-        std::iter::once(Lane::State).chain(texts.clone().filter(|c| !c.is_private()).map(|c| Lane::Channel(c.id))).collect();
+    let open: Vec<ChannelId> = texts.clone().filter(|c| !c.is_private()).map(|c| c.id).collect();
+    let lanes: Vec<Lane> = std::iter::once(Lane::State).chain(open.iter().map(|c| Lane::Channel(*c))).collect();
     let mut out = wants_of(state, KeyScope::Community, &lanes, community, now_ms);
+    let epochs = day_epochs(state, days, now_ms);
+    let day_writer = epochs.iter().any(|(key, _)| writes_newest(state, days, *key));
+    for want in out.iter_mut().filter(|w| day_writer && matches!(w.lane, Lane::Channel(_))) {
+        want.writes = false;
+    }
+    for (key, addressing) in &epochs {
+        let writes = writes_newest(state, days, *key);
+        for channel in &open {
+            let keys = day_stream_for(addressing, server.id, *channel);
+            out.push(Want { lane: Lane::Channel(*channel), scope: KeyScope::Community, key: *key, keys, writes, days: true });
+        }
+    }
     for channel in texts.filter(|c| c.is_private() && server.can_view(c.id, me)) {
         let scope = KeyScope::Channel(channel.id);
         out.extend(wants_of(state, scope, &[Lane::Channel(channel.id)], &locked(channel.id), now_ms));
@@ -94,6 +137,10 @@ pub fn wanted(state: &ServerState, me: UserId, community: &Keyring, locked: impl
 }
 
 pub fn every_stream(state: &ServerState, community: &Keyring, locked: impl Fn(ChannelId) -> Keyring) -> Vec<(Lane, StreamKeys)> {
+    every_stream_with_days(state, community, &DayKeyring::default(), locked)
+}
+
+pub fn every_stream_with_days(state: &ServerState, community: &Keyring, days: &DayKeyring, locked: impl Fn(ChannelId) -> Keyring) -> Vec<(Lane, StreamKeys)> {
     let server = state.server.id;
     let texts: Vec<&commy_core::Channel> = state.server.channels.iter().filter(|c| c.kind.holds_messages()).collect();
     let lanes: Vec<Lane> = std::iter::once(Lane::State).chain(texts.iter().map(|c| Lane::Channel(c.id))).collect();
@@ -111,6 +158,11 @@ pub fn every_stream(state: &ServerState, community: &Keyring, locked: impl Fn(Ch
             if let Some(checkpoint) = checkpoint {
                 add(Lane::State, checkpoint);
             }
+        }
+    }
+    for (_, share) in days.held(state) {
+        for channel in texts.iter().filter(|c| !c.is_private()) {
+            add(Lane::Channel(channel.id), day_stream_for(share.addressing(), server, channel.id));
         }
     }
     for channel in texts.iter().filter(|c| c.is_private()) {
@@ -282,6 +334,27 @@ pub fn decode_entry(plain: &[u8], lane: Lane) -> Option<WirePayload> {
     (lane_of_payload(&entry.payload) == Some(lane)).then_some(entry.payload)
 }
 
+#[derive(Serialize, Deserialize)]
+struct DayEntry {
+    version: u16,
+    sealed: DaySealed,
+}
+
+pub fn seal_day_entry(sealer: &DaySealer, server: ServerId, lane: Lane, plain: &[u8], now_ms: i64) -> Option<Vec<u8>> {
+    let Lane::Channel(channel) = lane else { return None };
+    let sealed = sealer.seal(DAY_CHANNEL, &place(server, Some(channel)), plain, now_ms)?;
+    commy_core::wire_layout::encode(&DayEntry { version: PROTOCOL_VERSION, sealed }).ok()
+}
+
+pub fn open_day_entry(days: &DayKeyring, server: ServerId, lane: Lane, body: &[u8]) -> Option<Vec<u8>> {
+    let Lane::Channel(channel) = lane else { return None };
+    let entry: DayEntry = commy_core::wire_layout::decode(body).ok()?;
+    if entry.version != PROTOCOL_VERSION {
+        return None;
+    }
+    days.open(server, &entry.sealed, DAY_CHANNEL, &place(server, Some(channel)))
+}
+
 pub fn rings(live_now: bool, created_at: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> bool {
     live_now && (now - created_at).num_seconds() < RINGS_FOR_SECS
 }
@@ -299,7 +372,7 @@ pub fn wake_point(want: &Want) -> Option<Option<ChannelId>> {
 
 pub fn bootstrap(server: ServerId, key: KeyId, secret: &ChannelSecret) -> Want {
     let scope = KeyScope::Community;
-    Want { lane: Lane::State, scope, key, keys: stream_for(secret, server, scope, Lane::State), writes: false }
+    Want { lane: Lane::State, scope, key, keys: stream_for(secret, server, scope, Lane::State), writes: false, days: false }
 }
 
 pub fn backfill_messages(state: &ServerState, channel: ChannelId, seen: &HashSet<MessageId>, now_ms: i64) -> Vec<WirePayload> {
@@ -624,5 +697,82 @@ mod tests {
         assert!(rings(true, now - chrono::Duration::seconds(5), now));
         assert!(!rings(false, now - chrono::Duration::seconds(5), now));
         assert!(!rings(true, now - chrono::Duration::hours(1), now));
+    }
+
+    fn day_settle(state: &mut ServerState, me: UserId) -> DayKeyring {
+        for _ in 0..8 {
+            let mut held = DayKeyring::unlock(state, me, &identity_for(me));
+            let Some(task) = commy_core::day_keys::day_key_task(state, me, &held, now()) else { return held };
+            for event in held.task_events(state, task, now()) {
+                state.apply(event).unwrap();
+            }
+        }
+        panic!("the day key task never settled");
+    }
+
+    fn switch_on(state: &mut ServerState) {
+        let server = state.server.id;
+        state.apply(ServerEvent::DayKeysSet { server, on: true, since: now(), history_days: 30 }).unwrap();
+    }
+
+    #[test]
+    fn with_day_keys_messages_move_to_day_streams_and_state_stays_where_it_was() {
+        let (mut state, channel, owner) = fixture();
+        let member = join(&mut state, "member");
+        let community = settle(&mut state, owner);
+        let none = |_| Keyring::default();
+        let before = wanted(&state, owner, &community, none, now());
+        assert_eq!(wanted_with_days(&state, owner, &community, &DayKeyring::default(), none, now()), before);
+        switch_on(&mut state);
+        let days = day_settle(&mut state, owner);
+        let ours = wanted_with_days(&state, owner, &community, &days, none, now());
+        let theirs_ring = DayKeyring::unlock(&state, member, &identity_for(member));
+        let member_community = Keyring::unlock_community(&state, member, &identity_for(member));
+        let theirs = wanted_with_days(&state, member, &member_community, &theirs_ring, none, now());
+        assert_eq!(ours.iter().map(|w| w.keys.id).collect::<Vec<_>>(), theirs.iter().map(|w| w.keys.id).collect::<Vec<_>>());
+
+        let writers: Vec<&Want> = ours.iter().filter(|w| w.writes).collect();
+        assert!(writers.iter().any(|w| w.lane == Lane::State && !w.days), "state still goes on the community stream");
+        let channel_writers: Vec<&Want> = writers.iter().copied().filter(|w| w.lane == Lane::Channel(channel)).collect();
+        assert_eq!(channel_writers.len(), 1);
+        assert!(channel_writers[0].days, "messages are written only to the day stream");
+        let old = before.iter().find(|w| w.lane == Lane::Channel(channel)).unwrap();
+        assert!(ours.iter().any(|w| w.keys.id == old.keys.id && !w.writes), "earlier messages stay readable");
+        assert!(every_stream_with_days(&state, &community, &days, none).iter().any(|(_, keys)| *keys == channel_writers[0].keys));
+    }
+
+    #[test]
+    fn until_a_day_key_arrives_messages_keep_going_where_they_went() {
+        let (mut state, channel, owner) = fixture();
+        let member = join(&mut state, "member");
+        let community = settle(&mut state, owner);
+        switch_on(&mut state);
+        let none = |_| Keyring::default();
+        let waiting = wanted_with_days(&state, member, &Keyring::unlock_community(&state, member, &identity_for(member)), &DayKeyring::default(), none, now());
+        assert!(waiting.iter().any(|w| w.lane == Lane::Channel(channel) && w.writes && !w.days));
+        day_settle(&mut state, owner);
+        let ours = wanted_with_days(&state, owner, &community, &DayKeyring::unlock(&state, owner, &identity_for(owner)), none, now());
+        assert!(ours.iter().any(|w| w.lane == Lane::Channel(channel) && w.days));
+    }
+
+    #[test]
+    fn day_entries_open_only_with_the_day_keys_and_on_their_own_lane() {
+        let (mut state, channel, owner) = fixture();
+        let member = join(&mut state, "member");
+        settle(&mut state, owner);
+        switch_on(&mut state);
+        let days = day_settle(&mut state, owner);
+        let server = state.server.id;
+        let message = post(&state, channel, owner, "the plan for friday");
+        let plain = encode_entry(&WirePayload::Event(ServerEvent::MessageCreate { message })).unwrap();
+        let sealer = days.sealer(&state).unwrap();
+        let sealed = seal_day_entry(&sealer, server, Lane::Channel(channel), &plain, now()).unwrap();
+        assert!(!sealed.windows(6).any(|w| w == b"friday"));
+        let theirs = DayKeyring::unlock(&state, member, &identity_for(member));
+        assert_eq!(open_day_entry(&theirs, server, Lane::Channel(channel), &sealed), Some(plain.clone()));
+        let other = state.server.channels.iter().find(|c| c.id != channel).unwrap().id;
+        assert_eq!(open_day_entry(&theirs, server, Lane::Channel(other), &sealed), None);
+        assert_eq!(open_day_entry(&DayKeyring::default(), server, Lane::Channel(channel), &sealed), None);
+        assert_eq!(seal_day_entry(&sealer, server, Lane::State, &plain, now()), None, "state entries are not day sealed");
     }
 }

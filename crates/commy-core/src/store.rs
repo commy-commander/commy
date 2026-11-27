@@ -129,6 +129,7 @@ pub struct ServerState {
     reaction_marks: HashMap<MessageId, Vec<ReactionMark>>,
     channel_keys: HashMap<ChannelId, ChannelKeys>,
     community_keys: ChannelKeys,
+    day_chain: crate::day_keys::DayChain,
     automod: AutoMod,
     bots: BTreeSet<UserId>,
     bot_commands: BTreeMap<UserId, Vec<BotCommand>>,
@@ -196,6 +197,8 @@ pub struct Snapshot {
     pub ballots: Vec<(MessageId, UserId, Vec<u8>)>,
     #[serde(default)]
     pub closed_polls: Vec<MessageId>,
+    #[serde(default, with = "crate::wire_layout::later::snapshot_day_chain")]
+    pub day_chain: crate::day_keys::DayChain,
 }
 
 impl ServerState {
@@ -228,6 +231,7 @@ impl ServerState {
             reaction_marks: HashMap::new(),
             channel_keys: HashMap::new(),
             community_keys: ChannelKeys::default(),
+            day_chain: Default::default(),
             automod: AutoMod::default(),
             bots: BTreeSet::new(),
             bot_commands: BTreeMap::new(),
@@ -279,6 +283,7 @@ impl ServerState {
             invite_background: self.invite_background.clone(),
             ballots: self.ballots().map(|(id, user, choices)| (id, user, choices.to_vec())).collect(),
             closed_polls: self.closed_polls.iter().filter(|id| self.index.contains_key(id)).copied().collect(),
+            day_chain: self.day_chain.clone(),
         }
     }
 
@@ -323,6 +328,7 @@ impl ServerState {
             .filter(|(channel, _)| state.server.channel(*channel).is_some())
             .collect();
         state.community_keys = snapshot.community_keys;
+        state.day_chain = snapshot.day_chain;
         state.action_times = snapshot.action_times.into_iter().collect();
         state.action_floor = snapshot.action_floor;
         state.automod = snapshot.automod;
@@ -472,6 +478,10 @@ impl ServerState {
 
     pub fn community_keys(&self) -> &ChannelKeys {
         &self.community_keys
+    }
+
+    pub fn day_chain(&self) -> &crate::day_keys::DayChain {
+        &self.day_chain
     }
 
     pub fn key_chain(&self, scope: KeyScope) -> Option<&ChannelKeys> {
@@ -2288,6 +2298,18 @@ impl ServerState {
                 self.community_keys.make_room(MAX_PROFILES, |u| members.is_current_member(u));
                 self.community_keys.set_grant(user, grant, MAX_PROFILES).ok_or(StoreError::Limit)
             }
+            ServerEvent::DayEpochAdd { server, epoch } => {
+                self.same_server(server)?;
+                Ok(self.day_chain.add_epoch(epoch))
+            }
+            ServerEvent::DayKeyGrant { server, user, grant } => {
+                self.same_server(server)?;
+                if self.server.banned.contains(&user) || !self.server.is_current_member(user) {
+                    return Ok(false);
+                }
+                let members = &self.server;
+                self.day_chain.set_grant(user, grant, MAX_PROFILES, |u| members.is_current_member(u)).ok_or(StoreError::Limit)
+            }
             ServerEvent::PollVote { server, channel, message, user, choices } => {
                 self.same_server(server)?;
                 self.vote_poll(channel, message, user, choices)
@@ -3230,7 +3252,7 @@ pub const MAX_GRANT_AHEAD_MS: i64 = 120_000;
 pub const MAX_DEVICE_SIGNAL_AGE_MS: i64 = 5 * 60 * 1000;
 
 fn is_key_grant(event: &ServerEvent) -> bool {
-    matches!(event, ServerEvent::ChannelKeyGrant { .. } | ServerEvent::CommunityKeyGrant { .. })
+    matches!(event, ServerEvent::ChannelKeyGrant { .. } | ServerEvent::CommunityKeyGrant { .. } | ServerEvent::DayKeyGrant { .. })
 }
 
 fn too_far_ahead(t: DateTime<Utc>, now: DateTime<Utc>) -> bool {

@@ -1314,13 +1314,14 @@ fn net_event(server: ServerId, sender: [u8; 32], payload: WirePayload) -> Option
         WirePayload::SyncRequest => NetEvent::SyncRequested { server, sender },
         payload @ WirePayload::SyncResponse { .. } => NetEvent::SyncReceived { server, payload },
         payload @ WirePayload::VoiceDial { .. } => NetEvent::VoiceDial { server, payload },
-        WirePayload::Sealed(_) => return None,
+        WirePayload::Sealed(_) | WirePayload::DaySealed(_) => return None,
     })
 }
 
 fn opened(slot: &GossipKeySlot, server: ServerId, payload: WirePayload) -> Option<WirePayload> {
     match payload {
         WirePayload::Sealed(sealed) => crate::gossip_seal::open_with(keys_for(slot, server).as_ref(), server, &sealed),
+        WirePayload::DaySealed(sealed) => crate::gossip_seal::open_day_payload(keys_for(slot, server).as_ref(), server, &sealed),
         plain => Some(plain),
     }
 }
@@ -1905,7 +1906,7 @@ impl CommyNode {
             crate::protocol::MAX_GOSSIP_BYTES
         );
         let sealed = crate::gossip_seal::seal_with(keys_for(&self.gossip_keys, server_id).as_ref(), server_id, payload);
-        if !matches!(sealed, WirePayload::Sealed(_)) {
+        if !matches!(sealed, WirePayload::Sealed(_) | WirePayload::DaySealed(_)) {
             return Ok(plain_bytes);
         }
         let bytes = Envelope::new(self.node_id_bytes(), sealed).encode()?;
@@ -2748,7 +2749,7 @@ mod tests {
     }
 
     fn sealing_with(key: commy_core::channel_key::KeyId, secret: commy_core::channel_key::ChannelSecret) -> crate::gossip_seal::GossipKeys {
-        Arc::new(move |_| Some(crate::gossip_seal::ServerKeys { sealing: Some((key, secret.clone())), held: Vec::new() }))
+        Arc::new(move |_| Some(crate::gossip_seal::ServerKeys { sealing: Some((key, secret.clone())), held: Vec::new(), days: None }))
     }
 
     async fn heard_words(events: &mut mpsc::UnboundedReceiver<NetEvent>, words: &str, within: Duration) -> bool {

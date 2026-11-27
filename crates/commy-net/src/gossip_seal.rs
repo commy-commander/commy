@@ -1,6 +1,7 @@
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use commy_core::channel_key::{ChannelSecret, KeyId, KeyScope, Keyring};
+use commy_core::day_keys::{DayKeyring, DaySealer};
 use commy_core::{ServerId, ServerState};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -8,9 +9,10 @@ use std::sync::Arc;
 use crate::protocol::WirePayload;
 
 const SEAL_DOMAIN: &str = "commy-gossip-seal/v1";
+const DAY_LABEL: &str = "commy-gossip-day/v1";
 const NONCE_BYTES: usize = 12;
 
-pub const SEAL_OVERHEAD_BYTES: usize = 64;
+pub const SEAL_OVERHEAD_BYTES: usize = 160;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SealedPayload {
@@ -23,6 +25,13 @@ pub struct SealedPayload {
 pub struct ServerKeys {
     pub sealing: Option<(KeyId, ChannelSecret)>,
     pub held: Vec<(KeyId, ChannelSecret)>,
+    pub days: Option<DayKeys>,
+}
+
+#[derive(Clone)]
+pub struct DayKeys {
+    pub sealer: Option<DaySealer>,
+    pub ring: DayKeyring,
 }
 
 impl ServerKeys {
@@ -34,7 +43,37 @@ impl ServerKeys {
 pub fn server_keys(state: &ServerState, community: &Keyring) -> ServerKeys {
     let sealing = community.newest_in(state, KeyScope::Community).map(|(key, secret)| (key, secret.clone()));
     let held = community.held_records(state, KeyScope::Community).into_iter().map(|(record, secret)| (record.id, secret.clone())).collect();
-    ServerKeys { sealing, held }
+    ServerKeys { sealing, held, days: None }
+}
+
+pub fn server_keys_with_days(state: &ServerState, community: &Keyring, days: &DayKeyring) -> ServerKeys {
+    let on = commy_core::day_chain::is_on(&state.server);
+    let days = on.then(|| DayKeys { sealer: days.sealer(state), ring: days.clone() });
+    ServerKeys { days, ..server_keys(state, community) }
+}
+
+fn day_place(server: ServerId) -> Vec<u8> {
+    postcard::to_allocvec(&server).expect("ids always encode")
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+pub fn seal_days(server: ServerId, payload: &WirePayload, sealer: &DaySealer, now_ms: i64) -> Option<WirePayload> {
+    if matches!(payload, WirePayload::Sealed(_) | WirePayload::DaySealed(_)) || !matches!(crate::community_streams::lane_of_payload(payload), Some(crate::community_streams::Lane::Channel(_))) {
+        return None;
+    }
+    let plain = commy_core::wire_layout::encode(payload).ok()?;
+    sealer.seal(DAY_LABEL, &day_place(server), &plain, now_ms).map(WirePayload::DaySealed)
+}
+
+pub fn open_days(server: ServerId, sealed: &commy_core::day_keys::DaySealed, ring: &DayKeyring) -> Option<WirePayload> {
+    let plain = ring.open(server, sealed, DAY_LABEL, &day_place(server))?;
+    match commy_core::wire_layout::decode::<WirePayload>(&plain).ok()? {
+        WirePayload::Sealed(_) | WirePayload::DaySealed(_) => None,
+        inner => Some(inner),
+    }
 }
 
 pub type GossipKeys = Arc<dyn Fn(ServerId) -> Option<ServerKeys> + Send + Sync>;
@@ -68,19 +107,28 @@ pub fn open(server: ServerId, sealed: &SealedPayload, secret: &ChannelSecret) ->
 }
 
 pub fn seal_with(keys: Option<&ServerKeys>, server: ServerId, payload: WirePayload) -> WirePayload {
+    let sealer = keys.and_then(|k| k.days.as_ref()).and_then(|d| d.sealer.as_ref());
+    let payload = sealer.and_then(|sealer| seal_days(server, &payload, sealer, now_ms())).unwrap_or(payload);
     let Some((key, secret)) = keys.and_then(|k| k.sealing.as_ref()) else { return payload };
     seal(server, &payload, *key, secret).unwrap_or(payload)
 }
 
 pub fn open_with(keys: Option<&ServerKeys>, server: ServerId, sealed: &SealedPayload) -> Option<WirePayload> {
-    open(server, sealed, keys?.secret(sealed.key)?)
+    match open(server, sealed, keys?.secret(sealed.key)?)? {
+        WirePayload::DaySealed(inner) => open_days(server, &inner, &keys?.days.as_ref()?.ring),
+        inner => Some(inner),
+    }
+}
+
+pub fn open_day_payload(keys: Option<&ServerKeys>, server: ServerId, sealed: &commy_core::day_keys::DaySealed) -> Option<WirePayload> {
+    open_days(server, sealed, &keys?.days.as_ref()?.ring)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocol::{gossip_size, Envelope, MAX_GOSSIP_BYTES};
-    use commy_core::{ChannelId, Message, ServerEvent, UserId};
+    use commy_core::{ChannelId, Message, ServerEvent, ServerState, UserId};
 
     fn message(text: &str) -> WirePayload {
         WirePayload::Event(ServerEvent::MessageCreate { message: Message::new(ChannelId::new(), UserId::new(), text) })
@@ -135,7 +183,7 @@ mod tests {
         let WirePayload::Sealed(inner) = seal(server, &plain, key, &secret).unwrap() else { panic!("not sealed") };
         assert_eq!(open_with(None, server, &inner), None);
         assert_eq!(open_with(Some(&ServerKeys::default()), server, &inner), None);
-        let older = ServerKeys { sealing: Some(keys()), held: vec![(key, secret)] };
+        let older = ServerKeys { sealing: Some(keys()), held: vec![(key, secret)], days: None };
         assert_eq!(open_with(Some(&older), server, &inner), Some(plain));
     }
 
@@ -148,6 +196,62 @@ mod tests {
             text.pop();
         }
         let sealed = seal(server, &message(&text), key, &secret).unwrap();
+        assert!(gossip_size(&sealed) <= MAX_GOSSIP_BYTES + SEAL_OVERHEAD_BYTES, "{}", gossip_size(&sealed));
+    }
+
+    fn day_keys_for(state: &mut ServerState) -> (DayKeyring, DayKeyring, commy_core::UserId) {
+        use commy_core::test_support::{identity_for, join};
+        let owner = state.server.owner;
+        let member = join(state, "member");
+        let server = state.server.id;
+        let now = chrono::Utc::now().timestamp_millis();
+        state.apply(ServerEvent::DayKeysSet { server, on: true, since: now, history_days: 30 }).unwrap();
+        let mut ring = DayKeyring::unlock(state, owner, &identity_for(owner));
+        let task = commy_core::day_keys::day_key_task(state, owner, &ring, now).unwrap();
+        for event in ring.task_events(state, task, now) {
+            state.apply(event).unwrap();
+        }
+        (DayKeyring::unlock(state, owner, &identity_for(owner)), DayKeyring::unlock(state, member, &identity_for(member)), member)
+    }
+
+    fn with_days(root: Option<(KeyId, ChannelSecret)>, state: &ServerState, ring: &DayKeyring) -> ServerKeys {
+        ServerKeys { sealing: root.clone(), held: root.into_iter().collect(), days: Some(DayKeys { sealer: ring.sealer(state), ring: ring.clone() }) }
+    }
+
+    #[test]
+    fn messages_are_sealed_with_the_day_key_inside_the_community_seal() {
+        let (mut state, channel, _) = commy_core::test_support::fixture();
+        let server = state.server.id;
+        let (owners, members, _) = day_keys_for(&mut state);
+        let root = keys();
+        let plain = WirePayload::Event(ServerEvent::MessageCreate { message: Message::new(channel, state.server.owner, "meet at the harbour") });
+        let sealed = seal_with(Some(&with_days(Some(root.clone()), &state, &owners)), server, plain.clone());
+        let WirePayload::Sealed(outer) = sealed else { panic!("not sealed") };
+        assert!(matches!(open(server, &outer, &root.1), Some(WirePayload::DaySealed(_))), "the community key alone shows only the day seal");
+        assert_eq!(open_with(Some(&with_days(Some(root.clone()), &state, &members)), server, &outer), Some(plain.clone()));
+        let root_only = ServerKeys { sealing: Some(root.clone()), held: vec![root.clone()], days: None };
+        assert_eq!(open_with(Some(&root_only), server, &outer), None);
+        let rename = WirePayload::Event(ServerEvent::ServerRename { server, name: "x".into() });
+        let WirePayload::Sealed(outer) = seal_with(Some(&with_days(Some(root.clone()), &state, &owners)), server, rename.clone()) else { panic!("not sealed") };
+        assert_eq!(open_with(Some(&root_only), server, &outer), Some(rename), "server changes stay on the community key");
+        let bare = seal_with(Some(&with_days(None, &state, &owners)), server, plain.clone());
+        let WirePayload::DaySealed(inner) = bare else { panic!("not day sealed") };
+        assert_eq!(open_day_payload(Some(&with_days(None, &state, &members)), server, &inner), Some(plain));
+        assert_eq!(open_day_payload(Some(&with_days(None, &state, &members)), ServerId::new(), &inner), None);
+    }
+
+    #[test]
+    fn the_largest_message_still_fits_with_both_seals() {
+        let (mut state, channel, _) = commy_core::test_support::fixture();
+        let server = state.server.id;
+        let (owners, _, _) = day_keys_for(&mut state);
+        let mut text = "x".repeat(commy_core::message::MAX_MESSAGE_BYTES);
+        let make = |text: &str| WirePayload::Event(ServerEvent::MessageCreate { message: Message::new(channel, state.server.owner, text) });
+        while gossip_size(&make(&text)) > MAX_GOSSIP_BYTES {
+            text.pop();
+        }
+        let sealed = seal_with(Some(&with_days(Some(keys()), &state, &owners)), server, make(&text));
+        assert!(matches!(sealed, WirePayload::Sealed(_)));
         assert!(gossip_size(&sealed) <= MAX_GOSSIP_BYTES + SEAL_OVERHEAD_BYTES, "{}", gossip_size(&sealed));
     }
 }
