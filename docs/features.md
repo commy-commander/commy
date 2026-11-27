@@ -47,9 +47,12 @@
   a channel to a call with a card that shows who is in it right now and a
   Join button. Stage channels seat an audience that only listens and can
   raise a hand; hosts invite people up to speak. Activities in a
-  voice channel: watch a direct video link or an attached video together,
-  kept within a second of each other, or play tic-tac-toe while the rest of
-  the channel watches.
+  voice channel: watch or listen together to a YouTube link, a direct video
+  link or an attached video, kept within a second or two of each other, with
+  an "Up next" queue anyone who joined can add to, a small player that keeps
+  going while you chat, and the video turned down while people talk. YouTube
+  only loads for each person after they choose to load it. Or play
+  tic-tac-toe while the rest of the channel watches.
 - **Screen and game streaming.** Share a whole monitor or a single window with
   a Sharp, Balanced or Smooth quality preset. Windows uses Windows Graphics
   Capture, so games stream cleanly, and can send what your computer plays
