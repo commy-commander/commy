@@ -46,20 +46,15 @@ only while the tab is in the background. Clicking one opens that channel or DM.
   it signs in with that site's session cookie and talks to `/api/auth`.
 - A browser cannot open UDP sockets, so every connection goes through the
   relay. The relay only forwards encrypted traffic.
-- Signing in opens your servers: a new browser gets your server list key
-  from the copy your account server keeps for your account. If that copy is
-  not there yet, the browser keeps checking for it for a short while and asks
-  your own signed-in devices for the key, which they hand over without a
-  prompt, through the sync service when the account server names one and
-  straight over the relay only when it does not. An account with no server
-  list yet gets a new one from the browser, named after the account. If the
-  account's copy of the key is gone or no longer opens the list and none of
-  your devices hands the key over within 20 seconds, the browser starts a new
-  list and keeps its key with your account, so signing in alone always opens
-  the web app. A device that still has servers under its own identity takes
-  over a list started this way while it is empty. If the account server
-  cannot be reached, the browser says so and offers Try again and your
-  recovery code. It then asks
+- Signing in opens your servers: a new browser asks your own signed-in
+  devices for your server list key, which they hand over without a prompt,
+  through the sync service when the account server names one and straight
+  over the relay only when it does not. The account server never holds that
+  key. If none of your devices answers within 90 seconds, the browser says so
+  and offers Try again and your recovery code (Settings, Commy Account on a
+  device that has your servers). An account with no server list yet gets a
+  new one from the browser, named after the account; save its recovery code
+  from Settings, because the key lives only on your devices. Once open, it asks
   one of your own devices for a copy of each server; that request is signed with your
   account identity, so the account server alone cannot obtain messages.
   Missing history comes from other members through the usual catch-up.

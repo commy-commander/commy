@@ -4,7 +4,6 @@ pub mod community_streams;
 pub mod connection_check;
 pub mod directory;
 pub mod dm;
-pub mod entry_escrow;
 pub mod entry_key;
 pub mod entry_list;
 pub mod gossip_seal;

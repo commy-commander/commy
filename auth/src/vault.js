@@ -5,7 +5,8 @@ const MODEL = "vaultItem";
 const EARLIER = "vaultEarlier";
 export const MAX_VAULT_BYTES = 256 * 1024;
 export const MAX_WRITER = 80;
-export const KEPT_EARLIER_NAMES = new Set(["servers", "entry-key"]);
+export const KEPT_EARLIER_NAMES = new Set(["servers"]);
+export const NO_LONGER_KEPT = new Set(["entry-key"]);
 export const NEWEST_EARLIER_KEPT = 20;
 export const EARLIER_DAYS = 45;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -107,8 +108,17 @@ async function findItem(adapter, userId, name) {
   });
 }
 
+export async function forgetItemsNoLongerKept(adapter) {
+  for (const model of [MODEL, EARLIER]) {
+    await adapter.deleteMany({ model, where: [{ field: "name", operator: "in", value: [...NO_LONGER_KEPT] }] });
+  }
+}
+
 export const commyVault = () => ({
   id: "commy-vault",
+  init(context) {
+    forgetItemsNoLongerKept(context.adapter).catch((err) => console.warn(`[auth] could not clear vault items no longer kept: ${err.message}`));
+  },
   schema: {
     [MODEL]: {
       fields: {
@@ -164,6 +174,7 @@ export const commyVault = () => ({
       async (ctx) => {
         const name = normalizeVaultName(ctx.body.name);
         if (!name) throw new APIError("BAD_REQUEST", { message: "Unknown vault item" });
+        if (NO_LONGER_KEPT.has(name)) throw new APIError("BAD_REQUEST", { message: "This item is no longer kept with your account" });
         const data = validSealed(ctx.body.data);
         if (!data) throw new APIError("BAD_REQUEST", { message: "Vault items must be sealed and under 256 KiB" });
         const userId = ctx.context.session.user.id;

@@ -5,7 +5,7 @@ import { memoryAdapter } from "better-auth/adapters/memory";
 import { sealedAtRest } from "../src/at-rest.js";
 import { buildAuthOptions } from "../src/auth.js";
 import { discoveryDocument, loadConfig } from "../src/config.js";
-import { EARLIER_DAYS, MAX_VAULT_BYTES, NEWEST_EARLIER_KEPT, cleanWriter, earlierToDrop, normalizeVaultName, validSealed } from "../src/vault.js";
+import { EARLIER_DAYS, MAX_VAULT_BYTES, NEWEST_EARLIER_KEPT, cleanWriter, earlierToDrop, forgetItemsNoLongerKept, normalizeVaultName, validSealed } from "../src/vault.js";
 
 const ORIGIN = "http://localhost:3001";
 const ENV = { BETTER_AUTH_SECRET: "test-secret-".repeat(4), DATABASE_URL: "postgres://unused", BETTER_AUTH_URL: ORIGIN };
@@ -31,7 +31,7 @@ function makeAuth() {
     assert.equal(r.status, 200, JSON.stringify(r.json));
     return r.setCookie.split(";")[0];
   };
-  return { db, call, signUp };
+  return { db, call, signUp, context: auth.$context };
 }
 
 test("names and sealed data are validated", () => {
@@ -84,6 +84,29 @@ test("writes must name the version they replace", async () => {
 
   await call("POST", "/commy/vault/delete", { cookie: alice, body: { name: "servers" } });
   assert.equal(db.vaultItem.length, 0);
+});
+
+test("the account server keeps no copy of the server list key", async () => {
+  const { db, call, signUp } = makeAuth();
+  const alice = await signUp("alice@example.test");
+  const put = await call("POST", "/commy/vault/put", { cookie: alice, body: { name: "entry-key", data: SEALED(1), version: 0 } });
+  assert.equal(put.status, 400);
+  assert.equal(db.vaultItem.length, 0);
+  assert.equal((await call("GET", "/commy/vault", { cookie: alice, query: { name: "entry-key" } })).json.data, null);
+  assert.equal((await call("GET", "/commy/vault/earlier", { cookie: alice, query: { name: "entry-key" } })).status, 400);
+});
+
+test("copies of the server list key kept by earlier versions are cleared", async () => {
+  const { db, call, signUp, context } = makeAuth();
+  const alice = await signUp("alice@example.test");
+  await putServers(call, alice, 1, 0);
+  const userId = db.user[0].id;
+  const at = new Date();
+  db.vaultItem.push({ id: "old-key", userId, name: "entry-key", data: SEALED(9), version: 3, updatedAt: at });
+  db.vaultEarlier.push({ id: "older-key", userId, name: "entry-key", data: SEALED(8), version: 2, updatedAt: at, replacedAt: at });
+  await forgetItemsNoLongerKept((await context).adapter);
+  assert.deepEqual(db.vaultItem.map((row) => row.name), ["servers"]);
+  assert.equal(db.vaultEarlier.length, 0);
 });
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -146,15 +169,6 @@ test("earlier copies stay with their account and only for kept items", async () 
   assert.equal((await call("GET", "/commy/vault/earlier", { query: { name: "servers" } })).status, 401);
   assert.deepEqual((await call("GET", "/commy/vault/earlier", { cookie: bob, query: { name: "servers" } })).json.items, []);
   assert.equal((await call("GET", "/commy/vault/earlier", { cookie: alice, query: { name: "read-state" } })).status, 400);
-});
-
-test("the escrowed list key keeps earlier copies too", async () => {
-  const { call, signUp } = makeAuth();
-  const alice = await signUp("alice@example.test");
-  await call("POST", "/commy/vault/put", { cookie: alice, body: { name: "entry-key", data: SEALED(1), version: 0 } });
-  await call("POST", "/commy/vault/put", { cookie: alice, body: { name: "entry-key", data: SEALED(2), version: 1 } });
-  const earlier = await call("GET", "/commy/vault/earlier", { cookie: alice, query: { name: "entry-key" } });
-  assert.deepEqual(earlier.json.items.map((item) => item.data), [SEALED(1)]);
 });
 
 test("writer labels are short printable text", () => {

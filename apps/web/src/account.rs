@@ -9,7 +9,6 @@ pub const LINK_REGISTER_PATH: &str = "/api/auth/commy/devices/register";
 pub const LIST_ITEM: &str = "servers";
 pub const VAULT_PATH: &str = "/api/auth/commy/vault?name=servers";
 pub const VAULT_PUT_PATH: &str = "/api/auth/commy/vault/put";
-pub const FOLDER_KEY_PATH: &str = "/api/auth/commy/folder-key";
 pub const CONFLICT: u16 = 409;
 pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
 pub const MOVED_PATH: &str = "/api/auth/commy/moved";
@@ -110,34 +109,7 @@ pub fn other_devices(reply: &Reply, own_node: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub fn escrow_path() -> String {
-    format!("/api/auth/commy/vault?name={}", commy_net::entry_escrow::VAULT_ITEM)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum KeyCopy {
-    Missing,
-    Unreadable,
-    ForAnotherList,
-    Unreachable,
-}
-
-impl KeyCopy {
-    pub fn note(self) -> &'static str {
-        match self {
-            KeyCopy::Missing => "Your account has no saved key for your servers yet. Open Commy on your computer and wait until Settings, Commy Account shows Up to date, then press Try again. You can also paste your recovery code.",
-            KeyCopy::ForAnotherList => "The key saved with your account is for an older server list. Open Commy on your computer and wait until Settings, Commy Account shows Up to date, then press Try again. You can also paste your recovery code.",
-            KeyCopy::Unreadable => "The key saved with your account could not be opened. Open Commy on your computer so it saves the key again, then press Try again. You can also paste your recovery code.",
-            KeyCopy::Unreachable => "Could not reach your account server to get your key. Check your connection, then press Try again.",
-        }
-    }
-}
-
-impl KeyCopy {
-    pub fn lost(self) -> bool {
-        !matches!(self, KeyCopy::Unreachable)
-    }
-}
+pub const KEY_NOT_HERE: &str = "This browser does not have the key to your servers yet. Open Commy on one of your other devices signed in to this account and press Try again, or paste the recovery code from Settings, Commy Account on that device.";
 
 pub const MAX_USERNAME_BYTES: usize = 32;
 const FALLBACK_USERNAME: &str = "Commy user";
@@ -152,28 +124,12 @@ pub fn username_for(account: &AccountUser) -> String {
     name[..end].trim_end().to_string()
 }
 
-pub fn key_copy(reply: &Reply) -> Result<String, KeyCopy> {
-    match vault_data(reply) {
-        Ok(Some(sealed)) => Ok(sealed),
-        Ok(None) => Err(KeyCopy::Missing),
-        Err(_) => Err(KeyCopy::Unreachable),
-    }
-}
-
 pub fn vault_version(reply: &Reply) -> Option<u64> {
     #[derive(Deserialize)]
     struct Item {
         version: u64,
     }
     reply.ok().then(|| serde_json::from_str::<Item>(&reply.body).ok().map(|item| item.version)).flatten()
-}
-
-pub fn folder_key(reply: &Reply) -> Option<String> {
-    #[derive(Deserialize)]
-    struct Key {
-        key: String,
-    }
-    reply.ok().then(|| serde_json::from_str::<Key>(&reply.body).ok().map(|k| k.key)).flatten()
 }
 
 pub fn vault_data(reply: &Reply) -> Result<Option<String>, String> {
@@ -513,23 +469,10 @@ mod tests {
     }
 
     #[test]
-    fn only_an_unreachable_key_copy_may_still_turn_up() {
-        assert!(KeyCopy::Missing.lost());
-        assert!(KeyCopy::Unreadable.lost());
-        assert!(KeyCopy::ForAnotherList.lost());
-        assert!(!KeyCopy::Unreachable.lost());
-    }
-
-    #[test]
-    fn tells_a_missing_key_copy_from_an_unreachable_one() {
-        assert_eq!(key_copy(&reply(200, r#"{"name":"entry-key","data":"sealed1.x","version":2}"#)), Ok("sealed1.x".into()));
-        assert_eq!(key_copy(&reply(200, r#"{"name":"entry-key","data":null,"version":0}"#)), Err(KeyCopy::Missing));
-        assert_eq!(key_copy(&reply(429, "")), Err(KeyCopy::Unreachable));
-        assert_eq!(key_copy(&reply(200, "<html>")), Err(KeyCopy::Unreachable));
-        for copy in [KeyCopy::Missing, KeyCopy::Unreadable, KeyCopy::ForAnotherList, KeyCopy::Unreachable] {
-            assert!(copy.note().contains("Try again"));
-            assert!(!copy.note().to_lowercase().contains("allow"));
-        }
+    fn a_browser_without_the_key_is_pointed_at_a_device_or_the_recovery_code() {
+        assert!(KEY_NOT_HERE.contains("Try again"));
+        assert!(KEY_NOT_HERE.contains("recovery code"));
+        assert!(!KEY_NOT_HERE.to_lowercase().contains("saved with your account"));
     }
 
     #[test]

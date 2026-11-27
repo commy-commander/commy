@@ -11,7 +11,6 @@ use commy_net::sealed::SealKey;
 use commy_net::{
     CommyNode, EntryKeyReply, EntryKeyRequest, MirrorRequest, NetEvent, ServerTicket, SharedCatchupStore, WirePayload,
 };
-use n0_future::FutureExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
@@ -22,7 +21,7 @@ use commy_view::catalog;
 use commy_view::pins::Pins;
 use commy_view::search::{Page, SearchQuery};
 
-use crate::account::{self, AccountUser, KeyCopy, Reply};
+use crate::account::{self, AccountUser, Reply};
 use crate::client::{Applied, Client, PollForm};
 use crate::dm_book::DmBook;
 use crate::host::Host;
@@ -63,8 +62,6 @@ const MAX_PREF_KEY: usize = 200;
 const MAX_PREFS_PER_CALL: usize = 500;
 const FAREWELL_LINGER: std::time::Duration = std::time::Duration::from_millis(300);
 const LOOK_FOR_KEY: std::time::Duration = std::time::Duration::from_secs(90);
-const RECHECK_ACCOUNT_KEY: std::time::Duration = std::time::Duration::from_secs(5);
-const START_FRESH_AFTER: chrono::TimeDelta = chrono::TimeDelta::seconds(20);
 const OPENING: &str = "Opening your servers";
 const FIND_OLDER_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
 const SEARCH_OLDER_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
@@ -96,14 +93,9 @@ struct Status {
     sealed: Option<String>,
     features: Option<account::Features>,
     looking: bool,
-    key_copy: KeyCopy,
     key: Option<SealKey>,
 }
 
-enum Found {
-    Key(SealKey),
-    Lost,
-}
 
 enum Started {
     Opened,
@@ -312,7 +304,6 @@ impl Session {
                 sealed: None,
                 features: None,
                 looking: false,
-                key_copy: KeyCopy::Missing,
                 key: None,
             }),
             node: Mutex::new(None),
@@ -880,10 +871,6 @@ impl Session {
             self.finish(list, key)?;
             return Ok(self.unlock_view());
         }
-        if let Some(key) = self.account_key().await {
-            self.accept_key(&account, key)?;
-            return Ok(self.unlock_view());
-        }
         self.look_for_key(account);
         Ok(self.unlock_view())
     }
@@ -901,64 +888,27 @@ impl Session {
                 return;
             }
             let result = match found {
-                Some(Found::Key(key)) => this.accept_key(&account, key).map(|_| false),
-                Some(Found::Lost) => this.replace_lost_list(&account).await,
-                None => {
-                    let copy = this.status.borrow().key_copy;
-                    Err(copy.note().to_string())
-                }
+                Some(key) => this.accept_key(&account, key),
+                None => Err(account::KEY_NOT_HERE.to_string()),
             };
             this.status.borrow_mut().looking = false;
-            match result {
-                Ok(false) => {}
-                Ok(true) => {
-                    let _ = this.unlock().await;
-                }
-                Err(e) => this.set_unlock(Unlock::Locked, e),
+            if let Err(e) = result {
+                this.set_unlock(Unlock::Locked, e);
             }
         });
     }
 
-    async fn find_key(self: &Rc<Self>, account: &AccountUser) -> Option<Found> {
-        let started = Utc::now();
+    async fn find_key(self: &Rc<Self>, account: &AccountUser) -> Option<SealKey> {
         let (found, mut heard) = mpsc::unbounded_channel();
         self.ask_own_devices(account, found.clone()).await;
         loop {
-            let from_device = async { heard.recv().await }
-                .or(async {
-                    n0_future::time::sleep(RECHECK_ACCOUNT_KEY).await;
-                    None
-                })
-                .await;
+            let key = heard.recv().await?;
             if self.status.borrow().unlock == Unlock::Unlocked {
                 return None;
             }
-            let key = match from_device {
-                Some(key) => Some(key).filter(|key| self.opens_list(key)),
-                None => self.account_key().await,
-            };
-            if let Some(key) = key {
-                return Some(Found::Key(key));
+            if self.opens_list(&key) || (self.refresh_list().await && self.opens_list(&key)) {
+                return Some(key);
             }
-            if Utc::now() - started >= START_FRESH_AFTER && self.status.borrow().key_copy.lost() {
-                return Some(Found::Lost);
-            }
-        }
-    }
-
-    async fn replace_lost_list(self: &Rc<Self>, account: &AccountUser) -> Result<bool, String> {
-        let reply = self.request("GET", account::VAULT_PATH, None).await?;
-        let version = account::vault_version(&reply).ok_or("Could not fetch your server list")?;
-        let sealed = account::vault_data(&reply)?;
-        if let Some(sealed) = &sealed {
-            self.status.borrow_mut().sealed = Some(sealed.clone());
-            if let Some(key) = self.account_key().await {
-                return self.accept_key(account, key).map(|_| false);
-            }
-        }
-        match self.start_new_list(account, version).await? {
-            Started::Opened => Ok(false),
-            Started::Raced(_) => Ok(true),
         }
     }
 
@@ -977,7 +927,6 @@ impl Session {
         }
         self.status.borrow_mut().sealed = Some(sealed);
         self.host.save(account::ENTRY_KEY_KEY, &account::entry_key_record(&account.id, &key));
-        self.escrow(&key).await;
         self.finish(list, key)?;
         Ok(Started::Opened)
     }
@@ -1092,32 +1041,7 @@ impl Session {
         let sealed = self.status.borrow().sealed.clone().ok_or("Your server list has not loaded yet")?;
         let list = EntryList::open(&key, &sealed)?;
         self.host.save(account::ENTRY_KEY_KEY, &account::entry_key_record(&account.id, &key));
-        let this = self.clone();
-        let kept = key.clone();
-        spawn_local(async move { this.escrow(&kept).await });
         self.finish(list, key)
-    }
-
-    async fn wrapping_key(&self) -> Option<SealKey> {
-        let body = json!({ "lockId": commy_net::entry_escrow::LOCK_ID });
-        let reply = self.request("POST", account::FOLDER_KEY_PATH, Some(body)).await.ok()?;
-        commy_net::entry_escrow::wrapping_key(&account::folder_key(&reply)?)
-    }
-
-    async fn account_key(&self) -> Option<SealKey> {
-        let found = self.escrowed_key().await;
-        let opened = match found {
-            Ok(key) if self.opens_list(&key) || (self.refresh_list().await && self.opens_list(&key)) => Ok(key),
-            Ok(_) => Err(KeyCopy::ForAnotherList),
-            Err(copy) => Err(copy),
-        };
-        match opened {
-            Ok(key) => Some(key),
-            Err(copy) => {
-                self.status.borrow_mut().key_copy = copy;
-                None
-            }
-        }
     }
 
     async fn refresh_list(&self) -> bool {
@@ -1133,22 +1057,8 @@ impl Session {
         account::earlier_copies(&self.request("GET", &account::earlier_path(name), None).await?)
     }
 
-    async fn keys_that_may_open(&self) -> Vec<SealKey> {
-        let mut keys: Vec<SealKey> = self.status.borrow().key.clone().into_iter().collect();
-        let Some(wrapping) = self.wrapping_key().await else { return keys };
-        let current = match self.request("GET", &account::escrow_path(), None).await {
-            Ok(reply) => account::vault_data(&reply).ok().flatten(),
-            Err(_) => None,
-        };
-        let earlier = self.earlier(commy_net::entry_escrow::VAULT_ITEM).await.unwrap_or_default();
-        for sealed in current.into_iter().chain(earlier.items.into_iter().map(|copy| copy.data)) {
-            if let Some(key) = commy_net::entry_escrow::unwrap(&wrapping, &sealed) {
-                if !keys.contains(&key) {
-                    keys.push(key);
-                }
-            }
-        }
-        keys
+    fn keys_that_may_open(&self) -> Vec<SealKey> {
+        self.status.borrow().key.clone().into_iter().collect()
     }
 
     fn servers_on_my_list(&self) -> std::collections::BTreeSet<ServerId> {
@@ -1163,14 +1073,14 @@ impl Session {
             return Err(crate::sync_stall::NOT_STARTED.into());
         }
         let copies = self.earlier(account::LIST_ITEM).await?;
-        let keys = self.keys_that_may_open().await;
+        let keys = self.keys_that_may_open();
         Ok(commy_net::entry_list::earlier_views(&copies.items, &keys, &self.servers_on_my_list()))
     }
 
     async fn bring_back(self: &Rc<Self>, version: u64) -> Result<Value, String> {
         let copies = self.earlier(account::LIST_ITEM).await?;
         let copy = copies.items.iter().find(|copy| copy.version == version).ok_or("That earlier list is gone. Open the list again.")?;
-        let keys = self.keys_that_may_open().await;
+        let keys = self.keys_that_may_open();
         let list = commy_net::entry_list::open_with_any(&keys, &copy.data).ok_or("None of your keys open that earlier list.")?;
         let (mut joined, mut failed) = (Vec::new(), Vec::new());
         for (server, entry) in list.missing_from(&self.servers_on_my_list()) {
@@ -1182,25 +1092,6 @@ impl Session {
         }
         self.emit("servers-changed", Value::Null);
         Ok(json!({ "joined": joined, "failed": failed }))
-    }
-
-    async fn escrowed_key(&self) -> Result<SealKey, KeyCopy> {
-        let reply = self.request("GET", &account::escrow_path(), None).await.map_err(|_| KeyCopy::Unreachable)?;
-        let sealed = account::key_copy(&reply)?;
-        let wrapping = self.wrapping_key().await.ok_or(KeyCopy::Unreachable)?;
-        commy_net::entry_escrow::unwrap(&wrapping, &sealed).ok_or(KeyCopy::Unreadable)
-    }
-
-    async fn escrow(&self, key: &SealKey) {
-        let Ok(reply) = self.request("GET", &account::escrow_path(), None).await else { return };
-        let Some(version) = account::vault_version(&reply) else { return };
-        let Some(wrapping) = self.wrapping_key().await else { return };
-        let held = account::vault_data(&reply).ok().flatten().and_then(|sealed| commy_net::entry_escrow::unwrap(&wrapping, &sealed));
-        if held.as_ref() == Some(key) {
-            return;
-        }
-        let body = json!({ "name": commy_net::entry_escrow::VAULT_ITEM, "data": commy_net::entry_escrow::wrap(&wrapping, key), "version": version, "writer": account::writer() });
-        let _ = self.request("POST", account::VAULT_PUT_PATH, Some(body)).await;
     }
 
     fn finish(self: &Rc<Self>, list: EntryList, key: SealKey) -> Result<(), String> {

@@ -455,42 +455,24 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
                 generated = true;
                 (key, EntryList::default())
             }
-            (None, Some(data)) => match account_copy(&app, &s, data).await {
-                AccountCopy::Opens(key) => {
-                    save_key(&dir, &s.server, &s.account, &key);
-                    continue;
-                }
-                AccountCopy::Absent if !local.servers.is_empty() => {
-                    set_status(handle, "waiting", REBUILDING, 0, false);
-                    rebuild_unless_a_device_answers(handle);
-                    return Ok(());
-                }
-                _ => {
-                    set_status(handle, "waiting", OPEN_ANOTHER_DEVICE, 0, false);
+            (None, Some(_)) if !local.servers.is_empty() => {
+                set_status(handle, "waiting", REBUILDING, 0, false);
+                rebuild_unless_a_device_answers(handle);
+                return Ok(());
+            }
+            (None, Some(_)) => {
+                set_status(handle, "waiting", OPEN_ANOTHER_DEVICE, 0, false);
+                ask_other_devices(handle);
+                return Ok(());
+            }
+            (Some(key), None) => (key, EntryList::default()),
+            (Some(key), Some(data)) => match EntryList::open(&key, data) {
+                Ok(list) => (key, list),
+                Err(_) => {
+                    set_status(handle, "waiting", OPEN_ANOTHER_DEVICE, 0, true);
                     ask_other_devices(handle);
                     return Ok(());
                 }
-            },
-            (Some(key), None) => (key, EntryList::default()),
-            (Some(key), Some(data)) => match EntryList::open(&key, data) {
-                Ok(list) => {
-                    escrow(&app, &s, &key).await;
-                    (key, list)
-                }
-                Err(e) => match account_copy(&app, &s, data).await {
-                    AccountCopy::Opens(newer) => {
-                        save_key(&dir, &s.server, &s.account, &newer);
-                        continue;
-                    }
-                    AccountCopy::Absent if !local.servers.is_empty() => {
-                        put(&app, &s, VAULT_ITEM, local.seal(&key), item.version).await?;
-                        continue;
-                    }
-                    _ => {
-                        set_status(handle, "error", e.clone(), 0, true);
-                        return Err(e);
-                    }
-                },
             },
         };
 
@@ -548,9 +530,6 @@ async fn sync(handle: &AppHandle) -> Result<(), String> {
         }
         match put(&app, &s, VAULT_ITEM, merged.seal(&key), item.version).await? {
             Put::Done => {
-                if item.data.is_none() {
-                    escrow(&app, &s, &key).await;
-                }
                 return finish(handle, "synced", "", merged.servers.len(), true).await;
             }
             Put::Conflict => {
@@ -575,42 +554,6 @@ async fn finish(handle: &AppHandle, state: &str, detail: &str, servers: usize, h
     }
     crate::settle::settle_key(handle).await;
     Ok(())
-}
-
-async fn wrapping_key(app: &App, s: &Session) -> Option<SealKey> {
-    let hex = crate::account::server_folder_key(app, &s.server, &s.token, commy_net::entry_escrow::LOCK_ID).await.ok()?;
-    commy_net::entry_escrow::wrapping_key(&hex)
-}
-
-enum AccountCopy {
-    Opens(SealKey),
-    Absent,
-    Unknown,
-}
-
-async fn account_copy(app: &App, s: &Session, list: &str) -> AccountCopy {
-    let sealed = match fetch(app, s, commy_net::entry_escrow::VAULT_ITEM).await {
-        Ok(Fetched::Item(VaultItem { data: Some(sealed), .. })) => sealed,
-        Ok(Fetched::Item(_)) => return AccountCopy::Absent,
-        Ok(Fetched::Unsupported) | Err(_) => return AccountCopy::Unknown,
-    };
-    let Some(wrapping) = wrapping_key(app, s).await else { return AccountCopy::Unknown };
-    match commy_net::entry_escrow::unwrap(&wrapping, &sealed) {
-        Some(key) if EntryList::open(&key, list).is_ok() => AccountCopy::Opens(key),
-        _ => AccountCopy::Absent,
-    }
-}
-
-async fn escrow(app: &App, s: &Session, key: &SealKey) {
-    let Ok(Fetched::Item(item)) = fetch(app, s, commy_net::entry_escrow::VAULT_ITEM).await else { return };
-    let Some(wrapping) = wrapping_key(app, s).await else { return };
-    if item.data.as_deref().and_then(|data| commy_net::entry_escrow::unwrap(&wrapping, data)).as_ref() == Some(key) {
-        return;
-    }
-    let sealed = commy_net::entry_escrow::wrap(&wrapping, key);
-    if let Err(e) = put(app, s, commy_net::entry_escrow::VAULT_ITEM, sealed, item.version).await {
-        tracing::warn!("could not keep the server list key with the account: {e}");
-    }
 }
 
 const KEY_WAIT_RETRY: std::time::Duration = std::time::Duration::from_secs(120);
@@ -728,12 +671,7 @@ async fn opened_account_list(app: &App, dir: &Path, s: &Session) -> Result<Optio
     let Fetched::Item(item) = fetch(app, s, VAULT_ITEM).await? else { return Ok(None) };
     let Some(data) = item.data.as_deref() else { return Ok(None) };
     let own = own_key(app.base_dir().map(|b| b.as_path()), dir, s, Some(data));
-    if let Some(list) = own.and_then(|key| EntryList::open(&key, data).ok()) {
-        return Ok(Some(list));
-    }
-    let AccountCopy::Opens(key) = account_copy(app, s, data).await else { return Ok(None) };
-    save_key(dir, &s.server, &s.account, &key);
-    Ok(EntryList::open(&key, data).ok())
+    Ok(own.and_then(|key| EntryList::open(&key, data).ok()))
 }
 
 #[tauri::command]
@@ -876,22 +814,8 @@ async fn earlier_copies(app: &App, s: &Session, name: &str) -> Result<EarlierCop
     res.json().await.map_err(|_| "Your account server sent an invalid reply".to_string())
 }
 
-async fn keys_that_may_open(app: &App, dir: &Path, s: &Session) -> Vec<SealKey> {
-    let mut keys: Vec<SealKey> = load_key(dir, &s.server, &s.account).into_iter().collect();
-    let Some(wrapping) = wrapping_key(app, s).await else { return keys };
-    let current = match fetch(app, s, commy_net::entry_escrow::VAULT_ITEM).await {
-        Ok(Fetched::Item(VaultItem { data: Some(sealed), .. })) => vec![sealed],
-        _ => Vec::new(),
-    };
-    let earlier = earlier_copies(app, s, commy_net::entry_escrow::VAULT_ITEM).await.unwrap_or_default();
-    for sealed in current.into_iter().chain(earlier.items.into_iter().map(|copy| copy.data)) {
-        if let Some(key) = commy_net::entry_escrow::unwrap(&wrapping, &sealed) {
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-        }
-    }
-    keys
+fn keys_that_may_open(dir: &Path, s: &Session) -> Vec<SealKey> {
+    load_key(dir, &s.server, &s.account).into_iter().collect()
 }
 
 fn present_servers(app: &App) -> BTreeSet<ServerId> {
@@ -903,7 +827,7 @@ pub async fn entry_list_earlier(handle: AppHandle) -> Result<Vec<EarlierView>, S
     let app = handle.state::<App>();
     let (dir, s) = signed_in(&app)?;
     let copies = earlier_copies(&app, &s, VAULT_ITEM).await?;
-    let keys = keys_that_may_open(&app, &dir, &s).await;
+    let keys = keys_that_may_open(&dir, &s);
     Ok(commy_net::entry_list::earlier_views(&copies.items, &keys, &present_servers(&app)))
 }
 
@@ -919,7 +843,7 @@ pub async fn entry_list_bring_back(handle: AppHandle, version: u64) -> Result<Br
     let (dir, s) = signed_in(&app)?;
     let copies = earlier_copies(&app, &s, VAULT_ITEM).await?;
     let copy = copies.items.iter().find(|copy| copy.version == version).ok_or("That earlier list is gone. Open the list again.")?;
-    let keys = keys_that_may_open(&app, &dir, &s).await;
+    let keys = keys_that_may_open(&dir, &s);
     let list = commy_net::entry_list::open_with_any(&keys, &copy.data).ok_or("None of your keys open that earlier list.")?;
     let mut result = BroughtBack::default();
     for (id, entry) in list.missing_from(&present_servers(&app)) {
