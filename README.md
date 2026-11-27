@@ -90,7 +90,7 @@ free to use, open source from top to bottom, and yours to host if you want.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/readme/rich-text-chat.webp" alt="A Commy text channel with formatted patch notes, a code block, an invite card and an auto moderation notice"></td>
+    <td width="50%"><img src="docs/images/readme/rich-text-chat.webp" alt="A Commy text channel with formatted track notes, a code block, an invite card and an auto moderation notice"></td>
     <td width="50%"><img src="docs/images/readme/voice-and-streaming.webp" alt="A Commy voice room watching a member stream a sky race, with the channel chat cheering beside it"></td>
   </tr>
   <tr>
