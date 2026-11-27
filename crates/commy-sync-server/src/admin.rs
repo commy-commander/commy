@@ -19,7 +19,8 @@ use crate::config::AdminSettings;
 use crate::gateway::{self, Overview};
 use crate::ramp::Tier;
 use crate::operator::{self, Command};
-use crate::reports::describe;
+use crate::reports::{describe, describe_opened, Filed};
+use commy_sync::report_seal::{OpenProblem, ReportSecret};
 use crate::store::Totals;
 use crate::Service;
 
@@ -247,7 +248,7 @@ impl Admin {
             operator: &service.desk.operator,
             contact: service.desk.contact.as_ref().map(|c| c.shown()),
             emails_reports: service.desk.emails_reports(),
-            reports: reports.map(|list| list.iter().map(|r| (r.id.clone(), r.report.community_name.clone(), r.report.reason.clone(), r.received, r.report.messages.len())).collect()),
+            reports: reports.map(|list| list.iter().map(|r| (r.id.clone(), r.report.community_name().to_string(), r.report.reason().to_string(), r.received, list_detail(&r.report))).collect()),
             gateway: overview.ok().filter(|o| o.enabled),
             now: now_s(),
         };
@@ -263,6 +264,7 @@ pub fn router(admin: Arc<Admin>) -> Router {
         .route("/certificate", post(own_certificate))
         .route("/certificate/automatic", post(automatic_certificate))
         .route("/reports/{id}", get(report))
+        .route("/reports/{id}/open", post(open_report))
         .route("/reports/{id}/drop", post(drop_report))
         .route("/reports/{id}/dismiss", post(dismiss_report))
         .route("/gateway/cut", post(gateway_cut))
@@ -383,10 +385,60 @@ async fn report(State(admin): State<Arc<Admin>>, headers: HeaderMap, Segment(id)
         return StatusCode::NOT_FOUND.into_response();
     }
     match admin.service.store.report(&id).await {
-        Ok(Some(stored)) => Html(report_page(&id, &describe(&stored), stored.state.as_str())).into_response(),
+        Ok(Some(stored)) => Html(report_page(&id, &describe(&stored), stored.state.as_str(), opener(&id, &stored.report, None))).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => (StatusCode::SERVICE_UNAVAILABLE, format!("The database did not answer: {e}")).into_response(),
     }
+}
+
+#[derive(Deserialize)]
+struct OpenForm {
+    key: String,
+}
+
+async fn open_report(State(admin): State<Arc<Admin>>, headers: HeaderMap, Segment(id): Segment<String>, Form(form): Form<OpenForm>) -> Response {
+    if let Err(refused) = admin.allowed(&headers) {
+        return refused;
+    }
+    if !report_id(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let stored = match admin.service.store.report(&id).await {
+        Ok(Some(stored)) => stored,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return (StatusCode::SERVICE_UNAVAILABLE, format!("The database did not answer: {e}")).into_response(),
+    };
+    let opened = ReportSecret::from_text(&form.key).ok_or(KEY_NOT_READ).and_then(|secret| stored.report.open(&secret).map_err(open_problem));
+    let page = match opened {
+        Ok(report) => report_page(&id, &describe_opened(&stored, &report), stored.state.as_str(), format!("<p class=\"note\">{OPENED_NOTE}</p>")),
+        Err(problem) => report_page(&id, &describe(&stored), stored.state.as_str(), opener(&id, &stored.report, Some(problem))),
+    };
+    Html(page).into_response()
+}
+
+const KEY_NOT_READ: &str = "That isn't a report key. Paste the commy-report-secret1. line you saved when the key was made.";
+const OPENED_NOTE: &str = "Opened with your report key. The key was used for this page only and was not kept.";
+
+fn open_problem(problem: OpenProblem) -> &'static str {
+    match problem {
+        OpenProblem::OtherKey => "This report was sealed to a different report key. Try the key this server used before.",
+        OpenProblem::WrongKey | OpenProblem::Mismatch => "The key did not open this report.",
+    }
+}
+
+fn list_detail(report: &Filed) -> String {
+    report.picked_messages().map_or_else(|| "sealed".to_string(), |count| format!("{count} messages"))
+}
+
+fn opener(id: &str, report: &Filed, problem: Option<&str>) -> String {
+    if !report.is_sealed() {
+        return String::new();
+    }
+    let problem = problem.map(|p| format!("<p class=\"note bad\">{}</p>", esc(p))).unwrap_or_default();
+    format!(
+        "{problem}<form method=\"post\" action=\"/reports/{}/open\" autocomplete=\"off\"><label>Report key<input type=\"password\" name=\"key\" placeholder=\"commy-report-secret1.\" spellcheck=\"false\" required></label><button>Open report</button></form>",
+        esc(id)
+    )
 }
 
 async fn drop_report(State(admin): State<Arc<Admin>>, headers: HeaderMap, Segment(id): Segment<String>) -> Response {
@@ -541,7 +593,7 @@ struct Dashboard<'a> {
     operator: &'a str,
     contact: Option<&'a str>,
     emails_reports: bool,
-    reports: Result<Vec<(String, String, String, i64, usize)>, crate::store::StoreError>,
+    reports: Result<Vec<(String, String, String, i64, String)>, crate::store::StoreError>,
     gateway: Option<Overview>,
     now: i64,
 }
@@ -636,14 +688,14 @@ impl Dashboard<'_> {
             Ok(open) => {
                 let items: String = open
                     .iter()
-                    .map(|(id, community, reason, received, messages)| {
+                    .map(|(id, community, reason, received, detail)| {
                         format!(
-                            "<li><a href=\"/reports/{}\"><strong>{}</strong><span>{} · {} · {} messages</span></a></li>",
+                            "<li><a href=\"/reports/{}\"><strong>{}</strong><span>{} · {} · {}</span></a></li>",
                             esc(id),
                             esc(community),
                             esc(reason),
                             day(received / 1000),
-                            messages
+                            esc(detail)
                         )
                     })
                     .collect();
@@ -782,7 +834,7 @@ fn sign_in_page(problem: Option<&str>) -> String {
     )
 }
 
-fn report_page(id: &str, described: &str, state: &str) -> String {
+fn report_page(id: &str, described: &str, state: &str, opener: String) -> String {
     let actions = if state == "open" {
         format!(
             "<form method=\"post\" action=\"/reports/{id}/dismiss\"><button class=\"quiet\">Dismiss</button></form>\
@@ -794,7 +846,7 @@ fn report_page(id: &str, described: &str, state: &str) -> String {
     };
     layout(
         "Report",
-        &format!("<p><a href=\"/\">Back</a></p><section><h2>Report {}</h2><pre>{}</pre>{actions}</section>", esc(id), esc(described)),
+        &format!("<p><a href=\"/\">Back</a></p><section><h2>Report {}</h2><pre>{}</pre>{opener}{actions}</section>", esc(id), esc(described)),
     )
 }
 
@@ -878,6 +930,34 @@ fn day(unix_s: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_report() -> commy_sync::report::HostReport {
+        let person = |id: &str| commy_sync::report::Person { id: id.into(), name: id.into() };
+        commy_sync::report::HostReport {
+            community: "c1".into(),
+            community_name: "Night Owls".into(),
+            owner: person("o"),
+            reporter: person("r"),
+            reported: person("t"),
+            reason: "spam".into(),
+            note: String::new(),
+            messages: Vec::new(),
+            streams: Vec::new(),
+            sent_at: "now".into(),
+        }
+    }
+
+    #[test]
+    fn a_sealed_report_offers_a_key_box_and_a_plain_one_does_not() {
+        let sealed = Filed::Sealed(ReportSecret::generate().public().seal(&sample_report()).unwrap());
+        let offered = opener("abc", &sealed, None);
+        assert!(offered.contains("action=\"/reports/abc/open\"") && offered.contains("type=\"password\""));
+        assert!(opener("abc", &sealed, Some("<b>no</b>")).contains("&lt;b&gt;no&lt;/b&gt;"));
+        assert_eq!(opener("abc", &Filed::Plain(sample_report()), None), "");
+        assert_eq!(list_detail(&sealed), "sealed");
+        assert_eq!(list_detail(&Filed::Plain(sample_report())), "0 messages");
+        assert_ne!(open_problem(OpenProblem::OtherKey), open_problem(OpenProblem::WrongKey));
+    }
 
     #[test]
     fn only_loopback_names_reach_the_admin_page() {

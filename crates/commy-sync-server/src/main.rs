@@ -12,6 +12,10 @@ async fn main() -> anyhow::Result<()> {
     if words.first().map(String::as_str) == Some("check") {
         return check(&words[1..]).await;
     }
+    if words == ["report-key"] {
+        print!("{}", operator::new_report_key());
+        return Ok(());
+    }
     tracing_subscriber::fmt()
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
@@ -85,8 +89,17 @@ async fn check(args: &[String]) -> anyhow::Result<()> {
 }
 
 async fn run_operator_command(config: &Config, words: &[String]) -> anyhow::Result<()> {
-    let command = operator::Command::parse(words).map_err(|usage| anyhow::anyhow!("{usage}"))?;
     let url = config.database_url.as_deref().ok_or_else(|| anyhow::anyhow!("operator commands need DATABASE_URL"))?;
+    if let [open, id] = words {
+        if open == "open" {
+            let mut key = String::new();
+            std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 4096), &mut key)?;
+            let store = Store::postgres(url).await?;
+            print!("{}", operator::open(&store, id, &key).await?);
+            return Ok(());
+        }
+    }
+    let command = operator::Command::parse(words).map_err(|usage| anyhow::anyhow!("{usage}"))?;
     let store = Store::postgres(url).await?;
     print!("{}", operator::run(&store, command).await?);
     Ok(())

@@ -900,7 +900,8 @@ async fn a_report_reaches_the_operator_with_its_contact() {
     let kept = service.store.reports(true).await.unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].id, receipt.id);
-    assert_eq!(kept[0].report.streams, vec![stream]);
+    assert_eq!(kept[0].report.streams(), &[stream]);
+    assert!(!kept[0].report.is_sealed(), "a service without a report key keeps reports as it always did");
 
     let mut bad = host_report(vec![]);
     bad.reason = "boring".into();
@@ -911,6 +912,29 @@ async fn a_report_reaches_the_operator_with_its_contact() {
         Err(commy_sync::reporting::ReportError::Refused(ErrorCode::RateLimited)),
         "one address cannot flood the operator"
     );
+}
+
+#[tokio::test]
+async fn a_service_with_a_report_key_only_ever_holds_reports_sealed_to_it() {
+    let secret = commy_sync::report_seal::ReportSecret::generate();
+    let key = secret.public().to_text();
+    let config = Config::from_env(|name| (name == "SYNC_REPORT_KEY").then(|| key.clone())).unwrap();
+    let (url, service) = start_with(config).await;
+    let stream = StreamSecret::random().keys().id;
+    let sent = host_report(vec![stream]);
+    let receipt = commy_sync::reporting::send(&url, sent.clone()).await.unwrap();
+    let kept = service.store.report(&receipt.id).await.unwrap().unwrap();
+    assert!(kept.report.is_sealed());
+    assert_eq!(kept.report.streams(), &[stream], "the operator can remove the community without opening the report");
+    let stored = serde_json::to_string(&kept.report).unwrap();
+    assert!(!stored.contains("Night Owls") && !stored.contains("the owner posts this everywhere"));
+    assert_eq!(kept.report.open(&secret), Ok(sent));
+}
+
+#[tokio::test]
+async fn a_report_key_that_is_not_one_stops_the_service_from_starting() {
+    let problem = Config::from_env(|name| (name == "SYNC_REPORT_KEY").then(|| "commy-report-secret1.AAAA".to_string())).unwrap_err();
+    assert_eq!(problem, commy_sync_server::config::REPORT_KEY_PROBLEM);
 }
 
 #[tokio::test]
@@ -926,6 +950,7 @@ async fn the_about_page_names_the_operator_and_the_abuse_contact() {
     assert_eq!(body["abuse_contact"], "https://example.org/abuse");
     assert_eq!(body["operator"], "this sync server");
     assert_eq!(body["takes_reports"], true);
+    assert_eq!(body["seals_reports"], false);
     assert_eq!(body["protocol"], commy_sync::wire::PROTOCOL);
     assert_eq!(body["oldest_protocol"], commy_sync::wire::OLDEST_CLIENT_PROTOCOL);
     assert_eq!(body["version"], serde_json::Value::Null);

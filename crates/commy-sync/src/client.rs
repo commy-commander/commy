@@ -750,7 +750,7 @@ mod tests {
             link.pending.insert(nonce, Pending { frame, reply, not_before: Instant::now() });
         }
         assert_eq!(link.pass_for(&keys.id), None, "no pass before the service says whose passes it takes");
-        link.handle(ServerFrame::Hello { protocol: crate::wire::PROTOCOL, version: None, oldest: None, relay: None, public_fallback: false, operator: None, passes: Some("https://commy.example".into()) });
+        link.handle(ServerFrame::Hello { protocol: crate::wire::PROTOCOL, version: None, oldest: None, relay: None, public_fallback: false, operator: None, passes: Some("https://commy.example".into()), report_key: None });
         let passes: Vec<Pass> = link.pending.values().filter_map(|p| match &p.frame {
             ClientFrame::Append { pass, .. } => pass.as_deref().cloned(),
             _ => None,

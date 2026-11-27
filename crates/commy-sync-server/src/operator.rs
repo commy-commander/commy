@@ -1,9 +1,10 @@
 use crate::ramp::{ServerRecord, Tier};
-use crate::reports::{describe, ReportState};
+use crate::reports::{describe, describe_opened, ReportState};
+use commy_sync::report_seal::{OpenProblem, ReportSecret};
 use crate::server_proof::clean_origin;
 use crate::store::{Store, StoreError};
 
-pub const USAGE: &str = "usage: commy-sync [check <wss://domain/sync> | reports [--all] | show <report> | drop <report> | dismiss <report> | gateway | gateway cut <https://server> <reason> | gateway restore <https://server> | gateway tier <https://server> <new|settled|trusted|auto>]";
+pub const USAGE: &str = "usage: commy-sync [check <wss://domain/sync> | reports [--all] | show <report> | open <report> (report key on standard input) | report-key | drop <report> | dismiss <report> | gateway | gateway cut <https://server> <reason> | gateway restore <https://server> | gateway tier <https://server> <new|settled|trusted|auto>]";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -79,6 +80,31 @@ async fn gateway_change(store: &Store, origin: &str, change: impl FnOnce(&mut Se
     Ok(record)
 }
 
+fn picked(report: &crate::reports::Filed) -> String {
+    report.picked_messages().map_or_else(|| "sealed".to_string(), |count| format!("{count} messages"))
+}
+
+pub fn new_report_key() -> String {
+    let secret = ReportSecret::generate();
+    format!(
+        "Put this line in the sync service's .env, then restart it:\nSYNC_REPORT_KEY={}\n\nKeep this line on your own computer, not on this server. It opens every report sealed to the key above, and it can't be shown again:\n{}\n",
+        secret.public().to_text(),
+        secret.to_text()
+    )
+}
+
+pub async fn open(store: &Store, id: &str, key_text: &str) -> Result<String, StoreError> {
+    let Some(stored) = store.report(id).await? else { return Ok(format!("No report {id}.\n")) };
+    let Some(secret) = ReportSecret::from_text(key_text) else {
+        return Ok("That isn't a report key. Pipe in the commy-report-secret1. line you saved when the key was made.\n".into());
+    };
+    Ok(match stored.report.open(&secret) {
+        Ok(report) => format!("{}\n", describe_opened(&stored, &report)),
+        Err(OpenProblem::OtherKey) => format!("Report {id} was sealed to a different report key.\n"),
+        Err(_) => format!("The key did not open report {id}.\n"),
+    })
+}
+
 pub async fn run(store: &Store, command: Command) -> Result<String, StoreError> {
     Ok(match command {
         Command::Gateway => gateway_list(store).await?,
@@ -104,7 +130,7 @@ pub async fn run(store: &Store, command: Command) -> Result<String, StoreError> 
             }
             reports
                 .iter()
-                .map(|r| format!("{}  {:<9}  {:<13}  {}  ({} messages)\n", r.id, r.state.as_str(), r.report.reason, r.report.community_name, r.report.messages.len()))
+                .map(|r| format!("{}  {:<9}  {:<13}  {}  ({})\n", r.id, r.state.as_str(), r.report.reason(), r.report.community_name(), picked(&r.report)))
                 .collect()
         }
         Command::Show(id) => match store.report(&id).await? {
@@ -117,13 +143,13 @@ pub async fn run(store: &Store, command: Command) -> Result<String, StoreError> 
         },
         Command::Drop(id) => {
             let Some(stored) = store.report(&id).await? else { return Ok(format!("No report {id}.\n")) };
-            let streams = &stored.report.streams;
+            let streams = stored.report.streams();
             let removed = store.drop_streams(streams, &id, crate::now_ms()).await?;
             store.settle_report(&id, ReportState::Dropped).await?;
             format!(
                 "Removed community {} ({}): {} streams refused from now on, {removed} stored entries deleted. Running services stop serving it within a minute.\n",
-                stored.report.community_name,
-                stored.report.community,
+                stored.report.community_name(),
+                stored.report.community(),
                 streams.len()
             )
         }
@@ -133,7 +159,7 @@ pub async fn run(store: &Store, command: Command) -> Result<String, StoreError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reports::{new_report_id, StoredReport};
+    use crate::reports::{new_report_id, Filed, StoredReport};
     use commy_sync::report::{HostReport, Person};
     use commy_sync::StreamSecret;
 
@@ -185,7 +211,7 @@ mod tests {
         };
         let (first, second) = (new_report_id(), new_report_id());
         for id in [&first, &second] {
-            store.add_report(&StoredReport { id: id.clone(), received: 1, state: ReportState::Open, report: report.clone() }).await.unwrap();
+            store.add_report(&StoredReport { id: id.clone(), received: 1, state: ReportState::Open, report: Filed::Plain(report.clone()) }).await.unwrap();
         }
         let listed = run(&store, Command::List { all: false }).await.unwrap();
         assert!(listed.contains(&first) && listed.contains("Loud Place"));
@@ -197,6 +223,40 @@ mod tests {
         assert_eq!(run(&store, Command::List { all: false }).await.unwrap(), "No open reports.\n");
         assert!(run(&store, Command::List { all: true }).await.unwrap().contains("dropped"));
         assert_eq!(run(&store, Command::Drop("missing".into())).await.unwrap(), "No report missing.\n");
+    }
+
+    #[tokio::test]
+    async fn an_operator_opens_a_sealed_report_with_the_key_and_drops_it_without() {
+        let store = Store::memory();
+        let stream = StreamSecret::random().keys().id;
+        store.append(&stream, &[2; 16], b"x", 1).await.unwrap();
+        let person = |id: &str| Person { id: id.into(), name: id.into() };
+        let report = HostReport {
+            community: "c7".into(),
+            community_name: "Quiet Place".into(),
+            owner: person("o"),
+            reporter: person("r"),
+            reported: person("t"),
+            reason: "spam".into(),
+            note: String::new(),
+            messages: Vec::new(),
+            streams: vec![stream],
+            sent_at: "now".into(),
+        };
+        let made = new_report_key();
+        let line = |prefix: &str| made.lines().find_map(|l| l.trim_start_matches("SYNC_REPORT_KEY=").strip_prefix(prefix).map(|rest| format!("{prefix}{rest}"))).unwrap();
+        let key = commy_sync::report_seal::ReportKey::from_text(&line("commy-report-key1.")).unwrap();
+        let secret = line("commy-report-secret1.");
+        let id = new_report_id();
+        store.add_report(&StoredReport { id: id.clone(), received: 1, state: ReportState::Open, report: Filed::Sealed(key.seal(&report).unwrap()) }).await.unwrap();
+        let listed = run(&store, Command::List { all: false }).await.unwrap();
+        assert!(listed.contains("(sealed)") && !listed.contains("Quiet Place"));
+        assert!(!run(&store, Command::Show(id.clone())).await.unwrap().contains("Quiet Place"));
+        assert!(open(&store, &id, &secret).await.unwrap().contains("Community: Quiet Place (c7)"));
+        assert!(open(&store, &id, "nonsense").await.unwrap().starts_with("That isn't a report key"));
+        assert!(open(&store, &id, &ReportSecret::generate().to_text()).await.unwrap().contains("different report key"));
+        let dropped = run(&store, Command::Drop(id.clone())).await.unwrap();
+        assert!(dropped.contains("1 streams refused from now on, 1 stored entries deleted"));
     }
 
     #[tokio::test]

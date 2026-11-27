@@ -8,6 +8,7 @@ use commy_sync::stream::{
     TAG_BYTES,
 };
 use commy_sync::pass::Pass;
+use crate::reports::Filed;
 use commy_sync::wire::{
     AppendNonce, Blob, ClientFrame, ErrorCode, OpenRequest, ServerFrame, WireEntry, ERASE_WINDOW_MS, FRAME_BODY_BUDGET, MAX_STREAMS_PER_CONNECTION, PAGE_SIZE,
 };
@@ -120,7 +121,10 @@ async fn handle(
             let _ = out.send(ServerFrame::Pong).await;
         }
         ClientFrame::Report { report } => {
-            let _ = out.send(crate::reports::take(service, caller.address, *report).await).await;
+            let _ = out.send(crate::reports::take(service, caller.address, Filed::Plain(*report)).await).await;
+        }
+        ClientFrame::SealedReport { report } => {
+            let _ = out.send(crate::reports::take(service, caller.address, Filed::Sealed(*report)).await).await;
         }
         ClientFrame::Open { stream, write, read, after, tail } => {
             open_streams(service, caller, session, vec![OpenRequest { stream, write, read, after, tail }], open, out).await;
@@ -340,7 +344,7 @@ fn stream_of(frame: &ClientFrame) -> Option<StreamId> {
         ClientFrame::OpenMany { .. }
         | ClientFrame::Watch { .. }
         | ClientFrame::Unwatch { .. }
-        | ClientFrame::Close { .. } | ClientFrame::Erase { .. } | ClientFrame::Release { .. } | ClientFrame::Report { .. } | ClientFrame::Ping => None,
+        | ClientFrame::Close { .. } | ClientFrame::Erase { .. } | ClientFrame::Release { .. } | ClientFrame::Report { .. } | ClientFrame::SealedReport { .. } | ClientFrame::Ping => None,
     }
 }
 

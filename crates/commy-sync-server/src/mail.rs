@@ -55,8 +55,12 @@ impl Mailer {
 }
 
 pub fn subject(stored: &StoredReport) -> String {
-    let name: String = stored.report.community_name.chars().filter(|c| !c.is_control()).take(SUBJECT_NAME_CHARS).collect();
-    format!("Commy report {}: {} in {}", stored.id, stored.report.reason, name)
+    let reason: String = stored.report.reason().chars().filter(|c| !c.is_control()).collect();
+    if stored.report.is_sealed() {
+        return format!("Commy report {}: {} (sealed)", stored.id, reason);
+    }
+    let name: String = stored.report.community_name().chars().filter(|c| !c.is_control()).take(SUBJECT_NAME_CHARS).collect();
+    format!("Commy report {}: {} in {}", stored.id, reason, name)
 }
 
 pub fn body(stored: &StoredReport) -> String {
@@ -71,7 +75,8 @@ pub fn body(stored: &StoredReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reports::ReportState;
+    use crate::reports::{Filed, ReportState};
+    use commy_sync::report_seal::ReportSecret;
     use commy_sync::report::{HostReport, Person};
 
     fn stored(community_name: &str) -> StoredReport {
@@ -80,7 +85,7 @@ mod tests {
             id: "abc".into(),
             received: 1,
             state: ReportState::Open,
-            report: HostReport {
+            report: Filed::Plain(HostReport {
                 community: "c1".into(),
                 community_name: community_name.into(),
                 owner: person("o"),
@@ -91,7 +96,7 @@ mod tests {
                 messages: Vec::new(),
                 streams: Vec::new(),
                 sent_at: "now".into(),
-            },
+            }),
         }
     }
 
@@ -104,6 +109,16 @@ mod tests {
         let body = body(&report);
         assert!(body.contains("commy-sync drop abc"));
         assert!(body.contains("commy-sync dismiss abc"));
+    }
+
+    #[test]
+    fn a_sealed_report_is_announced_without_its_contents() {
+        let Filed::Plain(plain) = stored("Night Owls").report else { panic!("a plain sample") };
+        let sealed = StoredReport { report: Filed::Sealed(ReportSecret::generate().public().seal(&plain).unwrap()), ..stored("Night Owls") };
+        assert_eq!(subject(&sealed), "Commy report abc: spam (sealed)");
+        let body = body(&sealed);
+        assert!(!body.contains("Night Owls") && !body.contains("Reported: t"), "the email carries nothing the key protects");
+        assert!(body.contains("commy-sync open abc") && body.contains("commy-sync drop abc"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use crate::limits::Limits;
+use commy_sync::report_seal::ReportKey;
 
 pub const DEFAULT_PORT: u16 = 3002;
 pub const DEFAULT_RETENTION_DAYS: u32 = 90;
@@ -22,6 +23,7 @@ pub struct Config {
     pub admin: Option<AdminSettings>,
     pub operator: Option<String>,
     pub abuse_contact: Option<Contact>,
+    pub report_key: Option<ReportKey>,
     pub smtp: Option<SmtpSettings>,
     pub server_key: Option<KeySeed>,
     pub gateway: Option<GatewaySettings>,
@@ -34,6 +36,15 @@ pub struct PassSettings {
     pub issuer: String,
     pub keys_url: String,
     pub required: bool,
+}
+
+pub const REPORT_KEY_PROBLEM: &str = "SYNC_REPORT_KEY must be the commy-report-key1. line printed by `commy-sync report-key`";
+
+fn report_key(env: &impl Fn(&str) -> Option<String>) -> Result<Option<ReportKey>, String> {
+    match env("SYNC_REPORT_KEY").map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+        None => Ok(None),
+        Some(text) => ReportKey::from_text(&text).map(Some).ok_or_else(|| REPORT_KEY_PROBLEM.to_string()),
+    }
 }
 
 fn pass_settings(env: &impl Fn(&str) -> Option<String>) -> Result<Option<PassSettings>, String> {
@@ -341,6 +352,7 @@ impl Config {
             admin: admin_settings(&env)?,
             operator: env("SYNC_OPERATOR_NAME").map(|v| v.trim().chars().take(100).collect::<String>()).filter(|v| !v.is_empty()),
             abuse_contact: env("SYNC_ABUSE_CONTACT").filter(|v| !v.trim().is_empty()).map(|v| Contact::parse(&v)).transpose()?,
+            report_key: report_key(&env)?,
             smtp: smtp_settings(&env)?,
             server_key: server_key_seed(&env)?,
             gateway: gateway_settings(&env)?,

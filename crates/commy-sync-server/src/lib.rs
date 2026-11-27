@@ -158,6 +158,7 @@ impl Service {
                 public_fallback: config.public_relay_fallback,
                 operator: config.operator.clone(),
                 passes: config.passes.as_ref().map(|p| p.issuer.clone()),
+                report_key: config.report_key.map(|key| key.to_text()),
                 ..Greeting::of(PROTOCOL)
             },
             server_key: config.server_key.as_ref().map_or_else(commy_core::Identity::generate, |seed| commy_core::Identity::from_bytes(&seed.0)),

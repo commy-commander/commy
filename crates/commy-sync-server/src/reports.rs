@@ -2,7 +2,8 @@ use commy_core::lock_or_recover::{LockOrRecover, ReadOrRecover};
 use std::collections::HashSet;
 use std::sync::RwLock;
 
-use commy_sync::report::{HostReport, Receipt};
+use commy_sync::report::{HostReport, Receipt, ReportProblem};
+use commy_sync::report_seal::{OpenProblem, ReportSecret, SealedReport};
 use commy_sync::wire::{ErrorCode, ServerFrame};
 use commy_sync::StreamId;
 use serde::{Deserialize, Serialize};
@@ -48,7 +49,71 @@ pub struct StoredReport {
     pub id: String,
     pub received: i64,
     pub state: ReportState,
-    pub report: HostReport,
+    pub report: Filed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Filed {
+    Sealed(SealedReport),
+    Plain(HostReport),
+}
+
+pub const SEALED_LABEL: &str = "(sealed)";
+
+impl Filed {
+    pub fn check(&self) -> Result<(), ReportProblem> {
+        match self {
+            Filed::Sealed(sealed) => sealed.check(),
+            Filed::Plain(report) => report.check(),
+        }
+    }
+
+    pub fn community(&self) -> &str {
+        match self {
+            Filed::Sealed(sealed) => &sealed.community,
+            Filed::Plain(report) => &report.community,
+        }
+    }
+
+    pub fn reason(&self) -> &str {
+        match self {
+            Filed::Sealed(sealed) => &sealed.reason,
+            Filed::Plain(report) => &report.reason,
+        }
+    }
+
+    pub fn streams(&self) -> &[StreamId] {
+        match self {
+            Filed::Sealed(sealed) => &sealed.streams,
+            Filed::Plain(report) => &report.streams,
+        }
+    }
+
+    pub fn community_name(&self) -> &str {
+        match self {
+            Filed::Sealed(_) => SEALED_LABEL,
+            Filed::Plain(report) => &report.community_name,
+        }
+    }
+
+    pub fn picked_messages(&self) -> Option<usize> {
+        match self {
+            Filed::Sealed(_) => None,
+            Filed::Plain(report) => Some(report.messages.len()),
+        }
+    }
+
+    pub fn is_sealed(&self) -> bool {
+        matches!(self, Filed::Sealed(_))
+    }
+
+    pub fn open(&self, secret: &ReportSecret) -> Result<HostReport, OpenProblem> {
+        match self {
+            Filed::Sealed(sealed) => secret.open(sealed),
+            Filed::Plain(report) => Ok(report.clone()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -62,6 +127,7 @@ pub struct Desk {
     pub contact: Option<Contact>,
     mailer: Option<Mailer>,
     dropped: RwLock<HashSet<StreamId>>,
+    seals: bool,
 }
 
 impl Desk {
@@ -81,6 +147,7 @@ impl Desk {
             contact: config.abuse_contact.clone(),
             mailer,
             dropped: RwLock::new(HashSet::new()),
+            seals: config.report_key.is_some(),
         }
     }
 
@@ -105,6 +172,7 @@ impl Desk {
             "operator": self.operator,
             "abuse_contact": self.contact.as_ref().map(Contact::shown),
             "takes_reports": true,
+            "seals_reports": self.seals,
         })
     }
 
@@ -117,7 +185,7 @@ pub fn new_report_id() -> String {
     data_encoding::BASE32_NOPAD.encode(&rand::random::<[u8; 10]>()).to_lowercase()
 }
 
-pub(crate) async fn take(service: &Service, key: AddressKey, report: HostReport) -> ServerFrame {
+pub(crate) async fn take(service: &Service, key: AddressKey, report: Filed) -> ServerFrame {
     if report.check().is_err() {
         return ServerFrame::error(ErrorCode::BadFrame);
     }
@@ -140,7 +208,7 @@ pub(crate) async fn take(service: &Service, key: AddressKey, report: HostReport)
             return ServerFrame::Error { code: ErrorCode::Unavailable, stream: None, nonce: None, retry_after_ms: Some(5_000) };
         }
     }
-    tracing::info!("sync: report {} received about community {}", stored.id, stored.report.community);
+    tracing::info!("sync: report {} received about community {}", stored.id, stored.report.community());
     if let Some(mailer) = &service.desk.mailer {
         let mailer = mailer.clone();
         let emailed = stored.clone();
@@ -153,8 +221,32 @@ pub(crate) async fn take(service: &Service, key: AddressKey, report: HostReport)
     ServerFrame::Reported { receipt: service.desk.receipt(stored.id) }
 }
 
+pub const OPEN_HINT: &str = "This report is sealed to your report key, so only the key's holder can read who and what was reported. Open it on the admin page, or pipe the key into: commy-sync open";
+
 pub fn describe(stored: &StoredReport) -> String {
-    let r = &stored.report;
+    match &stored.report {
+        Filed::Plain(report) => describe_report(stored, report),
+        Filed::Sealed(sealed) => describe_sealed(stored, sealed),
+    }
+}
+
+pub fn describe_opened(stored: &StoredReport, report: &HostReport) -> String {
+    describe_report(stored, report)
+}
+
+fn describe_sealed(stored: &StoredReport, sealed: &SealedReport) -> String {
+    [
+        format!("Report {} ({})", stored.id, stored.state.as_str()),
+        format!("Community: {}", sealed.community),
+        format!("Reason: {}", sealed.reason),
+        format!("Sent: {}", sealed.sent_at),
+        format!("Streams the reporter's app listed for this community: {}", sealed.streams.len()),
+        format!("{OPEN_HINT} {}", stored.id),
+    ]
+    .join("\n")
+}
+
+fn describe_report(stored: &StoredReport, r: &HostReport) -> String {
     let mut lines = vec![
         format!("Report {} ({})", stored.id, stored.state.as_str()),
         format!("Community: {} ({})", r.community_name, r.community),
@@ -313,7 +405,7 @@ impl Store {
 }
 
 fn stored_from_row(row: &sqlx::postgres::PgRow) -> Option<StoredReport> {
-    let report: HostReport = serde_json::from_str(&row.get::<String, _>(3)).ok()?;
+    let report: Filed = serde_json::from_str(&row.get::<String, _>(3)).ok()?;
     Some(StoredReport { id: row.get(0), received: row.get(1), state: ReportState::parse(&row.get::<String, _>(2)), report })
 }
 
@@ -344,12 +436,12 @@ mod tests {
         let other = StreamSecret::random().keys().id;
         store.append(&stream, &[1; 16], b"kept for now", 1).await.unwrap();
         store.append(&other, &[1; 16], b"someone else", 1).await.unwrap();
-        let stored = StoredReport { id: new_report_id(), received: 10, state: ReportState::Open, report: sample(vec![stream]) };
+        let stored = StoredReport { id: new_report_id(), received: 10, state: ReportState::Open, report: Filed::Plain(sample(vec![stream])) };
         assert!(store.add_report(&stored).await.unwrap());
         assert_eq!(store.reports(true).await.unwrap(), vec![stored.clone()]);
         assert_eq!(store.report(&stored.id).await.unwrap(), Some(stored.clone()));
         assert_eq!(store.report("nope").await.unwrap(), None);
-        assert_eq!(store.drop_streams(&stored.report.streams, &stored.id, 20).await.unwrap(), 1);
+        assert_eq!(store.drop_streams(stored.report.streams(), &stored.id, 20).await.unwrap(), 1);
         assert!(store.settle_report(&stored.id, ReportState::Dropped).await.unwrap());
         assert!(!store.settle_report("nope", ReportState::Dismissed).await.unwrap());
         assert!(store.reports(true).await.unwrap().is_empty());
@@ -378,14 +470,14 @@ mod tests {
     async fn open_reports_are_capped() {
         let store = Store::memory();
         for _ in 0..MAX_OPEN_REPORTS {
-            assert!(store.add_report(&StoredReport { id: new_report_id(), received: 1, state: ReportState::Open, report: sample(vec![]) }).await.unwrap());
+            assert!(store.add_report(&StoredReport { id: new_report_id(), received: 1, state: ReportState::Open, report: Filed::Plain(sample(vec![])) }).await.unwrap());
         }
-        assert!(!store.add_report(&StoredReport { id: new_report_id(), received: 1, state: ReportState::Open, report: sample(vec![]) }).await.unwrap());
+        assert!(!store.add_report(&StoredReport { id: new_report_id(), received: 1, state: ReportState::Open, report: Filed::Plain(sample(vec![])) }).await.unwrap());
     }
 
     #[test]
     fn the_operator_reads_what_the_reporter_picked() {
-        let stored = StoredReport { id: "r1".into(), received: 1, state: ReportState::Open, report: sample(vec![]) };
+        let stored = StoredReport { id: "r1".into(), received: 1, state: ReportState::Open, report: Filed::Plain(sample(vec![])) };
         let text = describe(&stored);
         assert!(text.contains("Report r1 (open)"));
         assert!(text.contains("Community: Night Owls (c1)"));
@@ -398,12 +490,64 @@ mod tests {
     fn the_operator_is_shown_how_to_suspend_a_reported_account() {
         let mut report = sample(vec![]);
         report.reported.id = "6F1C1D6E-2B7A-4C55-9D4E-0D8A1B2C3D4E".into();
-        let text = describe(&StoredReport { id: "r2".into(), received: 1, state: ReportState::Open, report });
+        let text = describe(&StoredReport { id: "r2".into(), received: 1, state: ReportState::Open, report: Filed::Plain(report) });
         assert!(text.contains("docker compose exec auth node src/suspension-cli.js suspend 6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4e \"<reason>\""));
         assert_eq!(suspend_command("6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4"), None);
         assert_eq!(suspend_command("6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4e; rm -rf /"), None);
         assert_eq!(suspend_command("6f1c1d6e2b7a-4c55-9d4e-0d8a1b2c3d4e-"), None);
         assert_eq!(suspend_command("6f1c1d6e-2b7a-4c55-9d4e-0d8a1b2c3d4g"), None);
+    }
+
+    async fn keeps_sealed(store: &Store) {
+        let secret = ReportSecret::generate();
+        let stream = StreamSecret::random().keys().id;
+        let sent = sample(vec![stream]);
+        let sealed = Filed::Sealed(secret.public().seal(&sent).unwrap());
+        let stored = StoredReport { id: new_report_id(), received: 10, state: ReportState::Open, report: sealed.clone() };
+        assert!(store.add_report(&stored).await.unwrap());
+        let back = store.report(&stored.id).await.unwrap().unwrap();
+        assert_eq!(back, stored);
+        assert_eq!(back.report.streams(), &[stream], "the operator can still remove the community without the key");
+        assert_eq!(back.report.open(&secret), Ok(sent));
+        assert!(store.add_report(&StoredReport { id: new_report_id(), report: Filed::Plain(sample(vec![])), ..stored }).await.unwrap());
+        let kinds: Vec<bool> = store.reports(true).await.unwrap().iter().map(|r| r.report.is_sealed()).collect();
+        assert_eq!(kinds, vec![true, false], "sealed and plain reports sit side by side");
+    }
+
+    #[tokio::test]
+    async fn memory_keeps_sealed_reports_sealed() {
+        keeps_sealed(&Store::memory()).await;
+    }
+
+    #[tokio::test]
+    async fn postgres_keeps_sealed_reports_sealed() {
+        let Ok(url) = std::env::var("SYNC_POSTGRES_TEST_URL") else { return };
+        let url = format!("{}/commy_sync_sealed_{}", url.trim_end_matches('/'), rand::random::<u32>());
+        keeps_sealed(&Store::postgres(&url).await.unwrap()).await;
+    }
+
+    #[test]
+    fn a_sealed_report_tells_the_operator_only_what_triage_needs() {
+        let secret = ReportSecret::generate();
+        let sent = sample(vec![StreamSecret::random().keys().id]);
+        let stored = StoredReport { id: "r3".into(), received: 1, state: ReportState::Open, report: Filed::Sealed(secret.public().seal(&sent).unwrap()) };
+        let text = describe(&stored);
+        assert!(text.contains("Report r3 (open)") && text.contains("Reason: spam") && text.contains("Community: c1"));
+        assert!(text.contains("commy-sync open r3"));
+        for hidden in ["Night Owls", "Nova", "Ferris", "buy now"] {
+            assert!(!text.contains(hidden), "{hidden} stays sealed");
+        }
+        let json = serde_json::to_string(&stored.report).unwrap();
+        assert!(!json.contains("Nova") && !json.contains("buy now"), "the stored row is sealed too");
+        let opened = describe_opened(&stored, &stored.report.open(&secret).unwrap());
+        assert!(opened.contains("#general Nova: buy now") && opened.contains("Community: Night Owls (c1)"));
+        assert_eq!(stored.report.open(&ReportSecret::generate()), Err(OpenProblem::OtherKey));
+    }
+
+    #[test]
+    fn rows_written_before_sealing_still_read() {
+        let older = serde_json::to_string(&sample(vec![])).unwrap();
+        assert!(matches!(serde_json::from_str::<Filed>(&older).unwrap(), Filed::Plain(_)));
     }
 
     #[test]

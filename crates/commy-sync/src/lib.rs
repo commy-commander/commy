@@ -3,6 +3,7 @@ pub mod file;
 pub mod pass;
 pub mod picture;
 pub mod report;
+pub mod report_seal;
 pub mod stream;
 pub mod wake;
 pub mod wire;

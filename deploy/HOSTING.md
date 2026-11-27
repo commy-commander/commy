@@ -169,6 +169,7 @@ again:
 | `ACME_EMAIL`           | asked                | Where Let's Encrypt sends certificate notices     |
 | `SYNC_ABUSE_CONTACT`   | asked                | Email or `https://` page shown to people who report |
 | `SYNC_OPERATOR_NAME`   | your domain          | The name apps show for whoever runs the server    |
+| `SYNC_REPORT_KEY`      | empty                | Apps seal reports to this key (see Reports below) |
 | `SYNC_RETENTION_DAYS`  | `90`                 | How long entries are kept, `0` keeps everything   |
 | `SYNC_RELAY_FALLBACK`  | `pause`              | `public` moves voice to the free public relays while yours is down |
 | `SYNC_ADMIN_PASSWORD`  | generated            | The admin page password; empty turns the page off |
@@ -761,8 +762,8 @@ server or channel a log belongs to.
   a person or messages in a community on your service, their app sends the
   report to the community's owner and to you. Your copy carries the community's
   id and name, the owner, reporter and reported person, the reason and note,
-  up to 10 messages the reporter picked, in plain text as their app showed
-  them, and the stream ids of that community's logs. The service cannot check
+  up to 10 messages the reporter picked, as their app showed them (sealed to
+  your report key once you set one, see Sealed reports below), and the stream ids of that community's logs. The service cannot check
   that those messages are real: it only ever holds sealed entries. Reports are
   kept in the `commy_sync` database, at most 5 a reporter's address per 10
   minutes and 5,000 open at once; settled reports are removed after 180 days.
@@ -785,7 +786,7 @@ server or channel a log belongs to.
   reporter's own devices and needs nothing from any server.
 
   When the reported person's account lives on your own account server, `show`
-  ends with the command that suspends it. Suspending signs the account out on
+  (or `open`, for a sealed report) ends with the command that suspends it. Suspending signs the account out on
   every device, refuses new sign-ins with a note that names
   `COMMY_ABUSE_CONTACT`, and hides its Discover listings and invite links until
   you lift it:
@@ -800,6 +801,25 @@ server or channel a log belongs to.
   The account server learns which Commy id an account uses when its app asks
   for a home card, which every app does after signing in and again each week.
   A Commy id claimed by more than one account suspends all of them.
+
+  **Sealed reports.** Make a report key once with
+  `docker compose run --rm --no-deps sync commy-sync report-key`. Put the
+  `SYNC_REPORT_KEY=` line it prints in `.env` and restart the sync service,
+  and save the `commy-report-secret1.` line on your own computer, not on the
+  server: it is shown only once. From then on apps seal everything in a report
+  except the community id, the reason, the time and the log ids, so the
+  database, backups, `show` and the report email hold nothing else, and `drop`
+  and `dismiss` work as before. Open a sealed report on the admin page by
+  pasting the secret line into its box (it is used for that page only and not
+  kept), or pipe it in from your computer:
+
+  ```sh
+  ssh <server> 'cd <stack> && docker compose exec -T sync commy-sync open <report>' < report-secret.txt
+  ```
+
+  Apps from before sealed reports keep sending plain reports, and those are
+  still taken. Keep the old secret line if you ever make a new key, since
+  reports sealed before the change only open with it.
 
 ## iroh relay
 
@@ -906,9 +926,11 @@ tokens when wake-ups are on. The operator can see how many logs exist and
 how busy each one is, not whose they are or what they say. With wake-ups on,
 the operator can also see how many tags a phone has registered and when they
 are rung, not which logs or people they stand for.
-It also holds the reports people send: these are in plain text, with the
-names and account ids of the people involved and the messages the reporter
-chose to include, because the reporter's app opens them before sending.
+It also holds the reports people send. Without a report key these are in
+plain text, with the names and account ids of the people involved and the
+messages the reporter chose to include, because the reporter's app opens them
+before sending. With `SYNC_REPORT_KEY` set, all of that is sealed to the key
+and the database keeps only the community id, reason, time and log ids.
 
 Redis holds the message doorbell (random tokens and blinded message ids with
 the time they arrived, deleted when an app takes them or after 14 days) and

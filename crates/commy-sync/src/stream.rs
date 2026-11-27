@@ -104,7 +104,7 @@ impl StreamSecret {
     }
 }
 
-fn hkdf(key: &[u8; 32], salt: &[u8], info: &[u8]) -> [u8; 32] {
+pub(crate) fn hkdf(key: &[u8; 32], salt: &[u8], info: &[u8]) -> [u8; 32] {
     let mut extract = <Hmac<Sha256> as KeyInit>::new_from_slice(salt).expect("HMAC takes any key length");
     extract.update(key);
     let prk = extract.finalize().into_bytes();

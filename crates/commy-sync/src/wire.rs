@@ -3,6 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::pass::Pass;
 use crate::report::{HostReport, Receipt};
+use crate::report_seal::SealedReport;
 use crate::stream::{Eraser, StreamId, StreamKeys, APPEND_NONCE_BYTES, MAX_SEALED};
 
 pub const PROTOCOL: u32 = 7;
@@ -143,6 +144,7 @@ pub enum ClientFrame {
     Erase { stream: StreamId, through: u64, at: i64, sig: Bytes<64> },
     Release { stream: StreamId, at: i64, sig: Bytes<64> },
     Report { report: Box<HostReport> },
+    SealedReport { report: Box<SealedReport> },
     Ping,
 }
 
@@ -248,6 +250,8 @@ pub enum ServerFrame {
         operator: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         passes: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report_key: Option<String>,
     },
     Opened { stream: StreamId, head: u64 },
     Entries { stream: StreamId, entries: Vec<WireEntry>, caught_up: bool },
@@ -279,6 +283,7 @@ pub struct Greeting {
     pub public_fallback: bool,
     pub operator: Option<String>,
     pub passes: Option<String>,
+    pub report_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,7 +295,7 @@ pub enum Fit {
 
 impl Greeting {
     pub fn of(protocol: u32) -> Self {
-        Greeting { protocol, version: None, oldest_protocol: OLDEST_CLIENT_PROTOCOL, relay: None, public_fallback: false, operator: None, passes: None }
+        Greeting { protocol, version: None, oldest_protocol: OLDEST_CLIENT_PROTOCOL, relay: None, public_fallback: false, operator: None, passes: None, report_key: None }
     }
 
     pub fn frame(&self) -> ServerFrame {
@@ -302,6 +307,7 @@ impl Greeting {
             public_fallback: self.public_fallback,
             operator: self.operator.clone(),
             passes: self.passes.clone(),
+            report_key: self.report_key.clone(),
         }
     }
 
@@ -318,12 +324,12 @@ impl Greeting {
 
 impl ServerFrame {
     pub fn hello(protocol: u32) -> Self {
-        ServerFrame::Hello { protocol, version: None, oldest: None, relay: None, public_fallback: false, operator: None, passes: None }
+        ServerFrame::Hello { protocol, version: None, oldest: None, relay: None, public_fallback: false, operator: None, passes: None, report_key: None }
     }
 
     pub fn greeting(&self) -> Option<Greeting> {
         match self {
-            ServerFrame::Hello { protocol, version, oldest, relay, public_fallback, operator, passes } => Some(Greeting {
+            ServerFrame::Hello { protocol, version, oldest, relay, public_fallback, operator, passes, report_key } => Some(Greeting {
                 protocol: *protocol,
                 version: version.clone(),
                 oldest_protocol: oldest.unwrap_or(OLDEST_CLIENT_PROTOCOL),
@@ -331,6 +337,7 @@ impl ServerFrame {
                 public_fallback: *public_fallback,
                 operator: operator.clone(),
                 passes: passes.clone(),
+                report_key: report_key.clone(),
             }),
             _ => None,
         }
@@ -451,7 +458,7 @@ mod tests {
         let id = StreamSecret::random().keys().id;
         let frames = [
             ServerFrame::hello(PROTOCOL),
-            Greeting { protocol: PROTOCOL, version: Some("0.2.5".into()), oldest_protocol: 2, relay: Some("https://sync.example.org".into()), public_fallback: false, operator: None, passes: None }.frame(),
+            Greeting { protocol: PROTOCOL, version: Some("0.2.5".into()), oldest_protocol: 2, relay: Some("https://sync.example.org".into()), public_fallback: false, operator: None, passes: None, report_key: None }.frame(),
             Greeting { operator: Some("Example Chat".into()), ..Greeting::of(PROTOCOL) }.frame(),
             ServerFrame::Opened { stream: id, head: 7 },
             ServerFrame::Entries { stream: id, entries: vec![WireEntry { seq: 1, at: 1_760_000_000_000, body: Blob(vec![4; 40]) }], caught_up: true },
@@ -530,12 +537,14 @@ mod tests {
             public_fallback: true,
             operator: Some("Example Chat".into()),
             passes: Some("https://example.org".into()),
+            report_key: Some("commy-report-key1.example".into()),
         };
         let text = serde_json::to_string(&new.frame()).unwrap();
         assert!(text.contains(r#""public_fallback":true"#));
         assert_eq!(serde_json::from_str::<ServerFrame>(&text).unwrap().greeting(), Some(new));
         let paused = serde_json::to_string(&Greeting { relay: Some("https://sync.example.org".into()), ..Greeting::of(5) }.frame()).unwrap();
         assert!(!paused.contains("public_fallback"), "older apps see the same hello as before");
+        assert!(!paused.contains("report_key"), "a service without a report key says nothing about one");
         assert!(!paused.contains("operator"), "a host with no operator name sends none");
         assert_eq!(serde_json::to_string(&ServerFrame::hello(4)).unwrap(), r#"{"t":"hello","protocol":4}"#);
     }
