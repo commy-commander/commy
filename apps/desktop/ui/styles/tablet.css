@@ -75,3 +75,68 @@ html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-c
   pointer-events: none;
 }
 html[data-look="studio"][data-touch="tablet"] .vp-more-menu > .vp-more-row { min-height: 44px; font-size: 16px; }
+
+@media (min-width: 800px) {
+  html[data-look="studio"][data-touch="tablet"] { --st-ml: 92px; }
+  html[data-look="studio"][data-touch="tablet"] .settings-layer { top: var(--st-mt); }
+  html[data-look="studio"][data-touch="tablet"] .app {
+    grid-template-rows: 0 minmax(0, 1fr);
+    row-gap: 0;
+  }
+  html[data-look="studio"][data-touch="tablet"] .rail {
+    position: fixed;
+    z-index: 6;
+    top: var(--st-mt);
+    bottom: var(--st-mb);
+    left: 10px;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 72px;
+  }
+  html[data-look="studio"][data-touch="tablet"] .rail-tray {
+    flex-direction: column;
+    flex: 0 1 auto;
+    gap: 8px;
+    width: 72px;
+    height: auto;
+    min-height: 0;
+    padding: 12px 0;
+    border-radius: 36px;
+  }
+  html[data-look="studio"][data-touch="tablet"] .rail-home { flex: none; width: 48px; height: 48px; padding: 0; justify-content: center; border-radius: 50%; }
+  html[data-look="studio"][data-touch="tablet"] .rail-home.active { margin: 3px 0; }
+  html[data-look="studio"][data-touch="tablet"] .rail-home-label { display: none; }
+  html[data-look="studio"][data-touch="tablet"] .rail-divider { width: 28px; height: 1px; margin: 4px 0; }
+  html[data-look="studio"][data-touch="tablet"] .server-list {
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    margin: -6px -12px;
+    padding: 6px 12px;
+    overflow-x: visible;
+    overflow-y: auto;
+  }
+  html[data-look="studio"][data-touch="tablet"] .rail-item:has(> .server-icon.active) { margin: 3px 0; }
+  html[data-look="studio"][data-touch="tablet"] .server-icon { width: 48px; height: 48px; }
+  html[data-look="studio"][data-touch="tablet"] .rail-add,
+  html[data-look="studio"][data-touch="tablet"] .rail-add:hover { flex: none; width: 48px; height: 48px; }
+  html[data-look="studio"][data-touch="tablet"] .rail-add:not(.rail-discover) { margin: 6px 0 0; }
+  html[data-look="studio"][data-touch="tablet"] .rail-add:not(.rail-discover)::before { display: none; }
+  html[data-look="studio"][data-touch="tablet"] .rail-spacer { flex: 1 1 0; min-height: 0; }
+  html[data-look="studio"][data-touch="tablet"] .user-panel {
+    flex-direction: column;
+    flex: none;
+    gap: 8px;
+    width: 72px;
+    height: auto;
+    padding: 12px 0;
+    border-radius: 36px;
+  }
+  html[data-look="studio"][data-touch="tablet"] .user-chip { flex: none; justify-content: center; width: 48px; height: 48px; padding: 0; }
+  html[data-look="studio"][data-touch="tablet"] .user-meta { display: none; }
+  html[data-look="studio"][data-touch="tablet"] .user-actions { position: static; }
+  html[data-look="studio"][data-touch="tablet"] .user-actions .icon-btn { flex: none; width: 48px; height: 48px; border-radius: 50%; }
+  html[data-look="studio"][data-touch="tablet"] body:has(.settings-layer:not(.hidden)) .user-panel { padding: 12px 0; }
+  html[data-look="studio"][data-touch="tablet"] body:has(.settings-layer:not(.hidden)) .user-actions > .set-done { width: 56px; height: 40px; padding: 0; justify-content: center; font-size: 13px; }
+}
