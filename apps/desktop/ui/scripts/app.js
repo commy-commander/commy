@@ -26774,7 +26774,7 @@ function openServerSettings(tab) {
     stickers: canStickers,
     emoticons: canEmoticons,
     soundboard: canSounds,
-    reports: isOwner,
+    reports: takesReports,
     rules: server.can_manage_server,
     onboarding: server.can_manage_server,
     automod: server.can_manage_server,
