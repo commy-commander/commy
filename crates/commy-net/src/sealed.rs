@@ -19,6 +19,7 @@ pub enum Purpose {
     ReadState,
     KeyHandoff,
     BrowserCopy,
+    BrowserKeyLock,
 }
 
 impl Purpose {
@@ -30,6 +31,7 @@ impl Purpose {
             Purpose::ReadState => b"commy-read-state-v1",
             Purpose::KeyHandoff => b"commy-key-handoff-v1",
             Purpose::BrowserCopy => b"commy-browser-copy-v1",
+            Purpose::BrowserKeyLock => b"commy-browser-key-lock-v1",
         }
     }
 }
@@ -90,6 +92,11 @@ impl SealKey {
         hash.update(SHORT_KEY_DOMAIN);
         hash.update(seed);
         Self(hash.finalize().into())
+    }
+
+    pub fn from_hex(text: &str) -> Option<Self> {
+        let bytes = data_encoding::HEXLOWER_PERMISSIVE.decode(text.trim().as_bytes()).ok()?;
+        Some(Self(bytes.try_into().ok()?))
     }
 
     pub fn bytes(&self) -> &[u8; 32] {
@@ -165,6 +172,16 @@ pub fn is_sealed(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hex_keys_read_back_and_refuse_the_wrong_length() {
+        let key = SealKey::generate();
+        let hex = data_encoding::HEXLOWER.encode(key.bytes());
+        assert_eq!(SealKey::from_hex(&hex), Some(key.clone()));
+        assert_eq!(SealKey::from_hex(&hex.to_uppercase()), Some(key));
+        assert_eq!(SealKey::from_hex("abc"), None);
+        assert_eq!(SealKey::from_hex(&"ab".repeat(31)), None);
+    }
 
     #[test]
     fn round_trips() {

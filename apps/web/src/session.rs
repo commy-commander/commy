@@ -871,6 +871,10 @@ impl Session {
             self.finish(list, key)?;
             return Ok(self.unlock_view());
         }
+        if let Some(key) = self.kept_key(&account).await.filter(|key| EntryList::open(key, &sealed).is_ok()) {
+            self.accept_key(&account, key)?;
+            return Ok(self.unlock_view());
+        }
         self.look_for_key(account);
         Ok(self.unlock_view())
     }
@@ -1094,10 +1098,33 @@ impl Session {
         Ok(json!({ "joined": joined, "failed": failed }))
     }
 
+    async fn browser_lock(&self) -> Option<SealKey> {
+        let body = json!({ "lockId": account::BROWSER_LOCK_ID });
+        account::folder_key(&self.request("POST", account::FOLDER_KEY_PATH, Some(body)).await.ok()?)
+    }
+
+    async fn kept_key(&self, account: &AccountUser) -> Option<SealKey> {
+        let locked = self.host.load(&account::locked_key_name(&account.id))?;
+        account::unlock_entry_key(&self.browser_lock().await?, &locked)
+    }
+
+    async fn keep_locked_copy(&self, key: SealKey) {
+        let Ok(account) = self.account() else { return };
+        if self.kept_key(&account).await.as_ref() == Some(&key) {
+            return;
+        }
+        if let Some(lock) = self.browser_lock().await {
+            self.host.save(&account::locked_key_name(&account.id), &account::lock_entry_key(&lock, &key));
+        }
+    }
+
     fn finish(self: &Rc<Self>, list: EntryList, key: SealKey) -> Result<(), String> {
         if self.status.borrow().unlock == Unlock::Unlocked {
             return Ok(());
         }
+        let this = self.clone();
+        let kept = key.clone();
+        spawn_local(async move { this.keep_locked_copy(kept).await });
         let identity = list.shared_identity().ok_or(
             "Your server list does not carry your identity yet. Update Commy on your computer and let it sync.",
         )?;

@@ -8,6 +8,8 @@ pub const LINK_CHALLENGE_PATH: &str = "/api/auth/commy/devices/challenge";
 pub const LINK_REGISTER_PATH: &str = "/api/auth/commy/devices/register";
 pub const LIST_ITEM: &str = "servers";
 pub const VAULT_PATH: &str = "/api/auth/commy/vault?name=servers";
+pub const FOLDER_KEY_PATH: &str = "/api/auth/commy/folder-key";
+pub const BROWSER_LOCK_ID: &str = "62726f777365722d6b65792d6c6f636b";
 pub const VAULT_PUT_PATH: &str = "/api/auth/commy/vault/put";
 pub const CONFLICT: u16 = 409;
 pub const DISCOVERY_PATH: &str = "/.well-known/commy-auth.json";
@@ -230,6 +232,27 @@ pub fn entry_key_record(account: &str, key: &SealKey) -> String {
     serde_json::to_string(&StoredKey { account: account.into(), key: key.to_text() }).expect("key record serializes")
 }
 
+pub fn locked_key_name(account: &str) -> String {
+    format!("{ENTRY_KEY_KEY}.locked.{account}")
+}
+
+pub fn folder_key(reply: &Reply) -> Option<SealKey> {
+    #[derive(Deserialize)]
+    struct Key {
+        key: String,
+    }
+    reply.ok().then(|| serde_json::from_str::<Key>(&reply.body).ok().and_then(|k| SealKey::from_hex(&k.key))).flatten()
+}
+
+pub fn lock_entry_key(lock: &SealKey, key: &SealKey) -> String {
+    lock.seal(commy_net::sealed::Purpose::BrowserKeyLock, key.to_text().as_bytes())
+}
+
+pub fn unlock_entry_key(lock: &SealKey, locked: &str) -> Option<SealKey> {
+    let text = lock.open(commy_net::sealed::Purpose::BrowserKeyLock, locked).ok()?;
+    SealKey::from_text(std::str::from_utf8(&text).ok()?).ok()
+}
+
 pub fn pins_key(account: &str) -> String {
     format!("{PINS_KEY}.{account}")
 }
@@ -262,6 +285,7 @@ pub fn kept_for_account(account: &str) -> Vec<String> {
         safety_key(account),
         personal_key(account),
         device_secret_key(account),
+        locked_key_name(account),
     ]
 }
 
@@ -466,6 +490,26 @@ mod tests {
         assert_eq!(username_for(&account(" ", "")), "Commy user");
         let long = username_for(&account(&"é".repeat(40), ""));
         assert!(long.len() <= MAX_USERNAME_BYTES && !long.is_empty());
+    }
+
+    #[test]
+    fn a_browser_keeps_its_key_locked_with_the_account_and_opens_it_only_with_that_lock() {
+        let key = SealKey::generate();
+        let lock = folder_key(&reply(200, &format!(r#"{{"key":"{}"}}"#, "ab".repeat(32)))).unwrap();
+        let locked = lock_entry_key(&lock, &key);
+        assert!(!locked.contains(&key.to_text()));
+        assert_eq!(unlock_entry_key(&lock, &locked), Some(key));
+        let other = folder_key(&reply(200, &format!(r#"{{"key":"{}"}}"#, "cd".repeat(32)))).unwrap();
+        assert_eq!(unlock_entry_key(&other, &locked), None);
+        assert!(folder_key(&reply(401, "")).is_none());
+        assert!(folder_key(&reply(200, r#"{"key":"abc"}"#)).is_none());
+    }
+
+    #[test]
+    fn the_locked_key_goes_when_the_account_is_deleted() {
+        assert!(kept_for_account("u1").contains(&locked_key_name("u1")));
+        assert_ne!(locked_key_name("u1"), locked_key_name("u2"));
+        assert_ne!(locked_key_name("u1"), ENTRY_KEY_KEY);
     }
 
     #[test]
