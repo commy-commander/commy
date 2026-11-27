@@ -31,8 +31,12 @@
 </p>
 
 <a href="https://commy.chat">
-  <img src="docs/images/readme/demo.gif" alt="Sending a message in a Commy server, joining a voice channel and watching a friend stream a racing game" width="960">
+  <img src="docs/images/readme/demo.webp" alt="Chatting in a Commy server while friends type and react, joining a voice channel from an invite, then watching a friend win a sky race on their stream while the chat cheers" width="960">
 </a>
+
+<p>
+  <sub><a href="docs/images/readme/demo.mp4">Watch the 30 second demo as a video</a></sub>
+</p>
 
 <p>
   <sub>If Commy looks like a good home for your community, a star helps more people find it.</sub>
@@ -87,7 +91,7 @@ free to use, open source from top to bottom, and yours to host if you want.
 <table>
   <tr>
     <td width="50%"><img src="docs/images/readme/rich-text-chat.webp" alt="A Commy text channel with formatted patch notes, a code block, an invite card and an auto moderation notice"></td>
-    <td width="50%"><img src="docs/images/readme/voice-and-streaming.webp" alt="A Commy voice room watching a member stream a racing game, with the channel chat beside it"></td>
+    <td width="50%"><img src="docs/images/readme/voice-and-streaming.webp" alt="A Commy voice room watching a member stream a sky race, with the channel chat cheering beside it"></td>
   </tr>
   <tr>
     <td align="center"><strong>Rich text chat</strong><br /><sub>Markdown, code, colours, invites and moderation in one feed</sub></td>
@@ -96,7 +100,7 @@ free to use, open source from top to bottom, and yours to host if you want.
 </table>
 
 <p align="center">
-  <img src="docs/images/readme/phone-chat.webp" alt="Commy on a phone showing a text channel" width="240">
+  <img src="docs/images/readme/phone-chat.webp" alt="Commy on a phone showing a text channel with a shared clip, reactions and a voice invite" width="240">
   &nbsp;&nbsp;
   <img src="docs/images/readme/phone-stream.webp" alt="Commy on a phone watching a live stream in a voice channel" width="240">
   <br />
