@@ -1,6 +1,6 @@
 const PRIVACY_NOTICE = {
-  id: "self-hosting-2026",
-  updatedOn: "2026-11-18",
+  id: "reports-to-moderators-2026",
+  updatedOn: "2026-11-27",
   url: "https://commy.chat/privacy",
 };
 const PRIVACY_NOTICE_KEY = "commy.privacyNoticeSeen";

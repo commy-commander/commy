@@ -58,6 +58,7 @@ test("the notice links to the privacy page and keeps no tracking", () => {
   const html = readFileSync(join(import.meta.dirname, "..", "index.html"), "utf8");
   const modal = html.slice(html.indexOf('id="modal-privacy-notice"'), html.indexOf('id="modal-stream-deck"'));
   assert.ok(modal.includes("Read the Privacy Policy") && modal.includes('id="privacy-notice-done"'));
-  assert.equal((modal.match(/<li[\s>]/g) || []).length, 6);
+  assert.equal((modal.match(/<li[\s>]/g) || []).length, 2);
+  assert.ok(modal.includes("moderators") && modal.includes("encrypted"));
   assert.ok(html.includes('<script src="scripts/privacy-notice.js"></script>'));
 });
