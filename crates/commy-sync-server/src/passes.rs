@@ -17,7 +17,8 @@ pub const PASS_SCHEMA: &[&str] = &[
 ];
 
 const REFRESH_EVERY: Duration = Duration::from_secs(60 * 60);
-const RETRY_EVERY: Duration = Duration::from_secs(60);
+const FIRST_RETRY: Duration = Duration::from_secs(1);
+const LONGEST_RETRY: Duration = Duration::from_secs(60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_KEYS_BYTES: usize = 64 * 1024;
 const MAX_KEYS: usize = 8;
@@ -51,6 +52,10 @@ impl Passes {
 
     pub fn issuer(&self) -> Option<&str> {
         self.settings.as_ref().map(|s| s.issuer.as_str())
+    }
+
+    fn keys_url(&self) -> &str {
+        self.settings.as_ref().map_or("", |s| s.keys_url.as_str())
     }
 
     pub fn required(&self) -> bool {
@@ -97,25 +102,61 @@ impl Passes {
     }
 }
 
+pub struct Backoff {
+    first: Duration,
+    longest: Duration,
+    next: Duration,
+}
+
+impl Backoff {
+    pub fn new(first: Duration, longest: Duration) -> Self {
+        Self { first, longest, next: first }
+    }
+
+    pub fn next_wait(&mut self) -> Duration {
+        let wait = self.next;
+        self.next = (wait * 2).min(self.longest);
+        wait
+    }
+
+    pub fn reset(&mut self) {
+        self.next = self.first;
+    }
+}
+
+pub async fn learn_keys_until_answered(passes: &Passes, backoff: &mut Backoff) -> usize {
+    let mut failures = 0u32;
+    loop {
+        match passes.refresh().await {
+            Ok(count) => {
+                backoff.reset();
+                if failures > 0 {
+                    tracing::info!("sync: {count} stream pass keys from {} after {failures} failed tries", passes.keys_url());
+                }
+                return count;
+            }
+            Err(e) => {
+                failures += 1;
+                let wait = backoff.next_wait();
+                tracing::warn!("sync: fetching stream pass keys from {} failed: {e}; trying again in {}s", passes.keys_url(), wait.as_secs_f32());
+                tokio::time::sleep(wait).await;
+            }
+        }
+    }
+}
+
 pub fn spawn_refresh(service: Arc<Service>) {
     let Some(settings) = service.passes.settings.clone() else { return };
     tokio::spawn(async move {
+        let mut backoff = Backoff::new(FIRST_RETRY, LONGEST_RETRY);
         loop {
-            let wait = match service.passes.refresh().await {
-                Ok(count) => {
-                    tracing::debug!("sync: {count} new stream pass keys from {}", settings.keys_url);
-                    REFRESH_EVERY
-                }
-                Err(e) => {
-                    tracing::warn!("sync: fetching new stream pass keys from {} failed: {e}", settings.keys_url);
-                    RETRY_EVERY
-                }
-            };
+            let count = learn_keys_until_answered(&service.passes, &mut backoff).await;
+            tracing::debug!("sync: {count} new stream pass keys from {}", settings.keys_url);
             let spent_before = epoch_of(crate::now_ms()).saturating_sub(1);
             if let Err(e) = service.store.prune_passes(spent_before).await {
                 tracing::warn!("sync: pruning spent passes failed: {e}");
             }
-            tokio::time::sleep(wait).await;
+            tokio::time::sleep(REFRESH_EVERY).await;
         }
     });
 }
@@ -186,7 +227,48 @@ pub(crate) mod tests {
     }
 
     fn settings() -> Option<PassSettings> {
-        Some(PassSettings { issuer: "https://accounts.example.org".into(), keys_url: "http://127.0.0.1:9/keys".into(), required: false })
+        settings_at("http://127.0.0.1:9/keys")
+    }
+
+    fn settings_at(keys_url: &str) -> Option<PassSettings> {
+        Some(PassSettings { issuer: "https://accounts.example.org".into(), keys_url: keys_url.into(), required: false })
+    }
+
+    async fn serve_keys(listener: tokio::net::TcpListener, body: String) {
+        let router = axum::Router::new().route("/keys", axum::routing::get(move || async move { body }));
+        axum::serve(listener, router).await.unwrap();
+    }
+
+    #[test]
+    fn retries_wait_twice_as_long_each_time_up_to_a_limit_and_start_over_after_an_answer() {
+        let mut backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(5));
+        let waits: Vec<u64> = (0..5).map(|_| backoff.next_wait().as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 5, 5]);
+        backoff.reset();
+        assert_eq!(backoff.next_wait(), Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn keys_are_learned_once_an_auth_server_that_started_late_answers() {
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = free.local_addr().unwrap();
+        drop(free);
+        let passes = Arc::new(Passes::new(settings_at(&format!("http://{address}/keys"))));
+        let learning = tokio::spawn({
+            let passes = passes.clone();
+            async move {
+                let mut backoff = Backoff::new(Duration::from_millis(10), Duration::from_millis(50));
+                learn_keys_until_answered(&passes, &mut backoff).await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!learning.is_finished(), "it keeps trying while nothing answers");
+        assert!(!passes.holds(&pass_for(7), 7 * WEEK_MS));
+        let auth = tokio::net::TcpListener::bind(address).await.unwrap();
+        tokio::spawn(serve_keys(auth, published(&[7])));
+        let learned = tokio::time::timeout(Duration::from_secs(5), learning).await.expect("keys arrive soon after auth answers").unwrap();
+        assert_eq!(learned, 1);
+        assert!(passes.holds(&pass_for(7), 7 * WEEK_MS));
     }
 
     #[test]
