@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { REPORT_MAX_PICKS, reportCandidates, reportPicked, reportDestination, reportSentToast } = require("../scripts/report-picks.js");
+const { REPORT_MAX_PICKS, reportCandidates, reportPicked, reportDestination, reportSentToast, teamTakesReport, canTakeReports } = require("../scripts/report-picks.js");
 
 const repo = join(import.meta.dirname, "..", "..", "..", "..");
 const shared = readFileSync(join(repo, "crates", "commy-sync", "src", "report.rs"), "utf8");
@@ -39,14 +39,32 @@ test("an older clicked message stays on offer when they wrote a lot since", () =
 });
 
 test("the dialog says where the report goes", () => {
-  assert.match(reportDestination({ sync_host: "sync.example.org" }, true), /server owner and to the people who run sync\.example\.org/);
+  assert.match(reportDestination({ sync_host: "sync.example.org" }, true), /server's owner and moderators and to the people who run sync\.example\.org/);
   assert.match(reportDestination({}, false), /^Your report goes privately to the people who run Commy\.chat/);
 });
 
 test("the confirmation names who got it and how to reach them", () => {
-  assert.equal(reportSentToast({ owner: true, host: { operator: "Example Chat", contact: "abuse@example.org" } }), "Report sent to the server owner and Example Chat. Contact them at abuse@example.org.");
+  assert.equal(reportSentToast({ owner: true, host: { operator: "Example Chat", contact: "abuse@example.org" } }), "Report sent to the server's owner and moderators and to Example Chat. Contact them at abuse@example.org.");
   assert.equal(reportSentToast({ owner: false, host: { operator: "Example Chat" } }), "Report sent to Example Chat.");
   assert.match(reportSentToast({ owner: true, host: null, host_problem: "x" }), /could not take it/);
+});
+
+test("the moderators take reports unless they are the reporter or the reported", () => {
+  const server = { owner: "o", report_takers: ["o", "m1", "m2"] };
+  assert.ok(teamTakesReport(server, "me", "them"));
+  assert.ok(teamTakesReport(server, "o", "them"), "the owner's report reaches the moderators");
+  assert.ok(teamTakesReport(server, "me", "o"), "a report about the owner reaches the moderators");
+  assert.ok(!teamTakesReport({ owner: "o", report_takers: ["o", "m1"] }, "m1", "o"), "nobody is left to take it");
+  assert.ok(!teamTakesReport({ owner: "o" }, "o", "them"), "without the list only the owner counts");
+  assert.ok(teamTakesReport({ owner: "o" }, "me", "them"));
+  assert.ok(!teamTakesReport(null, "me", "them"));
+});
+
+test("the Reports page shows for whoever takes reports", () => {
+  assert.ok(canTakeReports({ owner: "o", can_take_reports: true }, "m1"));
+  assert.ok(!canTakeReports({ owner: "o", can_take_reports: false }, "m1"));
+  assert.ok(canTakeReports({ owner: "o" }, "o"), "the owner always does");
+  assert.ok(!canTakeReports({ owner: "o" }, "m1"));
 });
 
 test("the report dialog sends the picked messages and the script loads before the app", () => {

@@ -1211,6 +1211,7 @@ dependencies = [
  "image 0.25.10",
  "libc",
  "mime_guess",
+ "n0-future",
  "open",
  "rand 0.8.8",
  "reqwest 0.12.28",

@@ -141,7 +141,7 @@ upload a new certificate before yours expires.
 ### Reports
 
 People can report messages or members of a community on your server. Each
-report reaches the community's owner and you. Read them on the admin page, or
+report reaches the community's owner and moderators and you. Read them on the admin page, or
 from the server:
 
 ```sh
@@ -760,7 +760,7 @@ server or channel a log belongs to.
   store, and `SYNC_OPERATOR_NAME` to the name apps show for you (by default
   `COMMY_INSTANCE_NAME`). `GET /sync/about` publishes both. When someone reports
   a person or messages in a community on your service, their app sends the
-  report to the community's owner and to you. Your copy carries the community's
+  report to the community's owner and moderators and to you. Your copy carries the community's
   id and name, the owner, reporter and reported person, the reason and note,
   up to 10 messages the reporter picked, as their app showed them (sealed to
   your report key once you set one, see Sealed reports below), and the stream ids of that community's logs. The service cannot check

@@ -16807,7 +16807,7 @@ function reportableIn(server, userId) {
 }
 
 function ownerTakesReport(server, userId) {
-  return Boolean(server && state.user && server.owner !== state.user.id && userId !== server.owner);
+  return Boolean(state.user) && teamTakesReport(server, state.user.id, userId);
 }
 
 let reportChoices = [];
@@ -26743,8 +26743,9 @@ function openServerSettings(tab) {
   }
   renderPetEditor(server);
   const isOwner = Boolean(state.user && server.owner === state.user.id);
-  $("tab-reports").classList.toggle("hidden", !isOwner);
-  if (isOwner) renderReportSettings(server);
+  const takesReports = canTakeReports(server, state.user && state.user.id);
+  $("tab-reports").classList.toggle("hidden", !takesReports);
+  if (takesReports) renderReportSettings(server);
   $("server-delete-section").classList.toggle("hidden", !isOwner);
   $("tab-audit").classList.toggle("hidden", !server.can_view_audit_log);
   if (server.can_view_audit_log) renderAuditLog(server);

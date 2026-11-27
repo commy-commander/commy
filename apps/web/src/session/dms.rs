@@ -489,19 +489,24 @@ impl Session {
             Some((socket, _, _)) => commy_sync::reporting::send(&socket, outgoing.host).await.map_err(|e| e.to_string()),
             None => Err("this community has no sync server yet".to_string()),
         };
-        let owner_reached = match outgoing.owner {
-            Some((owner, report)) => {
-                let mut sent = DmMessage::new(me.id, owner, report.encode());
-                sent.sign(&node, &identity);
-                let envelope = DmEnvelope::new(sent, self.profile_for(&me, owner));
-                Some(self.deliver_dm(owner, &envelope).await)
+        let team_reached = match outgoing.to_team {
+            Some(report) => {
+                let content = report.encode();
+                let mut reached = false;
+                for taker in &outgoing.team {
+                    let mut sent = DmMessage::new(me.id, *taker, content.clone());
+                    sent.sign(&node, &identity);
+                    let envelope = DmEnvelope::new(sent, self.profile_for(&me, *taker));
+                    reached |= self.deliver_dm(*taker, &envelope).await;
+                }
+                Some(reached)
             }
             None => None,
         };
-        match (owner_reached, host) {
-            (owner, Ok(receipt)) => Ok(json!({ "owner": owner == Some(true), "host": receipt, "host_problem": null })),
+        match (team_reached, host) {
+            (team, Ok(receipt)) => Ok(json!({ "owner": team == Some(true), "host": receipt, "host_problem": null })),
             (Some(true), Err(problem)) => Ok(json!({ "owner": true, "host": null, "host_problem": problem })),
-            (Some(false), Err(_)) => Err("the server owner is offline right now; try again later".into()),
+            (Some(false), Err(_)) => Err(safety::TEAM_OFFLINE.into()),
             (None, Err(problem)) => Err(format!("the report was not sent: {problem}")),
         }
     }
@@ -671,9 +676,9 @@ impl Session {
             "list_reports" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
                 let me = self.me_and_key().ok_or("Your servers are not unlocked yet")?.0.id;
-                let owner = self.read_state(server, |state, _| Ok(state.server.owner))?;
-                if owner != me {
-                    return Err("only the server owner receives reports".into());
+                let takes = self.read_state(server, |state, _| Ok(safety::takes_reports(state, me)))?;
+                if !takes {
+                    return Err(safety::ONLY_THE_TEAM.into());
                 }
                 let id = server.to_string();
                 to_json(&self.dms.borrow().safety.reports.iter().filter(|r| r.server == id).cloned().collect::<Vec<_>>())

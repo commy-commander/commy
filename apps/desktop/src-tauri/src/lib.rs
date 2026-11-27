@@ -3362,14 +3362,18 @@ async fn report_user(
         let socket = socket.ok_or_else(|| "this community has no sync server yet".to_string())?;
         commy_sync::reporting::send(&socket, outgoing.host).await.map_err(|e| e.to_string())
     };
-    let to_owner = async {
-        let Some((owner, report)) = outgoing.owner else { return None };
-        let owner_hex = node_hex_for_user(&app, owner);
-        let offline = "the server owner is offline right now; try again later";
-        Some(send_signed_dm(&app, &me, owner, owner_hex.as_deref(), report.encode(), offline).await)
+    let to_team = async {
+        let report = outgoing.to_team?.encode();
+        let sends = outgoing.team.iter().map(|taker| {
+            let hex = node_hex_for_user(&app, *taker);
+            let (me, report) = (&me, report.clone());
+            let app = &app;
+            async move { send_signed_dm(app, me, *taker, hex.as_deref(), report, view::safety::TEAM_OFFLINE).await }
+        });
+        view::safety::team_reach(n0_future::join_all(sends).await)
     };
-    let (host, owner) = tokio::join!(to_host, to_owner);
-    reach_of_report(owner, host)
+    let (host, team) = tokio::join!(to_host, to_team);
+    reach_of_report(team, host)
 }
 
 fn reach_of_report(owner: Option<CmdResult<()>>, host: Result<commy_sync::report::Receipt, String>) -> CmdResult<ReportSent> {
@@ -3426,9 +3430,9 @@ fn receive_report(app: &App, handle: &tauri::AppHandle, sender: UserId, content:
 fn list_reports(app: tauri::State<'_, App>, server_id: String) -> CmdResult<Vec<safety::Report>> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
-    let owner = app.servers.lock_or_recover().get(&sid).map(|s| s.server.owner).ok_or("unknown server")?;
-    if owner != me.id {
-        return Err("only the server owner receives reports".into());
+    let takes = app.servers.lock_or_recover().get(&sid).map(|s| view::safety::takes_reports(s, me.id)).ok_or("unknown server")?;
+    if !takes {
+        return Err(view::safety::ONLY_THE_TEAM.into());
     }
     Ok(app
         .safety

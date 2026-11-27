@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
-use commy_core::{ChannelId, MessageId, ServerId, ServerState, UserId, UserProfile};
+use commy_core::{ChannelId, MessageId, Permissions, ServerId, ServerState, UserId, UserProfile};
 use commy_core::DmStore;
 
 use crate::keys::KeyHolder;
@@ -124,8 +124,43 @@ pub struct ReportForm {
 }
 
 pub struct OutgoingReport {
-    pub owner: Option<(UserId, Report)>,
+    pub team: Vec<UserId>,
+    pub to_team: Option<Report>,
     pub host: HostReport,
+}
+
+pub const MAX_REPORT_TAKERS: usize = 10;
+
+pub fn takes_reports(state: &ServerState, user: UserId) -> bool {
+    let server = &state.server;
+    if !server.is_current_member(user) || state.is_bot(user) {
+        return false;
+    }
+    let perms = server.permissions_for(user);
+    user == server.owner || perms.allows(Permissions::KICK_MEMBERS) || perms.allows(Permissions::BAN_MEMBERS)
+}
+
+pub fn report_takers(state: &ServerState) -> Vec<UserId> {
+    let server = &state.server;
+    let mut takers: Vec<UserId> = std::iter::once(server.owner).chain(server.members.iter().map(|m| m.user)).filter(|u| takes_reports(state, *u)).collect();
+    let mut seen = HashSet::new();
+    takers.retain(|u| seen.insert(*u));
+    takers.truncate(MAX_REPORT_TAKERS);
+    takers
+}
+
+pub const ONLY_THE_TEAM: &str = "only the server's owner and moderators receive reports";
+pub const TEAM_OFFLINE: &str = "the server's moderators are offline right now; try again later";
+
+pub fn team_reach(results: Vec<Result<(), String>>) -> Option<Result<(), String>> {
+    if results.iter().any(Result::is_ok) {
+        return Some(Ok(()));
+    }
+    results.into_iter().next()
+}
+
+fn team_for(state: &ServerState, reporter: UserId, reported: UserId) -> Vec<UserId> {
+    report_takers(state).into_iter().filter(|u| *u != reporter && *u != reported).collect()
 }
 
 fn picked_ids(form: &ReportForm) -> Result<Vec<MessageId>, String> {
@@ -179,7 +214,8 @@ pub fn report(
     let channel_name = form.channel.and_then(|c| state.server.channels.iter().find(|ch| ch.id == c)).map(|ch| ch.name.clone()).unwrap_or_default();
     let note = truncate(form.note.trim(), MAX_NOTE);
     let shown = opened.iter().find(|m| m.author == form.reported).or(opened.first());
-    let to_owner = (owner != me.id && form.reported != owner).then(|| {
+    let team = team_for(state, me.id, form.reported);
+    let to_team = (!team.is_empty()).then(|| {
         let report = Report {
             id: MessageId::new().to_string(),
             server: state.server.id.to_string(),
@@ -194,7 +230,7 @@ pub fn report(
             excerpt: truncate(shown.map(|m| m.content.as_str()).unwrap_or_default(), MAX_EXCERPT),
             created_at: now.to_rfc3339(),
         };
-        (owner, report)
+        report
     });
     let host = HostReport {
         community: state.server.id.to_string(),
@@ -217,13 +253,13 @@ pub fn report(
         streams: streams.into_iter().take(MAX_REPORTED_STREAMS).collect(),
         sent_at: now.to_rfc3339(),
     };
-    Ok(OutgoingReport { owner: to_owner, host })
+    Ok(OutgoingReport { team, to_team, host })
 }
 
 pub fn received_report(servers: &HashMap<ServerId, ServerState>, me: UserId, sender: UserId, content: &str) -> Option<Report> {
     let report = Report::decode(content, sender)?;
     let server = servers.get(&report.server.parse::<ServerId>().ok()?)?;
-    (server.server.owner == me && server.server.members.iter().any(|m| m.user == sender)).then_some(report)
+    (takes_reports(server, me) && server.server.members.iter().any(|m| m.user == sender)).then_some(report)
 }
 
 pub use crate::truncate;
@@ -702,16 +738,81 @@ mod tests {
         let form = |reported: UserId, reason: &str| ReportForm { reported, channel: None, messages: Vec::new(), reason: reason.into(), note: "  rude  ".into() };
         let send = |me: &UserProfile, form: ReportForm| super::report(&state, &keys, me, form, "other".into(), Vec::new(), Utc::now());
         let made = send(&member, form(other.id, "spam")).unwrap();
-        let (to, made) = made.owner.unwrap();
-        assert_eq!((to, made.note.as_str(), made.reported.as_str()), (owner.id, "rude", other.id.to_string().as_str()));
+        assert_eq!(made.team, vec![owner.id]);
+        let made = made.to_team.unwrap();
+        assert_eq!((made.note.as_str(), made.reported.as_str()), ("rude", other.id.to_string().as_str()));
         assert_eq!(send(&member, form(other.id, "nope")).err().unwrap(), "pick a reason for the report");
         assert_eq!(send(&member, form(member.id, "spam")).err().unwrap(), "you cannot report yourself");
         let missing = ReportForm { channel: Some(ChannelId::new()), messages: vec![MessageId::new()], ..form(other.id, "spam") };
         assert_eq!(send(&member, missing).err().unwrap(), "that message is no longer available");
         let servers = HashMap::from([(sid, state.clone())]);
         assert_eq!(received_report(&servers, owner.id, member.id, &made.encode()), Some(made.clone()));
-        assert_eq!(received_report(&servers, member.id, member.id, &made.encode()), None, "only the owner takes reports");
+        assert_eq!(received_report(&servers, member.id, member.id, &made.encode()), None, "members without moderation rights take no reports");
         assert_eq!(received_report(&servers, owner.id, other.id, &made.encode()), None, "the sender must be the reporter");
+    }
+
+    fn moderator_role(state: &mut ServerState, owner: UserId, name: &str, permission: &str) -> commy_core::RoleId {
+        let form = crate::roles::RoleForm { name: name.into(), permissions: Some(vec![permission.into()]), ..Default::default() };
+        let (role, event) = crate::roles::create_role(state, owner, state.server.permissions_for(owner), form).unwrap();
+        state.apply(event).unwrap();
+        role
+    }
+
+    #[test]
+    fn reports_reach_moderators_too_but_never_the_reporter_or_the_reported() {
+        let owner = UserProfile::new("owner");
+        let (kicker, banner, member, other) = (UserProfile::new("kicker"), UserProfile::new("banner"), UserProfile::new("member"), UserProfile::new("other"));
+        let mut state = ServerState::new(commy_core::Server::new("Hangout", owner.id));
+        let sid = state.server.id;
+        for p in [&kicker, &banner, &member, &other] {
+            state.apply(commy_core::ServerEvent::MemberJoin { server: sid, profile: p.clone() }).unwrap();
+        }
+        let kicks = moderator_role(&mut state, owner.id, "Kickers", "kick_members");
+        let bans = moderator_role(&mut state, owner.id, "Banners", "ban_members");
+        state.apply(commy_core::ServerEvent::RoleAssign { server: sid, user: kicker.id, role: kicks }).unwrap();
+        state.apply(commy_core::ServerEvent::RoleAssign { server: sid, user: banner.id, role: bans }).unwrap();
+        assert_eq!(report_takers(&state), vec![owner.id, kicker.id, banner.id]);
+        let keys = KeyHolder::new(None);
+        let form = |reported: UserId| ReportForm { reported, channel: None, messages: Vec::new(), reason: "spam".into(), note: String::new() };
+        let send = |me: &UserProfile, reported: UserId| super::report(&state, &keys, me, form(reported), "x".into(), Vec::new(), Utc::now()).unwrap();
+        assert_eq!(send(&member, other.id).team, vec![owner.id, kicker.id, banner.id]);
+        assert_eq!(send(&kicker, other.id).team, vec![owner.id, banner.id], "the reporter does not get their own report");
+        assert_eq!(send(&member, kicker.id).team, vec![owner.id, banner.id], "a moderator never judges a report about themselves");
+        assert_eq!(send(&member, owner.id).team, vec![kicker.id, banner.id], "reports about the owner reach the moderators");
+        assert_eq!(send(&owner, other.id).team, vec![kicker.id, banner.id], "the owner can report to the moderators");
+        let made = send(&member, other.id).to_team.unwrap();
+        let servers = HashMap::from([(sid, state.clone())]);
+        for taker in [owner.id, kicker.id, banner.id] {
+            assert_eq!(received_report(&servers, taker, member.id, &made.encode()), Some(made.clone()));
+        }
+        assert_eq!(received_report(&servers, other.id, member.id, &made.encode()), None);
+        state.apply(commy_core::ServerEvent::RoleUnassign { server: sid, user: kicker.id, role: kicks }).unwrap();
+        let servers = HashMap::from([(sid, state.clone())]);
+        assert_eq!(received_report(&servers, kicker.id, member.id, &made.encode()), None, "a former moderator takes no more reports");
+        assert!(!takes_reports(&state, kicker.id));
+    }
+
+    #[test]
+    fn a_report_counts_as_reaching_the_team_when_any_moderator_took_it() {
+        assert_eq!(team_reach(Vec::new()), None);
+        assert_eq!(team_reach(vec![Err("offline".into()), Ok(())]), Some(Ok(())));
+        assert_eq!(team_reach(vec![Err("first".into()), Err("second".into())]), Some(Err("first".into())));
+    }
+
+    #[test]
+    fn a_report_reaches_at_most_a_handful_of_moderators() {
+        let owner = UserProfile::new("owner");
+        let mut state = ServerState::new(commy_core::Server::new("Hangout", owner.id));
+        let sid = state.server.id;
+        let role = moderator_role(&mut state, owner.id, "Mods", "kick_members");
+        for i in 0..MAX_REPORT_TAKERS + 5 {
+            let profile = UserProfile::new(&format!("mod{i}"));
+            state.apply(commy_core::ServerEvent::MemberJoin { server: sid, profile: profile.clone() }).unwrap();
+            state.apply(commy_core::ServerEvent::RoleAssign { server: sid, user: profile.id, role }).unwrap();
+        }
+        let takers = report_takers(&state);
+        assert_eq!(takers.len(), MAX_REPORT_TAKERS);
+        assert_eq!(takers[0], owner.id, "the owner always comes first");
     }
 
     #[test]
@@ -725,7 +826,7 @@ mod tests {
         let stream = commy_sync::StreamSecret::random().keys().id;
         let form = |reported: UserId| ReportForm { reported, channel: None, messages: Vec::new(), reason: "inappropriate".into(), note: String::new() };
         let about_owner = super::report(&state, &keys, &member, form(owner.id), "owner".into(), vec![stream], Utc::now()).unwrap();
-        assert!(about_owner.owner.is_none(), "the owner is not asked to judge themselves");
+        assert!(about_owner.team.is_empty() && about_owner.to_team.is_none(), "the owner is not asked to judge themselves");
         assert_eq!(about_owner.host.reported.id, owner.id.to_string());
         assert_eq!(about_owner.host.owner.id, owner.id.to_string());
         assert_eq!(about_owner.host.community, sid.to_string());
@@ -733,7 +834,7 @@ mod tests {
         assert_eq!(about_owner.host.streams, vec![stream]);
         assert_eq!(about_owner.host.check(), Ok(()));
         let by_owner = super::report(&state, &keys, &owner, form(member.id), "member".into(), Vec::new(), Utc::now()).unwrap();
-        assert!(by_owner.owner.is_none(), "an owner's report goes only to the operator");
+        assert!(by_owner.to_team.is_none(), "with no moderators an owner's report goes only to the operator");
         assert_eq!(by_owner.host.reporter.id, owner.id.to_string());
     }
 
@@ -773,7 +874,7 @@ mod tests {
         assert_eq!((picked[0].text.as_str(), picked[0].author.name.as_str()), ("please stop", "member"));
         assert_eq!(picked[1].text.chars().count(), MAX_MESSAGE_CHARS);
         assert_eq!(picked[1].channel, channel.name);
-        let (_, to_owner) = made.owner.unwrap();
+        let to_owner = made.to_team.unwrap();
         assert_eq!(to_owner.message, Some(insult.id.to_string()), "the owner sees the reported person's own message");
         assert_eq!(to_owner.excerpt.chars().count(), MAX_EXCERPT);
         let too_many = ReportForm { reported: other.id, channel: Some(channel.id), messages: (0..=MAX_PICKED_MESSAGES).map(|_| MessageId::new()).collect(), reason: "spam".into(), note: String::new() };
