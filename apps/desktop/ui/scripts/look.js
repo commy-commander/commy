@@ -2,7 +2,8 @@ const LOOK_FX_KEY = "commy.fx";
 const LOOK_ZOOM_KEY = "commy.zoom";
 const LOOK_STACK_KEY = "commy.tallStack";
 const LOOK_FIT = { slimWidth: 700, roomyWidth: 1180, roomyHeight: 760, phoneWidth: 550, stackHeight: 1800, tallRatio: 2, zoomMax: 8, tabletSide: 600, threePaneWidth: 1024 };
-const LOOK_ROOT_DATA = ["look", "fit", "fx", "stack", "touch", "panes"];
+const LOOK_ROOT_DATA = ["look", "fit", "fx", "stack", "touch", "panes", "fold"];
+const LOOK_FOLD_QUERIES = ["(horizontal-viewport-segments: 2)", "(vertical-viewport-segments: 2)"];
 const LOOK_ZOOM_SETTLE = { everyMs: 50, steadyPolls: 3, maxPolls: 40, hops: 3 };
 
 function tabletScreen(width, height) {
@@ -16,6 +17,14 @@ function tabletFit(width, height) {
 
 function tabletPanes(width) {
   return width >= LOOK_FIT.threePaneWidth ? "3" : "2";
+}
+
+function foldPosture(segments) {
+  if (!segments || segments.length !== 2) return null;
+  const [a, b] = segments;
+  if (a.y === b.y && a.height === b.height && a.x !== b.x) return "book";
+  if (a.x === b.x && a.width === b.width && a.y !== b.y) return "tabletop";
+  return null;
 }
 
 function windowFit(width, height, phoneApp = false, tablet = false) {
@@ -60,7 +69,7 @@ function resolveFx(stored, { fit, phoneApp }) {
   return fit === "slim" || phoneApp ? "lite" : "glass";
 }
 
-function lookAttributes({ storedFx, storedStack = null, width, height, phoneApp, tablet = false, zoom = 1 }) {
+function lookAttributes({ storedFx, storedStack = null, width, height, phoneApp, tablet = false, zoom = 1, segments = null }) {
   const real = { width: width * zoom, height: height * zoom };
   const fit = windowFit(real.width, real.height, phoneApp, tablet);
   const stack = !phoneApp && stackChosen(storedStack) && windowStack(real.width, real.height);
@@ -70,7 +79,11 @@ function lookAttributes({ storedFx, storedStack = null, width, height, phoneApp,
     fx: resolveFx(storedFx, { fit, phoneApp }) === "lite" ? "lite" : null,
     stack: stack ? "on" : null,
   };
-  if (phoneApp && tablet && fit !== "slim") Object.assign(attrs, { touch: "tablet", panes: tabletPanes(real.width) });
+  if (phoneApp && tablet && fit !== "slim") {
+    const fold = foldPosture(segments);
+    Object.assign(attrs, { touch: "tablet", panes: fold === "book" ? "2" : tabletPanes(real.width) });
+    if (fold) attrs.fold = fold;
+  }
   return attrs;
 }
 
@@ -171,6 +184,7 @@ function applyLook() {
     phoneApp: root.classList.contains("mobile-app"),
     tablet: Boolean(window.screen) && tabletScreen(window.screen.width, window.screen.height),
     zoom: lookWindow.zoom,
+    segments: window.viewport && window.viewport.segments,
   });
   for (const name of LOOK_ROOT_DATA) setRootData(root, name, attrs[name]);
   const media = attrs.look ? "all" : "not all";
@@ -214,6 +228,7 @@ if (typeof document !== "undefined") {
   else lookWindow.zoom = 1;
   applyLook();
   window.addEventListener("resize", applyLook);
+  if (typeof window.matchMedia === "function") for (const query of LOOK_FOLD_QUERIES) window.matchMedia(query).addEventListener("change", applyLook);
   let lookPhoneApp = document.documentElement.classList.contains("mobile-app");
   new MutationObserver(() => {
     const phoneApp = document.documentElement.classList.contains("mobile-app");
@@ -224,5 +239,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_STACK_KEY, LOOK_FIT, tabletScreen, tabletFit, tabletPanes, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes };
+  module.exports = { LOOK_FX_KEY, LOOK_ZOOM_KEY, LOOK_STACK_KEY, LOOK_FIT, foldPosture, tabletScreen, tabletFit, tabletPanes, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes };
 }

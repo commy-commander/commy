@@ -6813,7 +6813,7 @@ function openVoiceRoom() {
   if (voiceRoom.open) return true;
   voiceRoom.open = true;
   voiceRoom.folded = true;
-  voiceRoom.chat = document.documentElement.dataset.panes !== "2";
+  voiceRoom.chat = document.documentElement.dataset.panes !== "2" || Boolean(document.documentElement.dataset.fold);
   document.querySelector(".main").classList.remove("stage-focus");
   $("vr-grid").prepend($("video-pane"), $("cam-grid"));
   room.appendChild($("activity-panel"));
@@ -7439,10 +7439,10 @@ function voiceRoomDockEdges(panel) {
 
 function fitVoiceRoomDock() {
   const panel = $("voice-panel");
-  panel.classList.remove("vr-dock-quiet", "vr-dock-more");
+  panel.classList.remove("vr-dock-quiet", "vr-dock-more", "vr-dock-four");
   paintVoiceRoomMoreLamp();
   if (!voiceRoom.open || !shownVoiceRoomDock(panel)) return $("vp-more-menu").classList.add("hidden");
-  if (document.documentElement.dataset.panes === "2") return wordTabletVoiceKeys(panel);
+  if (document.documentElement.dataset.panes === "2" || document.documentElement.dataset.fold === "tabletop") return wordTabletVoiceKeys(panel);
   let room = voiceRoomDockRoom(voiceRoomDockEdges(panel));
   if (!room.keys || !room.meter) {
     panel.classList.add("vr-dock-more");
@@ -7454,7 +7454,7 @@ function fitVoiceRoomDock() {
 }
 
 function wordTabletVoiceKeys(panel) {
-  panel.classList.add("vr-dock-more");
+  panel.classList.add("vr-dock-more", "vr-dock-four");
   const words = { "vp-more": t("ui.more"), "deafen-btn": t("ui.deafen"), "mute-btn": t("ui.mic"), "vp-disconnect": t("ui.leave") };
   for (const [id, word] of Object.entries(words)) {
     const key = document.getElementById(id);

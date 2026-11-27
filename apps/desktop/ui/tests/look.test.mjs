@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { LOOK_FIT, LOOK_STACK_KEY, tabletScreen, tabletFit, tabletPanes, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes } = require("../scripts/look.js");
+const { LOOK_FIT, LOOK_STACK_KEY, foldPosture, tabletScreen, tabletFit, tabletPanes, windowFit, windowZoom, windowLayout, windowStack, stackChosen, zoomHop, knownZoom, resolveFx, lookAttributes } = require("../scripts/look.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 test("the new look is the only look: nothing saved and nothing in the address turns it off", () => {
@@ -187,4 +187,27 @@ test("tablet touch sizes load after the desktop sheets and only apply to a table
   for (const selector of css.match(/^[^@\s}][^{]*(?=\{)/gm)) for (const part of selector.split(",")) assert.match(part.trim(), /^html\[data-look="studio"\]\[data-touch="tablet"\]/, part);
   assert.match(css, /\.channel \{ min-height: 44px;/);
   assert.match(css, /\.composer textarea \{ font-size: 16px; \}/);
+});
+
+test("two screens side by side are a book, one above the other is a tabletop, and anything else is no fold", () => {
+  const left = { x: 0, y: 0, width: 540, height: 720 };
+  const right = { x: 568, y: 0, width: 540, height: 720 };
+  const top = { x: 0, y: 0, width: 1100, height: 420 };
+  const bottom = { x: 0, y: 420, width: 1100, height: 420 };
+  assert.equal(foldPosture([left, right]), "book");
+  assert.equal(foldPosture([top, bottom]), "tabletop");
+  assert.equal(foldPosture([{ x: 0, y: 0, width: 1100, height: 840 }]), null);
+  assert.equal(foldPosture([left, bottom]), null);
+  assert.equal(foldPosture(null), null);
+  assert.equal(foldPosture(undefined), null);
+});
+
+test("a folded tablet says how it is folded, and a book always gets two panes, one per screen", () => {
+  const base = { storedFx: null, phoneApp: true, tablet: true };
+  const book = [{ x: 0, y: 0, width: 540, height: 720 }, { x: 568, y: 0, width: 540, height: 720 }];
+  const tabletop = [{ x: 0, y: 0, width: 1100, height: 420 }, { x: 0, y: 420, width: 1100, height: 420 }];
+  assert.deepEqual(lookAttributes({ ...base, width: 1108, height: 720, segments: book }), { look: "studio", fit: "compact", fx: "lite", stack: null, touch: "tablet", panes: "2", fold: "book" });
+  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 840, segments: tabletop }), { look: "studio", fit: "compact", fx: "lite", stack: null, touch: "tablet", panes: "3", fold: "tabletop" });
+  assert.deepEqual(lookAttributes({ ...base, width: 1100, height: 840, segments: [{ x: 0, y: 0, width: 1100, height: 840 }] }), { look: "studio", fit: "compact", fx: "lite", stack: null, touch: "tablet", panes: "3" });
+  assert.deepEqual(lookAttributes({ ...base, phoneApp: false, width: 1108, height: 720, segments: book }), { look: "studio", fit: "compact", fx: null, stack: null });
 });

@@ -40,30 +40,30 @@ html[data-look="studio"][data-touch="tablet"] #app.vr-open .vp-voice .split-btn 
 html[data-look="studio"][data-touch="tablet"] #app.vr-open .vp-voice > .icon-btn { width: 44px; height: 44px; }
 html[data-look="studio"][data-touch="tablet"] #app.vr-open .vp-activities { height: 44px; }
 
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .voice-panel {
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .voice-panel.vr-dock-four {
   justify-content: center;
   gap: 0 40px;
   height: 100px;
   padding: 0 0 20px;
   border-radius: 36px;
 }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-conn-meta,
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-meter { display: none; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice { display: contents; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .vp-more { order: 1; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .split-btn:has(#deafen-btn) { order: 2; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .split-btn:has(#mute-btn) { order: 3; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice .split-btn,
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .icon-btn { position: relative; height: 54px; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice .split-btn .icon-btn,
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .icon-btn { width: 54px; height: 54px; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice .split-btn .icon-btn > svg,
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .icon-btn > svg { width: 22px; height: 22px; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-conn .vp-hangup,
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-conn .vp-hangup:hover { position: relative; inset: auto; order: 4; width: 54px; height: 54px; }
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .split-btn::after,
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-voice > .vp-more::before,
-html[data-look="studio"][data-touch="tablet"][data-panes="2"] #app.vr-open .vp-conn .vp-hangup::before {
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-conn-meta,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-meter { display: none; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice { display: contents; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice > .vp-more { order: 1; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice > .split-btn:has(#deafen-btn) { order: 2; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice > .split-btn:has(#mute-btn) { order: 3; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice .split-btn,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice > .icon-btn { position: relative; height: 54px; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice .split-btn .icon-btn,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice > .icon-btn { width: 54px; height: 54px; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice .split-btn .icon-btn > svg,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice > .icon-btn > svg { width: 22px; height: 22px; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-conn .vp-hangup,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-conn .vp-hangup:hover { position: relative; inset: auto; order: 4; width: 54px; height: 54px; }
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice > .split-btn::after,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-voice > .vp-more::before,
+html[data-look="studio"][data-touch="tablet"] #app.vr-open .vr-dock-four .vp-conn .vp-hangup::before {
   content: attr(data-word);
   position: absolute;
   top: calc(100% + 7px);
@@ -139,4 +139,34 @@ html[data-look="studio"][data-touch="tablet"] .vp-more-menu > .vp-more-row { min
   html[data-look="studio"][data-touch="tablet"] .user-actions .icon-btn { flex: none; width: 48px; height: 48px; border-radius: 50%; }
   html[data-look="studio"][data-touch="tablet"] body:has(.settings-layer:not(.hidden)) .user-panel { padding: 12px 0; }
   html[data-look="studio"][data-touch="tablet"] body:has(.settings-layer:not(.hidden)) .user-actions > .set-done { width: 56px; height: 40px; padding: 0; justify-content: center; font-size: 13px; }
+}
+
+html[data-look="studio"][data-touch="tablet"][data-fold="book"] .app { --sidebar-w: calc(env(viewport-segment-right 0 0, 50vw) - var(--st-ml)); }
+html[data-look="studio"][data-touch="tablet"][data-fold="book"] .main { margin-left: calc(env(viewport-segment-left 1 0, 50vw) - env(viewport-segment-right 0 0, 50vw)); }
+html[data-look="studio"][data-touch="tablet"][data-fold="book"] #app.vr-open:not(.vr-nochat) {
+  --vr-dock: 12px;
+  --vr-right: calc(100vw - env(viewport-segment-right 0 0, 50vw) + 12px);
+  grid-template-columns: 0 calc(env(viewport-segment-right 0 0, 50vw) - var(--st-ml) - 12px) minmax(0, 1fr);
+}
+html[data-look="studio"][data-touch="tablet"][data-fold="book"] #app.vr-open:not(.vr-nochat) .main { margin-left: calc(env(viewport-segment-left 1 0, 50vw) - env(viewport-segment-right 0 0, 50vw) + 24px); }
+
+html[data-look="studio"][data-touch="tablet"][data-fold="tabletop"] #app.vr-open {
+  --vr-right: var(--st-mr);
+  grid-template-columns: 0 380px minmax(0, 1fr);
+  grid-template-rows: calc(env(viewport-segment-bottom 0 0, 50vh) - var(--st-mt) - 12px) minmax(0, 1fr);
+  row-gap: calc(env(viewport-segment-top 1 0, 50vh) - env(viewport-segment-bottom 0 0, 50vh) + 24px);
+}
+html[data-look="studio"][data-touch="tablet"][data-fold="tabletop"] #app.vr-open::before,
+html[data-look="studio"][data-touch="tablet"][data-fold="tabletop"] #app.vr-open::after { grid-row: 1; grid-column: 2 / 4; }
+html[data-look="studio"][data-touch="tablet"][data-fold="tabletop"] #app.vr-open .voice-room { grid-row: 1; grid-column: 2 / 4; }
+html[data-look="studio"][data-touch="tablet"][data-fold="tabletop"] #app.vr-open .sidebar { grid-row: 2; grid-column: 2; }
+html[data-look="studio"][data-touch="tablet"][data-fold="tabletop"] #app.vr-open .sidebar > :not(.voice-panel) { display: none; }
+html[data-look="studio"][data-touch="tablet"][data-fold="tabletop"] #app.vr-open .main { grid-row: 2; grid-column: 3; margin-left: var(--st-gap); }
+html[data-look="studio"][data-touch="tablet"][data-fold="tabletop"] #app.vr-open .voice-panel.vr-dock-four {
+  top: calc(env(viewport-segment-top 1 0, 50vh) + 12px);
+  right: auto;
+  bottom: var(--st-mb);
+  left: var(--st-ml);
+  width: 380px;
+  height: auto;
 }
