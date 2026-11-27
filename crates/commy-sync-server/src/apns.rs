@@ -115,7 +115,7 @@ impl Apns {
             .await;
         let res = match sent {
             Ok(res) => res,
-            Err(e) => return Delivery::Failed(format!("APNs unreachable: {e}")),
+            Err(e) => return unreachable(e),
         };
         let status = res.status().as_u16();
         if status == 200 {
@@ -136,6 +136,10 @@ impl Apns {
             (code, reason) => Delivery::Failed(format!("APNs answered {code}: {reason}")),
         }
     }
+}
+
+fn unreachable(e: reqwest::Error) -> Delivery {
+    Delivery::Failed(format!("APNs unreachable: {}", e.without_url()))
 }
 
 pub fn payload(previews: &[String]) -> serde_json::Value {
@@ -207,6 +211,15 @@ mod tests {
         assert_eq!(held["preview"], "dHdv");
         assert_eq!(held["previews"], "b25l,dHdv");
         assert_eq!(held["aps"]["alert"]["body"], ALERT_BODY, "message text never travels in the clear");
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_apns_never_names_the_device_in_the_failure() {
+        let device = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+        let refused = reqwest::Client::new().post(format!("http://127.0.0.1:9/3/device/{device}")).send().await.unwrap_err();
+        let Delivery::Failed(text) = unreachable(refused) else { panic!("an unreachable APNs is a failure") };
+        assert!(text.starts_with("APNs unreachable"), "{text}");
+        assert!(!text.contains(device), "{text}");
     }
 
     #[test]
