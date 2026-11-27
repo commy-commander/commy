@@ -21,10 +21,21 @@ const makeKeyPair = promisify(generateKeyPair);
 
 export const epochOf = (ms) => Math.floor(Math.max(0, ms) / DAY_MS / EPOCH_DAYS);
 
+const MILLI = 1000;
+
+export function storedTokens(bucket) {
+  return bucket.milliTokens == null ? Number(bucket.tokens) : Number(bucket.milliTokens) / MILLI;
+}
+
+export function tokensToStore(tokens) {
+  const milliTokens = Math.max(0, Math.round(tokens * MILLI));
+  return { tokens: Math.floor(milliTokens / MILLI), milliTokens };
+}
+
 export function refill(bucket, now, { burst = PASS_BURST, refillMs = PASS_REFILL_MS } = {}) {
   if (!bucket) return burst;
   const earned = (now - new Date(bucket.updatedAt).getTime()) / refillMs;
-  return Math.min(burst, Math.max(0, Number(bucket.tokens) + Math.max(0, earned)));
+  return Math.min(burst, Math.max(0, storedTokens(bucket) + Math.max(0, earned)));
 }
 
 export function blindedMessage(text) {
@@ -124,7 +135,7 @@ export function createPassBuckets({ now = () => Date.now(), burst = PASS_BURST, 
         const row = await adapter.findOne({ model: BUCKET_MODEL, where: [{ field: "userId", value: userId }] });
         const tokens = refill(row, at, { burst, refillMs });
         const granted = Math.min(wanted, Math.floor(tokens));
-        const update = { tokens: tokens - granted, updatedAt: new Date(at) };
+        const update = { ...tokensToStore(tokens - granted), updatedAt: new Date(at) };
         if (row) await adapter.update({ model: BUCKET_MODEL, where: [{ field: "id", value: row.id }], update });
         else await adapter.create({ model: BUCKET_MODEL, data: { userId, ...update } });
         const waitMs = granted ? 0 : Math.ceil((1 - (tokens - granted)) * refillMs);
@@ -154,6 +165,7 @@ export const commyPasses = ({ abuseContact = null, keys = createPassKeys(), buck
           references: { model: "user", field: "id", onDelete: "cascade" },
         },
         tokens: { type: "number", required: true },
+        milliTokens: { type: "number", required: false },
         updatedAt: { type: "date", required: true },
       },
     },

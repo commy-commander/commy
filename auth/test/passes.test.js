@@ -15,6 +15,7 @@ import {
   PASS_KEY_BYTES,
   PASS_REFILL_MS,
   refill,
+  storedTokens,
 } from "../src/passes.js";
 
 const ORIGIN = "http://localhost:3001";
@@ -117,6 +118,32 @@ test("each account gets a burst of passes, then one more at a slow rate", async 
   now += 1000 * PASS_REFILL_MS;
   assert.equal((await buckets.take(adapter, "alice", 100)).granted, PASS_BURST, "a long rest fills it only to the burst");
   assert.equal(refill(null, now), PASS_BURST);
+});
+
+test("a part-filled bucket is stored as whole numbers and read back to the thousandth", async () => {
+  let now = 5_000_000;
+  const rows = [];
+  const adapter = {
+    async findOne({ where }) {
+      return rows.find((row) => row.userId === where[0].value) ?? null;
+    },
+    async create({ data }) {
+      rows.push({ id: "1", ...data });
+    },
+    async update({ where, update }) {
+      Object.assign(rows.find((row) => row.id === where[0].value), update);
+    },
+  };
+  const buckets = createPassBuckets({ now: () => now });
+  await buckets.take(adapter, "alice", MAX_PASSES_PER_REQUEST);
+  now += Math.round(0.3123 * PASS_REFILL_MS);
+  await buckets.take(adapter, "alice", MAX_PASSES_PER_REQUEST);
+  const [row] = rows;
+  assert.ok(Number.isInteger(row.tokens) && Number.isInteger(row.milliTokens), JSON.stringify(row));
+  assert.equal(row.milliTokens, 10312);
+  assert.equal(row.tokens, 10);
+  assert.ok(Math.abs(storedTokens(row) - 10.312) < 1e-9);
+  assert.equal(storedTokens({ tokens: 7 }), 7, "rows written before milli-tokens still read");
 });
 
 test("the key list is public and holds this week and next week", async () => {
