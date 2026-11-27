@@ -10,7 +10,7 @@ const {
   makeActivity, watchLinkSource, watchAttachmentSource, watchLinkUrl, watchAttachment, watchTitle,
   newActivityRun, ticTacToeWinner, boardFull, gameOver, turnMark, markOf, isParticipant, isPlayer, applyActivityInput, syncInput,
   watchTargetPosition, watchNeedsSeek, activityParticipants, avatarRow, gameStatus, canMoveAt, canEndActivity,
-  YOUTUBE_ORIGIN, YOUTUBE_STATE, youtubeVideoId, watchYouTubeSource, watchYouTubeId, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl,
+  YOUTUBE_ORIGIN, YOUTUBE_STATE, youtubeVideoId, watchYouTubeSource, watchYouTubeId, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl, YOUTUBE_RELAY_PATH, youtubeRelayOrigin, youtubePlayer,
   youtubeCommand, youtubeListening, readYouTubeMessage, youtubePlaying, youtubeExpectedTime, youtubeUserSeeked, youtubeNeedsSeek, youtubeErrorText,
 } = require("../scripts/activities.js");
 
@@ -340,6 +340,23 @@ test("the YouTube player loads from the privacy-enhanced site and only hears fro
   assert.equal(youtubeWatchUrl("dQw4w9WgXcQ"), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   assert.deepEqual(JSON.parse(youtubeCommand("seekTo", [12, true])), { event: "command", func: "seekTo", args: [12, true], id: 1, channel: "widget" });
   assert.deepEqual(JSON.parse(youtubeListening()), { event: "listening", id: 1, channel: "widget" });
+});
+
+test("an app page that is not on https loads YouTube through the Commy site, so YouTube sees a real web page", () => {
+  const web = youtubePlayer("dQw4w9WgXcQ", "https://commy.chat", "commy.chat");
+  assert.equal(web.origin, YOUTUBE_ORIGIN);
+  assert.equal(new URL(web.url).searchParams.get("origin"), "https://commy.chat");
+  for (const origin of ["tauri://localhost", "http://tauri.localhost", "null", ""]) {
+    const app = youtubePlayer("dQw4w9WgXcQ", origin, "dev.commy.chat");
+    assert.equal(app.origin, "https://dev.commy.chat");
+    const url = new URL(app.url);
+    assert.equal(url.pathname, YOUTUBE_RELAY_PATH);
+    assert.equal(url.searchParams.get("v"), "dQw4w9WgXcQ");
+  }
+  assert.equal(youtubeRelayOrigin("Staging.Commy.Chat"), "https://staging.commy.chat");
+  assert.equal(youtubeRelayOrigin("chat.example.org"), "https://commy.chat");
+  assert.equal(youtubeRelayOrigin(""), "https://commy.chat");
+  assert.equal(youtubePlayer("dQw4w9WgXcQ", "tauri://localhost", "evil.commy.chat.example").origin, "https://commy.chat");
 });
 
 test("player messages turn into ready, errors, states, times, titles and volume", () => {

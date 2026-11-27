@@ -3,6 +3,7 @@ const QUEUE_TITLE_MAX = 120;
 const QUEUE_LINEUP_MAX = QUEUE_MAX;
 const DUCK_SHARE = 0.3;
 const DUCK_RELEASE_MS = 700;
+const DUCK_SETTLE_MS = 1500;
 const FULL_VOLUME = 100;
 
 function freshQueue() {
@@ -147,6 +148,23 @@ function duckedVolume(volume, speaking, me, enabled) {
   return enabled && someoneElseSpeaking(speaking, me) ? Math.round(base * DUCK_SHARE) : base;
 }
 
+function heardVolumeIsTheirs(duck, now) {
+  return Boolean(duck) && !duck.ducked && !(now - (duck.setAt ?? -Infinity) < DUCK_SETTLE_MS);
+}
+
+function youtubeEndCounts(yt, state) {
+  return state === YOUTUBE_STATE.ENDED && Boolean(yt && yt.played);
+}
+
+function holdsAtEnd(endedAt, playback) {
+  if (endedAt === null || endedAt === undefined) return false;
+  return !(playback && Number.isFinite(playback.at) && playback.at > endedAt);
+}
+
+function firstEndOf(endedRun, run) {
+  return Boolean(run) && endedRun !== run.id;
+}
+
 function queueItemLabel(item) {
   if (item.title) return item.title;
   if (item.source && item.source.youtube) return t("ui.youtube-video");
@@ -164,7 +182,7 @@ function queueItemLabel(item) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    QUEUE_MAX, QUEUE_TITLE_MAX, DUCK_SHARE, DUCK_RELEASE_MS, FULL_VOLUME,
+    QUEUE_MAX, QUEUE_TITLE_MAX, DUCK_SHARE, DUCK_RELEASE_MS, DUCK_SETTLE_MS, FULL_VOLUME, heardVolumeIsTheirs, youtubeEndCounts, firstEndOf, holdsAtEnd,
     freshQueue, cleanQueueTitle, queueSourceFrom, sourceIsValid, sameSource,
     queueAddChange, queueRemoveChange, queueSkipChange, queueFinishedChange, queueLineupChange, queueItemFromWire,
     mayRemoveQueued, maySkipQueued, queueChangeKind, applyQueueChange, nextQueuedActivity, continuesQueue, queueAfterHead,

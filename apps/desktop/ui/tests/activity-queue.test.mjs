@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const activities = require("../scripts/activities.js");
 Object.assign(globalThis, activities);
 const {
-  QUEUE_MAX, QUEUE_TITLE_MAX, DUCK_SHARE, FULL_VOLUME,
+  QUEUE_MAX, QUEUE_TITLE_MAX, DUCK_SHARE, DUCK_SETTLE_MS, FULL_VOLUME, heardVolumeIsTheirs, youtubeEndCounts, firstEndOf, holdsAtEnd,
   freshQueue, cleanQueueTitle, queueSourceFrom, sourceIsValid, sameSource,
   queueAddChange, queueRemoveChange, queueSkipChange, queueFinishedChange, queueLineupChange, queueItemFromWire,
   mayRemoveQueued, maySkipQueued, applyQueueChange, nextQueuedActivity, continuesQueue, queueAfterHead,
@@ -149,4 +149,34 @@ test("queue rows name the video by title, YouTube or file name", () => {
   assert.equal(queueItemLabel({ source: watchYouTubeSource(SONG), title: "Song" }), "Song");
   assert.equal(queueItemLabel({ source: watchYouTubeSource(SONG), title: "" }), "YouTube video");
   assert.equal(queueItemLabel({ source: { link: { url: "https://example.org/clips/my%20clip.mp4?x=1" } }, title: "" }), "my clip.mp4");
+});
+
+test("a volume the app just set, or one heard while turned down, never becomes the volume to come back to", () => {
+  const now = 10000;
+  assert.equal(heardVolumeIsTheirs({ ducked: true, setAt: -Infinity }, now), false);
+  assert.equal(heardVolumeIsTheirs({ ducked: false, setAt: now - 200 }, now), false);
+  assert.equal(heardVolumeIsTheirs({ ducked: false, setAt: now - DUCK_SETTLE_MS }, now), true);
+  assert.equal(heardVolumeIsTheirs({ ducked: false, setAt: -Infinity }, now), true);
+  assert.equal(heardVolumeIsTheirs({ ducked: false }, now), true);
+  assert.equal(heardVolumeIsTheirs(null, now), false);
+});
+
+test("only the video that played here can end the run, and each run ends once", () => {
+  const ended = YOUTUBE_STATE.ENDED;
+  assert.equal(youtubeEndCounts({ played: false }, ended), false, "a late end from the video before a switch");
+  assert.equal(youtubeEndCounts({ played: true }, ended), true);
+  assert.equal(youtubeEndCounts({ played: true }, YOUTUBE_STATE.PAUSED), false);
+  assert.equal(youtubeEndCounts(null, ended), false);
+  assert.equal(firstEndOf(null, { id: "a" }), true);
+  assert.equal(firstEndOf("a", { id: "a" }), false);
+  assert.equal(firstEndOf("a", { id: "b" }), true);
+  assert.equal(firstEndOf(null, null), false);
+});
+
+test("a player that reached the end stays there until someone plays or seeks after it ended", () => {
+  assert.equal(holdsAtEnd(null, { playing: true, position: 60, at: 1000 }), false);
+  assert.equal(holdsAtEnd(5000, { playing: true, position: 0, at: 1000 }), true, "the run still says playing from before the end");
+  assert.equal(holdsAtEnd(5000, { playing: false, position: 56, at: 6000 }), false, "the starter's pause at the end comes after it");
+  assert.equal(holdsAtEnd(5000, { playing: true, position: 0, at: 9000 }), false, "someone plays it again");
+  assert.equal(holdsAtEnd(5000, { playing: true, position: 0, at: null }), true);
 });

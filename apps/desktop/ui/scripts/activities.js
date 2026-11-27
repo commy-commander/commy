@@ -15,6 +15,9 @@ const MAX_CHANNEL_VIDEOS = 6;
 const VIDEO_LINK_EXTENSIONS = ["mp4", "webm", "ogg"];
 const MAX_WATCH_URL_CHARS = 2048;
 const YOUTUBE_ORIGIN = "https://www.youtube-nocookie.com";
+const YOUTUBE_RELAY_PATH = "/embed/youtube.html";
+const YOUTUBE_RELAY_HOMES = ["commy.chat", "staging.commy.chat", "dev.commy.chat"];
+const YOUTUBE_RELAY_DEFAULT = "https://commy.chat";
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_HOSTS = ["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtube-nocookie.com", "www.youtube-nocookie.com"];
 const YOUTUBE_PATH_PREFIXES = ["shorts", "live", "embed", "v"];
@@ -165,6 +168,17 @@ function youtubeEmbedUrl(video, origin) {
     params.set("widget_referrer", origin);
   }
   return `${YOUTUBE_ORIGIN}/embed/${encodeURIComponent(video)}?${params}`;
+}
+
+function youtubeRelayOrigin(homeHost) {
+  const host = String(homeHost || "").trim().toLowerCase();
+  return YOUTUBE_RELAY_HOMES.includes(host) ? `https://${host}` : YOUTUBE_RELAY_DEFAULT;
+}
+
+function youtubePlayer(video, origin, homeHost) {
+  if (/^https:\/\//.test(String(origin || ""))) return { url: youtubeEmbedUrl(video, origin), origin: YOUTUBE_ORIGIN };
+  const relay = youtubeRelayOrigin(homeHost);
+  return { url: `${relay}${YOUTUBE_RELAY_PATH}?v=${encodeURIComponent(video)}`, origin: relay };
 }
 
 function youtubeWatchUrl(video) {
@@ -450,6 +464,7 @@ if (typeof module !== "undefined" && module.exports) {
     activityKindKey, activityKindInfo, activityName, activityPillLabel, isVideoLink, isVideoAttachment, channelVideoAttachments,
     makeActivity, watchLinkSource, watchAttachmentSource, watchLinkUrl, watchAttachment, watchTitle,
     YOUTUBE_ORIGIN, YOUTUBE_STATE, youtubeVideoId, watchYouTubeSource, watchYouTubeId, watchSourceKind, youtubeEmbedUrl, youtubeWatchUrl,
+    YOUTUBE_RELAY_PATH, youtubeRelayOrigin, youtubePlayer,
     youtubeCommand, youtubeListening, readYouTubeMessage, youtubePlaying, youtubeExpectedTime, youtubeUserSeeked, youtubeNeedsSeek, youtubeErrorText,
     newActivityRun, ticTacToeWinner, boardFull, gameOver, turnMark, markOf, isParticipant, isPlayer, applyActivityInput, syncInput,
     watchTargetPosition, watchNeedsSeek, activityParticipants, avatarRow, gameStatus, canMoveAt, canEndActivity,

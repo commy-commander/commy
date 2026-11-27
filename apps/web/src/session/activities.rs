@@ -24,6 +24,7 @@ impl Session {
                 let seq = args.seq.ok_or("missing input number")?;
                 let input = args.input.ok_or("missing input")?;
                 let payload = self.client.borrow().act(server, |state, me, _, _| activities::input(state, me.user, channel, seq, input, Utc::now()))?;
+                self.publish(server, &payload);
                 self.tell_neighbors(server, &payload).await;
                 Ok(Value::Null)
             }
@@ -31,6 +32,7 @@ impl Session {
                 let seq = args.seq.ok_or("missing input number")?;
                 let change = args.change.ok_or("missing queue change")?;
                 let payload = self.client.borrow().act(server, |state, me, _, _| activities::queue(state, me.user, channel, seq, change, Utc::now()))?;
+                self.publish(server, &payload);
                 self.tell_neighbors(server, &payload).await;
                 Ok(Value::Null)
             }

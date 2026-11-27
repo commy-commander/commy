@@ -226,6 +226,8 @@ pub fn signals(event: &ServerEvent) -> bool {
             | E::StageSet { .. }
             | E::HandRaise { .. }
             | E::ActivitySet { .. }
+            | E::ActivityInput { .. }
+            | E::ActivityQueue { .. }
             | E::DeviceAnnounce { .. }
     )
 }
@@ -384,6 +386,11 @@ mod tests {
         assert_eq!(encode_signal(node, &rename), None, "lasting changes are stored, never signalled");
         let sound = WirePayload::Event(ServerEvent::SoundboardPlay { server, channel, user: owner, name: "x".into() });
         assert!(!signals(streams_event(&sound)), "a sound would play twice when it also arrives from a peer");
+        let input = WirePayload::Event(ServerEvent::ActivityInput { server, channel, seq: 3, input: commy_core::ActivityInput::Join, by: owner });
+        assert_eq!(decode_signal(&encode_signal(node, &input).unwrap(), Lane::State), Some((node, input.clone())), "numbered activity inputs reach the browser app, which hears no peers");
+        let change = commy_core::QueueChange::Skip { run: "run-1".into() };
+        let queue = WirePayload::Event(ServerEvent::ActivityQueue { server, channel, seq: 4, change, by: owner });
+        assert_eq!(decode_signal(&encode_signal(node, &queue).unwrap(), Lane::State), Some((node, queue.clone())));
         assert_eq!(encode_signal(SERVICE_SENDER, &online).and_then(|p| decode_signal(&p, Lane::State)), None);
         assert_eq!(decode_signal(b"junk", Lane::State), None);
     }

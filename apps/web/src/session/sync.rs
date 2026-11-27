@@ -757,6 +757,9 @@ impl Session {
             }
             return;
         }
+        if self.hear_activity(server, &event, action) {
+            return;
+        }
         let returning = match &event {
             ServerEvent::PresenceUpdate { user, presence } => {
                 presence.is_visible_online() && !self.client.borrow().is_shown_online(server, *user)
