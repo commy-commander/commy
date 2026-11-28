@@ -155,6 +155,9 @@ mod tests {
         for event in holder.scope_events(&state, KeyScope::Community) {
             state.apply(event).unwrap();
         }
+        let ready = holder.scope_events(&state, KeyScope::Community);
+        assert!(matches!(ready.as_slice(), [ServerEvent::DayKeysReady { .. }]), "then the app says it reads day keys");
+        state.apply(ready[0].clone()).unwrap();
         assert!(holder.scopes_with_work(&state).is_empty());
         let newest = state.community_keys().newest().unwrap().id;
         let ring = KeyHolder::as_user(member, member_identity).community_ring(&state, None).unwrap();

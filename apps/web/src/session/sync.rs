@@ -270,6 +270,7 @@ impl Session {
             self.tend_away();
             self.record_hosts();
             self.tend_owned();
+            self.tend_days();
             self.tend_claims();
             self.follow_room_relay();
         }
@@ -356,6 +357,17 @@ impl Session {
         spawn_local(async move {
             errands::keep_at(&url, work, &errands::ERASE_WAITS).await;
         });
+    }
+
+    fn tend_days(self: &Rc<Self>) {
+        let joined = self.client.borrow().joined_servers();
+        for server in joined {
+            let holds = self.sync.borrow().as_ref().is_some_and(|live| live.book.holds_state(server));
+            let ready = holds.then(|| self.client.borrow().ready_for_days(server)).flatten();
+            if let Some(payload) = ready {
+                self.publish(server, &payload);
+            }
+        }
     }
 
     fn tend_owned(self: &Rc<Self>) {
@@ -696,10 +708,14 @@ impl Session {
             }
             let Some((server, want)) = live.book.route(stream) else { return };
             live.book.advance(stream, seq);
-            (server, want.lane, live.book.is_live(stream))
+            (server, want.lane, live.book.is_live(stream), want.days)
         };
-        let (server, lane, now_live) = routed;
-        let Some(payload) = streams::decode_entry(plain, lane) else { return };
+        let (server, lane, now_live, days) = routed;
+        let opened = match days {
+            true => self.client.borrow().day_keys(server).and_then(|keys| streams::open_day_entry(&keys.ring, server, lane, plain)),
+            false => Some(plain.to_vec()),
+        };
+        let Some(payload) = opened.and_then(|plain| streams::decode_entry(&plain, lane)) else { return };
         if !self.client.borrow().has(server) {
             let snapshot = matches!(payload, WirePayload::SyncResponse { .. });
             if snapshot && self.client.borrow().vouched(server, &payload, streams::RETENTION_MS).is_err() {
@@ -1103,6 +1119,27 @@ impl Session {
         live.book.writers(server, lane).into_iter().filter_map(|stream| Some((stream, live.pool.client_for(stream)?))).collect()
     }
 
+    fn sealed_for(&self, server: ServerId, lane: Lane, writers: Vec<(StreamId, SyncClient)>, plain: &[u8]) -> Vec<(StreamId, SyncClient, Vec<u8>)> {
+        let days: Vec<bool> = {
+            let guard = self.sync.borrow();
+            let Some(live) = guard.as_ref() else { return Vec::new() };
+            writers.iter().map(|(stream, _)| live.book.route(*stream).is_some_and(|(_, want)| want.days)).collect()
+        };
+        let sealer = days.contains(&true).then(|| self.client.borrow().day_keys(server).and_then(|keys| keys.sealer)).flatten();
+        let now = Utc::now().timestamp_millis();
+        writers
+            .into_iter()
+            .zip(days)
+            .filter_map(|((stream, client), days)| {
+                let body = match days {
+                    true => streams::seal_day_entry(sealer.as_ref()?, server, lane, plain, now)?,
+                    false => plain.to_vec(),
+                };
+                Some((stream, client, body))
+            })
+            .collect()
+    }
+
     fn store_writers(&self, server: ServerId, lane: Lane) -> Vec<(StreamId, SyncClient)> {
         let found = self.writers(server, lane);
         if !found.is_empty() {
@@ -1119,8 +1156,8 @@ impl Session {
         };
         let Some(plain) = streams::encode_entry(payload) else { return Vec::new() };
         let mut stored = Vec::new();
-        for (stream, client) in self.store_writers(server, lane) {
-            if let Ok(Ok(seq)) = n0_future::time::timeout(STORE_WAIT, client.append(stream, plain.clone())).await {
+        for (stream, client, body) in self.sealed_for(server, lane, self.store_writers(server, lane), &plain) {
+            if let Ok(Ok(seq)) = n0_future::time::timeout(STORE_WAIT, client.append(stream, body)).await {
                 stored.push((stream, seq));
             }
         }
@@ -1130,10 +1167,9 @@ impl Session {
     pub(super) fn publish(&self, server: ServerId, payload: &WirePayload) {
         if let Some(lane) = streams::lane_of_payload(payload) {
             let Some(plain) = streams::encode_entry(payload) else { return };
-            for (stream, client) in self.store_writers(server, lane) {
-                let plain = plain.clone();
+            for (stream, client, body) in self.sealed_for(server, lane, self.store_writers(server, lane), &plain) {
                 spawn_local(async move {
-                    let _ = client.append(stream, plain).await;
+                    let _ = client.append(stream, body).await;
                 });
             }
             if streams::event_of(payload).is_some_and(|(event, _)| streams::changes_lanes(event)) {
@@ -1152,7 +1188,8 @@ impl Session {
     pub(super) fn send_to_service(self: &Rc<Self>, server: ServerId, message: &Message) {
         let payload = WirePayload::Event(ServerEvent::MessageCreate { message: message.clone() });
         let Some(plain) = streams::encode_entry(&payload) else { return };
-        let writers = self.store_writers(server, Lane::Channel(message.channel));
+        let lane = Lane::Channel(message.channel);
+        let writers = self.sealed_for(server, lane, self.store_writers(server, lane), &plain);
         if writers.is_empty() {
             return;
         }
@@ -1160,8 +1197,8 @@ impl Session {
         let (this, id) = (self.clone(), message.id);
         spawn_local(async move {
             let mut stored = false;
-            for (stream, client) in writers {
-                stored |= client.append(stream, plain.clone()).await.is_ok();
+            for (stream, client, body) in writers {
+                stored |= client.append(stream, body).await.is_ok();
             }
             if stored {
                 this.settle_delivered(server, &[id]);

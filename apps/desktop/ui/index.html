@@ -2898,6 +2898,7 @@
         <div class="settings-nav-group" data-i18n="ui.general">General</div>
         <button class="settings-tab" data-tab="overview" id="tab-overview" data-i18n="ui.overview">Overview</button>
         <button class="settings-tab" data-tab="channels" id="tab-channels" data-i18n="ui.channels-2">Channels</button>
+        <button class="settings-tab" data-tab="message-privacy" id="tab-message-privacy" data-i18n="ui.message-privacy">Message Privacy</button>
         <div class="settings-nav-group" data-i18n="ui.people-2">People</div>
         <button class="settings-tab" data-tab="members" id="tab-members" data-i18n="ui.members">Members</button>
         <button class="settings-tab" data-tab="joins" id="tab-joins" data-i18n="ui.join-requests">Join Requests</button>
@@ -3416,6 +3417,25 @@
           <h2 class="settings-subhead" id="join-requests-count" data-i18n="ui.waiting">Waiting</h2>
           <div id="join-request-list" class="report-list"></div>
         </section>
+        <section class="settings-page" data-page="message-privacy" data-search="daily keys encryption encrypted history read back lost stolen device">
+          <h1 data-i18n="ui.message-privacy">Message Privacy</h1>
+          <div class="setting-sub expr-intro" data-i18n="ui.message-privacy-intro">Messages in this server are encrypted so only its members can read them. Daily keys go further: the key moves on every day and is replaced at least once a week, so someone who gets hold of a member's device can only open recent messages, not the server's whole history.</div>
+          <label class="settings-card setting-row" id="day-keys-row">
+            <div>
+              <div class="setting-title" data-i18n="ui.daily-keys">Daily keys</div>
+              <div class="setting-sub" id="day-keys-status" role="status"></div>
+              <div class="setting-sub setting-warn hidden" id="day-keys-older-apps" data-i18n="ui.day-keys-older-apps">If you turn it on now, members on older versions of Commy, including on their other devices, won't see new messages until they update.</div>
+            </div>
+            <input type="checkbox" id="day-keys-toggle" class="switch" />
+          </label>
+          <div class="settings-card setting-row" id="day-keys-history-row">
+            <div>
+              <div class="setting-title" data-i18n="ui.new-members-can-read-back">New members can read back</div>
+              <div class="setting-sub" data-i18n="ui.day-keys-history-note">How far back people who join can read. If a member's device is lost or stolen, about this much history plus up to a week could be opened with it, but nothing older.</div>
+            </div>
+            <select id="day-keys-history" class="compact-select" aria-label="New members can read back" data-i18n-aria-label="ui.new-members-can-read-back"></select>
+          </div>
+        </section>
         <section class="settings-page" data-page="bots">
           <h1 data-i18n="ui.bots">Bots</h1>
           <div class="setting-sub expr-intro" data-i18n="ui.bots-are-members-that-run-on-their-own">Bots are members that run on their own, on a computer or server someone keeps online. They join with an invite like anyone else, wear a BOT badge, and can only do what their roles allow.</div>
@@ -3929,6 +3949,7 @@
   <script src="scripts/channel-access.js"></script>
   <script src="scripts/sensitive.js"></script>
   <script src="scripts/audit-log.js"></script>
+  <script src="scripts/message-privacy.js"></script>
   <script src="scripts/invites.js"></script>
   <script src="scripts/directory.js"></script>
   <script src="scripts/automod.js"></script>

@@ -345,6 +345,10 @@ impl Session {
                 let (on, at) = (args.enabled.unwrap_or(false), Utc::now().timestamp_millis());
                 vec![client().act(server, |state, me, _, _| commy_view::join_requests::set_approval(state, me.perms, on, at))?]
             }
+            "set_day_keys" => {
+                let (on, days, at) = (args.on.unwrap_or(false), args.history_days.unwrap_or(commy_core::day_chain::DEFAULT_HISTORY_DAYS), Utc::now().timestamp_millis());
+                vec![client().act(server, |state, me, _, _| commy_view::message_privacy::set_day_keys(state, me.user, on, days, at))?]
+            }
             "set_upload_limit" => {
                 let megabytes = args.megabytes;
                 vec![client().act(server, |state, me, _, _| moderate::upload_limit(state, me.perms, megabytes, me.now))?]
@@ -420,7 +424,7 @@ impl Session {
         }
         self.refresh_gates();
         match cmd {
-            "ban_member" | "set_member_role" | "set_join_approval" | "answer_join_request" | "set_blocked_homes" => self.tend_keys(server, None),
+            "ban_member" | "set_member_role" | "set_join_approval" | "answer_join_request" | "set_blocked_homes" | "set_day_keys" => self.tend_keys(server, None),
             "set_channel_access" => {
                 self.leave_unseen_voice(server).await;
                 self.tend_keys(server, Some(KeyScope::Channel(channel()?)));

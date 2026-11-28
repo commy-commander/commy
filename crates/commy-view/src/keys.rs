@@ -1,4 +1,6 @@
 use commy_core::channel_key::{self, ChannelSecret, DriveField, KeyId, KeyScope, Keyring};
+use commy_core::day_keys::{self, DayKeyring};
+use commy_core::day_chain;
 use commy_core::ids::DriveId;
 use commy_core::search_keys::{GameDbKey, GifKey};
 use commy_core::{Attachment, ChannelId, Identity, Message, MessageId, Permissions, ServerEvent, ServerState, UserId};
@@ -209,8 +211,40 @@ impl KeyHolder {
     pub fn scope_events(&self, state: &ServerState, scope: KeyScope) -> Vec<ServerEvent> {
         let Some((me, identity)) = &self.me else { return Vec::new() };
         let mut ring = Keyring::unlock_scope(state, scope, *me, identity);
-        match task_for(state, scope, *me, &ring) {
-            Some(task) => ring.task_events(state, scope, task, chrono::Utc::now().timestamp_millis()),
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut events = match task_for(state, scope, *me, &ring) {
+            Some(task) => ring.task_events(state, scope, task, now),
+            None => Vec::new(),
+        };
+        if scope == KeyScope::Community && events.is_empty() {
+            events = self.day_events(state, now);
+        }
+        events
+    }
+
+    pub fn day_ring(&self, state: &ServerState) -> DayKeyring {
+        match &self.me {
+            Some((me, identity)) => DayKeyring::unlock(state, *me, identity),
+            None => DayKeyring::default(),
+        }
+    }
+
+    fn day_work(&self, state: &ServerState, now_ms: i64) -> Option<DayWork> {
+        let (me, _) = self.me.as_ref()?;
+        if let Some(ready) = day_chain::ready_event(&state.server, *me) {
+            return Some(DayWork::Say(ready));
+        }
+        if let Some(switch) = day_chain::auto_switch_event(&state.server, *me, now_ms) {
+            return Some(DayWork::Say(switch));
+        }
+        let ring = self.day_ring(state);
+        day_keys::day_key_task(state, *me, &ring, now_ms).map(|task| DayWork::Keys(ring, task))
+    }
+
+    pub fn day_events(&self, state: &ServerState, now_ms: i64) -> Vec<ServerEvent> {
+        match self.day_work(state, now_ms) {
+            Some(DayWork::Say(event)) => vec![event],
+            Some(DayWork::Keys(mut ring, task)) => ring.task_events(state, task, now_ms),
             None => Vec::new(),
         }
     }
@@ -246,7 +280,8 @@ impl KeyHolder {
             .chain(private)
             .filter(|scope| {
                 let ring = Keyring::unlock_scope(state, *scope, *me, identity);
-                task_for(state, *scope, *me, &ring).is_some()
+                let days = *scope == KeyScope::Community && self.day_work(state, chrono::Utc::now().timestamp_millis()).is_some();
+                days || task_for(state, *scope, *me, &ring).is_some()
             })
             .collect()
     }
@@ -259,6 +294,11 @@ impl KeyHolder {
         }
         Some(ring)
     }
+}
+
+enum DayWork {
+    Say(ServerEvent),
+    Keys(DayKeyring, day_keys::DayTask),
 }
 
 fn task_for(state: &ServerState, scope: KeyScope, me: UserId, ring: &Keyring) -> Option<channel_key::KeyTask> {
@@ -294,5 +334,34 @@ mod tests {
         assert_ne!(first, second);
         assert!(holder.community_ring(&state, None).unwrap().holds(second));
         assert!(KeyHolder::default().rotation_events(&state, KeyScope::Community).is_empty());
+    }
+
+    #[test]
+    fn an_updated_app_says_it_is_ready_and_the_owner_switches_on_once_everyone_has() {
+        use commy_core::test_support::{fixture, identity_for, join};
+        let (mut state, _, owner) = fixture();
+        let member = join(&mut state, "member");
+        let owners = KeyHolder::as_user(owner, identity_for(owner));
+        let members = KeyHolder::as_user(member, identity_for(member));
+        let tend = |holder: &KeyHolder, state: &mut ServerState| {
+            let events = holder.scope_events(state, KeyScope::Community);
+            for event in &events {
+                state.apply(event.clone()).unwrap();
+            }
+            events
+        };
+        while !tend(&owners, &mut state).is_empty() {}
+        assert!(!day_chain::is_on(&state.server), "the member hasn't said their app is ready");
+        assert!(day_chain::reads_day_keys(&state.server, owner));
+        assert_eq!(owners.scopes_with_work(&state), Vec::<KeyScope>::new());
+        assert_eq!(members.scopes_with_work(&state), vec![KeyScope::Community]);
+        while !tend(&members, &mut state).is_empty() {}
+        assert!(day_chain::reads_day_keys(&state.server, member));
+        while !tend(&owners, &mut state).is_empty() {}
+        assert!(day_chain::is_on(&state.server));
+        let newest = state.day_chain().newest().unwrap().id;
+        assert!(members.day_ring(&state).holds(newest));
+        assert!(owners.scopes_with_work(&state).is_empty() && members.scopes_with_work(&state).is_empty());
+        assert!(KeyHolder::default().day_ring(&state).newest(&state).is_none());
     }
 }

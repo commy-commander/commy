@@ -199,6 +199,43 @@ pub struct Snapshot {
     pub closed_polls: Vec<MessageId>,
     #[serde(default, with = "crate::wire_layout::later::snapshot_day_chain")]
     pub day_chain: crate::day_keys::DayChain,
+    #[serde(default, with = "crate::wire_layout::later::snapshot_newer_actions")]
+    pub newer_actions: Vec<Vec<u8>>,
+    #[serde(default, with = "crate::wire_layout::later::snapshot_newer_audit")]
+    pub newer_audit: Vec<Vec<u8>>,
+}
+
+pub const FIRST_NEWER_EVENT_TAG: u32 = 109;
+pub const FIRST_NEWER_AUDIT_TAG: u32 = 80;
+
+fn wire_tag<T: Serialize>(value: &T) -> Option<u32> {
+    let bytes = postcard::to_stdvec(value).ok()?;
+    postcard::take_from_bytes::<u32>(&bytes).ok().map(|(tag, _)| tag)
+}
+
+pub fn older_apps_read_event(event: &ServerEvent) -> bool {
+    wire_tag(event).is_some_and(|tag| tag < FIRST_NEWER_EVENT_TAG)
+}
+
+pub fn older_apps_read_audit(kind: &AuditKind) -> bool {
+    wire_tag(kind).is_some_and(|tag| tag < FIRST_NEWER_AUDIT_TAG)
+}
+
+fn split_for_older_apps<T: Serialize>(items: Vec<T>, older_reads: impl Fn(&T) -> bool) -> (Vec<T>, Vec<Vec<u8>>) {
+    let (old, newer): (Vec<T>, Vec<T>) = items.into_iter().partition(|item| older_reads(item));
+    (old, newer.iter().filter_map(|item| crate::wire_layout::encode(item).ok()).collect())
+}
+
+fn read_newer<T: serde::de::DeserializeOwned>(list: Vec<Vec<u8>>) -> impl Iterator<Item = T> {
+    list.into_iter().filter_map(|bytes| crate::wire_layout::decode(&bytes).ok())
+}
+
+impl Snapshot {
+    fn with_split_lists(mut self, actions: Vec<SignedEvent>, audit: Vec<AuditEntry>) -> Self {
+        (self.signed_actions, self.newer_actions) = split_for_older_apps(actions, |signed| older_apps_read_event(&signed.event));
+        (self.audit, self.newer_audit) = split_for_older_apps(audit, |entry| older_apps_read_audit(&entry.kind));
+        self
+    }
 }
 
 impl ServerState {
@@ -265,7 +302,7 @@ impl ServerState {
                 .collect(),
             action_times: self.action_times.iter().map(|(s, t)| (s.clone(), *t)).collect(),
             action_floor: self.action_floor,
-            signed_actions: self.signed_actions.values().cloned().collect(),
+            signed_actions: Vec::new(),
             reaction_marks: self
                 .reaction_marks
                 .iter()
@@ -277,14 +314,17 @@ impl ServerState {
             automod: self.automod.clone(),
             bots: self.bots.iter().copied().collect(),
             bot_commands: self.bot_commands.iter().map(|(bot, list)| (*bot, list.clone())).collect(),
-            audit: self.audit.clone(),
+            audit: Vec::new(),
             deleted: self.deleted,
             invites: self.invites.values().cloned().collect(),
             invite_background: self.invite_background.clone(),
             ballots: self.ballots().map(|(id, user, choices)| (id, user, choices.to_vec())).collect(),
             closed_polls: self.closed_polls.iter().filter(|id| self.index.contains_key(id)).copied().collect(),
             day_chain: self.day_chain.clone(),
+            newer_actions: Vec::new(),
+            newer_audit: Vec::new(),
         }
+        .with_split_lists(self.signed_actions.values().cloned().collect(), self.audit.clone())
     }
 
     pub fn from_snapshot(snapshot: Snapshot) -> Self {
@@ -338,7 +378,9 @@ impl ServerState {
             .into_iter()
             .filter(|(bot, list)| state.bots.contains(bot) && !list.is_empty() && crate::command::valid_commands(list))
             .collect();
-        state.audit = crate::audit::tidy(snapshot.audit);
+        let mut audit = snapshot.audit;
+        audit.extend(read_newer(snapshot.newer_audit));
+        state.audit = crate::audit::tidy(audit);
         state.deleted = snapshot.deleted;
         state.invites = snapshot.invites.into_iter().filter(TrackedInvite::valid).map(|i| (i.id(), i)).collect();
         state.invite_background = snapshot.invite_background;
@@ -348,7 +390,8 @@ impl ServerState {
             }
         }
         state.closed_polls = snapshot.closed_polls.into_iter().filter(|id| state.index.contains_key(id)).collect();
-        for signed in snapshot.signed_actions {
+        let newer: Vec<SignedEvent> = read_newer(snapshot.newer_actions).collect();
+        for signed in snapshot.signed_actions.into_iter().chain(newer) {
             if let Some(subject) = action::subject(&signed.event) {
                 if state.action_times.get(&subject) == Some(&signed.action.at) && state.still_verifies(&signed) {
                     state.signed_actions.insert(subject, signed);

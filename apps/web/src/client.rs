@@ -29,7 +29,7 @@ pub fn gossip_keys(servers: Servers, me: Me) -> commy_net::gossip_seal::GossipKe
         let servers = servers.lock().unwrap();
         let state = servers.get(&server)?;
         let community = holder.community_ring(state, None)?;
-        Some(commy_net::gossip_seal::server_keys(state, &community))
+        Some(commy_net::gossip_seal::server_keys_with_days(state, &community, &holder.day_ring(state)))
     })
 }
 
@@ -545,6 +545,21 @@ impl Client {
         self.servers.lock().unwrap().iter().map(|(sid, state)| (*sid, state.server.sync_host.clone())).collect()
     }
 
+    pub fn ready_for_days(&self, server: ServerId) -> Option<WirePayload> {
+        let (profile, identity) = self.me.lock().unwrap().clone()?;
+        let mut servers = self.servers.lock().unwrap();
+        let state = servers.get_mut(&server).filter(|state| state.server.owner != profile.id && !state.is_deleted())?;
+        let event = commy_core::day_chain::ready_event(&state.server, profile.id)?;
+        let at = state.signing_time(&event, Utc::now().timestamp_millis());
+        let signed = SignedEvent::sign(server, profile.id, at, event, &identity);
+        state.apply_own(&signed).ok()?;
+        Some(WirePayload::Signed(signed))
+    }
+
+    pub fn joined_servers(&self) -> Vec<ServerId> {
+        self.servers.lock().unwrap().keys().copied().collect()
+    }
+
     pub fn owned_servers(&self) -> Vec<ServerId> {
         let Some(me) = self.me_id() else { return Vec::new() };
         self.servers.lock().unwrap().iter().filter(|(_, s)| s.server.owner == me && !s.is_deleted()).map(|(id, _)| *id).collect()
@@ -812,7 +827,7 @@ impl Client {
                 };
                 let community = holder.community_ring(state, given.clone())?;
                 let locked = |channel| Keyring::unlock(state, channel, me, &identity);
-                let mut wants = streams::wanted(state, me, &community, locked, now_ms);
+                let mut wants = streams::wanted_with_days(state, me, &community, &holder.day_ring(state), locked, now_ms);
                 let stranded = !wants.iter().any(|w| w.lane == Lane::State) && state.server.is_current_member(me) && !state.is_deleted();
                 if let Some((key, secret)) = given.filter(|_| stranded) {
                     wants.push(streams::bootstrap(*sid, key, &secret));
@@ -835,7 +850,14 @@ impl Client {
         let Some(state) = servers.get(&server) else { return Vec::new() };
         let Some(community) = holder.community_ring(state, given.get(&server).cloned()) else { return Vec::new() };
         let locked = |channel| Keyring::unlock(state, channel, me, &identity);
-        streams::every_stream(state, &community, locked).into_iter().map(|(_, keys)| keys).collect()
+        streams::every_stream_with_days(state, &community, &holder.day_ring(state), locked).into_iter().map(|(_, keys)| keys).collect()
+    }
+
+    pub fn day_keys(&self, server: ServerId) -> Option<commy_net::gossip_seal::DayKeys> {
+        let servers = self.servers.lock().unwrap();
+        let state = servers.get(&server).filter(|state| commy_core::day_chain::is_on(&state.server))?;
+        let ring = self.keys().day_ring(state);
+        Some(commy_net::gossip_seal::DayKeys { sealer: ring.sealer(state), ring })
     }
 
     pub fn own_inboxes(&self, given: &HashMap<ServerId, (KeyId, ChannelSecret)>, now_ms: i64) -> Vec<(Option<ServerId>, StreamKeys)> {
@@ -1029,7 +1051,14 @@ mod tests {
         assert!(creator.start_group(group).is_err());
         assert!(creator.is_group(group));
         assert_eq!(creator.owned_servers(), vec![group]);
+        for _ in 0..3 {
+            creator.tend_scope(group, KeyScope::Community);
+        }
         assert!(creator.key_work(group).is_empty(), "the new key needs nothing more");
+        let servers = creator.servers.lock().unwrap();
+        assert!(commy_core::day_chain::is_on(&servers[&group].server), "a group of one is ready for day keys straight away");
+        assert!(servers[&group].day_chain().newest().is_some());
+        drop(servers);
         let mut ticket = ServerTicket::new(group, "", [0u8; 32], Vec::new());
         ticket.owner = Some((me.id, mine.public()));
         let mut creator = creator;

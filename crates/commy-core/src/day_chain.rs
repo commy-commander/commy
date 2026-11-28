@@ -364,6 +364,43 @@ mod tests {
             let old: Server = crate::wire_layout::read_as_first_layout(&bytes).unwrap();
             assert_eq!(old.name, state.server.name);
         }
+
+        #[test]
+        fn snapshots_keep_day_key_changes_where_older_apps_skip_them() {
+            use crate::store::{older_apps_read_audit, older_apps_read_event, Snapshot, FIRST_NEWER_AUDIT_TAG, FIRST_NEWER_EVENT_TAG};
+            let (mut state, _, owner) = fixture();
+            let server = state.server.id;
+            by(ServerEvent::ServerRename { server, name: "renamed".into() }, &mut state, owner, 30).unwrap();
+            by(ready_event(&state.server, owner).unwrap(), &mut state, owner, 20).unwrap();
+            by(switch_event(&state.server, true, 7, 100), &mut state, owner, 10).unwrap();
+            let snapshot = state.snapshot();
+            assert!(snapshot.signed_actions.iter().all(|s| older_apps_read_event(&s.event)));
+            assert!(snapshot.signed_actions.iter().any(|s| matches!(s.event, ServerEvent::ServerRename { .. })));
+            assert_eq!(snapshot.newer_actions.len(), 2);
+            assert!(snapshot.audit.iter().all(|e| older_apps_read_audit(&e.kind)) && !snapshot.audit.is_empty());
+            assert_eq!(snapshot.newer_audit.len(), 1);
+
+            let bytes = crate::wire_layout::encode(&snapshot).unwrap();
+            let old: Snapshot = crate::wire_layout::read_as_first_layout(&bytes).unwrap();
+            assert!(old.newer_actions.is_empty() && old.newer_audit.is_empty());
+            assert_eq!(old.signed_actions.len(), snapshot.signed_actions.len());
+
+            let back = ServerState::from_snapshot(crate::wire_layout::decode(&bytes).unwrap());
+            assert_eq!(back.signed_actions().len(), state.signed_actions().len());
+            assert!(back.signed_actions().iter().any(|s| matches!(s.event, ServerEvent::DayKeysSet { .. })));
+            assert!(back.audit_log().iter().any(|e| e.kind == crate::AuditKind::DayKeys));
+            let json = serde_json::to_string(&snapshot).unwrap();
+            let from_disk = ServerState::from_snapshot(serde_json::from_str(&json).unwrap());
+            assert_eq!(from_disk.signed_actions().len(), state.signed_actions().len());
+            assert_eq!(from_disk.audit_log().len(), state.audit_log().len());
+
+            let tag = |event: ServerEvent| postcard::take_from_bytes::<u32>(&postcard::to_stdvec(&event).unwrap()).unwrap().0;
+            assert_eq!(tag(ServerEvent::HomesBlocked { server, homes: vec![], require_home: false }) + 2, FIRST_NEWER_EVENT_TAG);
+            assert_eq!(tag(ServerEvent::DayKeysReady { server, user: owner, level: 1 }), FIRST_NEWER_EVENT_TAG);
+            let kind = |kind: crate::AuditKind| postcard::take_from_bytes::<u32>(&postcard::to_stdvec(&kind).unwrap()).unwrap().0;
+            assert_eq!(kind(crate::AuditKind::BlockedHomes) + 1, FIRST_NEWER_AUDIT_TAG);
+            assert_eq!(kind(crate::AuditKind::DayKeys), FIRST_NEWER_AUDIT_TAG);
+        }
     }
 
     #[test]

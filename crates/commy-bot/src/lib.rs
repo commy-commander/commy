@@ -130,6 +130,7 @@ impl Bot {
         let mut out = self.announcements(server, wall.timestamp_millis());
         out.extend(self.review(server, fresh, wall));
         out.extend(self.tend_community_key(server, wall));
+        out.extend(self.say_day_keys_ready(server, wall));
         Some(out)
     }
 
@@ -157,7 +158,20 @@ impl Bot {
     pub fn gossip_keys(&self, server: ServerId) -> Option<commy_net::gossip_seal::ServerKeys> {
         let state = self.replicas.get(&server)?.state.as_ref()?;
         let ring = Keyring::unlock_community(state, self.profile.id, &self.identity);
-        Some(commy_net::gossip_seal::server_keys(state, &ring))
+        let days = commy_core::day_keys::DayKeyring::unlock(state, self.profile.id, &self.identity);
+        Some(commy_net::gossip_seal::server_keys_with_days(state, &ring, &days))
+    }
+
+    pub fn say_day_keys_ready(&mut self, server: ServerId, wall: DateTime<Utc>) -> Vec<WirePayload> {
+        let me = self.profile.id;
+        let Some(state) = self.replicas.get_mut(&server).and_then(|r| r.state.as_mut()) else { return Vec::new() };
+        let Some(ready) = commy_core::day_chain::ready_event(&state.server, me) else { return Vec::new() };
+        let at = state.signing_time(&ready, wall.timestamp_millis());
+        let signed = SignedEvent::sign(server, me, at, ready, &self.identity);
+        if !action::authorized(&state.server, me, &signed.event) || state.apply_signed(&signed).is_err() {
+            return Vec::new();
+        }
+        vec![WirePayload::Signed(signed)]
     }
 
     pub fn tend_community_key(&mut self, server: ServerId, wall: DateTime<Utc>) -> Vec<WirePayload> {

@@ -48,7 +48,8 @@ fn scopes_of_streams(app: &App, sids: impl IntoIterator<Item = ServerId>) -> Has
         let servers = app.servers.lock_or_recover();
         let Some(state) = servers.get(&sid) else { continue };
         let Some(community) = holder.community_ring(state, given) else { continue };
-        for (_, keys) in streams::every_stream(state, &community, |_| Keyring::default()) {
+        let days = holder.day_ring(state);
+        for (_, keys) in streams::every_stream_with_days(state, &community, &days, |_| Keyring::default()) {
             out.insert(keys.id, (sid, KeyScope::Community));
         }
         for (lane, keys) in streams::every_stream(state, &community, |channel| Keyring::unlock(state, channel, me, &identity)) {
@@ -115,7 +116,7 @@ pub fn plan(app: &App, sid: ServerId) -> Option<Plan> {
     let servers = app.servers.lock_or_recover();
     let state = servers.get(&sid)?;
     let community = holder.community_ring(state, given)?;
-    let every = streams::every_stream(state, &community, |channel| Keyring::unlock(state, channel, me, &identity));
+    let every = streams::every_stream_with_days(state, &community, &holder.day_ring(state), |channel| Keyring::unlock(state, channel, me, &identity));
     Some(Plan { root: identity.to_bytes(), streams: every.into_iter().map(|(_, keys)| keys).collect(), chosen_host: state.server.sync_host.clone() })
 }
 

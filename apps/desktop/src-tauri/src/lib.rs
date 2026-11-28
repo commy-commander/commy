@@ -359,6 +359,18 @@ async fn set_join_approval(app: tauri::State<'_, App>, handle: tauri::AppHandle,
 }
 
 #[tauri::command]
+async fn set_day_keys(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, on: bool, history_days: u32) -> CmdResult<()> {
+    let sid: ServerId = server_id.parse().map_err(err_to_string)?;
+    let me = current_profile(&app)?;
+    let at = chrono::Utc::now().timestamp_millis();
+    let event = managed(&app, sid, me.id, |state, _| view::message_privacy::set_day_keys(state, me.id, on, history_days, at))?;
+    apply_and_broadcast(&app, &handle, sid, event).await?;
+    channel_lock::tend_scope(&app, &handle, sid, commy_core::channel_key::KeyScope::Community).await;
+    let _ = handle.emit("servers-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_tip_jar(app: tauri::State<'_, App>, handle: tauri::AppHandle, server_id: String, url: Option<String>) -> CmdResult<()> {
     let sid: ServerId = server_id.parse().map_err(err_to_string)?;
     let me = current_profile(&app)?;
@@ -2441,7 +2453,7 @@ fn gossip_keys(handle: &tauri::AppHandle) -> commy_net::gossip_seal::GossipKeys 
         let holder = channel_lock::holder_of(&app);
         let servers = app.servers.lock_or_recover();
         match servers.get(&server) {
-            Some(state) => Some(commy_net::gossip_seal::server_keys(state, &holder.community_ring(state, given)?)),
+            Some(state) => Some(commy_net::gossip_seal::server_keys_with_days(state, &holder.community_ring(state, given)?, &holder.day_ring(state))),
             None => given.map(|key| commy_net::gossip_seal::ServerKeys { sealing: None, held: vec![key], days: None, keyed: false }),
         }
     })
@@ -9154,6 +9166,7 @@ pub fn run() {
             cancel_join_request,
             send_join_note,
             set_join_approval,
+            set_day_keys,
             answer_join_request,
             set_join_sound,
             set_server_tag,

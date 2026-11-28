@@ -934,6 +934,7 @@ body.voice-dragging, body.voice-dragging * { cursor: grabbing !important; }
 
 .setting-title { font-weight: 600; }
 .setting-sub { font-size: 13px; color: var(--text-muted); }
+.setting-sub.setting-warn { color: var(--text-normal); border-left: 3px solid var(--yellow); padding-left: 8px; margin-top: 6px; }
 .file-store-status { margin: 6px 0; }
 .file-store-status:empty { display: none; }
 .setting-hint { margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--text-faint); }

@@ -573,6 +573,21 @@ function mockWornTagView() {
   return worn ? { ...worn.tag, server: worn.name } : null;
 }
 
+function mockDayKeys(server) {
+  const keys = server.day_keys || null;
+  const on = Boolean(keys && keys.on);
+  return {
+    on,
+    chosen: Boolean(keys),
+    since: on ? keys.since : null,
+    history_days: keys ? keys.history_days : 30,
+    history_choices: [1, 7, 30, 90],
+    waiting: server.day_keys_waiting === undefined ? 1 : server.day_keys_waiting,
+    can_turn_on: !mock.plainMember,
+    can_turn_off: !mock.plainMember && !server.group,
+  };
+}
+
 function mockJoinSoundClips(server) {
   if (server.join_sounds_off) return {};
   const clips = {};
@@ -819,6 +834,7 @@ async function mockInvoke(cmd, args = {}) {
         join_sounds_allowed: !s.join_sounds_off, join_sounds: mockJoinSoundClips(s), my_join_sound: (s.join_sounds || {})["me"] || null,
         server_tag: mockServerTagView(s),
         tip_jar: s.tip_jar || null, file_store: s.file_store || null, sync_host: s.sync_host || null, can_set_sync_host: !mock.plainMember && !s.group,
+        day_keys: mockDayKeys(s),
         blocked_homes: { homes: s.blocked_homes || [], require_home: !!s.require_home, can_edit: !mock.plainMember }, gif_key: s.gif_key || null, game_db: s.game_db || null, pet: s.pet || null, join_approval: !!s.join_approval, join_requests: mock.plainMember ? [] : s.join_requests || [], can_answer_joins: !mock.plainMember,
         can_manage_expressions: !mock.plainMember, can_upload_sounds: !mock.plainMember, can_use_soundboard: true, uploads_restricted: !!s.uploads_restricted, can_attach_files: !s.uploads_restricted || !mock.plainMember,
         can_send_voice_messages: !s.voice_messages_restricted || !mock.plainMember,
@@ -1619,6 +1635,14 @@ async function mockInvoke(cmd, args = {}) {
       const url = args.url ? cleanTipJar(args.url) : null;
       if (args.url && !url) throw "Use your Ko-fi page, like ko-fi.com/yourname";
       mock.servers[args.serverId].tip_jar = url;
+      return null;
+    }
+    case "set_day_keys": {
+      const srv = mock.servers[args.serverId];
+      if (mock.plainMember) throw "you need permission to manage this server to change message privacy";
+      if (![1, 7, 30, 90].includes(args.historyDays)) throw "choose 1, 7, 30 or 90 days";
+      const since = srv.day_keys && srv.day_keys.on ? srv.day_keys.since : Date.now();
+      srv.day_keys = { on: args.on, since: args.on ? since : 0, history_days: args.historyDays };
       return null;
     }
     case "set_join_approval": {
@@ -3559,6 +3583,34 @@ function noteJoinRequests(server) {
     if (!layer.classList.contains("hidden") && layer.dataset.tab === "joins") renderJoinRequestSettings(server);
   }
   paintJoinBadge();
+}
+
+function renderMessagePrivacy(server) {
+  const view = server.day_keys;
+  const controls = dayKeysControls(view);
+  const toggle = $("day-keys-toggle");
+  toggle.checked = controls.on;
+  toggle.disabled = controls.toggleDisabled;
+  $("day-keys-row").classList.toggle("readonly", controls.toggleDisabled);
+  $("day-keys-status").textContent = dayKeysStatus(view, at => formatShortTime(at));
+  $("day-keys-older-apps").classList.toggle("hidden", !dayKeysWarnsOlderApps(view));
+  const select = $("day-keys-history");
+  select.replaceChildren(...controls.choices.map(days => {
+    const option = el("option", "", dayKeysDaysLabel(days));
+    option.value = String(days);
+    return option;
+  }));
+  select.value = String(controls.days);
+  select.disabled = controls.historyDisabled;
+  $("day-keys-history-row").classList.toggle("readonly", controls.historyDisabled);
+}
+
+async function setDayKeys(on, historyDays) {
+  const server = state.currentServer;
+  if (!server) return;
+  await invoke("set_day_keys", { serverId: server.id, on, historyDays });
+  await refreshCurrentServer();
+  if (state.currentServer) renderMessagePrivacy(state.currentServer);
 }
 
 function renderJoinRequestSettings(server) {
@@ -24415,6 +24467,27 @@ function wireEvents() {
     }
   });
   setupJoinWait();
+  $("day-keys-toggle").addEventListener("change", async e => {
+    const on = e.target.checked;
+    try {
+      await setDayKeys(on, Number($("day-keys-history").value) || 30);
+      toast(on ? t("ui.daily-keys-are-on") : t("ui.daily-keys-are-off"));
+    } catch (err) {
+      e.target.checked = !on;
+      toast(String(err));
+    }
+  });
+  $("day-keys-history").addEventListener("change", async e => {
+    const server = state.currentServer;
+    if (!server || !server.day_keys || !server.day_keys.on) return;
+    try {
+      await setDayKeys(true, Number(e.target.value));
+      toast(t("ui.new-members-can-now-read-back", { value: dayKeysDaysLabel(Number(e.target.value)) }));
+    } catch (err) {
+      renderMessagePrivacy(server);
+      toast(String(err));
+    }
+  });
   $("join-approval-toggle").addEventListener("change", async e => {
     const server = state.currentServer;
     if (!server) return;
@@ -26887,6 +26960,9 @@ function openServerSettings(tab) {
   $("server-afk-timeout").disabled = !server.can_manage_server;
   paintServerImages(server);
   $("tab-channels").classList.toggle("hidden", !server.can_manage_channels);
+  const canPrivacy = canSeeMessagePrivacy(server);
+  $("tab-message-privacy").classList.toggle("hidden", !canPrivacy);
+  if (canPrivacy) renderMessagePrivacy(server);
   $("tab-roles").classList.toggle("hidden", !server.can_manage_roles);
   $("tab-members").classList.toggle("hidden", !canMembers);
   const canJoins = Boolean(server.can_answer_joins || server.can_manage_server);
@@ -26947,6 +27023,7 @@ function openServerSettings(tab) {
     overview: true,
     discovery: true,
     channels: server.can_manage_channels,
+    "message-privacy": canPrivacy,
     roles: server.can_manage_roles,
     emoji: canEmoji,
     stickers: canStickers,

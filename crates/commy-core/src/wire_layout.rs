@@ -187,6 +187,8 @@ later_fields! {
     server_day_keys = 6,
     server_day_keys_ready = 7,
     snapshot_day_chain = 8,
+    snapshot_newer_actions = 9,
+    snapshot_newer_audit = 10,
 }
 
 #[cfg(test)]

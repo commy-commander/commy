@@ -223,6 +223,8 @@ pub fn is_key_event(event: &ServerEvent) -> bool {
             | ServerEvent::CommunityKeyGrant { .. }
             | ServerEvent::ChannelKeyAdd { .. }
             | ServerEvent::ChannelKeyGrant { .. }
+            | ServerEvent::DayEpochAdd { .. }
+            | ServerEvent::DayKeyGrant { .. }
     )
 }
 
@@ -247,6 +249,7 @@ pub fn changes_lanes(event: &ServerEvent) -> bool {
                 | ServerEvent::ChannelDelete { .. }
                 | ServerEvent::ChannelKindSet { .. }
                 | ServerEvent::ChannelAccessSet { .. }
+                | ServerEvent::DayKeysSet { .. }
         )
 }
 

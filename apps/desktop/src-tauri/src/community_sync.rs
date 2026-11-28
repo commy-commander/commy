@@ -293,6 +293,7 @@ struct Live {
     greeted: HashMap<ServerId, Instant>,
     say_again: HashSet<ServerId>,
     looked_back: HashSet<StreamId>,
+    day_keys: HashMap<ServerId, commy_net::gossip_seal::DayKeys>,
     cursors: Cursors,
     task: tauri::async_runtime::JoinHandle<()>,
 }
@@ -300,6 +301,31 @@ struct Live {
 impl Live {
     fn route(&self, stream: StreamId) -> Option<(ServerId, Want)> {
         self.communities.iter().find_map(|(server, c)| c.wants.get(&stream).map(|want| (*server, want.clone())))
+    }
+
+    fn sealed_for(&self, server: ServerId, stream: StreamId, plain: &[u8]) -> Option<Vec<u8>> {
+        let want = self.communities.get(&server)?.wants.get(&stream)?;
+        if !want.days {
+            return Some(plain.to_vec());
+        }
+        let sealer = self.day_keys.get(&server)?.sealer.as_ref()?;
+        streams::seal_day_entry(sealer, server, want.lane, plain, now_ms())
+    }
+
+    fn opened_from(&self, server: ServerId, want: &Want, body: &[u8]) -> Option<Vec<u8>> {
+        if !want.days {
+            return Some(body.to_vec());
+        }
+        streams::open_day_entry(&self.day_keys.get(&server)?.ring, server, want.lane, body)
+    }
+
+    fn sealed_sends(&mut self, server: ServerId, sends: Vec<(StreamId, Option<SyncClient>)>, plain: &[u8]) -> Vec<(StreamId, Option<SyncClient>, Vec<u8>)> {
+        let sealed: Vec<(StreamId, Option<SyncClient>, Vec<u8>)> =
+            sends.into_iter().filter_map(|(stream, client)| Some((stream, client, self.sealed_for(server, stream, plain)?))).collect();
+        for (_, _, body) in &sealed {
+            self.note_echo(digest(body));
+        }
+        sealed
     }
 
     fn take_echo(&mut self, digest: &[u8; 32]) -> bool {
@@ -579,6 +605,7 @@ async fn tend(handle: &AppHandle) {
             greeted: HashMap::new(),
             say_again: HashSet::new(),
             looked_back: HashSet::new(),
+            day_keys: HashMap::new(),
             cursors,
             task,
         });
@@ -634,22 +661,41 @@ fn read_back(handle: &AppHandle) {
                 }
             }
         }
-        pick.and_then(|pick| Some((pick.clone(), live.communities.get(&pick.1)?.url.clone())))
+        pick.and_then(|pick| {
+            let days = pick.2.days.then(|| live.day_keys.get(&pick.1).map(|d| d.ring.clone())).flatten();
+            Some((pick.clone(), live.communities.get(&pick.1)?.url.clone(), days))
+        })
     };
-    let Some(((stream, server, want, until), url)) = next else { return };
+    let Some(((stream, server, want, until), url, days)) = next else { return };
     let (client, events) = SyncClient::spawn(url);
     client.follow(want.keys.clone(), until.saturating_sub(READ_BACK + 1));
-    let task = crate::account_session::spawn(read_until(handle.clone(), server, stream, want.lane, until, events));
+    let opener = Opener { server, lane: want.lane, days: want.days.then_some(days.unwrap_or_default()) };
+    let task = crate::account_session::spawn(read_until(handle.clone(), server, stream, opener, until, events));
     if let Some(live) = LIVE.lock_or_recover().as_mut() {
         live.reading = Some(Reading { stream, _client: client, task });
     }
 }
 
-async fn read_until(handle: AppHandle, server: ServerId, stream: StreamId, lane: Lane, until: u64, mut events: mpsc::UnboundedReceiver<SyncEvent>) {
+struct Opener {
+    server: ServerId,
+    lane: Lane,
+    days: Option<commy_core::day_keys::DayKeyring>,
+}
+
+impl Opener {
+    fn open(&self, body: &[u8]) -> Option<WirePayload> {
+        match &self.days {
+            Some(ring) => streams::decode_entry(&streams::open_day_entry(ring, self.server, self.lane, body)?, self.lane),
+            None => streams::decode_entry(body, self.lane),
+        }
+    }
+}
+
+async fn read_until(handle: AppHandle, server: ServerId, stream: StreamId, opener: Opener, until: u64, mut events: mpsc::UnboundedReceiver<SyncEvent>) {
     let mut older = Vec::new();
     while let Some(event) = events.recv().await {
         match event {
-            SyncEvent::Entry { seq, plain, .. } if seq < until => older.extend(streams::decode_entry(&plain, lane)),
+            SyncEvent::Entry { seq, plain, .. } if seq < until => older.extend(opener.open(&plain)),
             SyncEvent::Entry { .. } | SyncEvent::CaughtUp { .. } => break,
             SyncEvent::Refused { code, .. } => {
                 tracing::debug!("the sync service refused reading older history: {code:?}");
@@ -778,7 +824,21 @@ pub fn adopt_owner(handle: &AppHandle, server: ServerId) {
     app.persist_invites();
 }
 
-fn wanted_now(app: &App, me: UserId) -> HashMap<ServerId, Vec<Want>> {
+fn day_keys_now(app: &App) -> HashMap<ServerId, commy_net::gossip_seal::DayKeys> {
+    let holder = crate::channel_lock::holder_of(app);
+    let servers = app.servers.lock_or_recover();
+    servers
+        .iter()
+        .filter(|(sid, state)| !app.awaits_snapshot(**sid) && commy_core::day_chain::is_on(&state.server))
+        .map(|(sid, state)| {
+            let ring = holder.day_ring(state);
+            (*sid, commy_net::gossip_seal::DayKeys { sealer: ring.sealer(state), ring })
+        })
+        .collect()
+}
+
+fn wanted_now(app: &App, me: UserId, days: &HashMap<ServerId, commy_net::gossip_seal::DayKeys>) -> HashMap<ServerId, Vec<Want>> {
+    let no_days = commy_core::day_keys::DayKeyring::default();
     let Some(identity) = app.identity() else { return HashMap::new() };
     let holder = crate::channel_lock::holder_of(app);
     let sids: Vec<ServerId> = app.servers.lock_or_recover().keys().copied().collect();
@@ -796,7 +856,8 @@ fn wanted_now(app: &App, me: UserId) -> HashMap<ServerId, Vec<Want>> {
             }
             let community = holder.community_ring(state, given.clone())?;
             let locked = |channel| Keyring::unlock(state, channel, me, &identity);
-            let mut wants = streams::wanted(state, me, &community, locked, now);
+            let ring = days.get(&sid).map_or(&no_days, |d| &d.ring);
+            let mut wants = streams::wanted_with_days(state, me, &community, ring, locked, now);
             let stranded = !wants.iter().any(|w| w.lane == Lane::State) && state.server.is_current_member(me) && !state.is_deleted();
             if let Some((key, secret)) = given.filter(|_| stranded) {
                 wants.push(streams::bootstrap(sid, key, &secret));
@@ -893,7 +954,8 @@ fn drop_community(live: &mut Live, sid: ServerId) {
 fn refresh(handle: &AppHandle) {
     let app = handle.state::<App>();
     let Some(me) = LIVE.lock_or_recover().as_ref().map(|l| l.me) else { return };
-    let mut wanted = wanted_now(&app, me);
+    let days = day_keys_now(&app);
+    let mut wanted = wanted_now(&app, me, &days);
     let hosts = chosen_hosts(&app);
     let owners = owners_homes(&app);
     let unproven = unproven_owners(&app);
@@ -904,6 +966,7 @@ fn refresh(handle: &AppHandle) {
     let mut promoted = Vec::new();
     let mut guard = LIVE.lock_or_recover();
     let Some(live) = guard.as_mut() else { return };
+    live.day_keys = days;
     let gone: Vec<ServerId> = live.communities.keys().filter(|sid| !wanted.contains_key(sid)).copied().collect();
     for sid in gone {
         drop_community(live, sid);
@@ -1248,9 +1311,8 @@ fn publish_held(held: Unsent) {
         let mut guard = LIVE.lock_or_recover();
         guard.as_mut().map(|live| {
             let sends = targets(live, server, lane, key_event);
-            if !sends.is_empty() {
-                live.note_echo(digest(&plain));
-            } else if matches!(lane, Lane::Channel(_)) {
+            let sends = live.sealed_sends(server, sends, &plain);
+            if sends.is_empty() && matches!(lane, Lane::Channel(_)) {
                 wake_lane(live, server, lane);
             }
             (sends, live.handle.clone())
@@ -1262,8 +1324,8 @@ fn publish_held(held: Unsent) {
     };
     crate::account_session::spawn(async move {
         let mut retry = false;
-        for (stream, client) in sends {
-            match sync_link::append(client, stream, plain.clone()).await {
+        for (stream, client, body) in sends {
+            match sync_link::append(client, stream, body).await {
                 Ok(_) => {
                     if let Some(message) = message {
                         stored(&handle, server, message);
@@ -1348,14 +1410,11 @@ pub async fn publish_now(server: ServerId, payload: &WirePayload) -> Vec<(Stream
         let mut guard = LIVE.lock_or_recover();
         let Some(live) = guard.as_mut() else { return Vec::new() };
         let sends = targets(live, server, lane, key_event);
-        if !sends.is_empty() {
-            live.note_echo(digest(&plain));
-        }
-        sends
+        live.sealed_sends(server, sends, &plain)
     };
     let mut stored = Vec::new();
-    for (stream, client) in sends {
-        if let Ok(Ok(seq)) = tokio::time::timeout(PUBLISH_WAIT, sync_link::append(client, stream, plain.clone())).await {
+    for (stream, client, body) in sends {
+        if let Ok(Ok(seq)) = tokio::time::timeout(PUBLISH_WAIT, sync_link::append(client, stream, body)).await {
             stored.push((stream, seq));
         }
     }
@@ -1564,7 +1623,7 @@ fn on_entry(handle: &AppHandle, stream: StreamId, seq: u64, plain: &[u8]) {
                 community.heard.insert(stream, Instant::now());
             }
         }
-        let decoded = (!echo).then(|| streams::decode_entry(plain, want.lane)).flatten();
+        let decoded = (!echo).then(|| live.opened_from(server, &want, plain)).flatten().and_then(|plain| streams::decode_entry(&plain, want.lane));
         if let Some((ServerEvent::MessageCreate { message }, _)) = decoded.as_ref().and_then(streams::event_of) {
             if !live_now {
                 live.seen.entry(stream).or_default().insert(message.id);
@@ -1915,14 +1974,17 @@ async fn fill(stream: StreamId, payloads: Vec<WirePayload>) -> bool {
         let client = {
             let mut guard = LIVE.lock_or_recover();
             let Some(live) = guard.as_mut() else { return false };
-            let Some(client) = live.communities.values().find_map(|c| c.wants.contains_key(&stream).then(|| c.pool.client_for(stream)).flatten())
+            let Some((server, client)) =
+                live.communities.iter().find_map(|(server, c)| c.wants.contains_key(&stream).then(|| c.pool.client_for(stream)).flatten().map(|client| (*server, client)))
             else {
                 return false;
             };
-            live.note_echo(digest(&plain));
-            client
+            let Some(body) = live.sealed_for(server, stream, &plain) else { continue };
+            live.note_echo(digest(&body));
+            (client, body)
         };
-        match client.append(stream, plain).await {
+        let (client, body) = client;
+        match client.append(stream, body).await {
             Ok(_) | Err(AppendError::Seal(_)) => {}
             Err(e) => {
                 tracing::debug!("backfilling a server stream stopped: {e}");

@@ -15,3 +15,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 url = "2"
 web-time = "1.1"
+
+[dev-dependencies]
+commy-core = { workspace = true, features = ["test-support"] }

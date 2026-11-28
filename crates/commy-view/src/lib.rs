@@ -33,6 +33,7 @@ pub mod templates;
 pub mod file_store;
 pub mod sync_host;
 pub mod search_keys;
+pub mod message_privacy;
 pub mod tip_jar;
 pub mod voice_invite;
 pub mod voice_links;
@@ -404,6 +405,7 @@ pub struct ServerView {
     pub file_store: Option<String>,
     pub sync_host: Option<String>,
     pub can_set_sync_host: bool,
+    pub day_keys: Option<message_privacy::DayKeysView>,
     pub host_removed: bool,
     pub host_blocked: bool,
     pub blocked_homes: homes::BlockedHomesView,
@@ -798,6 +800,7 @@ impl ServerView {
             can_manage_file_storage: is_member && commy_core::file_store::can_manage_storage(perms),
             sync_host: sync_host::shown_host(state),
             can_set_sync_host: viewer == Some(state.server.owner) && !state.server.group,
+            day_keys: message_privacy::view(state, viewer),
             host_removed: false,
             host_blocked: false,
             blocked_homes: homes::blocked_homes_view(state, viewer),

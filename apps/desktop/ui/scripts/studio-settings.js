@@ -21,6 +21,7 @@ const SETTINGS_PAGE_ICONS = {
   "server-settings": {
     overview: "info",
     channels: "hash",
+    "message-privacy": "key-round",
     members: "users",
     joins: "user-check",
     roles: "tag",

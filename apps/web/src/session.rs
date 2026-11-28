@@ -269,6 +269,8 @@ struct Args {
     tts: Option<bool>,
     onboarding: Option<Value>,
     enabled: Option<bool>,
+    on: Option<bool>,
+    history_days: Option<u32>,
     megabytes: Option<u32>,
     reason: Option<String>,
     report_id: Option<String>,
@@ -568,7 +570,7 @@ impl Session {
             "set_own_role" => self.server_command(cmd, args).await,
             "set_role_access" => self.server_command(cmd, args).await,
             "kick_member" => self.server_command(cmd, args).await,
-            "set_join_approval" | "answer_join_request" => self.server_command(cmd, args).await,
+            "set_join_approval" | "answer_join_request" | "set_day_keys" => self.server_command(cmd, args).await,
             "set_tip_jar" | "set_pet" | "care_for_pet" => self.server_command(cmd, args).await,
             "set_file_store" => {
                 let server: ServerId = parse(args.server_id.as_ref(), "server")?;
