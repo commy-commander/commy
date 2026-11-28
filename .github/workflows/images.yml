@@ -30,8 +30,51 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Pick server checks
+    runs-on: commy-any
+    outputs:
+      auth: ${{ steps.pick.outputs.auth }}
+      sync: ${{ steps.pick.outputs.sync }}
+      agent: ${{ steps.pick.outputs.agent }}
+      stack: ${{ steps.pick.outputs.stack }}
+      sync_host: ${{ steps.pick.outputs.sync_host }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          checks="auth sync agent stack sync_host"
+          if [ -z "$BASE" ]; then
+            for check in $checks; do echo "$check=true" >> "$GITHUB_OUTPUT"; done
+            exit 0
+          fi
+          files="$(git diff --name-only "origin/$BASE...HEAD")"
+          workflow='^\.github/workflows/images\.yml$'
+          sync_crates='^crates/commy-sync(-server)?/'
+          image_inputs="^(auth/|deploy/|\.dockerignore$)|$sync_crates|$workflow"
+          not_in_stack='^apps/web/|^auth/test/|^crates/[^/]+/tests/|^deploy/(sync-host|relay|relay-host|relay-tools|releases|host|forge|forge-runner)/|\.md$'
+          not_in_sync_host='/tests?/|\.md$'
+          touches() { [ -n "$(printf '%s\n' "$files" | grep -E "$1")" ]; }
+          touches_outside() { [ -n "$(printf '%s\n' "$files" | grep -E "$1" | grep -Ev "$2")" ]; }
+          pick() {
+            echo "$1=$2" >> "$GITHUB_OUTPUT"
+            echo "$1: $2"
+          }
+          touches "^auth/|$workflow" && pick auth true || pick auth false
+          touches "$sync_crates|^Cargo\.(toml|lock)$|$workflow" && pick sync true || pick sync false
+          touches "^deploy/(agent/|edge/|setup-vps\.sh$)|$workflow" && pick agent true || pick agent false
+          touches_outside "$image_inputs" "$not_in_stack" && pick stack true || pick stack false
+          touches_outside "$sync_crates|^deploy/(sync-host|relay)/|^\.dockerignore$|$workflow" "$not_in_sync_host" && pick sync_host true || pick sync_host false
+
   auth-tests:
     name: Auth server tests
+    needs: changes
+    if: needs.changes.outputs.auth == 'true'
     runs-on: ubuntu-latest
     services:
       redis:
@@ -63,6 +106,8 @@ jobs:
 
   sync-tests:
     name: Sync service tests
+    needs: changes
+    if: needs.changes.outputs.sync == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -91,6 +136,8 @@ jobs:
 
   agent-tests:
     name: Deploy agent tests
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,6 +153,8 @@ jobs:
 
   stack-e2e:
     name: VPS setup end to end
+    needs: changes
+    if: needs.changes.outputs.stack == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -257,6 +306,8 @@ jobs:
 
   sync-host-e2e:
     name: Sync host setup end to end
+    needs: changes
+    if: needs.changes.outputs.sync_host == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -558,7 +609,7 @@ jobs:
 
   publish:
     name: Publish ${{ matrix.service }}
-    needs: [tagged-from-main, auth-tests, sync-tests, agent-tests, stack-e2e, sync-host-e2e, image, sync-image, relay-image]
+    needs: [changes, tagged-from-main, auth-tests, sync-tests, agent-tests, stack-e2e, sync-host-e2e, image, sync-image, relay-image]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     concurrency:

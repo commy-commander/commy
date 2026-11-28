@@ -27,6 +27,36 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
+  changes:
+    name: Pick UI checks
+    runs-on: commy-any
+    outputs:
+      layout: ${{ steps.pick.outputs.layout }}
+      installer: ${{ steps.pick.outputs.installer }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ -z "$BASE" ]; then
+            echo "layout=true" >> "$GITHUB_OUTPUT"
+            echo "installer=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --name-only "origin/$BASE...HEAD")"
+          workflow='^\.github/workflows/ui\.yml$'
+          touches() { [ -n "$(printf '%s\n' "$files" | grep -E "$1" | grep -Ev "$2")" ]; }
+          pick() {
+            echo "$1=$2" >> "$GITHUB_OUTPUT"
+            echo "$1: $2"
+          }
+          touches "^apps/desktop/ui/|$workflow" '^apps/desktop/ui/(tests|scripts/[^/]*\.test\.)|\.md$' && pick layout true || pick layout false
+          touches "^apps/desktop/src-tauri/installer/|^\.github/actions/release-config/|$workflow" '\.md$' && pick installer true || pick installer false
+
   test:
     name: UI tests
     runs-on: commy-any
@@ -48,7 +78,9 @@ jobs:
 
   layout:
     name: Call bar layout
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.layout == 'true'
+    runs-on: commy-any
     defaults:
       run:
         working-directory: apps/desktop/ui/layout-tests
@@ -66,7 +98,9 @@ jobs:
 
   installer:
     name: Installer data folder page
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.installer == 'true'
+    runs-on: commy-any
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -77,8 +111,11 @@ jobs:
       - name: Compile the page
         working-directory: apps/desktop/src-tauri/installer
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nsis
+          if ! command -v makensis >/dev/null; then
+            [ "$RUNNER_OS" = Linux ] || { echo "makensis is missing on this runner"; exit 1; }
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends nsis
+          fi
           makensis -WX -DOUTPUT="$RUNNER_TEMP/data-folder-check.exe" check-data-folder.nsi
       - name: Patch the installer template the release uses
         working-directory: apps/desktop/src-tauri

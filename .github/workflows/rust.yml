@@ -43,6 +43,7 @@ jobs:
       linux: ${{ steps.pick.outputs.linux }}
       windows: ${{ steps.pick.outputs.windows }}
       macos: ${{ steps.pick.outputs.macos }}
+      camera_fix: ${{ steps.pick.outputs.camera_fix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event_name == 'pull_request'
@@ -61,9 +62,16 @@ jobs:
           }
           if [ -z "$PR" ]; then
             pick true true
+            echo "camera_fix=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           files="$(git diff --name-only "origin/$BASE...HEAD")"
+          camera_fix='^apps/desktop/src-tauri/linux/camera-fix/|^\.github/workflows/rust\.yml$'
+          if [ -n "$(printf '%s\n' "$files" | grep -E "$camera_fix")" ]; then
+            echo "camera_fix=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "camera_fix=false" >> "$GITHUB_OUTPUT"
+          fi
           not_compiled='\.md$|^crates/commy-bot/clients/'
           phone_only='^apps/desktop/src-tauri/(gen/|tauri\.(android|ios)\.conf\.json$|Info\.ios\.plist$|package(-lock)?\.json$)|/phone\.rs$'
           compiled="$(printf '%s\n' "$files" | grep -Ev "$not_compiled|$phone_only" || true)"
@@ -85,7 +93,7 @@ jobs:
   camera-fix:
     name: Linux camera fix plugin
     needs: platforms
-    if: needs.platforms.outputs.linux == 'true'
+    if: needs.platforms.outputs.camera_fix == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
