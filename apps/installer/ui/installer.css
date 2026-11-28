@@ -56,7 +56,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--room);
 
 .meter { display: flex; align-items: center; gap: 12px; }
 .track { flex: 1; height: 3px; border-radius: 999px; background: rgb(var(--lamp) / .09); position: relative; }
-.fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 999px; background: linear-gradient(90deg, rgb(51 85 255 / .2), var(--accent) 50%, var(--accent-lit)); transition: width 200ms linear; }
+.fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 999px; background: linear-gradient(90deg, rgb(51 85 255 / .2), var(--accent) 50%, var(--accent-lit)); transition: width 90ms linear; }
 .fill::after { content: ""; position: absolute; right: -3px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: #dfe5ff; box-shadow: 0 0 10px 3px rgb(110 134 255 / .8); }
 .track.busy { overflow: hidden; }
 .track.busy .fill { width: 40% !important; transition: none; background: linear-gradient(90deg, transparent, var(--accent-lit), transparent); animation: sweep 1.2s cubic-bezier(.45, 0, .55, 1) infinite; }

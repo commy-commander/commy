@@ -135,6 +135,11 @@ function checking() {
   show({ heading: "Checking the download", line: "Making sure it is signed by Commy and nothing changed on the way", buttons: [key("Cancel", { onClick: cancel })], busy: true });
 }
 
+function closing() {
+  star.set({ hue: 0.65, energy: 1.2 });
+  show({ heading: "Closing Commy", line: "Commy is open, so Setup closes it before putting the new version in place", busy: true });
+}
+
 function installing() {
   star.set({ hue: 0.65, energy: 1.4 });
   show({ heading: "Installing", line: INSTALL_STEPS[0], progress: 0 });
@@ -177,6 +182,7 @@ async function openCommy() {
 const ON_PROGRESS = {
   download: downloading,
   check: checking,
+  closing,
   install: installing,
   done: ready,
   cancelled: welcome,
@@ -194,6 +200,7 @@ el("close").addEventListener("click", async () => {
 async function findRelease() {
   try {
     release = await invoke("release_info");
+    choices.startWithComputer = release.starts_with_computer;
     if (title.textContent === "Install Commy") welcome();
   } catch (message) {
     if (title.textContent === "Install Commy") sub.textContent = String(message);

@@ -8445,13 +8445,24 @@ fn autostart_default_due(voice: &VoiceSettings, allowed: bool) -> bool {
 }
 
 #[cfg(desktop)]
+const AUTOSTART_ARG: &str = "--start-with-computer";
+#[cfg(desktop)]
 const NO_AUTOSTART_ARG: &str = "--no-start-with-computer";
 
 #[cfg(desktop)]
+fn autostart_asked_for(args: impl IntoIterator<Item = String>) -> Option<bool> {
+    args.into_iter().fold(None, |asked, arg| match arg.as_str() {
+        AUTOSTART_ARG => Some(true),
+        NO_AUTOSTART_ARG => Some(false),
+        _ => asked,
+    })
+}
+
+#[cfg(desktop)]
 fn start_with_computer_by_default(handle: &tauri::AppHandle) {
-    if std::env::args().any(|arg| arg == NO_AUTOSTART_ARG) {
-        if let Err(e) = set_autostart(handle.clone(), false) {
-            tracing::warn!("could not stop Commy starting with the computer: {e}");
+    if let Some(enabled) = autostart_asked_for(std::env::args().skip(1)) {
+        if let Err(e) = set_autostart(handle.clone(), enabled) {
+            tracing::warn!("could not change whether Commy starts with the computer: {e}");
         }
         return;
     }
@@ -9500,6 +9511,15 @@ mod hygiene_tests {
         assert!(!autostart_default_due(&prompted, true), "the choice made in the tray prompt stays");
         let decided = VoiceSettings { autostart_decided: true, ..VoiceSettings::default() };
         assert!(!autostart_default_due(&decided, true), "a choice made in Settings stays");
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn commy_setup_can_turn_starting_with_the_computer_on_or_off() {
+        let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        assert_eq!(autostart_asked_for(args(&[AUTOSTART_ARG])), Some(true));
+        assert_eq!(autostart_asked_for(args(&["--minimized", NO_AUTOSTART_ARG])), Some(false));
+        assert_eq!(autostart_asked_for(args(&["--minimized"])), None);
     }
 }
 

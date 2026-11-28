@@ -5,6 +5,7 @@ mod setup;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager};
@@ -12,6 +13,7 @@ use tauri::{Emitter, Manager};
 use release::{Problem, Release};
 
 const PROGRESS_EVENT: &str = "install-progress";
+const PROGRESS_EVERY: Duration = Duration::from_millis(80);
 
 #[derive(Default)]
 struct Installer {
@@ -24,6 +26,7 @@ struct Installer {
 struct ReleaseInfo {
     version: String,
     bytes: Option<u64>,
+    starts_with_computer: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -31,6 +34,7 @@ struct ReleaseInfo {
 enum Progress {
     Download { received: u64, total: Option<u64> },
     Check,
+    Closing,
     Install,
     Done,
     Cancelled,
@@ -44,7 +48,7 @@ async fn release_info(state: tauri::State<'_, Installer>) -> Result<ReleaseInfo,
     let bytes = release::size(&client, &release).await;
     let version = release.version.clone();
     *state.release.lock().unwrap_or_else(|e| e.into_inner()) = Some(release);
-    Ok(ReleaseInfo { version, bytes })
+    Ok(ReleaseInfo { version, bytes, starts_with_computer: setup::starts_with_computer_now() })
 }
 
 #[tauri::command]
@@ -73,8 +77,13 @@ async fn install(app: &tauri::AppHandle, known: Option<Release>, cancelled: &Ato
         Some(release) => release,
         None => release::latest(&client).await?,
     };
+    let mut last_sent: Option<Instant> = None;
     let bytes = release::download(&client, &release, cancelled, |received, total| {
-        let _ = app.emit(PROGRESS_EVENT, Progress::Download { received, total });
+        let finished = total.is_some_and(|total| received >= total);
+        if finished || last_sent.is_none_or(|at| at.elapsed() >= PROGRESS_EVERY) {
+            last_sent = Some(Instant::now());
+            let _ = app.emit(PROGRESS_EVENT, Progress::Download { received, total });
+        }
     })
     .await?;
     let _ = app.emit(PROGRESS_EVENT, Progress::Check);
@@ -85,10 +94,16 @@ async fn install(app: &tauri::AppHandle, known: Option<Release>, cancelled: &Ato
     let path = setup::setup_file_path(&release.version);
     setup::save(&path, &bytes)?;
     drop(bytes);
-    let _ = app.emit(PROGRESS_EVENT, Progress::Install);
     let ran = tauri::async_runtime::spawn_blocking({
         let path = path.clone();
-        move || setup::run_quietly(&path, desktop_shortcut)
+        let app = app.clone();
+        move || {
+            setup::close_running_commy(|| {
+                let _ = app.emit(PROGRESS_EVENT, Progress::Closing);
+            })?;
+            let _ = app.emit(PROGRESS_EVENT, Progress::Install);
+            setup::run_quietly(&path, desktop_shortcut)
+        }
     })
     .await
     .map_err(|e| Problem::Setup(e.to_string()))?;

@@ -31,18 +31,21 @@ const HANDOFF_PREFIX: &str = "commy-link-v1 ";
 const HANDOFF_LIMIT: u64 = (MAX_LINK_LEN + HANDOFF_PREFIX.len() + 2) as u64;
 const SHOW_REQUEST: &str = "commy-show-v1";
 const HERE_REQUEST: &str = "commy-here-v1";
+const QUIT_REQUEST: &str = "commy-quit-v1";
 
 #[derive(Debug, PartialEq)]
 enum Handoff {
     Link(String),
     Show,
     Here,
+    Quit,
 }
 
 fn handoff(line: &str) -> Option<Handoff> {
     match line.trim() {
         SHOW_REQUEST => Some(Handoff::Show),
         HERE_REQUEST => Some(Handoff::Here),
+        QUIT_REQUEST => Some(Handoff::Quit),
         other => other.strip_prefix(HANDOFF_PREFIX).filter(|link| app_link(link).is_some()).map(|link| Handoff::Link(link.to_string())),
     }
 }
@@ -495,6 +498,7 @@ pub fn start(handle: &AppHandle, data_dir: &Path, launch_link: Option<String>) {
             match request {
                 Some(Handoff::Link(link)) => deliver(&handle, link),
                 Some(Handoff::Show) => crate::tray::show_main_window(&handle),
+                Some(Handoff::Quit) => handle.exit(0),
                 Some(Handoff::Here) | None => {}
             }
         }
@@ -684,6 +688,11 @@ mod tests {
         assert_eq!(handoff(&format!("{}\n", launch_request(Some(link), true))), Some(Handoff::Link(link.to_string())));
         assert_eq!(handoff("commy-link-v1 https://example.com"), None);
         assert_eq!(handoff("hello"), None);
+    }
+
+    #[test]
+    fn commy_setup_can_ask_the_running_app_to_quit_before_it_updates_it() {
+        assert_eq!(handoff("commy-quit-v1\n"), Some(Handoff::Quit));
     }
 
     #[test]

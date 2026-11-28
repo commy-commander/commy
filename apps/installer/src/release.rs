@@ -40,6 +40,7 @@ pub enum Problem {
     NoRelease,
     Cancelled,
     NotGenuine,
+    StillOpen,
     Disk(String),
     Setup(String),
 }
@@ -51,6 +52,7 @@ impl Problem {
             Problem::NoRelease => "There is no Windows download right now. Try again in a little while.".into(),
             Problem::Cancelled => "Cancelled.".into(),
             Problem::NotGenuine => "The download did not match Commy's signature, so it was not installed. Try again.".into(),
+            Problem::StillOpen => "Commy is still open. Quit it from its icon next to the clock, then try again.".into(),
             Problem::Disk(reason) => format!("Commy could not be saved to this computer: {reason}"),
             Problem::Setup(reason) => format!("Setup stopped before it finished: {reason}"),
         }
@@ -85,7 +87,21 @@ fn release_for_windows(mut manifest: Manifest) -> Result<Release, Problem> {
 
 pub async fn size(client: &reqwest::Client, release: &Release) -> Option<u64> {
     let response = client.head(&release.url).send().await.ok()?;
-    response.content_length().filter(|bytes| *bytes > 0)
+    if !response.status().is_success() {
+        return None;
+    }
+    declared_length(response.headers())
+}
+
+fn declared_length(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|bytes| *bytes > 0)
 }
 
 pub async fn download(
@@ -153,6 +169,16 @@ mod tests {
     fn a_manifest_without_windows_is_no_release() {
         let missing = release_for_windows(manifest(r#"{"version":"1.0.2","platforms":{}}"#));
         assert!(matches!(missing, Err(Problem::NoRelease)));
+    }
+
+    #[test]
+    fn reads_the_size_from_a_head_reply() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert_eq!(declared_length(&headers), None);
+        headers.insert(reqwest::header::CONTENT_LENGTH, "24469451".parse().unwrap());
+        assert_eq!(declared_length(&headers), Some(24_469_451));
+        headers.insert(reqwest::header::CONTENT_LENGTH, "0".parse().unwrap());
+        assert_eq!(declared_length(&headers), None);
     }
 
     #[test]
