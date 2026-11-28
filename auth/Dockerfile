@@ -1,4 +1,4 @@
-FROM rust:1.97-slim-trixie AS web
+FROM rust:1.100-slim-trixie AS web
 ARG COMMY_WEB_RELAYS=https://relay.commy.chat:8443,https://relay-staging.commy.chat:8443
 RUN apt-get update && apt-get install -y --no-install-recommends clang && rm -rf /var/lib/apt/lists/*
 COPY --from=node:24.22.1-trixie-slim@sha256:89c5244bc22a9bc3287d89ebc7e49b9cb5bb84cd40e6175ac3421d5a9f68b95a /usr/local/bin/node /usr/local/bin/node
