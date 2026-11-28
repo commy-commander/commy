@@ -35,6 +35,8 @@ pub enum WirePayload {
         sig: Signature,
         #[serde(default, with = "commy_core::wire_layout::later::sync_response_full_sig")]
         full_sig: Option<Signature>,
+        #[serde(default, with = "commy_core::wire_layout::later::sync_response_layout_sigs")]
+        layout_sigs: Vec<(u16, Signature)>,
     },
     VoiceDial {
         channel: commy_core::ChannelId,
@@ -119,34 +121,55 @@ fn whole_snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
     commy_core::wire_layout::encode(&snapshot_fields(payload)?).ok()
 }
 
+fn known_snapshot_bytes(payload: &WirePayload, last_key: u16) -> Option<Vec<u8>> {
+    commy_core::wire_layout::encode_known_to(&snapshot_fields(payload)?, last_key).ok()
+}
+
 fn full_layout_snapshot_bytes(payload: &WirePayload) -> Option<Vec<u8>> {
     postcard::to_stdvec(&snapshot_fields(payload)?).ok()
 }
+
+pub const FIRST_RELEASE_LAST_KEY: u16 = 5;
 
 pub fn sign_sync_response(payload: &mut WirePayload, at: i64, identity: &Identity) {
     if let WirePayload::SyncResponse { at: slot, .. } = payload {
         *slot = at;
     }
-    let (Some(first), Some(whole)) = (snapshot_bytes(payload), whole_snapshot_bytes(payload)) else { return };
-    if let WirePayload::SyncResponse { sig, full_sig, .. } = payload {
+    let last = commy_core::wire_layout::last_key();
+    let (Some(first), Some(legacy), Some(whole)) =
+        (snapshot_bytes(payload), known_snapshot_bytes(payload, FIRST_RELEASE_LAST_KEY), known_snapshot_bytes(payload, last))
+    else {
+        return;
+    };
+    if let WirePayload::SyncResponse { sig, full_sig, layout_sigs, .. } = payload {
         *sig = identity.sign(&first);
-        *full_sig = (whole != first).then(|| identity.sign(&whole));
+        *full_sig = (legacy != first).then(|| identity.sign(&legacy));
+        *layout_sigs = if whole != legacy { vec![(last, identity.sign(&whole))] } else { Vec::new() };
     }
 }
 
 pub fn verify_sync_response(payload: &WirePayload, key: &IdentityKey) -> bool {
-    let WirePayload::SyncResponse { sig, full_sig, .. } = payload else {
+    let WirePayload::SyncResponse { sig, full_sig, layout_sigs, .. } = payload else {
         return false;
     };
-    let (Some(first), Some(whole)) = (snapshot_bytes(payload), whole_snapshot_bytes(payload)) else {
+    let (Some(first), Some(legacy), Some(whole)) =
+        (snapshot_bytes(payload), known_snapshot_bytes(payload, FIRST_RELEASE_LAST_KEY), whole_snapshot_bytes(payload))
+    else {
         return false;
     };
-    let signed_by_this_build = if whole == first {
-        key.verify(&first, sig)
-    } else {
-        key.verify(&first, sig) && full_sig.is_some_and(|full| key.verify(&whole, &full))
+    let legacy_signed = legacy == first || full_sig.is_some_and(|full| key.verify(&legacy, &full));
+    let last = commy_core::wire_layout::last_key();
+    let newest = layout_sigs.iter().filter(|(layout, _)| *layout <= last).max_by_key(|(layout, _)| *layout);
+    let rest_signed = match newest {
+        Some((layout, signed)) => known_snapshot_bytes(payload, *layout).is_some_and(|bytes| bytes == whole && key.verify(&bytes, signed)),
+        None => whole == legacy,
     };
-    signed_by_this_build || full_layout_snapshot_bytes(payload).is_some_and(|bytes| key.verify(&bytes, sig))
+    let first_signed = key.verify(&first, sig);
+    let signed_by_this_build = first_signed && legacy_signed && rest_signed;
+    let signed_whole_by_earlier_build = first_signed && whole != first && full_sig.is_some_and(|full| key.verify(&whole, &full));
+    signed_by_this_build
+        || signed_whole_by_earlier_build
+        || full_layout_snapshot_bytes(payload).is_some_and(|bytes| key.verify(&bytes, sig))
 }
 
 pub fn signed_size(server: ServerId, event: &ServerEvent) -> usize {
@@ -274,10 +297,11 @@ pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: U
         at: i64::MAX,
         sig: Signature([0xff; 64]),
         full_sig: None,
+        layout_sigs: Vec::new(),
     };
     let first = build(&server, &members, &profiles, &messages);
     let has_later_fields = commy_core::wire_layout::encode(&first).ok() != commy_core::wire_layout::first_layout(&first).ok();
-    let mut size = gossip_size(&first) + if has_later_fields { FULL_SIG_BYTES } else { 0 };
+    let mut size = gossip_size(&first) + if has_later_fields { 2 * FULL_SIG_BYTES } else { 0 };
     let fits = |size: usize| size <= budget;
     let mut authored: std::collections::HashMap<UserId, usize> = std::collections::HashMap::new();
     for m in &messages {
@@ -695,6 +719,7 @@ mod tests {
             at: 0,
             sig: Signature([0; 64]),
             full_sig: None,
+            layout_sigs: Vec::new(),
         });
         assert!(all > MAX_GOSSIP_BYTES, "its profiles alone are too many");
         let (server, members, profiles, recent) = parts(build_sync_response(&state, 50, state.server.owner));

@@ -78,6 +78,18 @@ pub fn encode<T: Serialize + ?Sized>(value: &T) -> postcard::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+pub fn encode_known_to<T: Serialize + ?Sized>(value: &T, last_key: u16) -> postcard::Result<Vec<u8>> {
+    let layout = Layout::writing();
+    let mut bytes = postcard::to_stdvec(value)?;
+    let entries: Vec<Entry> = layout.written().into_iter().filter(|(key, _, _)| *key <= last_key).collect();
+    drop(layout);
+    if !entries.is_empty() {
+        bytes.extend_from_slice(&TRAILER_MARK);
+        bytes.extend(postcard::to_stdvec(&entries)?);
+    }
+    Ok(bytes)
+}
+
 pub fn first_layout<T: Serialize + ?Sized>(value: &T) -> postcard::Result<Vec<u8>> {
     let _layout = Layout::writing();
     postcard::to_stdvec(value)
@@ -189,6 +201,11 @@ later_fields! {
     snapshot_day_chain = 8,
     snapshot_newer_actions = 9,
     snapshot_newer_audit = 10,
+    sync_response_layout_sigs = 11,
+}
+
+pub fn last_key() -> u16 {
+    later::KEYS.iter().map(|(_, key)| *key).max().unwrap_or(0)
 }
 
 #[cfg(test)]

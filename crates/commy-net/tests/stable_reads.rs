@@ -132,6 +132,7 @@ fn signed_sync_response() -> (WirePayload, Identity) {
         at: 0,
         sig: commy_core::identity::Signature([0; 64]),
         full_sig: None,
+        layout_sigs: Vec::new(),
     };
     sign_sync_response(&mut payload, 1_800_000_000_000, &responder);
     (payload, responder)
@@ -165,4 +166,78 @@ fn this_build_trusts_new_fields_in_a_sync_response_only_when_signed() {
         *full_sig = None;
     }
     assert!(!verify_sync_response(&unsigned, &responder.public()), "new fields need the full signature");
+}
+
+type Stable100Snapshot = (
+    String,
+    stable_1_0_0::ServerId,
+    stable_1_0_0::UserId,
+    i64,
+    stable_1_0_0::Server,
+    Vec<u8>,
+    Vec<stable_1_0_0::UserProfile>,
+    Vec<stable_1_0_0::Message>,
+    Vec<u8>,
+);
+
+fn trusted_by_1_0_0(payload: &WirePayload, seed: u8) -> bool {
+    let WirePayload::SyncResponse { by, at, server, members, profiles, recent_messages, voice, sig, full_sig, .. } = payload else {
+        panic!("a sync response")
+    };
+    assert!(members.is_empty() && voice.is_empty());
+    let none: Vec<u8> = Vec::new();
+    let sent = wire_layout::encode(&("commy-snapshot/v1", server.id, by, at, server, &none, profiles, recent_messages, &none)).unwrap();
+    let read: Stable100Snapshot = stable_1_0_0::wire_layout::decode(&sent).expect("Commy 1.0.0 reads the snapshot");
+    let first = stable_1_0_0::wire_layout::first_layout(&read).unwrap();
+    let whole = stable_1_0_0::wire_layout::encode(&read).unwrap();
+    let key = stable_1_0_0::identity::Identity::from_bytes(&[seed; 32]).public();
+    let sig = stable_1_0_0::identity::Signature(sig.0);
+    let full_sig = full_sig.map(|full| stable_1_0_0::identity::Signature(full.0));
+    if whole == first {
+        key.verify(&first, &sig)
+    } else {
+        key.verify(&first, &sig) && full_sig.is_some_and(|full| key.verify(&whole, &full))
+    }
+}
+
+fn with_day_keys(mut payload: WirePayload) -> WirePayload {
+    if let WirePayload::SyncResponse { server, profiles, .. } = &mut payload {
+        server.day_keys = Some(commy_core::day_chain::DayKeys::new(true, 1_800_000_000_000, 30));
+        server.day_keys_ready = profiles.iter().map(|p| (p.id, 1)).collect();
+    }
+    payload
+}
+
+#[test]
+fn stable_1_0_0_trusts_a_snapshot_with_home_cards_and_day_keys() {
+    let (payload, responder) = signed_sync_response();
+    let mut payload = with_day_keys(payload);
+    sign_sync_response(&mut payload, 1_800_000_000_000, &responder);
+    let bytes = Envelope::new([1; 32], payload.clone()).encode().unwrap();
+    let read = Envelope::decode(&bytes).unwrap();
+    assert_eq!(read.payload, payload);
+    assert!(trusted_by_1_0_0(&read.payload, 10), "Commy 1.0.0 accepts the snapshot");
+    assert!(verify_sync_response(&read.payload, &responder.public()), "this build accepts it too");
+}
+
+#[test]
+fn this_build_catches_changed_day_keys_in_a_snapshot() {
+    let (payload, responder) = signed_sync_response();
+    let mut payload = with_day_keys(payload);
+    sign_sync_response(&mut payload, 1_800_000_000_000, &responder);
+    let mut moved = payload.clone();
+    if let WirePayload::SyncResponse { server, .. } = &mut moved {
+        server.day_keys_ready.clear();
+    }
+    assert!(!verify_sync_response(&moved, &responder.public()), "changed readiness is caught");
+    let mut moved = payload.clone();
+    if let WirePayload::SyncResponse { server, .. } = &mut moved {
+        server.day_keys = None;
+    }
+    assert!(!verify_sync_response(&moved, &responder.public()), "a dropped switch is caught");
+    let mut unsigned = payload;
+    if let WirePayload::SyncResponse { layout_sigs, .. } = &mut unsigned {
+        layout_sigs.clear();
+    }
+    assert!(!verify_sync_response(&unsigned, &responder.public()), "newer fields need their own signature");
 }
