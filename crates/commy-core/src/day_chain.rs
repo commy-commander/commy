@@ -142,6 +142,13 @@ pub fn history_days(server: &Server) -> u32 {
     server.day_keys.map_or(DEFAULT_HISTORY_DAYS, |keys| keys.history_days)
 }
 
+pub fn kept_from_older_apps(server: &Server, message: &crate::Message) -> bool {
+    let Some(keys) = server.day_keys.filter(|keys| keys.on) else { return false };
+    let open = server.channels.iter().any(|c| c.id == message.channel && !c.is_private());
+    let since = |at: chrono::DateTime<chrono::Utc>| at.timestamp_millis() >= keys.since;
+    open && (since(message.created_at) || message.edited_at.is_some_and(since))
+}
+
 pub fn reads_day_keys(server: &Server, user: UserId) -> bool {
     server.day_keys_ready.get(&user).is_some_and(|level| *level >= READS_DAY_KEYS)
 }

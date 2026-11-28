@@ -263,9 +263,7 @@ pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: U
     for channel in state.server.channels.iter().filter(|c| c.view_roles.is_empty()) {
         messages.extend(state.page(channel.id, None, per_channel).iter().cloned());
     }
-    if let Some(keys) = state.server.day_keys.filter(|keys| keys.on) {
-        messages.retain(|m| m.created_at.timestamp_millis() < keys.since);
-    }
+    messages.retain(|m| !commy_core::day_chain::kept_from_older_apps(&state.server, m));
     messages.sort_by_key(|m| std::cmp::Reverse(m.created_at));
     let owner = server.owner;
     let role_holders = server.members.iter().filter(|m| !m.roles.is_empty()).map(|m| m.user);

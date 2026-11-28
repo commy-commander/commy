@@ -59,6 +59,8 @@ pub enum CatchupFrame {
         identity: IdentityKey,
         ts_ms: i64,
         sig: Signature,
+        #[serde(default, with = "commy_core::wire_layout::later::catchup_hello_reads_days")]
+        reads_days: bool,
     },
     Refused {
         reason: String,
@@ -127,6 +129,7 @@ impl CatchupFrame {
             identity: identity.public(),
             ts_ms,
             sig,
+            reads_days: true,
         }
     }
 }
@@ -254,6 +257,13 @@ pub trait CatchupStore {
     fn apply_reaction_changes(&self, _server: ServerId, _user: UserId, _changes: Vec<ReactionChange>) -> usize {
         0
     }
+    fn kept_from_older_apps(&self, _server: ServerId, _message: &Message) -> bool {
+        false
+    }
+}
+
+fn reads_days(hello: &CatchupFrame) -> bool {
+    matches!(hello, CatchupFrame::Hello { reads_days: true, .. })
 }
 
 pub fn apply_live(
@@ -424,7 +434,7 @@ pub fn apply_items(
 }
 
 pub async fn run_initiator<IO, S>(
-    mut io: IO,
+    io: IO,
     store: &S,
     identity: &Identity,
     server: ServerId,
@@ -436,14 +446,34 @@ where
     IO: AsyncRead + AsyncWrite + Unpin,
     S: CatchupStore + ?Sized,
 {
-    let hello = CatchupFrame::hello(
-        identity,
-        HelloRole::Initiator,
-        server,
-        me,
-        local_node,
-        remote_node,
-        now_ms(),
+    initiate(io, store, identity, server, me, local_node, remote_node, true).await
+}
+
+fn hello_as(hello: CatchupFrame, reads: bool) -> CatchupFrame {
+    match hello {
+        CatchupFrame::Hello { server, user, identity, ts_ms, sig, .. } => CatchupFrame::Hello { server, user, identity, ts_ms, sig, reads_days: reads },
+        other => other,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn initiate<IO, S>(
+    mut io: IO,
+    store: &S,
+    identity: &Identity,
+    server: ServerId,
+    me: UserId,
+    local_node: [u8; 32],
+    remote_node: [u8; 32],
+    we_read_days: bool,
+) -> Result<SessionReport, CatchupError>
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+    S: CatchupStore + ?Sized,
+{
+    let hello = hello_as(
+        CatchupFrame::hello(identity, HelloRole::Initiator, server, me, local_node, remote_node, now_ms()),
+        we_read_days,
     );
     send(&mut io, &hello).await?;
     let reply = read(&mut io).await?;
@@ -460,6 +490,7 @@ where
         Ok(user) => user,
         Err(refusal) => return Err(refuse(&mut io, refusal).await),
     };
+    let peer_reads_days = reads_days(&reply);
 
     let ours = fit_digests(store.digests(server));
     let sent: HashMap<BucketKey, BucketDigest> = ours.iter().map(|d| (d.key, *d)).collect();
@@ -490,7 +521,7 @@ where
     log_capped("fetch", cap(&mut we_want));
 
     send(&mut io, &CatchupFrame::Want(we_want.clone())).await?;
-    let pushed = send_items(&mut io, store, server, peer_user, &they_lack, |key| listed.contains(&key)).await?;
+    let pushed = send_items(&mut io, store, server, peer_user, peer_reads_days, &they_lack, |key| listed.contains(&key)).await?;
     let verdict = read_applied(&mut io).await?;
 
     let wanted: HashSet<MessageId> = we_want.into_iter().collect();
@@ -539,6 +570,7 @@ pub struct Admitted {
     me: UserId,
     peer: UserId,
     identity: Identity,
+    peer_reads_days: bool,
 }
 
 pub async fn admit<IO, S>(
@@ -568,17 +600,33 @@ where
             me,
             peer,
             identity,
+            peer_reads_days: reads_days(&hello),
         }),
         Err(refusal) => Err(refuse(io, refusal).await),
     }
 }
 
 pub async fn respond<IO, S>(
+    io: IO,
+    store: &S,
+    admitted: Admitted,
+    local_node: [u8; 32],
+    remote_node: [u8; 32],
+) -> Result<(ServerId, SessionReport), CatchupError>
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+    S: CatchupStore + ?Sized,
+{
+    respond_as(io, store, admitted, local_node, remote_node, true).await
+}
+
+async fn respond_as<IO, S>(
     mut io: IO,
     store: &S,
     admitted: Admitted,
     local_node: [u8; 32],
     remote_node: [u8; 32],
+    we_read_days: bool,
 ) -> Result<(ServerId, SessionReport), CatchupError>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
@@ -589,15 +637,11 @@ where
         me,
         peer,
         identity,
+        peer_reads_days,
     } = admitted;
-    let reply = CatchupFrame::hello(
-        &identity,
-        HelloRole::Responder,
-        server,
-        me,
-        remote_node,
-        local_node,
-        now_ms(),
+    let reply = hello_as(
+        CatchupFrame::hello(&identity, HelloRole::Responder, server, me, remote_node, local_node, now_ms()),
+        we_read_days,
     );
     send(&mut io, &reply).await?;
 
@@ -655,7 +699,7 @@ where
 
     let got = receive_pages(&mut io, store, server, |_, key| answered.contains(&key)).await?;
     send(&mut io, &got.verdict()).await?;
-    let pushed = send_items(&mut io, store, server, peer, &want, |_| true).await?;
+    let pushed = send_items(&mut io, store, server, peer, peer_reads_days, &want, |_| true).await?;
     let verdict = match n0_future::time::timeout(APPLIED_TIMEOUT, read_applied(&mut io)).await {
         Ok(Ok(verdict)) => Some(verdict),
         Ok(Err(e)) => {
@@ -744,6 +788,7 @@ fn check_signed(
         identity,
         ts_ms,
         sig,
+        ..
     } = hello
     else {
         return Err(Refusal::BadSignature);
@@ -1007,6 +1052,7 @@ async fn send_items<IO, S>(
     store: &S,
     server: ServerId,
     peer: UserId,
+    peer_reads_days: bool,
     ids: &[MessageId],
     keep: impl Fn(BucketKey) -> bool,
 ) -> Result<Vec<MessageId>, CatchupError>
@@ -1019,7 +1065,7 @@ where
     } else {
         store.get(server, ids)
     };
-    messages.retain(|m| keep(message_key(m)) && store.may_read(server, peer, m.channel));
+    messages.retain(|m| keep(message_key(m)) && store.may_read(server, peer, m.channel) && (peer_reads_days || !store.kept_from_older_apps(server, m)));
     tombstones.retain(|p| keep(tombstone_key(p)) && store.may_read(server, peer, p.channel));
     let (messages, tombstones) = fit_items(ids, messages, tombstones, MAX_PUSHED_ITEMS);
     let signers = dedup(signers_of(&messages, &tombstones));
@@ -1394,6 +1440,50 @@ mod tests {
             held: vec![],
             rejected: vec![],
         }
+    }
+
+    fn days_on(stores: [&MemStore; 2]) {
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let since = Utc::now().timestamp_millis();
+        for store in stores {
+            store.with(|s| s.apply(commy_core::ServerEvent::DayKeysSet { server: s.server.id, on: true, since, history_days: 30 }).unwrap());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(3));
+    }
+
+    #[tokio::test]
+    async fn an_older_app_that_dials_gets_no_messages_written_after_day_keys_came_on() {
+        let (a, b, channel) = pair();
+        let before = b.post(channel, "before the switch");
+        days_on([&a, &b]);
+        let after = b.post(channel, "after the switch");
+        let (x, y) = tokio::io::duplex(8 * 1024);
+        let (ra, rb) = tokio::join!(
+            initiate(x, &a, &a.identity, a.server(), a.me, NODE_A, NODE_B, false),
+            run_responder(y, &b, NODE_B, NODE_A),
+        );
+        ra.expect("initiator");
+        rb.expect("responder");
+        assert!(a.has(before.id), "messages from before the switch still reach it");
+        assert!(!a.has(after.id), "messages after the switch wait until it updates");
+        ok_session(&a, &b).await;
+        assert!(a.has(after.id), "once it reads daily keys the message arrives");
+    }
+
+    #[tokio::test]
+    async fn an_older_app_that_answers_gets_no_messages_written_after_day_keys_came_on() {
+        let (a, b, channel) = pair();
+        days_on([&a, &b]);
+        let after = a.post(channel, "after the switch");
+        let (x, mut y) = tokio::io::duplex(8 * 1024);
+        let older = async {
+            let admitted = admit(&mut y, &b, NODE_B, NODE_A).await.expect("admitted");
+            respond_as(y, &b, admitted, NODE_B, NODE_A, false).await
+        };
+        let (ra, rb) = tokio::join!(run_initiator(x, &a, &a.identity, a.server(), a.me, NODE_A, NODE_B), older);
+        ra.expect("initiator");
+        rb.expect("responder");
+        assert!(!b.has(after.id));
     }
 
     #[tokio::test]
@@ -3183,7 +3273,7 @@ mod tests {
                 .await
                 .unwrap();
             send(&mut y, &got.verdict()).await.unwrap();
-            send_items(&mut y, &b, server, a.me, &want, |_| true).await.unwrap();
+            send_items(&mut y, &b, server, a.me, true, &want, |_| true).await.unwrap();
             drop(y);
             b
         };

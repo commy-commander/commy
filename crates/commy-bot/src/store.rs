@@ -95,6 +95,10 @@ impl CatchupStore for BotStore {
         self.with_state(server, |s| collect(s, ids)).unwrap_or_default()
     }
 
+    fn kept_from_older_apps(&self, server: ServerId, message: &Message) -> bool {
+        self.with_state(server, |s| commy_core::day_chain::kept_from_older_apps(&s.server, message)).unwrap_or(false)
+    }
+
     fn may_read(&self, server: ServerId, peer: UserId, channel: commy_core::ChannelId) -> bool {
         self.with_state(server, |s| commy_net::catchup::readable(s, peer, channel)).unwrap_or(false)
     }

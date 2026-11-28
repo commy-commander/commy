@@ -202,6 +202,7 @@ later_fields! {
     snapshot_newer_actions = 9,
     snapshot_newer_audit = 10,
     sync_response_layout_sigs = 11,
+    catchup_hello_reads_days = 12,
 }
 
 pub fn last_key() -> u16 {

@@ -241,3 +241,34 @@ fn this_build_catches_changed_day_keys_in_a_snapshot() {
     }
     assert!(!verify_sync_response(&unsigned, &responder.public()), "newer fields need their own signature");
 }
+
+#[derive(serde::Deserialize)]
+enum Stable100CatchupFrame {
+    Hello {
+        server: stable_1_0_0::ServerId,
+        user: stable_1_0_0::UserId,
+        identity: stable_1_0_0::identity::IdentityKey,
+        ts_ms: i64,
+        sig: stable_1_0_0::identity::Signature,
+    },
+}
+
+#[test]
+fn stable_1_0_0_reads_a_catch_up_hello_that_says_it_reads_daily_keys() {
+    use commy_net::catchup::{hello_bytes, HelloRole};
+    use commy_net::CatchupFrame;
+    let me = person(10);
+    let (server, ..) = with_every_new_field_set();
+    let user = commy_core::UserId::new();
+    let hello = CatchupFrame::hello(&me, HelloRole::Initiator, server.id, user, [1; 32], [2; 32], 1_800_000_000_000);
+    assert!(matches!(hello, CatchupFrame::Hello { reads_days: true, .. }));
+    let bytes = wire_layout::encode(&hello).unwrap();
+    let Stable100CatchupFrame::Hello { server: s, user: u, identity, ts_ms, sig } =
+        stable_1_0_0::wire_layout::decode(&bytes).expect("Commy 1.0.0 reads the hello");
+    assert_eq!(wire_layout::encode(&server.id).unwrap(), stable_1_0_0::wire_layout::encode(&s).unwrap());
+    assert_eq!(wire_layout::encode(&user).unwrap(), stable_1_0_0::wire_layout::encode(&u).unwrap());
+    let signed = hello_bytes(HelloRole::Initiator, server.id, user, [1; 32], [2; 32], ts_ms);
+    assert!(identity.verify(&signed, &sig), "the signature still checks");
+    let back: CatchupFrame = wire_layout::decode(&wire_layout::first_layout(&hello).unwrap()).unwrap();
+    assert!(matches!(back, CatchupFrame::Hello { reads_days: false, .. }), "a hello without the field is from an older app");
+}

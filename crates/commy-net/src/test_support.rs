@@ -103,6 +103,10 @@ impl CatchupStore for MemStore {
         self.with(|s| collect(s, ids))
     }
 
+    fn kept_from_older_apps(&self, _: ServerId, message: &Message) -> bool {
+        self.with(|s| commy_core::day_chain::kept_from_older_apps(&s.server, message))
+    }
+
     fn may_read(&self, _: ServerId, peer: UserId, channel: ChannelId) -> bool {
         self.with(|s| crate::catchup::readable(s, peer, channel))
     }
@@ -163,6 +167,10 @@ impl CatchupStore for MultiStore {
         self.of(server)
             .map(|s| s.items(server, keys))
             .unwrap_or_default()
+    }
+
+    fn kept_from_older_apps(&self, server: ServerId, message: &Message) -> bool {
+        self.of(server).is_some_and(|s| s.kept_from_older_apps(server, message))
     }
 
     fn get(&self, server: ServerId, ids: &[MessageId]) -> (Vec<Message>, Vec<TombstoneProof>) {
