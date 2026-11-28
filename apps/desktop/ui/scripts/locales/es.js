@@ -433,6 +433,7 @@ const LOCALE_ES = {
   "ui.reports-now-reach-moderators-too": "Las denuncias que envías en un servidor ahora también llegan a sus moderadores. Hemos añadido una parte que explica:",
   "ui.who-receives-a-report": "quién recibe una denuncia: el propietario del servidor y sus moderadores, las personas cuyo rol les permite expulsar o vetar miembros",
   "ui.each-report-copy-is-encrypted": "que cada copia está cifrada para que solo pueda leerla quien la recibe",
+  "ui.we-also-explain-the-leaked-password-check": "También explicamos cómo comprobamos las contraseñas nuevas con las filtradas en brechas de datos anteriores, sin que tu contraseña salga nunca de nuestro servidor.",
   "ui.your-messages-are-still-sealed": "Tus mensajes siguen sellados en tus dispositivos antes de llegar a cualquier servidor.",
   "ui.read-the-privacy-policy": "Leer la Política de privacidad",
   "ui.allow-stream-deck": "¿Permitir Stream Deck?",

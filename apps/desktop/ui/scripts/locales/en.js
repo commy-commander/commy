@@ -433,6 +433,7 @@ const LOCALE_EN = {
   "ui.reports-now-reach-moderators-too": "Reports you send in a server now reach its moderators too. We added a part that explains:",
   "ui.who-receives-a-report": "who receives a report: the server's owner and its moderators, the people whose role lets them remove or ban members",
   "ui.each-report-copy-is-encrypted": "that each copy is encrypted so only the person who receives it can read it",
+  "ui.we-also-explain-the-leaked-password-check": "We also explain how new passwords are checked against passwords leaked in past data breaches, without your password ever leaving our server.",
   "ui.your-messages-are-still-sealed": "Your messages are still sealed on your devices before they reach any server.",
   "ui.read-the-privacy-policy": "Read the Privacy Policy",
   "ui.allow-stream-deck": "Allow Stream Deck?",

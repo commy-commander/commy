@@ -60,5 +60,6 @@ test("the notice links to the privacy page and keeps no tracking", () => {
   assert.ok(modal.includes("Read the Privacy Policy") && modal.includes('id="privacy-notice-done"'));
   assert.equal((modal.match(/<li[\s>]/g) || []).length, 2);
   assert.ok(modal.includes("moderators") && modal.includes("encrypted"));
+  assert.ok(modal.includes("leaked in past data breaches"));
   assert.ok(html.includes('<script src="scripts/privacy-notice.js"></script>'));
 });
