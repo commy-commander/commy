@@ -12,6 +12,7 @@ on:
       - "crates/commy-sync-server/**"
       - ".dockerignore"
       - ".github/workflows/images.yml"
+      - ".github/actions/test-databases/**"
       - "!deploy/*.md"
   pull_request:
     paths: *image-paths
@@ -56,6 +57,7 @@ jobs:
           files="$(git diff --name-only "origin/$BASE...HEAD")"
           workflow='^\.github/workflows/images\.yml$'
           sync_crates='^crates/commy-sync(-server)?/'
+          databases='^\.github/actions/test-databases/'
           image_inputs="^(auth/|deploy/|\.dockerignore$)|$sync_crates|$workflow"
           not_in_stack='^apps/web/|^auth/test/|^crates/[^/]+/tests/|^deploy/(sync-host|relay|relay-host|relay-tools|releases|host|forge|forge-runner)/|\.md$'
           not_in_sync_host='/tests?/|\.md$'
@@ -65,8 +67,8 @@ jobs:
             echo "$1=$2" >> "$GITHUB_OUTPUT"
             echo "$1: $2"
           }
-          touches "^auth/|$workflow" && pick auth true || pick auth false
-          touches "$sync_crates|^Cargo\.(toml|lock)$|$workflow" && pick sync true || pick sync false
+          touches "^auth/|$databases|$workflow" && pick auth true || pick auth false
+          touches "$sync_crates|^Cargo\.(toml|lock)$|$databases|$workflow" && pick sync true || pick sync false
           touches "^deploy/(agent/|edge/|setup-vps\.sh$)|$workflow" && pick agent true || pick agent false
           touches_outside "$image_inputs" "$not_in_stack" && pick stack true || pick stack false
           touches_outside "$sync_crates|^deploy/(sync-host|relay)/|^\.dockerignore$|$workflow" "$not_in_sync_host" && pick sync_host true || pick sync_host false
@@ -75,51 +77,28 @@ jobs:
     name: Auth server tests
     needs: changes
     if: needs.changes.outputs.auth == 'true'
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:8-alpine
-        ports: ["6379:6379"]
-        options: --health-cmd "redis-cli ping" --health-interval 3s --health-retries 20
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: commy
-          POSTGRES_PASSWORD: commy
-          POSTGRES_DB: commy
-        ports: ["5432:5432"]
-        options: --health-cmd "pg_isready -U commy" --health-interval 3s --health-retries 20
-    env:
-      REDIS_TEST_URL: redis://127.0.0.1:6379
-      POSTGRES_TEST_URL: postgres://commy:commy@127.0.0.1:5432/commy
+    runs-on: commy-mac-ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start throwaway Postgres and Redis
+        run: sh .github/actions/test-databases/databases.sh start
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ">=24.22.1 <25"
-          cache: npm
-          cache-dependency-path: auth/package-lock.json
       - run: npm ci
         working-directory: auth
       - run: npm test
         working-directory: auth
+      - name: Stop the throwaway databases
+        if: always()
+        run: sh .github/actions/test-databases/databases.sh stop
 
   sync-tests:
     name: Sync service tests
     needs: changes
     if: needs.changes.outputs.sync == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: commy
-          POSTGRES_PASSWORD: commy
-          POSTGRES_DB: commy
-        ports: ["5432:5432"]
-        options: --health-cmd "pg_isready -U commy" --health-interval 3s --health-retries 20
+    runs-on: commy-mac-ci
     env:
-      SYNC_POSTGRES_TEST_URL: postgres://commy:commy@127.0.0.1:5432
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
     steps:
@@ -127,12 +106,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          cache-bin: false
-          key: sync
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Keep the build folder on this Mac between runs
+        run: |
+          target="$HOME/.cache/commy-ci-target/sync-tests"
+          if [ -d "$target" ] && [ "$(du -sk "$target" | cut -f1)" -gt 20000000 ]; then
+            echo "Clearing a build folder over 20 GB"
+            rm -rf "$target"
+          fi
+          echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
+      - name: Start a throwaway Postgres
+        run: sh .github/actions/test-databases/databases.sh start
       - run: cargo test --locked -p commy-sync -p commy-sync-server --features commy-sync/client
+      - name: Stop the throwaway databases
+        if: always()
+        run: sh .github/actions/test-databases/databases.sh stop
 
   agent-tests:
     name: Deploy agent tests
