@@ -62,6 +62,18 @@ pub fn server_keys_with_days(state: &ServerState, community: &Keyring, days: &Da
     ServerKeys { days, ..server_keys(state, community) }
 }
 
+pub fn with_given(mut keys: ServerKeys, given: Option<(KeyId, ChannelSecret)>) -> ServerKeys {
+    let Some((id, secret)) = given else { return keys };
+    if keys.secret(id).is_none() {
+        keys.held.push((id, secret.clone()));
+    }
+    if keys.sealing.is_none() {
+        keys.sealing = Some((id, secret));
+    }
+    keys.keyed = true;
+    keys
+}
+
 fn day_place(server: ServerId) -> Vec<u8> {
     postcard::to_allocvec(&server).expect("ids always encode")
 }
@@ -337,6 +349,29 @@ mod tests {
 
     fn with_days(root: Option<(KeyId, ChannelSecret)>, state: &ServerState, ring: &DayKeyring) -> ServerKeys {
         ServerKeys { sealing: root.clone(), held: root.into_iter().collect(), days: Some(DayKeys { sealer: ring.sealer(state), ring: ring.clone() }), keyed: true }
+    }
+
+    #[test]
+    fn a_newcomer_whose_copy_has_no_key_records_yet_opens_and_seals_with_the_invite_key() {
+        let (mut owner_state, channel, owner) = commy_core::test_support::fixture();
+        let server = owner_state.server.id;
+        let ring = community_ring(&mut owner_state, owner);
+        let owners = server_keys(&owner_state, &ring);
+        let invite = owners.sealing.clone().unwrap();
+        let placeholder = ServerState::new(owner_state.server.clone());
+        let bare = server_keys(&placeholder, &Keyring::default());
+        assert!(!bare.keyed && bare.held.is_empty(), "a copy without key records holds nothing on its own");
+        let newcomer = with_given(bare, Some(invite.clone()));
+        let plain = WirePayload::Event(ServerEvent::MessageCreate { message: Message::new(channel, owner, "welcome") });
+        let WirePayload::Sealed(from_owner) = seal_with(Some(&owners), server, plain.clone()) else { panic!("not sealed") };
+        assert_eq!(open_with(Some(&newcomer), server, &from_owner), Some(plain.clone()));
+        let sent = seal_with(Some(&newcomer), server, plain.clone());
+        assert!(newcomer.may_send(&sent));
+        let WirePayload::Sealed(from_newcomer) = sent else { panic!("the newcomer sends sealed") };
+        assert_eq!(open_with(Some(&owners), server, &from_newcomer), Some(plain));
+        assert!(!newcomer.may_send(&message("plain")), "nothing goes out in plain");
+        let again = with_given(owners.clone(), Some(invite));
+        assert_eq!(again.held.len(), owners.held.len(), "a key already held is not added twice");
     }
 
     #[test]

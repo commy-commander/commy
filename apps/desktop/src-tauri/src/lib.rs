@@ -2455,7 +2455,10 @@ fn gossip_keys(handle: &tauri::AppHandle) -> commy_net::gossip_seal::GossipKeys 
         let holder = channel_lock::holder_of(&app);
         let servers = app.servers.lock_or_recover();
         match servers.get(&server) {
-            Some(state) => Some(commy_net::gossip_seal::server_keys_with_days(state, &holder.community_ring(state, given)?, &holder.day_ring(state))),
+            Some(state) => {
+                let keys = commy_net::gossip_seal::server_keys_with_days(state, &holder.community_ring(state, given.clone())?, &holder.day_ring(state));
+                Some(commy_net::gossip_seal::with_given(keys, given))
+            }
             None => given.map(|key| commy_net::gossip_seal::ServerKeys { sealing: None, held: vec![key], days: None, keyed: false }),
         }
     })

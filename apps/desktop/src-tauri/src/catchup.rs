@@ -1027,7 +1027,11 @@ pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
     let carries_messages = matches!(&full, Some(WirePayload::SyncResponse { server, recent_messages, .. })
         if !recent_messages.is_empty() && commy_net::gossip_seal::older_apps_may_still_join(server));
     let layout = carries_messages.then(|| layout_snapshot_for(app, server)).flatten();
-    full.into_iter().chain(layout).chain(join).collect()
+    let keys = match full {
+        Some(_) => app.servers.lock_or_recover().get(&server).map(commy_net::community_streams::owner_key_records).unwrap_or_default(),
+        None => Vec::new(),
+    };
+    full.into_iter().chain(layout).chain(keys).chain(join).collect()
 }
 
 pub fn await_snapshot(app: &App, server: ServerId, me: UserProfile) -> Vec<WirePayload> {
@@ -2223,6 +2227,29 @@ mod tests {
         assert!(apply_snapshot(&TestHandle::new(app.clone()), sid, snapshot_by(&real, &owner)));
         assert!(holds(&app), "the owner's key and grant wait for the snapshot");
         assert!(app.catchup.lock().unwrap().take_early(sid, Instant::now()).is_empty());
+    }
+
+    #[test]
+    fn a_sync_reply_carries_the_owners_key_records_for_a_newcomer() {
+        use commy_core::channel_key::KeyScope;
+        let owner = Member::new("owner");
+        let me = Member::new("me");
+        let (mut real, _) = server(&owner);
+        join(&mut real, &me);
+        let sid = real.server.id;
+        let at = Utc::now().timestamp_millis();
+        let events = crate::channel_lock::KeyHolder::as_user(owner.id(), owner.identity.clone()).scope_events(&real, KeyScope::Community);
+        for (i, event) in events.into_iter().enumerate() {
+            real.apply_signed(&SignedEvent::sign(sid, owner.id(), at + i as i64, event, &owner.identity)).unwrap();
+        }
+        let replies = sync_replies(&app_with(&owner, real.clone()), sid);
+        let records: Vec<&SignedEvent> = replies.iter().filter_map(|reply| match reply {
+            WirePayload::Signed(signed) => Some(signed),
+            _ => None,
+        }).collect();
+        assert!(records.iter().any(|signed| matches!(signed.event, ServerEvent::CommunityKeyAdd { .. })), "the newcomer can open what is sealed after it");
+        assert!(records.iter().all(|signed| !matches!(signed.event, ServerEvent::CommunityKeyGrant { user, .. } if user != owner.id())), "only the owner's own grant is repeated");
+        assert!(matches!(replies.first(), Some(WirePayload::SyncResponse { .. })), "the snapshot still comes first");
     }
 
     #[test]
