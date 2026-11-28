@@ -73,3 +73,12 @@ test("a tile is redrawn only when its look changes, not when someone talks", () 
   assert.notEqual(overlayTileKey(nova, true), overlayTileKey({ ...nova, name: "Nova" }, true));
   assert.notEqual(overlayTileKey(nova, true), overlayTileKey(nova, false));
 });
+
+test("the overlay page loads the wording before the scripts that use it", () => {
+  const page = readFileSync(new URL("../overlay.html", import.meta.url), "utf8");
+  const at = name => page.indexOf(`<script src="scripts/${name}"></script>`);
+  for (const name of ["i18n.js", "locales/en.js", "i18n-start.js"]) {
+    assert.ok(at(name) > 0, name);
+    assert.ok(at(name) < at("overlay-view.js"), name);
+  }
+});
