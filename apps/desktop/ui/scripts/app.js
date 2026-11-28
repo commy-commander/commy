@@ -1839,7 +1839,7 @@ async function mockInvoke(cmd, args = {}) {
       return { step: "done" };
     case "account_sign_in_passkey": return args && args.quiet ? { step: "canceled" } : { step: "done" };
     case "account_sign_up_email":
-      if (args.password.length < 8) throw "Use a password with at least 8 characters.";
+      if (args.password.length < 12) throw "Use a password with at least 12 characters.";
       return { step: "check_email" };
     case "account_sign_out": mock.account.signed_in = false; mock.account.user = null; return mock.account;
     case "account_delete_start": return { confirm: "email", password: true, email: mock.account.user ? mock.account.user.email : null };

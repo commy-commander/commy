@@ -255,6 +255,7 @@ export function loadConfig(env = process.env) {
     accessCode: normalizeAccessCode(env.ACCESS_CODE) || null,
     adultsOnly: env.ADULTS_ONLY === "true",
     blockThrowawayEmails: env.BLOCK_THROWAWAY_EMAILS !== "false",
+    checkLeakedPasswords: env.CHECK_LEAKED_PASSWORDS !== "false",
     termsVersion: (env.TERMS_VERSION ?? "").trim() || null,
     invitesRequireAccount: env.INVITES_REQUIRE_ACCOUNT === "true",
     invitesMaxPermanent: Number(env.INVITES_MAX_PERMANENT) > 0 ? Math.floor(Number(env.INVITES_MAX_PERMANENT)) : undefined,
@@ -306,6 +307,7 @@ export function featureSummary(config) {
     `listing=${on(config.listing.enabled)}`,
     `throwaway_emails=${config.blockThrowawayEmails ? "blocked" : "allowed"}`,
     `unverified_cleanup=${on(config.smtp)}`,
+    `leaked_passwords=${on(config.checkLeakedPasswords)}`,
   ].join(" ");
 }
 

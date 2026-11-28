@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AuthError, authPost } from "../lib/auth-client.js";
+import { MAX_PASSWORD, MIN_NEW_PASSWORD, NEW_PASSWORD_HINT } from "../lib/password-rules.js";
 import { passkeyErrorMessage, passkeysWork, signInWithPasskey, signInWithPasskeyAutofill } from "../lib/passkey.js";
 import { signUpHref, twoFactorHref } from "../lib/safe-next.js";
 import { useAction } from "../lib/use-action.js";
@@ -377,13 +378,14 @@ export default function SignInPanel({
               type="password"
               name="password"
               autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              minLength={8}
+              minLength={mode === "signup" ? MIN_NEW_PASSWORD : undefined}
+              maxLength={MAX_PASSWORD}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               tabIndex={passwordTucked ? -1 : undefined}
               required={!passwordTucked}
             />
-            {mode === "signup" && <small className="field-hint">At least 8 characters.</small>}
+            {mode === "signup" && <small className="field-hint">{NEW_PASSWORD_HINT}</small>}
           </label>
         )}
         {mode === "signup" && (

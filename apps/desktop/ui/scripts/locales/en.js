@@ -149,7 +149,7 @@ const LOCALE_EN = {
   "signup.apple": "Sign up with Apple",
   "signup.have.account": "Already have an account? Sign in",
   "signup.name": "Display name",
-  "signup.password": "Password (8 or more characters)",
+  "signup.password": "Password (12 or more characters)",
   "signup.submit": "Create account",
   "signup.inbox.title": "Check your inbox",
   "signup.inbox.text": "We sent a link to {email}. Open it on any device to confirm your email, then come back here.",

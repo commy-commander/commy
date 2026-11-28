@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { isStaleSession, SIGN_IN_AGAIN, signOutAndReturn } from "../lib/auth-client.js";
+import { MAX_PASSWORD, MIN_NEW_PASSWORD, NEW_PASSWORD_HINT } from "../lib/password-rules.js";
 import { errorMessage } from "../lib/use-action.js";
 
 export function useSecureAction() {
@@ -63,12 +64,12 @@ export function NewPasswordFields() {
     <>
       <label>
         <span>New password</span>
-        <input type="password" name="newPassword" autoComplete="new-password" minLength={8} maxLength={128} required />
-        <small className="field-hint">At least 8 characters.</small>
+        <input type="password" name="newPassword" autoComplete="new-password" minLength={MIN_NEW_PASSWORD} maxLength={MAX_PASSWORD} required />
+        <small className="field-hint">{NEW_PASSWORD_HINT}</small>
       </label>
       <label>
         <span>Repeat new password</span>
-        <input type="password" name="confirm" autoComplete="new-password" minLength={8} maxLength={128} required />
+        <input type="password" name="confirm" autoComplete="new-password" minLength={MIN_NEW_PASSWORD} maxLength={MAX_PASSWORD} required />
       </label>
     </>
   );

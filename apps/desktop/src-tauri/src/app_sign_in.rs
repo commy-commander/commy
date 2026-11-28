@@ -13,7 +13,8 @@ use crate::state::App;
 const CHALLENGE_LIFETIME: Duration = Duration::from_secs(9 * 60);
 const MAX_EMAIL: usize = 254;
 const MAX_PASSWORD: usize = 128;
-const MIN_NEW_PASSWORD: usize = 8;
+const MIN_NEW_PASSWORD: usize = 12;
+const LEAKED_PASSWORD_NOTE: &str = "This password has shown up in a known data breach, so others may try it. Choose a different password.";
 const MAX_NAME: usize = 64;
 const SIGN_UP_RETURN: &str = "/account?app=1";
 const MAX_CODE: usize = 40;
@@ -32,6 +33,14 @@ const MAX_HANDOFF: usize = 64;
 const IOS_PASSKEY_SITES: [&str; 1] = ["commy.chat"];
 #[cfg(desktop)]
 const BROWSER_WAIT: Duration = Duration::from_secs(10 * 60);
+
+fn too_short_note() -> String {
+    format!("Use a password with at least {MIN_NEW_PASSWORD} characters.")
+}
+
+fn too_long_note() -> String {
+    format!("Use a password with {MAX_PASSWORD} characters or fewer.")
+}
 
 static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 static BROWSER_RETURN: Mutex<Option<tokio::sync::oneshot::Sender<Option<String>>>> = Mutex::new(None);
@@ -183,8 +192,9 @@ fn read_reply(answer: &Answer) -> Result<Reply, String> {
         }
         "SIGNUP_DISABLED" | "EMAIL_PASSWORD_SIGN_UP_DISABLED" => return Err("This account server isn't taking new accounts right now.".into()),
         "USER_ALREADY_EXISTS" | "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" => return Err("An account already uses this email. Sign in instead.".into()),
-        "PASSWORD_TOO_SHORT" => return Err("Use a password with at least 8 characters.".into()),
-        "PASSWORD_TOO_LONG" => return Err("Use a password with 128 characters or fewer.".into()),
+        "PASSWORD_TOO_SHORT" => return Err(too_short_note()),
+        "PASSWORD_TOO_LONG" => return Err(too_long_note()),
+        "PASSWORD_COMPROMISED" => return Err(LEAKED_PASSWORD_NOTE.into()),
         "ACCOUNT_SUSPENDED" => return Err(suspended_note(message)),
         "THROWAWAY_EMAIL" => return Err("Use an email address you keep. Throwaway inboxes can't make accounts.".into()),
         "ACCOUNT_NOT_LINKED" => {
@@ -367,10 +377,10 @@ impl SignUpFields {
         }
         let length = password.chars().count();
         if length < MIN_NEW_PASSWORD {
-            return Err("Use a password with at least 8 characters.".into());
+            return Err(too_short_note());
         }
         if password.len() > MAX_PASSWORD {
-            return Err("Use a password with 128 characters or fewer.".into());
+            return Err(too_long_note());
         }
         if !adult_confirmed {
             return Err("Confirm you are 18 or older and agree to the Terms.".into());
@@ -800,6 +810,10 @@ mod tests {
     fn refusals_read_like_sentences() {
         let wrong = read_reply(&answer(401, json!({ "code": "INVALID_EMAIL_OR_PASSWORD" }))).unwrap_err();
         assert_eq!(wrong, "That email and password don't match.");
+        let leaked = read_reply(&answer(400, json!({ "code": "PASSWORD_COMPROMISED" }))).unwrap_err();
+        assert!(leaked.contains("data breach"));
+        let short = read_reply(&answer(400, json!({ "code": "PASSWORD_TOO_SHORT" }))).unwrap_err();
+        assert!(short.contains("at least 12"));
         let linked = read_reply(&answer(401, json!({ "code": "OAUTH_LINK_ERROR", "message": "account not linked" }))).unwrap_err();
         assert!(linked.contains("already uses this email"));
         assert!(read_reply(&answer(429, json!({}))).unwrap_err().contains("Too many"));
@@ -921,18 +935,18 @@ mod tests {
 
     #[test]
     fn sign_up_checks_each_field_before_asking_the_server() {
-        let good = SignUpFields::checked(" me@example.com ", "long enough", " Nova ", true).unwrap();
-        assert_eq!(good, SignUpFields { email: "me@example.com".into(), password: "long enough".into(), name: "Nova".into() });
+        let good = SignUpFields::checked(" me@example.com ", "long enough pass", " Nova ", true).unwrap();
+        assert_eq!(good, SignUpFields { email: "me@example.com".into(), password: "long enough pass".into(), name: "Nova".into() });
         let body = good.body();
         assert_eq!(body["adultConfirmed"], json!(true));
         assert_eq!(body["callbackURL"], json!(SIGN_UP_RETURN));
         assert_eq!(body["name"], json!("Nova"));
-        assert!(SignUpFields::checked("nope", "long enough", "Nova", true).unwrap_err().contains("email"));
-        assert!(SignUpFields::checked("me@example.com", "short", "Nova", true).unwrap_err().contains("8"));
+        assert!(SignUpFields::checked("nope", "long enough pass", "Nova", true).unwrap_err().contains("email"));
+        assert!(SignUpFields::checked("me@example.com", "elevenchars", "Nova", true).unwrap_err().contains("12"));
         assert!(SignUpFields::checked("me@example.com", &"x".repeat(129), "Nova", true).unwrap_err().contains("128"));
-        assert!(SignUpFields::checked("me@example.com", "long enough", "  ", true).unwrap_err().contains("display name"));
-        assert!(SignUpFields::checked("me@example.com", "long enough", &"n".repeat(65), true).unwrap_err().contains("64"));
-        assert!(SignUpFields::checked("me@example.com", "long enough", "Nova", false).unwrap_err().contains("18"));
+        assert!(SignUpFields::checked("me@example.com", "long enough pass", "  ", true).unwrap_err().contains("display name"));
+        assert!(SignUpFields::checked("me@example.com", "long enough pass", &"n".repeat(65), true).unwrap_err().contains("64"));
+        assert!(SignUpFields::checked("me@example.com", "long enough pass", "Nova", false).unwrap_err().contains("18"));
     }
 
     #[test]

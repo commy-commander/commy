@@ -351,6 +351,12 @@ and Twitch application (both accept several).
   changes refuse addresses from known throwaway email services, using the list
   bundled in `auth/assets/throwaway-email-domains.txt`. Set
   `BLOCK_THROWAWAY_EMAILS=false` to allow them.
+- **Passwords**: new passwords need at least 12 characters, and the auth server
+  refuses ones found in known data breaches by asking the Have I Been Pwned
+  range API. Only the first 5 characters of the password's SHA-1 hash leave the
+  server. If the API cannot be reached in 3 seconds, the password is allowed and
+  the auth log says the check was skipped. Existing passwords keep working. Set
+  `CHECK_LEAKED_PASSWORDS=false` to turn the check off.
 - **Never-verified accounts**: with SMTP set, email and password accounts whose
   address is still unverified after 7 days are removed every few hours.
 

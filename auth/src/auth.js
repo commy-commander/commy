@@ -30,6 +30,8 @@ import { commyVault } from "./vault.js";
 import { commyVerifyEmailResult } from "./verify-email-result.js";
 import { commyFolderLock } from "./folder-lock.js";
 import { createMailer } from "./mailer.js";
+import { commyLeakedPasswords, pwnedPasswordsLookup } from "./leaked-passwords.js";
+import { MAX_PASSWORD, MIN_NEW_PASSWORD } from "./password-rules.js";
 import { commySuspension, refuseSuspendedSessions, suspensionFields } from "./suspension.js";
 import { commyThrowawayEmails, loadThrowawayDomains, refuseThrowawayEmail } from "./throwaway-email.js";
 import { redisRateLimitStorage } from "./rate-limit.js";
@@ -94,7 +96,7 @@ export function postgresDatabase(pool) {
   return kyselyAdapter(new Kysely({ dialect: new PostgresDialect({ pool }) }), { type: "postgres", transaction: true });
 }
 
-export function buildAuthOptions(config, { pool, send, fetch, redis = null, homeKeys = null, listing = null }) {
+export function buildAuthOptions(config, { pool, send, fetch, redis = null, homeKeys = null, listing = null, isLeakedPassword = null }) {
   const throwawayDomains = config.blockThrowawayEmails ? loadThrowawayDomains() : null;
   const plugins = [
     bearer(),
@@ -138,6 +140,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
   if (config.doorbell) plugins.push(commyDoorbell({ redis }));
   if (config.listing.enabled && listing) plugins.push(commyListing({ config, send, checker: listing.checker, onChange: listing.onChange }));
   if (throwawayDomains) plugins.push(commyThrowawayEmails({ domains: throwawayDomains }));
+  if (isLeakedPassword) plugins.push(commyLeakedPasswords({ isLeaked: isLeakedPassword }));
 
   if (config.turnstile) {
     plugins.push(
@@ -160,6 +163,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
     plugins.push(
       magicLink({
         disableSignUp: !config.allowSignup,
+      minPasswordLength: MIN_NEW_PASSWORD,
+      maxPasswordLength: MAX_PASSWORD,
         sendMagicLink: ({ email, url }) =>
           send({
             to: email,
@@ -183,6 +188,8 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
     emailAndPassword: {
       enabled: true,
       disableSignUp: !config.allowSignup,
+      minPasswordLength: MIN_NEW_PASSWORD,
+      maxPasswordLength: MAX_PASSWORD,
       requireEmailVerification: Boolean(config.smtp),
       resetPasswordTokenExpiresIn: 3600,
       revokeSessionsOnPasswordReset: true,
@@ -327,6 +334,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
 export function createAuth(config, { redis = null, listing = null } = {}) {
   const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10 });
   const send = createMailer(config);
-  const options = buildAuthOptions(config, { pool, send, redis, listing });
+  const isLeakedPassword = config.checkLeakedPasswords ? pwnedPasswordsLookup() : null;
+  const options = buildAuthOptions(config, { pool, send, redis, listing, isLeakedPassword });
   return { auth: betterAuth(options), options, pool, send };
 }

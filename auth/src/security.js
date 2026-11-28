@@ -2,14 +2,13 @@ import * as z from "zod";
 import { APIError, createAuthEndpoint, createAuthMiddleware, freshSessionMiddleware, getSessionFromCtx } from "better-auth/api";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { generateRandomString } from "better-auth/crypto";
+import { MAX_PASSWORD, MIN_NEW_PASSWORD } from "./password-rules.js";
 
 export const TWO_FACTOR_PAGE = "/account/two-factor";
 export const SIGN_INS_THAT_REDIRECT = ["/magic-link/verify", "/callback/:id", "/verify-email"];
 export const SIGN_IN_WITH_PROVIDER_TOKEN = "/sign-in/social";
 const TWO_FACTOR_COOKIE = "two_factor";
 const TWO_FACTOR_CHALLENGE_SECONDS = 600;
-const MIN_PASSWORD = 8;
-const MAX_PASSWORD = 128;
 
 async function hasVerifiedAuthenticator(adapter, userId) {
   const row = await adapter.findOne({ model: "twoFactor", where: [{ field: "userId", value: userId }] });
@@ -141,7 +140,7 @@ export const commyPasswords = () => ({
       {
         method: "POST",
         use: [freshSessionMiddleware],
-        body: z.object({ newPassword: z.string().min(MIN_PASSWORD).max(MAX_PASSWORD) }),
+        body: z.object({ newPassword: z.string().min(MIN_NEW_PASSWORD).max(MAX_PASSWORD) }),
       },
       async (ctx) => {
         const userId = ctx.context.session.user.id;
