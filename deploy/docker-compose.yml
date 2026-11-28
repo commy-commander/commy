@@ -254,7 +254,7 @@ services:
     logging: *logging
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:19-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: commy
