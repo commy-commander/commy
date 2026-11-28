@@ -118,8 +118,8 @@ pub fn wanted_with_days(state: &ServerState, me: UserId, community: &Keyring, da
     let lanes: Vec<Lane> = std::iter::once(Lane::State).chain(open.iter().map(|c| Lane::Channel(*c))).collect();
     let mut out = wants_of(state, KeyScope::Community, &lanes, community, now_ms);
     let epochs = day_epochs(state, days, now_ms);
-    let day_writer = epochs.iter().any(|(key, _)| writes_newest(state, days, *key));
-    for want in out.iter_mut().filter(|w| day_writer && matches!(w.lane, Lane::Channel(_))) {
+    let days_on = commy_core::day_chain::is_on(server);
+    for want in out.iter_mut().filter(|w| days_on && matches!(w.lane, Lane::Channel(_))) {
         want.writes = false;
     }
     for (key, addressing) in &epochs {
@@ -745,14 +745,16 @@ mod tests {
     }
 
     #[test]
-    fn until_a_day_key_arrives_messages_keep_going_where_they_went() {
+    fn until_a_day_key_arrives_messages_wait_instead_of_using_the_community_stream() {
         let (mut state, channel, owner) = fixture();
         let member = join(&mut state, "member");
         let community = settle(&mut state, owner);
         switch_on(&mut state);
         let none = |_| Keyring::default();
         let waiting = wanted_with_days(&state, member, &Keyring::unlock_community(&state, member, &identity_for(member)), &DayKeyring::default(), none, now());
-        assert!(waiting.iter().any(|w| w.lane == Lane::Channel(channel) && w.writes && !w.days));
+        assert!(waiting.iter().any(|w| w.lane == Lane::Channel(channel) && !w.days), "earlier messages stay readable");
+        assert!(!waiting.iter().any(|w| w.lane == Lane::Channel(channel) && w.writes), "nothing writes messages where older apps read them");
+        assert!(waiting.iter().any(|w| w.lane == Lane::State && w.writes));
         day_settle(&mut state, owner);
         let ours = wanted_with_days(&state, owner, &community, &DayKeyring::unlock(&state, owner, &identity_for(owner)), none, now());
         assert!(ours.iter().any(|w| w.lane == Lane::Channel(channel) && w.days));

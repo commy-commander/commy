@@ -263,6 +263,9 @@ pub fn build_sync_response_within(state: &ServerState, per_channel: usize, by: U
     for channel in state.server.channels.iter().filter(|c| c.view_roles.is_empty()) {
         messages.extend(state.page(channel.id, None, per_channel).iter().cloned());
     }
+    if let Some(keys) = state.server.day_keys.filter(|keys| keys.on) {
+        messages.retain(|m| m.created_at.timestamp_millis() < keys.since);
+    }
     messages.sort_by_key(|m| std::cmp::Reverse(m.created_at));
     let owner = server.owner;
     let role_holders = server.members.iter().filter(|m| !m.roles.is_empty()).map(|m| m.user);
@@ -491,6 +494,25 @@ mod tests {
         };
         assert!(!recent_messages.is_empty() && recent_messages.len() <= 50);
         assert_eq!(recent_messages.last().unwrap().content, "m99");
+    }
+
+    #[test]
+    fn with_day_keys_on_a_snapshot_leaves_out_messages_sent_after_the_switch() {
+        let (mut state, channel, owner) = fixture();
+        let before = post(&state, channel, owner, "before the switch");
+        state.apply(ServerEvent::MessageCreate { message: before }).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let since = chrono::Utc::now().timestamp_millis();
+        state.apply(ServerEvent::DayKeysSet { server: state.server.id, on: true, since, history_days: 30 }).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let after = post(&state, channel, owner, "after the switch");
+        state.apply(ServerEvent::MessageCreate { message: after }).unwrap();
+        let WirePayload::SyncResponse { recent_messages, .. } = build_sync_response(&state, 50, owner) else { panic!("wrong payload") };
+        let texts: Vec<&str> = recent_messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(texts, vec!["before the switch"]);
+        state.apply(ServerEvent::DayKeysSet { server: state.server.id, on: false, since: 0, history_days: 30 }).unwrap();
+        let WirePayload::SyncResponse { recent_messages, .. } = build_sync_response(&state, 50, owner) else { panic!("wrong payload") };
+        assert_eq!(recent_messages.len(), 2, "once the owner turns day keys off, snapshots carry messages again");
     }
 
     #[test]

@@ -41,6 +41,9 @@ impl ServerKeys {
     }
 
     pub fn may_send(&self, payload: &WirePayload) -> bool {
+        if self.days.is_some() && day_lane(payload) {
+            return false;
+        }
         !self.keyed || rides_plain(payload) || matches!(payload, WirePayload::Sealed(_) | WirePayload::DaySealed(_))
     }
 }
@@ -67,8 +70,13 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+fn day_lane(payload: &WirePayload) -> bool {
+    !matches!(payload, WirePayload::Sealed(_) | WirePayload::DaySealed(_))
+        && matches!(crate::community_streams::lane_of_payload(payload), Some(crate::community_streams::Lane::Channel(_)))
+}
+
 pub fn seal_days(server: ServerId, payload: &WirePayload, sealer: &DaySealer, now_ms: i64) -> Option<WirePayload> {
-    if matches!(payload, WirePayload::Sealed(_) | WirePayload::DaySealed(_)) || !matches!(crate::community_streams::lane_of_payload(payload), Some(crate::community_streams::Lane::Channel(_))) {
+    if !day_lane(payload) {
         return None;
     }
     let plain = commy_core::wire_layout::encode(payload).ok()?;
@@ -129,8 +137,14 @@ pub fn seal_with(keys: Option<&ServerKeys>, server: ServerId, payload: WirePaylo
     if rides_plain(&payload) {
         return payload;
     }
-    let sealer = keys.and_then(|k| k.days.as_ref()).and_then(|d| d.sealer.as_ref());
-    let payload = sealer.and_then(|sealer| seal_days(server, &payload, sealer, now_ms())).unwrap_or(payload);
+    let days = keys.and_then(|k| k.days.as_ref());
+    let payload = match days {
+        Some(days) if day_lane(&payload) => match days.sealer.as_ref().and_then(|sealer| seal_days(server, &payload, sealer, now_ms())) {
+            Some(sealed) => sealed,
+            None => return payload,
+        },
+        _ => payload,
+    };
     let Some((key, secret)) = keys.and_then(|k| k.sealing.as_ref()) else { return payload };
     seal(server, &payload, *key, secret).unwrap_or(payload)
 }
@@ -323,6 +337,24 @@ mod tests {
 
     fn with_days(root: Option<(KeyId, ChannelSecret)>, state: &ServerState, ring: &DayKeyring) -> ServerKeys {
         ServerKeys { sealing: root.clone(), held: root.into_iter().collect(), days: Some(DayKeys { sealer: ring.sealer(state), ring: ring.clone() }), keyed: true }
+    }
+
+    #[test]
+    fn without_a_day_key_messages_are_not_sent_on_a_server_with_day_keys_on() {
+        let (mut state, channel, _) = commy_core::test_support::fixture();
+        let server = state.server.id;
+        day_keys_for(&mut state);
+        let root = keys();
+        let waiting = ServerKeys { sealing: Some(root.clone()), held: vec![root.clone()], days: Some(DayKeys { sealer: None, ring: DayKeyring::default() }), keyed: true };
+        let plain = WirePayload::Event(ServerEvent::MessageCreate { message: Message::new(channel, state.server.owner, "after the switch") });
+        let sent = seal_with(Some(&waiting), server, plain.clone());
+        assert_eq!(sent, plain, "the message is not sealed with the community key alone");
+        assert!(!waiting.may_send(&sent));
+        let unkeyed = ServerKeys { keyed: false, ..waiting.clone() };
+        assert!(!unkeyed.may_send(&seal_with(Some(&unkeyed), server, plain)));
+        let rename = WirePayload::Event(ServerEvent::ServerRename { server, name: "Still sent".into() });
+        let sealed = seal_with(Some(&waiting), server, rename);
+        assert!(matches!(sealed, WirePayload::Sealed(_)) && waiting.may_send(&sealed), "server changes still go out");
     }
 
     #[test]
