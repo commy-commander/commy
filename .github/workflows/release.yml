@@ -63,7 +63,7 @@ jobs:
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             rust_targets: x86_64-unknown-linux-gnu
-            bundles: deb,appimage
+            bundles: deb,rpm,appimage
     defaults:
       run:
         shell: bash
@@ -94,7 +94,7 @@ jobs:
             libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
             libxdo-dev libssl-dev clang cmake \
             file gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio gstreamer1.0-gl \
-            libgstreamer1.0-dev gstreamer1.0-tools
+            libgstreamer1.0-dev gstreamer1.0-tools rpm
 
       - name: Choose the GStreamer plugins the AppImage carries
         if: runner.os == 'Linux'
@@ -186,6 +186,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.full }}
           TARGET: ${{ matrix.target }}
+          TEST_BUILD: ${{ steps.version.outputs.test_build }}
           SIGNING: ${{ steps.signing.outputs.enabled }}
           AZURE_TENANT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_TENANT_ID || '' }}
           AZURE_CLIENT_ID: ${{ steps.signing.outputs.enabled == 'true' && secrets.AZURE_CLIENT_ID || '' }}
@@ -219,6 +220,12 @@ jobs:
                 || { echo "the .deb does not carry the camera fix plugin"; dpkg-deb -c "$out/Commy_${VERSION}_amd64.deb"; exit 1; }
               cp "$bundle"/appimage/*.AppImage "$out/Commy_${VERSION}_amd64.AppImage"
               bash "$GITHUB_WORKSPACE/.github/scripts/check-appimage-media.sh" "$out/Commy_${VERSION}_amd64.AppImage"
+              cp "$bundle"/rpm/*.rpm "$out/Commy_${VERSION}_x86_64.rpm"
+              bash "$GITHUB_WORKSPACE/.github/scripts/check-rpm.sh" "$out/Commy_${VERSION}_x86_64.rpm"
+              branch=stable
+              [ -n "$TEST_BUILD" ] && branch=test
+              bash "$GITHUB_WORKSPACE/apps/desktop/src-tauri/linux/flatpak/in-docker.sh" \
+                "$out/Commy_${VERSION}_amd64.deb" "$VERSION" "$out/Commy_${VERSION}_x86_64.flatpak" "$branch"
               ;;
           esac
           ls -la "$out"
@@ -690,7 +697,7 @@ jobs:
           |----------|------|
           | Windows 10/11 | `*_x64-setup.exe` (installer) or `*_x64-portable.zip` |
           | macOS 11+ (Apple Silicon and Intel) | `*_universal.dmg` |
-          | Linux x64 | `*_amd64.AppImage` or `*_amd64.deb` |
+          | Linux x64 | `*_amd64.AppImage`, `*_amd64.deb` (Debian, Ubuntu), `*_x86_64.rpm` (Fedora, openSUSE) or `*_x86_64.flatpak` |
           | Stream Deck 7.1+ (Windows and macOS) | `commy-soundboard.streamDeckPlugin` |
           | Bots (`commy-bot`, see the [bot guide](https://git.commy.chat/commy/commy/src/branch/main/crates/commy-bot/README.md)) | `commy-bot-windows-x64.zip`, `commy-bot-macos-universal.tar.gz` or `commy-bot-linux-x64.tar.gz` |
 

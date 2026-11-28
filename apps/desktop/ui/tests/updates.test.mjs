@@ -37,6 +37,12 @@ test("copies that cannot install point to the download page", () => {
   assert.deepEqual(updateAction(status), { label: "Download Page", action: "page", disabled: false });
 });
 
+test("a Flatpak points to the download page for new versions", () => {
+  assert.equal(updateStatusText({ reason: "flatpak", phase: "idle" }, now), "This Flatpak updates when you install the newer one from the download page.");
+  const status = { phase: "available", reason: "flatpak", version: "0.2.0", page: "https://example.test/r" };
+  assert.deepEqual(updateAction(status), { label: "Download Page", action: "page", disabled: false });
+});
+
 test("development builds never check", () => {
   assert.equal(updateAction({ reason: "dev", phase: "idle" }).disabled, true);
   assert.equal(updateStatusText({ reason: "dev", phase: "idle" }, now), "Development builds do not update themselves.");
@@ -57,6 +63,7 @@ test("an outdated copy warns that it may not connect with the newest version", (
   assert.equal(outdatedNotice({ phase: "available", can_install: true, version: "0.2.2" }), warning);
   assert.equal(outdatedNotice({ phase: "available", reason: "portable", version: "0.2.2" }), warning);
   assert.equal(outdatedNotice({ phase: "available", reason: "package", version: "0.2.2" }), warning);
+  assert.equal(outdatedNotice({ phase: "available", reason: "flatpak", version: "0.2.2" }), warning);
 });
 
 test("no outdated warning when current, busy, or on a store or development build", () => {

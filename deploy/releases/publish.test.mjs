@@ -105,6 +105,9 @@ test("a manifest for another version or host is caught", () => {
 test("installers get their download types", () => {
   assert.equal(contentType("Commy_0.2.1_x64-setup.exe"), "application/vnd.microsoft.portable-executable");
   assert.equal(contentType("Commy_0.2.1_universal.app.tar.gz"), "application/gzip");
+  assert.equal(contentType("Commy_0.2.1_amd64.deb"), "application/vnd.debian.binary-package");
+  assert.equal(contentType("Commy_0.2.1_x86_64.rpm"), "application/x-rpm");
+  assert.equal(contentType("Commy_0.2.1_x86_64.flatpak"), "application/vnd.flatpak");
   assert.equal(contentType("latest.json"), "application/json");
   assert.equal(contentType("commy-soundboard.streamDeckPlugin"), "application/octet-stream");
 });

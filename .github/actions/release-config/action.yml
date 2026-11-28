@@ -80,7 +80,8 @@ runs:
             "windows": { "nsis": $nsis },
             "linux": {
               "appimage": { "bundleMediaFramework": true },
-              "deb": { "files": { "/usr/lib/commy/gstreamer-1.0/libgstcommycamerafix.so": "linux/camera-fix/libgstcommycamerafix.so" } }
+              "deb": { "files": { "/usr/lib/commy/gstreamer-1.0/libgstcommycamerafix.so": "linux/camera-fix/libgstcommycamerafix.so" } },
+              "rpm": { "files": { "/usr/lib/commy/gstreamer-1.0/libgstcommycamerafix.so": "linux/camera-fix/libgstcommycamerafix.so" } }
             },
             "macOS": { "minimumSystemVersion": "11.0", "signingIdentity": "-", "entitlements": "Entitlements.macos.plist" }
           },

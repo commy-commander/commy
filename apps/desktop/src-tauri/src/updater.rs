@@ -166,6 +166,9 @@ fn install_blocker(handle: &AppHandle) -> Option<&'static str> {
     }
     #[cfg(target_os = "linux")]
     {
+        if crate::flatpak::inside() {
+            return Some("flatpak");
+        }
         if handle.env().appimage.is_none() {
             return Some("package");
         }

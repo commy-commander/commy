@@ -546,6 +546,9 @@ const LINUX_LINK_ENTRY: &str = "chat.commy.desktop-links.desktop";
 
 #[cfg(target_os = "linux")]
 pub fn register_scheme() {
+    if crate::flatpak::inside() {
+        return;
+    }
     let exe = std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok());
     let (Some(exe), Some(dir)) = (exe, linux_applications_dir()) else { return };
     let entry = linux_link_entry(&exe.to_string_lossy());

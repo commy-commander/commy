@@ -1701,6 +1701,7 @@ const LOCALE_ES = {
   "ui.input-volume-2": "Volumen de entrada ",
   "ui.installed-2": "Instalados - {count}",
   "ui.installed-from-a-package-so-updates-come": "Instalado desde un paquete, así que las actualizaciones llegan por tu gestor de paquetes.",
+  "ui.this-flatpak-updates-when-you-install-the": "Este Flatpak se actualiza cuando instalas el más nuevo desde la página de descargas.",
   "ui.invite-code-copied": "Código de invitación copiado",
   "ui.invite-copied-to-clipboard": "Invitación copiada al portapapeles",
   "ui.invite-from": "Invitación de {host}",

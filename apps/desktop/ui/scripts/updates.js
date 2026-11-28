@@ -25,6 +25,7 @@ function updateStatusText(status, nowMs = Date.now()) {
   if (s.reason === "dev") return t("ui.development-builds-do-not-update");
   if (s.reason === "portable") return t("ui.this-copy-runs-without-the-installer-so");
   if (s.reason === "package") return t("ui.installed-from-a-package-so-updates-come");
+  if (s.reason === "flatpak") return t("ui.this-flatpak-updates-when-you-install-the");
   return t("ui.commy-has-not-looked-for-updates-yet");
 }
 

@@ -58,11 +58,22 @@ pub fn autostart_allowed(test_build: bool, label: Option<&str>, data_dir: Option
 }
 
 pub fn autostart_allowed_here() -> bool {
-    autostart_allowed(
+    let allowed = autostart_allowed(
         TEST_BUILD,
         std::env::var("COMMY_INSTANCE_LABEL").ok().as_deref(),
         crate::data_location::folder_from_environment().as_deref(),
-    )
+    );
+    allowed && !in_flatpak()
+}
+
+#[cfg(target_os = "linux")]
+fn in_flatpak() -> bool {
+    crate::flatpak::inside()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn in_flatpak() -> bool {
+    false
 }
 
 pub fn server_window_title(base: &str, server: Option<&str>) -> String {

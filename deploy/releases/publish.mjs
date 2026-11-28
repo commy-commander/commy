@@ -20,6 +20,8 @@ const CONTENT_TYPES = [
   [".tar.gz", "application/gzip"],
   [".AppImage", "application/octet-stream"],
   [".deb", "application/vnd.debian.binary-package"],
+  [".rpm", "application/x-rpm"],
+  [".flatpak", "application/vnd.flatpak"],
   [".json", "application/json"],
   [".txt", "text/plain; charset=utf-8"],
   [".pem", "application/x-pem-file"],

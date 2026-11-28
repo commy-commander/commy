@@ -146,6 +146,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     if let Some(icon) = icon(false) {
         builder = builder.icon(icon);
     }
+    #[cfg(target_os = "linux")]
+    if let Some(dir) = crate::flatpak::tray_icon_dir() {
+        builder = builder.temp_dir_path(dir);
+    }
     builder.build(app)?;
     Ok(())
 }

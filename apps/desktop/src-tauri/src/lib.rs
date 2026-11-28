@@ -16,6 +16,8 @@ mod calls;
 #[cfg(target_os = "linux")]
 mod camera_fix;
 mod entry_list;
+#[cfg(target_os = "linux")]
+mod flatpak;
 mod catchup;
 mod channel_lock;
 mod community_sync;
