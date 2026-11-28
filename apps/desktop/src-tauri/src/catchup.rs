@@ -950,6 +950,16 @@ pub fn release_held<A: AppAccess>(access: &A, server: ServerId, signers: &[UserI
 }
 
 pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
+    snapshot_with(app, server, SNAPSHOT_MESSAGES_PER_CHANNEL)
+}
+
+fn layout_snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
+    snapshot_with(app, server, 0)
+}
+
+const SNAPSHOT_MESSAGES_PER_CHANNEL: usize = 50;
+
+fn snapshot_with(app: &App, server: ServerId, per_channel: usize) -> Option<WirePayload> {
     if app.awaits_snapshot(server) {
         return None;
     }
@@ -958,7 +968,7 @@ pub fn snapshot_for(app: &App, server: ServerId) -> Option<WirePayload> {
     }
     let me = app.profile.lock_or_recover().as_ref().map(|p| p.id)?;
     let identity = app.identity()?;
-    let mut payload = commy_net::protocol::build_sync_response(app.servers.lock_or_recover().get(&server)?, 50, me);
+    let mut payload = commy_net::protocol::build_sync_response(app.servers.lock_or_recover().get(&server)?, per_channel, me);
     commy_net::protocol::sign_sync_response(&mut payload, Utc::now().timestamp_millis(), &identity);
     Some(payload)
 }
@@ -1009,7 +1019,11 @@ pub fn sync_replies(app: &App, server: ServerId) -> Vec<WirePayload> {
         return Vec::new();
     };
     let join = (member && app.key_settled()).then(|| app.wire_for(server, ServerEvent::MemberJoin { server, profile: app.announced(me) }));
-    snapshot_for(app, server).into_iter().chain(join).collect()
+    let full = snapshot_for(app, server);
+    let carries_messages = matches!(&full, Some(WirePayload::SyncResponse { server, recent_messages, .. })
+        if !recent_messages.is_empty() && commy_net::gossip_seal::older_apps_may_still_join(server));
+    let layout = carries_messages.then(|| layout_snapshot_for(app, server)).flatten();
+    full.into_iter().chain(layout).chain(join).collect()
 }
 
 pub fn await_snapshot(app: &App, server: ServerId, me: UserProfile) -> Vec<WirePayload> {
@@ -2710,6 +2724,20 @@ mod tests {
             let replies = sync_replies(&app_with(&friend, removed), sid);
             assert!(!replies.iter().any(|reply| joined(reply, &friend)), "a removed member does not announce itself back in ({ban})");
         }
+
+        let mut talked = real.clone();
+        let channel = talked.server.channels.iter().find(|c| c.kind == commy_core::ChannelKind::Text).unwrap().id;
+        let words = owner.post(&talked, channel, "meet at the harbour");
+        talked.apply(ServerEvent::MessageCreate { message: words }).unwrap();
+        let replies = sync_replies(&app_with(&owner, talked.clone()), sid);
+        let messages_in = |payload: &WirePayload| match payload {
+            WirePayload::SyncResponse { recent_messages, .. } => Some(recent_messages.len()),
+            _ => None,
+        };
+        assert_eq!(replies.iter().map(messages_in).collect::<Vec<_>>(), vec![Some(1), Some(0), None], "a newcomer from an older app also gets the layout alone");
+        talked.apply(ServerEvent::DayKeysSet { server: sid, on: true, since: Utc::now().timestamp_millis(), history_days: 30 }).unwrap();
+        let replies = sync_replies(&app_with(&owner, talked), sid);
+        assert_eq!(replies.iter().map(messages_in).collect::<Vec<_>>(), vec![Some(1), None], "once the server is on day keys the layout is not sent alone");
 
         let mut trimmed = from_owner[0].clone();
         if let WirePayload::SyncResponse { members, profiles, .. } = &mut trimmed {

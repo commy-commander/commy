@@ -41,7 +41,7 @@ impl ServerKeys {
     }
 
     pub fn may_send(&self, payload: &WirePayload) -> bool {
-        !self.keyed || matches!(payload, WirePayload::Sealed(_) | WirePayload::DaySealed(_))
+        !self.keyed || rides_plain(payload) || matches!(payload, WirePayload::Sealed(_) | WirePayload::DaySealed(_))
     }
 }
 
@@ -113,7 +113,22 @@ pub fn open(server: ServerId, sealed: &SealedPayload, secret: &ChannelSecret) ->
     }
 }
 
+pub fn older_apps_may_still_join(server: &commy_core::Server) -> bool {
+    server.day_keys.is_none()
+}
+
+pub fn rides_plain(payload: &WirePayload) -> bool {
+    match payload {
+        WirePayload::SyncRequest => true,
+        WirePayload::SyncResponse { server, recent_messages, .. } => recent_messages.is_empty() && older_apps_may_still_join(server),
+        _ => false,
+    }
+}
+
 pub fn seal_with(keys: Option<&ServerKeys>, server: ServerId, payload: WirePayload) -> WirePayload {
+    if rides_plain(&payload) {
+        return payload;
+    }
     let sealer = keys.and_then(|k| k.days.as_ref()).and_then(|d| d.sealer.as_ref());
     let payload = sealer.and_then(|sealer| seal_days(server, &payload, sealer, now_ms())).unwrap_or(payload);
     let Some((key, secret)) = keys.and_then(|k| k.sealing.as_ref()) else { return payload };
@@ -143,6 +158,47 @@ mod tests {
 
     fn keys() -> (KeyId, ChannelSecret) {
         (KeyId::random(), ChannelSecret::random())
+    }
+
+    #[test]
+    fn a_newcomer_gets_the_server_layout_in_plain_but_never_its_messages() {
+        let (mut state, channel, owner) = commy_core::test_support::fixture();
+        let server = state.server.id;
+        let (key, secret) = keys();
+        let keyed = ServerKeys { sealing: Some((key, secret)), keyed: true, ..ServerKeys::default() };
+        assert_eq!(seal_with(Some(&keyed), server, WirePayload::SyncRequest), WirePayload::SyncRequest);
+        let layout = crate::protocol::build_sync_response(&state, 0, owner);
+        assert_eq!(seal_with(Some(&keyed), server, layout.clone()), layout);
+        assert!(keyed.may_send(&layout));
+        let words = Message::new(channel, owner, "meet at the harbour");
+        state.apply(ServerEvent::MessageCreate { message: commy_core::test_support::signed(&state, words) }).unwrap();
+        let with_messages = crate::protocol::build_sync_response(&state, 50, owner);
+        assert!(!rides_plain(&with_messages));
+        assert!(matches!(seal_with(Some(&keyed), server, with_messages), WirePayload::Sealed(_)));
+    }
+
+    #[test]
+    fn the_plain_layout_also_stops_once_day_keys_were_turned_off_on_purpose() {
+        let (mut state, _, owner) = commy_core::test_support::fixture();
+        let server = state.server.id;
+        state.apply(ServerEvent::DayKeysSet { server, on: false, since: 0, history_days: 30 }).unwrap();
+        assert!(!older_apps_may_still_join(&state.server));
+        assert!(!rides_plain(&crate::protocol::build_sync_response(&state, 0, owner)));
+    }
+
+    #[test]
+    fn the_plain_layout_stops_once_the_server_has_moved_to_day_keys() {
+        let (mut state, _, owner) = commy_core::test_support::fixture();
+        let server = state.server.id;
+        let (key, secret) = keys();
+        let keyed = ServerKeys { sealing: Some((key, secret)), keyed: true, ..ServerKeys::default() };
+        assert!(rides_plain(&crate::protocol::build_sync_response(&state, 0, owner)));
+        state.apply(ServerEvent::DayKeysSet { server, on: true, since: chrono::Utc::now().timestamp_millis(), history_days: 30 }).unwrap();
+        assert!(!older_apps_may_still_join(&state.server));
+        let layout = crate::protocol::build_sync_response(&state, 0, owner);
+        assert!(!rides_plain(&layout));
+        assert!(matches!(seal_with(Some(&keyed), server, layout.clone()), WirePayload::Sealed(_)));
+        assert!(!keyed.may_send(&layout));
     }
 
     #[test]
