@@ -3,6 +3,7 @@ import { encode } from "uqr";
 import { authPost } from "../lib/auth-client.js";
 import { Feedback, PasswordField, useSecureAction } from "./security-ui.jsx";
 import { submitForm } from "../lib/forms.js";
+import CardHead from "./card-head.jsx";
 
 function QrCode({ text }) {
   const { data, size } = useMemo(() => encode(text, { ecc: "M", border: 2 }), [text]);
@@ -117,31 +118,29 @@ export default function TwoFactorCard({ enabled, hasPassword }) {
 
   return (
     <div className="account-card">
-      <h2>Two-step sign-in</h2>
-      <p className="muted">
-        {enabled
-          ? "On. Signing in with a password, email link, Google or Twitch also asks for a code from your authenticator app."
-          : "Ask for a code from an authenticator app whenever you sign in with a password, email link, Google or Twitch. Passkeys skip it, since they already prove it's you."}
-      </p>
-
-      {step === "idle" && (
-        <div className="form-actions section-actions">
-          {enabled ? (
-            <>
-              <button type="button" className="btn btn-ghost" onClick={() => setStep("confirm-codes")}>
-                New backup codes
-              </button>
-              <button type="button" className="btn btn-danger" onClick={() => setStep("confirm-off")}>
-                Turn off
-              </button>
-            </>
+      <CardHead
+        icon="shield"
+        title="Two-step sign-in"
+        action={
+          step === "idle" &&
+          (enabled ? (
+            <button type="button" className="btn btn-danger" onClick={() => setStep("confirm-off")}>
+              Turn off
+            </button>
           ) : (
             <button type="button" className="btn btn-primary" onClick={() => setStep("confirm-on")}>
               Turn on
             </button>
-          )}
-        </div>
-      )}
+          ))
+        }
+      >
+        <p className="muted">{enabled ? "On. Sign-ins ask for a code from your app." : "Ask for a code from an authenticator app."}</p>
+        {enabled && step === "idle" && (
+          <button type="button" className="link-button card-link" onClick={() => setStep("confirm-codes")}>
+            New backup codes
+          </button>
+        )}
+      </CardHead>
 
       {step === "confirm-on" && askPassword(start, "Continue")}
       {step === "confirm-off" && askPassword(turnOff, "Turn off two-step sign-in", true)}

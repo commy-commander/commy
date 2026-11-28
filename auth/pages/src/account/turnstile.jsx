@@ -36,7 +36,7 @@ const Turnstile = forwardRef(function Turnstile({ siteKey }, ref) {
     loadScript()
       .then(() => {
         if (!cancelled && el.current && window.turnstile && widget.current === null) {
-          widget.current = window.turnstile.render(el.current, { sitekey: siteKey, theme: "dark" });
+          widget.current = window.turnstile.render(el.current, { sitekey: siteKey, theme: "dark", size: "flexible" });
         }
       })
       .catch(() => undefined);

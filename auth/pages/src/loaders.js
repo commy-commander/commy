@@ -88,7 +88,7 @@ export function createLoaders(server) {
     if (user && next !== "/account") return { redirect: next };
     const errorMessage = accountError(query.get("error"));
     const page = { page: "account", title: `Account - ${name}` };
-    if (!user) return { ...page, props: { user: null, providers, next, errorMessage } };
+    if (!user) return { ...page, props: { user: null, providers, next, errorMessage, signedOut: query.get("notice") === "signed-out" } };
     const [linked, ways, keys] = await Promise.all([devices(), accounts(), passkeys()]);
     const notice = known(ACCOUNT_NOTICES, query.get("notice"));
     return { ...page, props: { user, providers, next, errorMessage, notice, devices: linked, accounts: ways, passkeys: keys } };

@@ -25,7 +25,7 @@ import { commyEmailPreferences } from "./email-preferences.js";
 import { commyInvites } from "./invites.js";
 import { commyListing } from "./listing.js";
 import { commyMedia } from "./media.js";
-import { commyPasswords, commySecurityNotices, commyStepUp, commyTwoFactorEverywhere, noticeWhenALoginIsLinked } from "./security.js";
+import { commyPasswords, commySecurityNotices, commyStepUp, commyTwoFactorEverywhere, commyUnlinkLogins, noticeWhenALoginIsLinked } from "./security.js";
 import { commyVault } from "./vault.js";
 import { commyVerifyEmailResult } from "./verify-email-result.js";
 import { commyFolderLock } from "./folder-lock.js";
@@ -121,6 +121,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
     commyStepUp(),
     passkey({ rpID: new URL(config.baseURL).hostname, rpName: config.instanceName, origin: passkeyOrigins(config) }),
     commyPasswords(),
+    commyUnlinkLogins({ emailSignIn: Boolean(config.smtp) }),
     commySecurityNotices({ baseURL: config.baseURL, send }),
     commyAccountDeletion({ instanceName: config.instanceName, send, emailCodes: Boolean(config.smtp) }),
     commyAppSignIn({ accessCode: config.accessCode, turnstileSiteKey: config.turnstile?.siteKey ?? null }),
@@ -232,6 +233,7 @@ export function buildAuthOptions(config, { pool, send, fetch, redis = null, home
         enabled: true,
         trustedProviders: PROVIDERS_THAT_ONLY_ISSUE_VERIFIED_EMAILS,
         allowDifferentEmails: true,
+        allowUnlinkingAll: true,
       },
       encryptOAuthTokens: true,
     },

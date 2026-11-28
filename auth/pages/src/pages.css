@@ -1431,3 +1431,252 @@ input[aria-invalid="true"]:not([type="checkbox"]) {
   gap: 12px;
   margin-top: 24px;
 }
+
+.page.account-page {
+  max-width: 68rem;
+}
+
+.account-head {
+  margin-bottom: 1.25rem;
+}
+
+.page .account-title {
+  margin-bottom: 1.25rem;
+}
+
+.account-card.account-id {
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+}
+
+.avatar.avatar-lg {
+  width: 4rem;
+  height: 4rem;
+  font-size: 1.7rem;
+}
+
+.account-who {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-who p {
+  overflow-wrap: anywhere;
+}
+
+.account-card .account-name {
+  color: var(--header-primary, var(--fg));
+  font-size: 1.25rem;
+  font-weight: 650;
+}
+
+.account-card .account-who .muted {
+  margin-top: 0.2rem;
+}
+
+.btn.sign-out {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn.sign-out svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.account-page > .form-error,
+.account-page > .form-notice {
+  margin: 0 0 1.25rem;
+}
+
+.account-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.account-col {
+  display: grid;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+.account-col > .account-card {
+  margin-top: 0;
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+}
+
+.page .card-head h2 {
+  margin: 0 0 0.3rem;
+}
+
+.card-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 0.8rem;
+  background: var(--pick, var(--bg-raised));
+  color: var(--accent-lit, var(--accent));
+}
+
+.card-icon svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.card-actions {
+  margin-top: 1.25rem;
+}
+
+.account-card .form-aside {
+  margin-top: 1rem;
+}
+
+.signed-out-page.page {
+  max-width: 34rem;
+}
+
+.account-card.signed-out-card {
+  margin-top: 0;
+  padding: clamp(2rem, 5vw, 3rem);
+  text-align: center;
+}
+
+.signed-out-mark {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  margin: 0 auto 1.25rem;
+  border-radius: 50%;
+  background: var(--pick, var(--bg-raised));
+  color: var(--accent-lit, var(--accent));
+}
+
+.signed-out-mark svg {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.page .signed-out-card h1 {
+  margin-bottom: 0.6rem;
+  font-size: clamp(1.75rem, 4vw, 2.25rem);
+  text-wrap: balance;
+}
+
+.signed-out-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+@media (max-width: 52rem) {
+  .account-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 34rem) {
+  .account-card.account-id {
+    flex-wrap: wrap;
+  }
+
+  .account-id .btn.sign-out {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.card-head:has(> div > h2:only-child) {
+  align-items: center;
+}
+
+.page .card-head:has(> div > h2:only-child) h2 {
+  margin-bottom: 0;
+}
+
+.account-card .card-head + * {
+  margin-top: 1.1rem;
+}
+
+.account-card .card-head + .card-actions,
+.account-card .card-head + .form-actions {
+  margin-top: 1.25rem;
+}
+
+.danger-card .card-icon {
+  background: color-mix(in srgb, var(--danger, #e5484d) 18%, transparent);
+  color: var(--danger-text, #ff8a8f);
+}
+
+.account-cols .method-row {
+  flex-wrap: wrap;
+}
+
+.account-cols .method-text {
+  flex: 1 1 10rem;
+}
+
+.account-card .card-head {
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 0.9rem;
+}
+
+.card-title {
+  flex: 1 1 7.5rem;
+  min-width: 0;
+}
+
+.page .card-title h2 {
+  margin: 0;
+}
+
+.account-card .card-title p {
+  margin-top: 0.2rem;
+  overflow-wrap: anywhere;
+}
+
+.card-action {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.card-action .form-error {
+  max-width: 16rem;
+  text-align: right;
+}
+
+.account-card .card-link {
+  margin-top: 0.35rem;
+  font-size: var(--step-small, 0.875rem);
+}
+
+.method-confirm .form-actions {
+  margin-top: 0.75rem;
+}
+
+.account-card .card-title .one-line {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

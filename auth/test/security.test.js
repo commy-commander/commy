@@ -144,6 +144,16 @@ test("unlinking a social login keeps the password and sends a notice", async () 
   assert.match(outbox[0].subject, /removed/);
 });
 
+test("the only social login can be unlinked when email sign-in works", async () => {
+  const cookie = await magicLinkAccount("social@example.test");
+  const user = db.user.find((u) => storedEmail(u) === "social@example.test");
+  for (const a of db.account.filter((row) => row.userId === user.id)) db.account.splice(db.account.indexOf(a), 1);
+  db.account.push({ id: "acc-twitch", userId: user.id, providerId: "twitch", accountId: "t-1", createdAt: new Date(), updatedAt: new Date() });
+  const r = await call("POST", "/unlink-account", { cookie, body: { accountId: "acc-twitch" } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(db.account.filter((row) => row.userId === user.id).length, 0);
+});
+
 test("an account without a password can set one once", async () => {
   const cookie = await magicLinkAccount("nopass@example.test");
   assert.equal((await call("POST", "/sign-in/email", { body: { email: "nopass@example.test", password: PASSWORD } })).status, 401);

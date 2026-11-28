@@ -38,17 +38,13 @@ export const SOCIAL_ICONS = {
     </svg>
   ),
   link: (
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="5" width="18" height="14" rx="3" />
-      <path d="M4 7.5l8 6 8-6" />
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+      <path d="M22 8.6v8.15a3.25 3.25 0 0 1-3.07 3.24l-.18.01H5.25a3.25 3.25 0 0 1-3.24-3.07L2 16.75V8.61l9.65 5.05c.22.12.48.12.7 0L22 8.61ZM5.25 4h13.5a3.25 3.25 0 0 1 3.23 2.92L12 12.15 2.02 6.92a3.25 3.25 0 0 1 3.04-2.91L5.25 4h13.5-13.5Z" />
     </svg>
   ),
   passkey: (
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="9" cy="8" r="4" />
-      <path d="M2.5 20a6.5 6.5 0 0 1 10.6-5" />
-      <circle cx="17.5" cy="15.5" r="2.5" />
-      <path d="M17.5 18v3.5M17.5 20h1.8" />
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+      <path d="M15 15.5c0-.53.1-1.03.26-1.5h-9C5 14 4 15 4 16.25v.92c0 .57.18 1.13.51 1.6 1.4 1.94 3.57 3 6.49 3.2V20.9a2 2 0 0 1 .59-1.41l3.44-3.45a4.54 4.54 0 0 1-.03-.55ZM12 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Zm7.5 17a3.5 3.5 0 1 0-3.39-2.61L12.3 20.2a1 1 0 0 0-.29.7v1.59c0 .28.22.5.5.5h2a.5.5 0 0 0 .5-.5V22h1a.5.5 0 0 0 .5-.5v-1h1a.5.5 0 0 0 .5-.5v-1h1.5Zm.5-5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" />
     </svg>
   ),
 };
@@ -412,6 +408,12 @@ export default function SignInPanel({
                 <>
                   {" "}and I agree to the <a href={links.terms}>Terms of Service</a>
                 </>
+              )}
+              {links.privacy && (
+                <>
+                  {links.terms ? " and the " : " and I agree to the "}
+                  <a href={links.privacy}>privacy policy</a>
+                </>
               )}.
             </span>
           </label>
@@ -462,7 +464,7 @@ export default function SignInPanel({
           )}
         </p>
       )}
-      {mode === "signup" && links.privacy && (
+      {mode === "signup" && !asksAdult && links.privacy && (
         <p className="muted small">
           By creating an account you agree to the <a href={links.privacy}>privacy policy</a>.
         </p>

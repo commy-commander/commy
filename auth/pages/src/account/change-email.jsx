@@ -2,6 +2,7 @@ import { useState } from "react";
 import { authPost } from "../lib/auth-client.js";
 import { Feedback, useSecureAction } from "./security-ui.jsx";
 import { submitForm } from "../lib/forms.js";
+import CardHead from "./card-head.jsx";
 
 export default function ChangeEmail({ currentEmail }) {
   const [open, setOpen] = useState(false);
@@ -18,9 +19,23 @@ export default function ChangeEmail({ currentEmail }) {
     });
 
   return (
-    <div className="account-section">
-      {open ? (
-        <form className="signin-form" onSubmit={submitForm(submit)}>
+    <section className="account-card" aria-labelledby="email-title">
+      <CardHead
+        icon="mail"
+        id="email-title"
+        title="Email"
+        action={
+          !open && (
+            <button type="button" className="btn btn-ghost" onClick={() => setOpen(true)}>
+              Change
+            </button>
+          )
+        }
+      >
+        <p className="muted one-line" title={currentEmail}>{currentEmail}</p>
+      </CardHead>
+      {open && (
+        <form className="signin-form method-form" onSubmit={submitForm(submit)}>
           <label>
             <span>New email</span>
             <input type="email" name="newEmail" autoComplete="email" placeholder="you@example.com" required />
@@ -34,12 +49,8 @@ export default function ChangeEmail({ currentEmail }) {
             </button>
           </div>
         </form>
-      ) : (
-        <button type="button" className="btn btn-ghost" onClick={() => setOpen(true)}>
-          Change email
-        </button>
       )}
       <Feedback error={error} stale={stale} notice={notice} />
-    </div>
+    </section>
   );
 }

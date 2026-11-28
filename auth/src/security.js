@@ -110,6 +110,29 @@ export const commyStepUp = () => ({
   },
 });
 
+export const commyUnlinkLogins = ({ emailSignIn }) => ({
+  id: "commy-unlink-logins",
+  hooks: {
+    before: [
+      {
+        matcher: (ctx) => ctx.path === "/unlink-account",
+        handler: createAuthMiddleware(async (ctx) => {
+          const session = await getSessionFromCtx(ctx).catch(() => null);
+          if (!session) return;
+          const accounts = await ctx.context.internalAdapter.findAccounts(session.user.id);
+          if (accounts.length !== 1) return;
+          const [only] = accounts;
+          if (emailSignIn && only.providerId !== "credential") return;
+          throw new APIError("BAD_REQUEST", {
+            code: "FAILED_TO_UNLINK_LAST_ACCOUNT",
+            message: "This is your only way to sign in. Add a password or another login before removing it.",
+          });
+        }),
+      },
+    ],
+  },
+});
+
 export const commyPasswords = () => ({
   id: "commy-passwords",
   endpoints: {
