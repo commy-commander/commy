@@ -91,6 +91,21 @@ jobs:
             echo "removed a container left on the runner: $id"
           done
 
+      - name: Wait for the other Android build on this Mac
+        if: runner.os == 'macOS'
+        run: |
+          lock="$HOME/.commy-android-build.lock"
+          until mkdir "$lock" 2>/dev/null; do
+            if [ -n "$(find "$lock" -maxdepth 0 -mmin +40 2>/dev/null)" ]; then
+              echo "Clearing a lock left by a build that stopped over 40 minutes ago"
+              rm -rf "$lock"
+              continue
+            fi
+            echo "Another Android build is using the shared Cargo folder on this Mac, waiting"
+            sleep 15
+          done
+          echo "ANDROID_BUILD_LOCK=$lock" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -102,7 +117,7 @@ jobs:
         with:
           cache-bin: false
           key: android
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && runner.os != 'macOS' }}
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -112,6 +127,7 @@ jobs:
         run: node --test "apps/desktop/mobile/*.test.mjs"
 
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: runner.os != 'macOS'
         with:
           path: |
             ~/.gradle/wrapper
@@ -261,6 +277,10 @@ jobs:
           echo "Sending $PLAY_RELEASE_NAME to $COMMY_APP_NAME ($PLAY_PACKAGE) $PLAY_TESTING testing"
           export PLAY_RELEASE_NOTES="Built from ${GITHUB_SHA::7}: $(git log -1 --format=%s)"
           node apps/desktop/mobile/play-upload.mjs dist/*.aab "$PLAY_TESTING"
+
+      - name: Let the next Android build on this Mac start
+        if: always() && env.ANDROID_BUILD_LOCK != ''
+        run: rm -rf "$ANDROID_BUILD_LOCK"
 
   ios:
     name: iOS ${{ inputs.ios || 'simulator' }} build
