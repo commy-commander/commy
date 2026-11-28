@@ -9,7 +9,7 @@ export const DOWNLOAD_PAGE = "https://commy.chat/download";
 export const DEFAULT_BUCKET = "commy-releases";
 export const MANIFEST = "latest.json";
 export const INDEX = "release.json";
-export const CHANNEL_COPIES = ["commy-soundboard.streamDeckPlugin"];
+export const CHANNEL_COPIES = ["Commy-Setup.exe", "commy-soundboard.streamDeckPlugin"];
 export const IMMUTABLE = "public, max-age=31536000, immutable";
 export const POINTER = "public, max-age=60, must-revalidate";
 

@@ -8,6 +8,7 @@ on:
       - "apps/desktop/src-tauri/**"
       - "apps/desktop/apple-sign-in/**"
       - "apps/desktop/app-lock/**"
+      - "apps/installer/**"
       - "apps/web/src/**"
       - "apps/web/Cargo.toml"
       - "Cargo.toml"

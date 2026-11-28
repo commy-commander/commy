@@ -17,6 +17,7 @@ logs/
 Thumbs.db
 
 apps/desktop/src-tauri/gen/
+apps/installer/gen/
 apps/desktop/src-tauri/linux/camera-fix/*.so
 
 data/

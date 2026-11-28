@@ -25,6 +25,7 @@ import {
 
 const files = [
   { name: "Commy_0.2.1_x64-setup.exe", size: 100 },
+  { name: "Commy-Setup.exe", size: 6 },
   { name: "Commy_0.2.1_universal.app.tar.gz", size: 200 },
   { name: "SHA256SUMS.txt", size: 3 },
   { name: "commy-soundboard.streamDeckPlugin", size: 4 },
@@ -54,7 +55,7 @@ test("versioned files are immutable and the channel pointers move last", () => {
   const plan = uploadPlan({ tag: "v0.2.1", files, publishedAt: "2026-11-06T20:00:00Z" });
   const keys = plan.map((step) => step.key);
   assert.deepEqual(keys.slice(0, files.length), files.map((file) => `v0.2.1/${file.name}`));
-  assert.deepEqual(keys.slice(files.length), ["stable/commy-soundboard.streamDeckPlugin", "stable/release.json", "stable/latest.json"]);
+  assert.deepEqual(keys.slice(files.length), ["stable/Commy-Setup.exe", "stable/commy-soundboard.streamDeckPlugin", "stable/release.json", "stable/latest.json"]);
   assert.ok(plan.slice(0, files.length).every((step) => step.cacheControl === IMMUTABLE));
   assert.ok(plan.slice(files.length).every((step) => step.cacheControl === POINTER));
 });

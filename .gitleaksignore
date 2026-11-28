@@ -6,3 +6,4 @@ ffb2474b1e1f06fabe7ab6209b11d5fd80a11ea9:crates/commy-sync-server/src/apns.rs:pr
 ffb2474b1e1f06fabe7ab6209b11d5fd80a11ea9:crates/commy-sync-server/src/apns.rs:private-key:230
 10c69262ea0abfe38309b183e3158192e415df42:crates/commy-sync-server/src/config.rs:generic-api-key:354
 114d17c2b0b654d8b023ddf69747ec63be4572c1:auth/test/server-guards.test.js:generic-api-key:47
+a6d61181b97715a5e9fe433dde0a0ebac93ba946:apps/installer/src/release.rs:generic-api-key:16

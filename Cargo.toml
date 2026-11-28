@@ -8,6 +8,7 @@ members = [
     "crates/commy-bot",
     "crates/commy-view",
     "apps/desktop/src-tauri",
+    "apps/installer",
     "apps/web",
     "crates/commy-sync",
     "crates/commy-sync-server",

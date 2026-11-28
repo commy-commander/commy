@@ -8445,7 +8445,16 @@ fn autostart_default_due(voice: &VoiceSettings, allowed: bool) -> bool {
 }
 
 #[cfg(desktop)]
+const NO_AUTOSTART_ARG: &str = "--no-start-with-computer";
+
+#[cfg(desktop)]
 fn start_with_computer_by_default(handle: &tauri::AppHandle) {
+    if std::env::args().any(|arg| arg == NO_AUTOSTART_ARG) {
+        if let Err(e) = set_autostart(handle.clone(), false) {
+            tracing::warn!("could not stop Commy starting with the computer: {e}");
+        }
+        return;
+    }
     let due = autostart_default_due(&handle.state::<App>().voice.lock_or_recover(), instance::autostart_allowed_here());
     if !due {
         return;

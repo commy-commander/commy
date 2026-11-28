@@ -181,6 +181,18 @@ jobs:
             --ci --target "${{ matrix.target }}" "${bundle_args[@]}" \
             --config tauri.release.conf.json
 
+      - name: Build Commy Setup
+        if: runner.os == 'Windows' && matrix.bundles
+        env:
+          TARGET: ${{ matrix.target }}
+          TEST_BUILD: ${{ steps.version.outputs.test_build }}
+        run: |
+          if [ -n "$TEST_BUILD" ]; then
+            export COMMY_INSTALL_CHANNEL=rc
+          fi
+          echo "Commy Setup installs from: ${COMMY_INSTALL_CHANNEL:-stable}"
+          cargo build --release --locked -p commy-installer --target "$TARGET"
+
       - name: Collect artifacts
         if: matrix.bundles
         env:
@@ -201,9 +213,10 @@ jobs:
               grep -qiE 'Classes[\\]+commy' "$nsi" || { echo "installer does not register commy://"; grep -n 'URL Protocol' "$nsi"; exit 1; }
               grep -q 'data-folder.nsh' "$nsi" || { echo "installer has no data folder page"; exit 1; }
               cp "$bundle"/nsis/*-setup.exe "$out/Commy_${VERSION}_x64-setup.exe"
+              cp "./target/$TARGET/release/commy-installer.exe" "$out/Commy-Setup.exe"
               exe="./target/$TARGET/release/commy-desktop.exe"
               if [ "$SIGNING" = true ]; then
-                bash "$GITHUB_WORKSPACE/.github/actions/windows-signing/sign.sh" "$exe" "$out/Commy_${VERSION}_x64-setup.exe"
+                bash "$GITHUB_WORKSPACE/.github/actions/windows-signing/sign.sh" "$exe" "$out/Commy_${VERSION}_x64-setup.exe" "$out/Commy-Setup.exe"
               fi
               zip="$out/Commy_${VERSION}_x64-portable.zip"
               if command -v 7z >/dev/null; then
@@ -642,6 +655,7 @@ jobs:
         with:
           subject-path: |
             dist/Commy_*
+            dist/Commy-Setup.exe
             dist/commy-soundboard.streamDeckPlugin
             dist/commy-bot-*
             dist/SHA256SUMS.txt
@@ -695,7 +709,7 @@ jobs:
           cat >> notes.md <<'EOF'
           | Platform | File |
           |----------|------|
-          | Windows 10/11 | `*_x64-setup.exe` (installer) or `*_x64-portable.zip` |
+          | Windows 10/11 | `Commy-Setup.exe` (small setup that installs the newest version), `*_x64-setup.exe` (full installer) or `*_x64-portable.zip` |
           | macOS 11+ (Apple Silicon and Intel) | `*_universal.dmg` |
           | Linux x64 | `*_amd64.AppImage`, `*_amd64.deb` (Debian, Ubuntu), `*_x86_64.rpm` (Fedora, openSUSE) or `*_x86_64.flatpak` |
           | Stream Deck 7.1+ (Windows and macOS) | `commy-soundboard.streamDeckPlugin` |
