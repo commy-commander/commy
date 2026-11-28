@@ -23,6 +23,8 @@ const CUSTOM_SIZE: u32 = 256;
 const MARK_PNG: &[u8] = include_bytes!("../../ui/images/commy-star-512.png");
 
 static CURRENT: RwLock<Option<(RgbaImage, RgbaImage)>> = RwLock::new(None);
+static CHOSEN: RwLock<Option<(Option<PathBuf>, String, String)>> = RwLock::new(None);
+const STAR_ALONE_FIT: f32 = 0.92;
 
 fn original() -> Option<&'static RgbaImage> {
     static BASE: std::sync::OnceLock<Option<RgbaImage>> = std::sync::OnceLock::new();
@@ -49,7 +51,6 @@ fn tile_colour(name: &str) -> Option<[u8; 3]> {
     TILE_COLOURS.iter().find(|(preset, _)| *preset == name).and_then(|(_, hex)| parse_hex(hex))
 }
 
-pub const CLASSIC_TILE: &str = "#1a2574";
 const STAR_FIT: f32 = 0.7;
 
 fn star_geometry(star: &RgbaImage) -> (f32, f32, f32) {
@@ -84,9 +85,39 @@ fn round_tile(rgb: [u8; 3]) -> Option<RgbaImage> {
 
 pub fn preset(name: &str) -> Option<RgbaImage> {
     if name == CLASSIC {
-        return parse_hex(CLASSIC_TILE).and_then(round_tile);
+        return original().cloned();
     }
     tile_colour(name).and_then(round_tile)
+}
+
+pub fn star_alone() -> Option<RgbaImage> {
+    let star = mark()?;
+    let (w, h) = star.dimensions();
+    let (cx, cy, reach) = star_geometry(star);
+    let disc = w.min(h) as f32 / 2.0;
+    let scale = disc * STAR_ALONE_FIT / reach;
+    let scaled = imageops::resize(star, (w as f32 * scale) as u32, (h as f32 * scale) as u32, imageops::FilterType::Lanczos3);
+    let mut canvas = RgbaImage::from_pixel(w, h, Rgba([0, 0, 0, 0]));
+    imageops::overlay(&mut canvas, &scaled, (disc - cx * scale).round() as i64, (disc - cy * scale).round() as i64);
+    Some(canvas)
+}
+
+fn tray_follows_app(app_choice: &str, app_icon: &RgbaImage) -> Option<RgbaImage> {
+    if app_choice == CLASSIC {
+        return star_alone();
+    }
+    Some(app_icon.clone())
+}
+
+fn taskbar_choice(app_choice: &str, app_icon: &RgbaImage, light: bool) -> Option<RgbaImage> {
+    if app_choice != CLASSIC {
+        return Some(app_icon.clone());
+    }
+    if light {
+        star_alone()
+    } else {
+        None
+    }
 }
 
 pub fn custom_path(dir: &Path, target: &str) -> PathBuf {
@@ -188,21 +219,38 @@ pub fn tray_image() -> Option<RgbaImage> {
     CURRENT.read().ok()?.as_ref().map(|(_, tray)| tray.clone())
 }
 
+fn system_is_light(handle: &tauri::AppHandle) -> bool {
+    tauri::Manager::get_webview_window(handle, "main")
+        .and_then(|window| window.theme().ok())
+        .is_some_and(|theme| theme == tauri::Theme::Light)
+}
+
 pub fn apply(handle: &tauri::AppHandle, dir: Option<&Path>, app_choice: &str, tray_choice: &str) {
+    if let Ok(mut chosen) = CHOSEN.write() {
+        *chosen = Some((dir.map(Path::to_path_buf), app_choice.to_string(), tray_choice.to_string()));
+    }
     let Some(app_icon) = load(dir, "app", app_choice) else { return };
-    let tray_icon = if tray_choice == FOLLOW_APP { Some(app_icon.clone()) } else { load(dir, "tray", tray_choice) };
+    let tray_icon = if tray_choice == FOLLOW_APP { tray_follows_app(app_choice, &app_icon) } else { load(dir, "tray", tray_choice) };
     let Some(tray_icon) = tray_icon else { return };
     if let Ok(mut current) = CURRENT.write() {
         *current = Some((app_icon.clone(), tray_icon));
     }
+    let taskbar = taskbar_choice(app_choice, &app_icon, system_is_light(handle));
     #[cfg(windows)]
-    crate::taskbar::show(handle, (app_choice != CLASSIC).then_some(&app_icon));
+    crate::taskbar::show(handle, taskbar.as_ref());
     #[cfg(desktop)]
     if let Some(window) = tauri::Manager::get_webview_window(handle, "main") {
-        let (w, h) = app_icon.dimensions();
-        let _ = window.set_icon(tauri::image::Image::new_owned(app_icon.into_raw(), w, h));
+        let shown = taskbar.unwrap_or(app_icon);
+        let (w, h) = shown.dimensions();
+        let _ = window.set_icon(tauri::image::Image::new_owned(shown.into_raw(), w, h));
     }
     crate::tray::refresh_icon(handle);
+}
+
+pub fn theme_changed(handle: &tauri::AppHandle) {
+    let chosen = CHOSEN.read().ok().and_then(|chosen| chosen.clone());
+    let Some((dir, app_choice, tray_choice)) = chosen else { return };
+    apply(handle, dir.as_deref(), &app_choice, &tray_choice);
 }
 
 #[cfg(test)]
@@ -227,6 +275,35 @@ mod tests {
             assert_ne!(icon.get_pixel(w / 2, h / 2).0[..3], icon.get_pixel(w / 2, h / 12).0[..3], "{name} star sits at the centre");
         }
         assert!(preset("nope").is_none());
+    }
+
+    #[test]
+    fn the_classic_icon_is_the_shipped_tile_and_the_star_alone_has_clear_corners() {
+        assert_eq!(preset(CLASSIC).unwrap().as_raw(), original().unwrap().as_raw());
+        let star = star_alone().unwrap();
+        let (w, h) = star.dimensions();
+        assert_eq!(star.get_pixel(0, 0)[3], 0);
+        assert_eq!(star.get_pixel(w - 1, 0)[3], 0);
+        assert_eq!(star.get_pixel(w / 2, h / 2)[3], 255);
+        assert!(star.pixels().filter(|p| p[3] > 0).count() as u32 > w * h / 4);
+    }
+
+    #[test]
+    fn the_tray_shows_the_star_alone_for_the_classic_icon_and_follows_other_tiles() {
+        let classic = preset(CLASSIC).unwrap();
+        assert_eq!(tray_follows_app(CLASSIC, &classic).unwrap().as_raw(), star_alone().unwrap().as_raw());
+        let amber = preset("amber").unwrap();
+        assert_eq!(tray_follows_app("amber", &amber).unwrap().as_raw(), amber.as_raw());
+    }
+
+    #[test]
+    fn the_taskbar_shows_the_tile_on_dark_and_the_star_alone_on_light() {
+        let classic = preset(CLASSIC).unwrap();
+        assert!(taskbar_choice(CLASSIC, &classic, false).is_none());
+        assert_eq!(taskbar_choice(CLASSIC, &classic, true).unwrap().as_raw(), star_alone().unwrap().as_raw());
+        let mint = preset("mint").unwrap();
+        assert_eq!(taskbar_choice("mint", &mint, true).unwrap().as_raw(), mint.as_raw());
+        assert_eq!(taskbar_choice("mint", &mint, false).unwrap().as_raw(), mint.as_raw());
     }
 
     #[test]

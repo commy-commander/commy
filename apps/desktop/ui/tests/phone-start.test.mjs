@@ -30,7 +30,7 @@ test("the phone startup sheet sits with the other phone sheets, before the off-k
 
 test("the phone startup screen wears the new look: the star, a slab of steps, and a full-width key", () => {
   assert.match(rule(" .startup"), /padding: calc\(env\(safe-area-inset-top\) \+ 24px\) 20px calc\(env\(safe-area-inset-bottom\) \+ 24px\);/);
-  assert.match(rule(" .startup"), /radial-gradient\(460px 420px at 18% 6%, var\(--wall-lit\), transparent 72%\)/);
+  assert.match(rule(" .startup"), /background: var\(--bg-darkest\);/);
   assert.match(rule(" .startup-card > .startup-logo"), /display: none;/);
   assert.match(rule(" .startup-card > .start-star"), /--star-size: 76px;\n  display: block;/);
   assert.match(rule(" .startup-title"), /font: 700 25px\/1\.14 var\(--font-display\);/);

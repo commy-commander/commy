@@ -47,7 +47,7 @@ test("an empty display name shows the username as its placeholder", () => {
 
 test("an off phone switch at Day is a sunken track, not white on a white sheet", () => {
   const day = 'html[data-look="studio"][data-fit="slim"][data-theme="light"]';
-  const sunk = "background: var(--bg-active); box-shadow: inset 0 1px 2px rgb(var(--dark) / .45), 0 1px 0 rgb(var(--lamp) / .5);";
+  const sunk = "background: var(--bg-active); box-shadow: none;";
   assert.ok(touch.includes(`${day} :not([aria-checked="true"]) > .tog { ${sunk} }`));
   assert.ok(read("styles", "phone-settings-page.css").includes(`${day} .settings-layer .settings-content input.switch:not(:checked) { ${sunk} }`));
 });

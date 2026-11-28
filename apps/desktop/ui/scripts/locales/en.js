@@ -3159,6 +3159,14 @@ const LOCALE_EN = {
   "ui.remove-from-queue": "Remove from the queue",
   "ui.turn-the-video-down-while-people-talk": "Turn the video down while people talk",
   "ui.show-the-full-player": "Show the full player",
+  "ui.coming-up": "Coming up",
+  "ui.periwinkle": "Periwinkle",
+  "ui.up-to-event-media": "You can add up to {count} GIFs and stickers.",
+  "ui.event-description-is-full": "The description is full. Shorten the text to add more.",
+  "ui.now-until": "Now · until {time}",
+  "ui.event-place": "{channel} · hosted by {name}",
+  "ui.hosted-by": "Hosted by {name}",
+  "ui.going-interested": "{going} going · {interested} interested",
 };
 
 if (typeof registerLocale === "function") registerLocale("en", LOCALE_EN);

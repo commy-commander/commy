@@ -4,20 +4,21 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MAP_FILE = join(HERE, "studio-icon-map.json");
-const OUT_FILE = join(HERE, "../ui/vendor/phosphor/icons.js");
+const OUT_FILE = join(HERE, "../ui/vendor/fluent/icons.js");
+const SIZE = 24;
 const REST_WEIGHT = "regular";
-const ON_WEIGHT = "fill";
+const ON_WEIGHT = "filled";
 
-const assetsDir = process.argv[2];
-if (!assetsDir) {
-  console.error("usage: node apps/desktop/tools/studio-icons.mjs <unpacked @phosphor-icons/core>/assets");
+const iconsDir = process.argv[2];
+if (!iconsDir) {
+  console.error("usage: node apps/desktop/tools/studio-icons.mjs <unpacked @fluentui/svg-icons>/icons");
   process.exit(1);
 }
 
 function drawing(weight, name) {
-  const file = join(assetsDir, weight, weight === REST_WEIGHT ? `${name}.svg` : `${name}-${weight}.svg`);
+  const file = join(iconsDir, `${name}_${SIZE}_${weight}.svg`);
   if (!existsSync(file)) return null;
-  return readFileSync(file, "utf8").replace(/^<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
+  return readFileSync(file, "utf8").trim().replace(/^<svg[^>]*>/, "").replace(/<\/svg>$/, "").replace(/ fill="[^"]*"/g, "");
 }
 
 const map = JSON.parse(readFileSync(MAP_FILE, "utf8"));

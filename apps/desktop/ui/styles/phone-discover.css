@@ -19,10 +19,10 @@ html[data-look="studio"][data-fit="slim"] #discover::before {
   top: 66px;
   bottom: -40px;
   border-radius: var(--radius-xl);
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 96px), var(--panel);
+  background: var(--panel);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
-  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+  box-shadow: inset 0 0 0 1px var(--rim-soft);
   pointer-events: none;
 }
 html[data-look="studio"][data-fit="slim"] #discover .discover-head::before {
@@ -50,7 +50,7 @@ html[data-look="studio"][data-fit="slim"] #discover::after {
   box-sizing: border-box;
   padding: var(--border-w);
   border-radius: var(--radius-xl);
-  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  background: none;
   -webkit-mask: linear-gradient(var(--white) 0 0) content-box, linear-gradient(var(--white) 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(var(--white) 0 0) content-box exclude, linear-gradient(var(--white) 0 0);

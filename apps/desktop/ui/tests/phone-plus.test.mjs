@@ -67,7 +67,7 @@ test("Aa and GIF are small round muted keys at the right end of the field", () =
   assert.match(rule(".main > .composer :is(#text-style-btn, #gif-btn) > .pt-fk .i"), /width: 20px; height: 20px;/);
   assert.match(rule(".main > .composer #gif-btn.hidden"), /display: none;/);
   assert.match(css, /:not\(\[data-theme="light"\]\) \.main > \.composer #text-style-btn\[aria-expanded="true"\] \{\n  background: var\(--glass-hi\), var\(--glass-key-on\);/);
-  assert.match(css, /\[data-theme="light"\] \.main > \.composer #text-style-btn\[aria-expanded="true"\] \{\n  background: linear-gradient\(180deg, rgb\(var\(--lamp\) \/ \.08\), rgb\(var\(--lamp\) \/ 0\) 70%\), var\(--bg-active\);\n  box-shadow: var\(--pillow-sm\);/);
+  assert.match(css, /\[data-theme="light"\] \.main > \.composer #text-style-btn\[aria-expanded="true"\] \{\n  background: var\(--bg-active\);\n  box-shadow: var\(--pillow-sm\);/);
 });
 
 test("the text style popover is a small glass popover above the field, not a sheet", () => {

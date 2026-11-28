@@ -111,7 +111,7 @@ test("the chat head keeps a glass people key that lights by the ON rule while th
   assert.match(glue, /studioIconMarkup\("users"\)/);
   assert.match(glue, /el\("button", "key sq strip-people-key"\)/);
   const day = rule(`${STACK} .app[data-pane].strip-people .chat-header > .strip-people-key`);
-  assert.ok(day.includes("linear-gradient(180deg, rgb(var(--lamp) / .08), rgb(var(--lamp) / 0) 70%), var(--bg-active);"));
+  assert.ok(day.includes("var(--bg-active);"));
   assert.ok(day.includes("box-shadow: var(--pillow-sm);"));
   const night = rule(`${STACK}:not([data-theme="light"]) .app[data-pane].strip-people .chat-header > .strip-people-key`);
   assert.ok(night.includes("background: var(--glass-hi), var(--glass-key-on);"));

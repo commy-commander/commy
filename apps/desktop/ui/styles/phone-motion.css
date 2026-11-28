@@ -3,7 +3,7 @@ html[data-look="studio"][data-fit="slim"][data-move]::view-transition-group(root
 html[data-look="studio"][data-fit="slim"][data-move]::view-transition-old(root),
 html[data-look="studio"][data-fit="slim"][data-move]::view-transition-new(root) { mix-blend-mode: normal; animation: none; }
 html[data-look="studio"][data-fit="slim"][data-move="push"]::view-transition-old(root) { animation: pt-move-under-out var(--pt-move-ms, 340ms) var(--ease-settle) both; }
-html[data-look="studio"][data-fit="slim"][data-move="push"]::view-transition-new(root) { animation: pt-move-over-in var(--pt-move-ms, 340ms) var(--ease-settle) both; box-shadow: -24px 0 48px -12px rgb(var(--dark) / .6); }
+html[data-look="studio"][data-fit="slim"][data-move="push"]::view-transition-new(root) { animation: pt-move-over-in var(--pt-move-ms, 340ms) var(--ease-settle) both; box-shadow: none; }
 html[data-look="studio"][data-fit="slim"][data-move="pop"]::view-transition-old(root) { z-index: 1; clip-path: inset(0 0 0 var(--pt-pop-from, 0px)); animation: pt-move-over-out var(--pt-move-ms, 340ms) var(--ease-settle) both; }
 html[data-look="studio"][data-fit="slim"][data-move="pop"]::view-transition-new(root) { animation: pt-move-under-in var(--pt-move-ms, 340ms) var(--ease-settle) both; }
 @keyframes pt-move-over-in {

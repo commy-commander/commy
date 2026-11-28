@@ -1,7 +1,7 @@
 const APP_ICON_MARK = "images/commy-star.svg";
 
 const APP_ICON_PRESETS = [
-  { id: "classic", get label() { return t("ui.night"); }, image: APP_ICON_MARK, tile: "#1a2574" },
+  { id: "classic", get label() { return t("ui.periwinkle"); }, image: APP_ICON_MARK, tile: "linear-gradient(180deg, #7686ff, #5466f0)" },
   { id: "amber", get label() { return t("ui.amber"); }, image: APP_ICON_MARK, tile: "#f2b24c" },
   { id: "mint", get label() { return t("ui.mint"); }, image: APP_ICON_MARK, tile: "#8fdcbd" },
   { id: "ocean", get label() { return t("ui.sky"); }, image: APP_ICON_MARK, tile: "#c3d6ff" },

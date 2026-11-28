@@ -1,0 +1,22 @@
+@font-face { font-family: "Geist"; src: url(../fonts/geist-latin-wght-normal.woff2) format("woff2"); font-weight: 100 900; font-display: block; }
+
+html[data-look="studio"]:root {
+  --ov-pane: rgb(26 32 66 / .92);
+  --ov-pane-quiet: rgb(26 32 66 / .76);
+  --ov-lamp: linear-gradient(transparent, transparent);
+  --ov-rim: inset 0 0 0 0 transparent;
+  --ov-ink: #eef0ff;
+  --ov-text: #d6dbf7;
+  --ov-quiet: #a3abd6;
+  --ov-well: #252c55;
+}
+html[data-look="studio"][data-theme="light"]:root {
+  --ov-pane: rgb(246 247 253 / .94);
+  --ov-pane-quiet: rgb(246 247 253 / .78);
+  --ov-ink: #10132a;
+  --ov-text: #1d2240;
+  --ov-quiet: #555d85;
+  --ov-well: #e4e8f9;
+}
+html[data-look="studio"]:root body,
+html[data-look="studio"]:root body :is(.member, .name, .line, .line b, .notice) { font-family: "Geist", system-ui, sans-serif; }

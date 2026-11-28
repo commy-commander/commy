@@ -63,20 +63,20 @@ html[data-look="studio"] .key .i.i-g,
 html[data-look="studio"] .is-on > .i.i-g,
 html[data-look="studio"] .i.i-g.on {
   stroke: currentColor;
-  stroke-width: 9px;
+  stroke-width: .5px;
   stroke-linejoin: round;
 }
 
 html[data-look="studio"] .slab {
   position: relative;
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 96px), var(--panel);
+  background: var(--panel);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   border-radius: var(--radius-xl);
-  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+  box-shadow: inset 0 0 0 1px var(--rim-soft);
 }
 html[data-look="studio"] .slab.thin {
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
+  background: var(--panel-thin);
 }
 html[data-look="studio"] .slab::before {
   content: "";
@@ -85,7 +85,7 @@ html[data-look="studio"] .slab::before {
   z-index: 3;
   padding: var(--border-w);
   border-radius: inherit;
-  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  background: none;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
@@ -222,7 +222,7 @@ html[data-look="studio"]:not([data-theme="light"]) .key.primary:disabled,
 html[data-look="studio"]:not([data-theme="light"]) .key.primary.is-off {
   --k-ink: var(--text-muted);
   color: var(--text-muted);
-  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .1);
+  box-shadow: none;
 }
 html[data-look="studio"] .key.sq {
   width: 40px;
@@ -332,7 +332,7 @@ html[data-look="studio"] form.bar .plus {
 html[data-look="studio"] form.bar .plus .i {
   width: 19px;
   height: 19px;
-  stroke-width: 2px;
+  stroke-width: .2px;
   transition: rotate 220ms var(--ease-spring);
 }
 html[data-look="studio"] form.bar.is-open .plus .i { rotate: 45deg; }
@@ -455,7 +455,7 @@ html[data-look="studio"] form.bar .send {
 html[data-look="studio"] form.bar .send .i {
   width: 22px;
   height: 22px;
-  stroke-width: 2.2px;
+  stroke-width: .2px;
 }
 html[data-look="studio"]:not([data-theme="light"]) form.bar.has-text .send { --k: var(--white); }
 html[data-look="studio"] form.bar:not(.has-text) .send {
@@ -487,7 +487,7 @@ html[data-look="studio"] .attachment.filecard {
   padding: 0 12px;
   border: 0;
   border-radius: 22px;
-  background: linear-gradient(180deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 60%), var(--bg-raised);
+  background: var(--bg-raised);
   box-shadow: var(--pillow-card);
 }
 html[data-look="studio"] .filecard .plate {
@@ -500,7 +500,7 @@ html[data-look="studio"] .filecard .plate {
   color: var(--accent-lit);
   box-shadow: var(--slot);
 }
-html[data-look="studio"][data-theme="light"] .filecard .plate { background: var(--bg-hover); box-shadow: inset 0 1px 2px rgb(var(--dark) / .3); }
+html[data-look="studio"][data-theme="light"] .filecard .plate { background: var(--bg-hover); box-shadow: none; }
 html[data-look="studio"] .filecard .file-meta { display: grid; gap: 5px; }
 html[data-look="studio"] .filecard .file-name { font: 600 14.5px/1 var(--font); }
 html[data-look="studio"] .filecard .file-size { font: 400 13px/1 var(--font); }

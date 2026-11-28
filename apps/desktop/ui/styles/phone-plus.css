@@ -117,7 +117,7 @@ html[data-look="studio"][data-fit="slim"]:not([data-theme="light"]) .main > .com
   color: var(--header-primary);
 }
 html[data-look="studio"][data-fit="slim"][data-theme="light"] .main > .composer #text-style-btn[aria-expanded="true"] {
-  background: linear-gradient(180deg, rgb(var(--lamp) / .08), rgb(var(--lamp) / 0) 70%), var(--bg-active);
+  background: var(--bg-active);
   box-shadow: var(--pillow-sm);
   color: var(--header-primary);
 }
@@ -134,7 +134,7 @@ html[data-look="studio"][data-fit="slim"] .text-style-pop:not(.hidden) {
   gap: 6px;
   border: 0;
   border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
+  background: var(--panel-thin);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-3);

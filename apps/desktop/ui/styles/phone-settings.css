@@ -1,10 +1,7 @@
 html[data-look="studio"][data-fit="slim"] .settings-layer {
   padding: env(safe-area-inset-top) 0 0;
   overflow: hidden;
-  background:
-    linear-gradient(118deg, rgb(var(--lamp) / 0) 16%, rgb(var(--lamp) / .07) 24%, rgb(var(--lamp) / .07) 40%, rgb(var(--lamp) / 0) 48%),
-    radial-gradient(460px 420px at 18% 6%, var(--wall-lit), transparent 72%),
-    linear-gradient(180deg, var(--bg-dark), var(--bg-darkest));
+  background: var(--bg-darkest);
 }
 html[data-look="studio"][data-fit="slim"] .settings-layer::before { content: ""; position: absolute; inset: 0; background: var(--grain); mix-blend-mode: overlay; opacity: .4; pointer-events: none; }
 html[data-look="studio"][data-fit="slim"][data-fx="lite"] .settings-layer::before { display: none; }
@@ -29,10 +26,10 @@ html[data-look="studio"][data-fit="slim"] .settings-layer > .settings-content {
   overflow: hidden;
   border: 0;
   border-radius: var(--radius-xl);
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 96px), var(--panel);
+  background: var(--panel);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
-  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+  box-shadow: inset 0 0 0 1px var(--rim-soft);
 }
 html[data-look="studio"][data-fit="slim"] .settings-layer > .settings-nav::before,
 html[data-look="studio"][data-fit="slim"] .settings-layer > .settings-content::before {
@@ -42,7 +39,7 @@ html[data-look="studio"][data-fit="slim"] .settings-layer > .settings-content::b
   z-index: 3;
   padding: var(--border-w);
   border-radius: inherit;
-  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  background: none;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);

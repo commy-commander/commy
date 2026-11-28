@@ -152,7 +152,7 @@ html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content inpu
   border: 0;
   border-radius: 50%;
   background: var(--cream);
-  box-shadow: 0 2px 0 var(--cream-deep), 0 4px 10px rgb(var(--dark) / .4);
+  box-shadow: 0 2px 0 var(--cream-deep);
 }
 
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch {
@@ -163,7 +163,7 @@ html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content inpu
   margin: 0;
   border-radius: 999px;
   background: var(--tog-off);
-  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .08), inset 0 1px 2px rgb(var(--dark) / .2);
+  box-shadow: none;
 }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch::before {
   content: "";
@@ -184,18 +184,18 @@ html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content inpu
   height: 26px;
   border-radius: 50%;
   background: var(--pillow-top), var(--tog-knob);
-  box-shadow: inset 0 -3px 4px -2px rgb(var(--dark) / .22), 0 1px 2px rgb(var(--dark) / .35), 0 3px 5px -1px rgb(var(--dark) / .35);
+  box-shadow: none;
   translate: 0 0;
   transition: translate 220ms var(--ease-spring);
 }
-html[data-look="studio"][data-fit="slim"][data-theme="light"] .settings-layer .settings-content input.switch:not(:checked) { background: var(--bg-active); box-shadow: inset 0 1px 2px rgb(var(--dark) / .45), 0 1px 0 rgb(var(--lamp) / .5); }
+html[data-look="studio"][data-fit="slim"][data-theme="light"] .settings-layer .settings-content input.switch:not(:checked) { background: var(--bg-active); box-shadow: none; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch:checked { background: var(--input-bg); box-shadow: var(--slot); }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch:checked::before { opacity: 1; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch:checked::after {
   left: 3px;
   translate: 22px 0;
   background: var(--cream);
-  box-shadow: inset 0 -4px 5px -3px rgb(var(--dark) / .22), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .5);
+  box-shadow: none;
 }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content input.switch:disabled { opacity: .5; }
 
@@ -259,7 +259,7 @@ html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .acc
   height: 40px;
   border-radius: 50%;
   font-size: 16px;
-  box-shadow: 0 1px 2px rgb(var(--dark) / .45);
+  box-shadow: none;
 }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .account-card > .account-line > div { display: grid; flex: 1; gap: 4px; min-width: 0; }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .account-card #acct-name { font: 600 16px/1.2 var(--font); }
@@ -364,7 +364,7 @@ html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .ove
   height: 64px;
   border-radius: 18px;
   font: 700 22px/1 var(--font-display);
-  box-shadow: inset 0 1px 0 rgb(var(--lamp) / .2), 0 3px 0 var(--key-edge);
+  box-shadow: 0 3px 0 var(--key-edge);
 }
 html[data-look="studio"][data-fit="slim"] .settings-layer .settings-content .overview-avatar > .overview-avatar-hint {
   display: inline-flex;

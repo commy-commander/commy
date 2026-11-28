@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
-const { STUDIO_ICON_PATHS } = require("../vendor/phosphor/icons.js");
+const { STUDIO_ICON_PATHS } = require("../vendor/fluent/icons.js");
 const { STUDIO_ICON_GLYPHS, STUDIO_APP_ICONS, STUDIO_STATIC_ICONS, StudioIcons, studioIconKnown, studioIconMarkup, paintStudioIcons, studioAppIconName, studioAppIconOn, studioStaticIconName, studioIconNode, swapStaticStudioIcons } = require("../scripts/studio-icons.js");
 
 const ICON_MAP = JSON.parse(readFileSync(new URL("../../tools/studio-icon-map.json", import.meta.url), "utf8"));
@@ -31,7 +31,7 @@ test("every icon the app names has a regular and a filled drawing", () => {
 
 test("an icon carries both drawings so a stylesheet picks rest or on without a redraw", () => {
   const svg = studioIconMarkup("mic", "", SAMPLE);
-  assert.equal(svg, "<svg class=\"i\" data-icon=\"mic\" viewBox=\"0 0 256 256\" aria-hidden=\"true\" focusable=\"false\"><g class=\"i-rest\"><path d=\"M1\"/></g><g class=\"i-on\"><path d=\"M2\"/></g></svg>");
+  assert.equal(svg, "<svg class=\"i\" data-icon=\"mic\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><g class=\"i-rest\"><path d=\"M1\"/></g><g class=\"i-on\"><path d=\"M2\"/></g></svg>");
 });
 
 test("a plain glyph has one drawing and is marked so a key can thicken it", () => {

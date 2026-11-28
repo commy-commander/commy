@@ -14169,7 +14169,16 @@ function renderEvents() {
     body.appendChild(empty);
     return;
   }
-  for (const event of upcoming) body.appendChild(eventCard(server, event));
+  const live = upcoming.filter(eventLive);
+  const later = upcoming.filter(e => !eventLive(e));
+  if (live.length) {
+    body.appendChild(el("h3", "events-sec", t("ui.happening-now")));
+    for (const event of live) body.appendChild(eventCard(server, event));
+  }
+  if (later.length) {
+    if (live.length) body.appendChild(el("h3", "events-sec", t("ui.coming-up")));
+    for (const event of later) body.appendChild(eventCard(server, event));
+  }
 }
 
 function sameDay(a, b) {
@@ -14224,70 +14233,97 @@ function renderEventCalendar(server) {
   return wrap;
 }
 
-function formatEventTime(event) {
+function eventLive(event) {
+  const now = Date.now();
+  return new Date(event.start).getTime() <= now && (!event.end || new Date(event.end).getTime() > now);
+}
+
+function eventWhen(event, live) {
   const start = new Date(event.start);
-  const opts = { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
-  let text = start.toLocaleString(dateLocale(), opts);
-  if (event.end) {
-    const end = new Date(event.end);
-    text += sameDay(start, end)
-      ? ` - ${end.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" })}`
-      : ` - ${end.toLocaleString(dateLocale(), opts)}`;
-  }
-  return text;
+  const clock = date => date.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" });
+  const end = event.end ? new Date(event.end) : null;
+  if (live) return end ? t("ui.now-until", { time: clock(end) }) : t("ui.happening-now");
+  const day = start.toLocaleDateString(dateLocale(), { weekday: "short" });
+  if (!end) return `${day} · ${clock(start)}`;
+  if (sameDay(start, end)) return `${day} · ${clock(start)} – ${clock(end)}`;
+  return `${day} · ${clock(start)} – ${end.toLocaleString(dateLocale(), { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
+}
+
+function openEventMenu(event, anchor) {
+  closeFloating();
+  const menu = $("msg-menu");
+  menu.replaceChildren();
+  const { item } = contextMenuBuilder(menu);
+  item(t("ui.edit-event"), () => openEventEditor(event));
+  item(t("ui.delete-event"), () => deleteEvent(event), "danger");
+  const r = anchor.getBoundingClientRect();
+  placeMenuAt(menu, r.left, r.bottom + 4, r.top - 4);
 }
 
 function eventCard(server, event) {
-  const card = el("div", "event-card");
   const start = new Date(event.start);
-  const live = start.getTime() <= Date.now() && (!event.end || new Date(event.end).getTime() > Date.now());
+  const live = eventLive(event);
+  const card = el("article", "event-card" + (live ? " is-now" : ""));
+  const top = el("div", "event-top");
   const badge = el("div", "event-date");
   badge.appendChild(el("span", "event-date-month", start.toLocaleDateString(dateLocale(), { month: "short" }).toUpperCase()));
   badge.appendChild(el("span", "event-date-day", String(start.getDate())));
-  card.appendChild(badge);
-  const main = el("div", "event-main");
-  const when = el("div", "event-when" + (live ? " live" : ""), live ? t("ui.happening-now") : formatEventTime(event));
-  main.appendChild(when);
-  main.appendChild(el("div", "event-title", event.title));
+  const head = el("div", "event-head");
+  head.appendChild(el("div", "event-when", eventWhen(event, live)));
+  head.appendChild(el("div", "event-title", event.title));
+  const where = el("div", "event-where");
   if (event.channel_name) {
-    const where = el("div", "event-where");
     where.appendChild(svgIcon("speaker", 14));
-    where.appendChild(el("span", null, event.channel_name));
-    main.appendChild(where);
+    where.appendChild(el("span", null, t("ui.event-place", { channel: event.channel_name, name: event.creator_name })));
+  } else {
+    where.appendChild(el("span", null, t("ui.hosted-by", { name: event.creator_name })));
   }
-  if (event.description) main.appendChild(renderMarkdown(event.description));
-  const foot = el("div", "event-foot");
-  foot.appendChild(el("span", "event-counts", `${event.going} going - ${event.interested} interested - by ${event.creator_name}`));
-  const rsvp = (value, label) => {
-    const btn = el("button", "btn-small " + (event.my_rsvp === value ? "btn-primary" : "btn-secondary"), label);
-    btn.onclick = () => setRsvp(event, event.my_rsvp === value ? null : value);
-    return btn;
-  };
-  const actions = el("div", "event-actions");
-  actions.append(rsvp("interested", t("ui.interested")), rsvp("going", t("ui.going")));
+  head.appendChild(where);
+  top.append(badge, head);
+  if (event.can_edit) {
+    const more = el("button", "event-more");
+    more.type = "button";
+    more.title = t("ui.more-options");
+    more.setAttribute("aria-label", t("ui.more-options"));
+    more.appendChild(svgIcon("more", 18));
+    more.onclick = () => openEventMenu(event, more);
+    top.appendChild(more);
+  }
+  card.appendChild(top);
+  const { words, media } = splitEventDescription(event.description);
+  if (words) card.appendChild(renderMarkdown(words));
+  if (media.length) {
+    const box = el("div", "event-media");
+    box.append(...eventMediaNodes(media));
+    card.appendChild(box);
+  }
+  card.appendChild(el("div", "event-counts", t("ui.going-interested", { going: event.going, interested: event.interested })));
+  const act = el("div", "event-act");
+  const answers = el("div", "event-rsvp");
+  answers.setAttribute("role", "group");
+  for (const [value, label] of [["interested", t("ui.interested")], ["going", t("ui.going")]]) {
+    const mine = event.my_rsvp === value;
+    const answer = el("button", mine ? "on" : null);
+    answer.type = "button";
+    answer.setAttribute("aria-pressed", String(mine));
+    if (mine) answer.appendChild(svgIcon("check", 15));
+    answer.appendChild(el("span", null, label));
+    answer.onclick = () => setRsvp(event, mine ? null : value);
+    answers.appendChild(answer);
+  }
+  act.appendChild(answers);
   if (event.channel && live) {
-    const join = el("button", "btn-primary btn-small", t("ui.join-voice"));
+    const join = el("button", "key primary event-join");
+    join.type = "button";
+    join.append(svgIcon("speaker", 16), el("span", null, t("ui.join")));
     join.onclick = () => {
       const channel = server.channels.find(c => c.id === event.channel);
       closeEvents();
       if (channel && state.voiceChannelId !== channel.id) toggleVoice(channel);
     };
-    actions.appendChild(join);
+    act.appendChild(join);
   }
-  if (event.can_edit) {
-    const edit = el("button", "icon-btn");
-    edit.title = t("ui.edit-event");
-    edit.appendChild(svgIcon("pencil", 16));
-    edit.onclick = () => openEventEditor(event);
-    const del = el("button", "icon-btn danger");
-    del.title = t("ui.delete-event");
-    del.appendChild(svgIcon("trash", 16));
-    del.onclick = () => deleteEvent(event);
-    actions.append(edit, del);
-  }
-  foot.appendChild(actions);
-  main.appendChild(foot);
-  card.appendChild(main);
+  card.appendChild(act);
   return card;
 }
 
@@ -14327,7 +14363,15 @@ function openEventEditor(event) {
   editingEventId = event ? event.id : null;
   $("event-editor-title").textContent = event ? t("ui.edit-event") : t("ui.create-event");
   $("event-title").value = event ? event.title : "";
-  $("event-description").value = event ? event.description : "";
+  const draft = splitEventDescription(event ? event.description : "");
+  $("event-description").value = draft.words;
+  eventDraftMedia = draft.media;
+  renderEventDraftMedia();
+  $("event-fmt").classList.add("hidden");
+  $("event-stickers").classList.add("hidden");
+  $("event-aa").classList.remove("on");
+  $("event-sticker").classList.remove("on");
+  $("event-gif").classList.toggle("hidden", !gifSettings().key && !serverHasGifs());
   const start = event ? new Date(event.start) : new Date(Math.ceil(Date.now() / 3600e3) * 3600e3 + 3600e3);
   $("event-start").value = toLocalInput(start);
   $("event-end").value = event && event.end ? toLocalInput(new Date(event.end)) : "";
@@ -14348,7 +14392,7 @@ async function saveEvent() {
       serverId: state.currentServer.id,
       eventId: editingEventId,
       title: $("event-title").value,
-      description: $("event-description").value,
+      description: eventDescriptionDraft(),
       start: new Date(startValue).toISOString(),
       end: endValue ? new Date(endValue).toISOString() : null,
       channelId: $("event-channel").value || null,
@@ -14360,6 +14404,139 @@ async function saveEvent() {
   } catch (e) {
     toast(String(e));
   }
+}
+
+const MAX_EVENT_MEDIA = 4;
+const MAX_EVENT_DESCRIPTION_BYTES = 1500;
+let eventDraftMedia = [];
+
+function isEventMediaLine(line) {
+  const trimmed = String(line || "").trim();
+  if (parseStickerToken(trimmed)) return true;
+  const links = imageLinks(trimmed);
+  return links.length === 1 && links[0] === trimmed;
+}
+
+function splitEventDescription(text) {
+  const words = [];
+  const media = [];
+  for (const line of String(text || "").split("\n")) {
+    if (isEventMediaLine(line)) media.push(line.trim());
+    else words.push(line);
+  }
+  return { words: words.join("\n").trim(), media };
+}
+
+function eventMediaNodes(media) {
+  const urls = media.filter(line => !parseStickerToken(line));
+  const stickers = media.map(parseStickerToken).filter(Boolean).map(sticker => customEmojiImg(sticker.name, sticker.image, "sticker-img"));
+  return [...imageEmbeds(urls), ...stickers];
+}
+
+function eventDescriptionDraft() {
+  return [$("event-description").value.trim(), ...eventDraftMedia].filter(Boolean).join("\n");
+}
+
+function eventMediaBytes() {
+  return new TextEncoder().encode(eventDraftMedia.map(line => `\n${line}`).join("")).length;
+}
+
+function renderEventDraftMedia() {
+  const box = $("event-media");
+  box.replaceChildren(...eventDraftMedia.map((line, index) => {
+    const item = el("span", "rich-thumb");
+    const sticker = parseStickerToken(line);
+    if (sticker) {
+      item.appendChild(customEmojiImg(sticker.name, sticker.image, "sticker-img"));
+    } else {
+      item.classList.add("is-gif");
+      const img = el("img");
+      img.alt = "";
+      img.src = viaAccountServer(line);
+      item.append(img, el("em", null, "GIF"));
+    }
+    const drop = el("button", "rich-drop");
+    drop.type = "button";
+    drop.title = t("ui.remove");
+    drop.setAttribute("aria-label", t("ui.remove"));
+    drop.appendChild(svgIcon("close", 12));
+    drop.onclick = () => {
+      eventDraftMedia.splice(index, 1);
+      renderEventDraftMedia();
+    };
+    item.appendChild(drop);
+    return item;
+  }));
+  box.classList.toggle("hidden", !eventDraftMedia.length);
+  $("event-description").maxLength = Math.max(0, MAX_EVENT_DESCRIPTION_BYTES - eventMediaBytes());
+}
+
+function addEventMedia(line) {
+  if (eventDraftMedia.length >= MAX_EVENT_MEDIA) {
+    toast(t("ui.up-to-event-media", { count: MAX_EVENT_MEDIA }));
+    return;
+  }
+  const encoder = new TextEncoder();
+  if (encoder.encode($("event-description").value).length + eventMediaBytes() + encoder.encode(`\n${line}`).length > MAX_EVENT_DESCRIPTION_BYTES) {
+    toast(t("ui.event-description-is-full"));
+    return;
+  }
+  eventDraftMedia.push(line);
+  renderEventDraftMedia();
+}
+
+function insertEventText(text) {
+  const box = $("event-description");
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? box.value.length;
+  box.setRangeText(text, start, end, "end");
+  box.focus();
+}
+
+function wrapEventText(mark) {
+  const box = $("event-description");
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? box.value.length;
+  box.setRangeText(`${mark}${box.value.slice(start, end)}${mark}`, start, end);
+  box.setSelectionRange(start + mark.length, end + mark.length);
+  box.focus();
+}
+
+function toggleEventFormatting() {
+  const open = $("event-fmt").classList.toggle("hidden") === false;
+  $("event-aa").classList.toggle("on", open);
+  $("event-aa").setAttribute("aria-pressed", String(open));
+}
+
+function toggleEventStickers() {
+  const grid = $("event-stickers");
+  const open = grid.classList.contains("hidden");
+  grid.classList.toggle("hidden", !open);
+  $("event-sticker").classList.toggle("on", open);
+  $("event-sticker").setAttribute("aria-pressed", String(open));
+  if (!open) return;
+  grid.replaceChildren();
+  const any = appendExpressionGroups(grid, "stickers", "", sticker => {
+    const btn = el("button", "sticker-tile");
+    btn.type = "button";
+    btn.title = sticker.name;
+    btn.appendChild(customEmojiImg(sticker.name, sticker.image, "sticker-img"));
+    btn.onclick = () => addEventMedia(stickerToken(sticker.name, sticker.image));
+    return btn;
+  }, { add: false });
+  if (!any) grid.appendChild(el("div", "picker-empty", t("ui.no-stickers-here-yet-servers-add-them-in")));
+}
+
+function setupEventRichText() {
+  for (const btn of document.querySelectorAll("#event-rich [data-icon]")) btn.replaceChildren(svgIcon(btn.dataset.icon, 20));
+  for (const btn of $("event-fmt").querySelectorAll("[data-wrap]")) btn.onclick = () => wrapEventText(btn.dataset.wrap);
+  $("event-aa").onclick = toggleEventFormatting;
+  $("event-emoji").onclick = e => openEmojiPop(e.currentTarget, insertEventText, { custom: true });
+  $("event-gif").onclick = e => {
+    openEmojiPop(e.currentTarget, insertEventText, { custom: true, onGif: async gif => addEventMedia(gif.url) });
+    showEmojiPopTab("gifs");
+  };
+  $("event-sticker").onclick = toggleEventStickers;
 }
 
 const COLLAPSED_KEY = "commy.collapsedSections";
@@ -25022,6 +25199,7 @@ function wireEvents() {
     if (e.target === e.currentTarget) closeEvents();
   });
   $("event-cancel").onclick = hideModals;
+  setupEventRichText();
   $("event-save").onclick = saveEvent;
   $("choose-roles-done").onclick = hideModals;
   $("create-category-icon").replaceChildren(svgIcon("chevronDown", 20));

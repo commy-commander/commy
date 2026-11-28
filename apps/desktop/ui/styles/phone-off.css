@@ -16,5 +16,5 @@ html[data-look="studio"][data-fit="slim"]:not([data-theme="light"]) .btn-primary
 html[data-look="studio"][data-fit="slim"]:not([data-theme="light"]) .key.primary:disabled,
 html[data-look="studio"][data-fit="slim"]:not([data-theme="light"]) .key.primary.is-off {
   background: var(--glass-key-off) !important;
-  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .1) !important;
+  box-shadow: none !important;
 }

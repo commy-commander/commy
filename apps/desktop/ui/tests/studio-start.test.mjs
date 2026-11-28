@@ -80,7 +80,7 @@ test("starting up is the guide's offline pane: a thin slab, the star at 58, the 
   assert.match(card, /width: min\(410px, 100%\);/);
   assert.match(card, /padding: 22px 24px 20px;/);
   assert.match(card, /var\(--panel-thin\);/);
-  assert.match(card, /box-shadow: inset 0 0 0 1px var\(--rim-soft\), var\(--shadow-2\);/);
+  assert.match(card, /box-shadow: inset 0 0 0 1px var\(--rim-soft\);/);
   assert.match(rule(`${R} .startup-card > .start-star`), /--star-size: 58px;/);
   assert.match(rule(`${R} .startup-card > .startup-logo`), /display: none;/);
   assert.match(rule(`${R} .startup-title`), /font: 700 22px\/1\.14 var\(--font-display\);/);

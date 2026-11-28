@@ -40,11 +40,11 @@ html[data-look="studio"]:not([data-fit="slim"]) .discover-search {
   cursor: text;
   transition: box-shadow var(--t-hover) var(--ease-out);
 }
-html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .discover-search { box-shadow: inset 0 1px 2px rgb(var(--dark) / .5), inset 0 0 0 1px rgb(var(--dark) / .12); }
-html[data-look="studio"]:not([data-fit="slim"]) .discover-search:hover { box-shadow: inset 0 1px 2px rgb(var(--dark) / .8), 0 0 0 1px var(--line-strong); }
+html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .discover-search { box-shadow: inset 0 0 0 1px rgb(var(--dark) / .12); }
+html[data-look="studio"]:not([data-fit="slim"]) .discover-search:hover { box-shadow: 0 0 0 1px var(--line-strong); }
 html[data-look="studio"]:not([data-fit="slim"]) .discover-search:focus-within {
   border-color: transparent;
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .8), 0 0 0 2px var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
   color: var(--header-primary);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .discover-search-icon > svg { scale: 1.125; }

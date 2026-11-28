@@ -70,27 +70,6 @@ test("Upcoming and Calendar sit in a slot, 40 tall, the open one ringed", () => 
   assert.match(rule(`${SLIM} #events-layer .events-tab.active`), /outline: var\(--ring-on\)/);
 });
 
-test("an event card wraps its foot: the count line on its own row, then 40 tall keys", () => {
-  assert.match(rule(`${SLIM} #events-body .event-card`), /grid-template-columns: 48px minmax\(0, 1fr\);[\s\S]*border-radius: 18px/);
-  assert.match(rule(`${SLIM} #events-body .event-date`), /height: 54px/);
-  assert.match(rule(`${SLIM} #events-body .event-foot`), /grid-column: 1 \/ -1;[\s\S]*flex-wrap: wrap/);
-  assert.match(rule(`${SLIM} #events-body .event-counts`), /flex: 1 0 100%/);
-  assert.match(rule(`${SLIM} #events-body .event-foot .key.sm`), /height: 40px/);
-  assert.match(rule(`${SLIM} #events-body .event-foot .key.sm.mine`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\)/);
-  assert.match(rule(`${SLIM} #events-body .event-foot .pe-ibtn`), /width: 40px;\n {2}height: 40px;\n {2}border-radius: 50%/);
-  assert.match(rule(`${SLIM} #events-body .event-foot .pe-push`), /margin-left: auto/);
-  assert.match(glue, /phoneEventIcon\("check"\)/);
-  assert.match(glue, /"trash-2"/);
-  assert.match(glue, /"volume-2"/);
-});
-
-test("happening now is the filled live tag", () => {
-  const live = rule(`${SLIM} #events-body .event-when.live`);
-  assert.match(live, /height: 22px/);
-  assert.match(live, /background: var\(--live\)/);
-  assert.match(live, /color: var\(--live-ink\)/);
-});
-
 test("the calendar has 46 tall day tiles, today in a filled dot, the picked day ringed", () => {
   assert.match(rule(`${SLIM} #events-body .cal-day`), /height: 46px/);
   assert.match(rule(`${SLIM} #events-body .cal-day.today .cal-num`), /width: 24px|flex: 0 0 24px/);

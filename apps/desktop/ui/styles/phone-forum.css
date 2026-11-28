@@ -5,10 +5,10 @@ html[data-look="studio"][data-fit="slim"] #forum-view {
   margin: 6px 10px calc(-1 * var(--radius-xl));
   padding: 14px 12px 0;
   border-radius: var(--radius-xl);
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 96px), var(--panel);
+  background: var(--panel);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
-  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+  box-shadow: inset 0 0 0 1px var(--rim-soft);
 }
 html[data-look="studio"][data-fit="slim"][data-fx="lite"] #forum-view {
   -webkit-backdrop-filter: none;
@@ -21,7 +21,7 @@ html[data-look="studio"][data-fit="slim"] #forum-view::before {
   z-index: 3;
   padding: var(--border-w);
   border-radius: inherit;
-  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  background: none;
   -webkit-mask: linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(black 0 0) content-box exclude, linear-gradient(black 0 0);
@@ -283,7 +283,7 @@ html[data-look="studio"][data-fit="slim"] #modal-forum-post {
   padding: 30px 18px 0;
   border: 0;
   border-radius: var(--radius-sheet) var(--radius-sheet) 0 0 !important;
-  background: linear-gradient(180deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 120px), var(--sheet-bg);
+  background: var(--sheet-bg);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   box-shadow: inset 0 0 0 1px var(--rim-soft), 0 -24px 40px -10px rgb(var(--dark) / .8);
@@ -309,7 +309,7 @@ html[data-look="studio"][data-fit="slim"] #modal-forum-post::after {
   inset: 0;
   padding: var(--border-w);
   border-radius: inherit;
-  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  background: none;
   -webkit-mask: linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(black 0 0) content-box exclude, linear-gradient(black 0 0);

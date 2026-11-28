@@ -3159,6 +3159,14 @@ const LOCALE_ES = {
   "ui.remove-from-queue": "Quitar de la cola",
   "ui.turn-the-video-down-while-people-talk": "Bajar el vídeo mientras la gente habla",
   "ui.show-the-full-player": "Mostrar el reproductor completo",
+  "ui.coming-up": "Próximamente",
+  "ui.periwinkle": "Pervinca",
+  "ui.up-to-event-media": "Puedes añadir hasta {count} GIF y stickers.",
+  "ui.event-description-is-full": "La descripción está llena. Acorta el texto para añadir más.",
+  "ui.now-until": "Ahora · hasta las {time}",
+  "ui.event-place": "{channel} · organiza {name}",
+  "ui.hosted-by": "Organiza {name}",
+  "ui.going-interested": "{going} van · {interested} interesados",
 };
 
 if (typeof registerLocale === "function") registerLocale("es", LOCALE_ES);

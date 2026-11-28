@@ -48,6 +48,7 @@
   <link rel="stylesheet" id="studio-phone-reach" href="styles/phone-reach.css" media="not all" />
   <link rel="stylesheet" id="studio-phone-off" href="styles/phone-off.css" media="not all" />
   <link rel="stylesheet" id="studio-tablet" href="styles/tablet.css" media="not all" />
+  <link rel="stylesheet" id="studio-tonal" href="styles/studio-tonal.css" media="not all" />
   <link rel="stylesheet" id="studio-contrast" href="styles/studio-contrast.css" media="not all" />
 </head>
 <body>
@@ -1250,9 +1251,24 @@
       <label class="field-label"><span data-i18n="ui.voice-channel-optional">Voice Channel (optional)</span>
         <select id="event-channel" class="compact-select"></select>
       </label>
-      <label class="field-label"><span data-i18n="ui.description">Description</span>
-        <textarea id="event-description" rows="4" maxlength="1500" placeholder="Tell people what to expect" data-i18n-placeholder="ui.tell-people-what-to-expect"></textarea>
-      </label>
+      <div class="field-label"><label for="event-description" data-i18n="ui.description">Description</label>
+        <div class="rich" id="event-rich">
+          <textarea id="event-description" rows="4" maxlength="1500" placeholder="Tell people what to expect" data-i18n-placeholder="ui.tell-people-what-to-expect"></textarea>
+          <div class="rich-media hidden" id="event-media"></div>
+          <div class="rich-fmt hidden" id="event-fmt" role="toolbar">
+            <button type="button" data-wrap="**" data-icon="bold" title="Bold" data-i18n-title="ui.bold"></button>
+            <button type="button" data-wrap="*" data-icon="italic" title="Italic" data-i18n-title="ui.italic"></button>
+            <button type="button" data-wrap="~~" data-icon="strike" title="Strikethrough" data-i18n-title="ui.strikethrough"></button>
+          </div>
+          <div class="rich-stickers hidden" id="event-stickers"></div>
+          <div class="rich-bar" role="toolbar">
+            <button type="button" class="aa" id="event-aa" translate="no" title="Text Style" data-i18n-title="ui.text-style" aria-label="Text Style" data-i18n-aria-label="ui.text-style" aria-pressed="false">Aa</button>
+            <button type="button" id="event-emoji" data-icon="smile" title="Emoji" data-i18n-title="ui.emoji"></button>
+            <button type="button" id="event-gif" data-icon="gifBox" title="GIFs" data-i18n-title="ui.gifs"></button>
+            <button type="button" id="event-sticker" data-icon="sticker" title="Stickers" data-i18n-title="ui.stickers"></button>
+          </div>
+        </div>
+      </div>
       <div class="modal-actions">
         <button class="btn-secondary" id="event-cancel" data-i18n="signin.cancel">Cancel</button>
         <button class="btn-primary" id="event-save" data-i18n="ui.save-event">Save Event</button>
@@ -3825,7 +3841,7 @@
   <script src="scripts/star.js"></script>
   <script src="scripts/studio-room.js"></script>
   <script src="scripts/studio-events.js"></script>
-  <script src="vendor/phosphor/icons.js"></script>
+  <script src="vendor/fluent/icons.js"></script>
   <script src="scripts/studio-icons.js"></script>
   <script src="scripts/studio-dock.js"></script>
   <script src="scripts/studio-saved.js"></script>

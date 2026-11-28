@@ -14,10 +14,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-layer {
   padding: 0;
   gap: 0;
   border-radius: var(--radius-xl);
-  background: linear-gradient(112deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 38%), linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 96px), var(--panel);
+  background: var(--panel);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
-  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+  box-shadow: inset 0 0 0 1px var(--rim-soft);
   animation: none;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-layer::after {
@@ -27,7 +27,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-layer::after {
   z-index: 4;
   padding: var(--border-w);
   border-radius: inherit;
-  background: linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%);
+  background: none;
   -webkit-mask: linear-gradient(rgb(0 0 0) 0 0) content-box, linear-gradient(rgb(0 0 0) 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(rgb(0 0 0) 0 0) content-box exclude, linear-gradient(rgb(0 0 0) 0 0);
@@ -44,7 +44,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-nav {
   min-height: 0;
   overflow: hidden;
   border-radius: var(--radius-xl) 0 0 var(--radius-xl);
-  background: linear-gradient(90deg, rgb(var(--dark) / 0), rgb(var(--dark) / .2));
+  background: none;
   box-shadow: inset -1px 0 0 var(--line);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .settings-nav-inner {
@@ -122,7 +122,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .settings-tab.active:hover {
   padding: 0 14px 0 12px;
   border-radius: var(--radius-pill) 0 0 var(--radius-pill);
   background: var(--pillow-top), var(--accent);
-  box-shadow: inset 0 1px 1px rgb(var(--lamp) / .4), inset 0 -8px 10px -8px rgb(var(--dark) / .35), 0 2px 3px rgb(var(--dark) / .45), 0 12px 16px -6px rgb(var(--dark) / .7);
+  box-shadow: none;
   color: var(--accent-ink);
   font-weight: 600;
 }
@@ -397,8 +397,8 @@ html[data-look="studio"]:not([data-fit="slim"]) .game-search {
   top: calc(100% + 8px);
   padding: 7px;
   border-radius: 22px;
-  background: linear-gradient(180deg, rgb(var(--lamp) / .06), rgb(var(--lamp) / 0) 60%), var(--bg-raised);
-  box-shadow: inset 0 0 0 1px var(--rim-soft), inset 0 1px 0 rgb(var(--lamp) / .12), var(--shadow-3);
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--rim-soft);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .game-hit { gap: 12px; min-height: 52px; padding: 6px 12px 6px 6px; border-radius: 16px; }
 html[data-look="studio"]:not([data-fit="slim"]) .game-hit:hover,
@@ -408,7 +408,7 @@ html[data-look="studio"] .settings-layer input[type="range"]::-webkit-slider-run
   height: 8px;
   border-radius: 4px;
   background: linear-gradient(var(--accent), var(--accent)) 0 0 / var(--fill, 50%) 100% no-repeat, var(--input-bg);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .9), 0 1px 0 rgb(var(--lamp) / .14);
+  box-shadow: 0 1px 0 rgb(var(--lamp) / .14);
 }
 html[data-look="studio"] .settings-layer input[type="range"]::-webkit-slider-thumb {
   width: 22px;
@@ -417,7 +417,7 @@ html[data-look="studio"] .settings-layer input[type="range"]::-webkit-slider-thu
   border: 0;
   border-radius: 50%;
   background: linear-gradient(180deg, var(--white), var(--star));
-  box-shadow: inset 0 -4px 5px -3px rgb(var(--dark) / .22), 0 1px 2px rgb(var(--dark) / .5), 0 5px 8px -2px rgb(var(--dark) / .55);
+  box-shadow: none;
   -webkit-appearance: none;
   appearance: none;
 }
@@ -428,7 +428,7 @@ html[data-look="studio"] .settings-layer input.switch {
   height: 28px;
   border-radius: var(--radius-pill);
   background: var(--input-bg);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .9), 0 1px 0 rgb(var(--lamp) / .14);
+  box-shadow: 0 1px 0 rgb(var(--lamp) / .14);
   transition: background var(--t-hover) var(--ease-out);
 }
 html[data-look="studio"] .settings-layer input.switch::after {
@@ -438,22 +438,22 @@ html[data-look="studio"] .settings-layer input.switch::after {
   height: 22px;
   border-radius: 50%;
   background: var(--pillow-top), var(--bg-active);
-  box-shadow: inset 0 1px 1px rgb(var(--lamp) / .25), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .5);
+  box-shadow: none;
   transition: translate 180ms var(--ease-spring), background var(--t-hover);
 }
 html[data-look="studio"] .settings-layer input.switch:checked {
   background: var(--accent);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .5), 0 1px 0 rgb(var(--lamp) / .14);
+  box-shadow: 0 1px 0 rgb(var(--lamp) / .14);
 }
 html[data-look="studio"] .settings-layer input.switch:checked::after {
   left: 3px;
   translate: 20px 0;
   background: linear-gradient(180deg, var(--white), var(--star));
-  box-shadow: inset 0 -3px 4px -2px rgb(var(--dark) / .2), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .45);
+  box-shadow: none;
 }
 html[data-look="studio"] .settings-layer input.switch:disabled {
   background: rgb(var(--lamp) / .06);
-  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .07);
+  box-shadow: none;
   opacity: 1;
   cursor: not-allowed;
 }
@@ -465,7 +465,7 @@ html[data-look="studio"] .settings-layer .segmented {
   padding: 4px;
   border-radius: var(--radius-pill);
   background: var(--input-bg);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .9), 0 1px 0 rgb(var(--lamp) / .14);
+  box-shadow: 0 1px 0 rgb(var(--lamp) / .14);
 }
 html[data-look="studio"] .settings-layer .segmented > button:not(.key) {
   justify-content: center;
@@ -574,7 +574,7 @@ html[data-look="studio"] .settings-layer .set-theme {
   padding: 6px 6px 0;
   border: 0;
   border-radius: 24px;
-  background: linear-gradient(180deg, rgb(var(--lamp) / .06), rgb(var(--lamp) / 0) 70%), var(--bg-raised);
+  background: var(--bg-raised);
   box-shadow: var(--pillow-card);
   color: var(--text-normal);
   text-align: left;
@@ -582,7 +582,7 @@ html[data-look="studio"] .settings-layer .set-theme {
   transition: translate var(--t-hover) var(--ease-spring), box-shadow var(--t-hover) var(--ease-out);
 }
 html[data-look="studio"] .settings-layer .set-theme:active { translate: 0 2px; transition-duration: var(--t-press); }
-html[data-look="studio"] .settings-layer .set-theme[aria-checked="true"] { box-shadow: inset 0 1px 0 rgb(var(--lamp) / .2), 0 0 0 2px var(--accent-lit), 0 2px 0 2px var(--accent-deep), 0 12px 14px -5px rgb(var(--dark) / .5); }
+html[data-look="studio"] .settings-layer .set-theme[aria-checked="true"] { box-shadow: 0 0 0 2px var(--accent-lit), 0 2px 0 2px var(--accent-deep); }
 html[data-look="studio"] .settings-layer .set-theme:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
 html[data-look="studio"] .settings-layer .set-theme .tmini {
   position: relative;
@@ -590,13 +590,13 @@ html[data-look="studio"] .settings-layer .set-theme .tmini {
   height: 70px;
   overflow: hidden;
   border-radius: 18px;
-  background: linear-gradient(180deg, var(--bg-dark) 0%, var(--wall-lit) 62%, var(--tint-1) 62.5%, var(--tint-1) 64%, var(--bg-dark) 64.5%, var(--bg-darkest) 100%);
+  background: var(--bg-darkest);
 }
 html[data-look="studio"] .settings-layer .set-theme .tmini.split { background: none; }
 html[data-look="studio"] .settings-layer .set-theme .tmini.split > .tm {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, var(--bg-dark) 0%, var(--wall-lit) 62%, var(--tint-1) 62.5%, var(--tint-1) 64%, var(--bg-dark) 64.5%, var(--bg-darkest) 100%);
+  background: var(--bg-darkest);
 }
 html[data-look="studio"] .settings-layer .set-theme .tmini.split > .tm.theme-light { clip-path: polygon(58% 0, 100% 0, 100% 100%, 42% 100%); }
 html[data-look="studio"] .settings-layer .set-theme .mw {
@@ -607,7 +607,7 @@ html[data-look="studio"] .settings-layer .set-theme .mw {
   left: 14px;
   border-radius: 9px;
   background: var(--panel);
-  box-shadow: inset 0 1px 0 var(--rim), inset 0 0 0 1px var(--rim-soft), 0 8px 10px -4px rgb(var(--dark) / .6);
+  box-shadow: inset 0 1px 0 var(--rim), inset 0 0 0 1px var(--rim-soft);
 }
 html[data-look="studio"] .settings-layer .set-theme .mw::before {
   content: "";
@@ -629,7 +629,7 @@ html[data-look="studio"] .settings-layer .set-theme .mb {
   height: 14px;
   border-radius: 7px;
   background: var(--accent);
-  box-shadow: inset 0 1px 0 rgb(var(--lamp) / .4), 0 2px 0 var(--accent-deep), 0 6px 6px -2px rgb(var(--dark) / .6);
+  box-shadow: 0 2px 0 var(--accent-deep);
 }
 html[data-look="studio"] .settings-layer .set-theme .mk {
   position: absolute;
@@ -639,7 +639,7 @@ html[data-look="studio"] .settings-layer .set-theme .mk {
   height: 16px;
   border-radius: 50%;
   background: var(--cream);
-  box-shadow: 0 2px 0 var(--cream-deep), 0 4px 4px -1px rgb(var(--dark) / .5);
+  box-shadow: 0 2px 0 var(--cream-deep);
 }
 html[data-look="studio"] .settings-layer .set-theme .lab {
   display: flex;
@@ -742,8 +742,8 @@ html[data-look="studio"] .settings-layer .set-caps > .kbd {
   height: 24px;
   padding: 0 7px;
   border-radius: 8px;
-  background: linear-gradient(180deg, rgb(var(--lamp) / .08), rgb(var(--lamp) / 0) 70%), var(--bg-raised);
-  box-shadow: inset 0 1px 0 rgb(var(--lamp) / .18), 0 1px 2px rgb(var(--dark) / .5), 0 2px 4px -1px rgb(var(--dark) / .4);
+  background: var(--bg-raised);
+  box-shadow: none;
   color: var(--header-primary);
   font: 500 12px/1 var(--font-mono);
   letter-spacing: 0;
@@ -806,7 +806,7 @@ html[data-look="studio"] .settings-layer :is(.btn-primary, .btn-secondary, .btn-
 }
 html[data-look="studio"]:not([data-theme="light"]) .settings-layer .btn-primary:disabled {
   --k-ink: var(--text-muted);
-  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .1);
+  box-shadow: none;
 }
 html[data-look="studio"] .settings-layer .btn-small {
   height: 32px;
@@ -816,25 +816,25 @@ html[data-look="studio"] .settings-layer .btn-small {
 html[data-look="studio"] .settings-layer .btn-small.order-key { width: 32px; padding: 0; border-radius: 50%; }
 
 html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-search,
-html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer :where(input[type="text"], input[type="password"], input[type="search"]:not(.settings-search), input[type="number"], input[type="email"], input[type="url"], select, textarea):not(:hover, :focus, :disabled) { box-shadow: inset 0 1px 2px rgb(var(--dark) / .5), inset 0 0 0 1px rgb(var(--dark) / .12); }
+html[data-look="studio"][data-theme="light"]:not([data-fit="slim"]) .settings-layer :where(input[type="text"], input[type="password"], input[type="search"]:not(.settings-search), input[type="number"], input[type="email"], input[type="url"], select, textarea):not(:hover, :focus, :disabled) { box-shadow: inset 0 0 0 1px rgb(var(--dark) / .12); }
 html[data-look="studio"][data-theme="light"] .settings-layer .segmented:not(.voice-filters) {
   background: var(--bg-active);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .4);
+  box-shadow: none;
 }
 html[data-look="studio"][data-theme="light"] .settings-layer input.switch:not(:checked, :disabled) {
   background: var(--bg-active);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .45);
+  box-shadow: none;
 }
 html[data-look="studio"][data-theme="light"] .settings-layer input.switch:not(:checked, :disabled)::after { background: var(--bg-raised); }
 html[data-look="studio"][data-theme="light"] .settings-layer input[type="range"]:not(#sensitivity-db)::-webkit-slider-runnable-track {
   background: linear-gradient(var(--accent), var(--accent)) 0 0 / var(--fill, 50%) 100% no-repeat, var(--bg-active);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .45);
+  box-shadow: none;
 }
-html[data-look="studio"][data-theme="light"] .settings-layer input[type="range"]:not(#sensitivity-db)::-webkit-slider-thumb { box-shadow: inset 0 1px 1px rgb(var(--lamp) / .2), 0 1px 2px rgb(var(--dark) / .4), 0 5px 8px -2px rgb(var(--dark) / .4); }
+html[data-look="studio"][data-theme="light"] .settings-layer input[type="range"]:not(#sensitivity-db)::-webkit-slider-thumb { box-shadow: none; }
 
 html[data-look="studio"][data-theme="light"] .settings-layer .mic-meter { background: var(--bg-hover); }
 html[data-look="studio"][data-theme="light"] .settings-layer #sensitivity-db::-webkit-slider-thumb { background: var(--cream); }
 
-html[data-look="studio"][data-theme="light"] .settings-layer .set-caps > .kbd { box-shadow: inset 0 0 0 1px rgb(var(--dark) / .1), 0 2px 0 var(--key-edge), 0 3px 1px rgb(var(--dark) / .18); }
+html[data-look="studio"][data-theme="light"] .settings-layer .set-caps > .kbd { box-shadow: inset 0 0 0 1px rgb(var(--dark) / .1), 0 2px 0 var(--key-edge); }
 
 html[data-look="studio"][data-fit="slim"] #user-settings .settings-nav-title { display: none; }

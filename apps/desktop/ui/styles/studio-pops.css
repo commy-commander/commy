@@ -5,7 +5,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .audio-pop {
   padding: 10px;
   border: 0;
   border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
+  background: var(--panel-thin);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-3);
@@ -31,7 +31,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .audio-pop .pops-pick > select {
   border-radius: var(--radius-pill);
   outline: 0;
   background: rgb(var(--lamp) / .07);
-  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .06), inset 0 1px 2px rgb(var(--dark) / .22);
+  box-shadow: inset 0 1px 2px rgb(var(--dark) / .22);
   color: var(--header-primary);
   font: 400 15px/1 var(--font);
   text-overflow: ellipsis;
@@ -92,7 +92,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .audio-pop > .ap-row > input.swi
   height: 22px;
   border-radius: 50%;
   background: var(--pillow-top), var(--bg-active);
-  box-shadow: inset 0 1px 1px rgb(var(--lamp) / .25), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .5);
+  box-shadow: 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .5);
   transition: translate 180ms var(--ease-spring), background var(--t-hover);
 }
 html[data-look="studio"]:not([data-fit="slim"]) .audio-pop > .ap-row > input.switch:checked {

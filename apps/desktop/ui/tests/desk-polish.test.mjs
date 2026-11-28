@@ -43,7 +43,7 @@ test("a slider in a settings row leaves the words their room, and a kind picker 
 test("the games search list has its own backing and sits above the next card", () => {
   assert.ok(settings.includes(`${STUDIO} .set-pane:has(.game-search:not(.hidden)) { z-index: 5; }`));
   const rule = settings.slice(settings.indexOf(`${DESK} .game-search {`));
-  assert.match(rule.slice(0, rule.indexOf("}")), /background: linear-gradient\(180deg, rgb\(var\(--lamp\) \/ \.06\), rgb\(var\(--lamp\) \/ 0\) 60%\), var\(--bg-raised\);/);
+  assert.match(rule.slice(0, rule.indexOf("}")), /background: var\(--bg-raised\);/);
 });
 
 test("the header keys sit on one line and GIF is the last key in the message bar", () => {

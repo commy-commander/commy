@@ -1,0 +1,504 @@
+@font-face { font-family: "Geist"; src: url(../fonts/geist-latin-wght-normal.woff2) format("woff2"); font-weight: 100 900; font-display: block; }
+
+html[data-look="studio"]:root,
+html[data-look="studio"]:root .theme-dark,
+html[data-look="studio"]:root .theme-light {
+  --font: "Geist", system-ui, sans-serif;
+  --font-display: "Geist", system-ui, sans-serif;
+  --grain: none;
+  --fx-blur: 0px;
+  --fx-sat: 1;
+  --pillow-top: linear-gradient(transparent, transparent);
+  --glass-hi: linear-gradient(transparent, transparent);
+  --pillow: 0 0 0 0 transparent;
+  --pillow-sm: 0 0 0 0 transparent;
+  --pillow-down: 0 0 0 0 transparent;
+  --pillow-card: 0 0 0 0 transparent;
+  --pillow-bar: 0 0 0 0 transparent;
+  --slot: 0 0 0 0 transparent;
+  --glass-rim: 0 0 0 0 transparent;
+  --glass-pool: 0 0 0 0 transparent;
+  --glass-drop: 0 0 0 0 transparent;
+  --glass-fx: none;
+  --line-glow: transparent;
+  --ring-on: 0 solid transparent;
+  --rim: transparent;
+  --rim-soft: transparent;
+  --shadow-2: 0 0 0 0 transparent;
+  --k-plain: var(--bg-raised);
+  --k-plain-hover: var(--bg-hover);
+  --k-plain-shadow: 0 0 0 0 transparent;
+  --k-plain-fx: none;
+  --k-plain-hover-filter: none;
+  --k-latched: linear-gradient(180deg, var(--on-top), var(--on-bot));
+  --k-latched-shadow: var(--on-lift);
+  --k-latched-filter: none;
+  --k-off: transparent;
+  --k-off-shadow: 0 0 0 0 transparent;
+  --k-mute-shadow: 0 0 0 0 transparent;
+  --bar-field: var(--input-bg);
+  --bar-field-shadow: 0 0 0 0 transparent;
+  --bar-field-fx: none;
+  --on-top: #7686ff;
+  --on-bot: #5466f0;
+  --on-flat: #6273f8;
+  --on-ink: #ffffff;
+  --on-fill: linear-gradient(180deg, var(--on-top), var(--on-bot));
+  --on-lift: inset 0 1px 0 rgba(255, 255, 255, .26), inset 0 -1px 0 rgba(0, 0, 0, .16), 0 1px 2px var(--on-drop), 0 6px 14px -6px var(--on-glow);
+}
+
+html[data-look="studio"]:root:not([data-theme="light"]),
+html[data-look="studio"]:root:not([data-theme="light"]) .fx-lite,
+html[data-look="studio"]:root .theme-dark {
+  --bg-darkest: #10142c;
+  --bg-dark: #161a2e;
+  --section: #1a2042;
+  --bg-mid: #1a2042;
+  --wall-lit: #10142c;
+  --tint-1: #6273f8;
+  --panel: #1a2042;
+  --panel-thin: #1a2042;
+  --bg-raised: #252c55;
+  --bg-hover: #2c3461;
+  --bg-active: #343d70;
+  --bg-pressed: #222842;
+  --input-bg: #222842;
+  --key-edge: #262c4a;
+  --line: rgba(190, 200, 255, .08);
+  --line-strong: rgba(190, 200, 255, .16);
+  --header-primary: #f1f2ff;
+  --text-normal: #d6d9f0;
+  --text-muted: #a5abcc;
+  --text-faint: #8e94b8;
+  --accent: #6273f8;
+  --accent-hover: #7686ff;
+  --accent-deep: #4a59d6;
+  --accent-lit: #8f9cff;
+  --focus: #8f9cff;
+  --link: #a9b4ff;
+  --mention-ink: #c9d3ff;
+  --cream: #e4e8ff;
+  --cream-ink: #10132a;
+  --a-ground: #20253f;
+  --tabbar-bg: #1a2042;
+  --tab-active-bg: #6273f8;
+  --sheet-bg: #20253f;
+  --scrim: rgba(6, 8, 22, .64);
+  --swipe-done: #6273f8;
+  --swipe-neutral: #343d70;
+  --horizon-ground: #1a2042;
+  --horizon-fade: #1a2042;
+  --glass-key: #252c55;
+  --glass-key-hover: #2c3461;
+  --glass-key-on: #343d70;
+  --glass-key-off: #1f2440;
+  --mute-k: #1f2440;
+  --tog-off: #3a4166;
+  --shadow-1: 0 10px 28px -10px rgba(4, 6, 20, .6);
+  --shadow-3: 0 16px 40px -12px rgba(4, 6, 20, .7);
+  --on-glow: rgba(84, 102, 240, .55);
+  --on-drop: rgba(4, 6, 24, .45);
+  --pick: color-mix(in srgb, #6273f8 26%, var(--panel));
+  --pick-ink: var(--header-primary);
+  --tonal: #2a3570;
+  --tonal-ink: #c9d3ff;
+  --halo: color-mix(in srgb, #6273f8 60%, #1a2042);
+  --stop: color-mix(in srgb, var(--danger) 24%, var(--bg-raised));
+  --stop-ink: #ffb4ab;
+  --pw-lit: #a9b4ff;
+  --pw-tint: color-mix(in srgb, #6273f8 22%, #1a2042);
+  --ev-card: color-mix(in srgb, #252c55 50%, #1a2042);
+  --play-fill: linear-gradient(100deg, color-mix(in srgb, #6273f8 34%, #1a2042), color-mix(in srgb, #6273f8 12%, #1a2042));
+  --ev-now: linear-gradient(160deg, color-mix(in srgb, #6273f8 34%, #1a2042), color-mix(in srgb, #6273f8 12%, #1a2042) 70%);
+  --rsvp-well: color-mix(in srgb, #222842 80%, transparent);
+  --rsvp-now: rgba(130, 146, 255, .42);
+  --rsvp-now-ink: #ffffff;
+}
+
+html[data-look="studio"]:root[data-theme="light"],
+html[data-look="studio"]:root[data-theme="light"] .fx-lite,
+html[data-look="studio"]:root .theme-light {
+  --bg-darkest: #e8ebf8;
+  --bg-dark: #eef0fa;
+  --section: #f6f7fd;
+  --bg-mid: #f6f7fd;
+  --wall-lit: #e8ebf8;
+  --tint-1: #5466f0;
+  --panel: #f6f7fd;
+  --panel-thin: #f6f7fd;
+  --bg-raised: #e4e8f9;
+  --bg-hover: #dce1f6;
+  --bg-active: #d2d8f3;
+  --bg-pressed: #dce1f6;
+  --input-bg: #e9ecfa;
+  --key-edge: #e4e8f9;
+  --line: rgba(30, 40, 100, .08);
+  --line-strong: rgba(30, 40, 100, .16);
+  --header-primary: #10132a;
+  --text-normal: #23284a;
+  --text-muted: #4e5578;
+  --text-faint: #646b8f;
+  --accent: #5466f0;
+  --accent-hover: #4a5ae0;
+  --accent-deep: #3a48c4;
+  --accent-lit: #5466f0;
+  --focus: #5466f0;
+  --link: #3a48c4;
+  --cream: #dfe5ff;
+  --cream-ink: #1c32b8;
+  --a-ground: #dfe3f7;
+  --tabbar-bg: #f6f7fd;
+  --tab-active-bg: #5466f0;
+  --sheet-bg: #ffffff;
+  --scrim: rgba(20, 26, 70, .32);
+  --swipe-done: #5466f0;
+  --swipe-neutral: #d2d8f3;
+  --horizon-ground: #f6f7fd;
+  --horizon-fade: #f6f7fd;
+  --glass-key: #e4e8f9;
+  --glass-key-hover: #dce1f6;
+  --glass-key-on: #d2d8f3;
+  --glass-key-off: #eef0fa;
+  --mute-k: #dce1f6;
+  --tog-off: #c9cfe9;
+  --shadow-1: 0 10px 28px -10px rgba(30, 40, 100, .2);
+  --shadow-3: 0 16px 40px -12px rgba(30, 40, 100, .22);
+  --on-glow: rgba(84, 102, 240, .4);
+  --on-drop: rgba(20, 30, 90, .18);
+  --pick: #e3e7ff;
+  --pick-ink: var(--header-primary);
+  --tonal: #d6deff;
+  --tonal-ink: #1c32b8;
+  --halo: color-mix(in srgb, #5466f0 45%, #f6f7fd);
+  --stop: #fde3e0;
+  --stop-ink: #b42318;
+  --pw-lit: #3a48c4;
+  --pw-tint: #e3e7ff;
+  --ev-card: #ffffff;
+  --play-fill: linear-gradient(100deg, #d6dcff, #eceffe);
+  --ev-now: linear-gradient(160deg, #dfe4ff, #f1f3ff 70%);
+  --rsvp-well: #eceffb;
+  --rsvp-now: #ffffff;
+  --rsvp-now-ink: #1c2a8f;
+}
+
+html[data-look="studio"][data-fx]:root,
+html[data-look="studio"][data-fx]:root .theme-dark,
+html[data-look="studio"][data-fx]:root .theme-light { --bar-field: var(--input-bg); }
+
+html[data-look="studio"]:root body { background: var(--bg-darkest); }
+html[data-look="studio"]:root .studio-room { background: var(--bg-darkest); }
+html[data-look="studio"]:root .studio-room svg,
+html[data-look="studio"]:root .studio-room::after,
+html[data-look="studio"]:root .slab::before,
+html[data-look="studio"]:root .slab::after,
+html[data-look="studio"]:root .composer::after,
+html[data-look="studio"]:root form.bar::before,
+html[data-look="studio"]:root form.bar::after,
+html[data-look="studio"]:root .hzn-line,
+html[data-look="studio"]:root .hzn-sun { display: none !important; }
+html[data-look="studio"]:root .slab,
+html[data-look="studio"]:root .slab.thin {
+  background: var(--panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+html[data-look="studio"]:root .hzn-ground { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--horizon-ground); box-shadow: none; }
+
+html[data-look="studio"]:root .key { box-shadow: none; filter: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look="studio"]:root .key:hover { filter: none; }
+html[data-look="studio"]:root .key:active { scale: .97; box-shadow: none; }
+html[data-look="studio"]:root .key .led,
+html[data-look="studio"]:root .key > .led { display: none; }
+html[data-look="studio"]:root .key.sm.latch:not(.sq) { padding-right: 14px; }
+html[data-look="studio"]:root .key.key.primary,
+html[data-look="studio"]:root .key.key.cream,
+html[data-look="studio"]:root .key.key.is-down,
+html[data-look="studio"]:root .key.key.is-on {
+  --k-ink: var(--on-ink);
+  background: var(--on-fill) !important;
+  color: var(--on-ink) !important;
+  box-shadow: var(--on-lift) !important;
+  filter: none !important;
+  font-weight: 600;
+}
+html[data-look="studio"]:root .key.key.primary:hover,
+html[data-look="studio"]:root .key.key.is-down:hover,
+html[data-look="studio"]:root .key.key.is-on:hover { filter: brightness(1.06) !important; }
+html[data-look="studio"]:root .key.key.danger { background: var(--danger) !important; color: #ffffff !important; box-shadow: none !important; filter: none !important; }
+html[data-look="studio"]:root .key.key.muted { --k-ink: var(--text-faint); background: var(--mute-k) !important; color: var(--text-faint) !important; box-shadow: none !important; filter: none !important; }
+html[data-look="studio"]:root .key.key:disabled,
+html[data-look="studio"]:root .key.key.is-off { background: var(--bg-mid) !important; color: var(--text-faint) !important; box-shadow: none !important; filter: none !important; }
+html[data-look="studio"]:root .key.key.primary:disabled,
+html[data-look="studio"]:root .key.key.primary.is-off { background: var(--bg-raised) !important; color: var(--text-muted) !important; }
+html[data-look="studio"]:root :has(> .key.danger) > .key.key.primary:not(.danger),
+html[data-look="studio"]:root :has(> .key.danger) > .key.key.cream:not(.danger) { background: var(--bg-raised) !important; color: var(--header-primary) !important; box-shadow: none !important; }
+html[data-look="studio"]:root .key.key :is(.i, svg) { color: inherit; }
+
+html[data-look="studio"]:root .composer::before { box-shadow: none; }
+html[data-look="studio"]:root .composer:has(textarea:focus-visible)::before { box-shadow: 0 0 0 1.5px var(--focus); }
+html[data-look="studio"]:root .composer .composer-attach,
+html[data-look="studio"]:root .composer .composer-send { box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-look="studio"]:root .composer.has-text .composer-send,
+html[data-look="studio"]:root:not([data-theme="light"]) .composer.has-text .composer-send { background: var(--on-fill); color: var(--on-ink); box-shadow: var(--on-lift); }
+
+html[data-look="studio"]:root * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+
+html[data-look="studio"]:root .stage-btn.key.active,
+html[data-look="studio"]:root .rail-home.active,
+html[data-look="studio"]:root .discover-chip[aria-pressed="true"],
+html[data-look="studio"]:root .forum-chip.picked,
+html[data-look="studio"]:root .access-chip.picked,
+html[data-look="studio"]:root .catalog-chip.active,
+html[data-look="studio"]:root .role-pick.held,
+html[data-look="studio"]:root .report-reasons > label:has(> input:checked),
+html[data-look="studio"]:root .ob-answer.picked,
+html[data-look="studio"]:root .person-row.picked,
+html[data-look="studio"]:root .kind-option.active,
+html[data-look="studio"]:root .template-tile[aria-checked="true"],
+html[data-look="studio"]:root .catalog-tile.picked,
+html[data-look="studio"]:root .notify-level.picked,
+html[data-look="studio"]:root .activity-card[aria-checked="true"],
+html[data-look="studio"]:root .share-card.picked,
+html[data-look="studio"]:root .set-theme[aria-checked="true"],
+html[data-look="studio"]:root .look-option[aria-checked="true"],
+html[data-look="studio"]:root .pt-profile .look.on,
+html[data-look="studio"]:root .srow.pick[aria-checked="true"] {
+  background: var(--on-fill) !important;
+  color: var(--on-ink) !important;
+  box-shadow: var(--on-lift) !important;
+  outline: none !important;
+  filter: none !important;
+}
+html[data-look="studio"]:root .stage-btn.key.active :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .rail-home.active :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .discover-chip[aria-pressed="true"] :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .forum-chip.picked :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .access-chip.picked :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .catalog-chip.active :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .role-pick.held :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .report-reasons > label:has(> input:checked) :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .ob-answer.picked :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .person-row.picked :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .kind-option.active :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .template-tile[aria-checked="true"] :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .catalog-tile.picked :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .notify-level.picked :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .activity-card[aria-checked="true"] :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .share-card.picked :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .set-theme[aria-checked="true"] :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .look-option[aria-checked="true"] :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .pt-profile .look.on :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash),
+html[data-look="studio"]:root .srow.pick[aria-checked="true"] :is(b, strong, span, small, p, em, label, .i, svg, .tick, .hash) { color: inherit !important; }
+html[data-look="studio"]:root .role-pick.held :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .report-reasons > label:has(> input:checked) :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .ob-answer.picked :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .person-row.picked :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .kind-option.active :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .template-tile[aria-checked="true"] :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .catalog-tile.picked :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .notify-level.picked :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .activity-card[aria-checked="true"] :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .share-card.picked :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .set-theme[aria-checked="true"] :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .look-option[aria-checked="true"] :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .pt-profile .look.on :is(small, p, .sub, .meta, .desc, .hint),
+html[data-look="studio"]:root .srow.pick[aria-checked="true"] :is(small, p, .sub, .meta, .desc, .hint) { color: rgba(255, 255, 255, .82) !important; }
+html[data-look="studio"]:root .template-tile[aria-checked="true"],
+html[data-look="studio"]:root .catalog-tile.picked,
+html[data-look="studio"]:root .activity-card[aria-checked="true"],
+html[data-look="studio"]:root .share-card.picked,
+html[data-look="studio"]:root .set-theme[aria-checked="true"],
+html[data-look="studio"]:root .look-option[aria-checked="true"],
+html[data-look="studio"]:root .pt-profile .look.on { position: relative; }
+html[data-look="studio"]:root .template-tile[aria-checked="true"]::after,
+html[data-look="studio"]:root .catalog-tile.picked::after,
+html[data-look="studio"]:root .activity-card[aria-checked="true"]::after,
+html[data-look="studio"]:root .share-card.picked::after,
+html[data-look="studio"]:root .look-option[aria-checked="true"]::after,
+html[data-look="studio"]:root .pt-profile .look.on::after {
+  content: "" !important;
+  position: absolute !important;
+  inset: 6px 6px auto auto !important;
+  display: block !important;
+  width: 20px !important;
+  height: 20px !important;
+  border-radius: 50% !important;
+  background: #ffffff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235466f0' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='m5 12.5 4.5 4.5L19 7.5'/></svg>") center / 13px no-repeat !important;
+  box-shadow: 0 1px 3px rgba(10, 14, 50, .35) !important;
+  -webkit-mask: none !important;
+  mask: none !important;
+  opacity: 1 !important;
+  z-index: 3 !important;
+}
+
+html[data-look="studio"]:root .settings-content .segmented:not(.voice-filters) > button:not(.key).active,
+html[data-look="studio"]:root .events-tab.active,
+html[data-look="studio"]:root .forum-mode.active,
+html[data-look="studio"]:root .pt-picker-tabs > button.on,
+html[data-look="studio"]:root .share-tab.active,
+html[data-look="studio"]:root .search-scope-btn.active,
+html[data-look="studio"]:root :is(.emoji-picker, .emoji-pop) > .picker-tabs > button.active,
+html[data-look="studio"]:root .channel.active,
+html[data-look="studio"]:root .channel.active:hover,
+html[data-look="studio"]:root .settings-tab.active,
+html[data-look="studio"]:root .account-row.current,
+html[data-look="studio"]:root .forum-card.open,
+html[data-look="studio"]:root .forum-post.open,
+html[data-look="studio"]:root .cal-day.selected,
+html[data-look="studio"]:root .search-row.active,
+html[data-look="studio"]:root .eb-tone-option.on,
+html[data-look="studio"]:root .folder-head.active,
+html[data-look="studio"]:root #sw-steps > .sw-step.active {
+  background: var(--tonal) !important;
+  color: var(--tonal-ink) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  filter: none !important;
+}
+html[data-look="studio"]:root .channel.active :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .channel.active:hover :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .settings-tab.active :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .account-row.current :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .forum-card.open :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .forum-post.open :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .cal-day.selected :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .search-row.active :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .eb-tone-option.on :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root .folder-head.active :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong),
+html[data-look="studio"]:root #sw-steps > .sw-step.active :is(.hash, .channel-icon, .channel-gear, .channel-pin, .channel-lock, .channel-bell, .channel-name, .i, svg, span, b, strong) { color: inherit !important; }
+
+html[data-look="studio"]:root .server-icon,
+html[data-look="studio"]:root .server-icon:hover {
+  background: color-mix(in srgb, var(--server-tint, var(--accent)) 30%, var(--bg-raised)) !important;
+  box-shadow: none !important;
+  filter: none;
+}
+html[data-look="studio"]:root .server-icon.active,
+html[data-look="studio"]:root .server-icon.active:hover {
+  background: color-mix(in srgb, var(--server-tint, var(--accent)) 82%, var(--panel)) !important;
+  color: #ffffff !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px var(--halo) !important;
+}
+html[data-look="studio"]:root .server-icon.has-image,
+html[data-look="studio"]:root .server-icon.has-image:hover { background: var(--bg-raised) !important; }
+
+html[data-look="studio"]:root .pet-actions > button,
+html[data-look="studio"]:root .pet-actions > button:hover { background: var(--cream) !important; color: var(--cream-ink) !important; box-shadow: none !important; }
+html[data-look="studio"]:root input.switch:checked,
+html[data-look="studio"]:root .tog.on,
+html[data-look="studio"]:root [aria-checked="true"] > .tog { background-color: var(--on-flat) !important; }
+
+html[data-look="studio"]:root :is(.member-card, .profile-pane) .play-box { background: var(--play-fill) !important; box-shadow: none !important; }
+html[data-look="studio"]:root :is(.member-card, .profile-pane) .play-box .ac-label { color: var(--pw-lit) !important; font-weight: 600; }
+html[data-look="studio"]:root :is(.member-card, .profile-pane) .play-box .ac-cover { box-shadow: none !important; }
+
+html[data-look="studio"]:root #pt-glass { display: none; }
+
+html[data-look="studio"]:root #events-body { display: block; }
+html[data-look="studio"]:root #events-body > .events-sec { margin: 18px 6px 8px; font: 600 13px/1 var(--font); color: var(--text-muted); }
+html[data-look="studio"]:root #events-body > .events-sec:first-child { margin-top: 4px; }
+html[data-look="studio"]:root #events-body .event-card { display: grid; gap: 12px; margin: 0 0 10px; padding: 14px; border-radius: 22px; background: var(--ev-card); box-shadow: none; }
+html[data-look="studio"]:root #events-body .event-card.is-now { background: var(--ev-now); }
+html[data-look="studio"]:root #events-body .event-top { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+html[data-look="studio"]:root #events-body .event-date { display: grid; justify-items: center; align-content: center; gap: 3px; width: auto; height: 56px; border-radius: 16px; background: var(--pw-tint); box-shadow: none; }
+html[data-look="studio"]:root #events-body .event-date-month { font: 700 11.5px/1 var(--font); letter-spacing: .08em; color: var(--pw-lit); }
+html[data-look="studio"]:root #events-body .event-date-day { font: 700 22px/1 var(--font); letter-spacing: -.02em; color: var(--header-primary); }
+html[data-look="studio"]:root #events-body .is-now .event-date { background: var(--on-fill); box-shadow: var(--on-lift); }
+html[data-look="studio"]:root #events-body .is-now .event-date-month { color: rgba(255, 255, 255, .82); }
+html[data-look="studio"]:root #events-body .is-now .event-date-day { color: #ffffff; }
+html[data-look="studio"]:root #events-body .event-head { display: grid; gap: 4px; min-width: 0; padding-top: 2px; }
+html[data-look="studio"]:root #events-body .event-when { font: 600 13px/1.2 var(--font); color: var(--text-muted); }
+html[data-look="studio"]:root #events-body .is-now .event-when { color: var(--pw-lit); }
+html[data-look="studio"]:root #events-body .event-title { overflow-wrap: anywhere; font: 700 18px/1.2 var(--font); letter-spacing: -.02em; color: var(--header-primary); }
+html[data-look="studio"]:root #events-body .event-where { display: flex; align-items: center; gap: 6px; min-width: 0; font: 500 13px/1.2 var(--font); color: var(--text-muted); }
+html[data-look="studio"]:root #events-body .event-where > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-look="studio"]:root #events-body .event-where > svg { flex: none; width: 15px; height: 15px; }
+html[data-look="studio"]:root #events-body .event-more { display: grid; place-items: center; width: 34px; height: 34px; margin: -4px -4px 0 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; }
+html[data-look="studio"]:root #events-body .event-more:hover { background: var(--bg-hover); color: var(--header-primary); }
+html[data-look="studio"]:root #events-body .event-more:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+html[data-look="studio"]:root #events-body .event-more > svg { width: 18px; height: 18px; }
+html[data-look="studio"]:root #events-body .event-card > .md { margin: 0; font: 400 14.5px/1.45 var(--font); color: var(--text-normal); }
+html[data-look="studio"]:root #events-body .event-card > .md .md-para { margin: 0; }
+html[data-look="studio"]:root #events-body .event-counts { font: 500 13px/1 var(--font); color: var(--text-muted); }
+html[data-look="studio"]:root #events-body .event-act { display: flex; align-items: center; gap: 8px; }
+html[data-look="studio"]:root #events-body .event-rsvp { display: flex; flex: 1; gap: 3px; min-width: 0; padding: 3px; border-radius: 999px; background: var(--rsvp-well); }
+html[data-look="studio"]:root #events-body .event-rsvp > button { display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 38px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); font: 600 14px/1 var(--font); cursor: pointer; }
+html[data-look="studio"]:root #events-body .event-rsvp > button:hover { color: var(--header-primary); }
+html[data-look="studio"]:root #events-body .event-rsvp > button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+html[data-look="studio"]:root #events-body .event-rsvp > button > svg { flex: none; width: 15px; height: 15px; }
+html[data-look="studio"]:root #events-body .event-rsvp > button.on { background: var(--on-fill); color: #ffffff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), 0 4px 10px -5px var(--on-glow); }
+html[data-look="studio"]:root #events-body .is-now .event-rsvp > button.on { background: var(--rsvp-now); color: var(--rsvp-now-ink); box-shadow: none; }
+html[data-look="studio"]:root #events-body .event-join.key { flex: none; height: 44px; padding: 0 18px; gap: 7px; font-size: 14.5px; }
+html[data-look="studio"]:root #events-body .event-join.key > svg { width: 17px; height: 17px; }
+html[data-look="studio"]:root:not([data-fit="slim"]) #events-body .event-rsvp { flex: 0 1 300px; }
+html[data-look="studio"]:root:not([data-fit="slim"]) #events-body .event-join.key { margin-left: auto; }
+
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal-grid { gap: 2px 0; }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal-day { position: relative; display: grid; align-content: center; justify-items: center; gap: 2px; height: 46px; padding: 0; border-radius: 14px; background: transparent; box-shadow: none; }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal-num { display: grid; place-items: center; width: 32px; height: 32px; margin: 0; border-radius: 50%; background: none; font: 500 15px/1 var(--font); }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal-day.today .cal-num { background: var(--on-fill); color: #ffffff; font-weight: 700; }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal-day.selected { background: var(--pick) !important; }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal-day.selected .cal-num { font-weight: 700; color: var(--header-primary); }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal-day.today.selected .cal-num { color: #ffffff; }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .pe-dots { position: absolute; bottom: 4px; margin: 0; gap: 3px; }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .pe-dots > i { width: 4px; height: 4px; background: var(--accent-lit); box-shadow: none; }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal-dow { font-weight: 600; color: var(--text-faint); }
+html[data-look="studio"]:root[data-fit="slim"] #events-body .cal + .event-card { margin-top: 12px; }
+html[data-look="studio"]:root:not([data-fit="slim"]) #events-body .cal-day { background: var(--ev-card); box-shadow: none; }
+html[data-look="studio"]:root:not([data-fit="slim"]) #events-body .cal-day.other { background: transparent; }
+html[data-look="studio"]:root:not([data-fit="slim"]) #events-body .cal-day.today .cal-num { background: var(--on-fill); color: #ffffff; box-shadow: none; }
+html[data-look="studio"]:root:not([data-fit="slim"]) #events-body .cal-event { background: var(--pw-tint); color: var(--header-primary); box-shadow: none; }
+html[data-look="studio"]:root #event-rich { display: grid; gap: 8px; padding: 12px 12px 6px; border-radius: 18px; background: var(--input-bg); }
+html[data-look="studio"]:root #event-rich:focus-within { box-shadow: 0 0 0 2px var(--focus); }
+html[data-look="studio"]:root #event-rich textarea#event-description { display: block; width: 100%; height: auto; min-height: 84px; margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; outline: none; resize: vertical; font: 400 15px/1.4 var(--font); color: var(--header-primary); }
+html[data-look="studio"][data-fit="slim"]:root #event-rich textarea#event-description { resize: none; }
+html[data-look="studio"]:root #event-rich .rich-media { display: flex; flex-wrap: wrap; gap: 8px; }
+html[data-look="studio"]:root #event-rich .rich-thumb { position: relative; display: grid; place-items: center; width: 56px; height: 56px; border-radius: 12px; }
+html[data-look="studio"]:root #event-rich .rich-thumb.is-gif { width: 84px; overflow: hidden; background: var(--bg-raised); }
+html[data-look="studio"]:root #event-rich .rich-thumb img { width: 100%; height: 100%; object-fit: cover; }
+html[data-look="studio"]:root #event-rich .rich-thumb .sticker-img { width: 52px; height: 52px; object-fit: contain; }
+html[data-look="studio"]:root #event-rich .rich-thumb em { position: absolute; left: 5px; bottom: 5px; padding: 2px 5px; border-radius: 5px; background: rgba(8, 10, 30, .62); color: #fff; font: 700 10px/1 var(--font); font-style: normal; }
+html[data-look="studio"]:root #event-rich .rich-drop { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: var(--bg-mid, var(--bg-raised)); color: var(--header-primary); }
+html[data-look="studio"]:root #event-rich :is(.rich-fmt, .rich-bar) { display: flex; gap: 4px; }
+html[data-look="studio"]:root #event-rich .rich-fmt { justify-self: start; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--bg-raised) 70%, transparent); }
+html[data-look="studio"]:root #event-rich :is(.rich-fmt, .rich-bar) > button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 0; border-radius: 50%; background: transparent; box-shadow: none; color: var(--text-muted); }
+html[data-look="studio"]:root #event-rich :is(.rich-fmt, .rich-bar) > button:hover { background: color-mix(in srgb, var(--bg-raised) 80%, transparent); color: var(--header-primary); }
+html[data-look="studio"]:root #event-rich :is(.rich-fmt, .rich-bar) > button.hidden { display: none; }
+html[data-look="studio"]:root #event-rich .rich-bar { margin: 0 -4px; padding-top: 6px; border-top: 1px solid var(--line, color-mix(in srgb, var(--text-muted) 18%, transparent)); }
+html[data-look="studio"]:root #event-rich .rich-bar .aa { font: 700 15px/1 var(--font); letter-spacing: -.02em; }
+html[data-look="studio"]:root #event-rich .rich-bar > button.on { background: var(--pw-tint); color: var(--pw-lit); }
+html[data-look="studio"]:root #event-rich .rich-stickers { display: flex; flex-wrap: wrap; gap: 6px; max-height: 168px; overflow-y: auto; padding: 4px 0; }
+html[data-look="studio"]:root #event-rich .rich-stickers .picker-section { flex-basis: 100%; }
+html[data-look="studio"]:root #event-rich .rich-stickers .sticker-tile { width: 60px; height: 60px; padding: 4px; border: 0; border-radius: 12px; background: transparent; }
+html[data-look="studio"]:root #event-rich .rich-stickers .sticker-tile:hover { background: var(--bg-raised); }
+html[data-look="studio"]:root #event-rich .rich-stickers .sticker-img { width: 100%; height: 100%; object-fit: contain; }
+html[data-look="studio"]:root #event-rich .rich-stickers .picker-empty { padding: 6px 2px; color: var(--text-muted); font-size: 13.5px; }
+html[data-look="studio"]:root #events-body .event-media { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+html[data-look="studio"]:root #events-body .event-media .image-embed { max-width: 220px; }
+html[data-look="studio"]:root #events-body .event-media .image-embed img { max-height: 160px; border-radius: 12px; }
+html[data-look="studio"]:root #events-body .event-media .sticker-img { width: 72px; height: 72px; object-fit: contain; }
+html[data-look="studio"][data-fit="slim"]:root #modal-event #event-rich + .modal-actions, html[data-look="studio"][data-fit="slim"]:root #modal-event .field-label:has(> #event-rich) + .modal-actions { margin-top: 18px; }
+html[data-look="studio"]:root .vp-voice :is(#mute-btn, #deafen-btn, #vp-camera, .vp-hand-key, #vp-more)::after,
+html[data-look="studio"]:root .vp-activities.vp-share::after { content: none !important; display: none !important; }
+html[data-look="studio"]:root .vp-activities.vp-share,
+html[data-look="studio"]:root #app.vr-open .vp-activities.vp-share { padding-right: 16px; }
+html[data-look="studio"]:root .vp-voice :is(#vp-camera.active, .vp-hand-key.on, #vp-more.active),
+html[data-look="studio"]:root .vp-activities.vp-share.active { background: linear-gradient(180deg, var(--on-top), var(--on-bot)) !important; color: #fff !important; box-shadow: var(--on-lift, none) !important; filter: none !important; }
+html[data-look="studio"]:root:not([data-theme="light"]) {
+  --float: #212856;
+  --float-key: #2d3568;
+  --float-line: rgba(143, 156, 255, .16);
+  --shadow-2: 0 18px 40px -14px rgba(4, 6, 20, .75), 0 2px 8px rgba(4, 6, 20, .35);
+}
+html[data-look="studio"]:root[data-theme="light"] {
+  --float: #ffffff;
+  --float-key: #e8ebfa;
+  --float-line: rgba(40, 52, 140, .12);
+  --shadow-2: 0 18px 40px -14px rgba(30, 40, 100, .3), 0 2px 8px rgba(30, 40, 100, .12);
+}
+html[data-look="studio"]:root :is(.soundboard-pop, .audio-pop, .voice-pop, .vr-pop, .emoji-picker, .emoji-pop, .gif-picker, .search-pop, .pins-pop, .pop-menu, .profile-pop, .text-style-pop):not(.pt-tray) { background: var(--float) !important; box-shadow: 0 0 0 1px var(--float-line), var(--shadow-2) !important; }
+html[data-look="studio"]:root :is(.soundboard-pop, .audio-pop, .voice-pop, .vr-pop, .profile-pop):not(.pt-tray) .key:not(.primary, .danger, .cream, .is-on, .is-down, [aria-pressed="true"]),
+html[data-look="studio"]:root .soundboard-pop:not(.pt-tray) .sb-sound { background: var(--float-key) !important; }

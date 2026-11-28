@@ -24,10 +24,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .startup-card {
   width: min(410px, 100%);
   padding: 22px 24px 20px;
   border-radius: var(--radius-xl);
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
+  background: var(--panel-thin);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
-  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-2);
+  box-shadow: inset 0 0 0 1px var(--rim-soft);
 }
 html[data-look="studio"]:not([data-fit="slim"])[data-fx="lite"] .startup-card {
   -webkit-backdrop-filter: none;
@@ -163,10 +163,10 @@ html[data-look="studio"]:not([data-fit="slim"]) .offline-chip {
   height: 32px;
   padding: 0 14px 0 12px;
   border: 0;
-  background: linear-gradient(180deg, rgb(var(--lamp) / .04), rgb(var(--lamp) / 0) 80px), var(--panel-thin);
+  background: var(--panel-thin);
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
-  box-shadow: inset 0 0 0 1px var(--rim-soft), var(--shadow-1);
+  box-shadow: inset 0 0 0 1px var(--rim-soft);
   color: var(--text-normal);
   font: 500 12.5px/1 var(--font);
 }
@@ -263,13 +263,13 @@ html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header > .dm-search {
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--input-bg);
-  box-shadow: inset 0 0 0 1px rgb(var(--lamp) / .06), inset 0 1px 2px rgb(var(--dark) / .22);
+  box-shadow: none;
   color: var(--header-primary);
   font: 400 14px/1 var(--font);
   letter-spacing: 0;
   text-overflow: ellipsis;
 }
-html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .sidebar-header > .dm-search:not(:focus) { box-shadow: inset 0 1px 3px rgb(var(--dark) / .4), inset 0 0 0 1px rgb(var(--dark) / .1); }
+html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .sidebar-header > .dm-search:not(:focus) { box-shadow: inset 0 0 0 1px rgb(var(--dark) / .1); }
 html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header > .dm-search::placeholder { color: var(--text-muted); opacity: 1; }
 html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header > .dm-search:focus { box-shadow: 0 0 0 1.5px var(--focus); }
 html[data-look="studio"]:not([data-fit="slim"]) .sidebar-header > .start-find {
@@ -307,11 +307,11 @@ html[data-look="studio"]:not([data-fit="slim"]) .start-ghost > i {
   height: 30px;
   border-radius: 50%;
   background: var(--input-bg);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .8), 0 1px 0 rgb(var(--lamp) / .1);
+  box-shadow: 0 1px 0 rgb(var(--lamp) / .1);
 }
 html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"] .start-ghost > i {
   background: var(--bg-hover);
-  box-shadow: inset 0 1px 2px rgb(var(--dark) / .3);
+  box-shadow: none;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .start-ghost > span {
   flex: 1;

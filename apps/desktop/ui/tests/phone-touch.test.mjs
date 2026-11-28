@@ -721,11 +721,11 @@ test("a swiped channel row shows two round keys with no words, and the row runs 
   assert.match(css, /\.channel-scroll:has\(\.channel\.pt-dragging\) \{ overflow-x: hidden; clip-path: inset\(0 12px 0 0\); \}/);
 });
 
-test("keys that act are drawn filled, hanging up is the same mark everywhere, and the wall carries the lamp's band", () => {
+test("keys that act are drawn filled, hanging up is the same mark everywhere, and the wall is flat", () => {
   assert.equal(ROOM_KEYS.find(key => key.id === "leave").icon, "phone-off");
   assert.equal((glue.match(/aria-label="Hang up"><i data-i="phone-off"><\/i>/g) || []).length, 2);
   assert.doesNotMatch(css, /\.hang \.i \{[^}]*rotate/);
-  assert.equal((css.match(/linear-gradient\(118deg, rgb\(var\(--lamp\) \/ 0\) 16%, rgb\(var\(--lamp\) \/ \.07\) 24%, rgb\(var\(--lamp\) \/ \.07\) 40%, rgb\(var\(--lamp\) \/ 0\) 48%\)/g) || []).length, 4);
+  assert.doesNotMatch(css, /linear-gradient\(118deg, rgb\(var\(--lamp\)/);
   assert.doesNotMatch(css, /\.(?:count-badge|badge|pt-count)[^{]*\{[^}]*tabular-nums/);
 });
 
@@ -1019,7 +1019,7 @@ test("a pad on the tray is its name alone, and a green bar runs under it when yo
   assert.match(css, rule(' \\.pt-tray \\.sb-sound::after', 'content: ""; position: absolute; left: 24px; right: 24px; bottom: 6px; height: 3px; border-radius: 2px; background: var\\(--green\\); transform: scaleX\\(0\\);'));
   assert.match(css, rule(' \\.pt-tray \\.sb-sound\\.playing::after', 'animation: pt-pad 1200ms linear;'));
   assert.match(glue, /if \(!pad \|\| pad\.disabled \|\| Date\.now\(\) < soundboardCooldown\) return;\n\s+pad\.classList\.toggle\("playing", true\);/);
-  assert.match(css, rule(' \\.pt-stream \\.max \\.i\\.i-g', 'stroke: currentColor; stroke-width: 9;'));
+  assert.match(css, rule(' \\.pt-stream \\.max \\.i\\.i-g', 'stroke: currentColor; stroke-width: \\.5;'));
   assert.match(css, rule(' \\.pt-tray :is\\(\\.sb-sound, \\.pt-tray-add\\)', '[\\s\\S]*justify-content: center;'));
 });
 
@@ -1098,16 +1098,16 @@ test("the chevron over a stream goes back to the room, and the stream tools wait
   assert.match(css, rule(' \\.app\\.pt-stream-full\\[data-pane="chat"\\] \\.stage:not\\(\\.hidden\\)', "background: var\\(--bg-darkest\\);"));
 });
 
-test("the room stands in the same lit room as Home, its line rises wide under the Mic, and a muted mark is the filled one", () => {
+test("the room stands on the same flat wall as Home, its line rises wide under the Mic, and a muted mark is the filled one", () => {
   assert.equal(HORIZON.roomSpread, 35);
   assert.equal(HORIZON.roomHot, 70);
   assert.equal(horizonY(300, 300, 9, null, 0, HORIZON.roomSpread), 21);
   assert.ok(horizonY(335, 300, 9, null, 0, HORIZON.roomSpread) < horizonY(335, 300, 9, null, 0));
   assert.match(glue, /horizonPath\(width, studioPhone\.centre, studioPhone\.swell, null, 0, HORIZON\.roomSpread\)/);
-  assert.match(css, rule(' \\.app\\[data-pane="list"\\]\\.pt-voice-open > \\.pt-room', "radial-gradient\\(460px 420px at 18% 6%, var\\(--wall-lit\\), transparent 72%\\)"));
+  assert.match(css, rule(' \\.app\\[data-pane="list"\\]\\.pt-voice-open > \\.pt-room', "background: var\\(--bg-darkest\\);"));
   assert.match(css, rule(' \\.app\\[data-pane="list"\\]\\.pt-voice-open > \\.pt-room::after', "background: var\\(--grain\\);"));
   assert.match(css, rule(" \\.ptile \\.mo \\.i \\.i-on", "display: inline;"));
-  assert.match(css, rule(" \\.pt-stream::before", "linear-gradient\\(172deg, var\\(--rim\\) 0%"));
+  assert.match(css, rule(" \\.pt-stream::before", "background: none;"));
   assert.match(css, rule(" \\.pt-room-head \\.t b > span:first-child", "margin: -\\.2em 0; padding: \\.2em 0;"));
 });
 

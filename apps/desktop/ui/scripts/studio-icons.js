@@ -1,4 +1,4 @@
-const STUDIO_ICON_VIEWBOX = "0 0 256 256";
+const STUDIO_ICON_VIEWBOX = "0 0 24 24";
 const STUDIO_ICON_REST = 0;
 const STUDIO_ICON_ON = 1;
 const STUDIO_ICON_NAME = /^[a-z0-9-]+$/;
@@ -63,7 +63,7 @@ const STUDIO_APP_ICONS = {
   photo: "image", movie: "film", gifBox: "gif", bellOff: "bell-off", people: "users", gamepad: "gamepad-2", paste: "clipboard", search: "search",
   clock: "clock", link: "link", download: "download", warning: "triangle-alert", openExternal: "external-link", bookmark: "bookmark",
   bookmarkOn: "bookmark", bell: "bell", stage: "podcast", hand: "hand", emojiSmile: "smile", emojiClock: "clock", emojiHeart: "heart",
-  emojiFlag: "flag", globe: "globe",
+  emojiFlag: "flag", globe: "globe", bold: "bold", italic: "italic", strike: "strikethrough", sticker: "sticker", textAa: "a-large-small",
 };
 const STUDIO_APP_ICONS_ON = new Set(["pin", "bookmarkOn"]);
 const STUDIO_STATIC_ICONS = [

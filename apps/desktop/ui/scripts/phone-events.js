@@ -38,12 +38,6 @@ function phoneEventIcon(name, extra) {
   return typeof studioIconMarkup === "function" ? studioIconMarkup(name, `pe-x ${extra || ""}`.trim()) : "";
 }
 
-function phoneEventSwapIcon(holder, name, extra) {
-  const old = holder.querySelector(":scope > svg");
-  if (old) old.remove();
-  holder.insertAdjacentHTML("afterbegin", phoneEventIcon(name, extra));
-}
-
 function phoneEventsHead() {
   const layer = document.getElementById("events-layer");
   const head = layer && layer.querySelector(".events-head");
@@ -73,34 +67,6 @@ function phoneEventsHead() {
     create.classList.add("key", "pe-key");
     create.insertAdjacentHTML("afterbegin", phoneEventIcon("plus"));
   }
-}
-
-function phoneEventsCard(card) {
-  if (card.dataset.pe) return;
-  card.dataset.pe = "1";
-  const foot = card.querySelector(".event-foot");
-  if (foot) card.appendChild(foot);
-  const where = card.querySelector(".event-where");
-  if (where) phoneEventSwapIcon(where, "volume-2");
-  const buttons = foot ? [...foot.querySelectorAll(".event-actions > button")] : [];
-  const icons = buttons.filter(button => button.classList.contains("icon-btn"));
-  buttons.filter(button => !icons.includes(button)).forEach((button, index) => {
-    const answer = index < 2;
-    const mine = answer && button.classList.contains("btn-primary");
-    button.classList.remove("btn-primary", "btn-secondary", "btn-small");
-    button.classList.add("key", "sm", answer ? "pe-answer" : "primary");
-    if (mine) {
-      button.classList.add("mine");
-      button.setAttribute("aria-pressed", "true");
-      button.insertAdjacentHTML("afterbegin", phoneEventIcon("check"));
-    } else if (answer) button.setAttribute("aria-pressed", "false");
-  });
-  icons.forEach((button, index) => {
-    button.classList.remove("danger");
-    button.classList.add("pe-ibtn");
-    if (index === 0) button.classList.add("pe-push");
-    phoneEventSwapIcon(button, index === 0 ? "pencil" : "trash-2");
-  });
 }
 
 function phoneEventsCalendar(cal) {
@@ -134,7 +100,6 @@ function phoneEventsEmpty(empty) {
 function phoneEventsBody() {
   const body = document.getElementById("events-body");
   if (!body) return;
-  for (const card of body.querySelectorAll(".event-card")) phoneEventsCard(card);
   for (const cal of body.querySelectorAll(":scope > .cal")) phoneEventsCalendar(cal);
   for (const empty of body.querySelectorAll(":scope > .events-empty")) phoneEventsEmpty(empty);
 }

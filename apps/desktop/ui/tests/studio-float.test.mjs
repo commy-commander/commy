@@ -84,7 +84,7 @@ test("the pickers are one 400 by 452 slab with slot tabs, a capsule search, a ha
   assert.match(rule(`${R} .emoji-browser .eb-search`), /height: 36px;\n  padding: 0 14px;\n  border-radius: var\(--radius-pill\);/);
   assert.match(rule(`${R} .emoji-browser .eb-tone`), /width: 36px;\n  height: 36px;\n  border-radius: 50%;\n  background: var\(--glass-key\);/);
   assert.match(rule(`${R} .emoji-browser .eb-rail`), /flex: 0 0 40px;[\s\S]*border-right: 1px solid var\(--line\);/);
-  assert.match(rule(`${R} .emoji-browser .eb-rail-server`), /width: 30px;\n  height: 30px;\n  border-radius: 9px;\n  background: linear-gradient\(180deg, rgb\(var\(--lamp\) \/ \.09\), rgb\(var\(--lamp\) \/ 0\) 70%\), color-mix\(in srgb, var\(--server-tint, var\(--accent\)\) 26%, var\(--bg-raised\)\);[\s\S]*color: color-mix\(in srgb, var\(--server-tint, var\(--accent\)\) 45%, var\(--white\)\);/);
+  assert.match(rule(`${R} .emoji-browser .eb-rail-server`), /width: 30px;\n  height: 30px;\n  border-radius: 9px;\n  background: color-mix\(in srgb, var\(--server-tint, var\(--accent\)\) 26%, var\(--bg-raised\)\);[\s\S]*color: color-mix\(in srgb, var\(--server-tint, var\(--accent\)\) 45%, var\(--white\)\);/);
   assert.match(rule(`${R} .emoji-browser .eb-rail-btn.active > .eb-rail-server`), /44%, var\(--bg-raised\)\); color: var\(--white\); outline: 2px solid var\(--accent-lit\);/);
   const D = 'html[data-look="studio"]:not([data-fit="slim"])[data-theme="light"]';
   assert.ok(css.includes(`${D} .emoji-browser .eb-rail-server { color: color-mix(in srgb, var(--server-tint, var(--accent)) 50%, var(--ink-strong)); }`));

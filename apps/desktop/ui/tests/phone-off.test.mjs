@@ -29,5 +29,5 @@ test("a primary key that cannot be pressed yet wears the guide's off look, never
   assert.match(day, /box-shadow: var\(--k-off-shadow\) !important;/);
   assert.match(day, /color: var\(--text-muted\) !important;/);
   const night = css.slice(css.indexOf(`${SLIM}:not([data-theme="light"]) .btn-primary:disabled`));
-  assert.match(night, /background: var\(--glass-key-off\) !important;\n  box-shadow: inset 0 0 0 1px rgb\(var\(--lamp\) \/ \.1\) !important;/);
+  assert.match(night, /background: var\(--glass-key-off\) !important;\n  box-shadow: none !important;/);
 });

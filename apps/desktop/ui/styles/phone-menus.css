@@ -12,9 +12,7 @@ html[data-look="studio"][data-fit="slim"] #room-member-menu:not(.hidden) {
   border: var(--border-w) solid transparent;
   border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
   background:
-    linear-gradient(180deg, rgb(var(--lamp) / .05), rgb(var(--lamp) / 0) 120px) padding-box,
     linear-gradient(var(--sheet-bg), var(--sheet-bg)) padding-box,
-    linear-gradient(172deg, var(--rim) 0%, rgb(var(--lamp) / .16) 16%, rgb(var(--lamp) / .03) 50%, rgb(var(--lamp) / .09) 100%) border-box,
     linear-gradient(var(--rim-soft), var(--rim-soft)) border-box;
   -webkit-backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));
   backdrop-filter: blur(var(--fx-blur)) saturate(var(--fx-sat));

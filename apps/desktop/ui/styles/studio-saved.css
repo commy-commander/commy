@@ -75,7 +75,7 @@ html[data-look="studio"]:not([data-fit="slim"]) .saved-row:focus-visible { backg
 html[data-look="studio"]:not([data-fit="slim"]) .saved-row > .avatar {
   width: 36px;
   height: 36px;
-  box-shadow: 0 1px 2px rgb(var(--dark) / .45);
+  box-shadow: none;
 }
 html[data-look="studio"]:not([data-fit="slim"]) .saved-body { gap: 2px; }
 html[data-look="studio"]:not([data-fit="slim"]) .saved-line {

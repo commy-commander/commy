@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { SETTINGS_PAGE_ICONS, SETTINGS_PICK_ICONS, SETTINGS_FILTER_ICONS, METER_BARS, settingsPageIcon, settingsPaneGroups, meterBarClass, meterLit, hotkeyCaps, themeCardClass } = require("../scripts/studio-settings.js");
 const { VOICE_FILTERS } = require("../scripts/voice-filters.js");
-const { STUDIO_ICON_PATHS } = require("../vendor/phosphor/icons.js");
+const { STUDIO_ICON_PATHS } = require("../vendor/fluent/icons.js");
 const read = path => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const html = read("../index.html");
 const css = read("../styles/studio-settings.css");

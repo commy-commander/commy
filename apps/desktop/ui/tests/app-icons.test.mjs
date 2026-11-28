@@ -33,7 +33,8 @@ test("the presets offered are the ones the desktop app can build", () => {
 test("colour tiles match the colours the desktop app paints", () => {
   const source = readFileSync(join(import.meta.dirname, "..", "..", "src-tauri", "src", "app_icon.rs"), "utf8");
   const painted = Object.fromEntries([...source.matchAll(/\("([a-z]+)", "(#[0-9a-f]{6})"\)/g)].map(m => [m[1], m[2]]));
-  painted.classic = /pub const CLASSIC_TILE: &str = "(#[0-9a-f]{6})"/.exec(source)[1];
+  assert.match(source, /if name == CLASSIC \{\n\s+return original\(\)\.cloned\(\);/);
+  painted.classic = "linear-gradient(180deg, #7686ff, #5466f0)";
   for (const preset of APP_ICON_PRESETS) {
     assert.equal(preset.tile, painted[preset.id], preset.id);
     assert.equal(preset.image, "images/commy-star.svg");

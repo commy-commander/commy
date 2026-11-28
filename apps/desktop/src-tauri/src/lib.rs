@@ -8925,6 +8925,10 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::Focused(true)) && window.label() == "main" {
                 account::check_session_soon();
             }
+            #[cfg(desktop)]
+            if matches!(event, tauri::WindowEvent::ThemeChanged(_)) && window.label() == "main" {
+                app_icon::theme_changed(window.app_handle());
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" {
                     return;

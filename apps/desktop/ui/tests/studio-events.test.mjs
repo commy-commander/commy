@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { EVENT_HEAD_KEYS, EVENT_HEAD_ICONS, eventActionKey, eventAnswerMine, eventDeleteIcon } = require("../scripts/studio-events.js");
+const { EVENT_HEAD_KEYS, EVENT_HEAD_ICONS } = require("../scripts/studio-events.js");
 const read = path => englishSource(readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n"));
 const html = read("../index.html");
 const app = read("../scripts/app.js");
@@ -48,31 +48,6 @@ test("the sheet is a 640 slab with tabs in a slot and glass keys in the head", (
   assert.match(rule(`${R} #events-close.key.sq,\n${R} .events-panel .cal-head > .key.sq`), /width: 36px;/);
   assert.deepEqual(EVENT_HEAD_KEYS, { "event-create": "key sm", "events-close": "key sq" });
   assert.deepEqual(EVENT_HEAD_ICONS, { "event-create": "plus" });
-});
-
-test("each event is a card with a date tile, the live tag and ringed answers", () => {
-  assert.match(rule(`${R} .events-body > .event-card`), /border-radius: 18px;/);
-  assert.match(rule(`${R} .events-body > .event-card`), /box-shadow: inset 0 0 0 1px var\(--line\);/);
-  assert.match(rule(`${R} .event-card > .event-date`), /width: 52px;\n  height: 58px;/);
-  assert.match(rule(`${R} .event-date-month`), /color: var\(--accent-lit\);/);
-  assert.match(rule(`${R} .event-date-day`), /font: 700 22px\/1 var\(--font-display\);/);
-  assert.match(rule(`${R} .event-when.live`), /background: var\(--live\);/);
-  assert.match(rule(`${R} .event-when.live`), /color: var\(--live-ink\);/);
-  assert.match(rule(`${R} .event-main > .event-title`), /font: 700 17px\/1\.25 var\(--font-display\);/);
-  assert.match(rule(`${R} .event-counts`), /font: 500 12\.5px\/1\.2 var\(--font\);/);
-  assert.match(rule(`${R} .event-actions > .key.sm.mine`), /box-shadow: inset 0 0 0 1\.5px var\(--accent-lit\);/);
-  assert.match(rule(`${R} .event-actions > .icon-btn`), /border-radius: 50%;/);
-  assert.equal(eventActionKey(0, false, true), "key sm");
-  assert.equal(eventActionKey(1, false, true), "key sm");
-  assert.equal(eventActionKey(2, false, true), "key sm primary");
-  assert.equal(eventActionKey(3, true, true), "");
-  assert.equal(eventActionKey(0, false, false), "");
-  assert.equal(eventAnswerMine(1, "btn-small btn-primary", true), true);
-  assert.equal(eventAnswerMine(1, "btn-small btn-secondary", true), false);
-  assert.equal(eventAnswerMine(2, "btn-primary btn-small", true), false);
-  assert.equal(eventAnswerMine(0, "btn-small btn-primary", false), false);
-  assert.equal(eventDeleteIcon(true), "trash-2");
-  assert.equal(eventDeleteIcon(false), "trash");
 });
 
 test("the calendar has 78 tiles, a filled today and a ringed picked day", () => {

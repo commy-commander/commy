@@ -733,7 +733,7 @@ html[data-look="studio"] .modal.dialog input.switch::after {
   height: 22px;
   border-radius: 50%;
   background: var(--pillow-top), var(--bg-active);
-  box-shadow: inset 0 1px 1px rgb(var(--lamp) / .25), 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .5);
+  box-shadow: 0 1px 2px rgb(var(--dark) / .5), 0 3px 5px -1px rgb(var(--dark) / .5);
   transition: translate 180ms var(--ease-spring), background var(--t-hover);
 }
 html[data-look="studio"] .modal.dialog input.switch:checked {
