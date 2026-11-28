@@ -2732,6 +2732,7 @@ mod tests {
         let mut talked = real.clone();
         let channel = talked.server.channels.iter().find(|c| c.kind == commy_core::ChannelKind::Text).unwrap().id;
         let words = owner.post(&talked, channel, "meet at the harbour");
+        let switched = words.created_at.timestamp_millis() + 1;
         talked.apply(ServerEvent::MessageCreate { message: words }).unwrap();
         let replies = sync_replies(&app_with(&owner, talked.clone()), sid);
         let messages_in = |payload: &WirePayload| match payload {
@@ -2739,7 +2740,7 @@ mod tests {
             _ => None,
         };
         assert_eq!(replies.iter().map(messages_in).collect::<Vec<_>>(), vec![Some(1), Some(0), None], "a newcomer from an older app also gets the layout alone");
-        talked.apply(ServerEvent::DayKeysSet { server: sid, on: true, since: Utc::now().timestamp_millis(), history_days: 30 }).unwrap();
+        talked.apply(ServerEvent::DayKeysSet { server: sid, on: true, since: switched, history_days: 30 }).unwrap();
         let replies = sync_replies(&app_with(&owner, talked), sid);
         assert_eq!(replies.iter().map(messages_in).collect::<Vec<_>>(), vec![Some(1), None], "once the server is on day keys the layout is not sent alone");
 
