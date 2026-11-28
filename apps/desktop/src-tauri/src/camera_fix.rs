@@ -1,6 +1,7 @@
 use std::path::Path;
 
 pub const PLUGIN_DIR: &str = "/usr/lib/commy/gstreamer-1.0";
+pub const FLATPAK_PLUGIN_DIR: &str = "/app/lib/commy/gstreamer-1.0";
 pub const PLUGIN_FILE: &str = "libgstcommycamerafix.so";
 pub const TRACER: &str = "commycamerafix";
 
@@ -26,19 +27,34 @@ fn add_to_var(name: &str, entry: &str, separator: char) {
     }
 }
 
+pub fn plugin_dir(in_flatpak: bool) -> &'static str {
+    if in_flatpak {
+        FLATPAK_PLUGIN_DIR
+    } else {
+        PLUGIN_DIR
+    }
+}
+
 pub fn apply_before_any_window() {
     let in_appimage = std::env::var_os("APPIMAGE").is_some();
-    if in_appimage || !Path::new(PLUGIN_DIR).join(PLUGIN_FILE).is_file() {
+    let dir = plugin_dir(crate::flatpak::inside());
+    if in_appimage || !Path::new(dir).join(PLUGIN_FILE).is_file() {
         return;
     }
     let path_var = plugin_path_var(std::env::var_os("GST_PLUGIN_PATH_1_0").is_some());
-    add_to_var(path_var, PLUGIN_DIR, ':');
+    add_to_var(path_var, dir, ':');
     add_to_var("GST_TRACERS", TRACER, ';');
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_flatpak_keeps_the_plugin_under_app() {
+        assert_eq!(plugin_dir(true), "/app/lib/commy/gstreamer-1.0");
+        assert_eq!(plugin_dir(false), "/usr/lib/commy/gstreamer-1.0");
+    }
 
     #[test]
     fn starts_an_empty_list() {

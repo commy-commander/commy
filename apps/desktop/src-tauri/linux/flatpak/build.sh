@@ -27,7 +27,7 @@ desktop="build/export/share/applications/$app.desktop"
 desktop-file-validate "$desktop"
 grep -q '^MimeType=x-scheme-handler/commy' "$desktop" || { echo "the Flatpak does not handle commy:// links"; cat "$desktop"; exit 1; }
 grep -q '^Exec=.*%u' "$desktop" || { echo "the Flatpak launcher does not pass links on"; cat "$desktop"; exit 1; }
-for file in bin/commy-desktop lib/libayatana-appindicator3.so.1 share/metainfo/$app.metainfo.xml share/icons/hicolor/256x256/apps/$app.png; do
+for file in bin/commy-desktop lib/commy/gstreamer-1.0/libgstcommycamerafix.so lib/libayatana-appindicator3.so.1 share/metainfo/$app.metainfo.xml share/icons/hicolor/256x256/apps/$app.png; do
   [ -e "build/files/$file" ] || { echo "the Flatpak is missing /app/$file"; exit 1; }
 done
 

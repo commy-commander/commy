@@ -9,6 +9,7 @@ finish-args:
   - --socket=x11
   - --socket=wayland
   - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0
   - --device=all
   - --filesystem=xdg-download
   - --filesystem=xdg-pictures:ro
@@ -31,6 +32,7 @@ modules:
       - ar x commy.deb
       - tar -xf data.tar.gz
       - install -Dm755 usr/bin/commy-desktop -t /app/bin
+      - install -Dm755 usr/lib/commy/gstreamer-1.0/libgstcommycamerafix.so -t /app/lib/commy/gstreamer-1.0
       - install -Dm644 usr/share/applications/Commy.desktop /app/share/applications/chat.commy.desktop.desktop
       - desktop-file-edit --set-icon=chat.commy.desktop --set-key=Exec --set-value="commy-desktop %u" /app/share/applications/chat.commy.desktop.desktop
       - install -Dm644 usr/share/icons/hicolor/32x32/apps/commy-desktop.png /app/share/icons/hicolor/32x32/apps/chat.commy.desktop.png
