@@ -27,3 +27,10 @@ test("a versioned simulator build checks which servers it was built for", () => 
   assert.match(step, /tar -cf - -C "\$app" \. \| expect_built_servers "The simulator app"/);
   assert.match(step, /expect_ios_bundle_id "The simulator app" < "\$app\/Info\.plist"/);
 });
+
+test("a Play bundle goes to the app its version belongs to: rc builds to Commy Beta, finals to Commy", () => {
+  const step = stepRun("Send the bundle to Google Play testing");
+  assert.doesNotMatch(step, /test build that uses the staging servers/);
+  assert.match(step, /source apps\/desktop\/mobile\/release-env\.sh "\$PLAY_RELEASE_NAME"/);
+  assert.match(step, /export PLAY_PACKAGE="\$COMMY_ANDROID_APP_ID"/);
+});

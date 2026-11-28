@@ -108,6 +108,7 @@ async function main() {
     track,
     name,
     notes: process.env.PLAY_RELEASE_NOTES || "",
+    packageName: process.env.PLAY_PACKAGE || PACKAGE,
   });
   console.log(`Version code ${result.versionCode} is in ${result.track} testing (${result.status})`);
 }

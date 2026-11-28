@@ -23,11 +23,13 @@ import app.tauri.plugin.Plugin
 @TauriPlugin
 class SignInPlugin(private val activity: Activity) : Plugin(activity) {
   private var sheet: Invoke? = null
+  private var sheetScheme = RETURN_SCHEME
   private var away = false
 
   @Command
   fun openSheet(invoke: Invoke) {
     val url = invoke.getArgs().optString("url")
+    val scheme = invoke.getArgs().optString("scheme").ifEmpty { RETURN_SCHEME }
     if (!url.startsWith("https://")) {
       invoke.reject("That is not a sign-in page")
       return
@@ -38,6 +40,7 @@ class SignInPlugin(private val activity: Activity) : Plugin(activity) {
         return@runOnUiThread
       }
       sheet = invoke
+      sheetScheme = scheme
       away = false
       try {
         CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(activity, Uri.parse(url))
@@ -54,7 +57,7 @@ class SignInPlugin(private val activity: Activity) : Plugin(activity) {
 
   override fun onNewIntent(intent: Intent) {
     val link = intent.data ?: return
-    if (link.scheme != RETURN_SCHEME || link.host != RETURN_HOST) return
+    if (link.scheme != sheetScheme || link.host != RETURN_HOST) return
     val waiting = sheet ?: return
     sheet = null
     away = false

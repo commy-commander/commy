@@ -23,6 +23,10 @@ const SHEET_PROVIDERS: [&str; 2] = ["google", "twitch"];
 const MAX_SUSPENDED_NOTE: usize = 240;
 const SUSPENDED_FALLBACK: &str = "This account is suspended for breaking the Terms. If you think this is a mistake, write to this account server's contact.";
 const SHEET_RETURN_SCHEME: &str = "commy";
+const APP_LINK_SCHEME: &str = match option_env!("COMMY_LINK_SCHEME") {
+    Some(scheme) => scheme,
+    None => SHEET_RETURN_SCHEME,
+};
 const SHEET_RETURN_HOST: &str = "signed-in";
 const MAX_HANDOFF: usize = 64;
 const IOS_PASSKEY_SITES: [&str; 1] = ["commy.chat"];
@@ -546,17 +550,28 @@ fn sheet_page(server: &str, answer: &Answer) -> Result<(String, String), String>
     Ok((page.to_string(), handoff))
 }
 
-fn sheet_code(back: &str, handoff: &str) -> Result<String, String> {
+fn sheet_return_scheme(started: &Value, own: &'static str) -> &'static str {
+    let scheme = started.get("returnUrl").and_then(Value::as_str).and_then(|link| url::Url::parse(link).ok()).map(|url| url.scheme().to_string());
+    match scheme.as_deref() {
+        Some(scheme) if scheme == own => own,
+        _ => SHEET_RETURN_SCHEME,
+    }
+}
+
+fn sheet_code(back: &str, handoff: &str, scheme: &str) -> Result<String, String> {
     let url = url::Url::parse(back).map_err(|_| "The sign-in came back broken. Try again.")?;
-    let ours = url.scheme() == SHEET_RETURN_SCHEME && url.host_str() == Some(SHEET_RETURN_HOST);
+    let ours = url.scheme() == scheme && url.host_str() == Some(SHEET_RETURN_HOST);
     if !ours || query_value(&url, "handoff").as_deref() != Some(handoff) {
         return Err("The sign-in came back for another attempt. Try again.".into());
     }
     query_value(&url, "code").ok_or_else(|| "The sign-in came back broken. Try again.".into())
 }
 
-fn sheet_body(provider: &str, challenge: &str, adult_confirmed: bool, access: Option<&str>) -> Value {
+fn sheet_body(provider: &str, challenge: &str, adult_confirmed: bool, access: Option<&str>, link_scheme: &str) -> Value {
     let mut body = json!({ "provider": provider, "challenge": challenge });
+    if link_scheme != SHEET_RETURN_SCHEME {
+        body["returnScheme"] = json!(link_scheme);
+    }
     if adult_confirmed {
         body["adultConfirmed"] = json!(true);
     }
@@ -631,17 +646,18 @@ pub async fn account_sign_in_sheet(
         pending.access = Some(check_access_code(&app, &server, &doc, &code).await?);
     }
     let (verifier, challenge) = new_verifier();
-    let body = sheet_body(&provider, &challenge, adult_confirmed, pending.access.as_deref());
+    let body = sheet_body(&provider, &challenge, adult_confirmed, pending.access.as_deref(), APP_LINK_SCHEME);
     let started = post(&app, &server, &start, body, None, None).await?;
     if !(200..300).contains(&started.status) {
         return Err(read_reply(&started).err().unwrap_or_else(|| "The account server did not start the sign-in".into()));
     }
     let (page, handoff) = sheet_page(&server, &started)?;
-    let Some(back) = open_sheet(&handle, page).await? else {
+    let scheme = sheet_return_scheme(&started.body, APP_LINK_SCHEME);
+    let Some(back) = open_sheet(&handle, page, scheme).await? else {
         keep(pending);
         return Ok(SignInStep::Canceled);
     };
-    let code = sheet_code(&back, &handoff)?;
+    let code = sheet_code(&back, &handoff, scheme)?;
     let answer = post(&app, &server, &finish, json!({ "handoff": handoff, "verifier": verifier, "code": code }), None, None).await?;
     if answer.body.get("code").and_then(Value::as_str) == Some("ACCESS_DENIED") {
         keep(pending);
@@ -651,13 +667,13 @@ pub async fn account_sign_in_sheet(
 }
 
 #[cfg(mobile)]
-async fn open_sheet(handle: &AppHandle, page: String) -> Result<Option<String>, String> {
-    let back = ask_native(handle, "openSheet", json!({ "url": page }), "The sign-in page").await?;
+async fn open_sheet(handle: &AppHandle, page: String, scheme: &str) -> Result<Option<String>, String> {
+    let back = ask_native(handle, "openSheet", json!({ "url": page, "scheme": scheme }), "The sign-in page").await?;
     Ok(back.map(|back| back.get("url").and_then(Value::as_str).unwrap_or_default().to_string()))
 }
 
 #[cfg(desktop)]
-async fn open_sheet(handle: &AppHandle, page: String) -> Result<Option<String>, String> {
+async fn open_sheet(handle: &AppHandle, page: String, _scheme: &str) -> Result<Option<String>, String> {
     let back = wait_for_browser();
     if let Err(e) = crate::browser::open(handle, &page) {
         account_cancel_browser_sign_in();
@@ -859,11 +875,25 @@ mod tests {
 
     #[test]
     fn only_our_own_attempt_comes_back_from_the_sheet() {
-        assert_eq!(sheet_code("commy://signed-in?handoff=abc&code=xyz", "abc").unwrap(), "xyz");
-        assert!(sheet_code("commy://signed-in?handoff=other&code=xyz", "abc").is_err());
-        assert!(sheet_code("commy://i/commy.chat/AB?handoff=abc&code=xyz", "abc").is_err());
-        assert!(sheet_code("https://signed-in/?handoff=abc&code=xyz", "abc").is_err());
-        assert!(sheet_code("commy://signed-in?handoff=abc", "abc").is_err());
+        assert_eq!(sheet_code("commy://signed-in?handoff=abc&code=xyz", "abc", "commy").unwrap(), "xyz");
+        assert!(sheet_code("commy://signed-in?handoff=other&code=xyz", "abc", "commy").is_err());
+        assert!(sheet_code("commy://i/commy.chat/AB?handoff=abc&code=xyz", "abc", "commy").is_err());
+        assert!(sheet_code("https://signed-in/?handoff=abc&code=xyz", "abc", "commy").is_err());
+        assert!(sheet_code("commy://signed-in?handoff=abc", "abc", "commy").is_err());
+        assert_eq!(sheet_code("commy-beta://signed-in?handoff=abc&code=xyz", "abc", "commy-beta").unwrap(), "xyz");
+        assert!(sheet_code("commy://signed-in?handoff=abc&code=xyz", "abc", "commy-beta").is_err());
+    }
+
+    #[test]
+    fn the_sheet_waits_on_the_link_the_account_server_will_send() {
+        let new_server = json!({ "url": "https://staging.commy.chat/go", "returnUrl": "commy-beta://signed-in" });
+        assert_eq!(sheet_return_scheme(&new_server, "commy-beta"), "commy-beta");
+        let old_server = json!({ "url": "https://staging.commy.chat/go", "returnUrl": "commy://signed-in" });
+        assert_eq!(sheet_return_scheme(&old_server, "commy-beta"), "commy");
+        assert_eq!(sheet_return_scheme(&json!({ "url": "https://commy.chat/go" }), "commy-beta"), "commy");
+        let stranger = json!({ "returnUrl": "elsewhere://signed-in" });
+        assert_eq!(sheet_return_scheme(&stranger, "commy-beta"), "commy");
+        assert_eq!(sheet_return_scheme(&new_server, "commy"), "commy");
     }
 
     #[test]
@@ -871,8 +901,9 @@ mod tests {
         let (verifier, challenge) = new_verifier();
         assert_eq!(challenge.len(), 43);
         assert_eq!(challenge, data_encoding::BASE64URL_NOPAD.encode(&Sha256::digest(verifier.as_bytes())));
-        assert_eq!(sheet_body("google", "c", false, None), json!({ "provider": "google", "challenge": "c" }));
-        let body = sheet_body("twitch", "c", true, Some("tok"));
+        assert_eq!(sheet_body("google", "c", false, None, "commy"), json!({ "provider": "google", "challenge": "c" }));
+        assert_eq!(sheet_body("google", "c", false, None, "commy-beta")["returnScheme"], json!("commy-beta"));
+        let body = sheet_body("twitch", "c", true, Some("tok"), "commy");
         assert_eq!(body["adultConfirmed"], json!(true));
         assert_eq!(body["accessToken"], json!("tok"));
     }

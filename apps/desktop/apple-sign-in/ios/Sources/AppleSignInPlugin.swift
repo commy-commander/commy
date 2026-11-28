@@ -9,6 +9,7 @@ class SignInRequest: Decodable {
 
 class SheetRequest: Decodable {
   let url: String
+  let scheme: String?
 }
 
 class PasskeyRequest: Decodable {
@@ -128,7 +129,7 @@ class AppleSignInPlugin: Plugin, ASAuthorizationControllerDelegate, ASAuthorizat
         invoke.reject("A sign-in page is already open")
         return
       }
-      let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "commy") { [weak self] callback, error in
+      let session = ASWebAuthenticationSession(url: url, callbackURLScheme: args.scheme ?? "commy") { [weak self] callback, error in
         DispatchQueue.main.async {
           guard let self = self, let waiting = self.sheetInvoke else { return }
           self.sheetInvoke = nil

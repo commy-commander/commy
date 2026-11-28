@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, NOTIFICATION_SOUNDS, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, pushSetup, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, EMAIL_CONFIRMED, MAX_SDK } from "./android-project.mjs";
+import { LAUNCHER_LAYERS, LAUNCHER_NAMES, NOTIFICATION_ICON, NOTIFICATION_SOUNDS, launcherIcon, withCommyNeeds, withCommyDependencies, withDebugSigning, withSigning, withNativeSymbols, DEBUG_KEY, UPLOAD_KEY, applicationId, firebaseValues, firebasePackages, readGoogleServices, pushSetup, PERMISSIONS, FEATURES, COMPONENTS, GRADLE_DEPENDENCIES, INVITE_LINKS, SIGN_IN_RETURN, EMAIL_CONFIRMED, MAX_SDK, STORE_APP, appVariant, linkFilters, withApplicationId, withAppName, launcherLayerSource } from "./android-project.mjs";
 
 const generated = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -336,4 +336,38 @@ test("every launcher layer ships as a square picture big enough for the largest 
     assert.equal(png.readUInt32BE(16), 432, name);
     assert.equal(png.readUInt32BE(20), 432, name);
   }
+});
+
+const betaEnv = { COMMY_ANDROID_APP_ID: "chat.commy.mobile.beta", COMMY_APP_NAME: "Commy Beta", COMMY_LINK_SCHEME: "commy-beta" };
+
+test("a build with no release values is the store app", () => {
+  assert.deepEqual(appVariant({}), STORE_APP);
+  assert.deepEqual(appVariant({ COMMY_ANDROID_APP_ID: "chat.commy.mobile", COMMY_APP_NAME: "Commy" }), STORE_APP);
+});
+
+test("the beta app gets its own app id, name, links and launcher background", () => {
+  const beta = appVariant(betaEnv);
+  assert.deepEqual(beta, { appId: "chat.commy.mobile.beta", name: "Commy Beta", scheme: "commy-beta", icons: "beta/" });
+  const gradle = `android {\n    namespace = "chat.commy.mobile"\n    defaultConfig {\n        applicationId = "chat.commy.mobile"\n    }\n}\n`;
+  const moved = withApplicationId(gradle, beta.appId);
+  assert.equal(applicationId(moved), "chat.commy.mobile.beta");
+  assert.match(moved, /namespace = "chat\.commy\.mobile"/, "the Kotlin package stays where the plugins look for it");
+  assert.throws(() => withApplicationId("android {}", beta.appId), /applicationId/);
+  const strings = `<resources>\n    <string name="app_name">Commy</string>\n    <string name="main_activity_title">Commy</string>\n</resources>\n`;
+  const named = withAppName(strings, beta.name);
+  assert.match(named, /<string name="app_name">Commy Beta<\/string>/);
+  assert.match(named, /<string name="main_activity_title">Commy Beta<\/string>/);
+  assert.throws(() => withAppName("<resources />", beta.name), /app_name/);
+  assert.match(launcherLayerSource("commy_launcher_background", beta), /android-icon\/beta\/commy_launcher_background\.png$/);
+  assert.match(launcherLayerSource("commy_launcher_foreground", beta), /android-icon\/commy_launcher_foreground\.png$/);
+  assert.match(launcherLayerSource("commy_launcher_background", STORE_APP), /android-icon\/commy_launcher_background\.png$/);
+  assert.ok(existsSync(new URL("./android-icon/beta/commy_launcher_background.png", import.meta.url)));
+});
+
+test("the beta app answers only its own links, so the store app keeps commy:// to itself", () => {
+  const out = withCommyNeeds(withCommyNeeds(generated, { scheme: "commy-beta" }), { scheme: "commy-beta" });
+  for (const { xml } of linkFilters("commy-beta")) assert.equal(out.split(xml).length - 1, 1);
+  assert.ok(!out.includes('android:scheme="commy" '), "no commy:// filter in the beta app");
+  assert.ok(out.includes('android:scheme="commy-beta" android:host="signed-in"'));
+  assert.deepEqual(linkFilters().map(f => f.xml), [INVITE_LINKS, SIGN_IN_RETURN, EMAIL_CONFIRMED]);
 });

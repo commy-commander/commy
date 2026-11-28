@@ -95,7 +95,10 @@ the App Store Connect API key named by `ASC_KEY_ID` and `ASC_ISSUER_ID` with its
 staging servers as a separate app, Commy Beta (`chat.commy.mobile.beta`, its
 own icon, its own TestFlight app record and the `commy-beta://` link scheme), so
 testers keep the store app next to it. A final version builds Commy
-(`chat.commy.mobile`). A staging server that wakes the beta app sets
+(`chat.commy.mobile`). Android does the same: an `-rc` Play bundle is Commy
+Beta (`chat.commy.mobile.beta`, amber launcher icon, `commy-beta://` links)
+and goes to that app's Play testing track, while a final one goes to Commy.
+`GOOGLE_SERVICES_JSON` needs both packages for push. A staging server that wakes the beta app sets
 `APNS_TOPIC=chat.commy.mobile.beta` and lists `chat.commy.mobile.beta` in
 `APPLE_APP_BUNDLE_IDS`.
 

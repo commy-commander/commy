@@ -12,6 +12,8 @@ export_build_value() {
 }
 
 release_ios_bundle_id=chat.commy.mobile
+release_android_app_id=chat.commy.mobile
+release_link_scheme=commy
 release_app_name=Commy
 release_app_icon="$release_mobile_dir/app-icon.png"
 release_ios_info_plist=""
@@ -23,14 +25,20 @@ if [[ "$release_version" == *-* ]]; then
   export_build_value COMMY_DEFAULT_RELAY https://relay-staging.commy.chat:8443
   export_build_value COMMY_RELAY_QAD_PORT 7843
   release_ios_bundle_id=chat.commy.mobile.beta
+  release_android_app_id=chat.commy.mobile.beta
+  release_link_scheme=commy-beta
+  export_build_value COMMY_LINK_SCHEME "$release_link_scheme"
   release_app_name="Commy Beta"
   release_app_icon="$release_mobile_dir/app-icon-beta.png"
   release_ios_info_plist="$release_mobile_dir/ios/beta/Info.plist"
 fi
 export COMMY_IOS_BUNDLE_ID="$release_ios_bundle_id"
+export COMMY_ANDROID_APP_ID="$release_android_app_id"
+export COMMY_APP_NAME="$release_app_name"
 echo "Commy $release_version"
 echo "Account server: ${COMMY_DEFAULT_ACCOUNT_SERVER:-https://commy.chat}"
 echo "iPhone app: $release_app_name ($release_ios_bundle_id)"
+echo "Android app: $release_app_name ($release_android_app_id)"
 
 ios_build_config() {
   local bundle_version="${1:-}"
@@ -47,6 +55,16 @@ expect_ios_bundle_id() {
   built="$(plutil -extract CFBundleIdentifier raw -o - - 2>/dev/null || true)"
   if [[ "$built" != "$release_ios_bundle_id" ]]; then
     echo "::error::$label was built as ${built:-an unknown app} but $release_version must be $release_ios_bundle_id" >&2
+    return 1
+  fi
+  echo "$label is $release_app_name ($built)"
+}
+
+expect_android_app_id() {
+  local label="$1" built
+  built="$(tr -d '[:space:]')"
+  if [[ "$built" != "$release_android_app_id" ]]; then
+    echo "::error::$label was built as ${built:-an unknown app} but $release_version must be $release_android_app_id" >&2
     return 1
   fi
   echo "$label is $release_app_name ($built)"

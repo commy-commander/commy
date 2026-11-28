@@ -256,12 +256,9 @@ jobs:
             echo "::warning::This bundle is signed with a throwaway key, so it is not sent to Google Play"
             exit 0
           fi
-          case "$PLAY_RELEASE_NAME" in
-            *-*)
-              echo "::notice::$PLAY_RELEASE_NAME is a test build that uses the staging servers, so it is not sent to Google Play"
-              exit 0
-              ;;
-          esac
+          source apps/desktop/mobile/release-env.sh "$PLAY_RELEASE_NAME" > /dev/null
+          export PLAY_PACKAGE="$COMMY_ANDROID_APP_ID"
+          echo "Sending $PLAY_RELEASE_NAME to $COMMY_APP_NAME ($PLAY_PACKAGE) $PLAY_TESTING testing"
           export PLAY_RELEASE_NOTES="Built from ${GITHUB_SHA::7}: $(git log -1 --format=%s)"
           node apps/desktop/mobile/play-upload.mjs dist/*.aab "$PLAY_TESTING"
 

@@ -6,6 +6,12 @@ import { ACCESS_COOKIE, accessToken, normalizeAccessCode } from "./access.js";
 import { CAPTCHA_PATH } from "./config.js";
 
 export const APP_RETURN_URL = "commy://signed-in";
+export const APP_RETURN_SCHEMES = ["commy", "commy-beta"];
+
+export function appReturnUrl(scheme = APP_RETURN_SCHEMES[0]) {
+  const url = new URL(APP_RETURN_URL);
+  return APP_RETURN_SCHEMES.includes(scheme) ? `${scheme}://${url.host}` : APP_RETURN_URL;
+}
 export const SHEET_PROVIDERS = ["google", "twitch"];
 const HANDOFF_SECONDS = 600;
 const ACCESS_COOKIE_SECONDS = 600;
@@ -96,8 +102,8 @@ async function writeHandoff(ctx, id, value) {
   });
 }
 
-function backToApp(id, code) {
-  const url = new URL(APP_RETURN_URL);
+function backToApp(id, code, scheme) {
+  const url = new URL(appReturnUrl(scheme));
   url.searchParams.set("handoff", id);
   url.searchParams.set("code", code);
   return url.toString();
@@ -153,6 +159,7 @@ export const commyAppSignIn = ({ accessCode, turnstileSiteKey }) => ({
           challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
           adultConfirmed: z.boolean().optional(),
           accessToken: z.string().max(200).optional(),
+          returnScheme: z.enum(APP_RETURN_SCHEMES).optional(),
         }),
       },
       async (ctx) => {
@@ -165,11 +172,12 @@ export const commyAppSignIn = ({ accessCode, turnstileSiteKey }) => ({
           challenge: ctx.body.challenge,
           adultConfirmed: ctx.body.adultConfirmed === true,
           access: ctx.body.accessToken ?? null,
+          returnScheme: ctx.body.returnScheme ?? APP_RETURN_SCHEMES[0],
           opened: false,
         });
         const go = new URL(`${ctx.context.baseURL}/commy/app-sign-in/go`);
         go.searchParams.set("handoff", id);
-        return ctx.json({ url: go.toString(), returnUrl: APP_RETURN_URL });
+        return ctx.json({ url: go.toString(), returnUrl: appReturnUrl(ctx.body.returnScheme) });
       },
     ),
     openSheetSignIn: createAuthEndpoint("/commy/app-sign-in/go", { method: "GET", query: z.object({ handoff: z.string().max(64) }) }, async (ctx) => {
@@ -209,7 +217,7 @@ export const commyAppSignIn = ({ accessCode, turnstileSiteKey }) => ({
         await writeHandoff(ctx, id, { ...handoff, ...result, code: sha256(code) });
         if (signedIn) deleteSessionCookie(ctx, true);
         const headers = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" };
-        return new Response(backPage(backToApp(id, code)), { status: 200, headers });
+        return new Response(backPage(backToApp(id, code, handoff.returnScheme)), { status: 200, headers });
       },
     ),
     finishSheetSignIn: createAuthEndpoint(

@@ -53,6 +53,18 @@ test("a release candidate builds as the Commy Beta iPhone app with its own icon,
   assert.ok(readFileSync(new URL("./app-icon-beta.png", import.meta.url)).length > 0);
 });
 
+test("a release candidate builds the Android app as Commy Beta and links back on commy-beta://", () => {
+  const out = sourced("1.0.2-rc.1", 'printf "%s|%s|%s|%s" "$COMMY_ANDROID_APP_ID" "$COMMY_APP_NAME" "$TAURI_COMMY_LINK_SCHEME" "$(printf " chat.commy.mobile.beta\n" | expect_android_app_id "The APK")"');
+  assert.equal(out, "chat.commy.mobile.beta|Commy Beta|commy-beta|The APK is Commy Beta (chat.commy.mobile.beta)");
+});
+
+test("a final release builds the store Android app and keeps commy:// links", () => {
+  const out = sourced("1.0.2", 'printf "%s|%s|%s" "$COMMY_ANDROID_APP_ID" "$COMMY_APP_NAME" "${COMMY_LINK_SCHEME:-unset}"');
+  assert.equal(out, "chat.commy.mobile|Commy|unset");
+  const wrong = spawnSync("bash", ["-c", `source "${releaseEnv}" 1.0.2 >/dev/null && printf "chat.commy.mobile.beta" | expect_android_app_id "The APK"`], { encoding: "utf8" });
+  assert.notEqual(wrong.status, 0);
+});
+
 test("a final release builds the store iPhone app", () => {
   const out = sourced("1.0.1", 'printf "%s|%s|%s|%s" "$COMMY_IOS_BUNDLE_ID" "$release_app_name" "$(basename "$release_app_icon")" "$(ios_build_config)"');
   const [bundleId, name, icon, config] = out.split("|");

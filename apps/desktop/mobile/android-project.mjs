@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const PERMISSIONS = [
@@ -45,14 +45,29 @@ export const COMPONENTS = [
 const usesPermission = name => (MAX_SDK[name] ? `<uses-permission android:name="${name}" android:maxSdkVersion="${MAX_SDK[name]}" />` : `<uses-permission android:name="${name}" />`);
 const usesFeature = name => `<uses-feature android:name="${name}" android:required="false" />`;
 
-export const INVITE_LINKS = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="i" /></intent-filter>`;
-export const SIGN_IN_RETURN = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="signed-in" /></intent-filter>`;
-export const EMAIL_CONFIRMED = `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="commy" android:host="email-confirmed" /></intent-filter>`;
-const LINK_FILTERS = [
-  { marker: 'android:host="i"', xml: INVITE_LINKS },
-  { marker: 'android:host="signed-in"', xml: SIGN_IN_RETURN },
-  { marker: 'android:host="email-confirmed"', xml: EMAIL_CONFIRMED },
-];
+export const STORE_APP = { appId: "chat.commy.mobile", name: "Commy", scheme: "commy", icons: "" };
+
+export function appVariant(env = process.env) {
+  const appId = (env.COMMY_ANDROID_APP_ID ?? "").trim();
+  if (!appId || appId === STORE_APP.appId) return STORE_APP;
+  return {
+    appId,
+    name: (env.COMMY_APP_NAME ?? "").trim() || STORE_APP.name,
+    scheme: (env.COMMY_LINK_SCHEME ?? "").trim() || STORE_APP.scheme,
+    icons: "beta/",
+  };
+}
+
+const linkFilter = (scheme, host) => `<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="${scheme}" android:host="${host}" /></intent-filter>`;
+export const LINK_HOSTS = ["i", "signed-in", "email-confirmed"];
+
+export function linkFilters(scheme = STORE_APP.scheme) {
+  return LINK_HOSTS.map(host => ({ marker: `android:scheme="${scheme}" android:host="${host}"`, xml: linkFilter(scheme, host) }));
+}
+
+export const INVITE_LINKS = linkFilter(STORE_APP.scheme, "i");
+export const SIGN_IN_RETURN = linkFilter(STORE_APP.scheme, "signed-in");
+export const EMAIL_CONFIRMED = linkFilter(STORE_APP.scheme, "email-confirmed");
 
 function insertBefore(xml, marker, lines, indent, from = 0) {
   const anchor = xml.indexOf(marker, from);
@@ -62,7 +77,7 @@ function insertBefore(xml, marker, lines, indent, from = 0) {
   return `${xml.slice(0, lineStart)}${block}${xml.slice(lineStart)}`;
 }
 
-export function withCommyNeeds(xml) {
+export function withCommyNeeds(xml, { scheme = STORE_APP.scheme } = {}) {
   const missing = [
     ...PERMISSIONS.filter(name => !xml.includes(`"${name}"`)).map(usesPermission),
     ...FEATURES.filter(name => !xml.includes(`"${name}"`)).map(usesFeature),
@@ -71,7 +86,7 @@ export function withCommyNeeds(xml) {
   if (missing.length) out = insertBefore(out, "<application", [...missing, ""], "    ");
   const components = COMPONENTS.filter(c => !out.includes(`"${c.name}"`)).map(c => c.xml);
   if (components.length) out = insertBefore(out, "</application>", components, "        ");
-  const filters = LINK_FILTERS.filter(f => !out.includes(f.marker)).map(f => f.xml);
+  const filters = linkFilters(scheme).filter(f => !out.includes(f.marker)).map(f => f.xml);
   if (filters.length) {
     const main = out.indexOf('android:name=".MainActivity"');
     if (main < 0) throw new Error("AndroidManifest.xml has no MainActivity");
@@ -152,6 +167,17 @@ export function withNativeSymbols(gradle) {
   return `${out.slice(0, from)}${android[1]}    System.getenv("NDK_HOME")?.takeIf { it.isNotBlank() }?.let { ndkPath = it }\n${out.slice(from)}`;
 }
 
+export function withApplicationId(gradle, appId) {
+  if (!/applicationId\s*=\s*"[^"]+"/.test(gradle)) throw new Error("app/build.gradle.kts has no applicationId");
+  return gradle.replace(/applicationId\s*=\s*"[^"]+"/, `applicationId = "${appId}"`);
+}
+
+export function withAppName(strings, name) {
+  const label = /(<string name="(?:app_name|main_activity_title)"[^>]*>)[^<]*(<\/string>)/g;
+  if (!/<string name="app_name"/.test(strings)) throw new Error("res/values/strings.xml has no app_name");
+  return strings.replace(label, (_, open, close) => `${open}${escapeXml(name)}${close}`);
+}
+
 export function applicationId(gradle) {
   return gradle.match(/applicationId\s*=\s*"([^"]+)"/)?.[1] ?? null;
 }
@@ -214,6 +240,7 @@ const manifestPath = here("../src-tauri/gen/android/app/src/main/AndroidManifest
 const sourcesFrom = here("./android/");
 const sourcesTo = here("../src-tauri/gen/android/app/src/main/java/chat/commy/mobile/");
 const gradlePath = here("../src-tauri/gen/android/app/build.gradle.kts");
+const stringsPath = here("../src-tauri/gen/android/app/src/main/res/values/strings.xml");
 const firebasePath = here("../src-tauri/gen/android/app/src/main/res/values/firebase.xml");
 const keepRulesFrom = here("./android/commy-rules.pro");
 const keepRulesTo = here("../src-tauri/gen/android/app/commy-rules.pro");
@@ -223,9 +250,15 @@ const launcherIconTo = here("../src-tauri/gen/android/app/src/main/res/mipmap-an
 const soundsFrom = here("./sounds/");
 const soundsTo = here("../src-tauri/gen/android/app/src/main/res/raw/");
 
+export function launcherLayerSource(name, variant, exists = existsSync) {
+  const own = `${launcherFrom}${variant.icons}${name}.png`;
+  return variant.icons && exists(own) ? own : `${launcherFrom}${name}.png`;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const variant = appVariant();
   const before = readFileSync(manifestPath, "utf8");
-  const after = withCommyNeeds(before);
+  const after = withCommyNeeds(before, { scheme: variant.scheme });
   if (after !== before) writeFileSync(manifestPath, after);
   mkdirSync(sourcesTo, { recursive: true });
   const sources = readdirSync(sourcesFrom).filter(name => name.endsWith(".kt"));
@@ -233,15 +266,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   copyFileSync(keepRulesFrom, keepRulesTo);
   mkdirSync(launcherLayersTo, { recursive: true });
   mkdirSync(launcherIconTo, { recursive: true });
-  for (const name of [...Object.values(LAUNCHER_LAYERS), NOTIFICATION_ICON]) copyFileSync(`${launcherFrom}${name}.png`, `${launcherLayersTo}${name}.png`);
+  for (const name of [...Object.values(LAUNCHER_LAYERS), NOTIFICATION_ICON]) copyFileSync(launcherLayerSource(name, variant), `${launcherLayersTo}${name}.png`);
   for (const name of LAUNCHER_NAMES) writeFileSync(`${launcherIconTo}${name}.xml`, launcherIcon());
   mkdirSync(soundsTo, { recursive: true });
   for (const name of NOTIFICATION_SOUNDS) copyFileSync(`${soundsFrom}${name}`, `${soundsTo}${name}`);
-  const gradle = readFileSync(gradlePath, "utf8");
+  const gradle = withApplicationId(readFileSync(gradlePath, "utf8"), variant.appId);
+  const strings = readFileSync(stringsPath, "utf8");
+  const named = withAppName(strings, variant.name);
+  if (named !== strings) writeFileSync(stringsPath, named);
+  console.log(`App: ${variant.name} (${variant.appId}), links ${variant.scheme}://`);
   const debugStore = process.env.ANDROID_DEBUG_KEYSTORE_FILE;
   const releaseStore = process.env.ANDROID_UPLOAD_KEYSTORE_FILE;
   const withDependencies = withNativeSymbols(withSigning(withCommyDependencies(gradle), { debugStore, releaseStore }));
-  if (withDependencies !== gradle) writeFileSync(gradlePath, withDependencies);
+  writeFileSync(gradlePath, withDependencies);
   console.log(debugStore ? "Debug builds sign with the kept debug key" : "ANDROID_DEBUG_KEYSTORE_FILE is not set, so debug builds sign with a new key");
   console.log(releaseStore ? `Release builds sign with the upload key, password from ${UPLOAD_KEY.passwordEnv}` : "ANDROID_UPLOAD_KEYSTORE_FILE is not set, so release builds are unsigned");
   console.log(after === before ? "AndroidManifest.xml already has what Commy needs" : "AndroidManifest.xml now asks for the microphone, camera, notifications, the call and screen share services, relaunching, invite links and the sign-in return link");

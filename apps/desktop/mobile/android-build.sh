@@ -15,7 +15,7 @@ src_tauri="$(cd "$mobile/../src-tauri" && pwd)"
 cd "$src_tauri"
 
 [ -d gen/android ] || npx tauri android init --ci
-npx tauri icon ../mobile/app-icon.png
+npx tauri icon "$release_app_icon"
 node ../mobile/android-project.mjs
 
 config="$(printf '{"version":"%s","bundle":{"android":{"versionCode":%s}}}' "$release_app_version" "$version_code")"
@@ -31,4 +31,6 @@ out="$src_tauri/gen/android/Commy-$version-$version_code"
 cp "$aab" "$out.aab"
 cp "$apk" "$out.apk"
 unzip -p "$out.apk" | expect_built_servers "The Android APK"
+aapt2="$(ls "${ANDROID_HOME:?set ANDROID_HOME}"/build-tools/*/aapt2 | sort -V | tail -n 1)"
+"$aapt2" dump packagename "$out.apk" | expect_android_app_id "The Android APK"
 echo "Built $out.aab for Google Play and $out.apk to install directly"

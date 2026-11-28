@@ -303,6 +303,25 @@ test("a refused sheet sign-in comes back to the app as a reason", async () => {
   assert.equal(r.json.code, "ACCESS_CODE_REQUIRED");
 });
 
+test("the beta app's sheet sign-in comes back on the beta app's own link", async () => {
+  start({ GOOGLE_CLIENT_ID: "gid", GOOGLE_CLIENT_SECRET: "gsecret" });
+  const { verifier, challenge } = pkce();
+  const started = await call("POST", "/commy/app-sign-in/start", { origin: null, body: { provider: "google", challenge, returnScheme: "commy-beta" } });
+  assert.equal(started.status, 200, JSON.stringify(started.json));
+  assert.equal(started.json.returnUrl, "commy-beta://signed-in");
+  const handoff = new URL(started.json.url).searchParams.get("handoff");
+  const back = await call("GET", `/commy/app-sign-in/back?handoff=${handoff}&error=ACCESS_DENIED`, { origin: null });
+  const landing = landingFrom(back.text);
+  assert.equal(`${landing.protocol}//${landing.host}`, "commy-beta://signed-in");
+  const r = await call("POST", "/commy/app-sign-in/finish", { origin: null, body: { handoff, verifier, code: landing.searchParams.get("code") } });
+  assert.notEqual(r.status, 404, "the code from the beta link finishes the same sign-in");
+
+  const plain = await call("POST", "/commy/app-sign-in/start", { origin: null, body: { provider: "google", challenge } });
+  assert.equal(plain.json.returnUrl, "commy://signed-in");
+  const stranger = await call("POST", "/commy/app-sign-in/start", { origin: null, body: { provider: "google", challenge, returnScheme: "https" } });
+  assert.equal(stranger.status, 400, "only Commy's own app links");
+});
+
 test("the sheet only offers providers this server has", async () => {
   const r = await call("POST", "/commy/app-sign-in/start", { origin: null, body: { provider: "google", challenge: pkce().challenge } });
   assert.equal(r.status, 404);
