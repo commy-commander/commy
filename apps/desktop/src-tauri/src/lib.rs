@@ -18,6 +18,8 @@ mod camera_fix;
 mod entry_list;
 #[cfg(target_os = "linux")]
 mod flatpak;
+#[cfg(target_os = "linux")]
+mod media_permission;
 mod catchup;
 mod channel_lock;
 mod community_sync;
@@ -8928,6 +8930,8 @@ pub fn run() {
     let builder = builder.plugin(call_service::init()).plugin(relaunch::init()).plugin(push_wake::init()).plugin(screen_service::init()).plugin(app_sign_in::init()).plugin(share_sheet::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(push_wake::init());
+    #[cfg(target_os = "linux")]
+    let builder = builder.on_permission_request(|_, kind| media_permission::answer(kind));
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
